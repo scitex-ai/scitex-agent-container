@@ -132,16 +132,21 @@ def spec_git_sha(config_path: str | None, *, timeout_s: float = 5.0) -> str:
 def write_birth_certificate(
     config: Any,
     incarnation_id: str,
-    *,
-    db_path: Path | None = None,
 ) -> bool:
     """Record the birth certificate for ``incarnation_id``. Best-effort.
 
-    Returns True iff the row was written. A failure is LOGGED with its
+    Returns True iff the record was written. A failure is LOGGED with its
     origin and swallowed — the certificate is bookkeeping about a launch
     that already succeeded, and failing the launch over it would destroy
     the very run it documents (same contract as the sibling
     ``record_local_instance`` side-writes).
+
+    ``db_path`` was dropped on 2026-08-19 when the incarnations table moved
+    to per-host PostgreSQL. It named a SQLite file this function no longer
+    writes to, and an ignored parameter in a signature is a lie a caller
+    cannot see through: ``_instances.write_instance_records`` was still
+    threading its own state.db path in here, which would have read as
+    "the certificate lands in that file" long after it stopped being true.
     """
     try:
         spec_id = (
@@ -160,10 +165,9 @@ def write_birth_certificate(
             spec_git_sha=spec_git_sha(spec_id),
             host=None,
             compiled_spec_json=payload,
-            db_path=db_path,
         )
         return True
-    except Exception as exc:  # stx-allow: fallback (reason: the certificate documents a launch that already succeeded; failing the launch over bookkeeping would destroy the run it documents — logged with origin, never silent)
+    except Exception as exc:  # stx-allow: fallback (reason: the certificate documents a launch that already succeeded; failing the launch over bookkeeping would destroy the run it documents. SINK, measured 2026-08-20: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'birth certificate NOT recorded'` is the check)
         logger.error(
             "birth certificate NOT recorded for incarnation %s (agent %s): %s "
             "(origin: _lifecycle/_birth_certificate.write_birth_certificate)",

@@ -66,7 +66,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
 from typing import Any, Callable
+
+from ._launch_fatal import apptainer_fatal
 
 __all__ = [
     "DEFAULT_POLL_INTERVAL_S",
@@ -339,14 +342,31 @@ def _verify_by_heartbeat(
 ) -> LaunchVerdict:
     """SDK-path verdict — poll for a FRESH heartbeat from a NEW incarnation.
 
-    Per tick, in evidence order: (1) a beat stamped at/after
-    ``launched_at`` (and not the old run's ``stopping`` farewell) proves
-    the new runner booted → VERIFIED_UP; (2) the runtime's own pid probe
-    reporting the container DEAD is definitive → VERIFIED_FAILED with the
-    boot-log tail (``stdout.log`` — apptainer merges the runner's stderr
-    into it, so the Errno 98 / VenvDistributionError text lives there);
+    Per tick, in evidence order:
+
+    (0) an apptainer ``FATAL`` in a boot log written by THIS launch →
+        VERIFIED_FAILED. Checked FIRST, added 2026-08-20 on the
+        operator's instruction, because it is positive evidence the
+        container was never created and it used to be checked LAST — i.e.
+        never, since a heartbeat short-circuits the loop. See
+        :func:`._launch_fatal.apptainer_fatal`.
+    (1) a beat stamped at/after ``launched_at`` (and not the old run's
+        ``stopping`` farewell) → VERIFIED_UP. Note what this does and
+        does not prove: something wrote a beat. Fleet-wide on 2026-08-19
+        all but one of ~118 beats came from ``listen-tui-observer``, not
+        from the runner, which is why (0) must precede it.
+    (2) the runtime's own pid probe reporting the container DEAD is
+        definitive → VERIFIED_FAILED with the boot-log tail
+        (``stdout.log`` — apptainer merges the runner's stderr into it,
+        so the Errno 98 / VenvDistributionError text lives there).
     (3) window expiry with the process still standing → UNVERIFIED, which
-    is exit-nonzero but worded as "could not verify", never "failed".
+        is exit-nonzero but worded as "could not verify", never "failed".
+
+    Every negative verdict reaches the operator through
+    ``cli_pkg.lifecycle._start_verify_report``, which routes it via
+    ``system_msg`` — sac's scitex-logging surface — and returns False so
+    the caller exits non-zero. That plumbing already existed; what was
+    missing was any path that reached it when apptainer had FATAL'd.
     """
     from .._runners._session_state import read_heartbeat
 
@@ -354,6 +374,22 @@ def _verify_by_heartbeat(
     log_candidates = ("stdout.log", "boot.stderr.log")
     deadline = launched_at + window
     while True:
+        # BEFORE the heartbeat, because a FATAL is positive evidence the
+        # container was never created and a beat is not proof it was. See
+        # _apptainer_fatal for the measurement behind that ordering.
+        fatal = apptainer_fatal(state_dir, log_candidates, launched_at=launched_at)
+        if fatal is not None:
+            fatal_log, fatal_line = fatal
+            waited = max(0.0, now_fn() - launched_at)
+            return LaunchVerdict(
+                VERIFIED_FAILED,
+                f"apptainer FATAL {waited:.1f}s after launch — the container "
+                f"was never created: {fatal_line}",
+                str(fatal_log),
+                _tail(fatal_log),
+                waited,
+                str(heartbeat_path),
+            )
         beat = read_heartbeat(state_dir)
         if beat is not None:
             ts = beat.get("ts")

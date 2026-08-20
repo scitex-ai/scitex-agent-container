@@ -26,10 +26,12 @@ the same command with independent state. ``sac.accounts-refresh`` is the
 fleet's SOLE OAuth refresher against a SINGLE-USE refresh token, so two
 of it revoke each other's access token fleet-wide.
 
-The rename therefore does not ride along with a CLI-surface change; it
-ships with the migration verb that enforces stop -> remove -> install and
-makes install-before-uninstall impossible. Flipping this one constant is
-the code half of that change.
+The rename therefore does not ride along with a CLI-surface change; the
+migration verb that enforces stop -> remove -> install and makes
+install-before-uninstall impossible is what closes it on each host.
+Flipping this one constant is the code half; the verb is the host half,
+and — see below — the code half has to land FIRST for the verb to work
+at all.
 
 WHY TWO PREFIXES ARE LIVE AT ONCE, AND WHY THAT IS THE SAFE SHAPE
 =================================================================
@@ -38,16 +40,33 @@ WHY TWO PREFIXES ARE LIVE AT ONCE, AND WHY THAT IS THE SAFE SHAPE
 deliberately keeps its old name until an operator-supervised cutover:
 ``sac.accounts-refresh``, the fleet's sole OAuth refresher.
 
-The alternative — rename the SPEC now and cut the UNIT over later — is
-the one shape that must not ship. The live, enabled, actively-refreshing
-unit is ``sac.accounts-refresh.timer``; if the spec said
-``scitex-agent-container-accounts-refresh`` while that unit ran, then
-``sac dev timer status accounts-refresh`` would resolve to a name no unit
-carries and report the refresher as absent — WHILE IT IS RUNNING. A CLI
-that reports the fleet's most critical job as missing when it is healthy
-is worse than a name that does not match a convention yet.
+THE ORDER WAS INVERTED 2026-08-19, and this paragraph used to argue the
+opposite, so read the correction rather than the memory of it. The old
+rule was "rename the SPEC now and cut the UNIT over later is the one
+shape that must not ship", on the grounds that ``sac dev timer status
+accounts-refresh`` would then resolve to a name no unit carries and
+report the fleet's sole OAuth refresher as absent while it runs.
 
-So the declared name tracks the DEPLOYED unit, always. Both prefixes are
+That hazard is real and it is now ACCEPTED, because the alternative is
+not available. ``sac dev timer install`` resolves only names a JobSpec
+DECLARES, so a held spec can never be installed under its new name:
+
+    $ sac dev timer install scitex-agent-container-accounts-refresh
+    no job named 'scitex-agent-container-accounts-refresh' here
+
+"Rename both together" was therefore never reachable — attempted in the
+old order on 2026-08-18, stop and remove succeeded, install failed on
+exactly that lookup, and the fleet had zero refreshers for ~2 minutes.
+The spec leads and the unit follows, or the cutover never happens.
+
+What the accepted window costs is bounded and worth naming: a MISREPORT
+on one manual verb, which cannot escalate by itself, because nothing in
+this package installs or enables a timer automatically — the backend
+declines to run ``systemctl`` and the apply path only PRINTS the enable
+line. Two racing refreshers still require a human to type the install
+command against a host that already carries the old unit.
+
+So the declared name now LEADS the deployed unit, by necessity. Both prefixes are
 readable until :mod:`._migrate` records that cutover as done, and
 ``JOB_PREFIX`` alone is what new names are minted with.
 """

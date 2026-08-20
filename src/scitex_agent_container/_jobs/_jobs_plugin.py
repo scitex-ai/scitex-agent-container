@@ -156,6 +156,44 @@ def provide_jobs() -> "list[JobSpec]":
     ``--sync-active-login`` keeps the operator's live session valid across
     the single-use refresh_token rotation.
 
+    EVERY COMMAND IS SELF-BOUNDING; NONE DECLARES ``timeout_sec``
+    ------------------------------------------------------------
+    Each command starts with a literal ``/usr/bin/timeout <N> ``, because
+    that is the only place a bound can survive. Since the supervisor
+    redesign (operator policy 2026-06-14) ``scitex-dev ecosystem up``
+    lowers every ``kind="timer"`` JobSpec onto the managed CRONTAB block,
+    and a cron line is ``<schedule> <command> # marker`` and nothing else
+    — it has no field a timeout could ride in.
+
+    ``timeout_sec`` is DROPPED rather than kept alongside the prefix:
+    scitex-dev's guard (``_up_timer_lowering.lowering_losses``) keys on the
+    FIELD BEING SET, not on whether the command is really bounded, so a
+    spec carrying both still counts as a dropped guarantee and still
+    REFUSES the lowering — ``ecosystem up`` aborts for the whole ecosystem,
+    measured, not assumed. Nothing is lost by dropping it: the bound moved
+    into the command, where both rendering targets honour it. Previously it
+    was a systemd-only promise that evaporated on cron, which is how
+    ``fleet-reconcile`` piled up fourteen concurrent instances, the oldest
+    45 minutes old (2026-07-18).
+
+    Two spelling choices, both load-bearing. ``/usr/bin/timeout`` is
+    ABSOLUTE (GNU coreutils 9.4, verified on scitex-compute-04): cron's and
+    systemd's minimal PATHs both carry ``/usr/bin`` so a bare ``timeout``
+    would resolve too, but the absolute form keeps ``heal-agent-auth``'s
+    "depends on no PATH at all" property true. The INNER command stays
+    PATH-relative (``sac …``) because sac's install path VARIES BY HOST
+    (``~/.env-sac/bin/sac`` on scitex-compute-04, ``~/.env-3.11/bin/sac``
+    elsewhere), so pinning one absolute ``sac`` would break the others —
+    and the cron line has always run ``sac`` off cron's PATH anyway.
+
+    KNOWN CONSEQUENCE, stated rather than papered over: a wrapper prefix
+    means ``resolve_execstart`` (which absolutises only the FIRST token)
+    no longer absolutises the inner ``sac`` should these specs ever be
+    rendered as systemd units instead — the same hazard scitex-dev's own
+    lowering module documents. Not live today (``up`` writes cron, not
+    units); a future move back to a timer surface must pin the inner path
+    or declare ``venv`` at that time.
+
     """
     from scitex_dev.jobs import JobSpec
 
@@ -163,25 +201,55 @@ def provide_jobs() -> "list[JobSpec]":
 
     return [
         JobSpec(
-            # THE ONE NAME STILL ON THE LEGACY PREFIX, AND IT IS ON PURPOSE.
-            # Every other job here was cut over to `scitex-agent-container-*`;
-            # this one is HELD, with the reason recorded in
-            # `_migrate._renames.RENAMES` (the SSoT for the cutover).
+            # THE LAST NAME OFF THE LEGACY PREFIX. It was held back for
+            # months on the rule "never rename a spec ahead of its unit", and
+            # that rule was right about the hazard and wrong about the order.
             #
-            # A spec renamed AHEAD of its unit is the one shape that must not
-            # ship. The live, enabled, actively-refreshing unit is
-            # `sac.accounts-refresh.timer`; if this said
-            # `scitex-agent-container-accounts-refresh` while that unit ran,
-            # `sac dev timer status accounts-refresh` would resolve to a name
-            # no unit carries and report the fleet's SOLE OAuth refresher as
-            # ABSENT while it refreshes. A name that does not match the
-            # convention yet is a PS-227 warning; a CLI that reports the
-            # credential machinery as missing when it is healthy is an
-            # incident. So the declared name tracks the DEPLOYED unit until
-            # the supervised cutover renames both together.
-            name="sac.accounts-refresh",
+            # WHAT THE HOLD ASSUMED: that the supervised cutover renames spec
+            # and unit TOGETHER. MEASURED 2026-08-19, that is unreachable —
+            # the migration's install step delegates to scitex-dev BY THE NEW
+            # CANONICAL NAME, and scitex-dev resolves a name only if a JobSpec
+            # DECLARES it:
+            #
+            #   $ sac dev timer install scitex-agent-container-accounts-refresh
+            #   no job named 'scitex-agent-container-accounts-refresh' here
+            #
+            # So install-new cannot run until this line moves. The spec moves
+            # FIRST or the cutover never happens at all; that is not a rule
+            # violation, it is the only order the tooling admits. (Attempted
+            # in the other order 2026-08-18: stop/remove succeeded, install
+            # failed on exactly that lookup, and the fleet's sole OAuth
+            # refresher was down ~2 minutes until the old units were restored.)
+            #
+            # WHAT THE WINDOW ACTUALLY COSTS, stated plainly rather than
+            # assumed: between this rename and the host cutover,
+            # `sac dev timer status accounts-refresh` resolves to a unit name
+            # the host does not carry and reports the refresher ABSENT while
+            # `sac.accounts-refresh.timer` keeps firing every 2h. That is a
+            # MISREPORT ON ONE MANUAL VERB, not an outage — and it cannot
+            # escalate on its own: nothing in this repo installs or enables a
+            # timer automatically (`_dev_jobs_backend` declines to run
+            # systemctl; `_dev_jobs_apply` only PRINTS the enable line), so
+            # the two-racing-refreshers catastrophe still requires a human to
+            # type the install command against a host that already has the
+            # old unit.
+            #
+            # CLOSING THE WINDOW is `sac dev migrate-job-names --only
+            # accounts-refresh --include-held --yes`, run supervised, then
+            # `sac accounts status` BEFORE walking away. Ordered
+            # stop-old -> remove-old -> install-new -> verify-exactly-one, and
+            # "exactly one" means one unit FOR THIS JOB:
+            # `scitex-agent-container-accounts-keepalive` is a DIFFERENT job
+            # that must keep existing.
+            name="scitex-agent-container-accounts-refresh",
             schedule="0 */2 * * *",  # every 2h
-            command=("sac accounts refresh --all --include-active --sync-active-login"),
+            # SELF-BOUNDING (120s) — see the convention note above. The
+            # bound has to live in the command because this job lands on
+            # CRON, where `timeout_sec` cannot follow it.
+            command=(
+                "/usr/bin/timeout 120 "
+                "sac accounts refresh --all --include-active --sync-active-login"
+            ),
             description=(
                 "Headless OAuth access-token refresh for all stored Claude "
                 "accounts including the active one (sole-refresher model), "
@@ -200,12 +268,18 @@ def provide_jobs() -> "list[JobSpec]":
             kind="timer",
             on_boot_sec="15min",
             on_unit_active_sec="2h",
-            timeout_sec=120,
         ),
         JobSpec(
             name="scitex-agent-container-accounts-keepalive",
             schedule="*/15 * * * *",  # every 15min (cron form; timer below)
+            # SELF-BOUNDING (300s). Per peer: a handful of coreutils ssh ops
+            # plus ONE outbound HTTPS verification from the peer (15s cap
+            # inside the probe). 300s covers three peers including a slow one
+            # without ever hanging forever. A pass killed here leaves the
+            # peer's previous credential intact — nothing is published
+            # unverified.
             command=(
+                "/usr/bin/timeout 300 "
                 "sac accounts keepalive --all "
                 "--to ywata-note-win "
                 "--to scitex-compute-03 "
@@ -257,17 +331,71 @@ def provide_jobs() -> "list[JobSpec]":
             # peer is verified, not rewritten.
             on_boot_sec="10min",
             on_unit_active_sec="15min",
-            # Per peer: a handful of coreutils ssh ops plus ONE outbound
-            # HTTPS verification from the peer (15s cap inside the probe).
-            # 300s covers three peers including a slow one without ever
-            # hanging forever. A pass killed here leaves the peer's previous
-            # credential intact — nothing is published unverified.
-            timeout_sec=300,
+        ),
+        JobSpec(
+            name="scitex-agent-container-accounts-quota-cache",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer below)
+            # SELF-BOUNDING (120s). One usage read per stored account (4
+            # today), each a single HTTPS call; 120s covers all of them on a
+            # slow network and never hangs. A pass killed here leaves the
+            # PREVIOUS cache in place — stale, which is the status quo this
+            # job improves on, never wrong.
+            command="/usr/bin/timeout 120 sac accounts refresh-quota-cache",
+            description=(
+                "Keeps the per-account usage cache FRESH. Nothing else did: "
+                "sac.accounts-refresh rotates TOKENS and accounts-keepalive "
+                "COPIES tokens, so before this job every quota number the "
+                "fleet showed was as old as the last time a human happened to "
+                "run the verb by hand. Reads usage only — it neither mints nor "
+                "rotates, so it cannot revoke a credential a running agent "
+                "holds (the hazard that makes `accounts refresh` dangerous to "
+                "schedule aggressively). "
+                "MEASURED COST OF NOT HAVING IT, 2026-08-17: `sac accounts "
+                "list` rendered every bar with `! snapshot older than the "
+                "refresh window` and `(stale 1d)` — it detected its own "
+                "staleness and did not fix it. On that day-old snapshot "
+                "scitex-01 read 7d=23% and wyusuuke read 7d=100%; the truth "
+                "after a manual refresh was scitex-01 94% and wyusuuke 0% — "
+                "INVERTED. An agent was repointed at the nearly-exhausted "
+                "account on the strength of it, and the operator's own "
+                "diagnosis was that an account reaches 94% precisely because "
+                "no one is refreshing the numbers that would have shown it "
+                "climbing. A cache that reports its own staleness without "
+                "repairing it is a record, not a gate."
+            ),
+            kind="timer",
+            # 5min, at the operator's instruction — he proposed 1min and
+            # offered 5min "if that is overdoing it". Taking the 5.
+            #
+            # The cadence is chosen against the 5h window, which is the fast
+            # one: a busy account can cross from comfortable to exhausted
+            # inside a single hour, so an hourly cadence would still permit a
+            # placement decision on numbers that predate the exhaustion. The
+            # 7d window moves far too slowly to drive this.
+            #
+            # WHY NOT 1min. Staleness at 5min is already far inside any
+            # decision window — no account crosses a threshold that matters in
+            # five minutes, so 1min buys freshness nobody can act on while
+            # costing 5x the calls (4 accounts x 1440 = 5760/day against a
+            # third-party usage endpoint whose rate limits we do not control
+            # and have not measured). If a case ever appears where a 5min-old
+            # number caused a wrong decision, that is the evidence to go to
+            # 1min — and it would be evidence, not a guess.
+            on_boot_sec="2min",
+            on_unit_active_sec="5min",
         ),
         JobSpec(
             name="scitex-agent-container-host-sync-check",
             schedule="0 * * * *",  # hourly (cron form; timer cadence below)
-            command="sac host sync --check --all --alarm --exit-zero",
+            # SELF-BOUNDING (600s). Sequential per-ssh probe over every peer,
+            # each capped at the verb's 120s default (an unreachable peer
+            # waits its ssh connect-timeout). 600s comfortably covers a
+            # handful of peers including a slow/unreachable one without ever
+            # hanging forever.
+            command=(
+                "/usr/bin/timeout 600 "
+                "sac host sync --check --all --alarm --exit-zero"
+            ),
             description=(
                 "Read-only drift check of every peer's sac checkout vs the "
                 "centre; records each verdict in sac's own event log so the "
@@ -289,16 +417,18 @@ def provide_jobs() -> "list[JobSpec]":
             # 2h token refresh, so hourly is ample and gentle on ssh.
             on_boot_sec="10min",
             on_unit_active_sec="1h",
-            # Sequential per-ssh probe over every peer, each capped at the
-            # verb's 120s default (an unreachable peer waits its ssh
-            # connect-timeout). 600s comfortably covers a handful of peers
-            # including a slow/unreachable one without ever hanging forever.
-            timeout_sec=600,
         ),
         JobSpec(
             name="scitex-agent-container-worktree-gc",
             schedule="30 4 * * *",  # daily 04:30 (cron form; timer cadence below)
-            command="sac worktree gc --apply --all",
+            # SELF-BOUNDING (900s). A pass is a handful of local `git` calls
+            # per worktree plus one `gh pr list` per unmerged branch (the
+            # squash-merge leg). A repo deep in sprawl with a slow/
+            # rate-limited gh is the worst case; 900s covers the whole
+            # fleet's repos without ever hanging forever. Every gh failure
+            # already degrades to KEEP, so a timeout costs a skipped reap,
+            # never a wrong one.
+            command="/usr/bin/timeout 900 sac worktree gc --apply --all",
             description=(
                 "Daily git-worktree GC: removes only worktrees PROVEN safe "
                 "(clean AND merged AND older than 24h AND not in use — never "
@@ -314,18 +444,18 @@ def provide_jobs() -> "list[JobSpec]":
             # boot keeps it clear of the login/auth settling window.
             on_boot_sec="20min",
             on_unit_active_sec="1d",
-            # A pass is a handful of local `git` calls per worktree plus one
-            # `gh pr list` per unmerged branch (the squash-merge leg). A repo
-            # deep in sprawl with a slow/rate-limited gh is the worst case;
-            # 900s covers the whole fleet's repos without ever hanging
-            # forever. Every gh failure already degrades to KEEP, so a
-            # timeout costs a skipped reap, never a wrong one.
-            timeout_sec=900,
         ),
         JobSpec(
             name="scitex-agent-container-spartan-sif-bake",
             schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
-            command="sac image bake-remote --yes",
+            # SELF-BOUNDING (14400s = 4h), and the one where the bound
+            # matters most: at a */10 cadence an UNBOUNDED bake outlives its
+            # own tick by design, so a wedged run would pile up against every
+            # later one. Two full bakes (base ~15-25min + scitex ~10-20min)
+            # plus a multi-GB pull on a slow link fit comfortably; the
+            # per-leg ssh timeout inside the command is 7200s, so 4h bounds
+            # the whole chain without ever killing a legitimate run.
+            command="/usr/bin/timeout 14400 sac image bake-remote --yes",
             description=(
                 "10-minute SIF refresh with zero master CPU: bake sac-base + "
                 "sac-scitex on the standing Spartan CPU lease (srun "
@@ -360,16 +490,15 @@ def provide_jobs() -> "list[JobSpec]":
             # something changed, the rest of that window bouncing off the lock.
             on_boot_sec="30min",
             on_unit_active_sec="10min",
-            # Two full bakes (base ~15-25min + scitex ~10-20min) plus a
-            # multi-GB pull on a slow link fit comfortably; the per-leg
-            # ssh timeout inside the command is 7200s, so 4h bounds the
-            # whole chain without ever hanging forever.
-            timeout_sec=14_400,
         ),
         JobSpec(
             name="scitex-agent-container-freshness-refresh",
             schedule="7 * * * *",  # hourly (cron form; timer cadence below)
-            command="sac freshness refresh",
+            # SELF-BOUNDING (300s). Generous on purpose, matching the
+            # primitive's own 30s per-source timeouts: a busy host must not
+            # be mistaken for a broken one, and a manufactured UNKNOWN is
+            # exactly the failure mode. Nothing is waiting on this run.
+            command="/usr/bin/timeout 300 sac freshness refresh",
             description=(
                 "Publishes the version-currency verdict to the cache that "
                 "every `sac` invocation reads. Runs the real checks (PyPI, "
@@ -388,11 +517,6 @@ def provide_jobs() -> "list[JobSpec]":
             # pass makes real network calls.
             on_boot_sec="25min",
             on_unit_active_sec="1h",
-            # Generous on purpose, matching the primitive's own 30s per-source
-            # timeouts: a busy host must not be mistaken for a broken one, and
-            # a manufactured UNKNOWN is exactly the failure mode. Nothing is
-            # waiting on this run.
-            timeout_sec=300,
         ),
         # The two AGENT-LIVENESS enforcers live together in
         # :mod:`._specs_liveness` — each one's scope is defined by what the
@@ -402,14 +526,25 @@ def provide_jobs() -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-heal-agent-auth",
             schedule="*/10 * * * *",  # every 10min (cron form; timer cadence below)
-            # ABSOLUTE by design, both tokens. `resolve_execstart` passes a
+            # ABSOLUTE by design, EVERY token. `resolve_execstart` passes a
             # command whose head starts with "/" through VERBATIM, so this is
             # the only form that depends on neither the ambient PATH nor which
             # interpreter ran `ecosystem up`. A systemd --user unit gets a
             # MINIMAL PATH, so the venv python must be named outright: the
             # script's own `#!/usr/bin/env python3` would resolve to the SYSTEM
             # python under systemd, not the 3.11 venv the fleet runs on.
+            #
+            # The `timeout` head is spelled ABSOLUTELY for the same reason —
+            # it keeps this command's "depends on no PATH at all" property
+            # intact, which a bare `timeout` would have quietly given up.
+            #
+            # SELF-BOUNDING (300s). A no-op tick takes ~2-8s, and the worst
+            # observed pass (a TUI restart at 15:30:04 settling by 15:32:08)
+            # ~2min. A pass killed here is SAFE — state is persisted per
+            # restart, so the next tick still honours the debounce for
+            # anything already bounced.
             command=(
+                "/usr/bin/timeout 300 "
                 "/home/ywatanabe/.env-3.11/bin/python "
                 "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
             ),
@@ -443,13 +578,6 @@ def provide_jobs() -> "list[JobSpec]":
             # every kind="timer", so a window missed while the host was asleep
             # fires on resume — the property a crontab line does NOT have and a
             # laptop fleet needs most.
-            #
-            # 300s matches the siblings and comfortably outlives a real pass:
-            # a no-op tick takes ~2-8s, and the worst observed pass (a TUI
-            # restart at 15:30:04 settling by 15:32:08) ~2min. A pass killed
-            # here is SAFE — state is persisted per restart, so the next tick
-            # still honours the debounce for anything already bounced.
-            timeout_sec=300,
         ),
     ]
 

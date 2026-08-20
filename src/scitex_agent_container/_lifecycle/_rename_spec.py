@@ -20,9 +20,18 @@ Touchpoints (the SSOT — :data:`SPEC_TOUCHPOINTS` documents them for
   7. ``spec.apptainer.raw_args`` ``--env K=V`` for K in :data:`ENV_RULES`
   8. ``spec.apptainer.env.<K>`` for K in :data:`ENV_RULES`
 
-``ENV_RULES`` is where the DAMAGING one lives: ``SCITEX_TODO_AGENT_ID``
-is the agent's identity ON THE BOARD. Change it without migrating the
-cards and every card the agent owns is orphaned — see ``_rename_cards``.
+``ENV_RULES`` is where the DAMAGING one lives: the agent's identity ON
+THE BOARD. Change it without migrating the cards and every card the agent
+owns is orphaned — see ``_rename_cards``. FAILING to change it is the
+mirror-image damage: the renamed agent keeps writing under its former
+name, and the board cannot say who those cards belong to.
+
+That identity is spelled ``SCITEX_CARDS_AGENT_ID`` today and
+``SCITEX_TODO_AGENT_ID`` in specs written before the rename. BOTH are in
+``ENV_RULES`` because both are live in the fleet — 108 specs and 193
+specs respectively, measured 2026-08-19. Only the old one was listed
+until then, so renaming any of the 108 silently produced exactly the
+mirror-image damage above.
 
 Why ruamel round-trip and not PyYAML load+dump: specs carry load-bearing
 operator commentary (the live ``scitex-todo`` spec is ~40% comments
@@ -59,6 +68,20 @@ from typing import Any, Iterator
 # renamed.
 ENV_RULES: dict[str, str] = {
     "SCITEX_TODO_AGENT_ID": "identity",
+    # THE CURRENT SPELLING, and it was missing. Measured 2026-08-19 on
+    # compute-04: 108 specs declare SCITEX_CARDS_AGENT_ID and 193 still
+    # declare SCITEX_TODO_AGENT_ID. Only the old name was listed here, so
+    # renaming any of those 108 agents left the board identity pointing at
+    # the agent's FORMER name — and every card it then wrote was attributed
+    # to an agent that no longer exists. Exactly the damage the module
+    # docstring above warns this dict causes when it is wrong.
+    #
+    # BOTH are listed on purpose while both populations exist. This is not a
+    # compatibility fallback to be tidied away: it is the rename tool having
+    # to recognise what is ACTUALLY IN THE SPECS. Drop the old key only when
+    # no spec declares it — the same condition _board_identity_env.py states
+    # for dropping the legacy injection, and it is the same 193 specs.
+    "SCITEX_CARDS_AGENT_ID": "identity",
     "SCITEX_TODO_AGENT": "identity",
     "SAC_NAME": "identity",
     "SCITEX_AGENT_CONTAINER_NAME": "identity",
