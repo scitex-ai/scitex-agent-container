@@ -167,7 +167,7 @@ async def github_ci_poll_loop(
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # stx-allow: fallback (loop must survive a transient GitHub/registry error; logged, retried next tick)
+            except Exception as exc:  # stx-allow: fallback (loop must survive a transient GitHub/registry error; retried next tick). SINK, measured 2026-08-20: logger.warning on this module's logger, which reaches journald because the poller only ever runs inside `sac listen` and sac-listen.service is a systemd user unit with the default StandardOutput=journal — `journalctl --user -u sac-listen.service | grep github_ci_poll_loop` is the check, and it is how the abandoned-tick ERRO on the line below was actually found today.
                 logger.warning(
                     "github_ci_poll_loop: tick failed (%s); retry next tick", exc
                 )
