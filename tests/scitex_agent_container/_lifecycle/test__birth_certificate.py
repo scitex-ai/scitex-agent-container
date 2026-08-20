@@ -4,9 +4,11 @@ Operator requirement (2026-08-14): record the COMPILED final spec as
 "this agent was born like this", keyed by incarnation id, in the DB —
 and reference credentials by slot/source NAME, never by value.
 
-Real AgentConfigs, a real on-disk SQLite via explicit ``db_path``, and a
-REAL git repo for the sha tests (git invoked as a subprocess with -C,
-signing disabled per-invocation). No mocks.
+Real AgentConfigs, a REAL PostgreSQL via the ``pg_schema`` fixture (the
+certificate moved off SQLite on 2026-08-19; the fixture gives each test a
+throwaway schema so the live fleet state is never touched), and a REAL git
+repo for the sha tests (git invoked as a subprocess with -C, signing
+disabled per-invocation). No mocks.
 """
 
 from __future__ import annotations
@@ -152,62 +154,57 @@ def test_sha_resolves_head_in_a_real_repo(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def db(tmp_path: Path) -> Path:
-    return tmp_path / "state.db"
-
-
-def test_certificate_row_lands_keyed_by_incarnation(db: Path) -> None:
+def test_certificate_row_lands_keyed_by_incarnation(pg_schema: str) -> None:
     # Arrange
     cfg = AgentConfig(name="alpha")
     # Act
-    ok = write_birth_certificate(cfg, "inc-b1", db_path=db)
+    ok = write_birth_certificate(cfg, "inc-b1")
     # Assert
-    assert ok is True and get_incarnation("inc-b1", db_path=db) is not None
+    assert ok is True and get_incarnation("inc-b1") is not None
 
 
-def test_certificate_names_the_agent_identity(db: Path) -> None:
+def test_certificate_names_the_agent_identity(pg_schema: str) -> None:
     # Arrange
     cfg = AgentConfig(name="alpha")
     # Act
-    write_birth_certificate(cfg, "inc-b2", db_path=db)
+    write_birth_certificate(cfg, "inc-b2")
     # Assert
-    assert get_incarnation("inc-b2", db_path=db)["agent_id"] == "alpha"
+    assert get_incarnation("inc-b2")["agent_id"] == "alpha"
 
 
-def test_certificate_records_unresolvable_sha_honestly(db: Path) -> None:
+def test_certificate_records_unresolvable_sha_honestly(pg_schema: str) -> None:
     # Arrange: no config_path at all — nothing to fake a sha from.
     cfg = AgentConfig(name="alpha")
     # Act
-    write_birth_certificate(cfg, "inc-b3", db_path=db)
+    write_birth_certificate(cfg, "inc-b3")
     # Assert
-    assert get_incarnation("inc-b3", db_path=db)["spec_git_sha"] == (
+    assert get_incarnation("inc-b3")["spec_git_sha"] == (
         SPEC_SHA_UNRESOLVABLE
     )
 
 
-def test_certificate_records_the_spec_repo_head(db: Path, tmp_path: Path) -> None:
+def test_certificate_records_the_spec_repo_head(pg_schema: str, tmp_path: Path) -> None:
     # Arrange: a spec tracked in a real git repo.
     repo = tmp_path / "specs"
     head = _git_repo_with_commit(repo)
     cfg = AgentConfig(name="alpha", config_path=str(repo / "spec.yaml"))
     # Act
-    write_birth_certificate(cfg, "inc-b4", db_path=db)
+    write_birth_certificate(cfg, "inc-b4")
     # Assert
-    assert get_incarnation("inc-b4", db_path=db)["spec_git_sha"] == head
+    assert get_incarnation("inc-b4")["spec_git_sha"] == head
 
 
-def test_certificate_compiled_spec_is_redacted_json(db: Path) -> None:
+def test_certificate_compiled_spec_is_redacted_json(pg_schema: str) -> None:
     # Arrange
     cfg = AgentConfig(name="alpha", env={"API_KEY": "sk-live"})
     # Act
-    write_birth_certificate(cfg, "inc-b5", db_path=db)
-    stored = json.loads(get_incarnation("inc-b5", db_path=db)["compiled_spec_json"])
+    write_birth_certificate(cfg, "inc-b5")
+    stored = json.loads(get_incarnation("inc-b5")["compiled_spec_json"])
     # Assert: no secret material in the record.
     assert stored["env"]["API_KEY"] == "<redacted:API_KEY>"
 
 
-def test_certificate_compiled_spec_carries_residency(db: Path, tmp_path: Path) -> None:
+def test_certificate_compiled_spec_carries_residency(pg_schema: str, tmp_path: Path) -> None:
     # Arrange: a compiled config declaring the v4 residency axis — the
     # birth certificate must record it (provenance for "why did this
     # incarnation end at oneshot-complete?").
@@ -215,16 +212,16 @@ def test_certificate_compiled_spec_carries_residency(db: Path, tmp_path: Path) -
 
     cfg = AgentConfig(name="alpha", residency=ONE_SHOT)
     # Act
-    write_birth_certificate(cfg, "inc-b7", db_path=db)
-    stored = json.loads(get_incarnation("inc-b7", db_path=db)["compiled_spec_json"])
+    write_birth_certificate(cfg, "inc-b7")
+    stored = json.loads(get_incarnation("inc-b7")["compiled_spec_json"])
     # Assert
     assert stored["residency"] == ONE_SHOT
 
 
-def test_certificate_failure_is_false_not_raise(db: Path) -> None:
+def test_certificate_failure_is_false_not_raise(pg_schema: str) -> None:
     # Arrange: a config whose serialization cannot work (not a dataclass).
     broken = object()
     # Act
-    ok = write_birth_certificate(broken, "inc-b6", db_path=db)
+    ok = write_birth_certificate(broken, "inc-b6")
     # Assert: best-effort — the launch it documents must not die over it.
     assert ok is False

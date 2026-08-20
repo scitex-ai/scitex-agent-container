@@ -80,3 +80,68 @@ def _clear_agent_identity() -> Iterator[None]:
     agent's value would otherwise win over test-controlled overrides.
     """
     yield from _save_restore_yield(_AGENT_IDENTITY_KEYS)
+
+
+# ----------------------------------------------------------------------
+# PostgreSQL isolation for the sqlite -> Postgres migration (2026-08-19)
+# ----------------------------------------------------------------------
+
+#: The per-host store. Loopback only — every fleet PostgreSQL refuses
+#: non-local connections at pg_hba, measured 2026-08-19.
+PG_BASE_DSN = os.environ.get(
+    "SAC_TEST_PG_DSN", "postgresql://scitex_cards@127.0.0.1:55432/scitex"
+)
+
+
+@pytest.fixture()
+def pg_schema() -> Iterator[str]:
+    """A throwaway PostgreSQL schema, wired in via ``SCITEX_STORE_DSN``.
+
+    Yields the schema name. Anything a module-under-test writes through
+    ``scitex_dev.store`` lands here and is dropped afterwards, so the live
+    fleet state is never touched.
+
+    NOT AUTOUSE, and the two fixtures above are: this one is opt-in because
+    it CONNECTS, and a test that does not need PostgreSQL must not fail
+    because PostgreSQL is down.
+
+    A SCHEMA rather than a database, deliberately: creating a database needs
+    ``CREATEDB`` and the fleet is not uniform there (compute-03's
+    ``scitex_cards`` role has ``rolcreatedb=False``), so a create-a-database
+    fixture would pass on three runners and fail on the fourth — a flake
+    that looks like the code. The name carries a uuid because the three-way
+    python matrix can put concurrent jobs on ONE runner.
+
+    ``psycopg`` is imported INSIDE the fixture, not at module scope. A
+    top-level import here would make it a hard dependency of every test in
+    this package, so a missing psycopg would turn into a collection error
+    for hundreds of tests that never touch a database.
+
+    Real ``os.environ`` save/restore, not ``monkeypatch`` — PA-306 forbids
+    mocks, and the point is that the REAL resolver reads the REAL variable.
+
+    (``_state/test_state_db_verdict_dedup.py`` still carries its own copy of
+    this fixture, written before this shared one existed. It is the same
+    code; consolidating it is a tidy-up for a PR that already touches that
+    file, not for this one.)
+    """
+    import uuid
+
+    import psycopg
+
+    schema = "sac_test_" + uuid.uuid4().hex[:12]
+    with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+
+    key = "SCITEX_STORE_DSN"
+    saved = os.environ.get(key)
+    os.environ[key] = f"{PG_BASE_DSN}?options=-csearch_path%3D{schema}"
+    try:
+        yield schema
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

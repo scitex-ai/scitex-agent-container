@@ -133,7 +133,13 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_agentstate/_journal.py:226",
         "scitex_agent_container/_authheal/_pass.py:283",
         "scitex_agent_container/_authheal/_pass.py:431",
-        "scitex_agent_container/_lifecycle/_birth_certificate.py:166",
+        # _birth_certificate.py LEFT THIS SET 2026-08-20 — the reason now
+        # names its sink (journald via sac-listen.service for a brokered
+        # start, the caller's stderr for a direct one) and carries the
+        # journalctl invocation that checks it. Measured before writing:
+        # sac-listen.service is StandardOutput=journal, and per-agent logs
+        # live under runtime/logs/<agent>/ — asserted rather than assumed,
+        # because a NAMED sink that is wrong is worse than an unnamed one.
         "scitex_agent_container/_lifecycle/_github_ci_poll_loop.py:160",
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
         "scitex_agent_container/_lifecycle/_instances.py:263",

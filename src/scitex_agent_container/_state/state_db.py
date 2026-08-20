@@ -93,7 +93,12 @@ KNOWN_TABLES = (
     "comms_nodes",
     "node_comms_policy",
     "acl_deny_notify_log",
-    "incarnations",
+    # ``incarnations`` was here until 2026-08-19. It now lives in per-host
+    # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
+    # through `sac db query`. Removed rather than left behind: a whitelisted
+    # name with no table returns an EMPTY result, and an empty result reads
+    # as "this agent has no incarnations" when the truth is "you are asking
+    # the wrong database". An unknown-table error is the honest answer.
 )
 
 
@@ -198,14 +203,13 @@ def init_schema(db_path: Path | None = None) -> Path:
 
         conn.executescript(_pp._SCHEMA)
         conn.executescript(_blocks._SCHEMA)
-        # v4 step 5 — the ``incarnations`` birth-certificate table
-        # (compiled-spec-at-launch + exit mirror), keyed by the same
-        # incarnation id the beats and the ExitRecord carry. Lives in
-        # the EXISTING sqlite factory ON PURPOSE so the separately-
-        # carded sqlite→Postgres migration carries it along.
-        from . import state_db_incarnations as _incarn
-
-        conn.executescript(_incarn._SCHEMA_INCARNATIONS)
+        # The ``incarnations`` birth-certificate table used to be created
+        # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
+        # this comment block used to make — "lives in the EXISTING sqlite
+        # factory ON PURPOSE so the separately-carded sqlite→Postgres
+        # migration carries it along" — is now kept. Its schema is created
+        # on first open by :func:`state_db_incarnations.open_incarnation_store`,
+        # so there is nothing to run here.
         # sac-comms item D (lead a2a c42b3e3c): rate-limit log for
         # synthetic ACL-deny notifications published at the target
         # receiver. One row per (sender, target) pair carrying the

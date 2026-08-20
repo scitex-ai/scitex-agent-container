@@ -66,6 +66,13 @@ they hand their DDL to `state_db.open_db` to execute —
     _state/state_db_acl_policy.py        _state/state_db_acl_deny_notify.py
     _state/state_db_pending_approval.py
 
+(That enumeration is the original 2026-08-19 measurement, kept as written
+because it is what motivated the second list. ``state_db_incarnations.py``
+left the set later the same day when the birth certificate moved to
+PostgreSQL — the live set is always ``FROZEN_SQLITE_DDL`` below, never this
+prose, which is exactly why the gate reads the constant and not the
+docstring.)
+
 So the shape "add a new SQLite table without appearing in FROZEN_SQLITE" is
 not hypothetical — it is the IDIOMATIC way tables are added in this package,
 with five existing examples. A new `state_db_<thing>.py` written that way
@@ -134,9 +141,14 @@ FROZEN_SQLITE_DDL = frozenset(
         "_state/state_db_acl_deny_notify.py",
         "_state/state_db_acl_policy.py",
         "_state/state_db_blocks.py",
-        "_state/state_db_incarnations.py",
         "_state/state_db_pending_approval.py",
         "_state/state_db_schema.py",
+        # _state/state_db_incarnations.py LEFT THIS SET 2026-08-19 — the
+        # SECOND table to move to PostgreSQL, and the first to leave via
+        # THIS list rather than FROZEN_SQLITE (it never imported sqlite3;
+        # it handed its DDL to state_db.open_db, which is exactly the hole
+        # this second list was added to close). The birth certificate now
+        # lives in per-host PostgreSQL via scitex_dev.store.
     }
 )
 
