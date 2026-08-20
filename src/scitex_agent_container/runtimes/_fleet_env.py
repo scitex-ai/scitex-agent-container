@@ -309,7 +309,13 @@ def effective_env(
     merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
     apptainer = getattr(config, "apptainer", None)
     raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
-    return apply_board_identity_alias(merged, raw_args=raw_args)
+    # The agent's own name is passed so a spec that declares NEITHER identity
+    # spelling still launches with one. See the branch in
+    # ``apply_board_identity_alias`` for why the name is the right answer and
+    # why it cannot override a deliberate alias.
+    return apply_board_identity_alias(
+        merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
+    )
 
 
 def fleet_env_flags(
