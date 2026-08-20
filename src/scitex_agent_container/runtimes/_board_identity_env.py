@@ -179,6 +179,7 @@ def apply_board_identity_alias(
     env: Mapping[str, Any],
     *,
     raw_args: Iterable[Any] | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, str]:
     """Ensure the CANONICAL board identity is set. Returns a NEW dict.
 
@@ -226,20 +227,58 @@ def apply_board_identity_alias(
         from_raw.get(LEGACY_BOARD_ID_ENV) or merged.get(LEGACY_BOARD_ID_ENV) or ""
     ).strip()
     identity = current or legacy
+    derived_from_name = False
     if not identity:
-        return merged
+        # NEITHER SPELLING IS DECLARED. Before 2026-08-20 this returned an env
+        # with NO board identity at all, and the agent launched unable to say
+        # who it was. proj-scitex-hub reported exactly that: scitex-cards
+        # unusable, no SCITEX_CARDS_AGENT_ID, no SCITEX_CARDS_DB. The fleet
+        # baseline promises every agent that its identity "is already wired
+        # into your environment" and tells it to report a failure to resolve
+        # as a sac bug rather than work around it. This is that bug.
+        #
+        # THE AGENT'S OWN NAME IS NOT A GUESS, and that is measured rather than
+        # asserted. Across compute-03's 136 specs and compute-04's 121: 96
+        # declare an identity and it EQUALS the agent name; 9 differ, of which
+        # 6 are TEMPLATES carrying placeholders and 3 are deliberate aliases
+        # (scitex-agent-container-04 -> scitex-agent-container,
+        # scitex-hub-mobile-ux -> scitex-hub, _template_handyman ->
+        # local-coder); 16-17 declare nothing at all. Every one of the aliases
+        # DECLARES its identity, and this branch only runs when none is
+        # declared — so deriving can never override a deliberate alias. It
+        # only fills the hole the 16-17 fall into.
+        #
+        # This is the opposite of the silent default this module warns about.
+        # That warning is about substituting a value when the answer is
+        # UNKNOWN, which puts a wrong author on a card. Here the answer is
+        # known: the spec's own name is the authority sac launched the agent
+        # under. Writing nothing is what produced a wrong (empty) author.
+        if not agent_name or not str(agent_name).strip():
+            return merged
+        identity = str(agent_name).strip()
+        assert_expanded(BOARD_ID_ENV, identity)
+        derived_from_name = True
 
     if BOARD_ID_ENV in from_raw or (merged.get(BOARD_ID_ENV) or "").strip():
         return merged
 
     merged[BOARD_ID_ENV] = identity
-    logger.info(
-        "board_identity: injected %s=%s (derived from the legacy %s, which is "
-        "read but deliberately NOT written back)",
-        BOARD_ID_ENV,
-        identity,
-        LEGACY_BOARD_ID_ENV,
-    )
+    if derived_from_name:
+        logger.info(
+            "board_identity: injected %s=%s (the spec declared NEITHER "
+            "spelling, so the identity is the agent's own name — without this "
+            "the agent launches unable to say who it is)",
+            BOARD_ID_ENV,
+            identity,
+        )
+    else:
+        logger.info(
+            "board_identity: injected %s=%s (derived from the legacy %s, which "
+            "is read but deliberately NOT written back)",
+            BOARD_ID_ENV,
+            identity,
+            LEGACY_BOARD_ID_ENV,
+        )
     return merged
 
 
