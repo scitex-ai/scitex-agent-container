@@ -132,13 +132,38 @@ def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
     container, and opening a Store against it raises StoreTargetError naming
     the missing path. That loud refusal — with no SQLite to slip into — is
     scitex-dev's stated design and the behaviour the operator asked for.
+
+    THE DISCRIMINATOR WAS A RENDERING DETAIL, and a dependency bump exposed
+    it. This asserted ``"55432" not in locator`` — reading the ABSENCE of a
+    port as proof the unset arm went elsewhere. Measured on both versions:
+
+        scitex-dev 0.56.0   set: postgres://127.0.0.1:55432/scitex
+                          unset: postgres://?/scitex            <- no port
+        scitex-dev 0.56.1 unset: postgres[... port=55432]       <- port
+
+    The behaviour never changed; only ``__str__`` did. That is the whole
+    reason this ran green on a developer machine pinned to 0.56.0 and red in
+    CI, which resolves the newest — and why it took a full CI reproduction,
+    not a local run, to see it. Both failing tests on develop shared this
+    single cause, and between them they blocked every open PR, including
+    ones touching no state code at all.
+
+    The locator is a DISPLAY FORM (the real connection string is
+    ``target.dsn``, redacted here deliberately). A display form is not a
+    contract. So state the predicate this docstring already describes: the
+    two arms must DIFFER. That is exactly what "the variable is not inert"
+    means, it needs no knowledge of WHICH field carries the difference, and
+    no reformatting on either side can defeat it.
+
+    Mutation-checked: pointing the unset arm at the injected DSN makes the
+    two identical and this test fails, so it still discriminates.
     """
     # Arrange
-    expected_absent = "55432"
+    with_injection = _resolved_store_locator(FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"])
     # Act
-    locator = _resolved_store_locator(None)
+    without_injection = _resolved_store_locator(None)
     # Assert
-    assert expected_absent not in locator
+    assert without_injection != with_injection
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:
@@ -559,3 +584,19 @@ def test_an_empty_fleet_default_env_is_a_valid_state() -> None:
     flags = fleet_env_flags(config, defaults={})
     # Assert
     assert flags == []
+
+
+def test_effective_env_gives_an_unlabelled_spec_its_own_name() -> None:
+    """The end-to-end path proj-scitex-hub fell through on 2026-08-20.
+
+    The unit test above covers the alias function; this covers the WIRING —
+    that ``effective_env`` actually hands the agent's name down. Drop the
+    ``agent_name=`` argument at the call site and the unit tests stay green
+    while this one goes red, which is the point of having both.
+    """
+    # Arrange
+    config = SimpleNamespace(name="proj-scitex-hub", env={})
+    # Act
+    env = effective_env(config)
+    # Assert
+    assert env["SCITEX_CARDS_AGENT_ID"] == "proj-scitex-hub"
