@@ -110,7 +110,17 @@ FROZEN_SQLITE = frozenset(
         "_lifecycle/_rename_plan.py",
         "_state/auth_state.py",
         "_state/dispatch_ledger.py",
-        "_state/inbound_ledger.py",
+        # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
+        # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
+        # missing endpoint but an AUTOINCREMENT id that looked public: returned
+        # by record_inbound, taken by mark_reported. Measured before assuming —
+        # no caller in this repo binds that return value, and mark_reported is
+        # always handed a claim-derived id — so the integer only ever
+        # round-tripped claim -> settle inside one Stop hook. The natural key
+        # replaced it with no surrogate, which matters because surrogate ids do
+        # not survive a store boundary and this fleet has already paid for that
+        # once. The atomic BEGIN IMMEDIATE claim became an optimistic loop on
+        # Row.seq, preserving "two concurrent Stop hooks never double-report".
         "_state/port_allocator.py",
         "_state/state_db.py",
         "_state/state_db_health.py",
