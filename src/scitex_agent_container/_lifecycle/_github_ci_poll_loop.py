@@ -134,11 +134,21 @@ async def github_ci_poll_loop(
         # the listen server even after bind.
         for repo in list(repos_source()):
             for pr in list_prs(repo):
+                head_sha = pr.get("head_sha", "")
                 deliver(
                     repo,
                     pr["number"],
-                    pr.get("head_sha", ""),
-                    conclusion_for(repo, pr["number"]),
+                    head_sha,
+                    # PASS THE SHA WE ALREADY HAVE. ``pr_ci_conclusion`` falls
+                    # back to its own ``gh api repos/<r>/pulls/<n>`` lookup when
+                    # ``head_sha`` is empty, and ``list_open_prs`` has ALREADY
+                    # returned it in the very dict being read on this line — so
+                    # omitting it bought a third REST call per PR per tick for
+                    # a value sitting in local memory. The source comment on
+                    # ``pr_ci_conclusion`` asked for this ("the poll loop
+                    # already holds it ... and should pass it to save the
+                    # call"); it had simply never been done.
+                    conclusion_for(repo, pr["number"], head_sha=head_sha),
                     pr_body=pr.get("body", ""),
                 )
 
