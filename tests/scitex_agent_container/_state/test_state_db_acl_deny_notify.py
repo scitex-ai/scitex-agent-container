@@ -62,14 +62,13 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
 # ---------------------------------------------------------------------------
 
 
-def test_first_call_returns_true(isolated_state: Path) -> None:
+def test_first_call_returns_true(pg_schema: str) -> None:
     # Arrange — fresh DB, no prior row for the pair.
     # Act
     admitted = should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     # Assert — first denied attempt MUST emit the synthetic notification.
@@ -77,14 +76,13 @@ def test_first_call_returns_true(isolated_state: Path) -> None:
 
 
 def test_second_call_within_cooldown_returns_false(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — record an admit at t=1000, cool-down=60s.
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     # Act — second attempt only 30s later (inside the window).
@@ -92,7 +90,6 @@ def test_second_call_within_cooldown_returns_false(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1030.0,
     )
     # Assert — duplicate inside cool-down MUST suppress (no flood).
@@ -100,14 +97,13 @@ def test_second_call_within_cooldown_returns_false(
 
 
 def test_call_after_cooldown_elapses_returns_true(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — cool-down=60s; second attempt 61s later (just past).
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     # Act
@@ -115,7 +111,6 @@ def test_call_after_cooldown_elapses_returns_true(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1061.0,
     )
     # Assert — past the window, re-emit so the operator who missed
@@ -124,7 +119,7 @@ def test_call_after_cooldown_elapses_returns_true(
 
 
 def test_different_pair_not_throttled_by_unrelated(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — throttle is per (sender, target). One pair's emit
     # MUST NOT silence a different pair.
@@ -132,7 +127,6 @@ def test_different_pair_not_throttled_by_unrelated(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     # Act — different sender, same target.
@@ -140,7 +134,6 @@ def test_different_pair_not_throttled_by_unrelated(
         sender="bob",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1005.0,
     )
     # Assert
@@ -148,14 +141,13 @@ def test_different_pair_not_throttled_by_unrelated(
 
 
 def test_same_sender_different_target_admitted(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — same sender, different target — independent key.
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     # Act
@@ -163,53 +155,49 @@ def test_same_sender_different_target_admitted(
         sender="alice",
         target="other",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1005.0,
     )
     # Assert
     assert admitted is True
 
 
-def test_admit_updates_last_notified_at(isolated_state: Path) -> None:
+def test_admit_updates_last_notified_at(pg_schema: str) -> None:
     # Arrange — capture the stamp the admit recorded.
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1234.5,
     )
     # Act
-    stamp = last_notified_at(sender="alice", target="lead", db_path=isolated_state)
+    stamp = last_notified_at(sender="alice", target="lead")
     # Assert — observability surface MUST round-trip the recorded ts.
     assert stamp == 1234.5
 
 
-def test_re_admit_overwrites_last_notified_at(isolated_state: Path) -> None:
+def test_re_admit_overwrites_last_notified_at(pg_schema: str) -> None:
     # Arrange — first admit at t=1000, second (past cool-down) at t=2000.
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=2000.0,
     )
     # Act
-    stamp = last_notified_at(sender="alice", target="lead", db_path=isolated_state)
+    stamp = last_notified_at(sender="alice", target="lead")
     # Assert — the second admit MUST bump the stamp forward so the
     # next cool-down is measured from the most recent emit.
     assert stamp == 2000.0
 
 
 def test_suppressed_call_does_not_bump_last_notified_at(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — a suppressed (inside-window) attempt MUST NOT slide
     # the cool-down forward. Otherwise a sender attempting every
@@ -218,18 +206,16 @@ def test_suppressed_call_does_not_bump_last_notified_at(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1000.0,
     )
     should_notify_acl_deny(
         sender="alice",
         target="lead",
         cooldown_s=60.0,
-        db_path=isolated_state,
         now=1030.0,
     )
     # Act
-    stamp = last_notified_at(sender="alice", target="lead", db_path=isolated_state)
+    stamp = last_notified_at(sender="alice", target="lead")
     # Assert
     assert stamp == 1000.0
 
@@ -239,7 +225,7 @@ def test_suppressed_call_does_not_bump_last_notified_at(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_sender_raises(isolated_state: Path) -> None:
+def test_empty_sender_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
@@ -248,11 +234,10 @@ def test_empty_sender_raises(isolated_state: Path) -> None:
             sender="",
             target="lead",
             cooldown_s=60.0,
-            db_path=isolated_state,
         )
 
 
-def test_empty_target_raises(isolated_state: Path) -> None:
+def test_empty_target_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
@@ -261,16 +246,15 @@ def test_empty_target_raises(isolated_state: Path) -> None:
             sender="alice",
             target="",
             cooldown_s=60.0,
-            db_path=isolated_state,
         )
 
 
 def test_last_notified_at_absent_pair_returns_none(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — no admit calls for this pair.
     # Act
-    stamp = last_notified_at(sender="ghost", target="lead", db_path=isolated_state)
+    stamp = last_notified_at(sender="ghost", target="lead")
     # Assert
     assert stamp is None
 
@@ -280,7 +264,7 @@ def test_last_notified_at_absent_pair_returns_none(
 # ---------------------------------------------------------------------------
 
 
-def test_default_cooldown_is_thirty_minutes(isolated_state: Path) -> None:
+def test_default_cooldown_is_thirty_minutes(pg_schema: str) -> None:
     # Arrange — no env, no override.
     os.environ.pop("SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S", None)
     # Act
@@ -289,7 +273,7 @@ def test_default_cooldown_is_thirty_minutes(isolated_state: Path) -> None:
     assert effective == DEFAULT_COOLDOWN_S
 
 
-def test_env_overrides_default(isolated_state: Path) -> None:
+def test_env_overrides_default(pg_schema: str) -> None:
     # Arrange — operator sets a custom window.
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "5"
     # Act
@@ -298,7 +282,7 @@ def test_env_overrides_default(isolated_state: Path) -> None:
     assert effective == 5.0
 
 
-def test_explicit_override_beats_env(isolated_state: Path) -> None:
+def test_explicit_override_beats_env(pg_schema: str) -> None:
     # Arrange — test seam: explicit arg wins over env wins over default.
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "999"
     # Act
@@ -307,7 +291,7 @@ def test_explicit_override_beats_env(isolated_state: Path) -> None:
     assert effective == 0.5
 
 
-def test_malformed_env_falls_back_to_default(isolated_state: Path) -> None:
+def test_malformed_env_falls_back_to_default(pg_schema: str) -> None:
     # Arrange — operator typo (non-float) MUST NOT silently disable
     # the rate-limit; fall back to the safe default.
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "not-a-number"
@@ -317,7 +301,7 @@ def test_malformed_env_falls_back_to_default(isolated_state: Path) -> None:
     assert effective == DEFAULT_COOLDOWN_S
 
 
-def test_negative_env_falls_back_to_default(isolated_state: Path) -> None:
+def test_negative_env_falls_back_to_default(pg_schema: str) -> None:
     # Arrange — "-1" would disable the rate-limit (every attempt
     # past, since elapsed >= -1 always). Safe fallback per spec.
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "-1"

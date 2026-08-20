@@ -47,7 +47,7 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_outbound_siblings_deny_blocks_sibling_send(db_path: Path) -> None:
+def test_outbound_siblings_deny_blocks_sibling_send(db_path: Path, pg_schema: str) -> None:
     """Gap-1: sender with outbound.siblings=deny cannot address a sibling
     even though they share the same parent (group ACL would allow)."""
     # Arrange
@@ -65,7 +65,7 @@ def test_outbound_siblings_deny_blocks_sibling_send(db_path: Path) -> None:
     assert decision == "deny"
 
 
-def test_outbound_parent_deny_blocks_send_to_parent(db_path: Path) -> None:
+def test_outbound_parent_deny_blocks_send_to_parent(db_path: Path, pg_schema: str) -> None:
     """Gap-1: child with outbound.parent=deny cannot send to its parent."""
     # Arrange
     record_lineage(child="cap-a", parent="root", db_path=db_path)
@@ -81,7 +81,7 @@ def test_outbound_parent_deny_blocks_send_to_parent(db_path: Path) -> None:
     assert decision == "deny"
 
 
-def test_outbound_default_allows_sibling_send(db_path: Path) -> None:
+def test_outbound_default_allows_sibling_send(db_path: Path, pg_schema: str) -> None:
     """Default-preservation: with no comms policy row, the legacy
     intra-group sibling allow continues to fire (Phase-3 is opt-in)."""
     # Arrange
@@ -103,7 +103,7 @@ def test_outbound_default_allows_sibling_send(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_siblings_deny_rejects_sibling_inbound(db_path: Path) -> None:
+def test_inbound_siblings_deny_rejects_sibling_inbound(db_path: Path, pg_schema: str) -> None:
     """Gap-2: target with inbound.siblings=deny rejects a sibling sender
     even when the sender's outbound policy permits."""
     # Arrange
@@ -121,7 +121,7 @@ def test_inbound_siblings_deny_rejects_sibling_inbound(db_path: Path) -> None:
     assert decision == "deny"
 
 
-def test_inbound_parent_deny_rejects_send_from_parent(db_path: Path) -> None:
+def test_inbound_parent_deny_rejects_send_from_parent(db_path: Path, pg_schema: str) -> None:
     """Gap-2: target with inbound.parent=deny rejects its own parent's
     send (the parent appears as ``rel='child'`` from sender's POV)."""
     # Arrange

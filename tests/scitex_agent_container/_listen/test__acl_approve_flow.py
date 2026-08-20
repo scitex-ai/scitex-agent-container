@@ -226,7 +226,7 @@ def test_unblock_removes_existing_block_row(isolated_state: Path, pg_schema: str
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert not has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert not has_block(sender="worker-a", target="lead")
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ def test_block_writes_comms_blocks_row(isolated_state: Path, pg_schema: str) -> 
     # Act
     block_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_block(sender="worker-a", target="lead")
 
 
 def test_block_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -> None:
@@ -331,7 +331,7 @@ def test_cli_block_writes_comms_blocks(isolated_state: Path, pg_schema: str) -> 
     # Act
     CliRunner().invoke(a2a, ["block", "worker-a", "lead"])
     # Assert
-    assert has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_block(sender="worker-a", target="lead")
 
 
 def test_cli_grant_alias_still_unblocks(isolated_state: Path, pg_schema: str) -> None:
