@@ -17,7 +17,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
 
 from scitex_agent_container._lifecycle._birth_certificate import (
     SPEC_SHA_UNRESOLVABLE,
