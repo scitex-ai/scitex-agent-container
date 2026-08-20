@@ -21,10 +21,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs() -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Nine jobs today:
+    Nine jobs today. The names below are the DECLARED ``JobSpec.name``
+    strings, verbatim — not a shorthand for them. scitex-dev derives each
+    systemd unit filename from that string with no sanitisation, so every
+    name here is directly addressable as ``systemctl --user <name>.timer``.
+    Eight follow the fleet convention ``scitex-<pkg>-<job>`` (PS-226/227);
+    the ninth, ``sac.accounts-refresh``, does not — see its entry.
 
-    * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
-      of the single-refresher model, and the sibling of
+    * ``scitex-agent-container-accounts-keepalive`` (``kind="timer"``) — the
+      DISTRIBUTION half of the single-refresher model, and the sibling of
       ``sac.accounts-refresh`` below. That job rotates the token on the ONE
       host holding refresh material; this one COPIES the result out to the
       access-only hosts and proves each of them accepts it. Without it those
@@ -39,21 +44,22 @@ def provide_jobs() -> "list[JobSpec]":
       accounts THIS host holds refresh material for and exits NON-ZERO when
       that set is empty, so an install on the wrong host is loud, not quiet.
 
-    * ``sac.freshness-refresh`` (``kind="timer"``) — the REFRESHER half of
-      the version-currency check. The CLI's startup banner reads a cached
+    * ``scitex-agent-container-freshness-refresh`` (``kind="timer"``) — the
+      REFRESHER half of the version-currency check. The CLI's startup banner reads a cached
       JSON file and nothing else (no network on the hot path), so this is
       what puts an answer in that file; unscheduled, the banner has nothing
       to read and is silent forever, which reads exactly like "everything is
       fine". A check nobody schedules is not a check.
 
-    * ``sac.fleet-reconcile`` (``kind="timer"``) — the only enforcer of
-      "should be running ⇒ is running". Restarts agents whose tmux session
+    * ``scitex-agent-container-fleet-reconcile`` (``kind="timer"``) — the only
+      enforcer of "should be running ⇒ is running". Restarts agents whose tmux session
       is gone though their spec asks to be kept running and nothing recorded
       a deliberate stop. See its inline comment: the spec field it enforces
       (``restart.policy``) is dead code without it, and 33 agents once
       stayed dead for hours because of that.
 
-    * ``sac.restart-login-expired-agents`` (``kind="timer"``) — the SIBLING of
+    * ``scitex-agent-container-restart-login-expired-agents``
+      (``kind="timer"``) — the SIBLING of
       fleet-reconcile and the exact division of labor: fleet-reconcile owns
       DEAD/no-session corpses; this owns LIVE-session-but-AUTH-DEAD agents (a
       frozen "Login expired" banner) that fleet-reconcile explicitly leaves
@@ -72,7 +78,8 @@ def provide_jobs() -> "list[JobSpec]":
       PR cannot edit, so the cron retirement is an operator/dotfiles step that
       must land WITH the enable.
 
-    * ``sac.heal-agent-auth`` (``kind="timer"``) — the INCUMBENT auth healer
+    * ``scitex-agent-container-heal-agent-auth`` (``kind="timer"``) — the
+      INCUMBENT auth healer
       (``~/.scitex/agent-container/bin/auth-heal.py``, every 10min), declared
       here so it stops living as a hand-written crontab line that a sweep
       deletes. ``~/.dotfiles/src/.cron/copy_crontab`` installs the tracked
@@ -84,7 +91,8 @@ def provide_jobs() -> "list[JobSpec]":
       dotfiles moved their own schedules to systemd ``--user`` timers for the
       same reason, and scitex-dev's ruling makes the JobSpec plugin the SSoT.
 
-      MUTUALLY EXCLUSIVE WITH ``sac.restart-login-expired-agents`` — enable
+      MUTUALLY EXCLUSIVE WITH
+      ``scitex-agent-container-restart-login-expired-agents`` — enable
       exactly ONE. This job's ``scan_tui`` is precisely what that timer
       reimplements natively, so the deploy gate documented below is not
       lifted by declaring this one; it is made explicit. Declaring both is
@@ -96,8 +104,18 @@ def provide_jobs() -> "list[JobSpec]":
       active one (``--include-active``), mirroring the rotated token back
       into the live ``~/.claude`` login (``--sync-active-login``).
 
-    * ``sac.host-sync-check`` (``kind="timer"``) — the READ-ONLY peer
-      drift detector ``sac host sync --check --all``, run hourly with
+      THE ONE NAME HERE THAT BREAKS THE CONVENTION, and it is quoted
+      correctly above rather than tidied: the dot violates PS-226
+      (``^[a-z0-9]+(-[a-z0-9]+)*$``, severity E). It is NOT renamed in this
+      docstring because the name is what is actually declared and installed —
+      ``sac.accounts-refresh.timer`` is the live unit on compute-04. Renaming
+      it is a live-timer MIGRATION (install new, verify, disable+remove old),
+      not an edit here: a JobSpec under a corrected name derives a SECOND unit
+      beside the running one rather than renaming it, which is the same
+      double-supervisor hazard the ``sac listen`` note below describes.
+
+    * ``scitex-agent-container-host-sync-check`` (``kind="timer"``) — the
+      READ-ONLY peer drift detector ``sac host sync --check --all``, run hourly with
       ``--alarm`` so each peer's verdict is recorded in sac's own event
       log (degraded / unknown / recovered). This is what makes the Stage-0
       detector (PR #690) actually RUN and be SEEN: shipped but scheduled
@@ -107,8 +125,8 @@ def provide_jobs() -> "list[JobSpec]":
       ``--check`` in the CLI, so this scheduled command is read-only by
       construction.
 
-    * ``sac.spartan-sif-bake`` (``kind="timer"``) — the EVERY-10-MINUTES
-      remote SIF bake + pull. Operator directive (2026-07-17, verbatim): 「sif は最新版を
+    * ``scitex-agent-container-spartan-sif-bake`` (``kind="timer"``) — the
+      EVERY-10-MINUTES remote SIF bake + pull. Operator directive (2026-07-17, verbatim): 「sif は最新版を
       定期焼きにしましょう。spartan 側で。それでこちらには定期的に rsync する形で。
       cpu は使わずに新しいものが得られると思います。」 The bake runs as an
       ``srun --overlap`` step inside the standing Spartan CPU lease
@@ -119,8 +137,8 @@ def provide_jobs() -> "list[JobSpec]":
       Keep-3 rotation on both sides. A source-unchanged run is a cheap
       SKIPPED verdict — the */10 cadence buys freshness, not transfers.
 
-    * ``sac.worktree-gc`` (``kind="timer"``) — the DAILY worktree GC,
-      ``sac worktree gc --apply --all``. Agent-tool worktrees auto-clean
+    * ``scitex-agent-container-worktree-gc`` (``kind="timer"``) — the DAILY
+      worktree GC, ``sac worktree gc --apply --all``. Agent-tool worktrees auto-clean
       only when nothing edited them, so anything an agent TOUCHED
       persisted forever with no GC, no cap and no alarm anywhere: one repo
       reached 105 worktrees and helped trigger a host load-spike
