@@ -332,10 +332,13 @@ def _build_on_turn(
         if from_agent:
             try:
                 from ._tui_outbound import record_dispatch
-                from .tui_session import state_dir_for_config
 
+                # No state.db path any more: the inbound ledger is PostgreSQL.
+                # `state_dir_for_config` is no longer imported here because it
+                # was imported ONLY to build that path — and an import kept for
+                # a vanished use is how a module keeps a dependency nobody can
+                # see the reason for.
                 record_dispatch(
-                    db_path=state_dir_for_config(config) / "state.db",
                     agent=config.name,
                     from_agent=from_agent,
                     dispatch_id=dispatch_id,
