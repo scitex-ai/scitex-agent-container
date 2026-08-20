@@ -191,20 +191,15 @@ async def _annotate_status_reachability(
     Degrades to ``unknown`` (never ``unreachable``) if the broker cannot be
     read — "I could not check" must not be rendered as death.
     """
-    from ._reachability import UNKNOWN, annotate_reachability
+    from ._reachability import (
+        UNKNOWN,
+        annotate_reachability,
+        resolve_annotation_host,
+    )
 
     try:
         counts = await request.app.state.inbox.subscriber_counts()
-        # Prefer the per-app ``local_host``; fall back to the env resolver —
-        # mirroring ``_node_channel`` for the identical question. The fallback
-        # is load-bearing: ``create_app`` defaults it to None and the one
-        # production caller never passes it, so without this EVERY row with a
-        # host was annotated ``unknown``, including rows on this host.
-        from .._state.state_db import _resolve_host as _resolve_local_host
-
-        local_host = getattr(request.app.state, "local_host", None) or (
-            _resolve_local_host(None)
-        )
+        local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
         import logging
 
