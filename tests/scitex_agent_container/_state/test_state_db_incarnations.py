@@ -133,29 +133,47 @@ def test_init_creates_the_incarnations_store_in_postgres(pg_schema: str) -> None
 
 
 def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> None:
-    """The SQLite version returned None; naming WHERE the state went is better.
+    """The return value names WHERE the state went, so it can be checked.
 
-    ASSERTS THE PARTS, NOT THE PUNCTUATION, and that is the whole point of the
-    rewrite. The first version pinned the substring ``127.0.0.1:55432/scitex``,
-    which is a claim about how the store RENDERS a locator rather than about
-    what the locator identifies. scitex_dev.store renders it REDACTED — today
-    ``postgres[host=127.0.0.1 db=scitex port=55432]`` — so the test went red on
-    a formatting change while the endpoint it cares about was unchanged and
-    correct. (Measured 2026-08-20: red on develop, red on a near-develop
-    control, and red for this reason on both.)
+    It names the DATABASE and not the ``search_path`` schema layered on top
+    — measured 2026-08-19, when this test was first written asserting the
+    schema and failed with ``'sac_test_...' in 'postgres://127.0.0.1:55432/
+    scitex'``. Pinned as discovered rather than quietly weakened: an
+    operator following this string reaches the right server, and still has
+    to know which schema to look in.
 
-    The same redaction cost real time the same day: connecting with
-    ``str(target.locator)`` instead of ``target.dsn`` produced a malformed-URI
-    error that read exactly like a broken DSN builder in another package. The
-    lesson is identical at both sites — a display form is not the value, so do
-    not assert on its shape.
+    ASSERTS ON THE PARTS, NOT THE PUNCTUATION, and that is the fix for how
+    this test broke. The quotation in the paragraph above is the locator as
+    scitex-dev 0.56.0 rendered it — ``postgres://127.0.0.1:55432/scitex`` —
+    and the old assertion spliced the tail off ``_BASE_DSN`` and looked for
+    that substring verbatim. 0.56.1 renders the same endpoint as
+    ``postgres[host=127.0.0.1 db=scitex port=55432]``.
+
+    Nothing about where the state goes changed. A developer machine pinned
+    to 0.56.0 stayed green while CI, which resolves the newest, went red —
+    so this was invisible to every local run and only a full CI
+    reproduction found it.
+
+    The locator is a REDACTED DISPLAY FORM, deliberately: the real
+    connection string is ``target.dsn``. A display form is not a contract
+    and must not be asserted on as if it were. What this test means is "the
+    locator names this host, this port and this database", which survives
+    any reformatting that still names them — including both forms above.
     """
-    # Arrange — what must be identifiable in the answer, however it is spelled.
-    expected_parts = ("postgres", "scitex", "55432")
+    # Arrange: the endpoint the fixture routed this test's writes through.
+    host_port, _, database = _BASE_DSN.split("@", 1)[-1].partition("/")
+    host, _, port = host_port.partition(":")
     # Act
     locator = init_incarnations_schema()
     # Assert
-    assert all(part in locator for part in expected_parts)
+    assert all(part in locator for part in (host, port, database))
+
+
+# ----------------------------------------------------------------------
+# Birth
+# ----------------------------------------------------------------------
+
+
 def test_birth_record_is_readable_by_incarnation_id(pg_schema: str) -> None:
     # Arrange
     _birth()
