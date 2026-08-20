@@ -559,3 +559,19 @@ def test_an_empty_fleet_default_env_is_a_valid_state() -> None:
     flags = fleet_env_flags(config, defaults={})
     # Assert
     assert flags == []
+
+
+def test_effective_env_gives_an_unlabelled_spec_its_own_name() -> None:
+    """The end-to-end path proj-scitex-hub fell through on 2026-08-20.
+
+    The unit test above covers the alias function; this covers the WIRING —
+    that ``effective_env`` actually hands the agent's name down. Drop the
+    ``agent_name=`` argument at the call site and the unit tests stay green
+    while this one goes red, which is the point of having both.
+    """
+    # Arrange
+    config = SimpleNamespace(name="proj-scitex-hub", env={})
+    # Act
+    env = effective_env(config)
+    # Assert
+    assert env["SCITEX_CARDS_AGENT_ID"] == "proj-scitex-hub"
