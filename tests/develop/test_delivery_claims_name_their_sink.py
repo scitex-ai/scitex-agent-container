@@ -190,14 +190,22 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",
         "scitex_agent_container/cli_pkg/build_cmds.py:198",
         "scitex_agent_container/cli_pkg/hook_cmds.py:46",
+        # _tui_outbound.py and _tui_turn_bridge.py LEFT THIS SET 2026-08-20 —
+        # both reasons now name their sink. MEASURED before writing it, because
+        # a NAMED sink that is wrong is worse than an unnamed one:
+        # _logging/__init__.py documents scitex-logging fanning out to stderr
+        # AND a rotating file under ~/.scitex/logging/runtime/, and that
+        # directory holds live scitex-<date>.log files (plus .1/.2 rotations)
+        # on both this container and its host. It is NOT
+        # ~/.scitex/agent-container/runtime/logs/ — that one holds
+        # shell-redirect logs (creds-watch.log, host_exec.log, build logs) and
+        # is the directory I would have named had I guessed from the tree.
         "scitex_agent_container/runtimes/_apptainer_auth_bind.py:296",
         "scitex_agent_container/runtimes/_cct_rail_alarm.py:198",
         "scitex_agent_container/runtimes/_cct_rail_verdict.py:242",
         "scitex_agent_container/runtimes/_openai_sdk_common.py:179",
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
         "scitex_agent_container/runtimes/_tui_inject.py:92",
-        "scitex_agent_container/runtimes/_tui_outbound.py:277",
-        "scitex_agent_container/runtimes/_tui_turn_bridge.py:343",
         "scitex_agent_container/runtimes/_tui_turn_bridge_lifecycle.py:196",
     }
 )

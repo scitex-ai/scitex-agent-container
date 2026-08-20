@@ -343,7 +343,7 @@ def _build_on_turn(
                     from_agent=from_agent,
                     dispatch_id=dispatch_id,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged for the operator)
+            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging)
                 logging.getLogger(__name__).warning(
                     "tui-outbound: failed to record inbound dispatch for %s: %s",
                     config.name,

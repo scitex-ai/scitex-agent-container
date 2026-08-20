@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
             listen_url=listen_url,
             bearer=bearer,
         )
-    except Exception as exc:  # stx-allow: fallback (reason: a completion-push failure must not wedge the agent's turn loop; the row is already marked failed + this logs loud — the requester can fall back to the agent's logs)
+    except Exception as exc:  # stx-allow: fallback (reason: a completion-push failure must not wedge the agent's turn loop; the row is already marked failed + this logs loud at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging, so the requester can read it there)
         log.warning("tui-outbound: completion flush failed: %s", exc)
     return 0
 
