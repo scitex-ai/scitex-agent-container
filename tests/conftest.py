@@ -374,6 +374,15 @@ from tests.scitex_agent_container._helpers.subprocess_shim import (  # noqa: E40
     subprocess_shim,
 )
 
+# Autouse gate: fail the test that leaves a background thread running. Imported
+# here rather than defined here for the same reason the shims above are -- and
+# it belongs beside `_assert_state_floor_intact` in spirit, because it is the
+# same failure class: state a test leaves behind that damages a LATER,
+# unrelated test while the guilty one passes. See the module docstring.
+from tests.scitex_agent_container._helpers.thread_leak import (  # noqa: E402,F401
+    _assert_no_leaked_threads,
+)
+
 
 # ---------------------------------------------------------------------------
 # THE PACKAGE UNDER TEST MUST BE THIS CHECKOUT. Fail the SESSION otherwise.
