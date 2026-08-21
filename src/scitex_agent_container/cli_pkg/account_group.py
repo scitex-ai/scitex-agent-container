@@ -8,12 +8,37 @@ from __future__ import annotations
 
 import click
 
+from ._helpers import HelpRecursiveGroup
+
 # ---------------------------------------------------------------------------
 # account group
 # ---------------------------------------------------------------------------
 
 
-@click.group("account")
+class _AccountsGroup(HelpRecursiveGroup):
+    """Render ``sac accounts --help`` under named sections.
+
+    Fifteen verbs in one alphabetical column made ``list`` / ``status`` /
+    ``quota`` look interchangeable and hid which of them WRITE. The
+    sections say what each verb is FOR; the interface spec
+    (general/03_interface_02_cli §6) asks for this and ``sac agents``
+    already does it. Anything not listed here still renders, under
+    ``Other`` — a new verb is never silently dropped from ``--help``.
+    """
+
+    COMMAND_CATEGORIES = [
+        ("Inspect (read-only)", ["list", "status", "quota"]),
+        ("Stored accounts", ["save", "delete", "switch", "login"]),
+        (
+            "Credential material",
+            ["refresh", "mint-token", "sync-live", "sync-openai"],
+        ),
+        ("Distribute to peers", ["send-credentials"]),
+        ("Watch continuously", ["watch-live", "watch-quota", "refresh-quota-cache"]),
+    ]
+
+
+@click.group("account", cls=_AccountsGroup)
 def account() -> None:
     """Inspect provider accounts and manage Claude credential rotation."""
 
