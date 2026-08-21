@@ -106,6 +106,49 @@ class FakeRuntime:
         return ""
 
 
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    ``_write_spec`` enables ``health``, so ``agent_start`` reaches
+    ``_start_supervision``, which does::
+
+        thread = thread_factory(target=health_monitor, ..., daemon=True)
+        thread.start()
+
+    With the real ``threading.Thread`` that daemon thread OUTLIVES the test
+    and keeps looping ``health_monitor -> restart_and_record ->
+    write_birth_certificate`` for the rest of the worker process. Its
+    ``logger.error`` then lands in whatever capture buffer happens to be open
+    -- an unrelated test's ``CliRunner`` -- ahead of that command's own
+    output, which is how a PASSING test here turns a stranger's assertion red
+    three files later. Measured on develop 2026-08-21: 31 stray certificates
+    in one run, plus ``ValueError: I/O operation on closed file`` from writing
+    into a stream pytest had already torn down.
+
+    Recording ``start()`` rather than swallowing it keeps the seam honest: a
+    test that wants to assert the monitor was launched still can. Same shape
+    as ``_RecordingThread`` in ``test__start_supervision.py`` and
+    ``_CapturingThread`` in ``test__instances_auto_grant.py``.
+
+    PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def join(self, timeout=None) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
+
+
 class FakeHandover:
     def ensure_instance_uuid(self, config: AgentConfig) -> str:
         return "fake-uuid"
@@ -150,6 +193,7 @@ def test_the_already_running_noop_returns_the_already_running_outcome(
     # Act
     ok = agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -171,6 +215,7 @@ def test_the_already_running_noop_retracts_an_existing_marker(
     # Act
     agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -192,6 +237,7 @@ def test_the_already_running_noop_leaves_the_retracted_copy(
     # Act
     agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -213,6 +259,7 @@ def test_the_already_running_noop_with_no_marker_does_not_raise(
     # Act
     ok = agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -244,6 +291,7 @@ def test_a_launch_that_merely_returned_keeps_the_marker(
     # Act
     agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -271,6 +319,7 @@ def test_a_dry_run_on_an_alive_agent_keeps_the_marker(
     # Act
     agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -299,6 +348,7 @@ def test_a_failed_start_keeps_the_marker(
     try:
         agent_start(
             str(spec),
+            thread_factory=FakeThread,
             registry=registry,
             runtime_factory=lambda _c: runtime,
             handover_mod=FakeHandover(),
