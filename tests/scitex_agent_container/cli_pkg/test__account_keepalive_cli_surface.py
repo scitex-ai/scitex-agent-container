@@ -1,18 +1,20 @@
-"""``sac accounts`` help surface: sections, a real peer list, a live alias.
+"""``sac accounts send-credentials``: a real peer list, and a live legacy alias.
 
-Three defects, all found by the operator reading the shipped ``--help``:
+Two of the three defects the operator found reading the shipped ``--help``:
 
-1. Fifteen verbs rendered as one flat alphabetical column.
-2. The examples named peers that exist on no host (``compute-04``,
-   ``laptop``), while ``--to`` requires a key from ``config.yaml``. Copying
-   the documentation therefore failed.
-3. ``keepalive`` needs a paragraph to say it copies credentials to peers -
-   and the constitution's rule is that when a name needs restating as
-   something else, that something else IS the name.
+1. The examples named peers that exist on no host (``compute-04``, ``laptop``),
+   while ``--to`` requires a key from ``config.yaml``. Copying the
+   documentation therefore failed.
+2. ``keepalive`` needs a paragraph to say it copies credentials to peers - and
+   the constitution's rule is that when a name needs restating as something
+   else, that something else IS the name.
 
 The alias tests are the load-bearing ones: ``keepalive`` is a PUBLISHED
 contract with a scitex-dev JobSpec calling it every 15 minutes, so a rename
-that stops at renaming would take the fleet's credential distribution down.
+that stopped at renaming would take the fleet's credential distribution down.
+
+(The ``--help`` SECTIONS are the third defect and live beside their own module,
+in ``test_account_group_categories.py``.)
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from scitex_agent_container.cli_pkg._account_keepalive import (
     format_peer_lines,
     register_keepalive_command,
 )
-from scitex_agent_container.cli_pkg.account_group import _AccountsGroup, account
 
 
 def _group() -> click.Group:
@@ -184,50 +185,3 @@ def test_the_new_name_does_not_warn():
 
     # Assert
     assert "is now" not in result.stderr
-
-
-# --- the sections ----------------------------------------------------------
-
-
-def test_accounts_help_renders_named_sections():
-    # Arrange
-    runner = CliRunner()
-
-    # Act
-    result = runner.invoke(account, ["--help"])
-
-    # Assert
-    assert "Distribute to peers:" in result.stdout
-
-
-def test_every_categorised_name_is_a_real_command():
-    # Arrange — a category naming a verb that does not exist would silently
-    # render nothing, which is how a section quietly goes empty after a rename
-    ctx = click.Context(account)
-    listed = {n for _, names in _AccountsGroup.COMMAND_CATEGORIES for n in names}
-
-    # Act
-    missing = sorted(n for n in listed if account.get_command(ctx, n) is None)
-
-    # Assert
-    assert missing == []
-
-
-def test_no_visible_command_falls_through_to_other():
-    # Arrange — `Other` is the catch-all; a VISIBLE verb landing there is one
-    # somebody forgot to categorise. Hidden verbs (the `keepalive` alias) are
-    # excluded on the same predicate the formatter itself uses, so this tracks
-    # what a reader actually sees rather than what the group happens to hold.
-    ctx = click.Context(account)
-    categorised = {n for _, names in _AccountsGroup.COMMAND_CATEGORIES for n in names}
-    visible = {
-        n
-        for n in account.list_commands(ctx)
-        if not getattr(account.get_command(ctx, n), "hidden", False)
-    }
-
-    # Act
-    uncategorised = sorted(visible - categorised)
-
-    # Assert
-    assert uncategorised == []
