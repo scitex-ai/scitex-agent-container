@@ -21,6 +21,7 @@ import click
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._account_keepalive import (
+    _registered_peer_lines,
     format_peer_lines,
     register_keepalive_command,
 )
@@ -70,15 +71,20 @@ def test_peer_lines_mark_a_wildcard_row_as_a_pattern():
     assert "pattern" in rendered
 
 
-def test_help_lists_the_peers_to_accepts():
-    # Arrange
+def test_help_lists_the_peers_exactly_when_this_host_has_them():
+    # Arrange — asserting `"Registered peers" in stdout` outright would be an
+    # ENVIRONMENTAL fact, not a property of the code: the block renders from the
+    # live config, so it is absent on any host with no peers registered (a CI
+    # runner, a fresh checkout) and the test would fail there for being right.
+    # The invariant that holds everywhere is that the two AGREE.
     group = _group()
+    host_has_peers = bool(_registered_peer_lines())
 
     # Act
     result = CliRunner().invoke(group, ["send-credentials", "--help"])
 
-    # Assert — the vocabulary is visible at the point of use
-    assert "Registered peers" in result.stdout
+    # Assert — wiring is present; what it renders is the host's business
+    assert ("Registered peers" in result.stdout) == host_has_peers
 
 
 # --- the examples ----------------------------------------------------------
