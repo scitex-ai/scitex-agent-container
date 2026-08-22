@@ -138,8 +138,11 @@ def deliver_verdict(
 
         failure_streak = failures_since_last_success
 
+    # No `db_path`: the delivered-set moved to PostgreSQL via
+    # scitex_dev.store, which resolves its own target. `db_path` still
+    # reaches `ancestors` below, whose lineage table is still SQLite.
     if already_delivered(
-        repo=repo, pr=pr, head_sha=head_sha, conclusion=conclusion, db_path=db_path
+        repo=repo, pr=pr, head_sha=head_sha, conclusion=conclusion
     ):
         return {"delivered": [], "skipped": True, "reason": "already-delivered"}
 
@@ -149,14 +152,13 @@ def deliver_verdict(
     # it stall would un-cap the PR on the next tick.
     escalating = False
     if conclusion == "failure":
-        streak = failure_streak(repo=repo, pr=pr, db_path=db_path)
+        streak = failure_streak(repo=repo, pr=pr)
         if streak > CONSECUTIVE_FAILURE_CAP:
             record(
                 repo=repo,
                 pr=pr,
                 head_sha=head_sha,
                 conclusion=conclusion,
-                db_path=db_path,
             )
             return {"delivered": [], "skipped": True, "reason": "streak-capped"}
         escalating = streak == CONSECUTIVE_FAILURE_CAP
@@ -193,7 +195,7 @@ def deliver_verdict(
     # not re-delivered next tick. A total-delivery failure still records —
     # the agent picks the verdict up on its own heartbeat; re-spamming a
     # transiently-unreachable fleet every tick is worse than one miss.
-    record(repo=repo, pr=pr, head_sha=head_sha, conclusion=conclusion, db_path=db_path)
+    record(repo=repo, pr=pr, head_sha=head_sha, conclusion=conclusion)
     return {
         "delivered": delivered,
         "skipped": False,

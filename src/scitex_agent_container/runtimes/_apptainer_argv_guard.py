@@ -66,6 +66,9 @@ always printed, so the reader sees the actual argv instead of a rule.
 
 from __future__ import annotations
 
+import re
+from typing import Any, Iterable
+
 # apptainer ``exec`` options that REQUIRE a following value. A subset
 # focused on the ones sac itself emits or operators commonly pass via
 # raw_args; an unknown value-flag not listed here simply isn't guarded
@@ -239,9 +242,108 @@ def _flag_region(argv: list[str]) -> list[str]:
     return region
 
 
+#: An env assignment as raw_args can only have been meant as an ``--env``
+#: value. UPPER_SNAKE before the ``=`` is what makes this precise rather
+#: than broad: every environment variable the fleet sets is upper-snake,
+#: while the value-shaped ``k=v`` tokens that legitimately follow flags
+#: this module does NOT track (``--network-args portmap=8080:tcp``,
+#: ``--security uid:1000``) are not. Broadening it would trade a real
+#: catch for a false refusal, and this module's whole doctrine is that a
+#: guard must never block a launch it merely failed to recognise.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Z][A-Z0-9_]*=")
+
+
+def find_stray_env_pair(raw_args: Iterable[Any] | None) -> tuple[int, str] | None:
+    """First ``(index, token)`` in ``raw_args`` that is a POSITIONAL env pair.
+
+    ``spec.apptainer.raw_args`` must contain ZERO positionals: sac supplies
+    the image and the inner command itself, so the first bare token the
+    operator adds becomes the token apptainer reads as the IMAGE PATH.
+
+    THE INCIDENT (2026-08-18). A bulk edit added the new board-identity
+    variable to ~100 specs and inserted only the VALUE, without the
+    ``- --env`` that has to precede it::
+
+        - --env
+        - SCITEX_TODO_AGENT_ID=business
+        - SCITEX_CARDS_AGENT_ID=business      <- positional, in flag position
+
+    apptainer resolved that bare token against the launch cwd and reported::
+
+        FATAL: While checking container encryption: could not open image
+          /home/ywatanabe/proj/business/SCITEX_CARDS_AGENT_ID=business
+
+    — a message that names an image nobody wrote, blames encryption, and
+    never mentions the missing flag. ``sac agents check`` answered "Ready to
+    deploy" on that spec minutes before the start failed, because it
+    validates raw_args as YAML and as a schema and not as an apptainer argv.
+
+    WHY THE SIBLING GUARD MISSES IT: :func:`validate_flag_argv` inspects
+    ``_flag_region(argv)``, which by construction STOPS at the first
+    positional. The stray token does not break the flag region — it ENDS
+    it, and everything after is read as the container's business. So the
+    two checks are complementary, not redundant: one finds a flag with no
+    value, this one finds a value with no flag.
+
+    Returns ``None`` for well-formed input (including ``None`` / empty).
+    """
+    tokens = [str(a) for a in (raw_args or [])]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in VALUE_TAKING_FLAGS:
+            index += 2  # the flag CONSUMES the next token; it is not a positional
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        if _ENV_ASSIGNMENT.match(token):
+            return index, token
+        index += 1  # a bare non-env token: not ours to judge, see _ENV_ASSIGNMENT
+    return None
+
+
+def validate_raw_args(
+    raw_args: Iterable[Any] | None,
+    *,
+    agent: str | None = None,
+) -> None:
+    """Fail loud if ``raw_args`` carries an env pair with no ``--env`` flag.
+
+    A no-op for well-formed raw_args. See :func:`find_stray_env_pair` for
+    what this catches and why apptainer's own error cannot say it.
+    """
+    found = find_stray_env_pair(raw_args)
+    if found is None:
+        return
+    index, token = found
+    key = token.split("=", 1)[0]
+    who = f" for agent {agent!r}" if agent else ""
+    raise ApptainerArgvError(
+        f"spec.apptainer.raw_args[{index}]{who} is {token!r} — an environment "
+        f"assignment sitting in FLAG position with no `--env` before it.\n"
+        f"\n"
+        f"apptainer does not read that as an environment variable. It reads "
+        f"the first bare token as the IMAGE PATH, resolves it against the "
+        f"launch directory, and fails with a message that names a path "
+        f"nobody wrote:\n"
+        f"    FATAL: ... could not open image <workdir>/{token}\n"
+        f"\n"
+        f"FIX: insert `--env` immediately before it, i.e.\n"
+        f"    - --env\n"
+        f"    - {token}\n"
+        f"\n"
+        f"(If {key} was NOT meant as an environment variable, remove it: "
+        f"raw_args must contain no positionals at all — sac supplies the "
+        f"image and the inner command itself.)"
+    )
+
+
 __all__ = [
     "ApptainerArgvError",
     "VALUE_TAKING_FLAGS",
     "find_missing_value",
+    "find_stray_env_pair",
     "validate_flag_argv",
+    "validate_raw_args",
 ]

@@ -299,7 +299,12 @@ def record_local_instance(
     # sibling side-writes above — see ``_birth_certificate``.
     from ._birth_certificate import write_birth_certificate
 
-    write_birth_certificate(config, instance_id, db_path=db_path)
+    # No ``db_path``: the certificate went to per-host PostgreSQL on
+    # 2026-08-19. This function's own ``db_path`` still names the SQLite
+    # state.db that ``record_local_instance`` above writes to — the two
+    # records now live in two different databases, which is exactly what
+    # the migration is doing, one table at a time.
+    write_birth_certificate(config, instance_id)
     return instance_id
 
 

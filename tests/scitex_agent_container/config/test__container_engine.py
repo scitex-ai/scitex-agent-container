@@ -441,3 +441,48 @@ def test_a_scaffolded_spec_cannot_reproduce_the_key():
         "the required/paste-ready block still emits container.runtime — a "
         "spec scaffolded from it would be born failing validation"
     )
+
+
+# ----------------------------------------------------------------------
+# The remedy must be SAFE TO FOLLOW LITERALLY
+#
+# `spec.runtime` (the harness launch mode) and `spec.container.runtime`
+# (removed) share a leaf name and nothing else. Measured 2026-08-20 over
+# the 122 live specs on compute-04:
+#
+#     with spec.runtime            122 / 122
+#     with spec.container.runtime    0 / 122
+#
+# So a reader who hits this error and greps `runtime:` finds exactly one
+# line — the LIVE one — in every spec they could be holding. On
+# 2026-08-20 the operator did exactly that and was one keystroke from
+# deleting `runtime: tui` from a working agent. An ambiguous remedy is
+# executed, not puzzled over, so the disambiguation is pinned here.
+# ----------------------------------------------------------------------
+
+
+def test_the_remedy_tells_the_reader_which_runtime_to_keep():
+    # Arrange — naming only the doomed line is what made this dangerous.
+    message = _runtime_errors({"runtime": "none"})[0]
+    # Act
+    protects_the_live_field = "KEEP" in message
+    # Assert
+    assert protects_the_live_field, message
+
+
+def test_the_remedy_shows_the_nesting_rather_than_the_leaf_name():
+    # Arrange — `container:` alone names a block, not a line.
+    message = _runtime_errors({"runtime": "none"})[0]
+    # Act
+    shows_the_parent_path = "spec:" in message
+    # Assert
+    assert shows_the_parent_path, message
+
+
+def test_the_remedy_warns_against_acting_on_a_bare_grep():
+    # Arrange — the grep is the obvious move and it finds the wrong line.
+    message = _runtime_errors({"runtime": "none"})[0]
+    # Act
+    warns = "grep" in message.lower()
+    # Assert
+    assert warns, message

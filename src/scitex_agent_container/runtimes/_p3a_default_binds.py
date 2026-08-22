@@ -2,17 +2,28 @@
 
 Two classes of fleet-wide bind live here today:
 
-* **P3a-2 single-shared-store** — every agent's apptainer container
-  mounts the host's ``~/.scitex/todo/`` so scitex-todo's precedence-4
-  user-scope store resolves to the SAME global ``tasks.yaml``
-  fleet-wide. Operator directive
-  ``feedback_scitex_todo_single_shared_store``
-  (lead-learnings/22, P3a unlock). Lead a2a
-  ``214dd26d3fd24e088c75a34329895fa4``. This module is the SOLE
-  source of the bind — no fleet ``_shared/spec.yaml`` carries an
-  explicit ``~/.scitex/todo:`` line (lead audit 2026-06-13 a2a
-  ``f33cbc78c2074594b513439d93748810``), so the helper here is what
-  every sac-launched agent picks up at boot.
+* **single-shared-store** — every agent's apptainer container mounts
+  the host copy of a shared store, so a resolver keying off the
+  AGENT's ``$HOME=/home/agent`` reaches the SAME data fleet-wide.
+  Today that is ``~/.scitex/cards`` and
+  ``~/.scitex/claude-code-telegrammer``; see each entry's own note
+  for the incident that bought it.
+
+  The original member of this class, ``~/.scitex/todo``, was RETIRED
+  2026-08-19 and is archived in place at the end of the tuple rather
+  than deleted. Its P3a-2 provenance (operator directive
+  ``feedback_scitex_todo_single_shared_store``, lead-learnings/22,
+  lead a2a ``214dd26d3fd24e088c75a34329895fa4``) is recorded there.
+
+  This module remains the SOLE source of these binds — no fleet
+  ``_shared/spec.yaml`` carries them explicitly (lead audit
+  2026-06-13 a2a ``f33cbc78c2074594b513439d93748810``), so the helper
+  here is what every sac-launched agent picks up at boot. That is
+  itself under review: the operator ruled 2026-08-19 that a bind must
+  be declared in the spec rather than injected from code
+  (「必ずスペックで明示的に渡して下さい」), with sac's own wiring the
+  stated exception. See card
+  ``sac-remove-implicit-fleet-default-binds-20260819``.
 
 * **2026-06-13 SAC overlay stopgap** — bind the host's working
   ``scitex_agent_container`` source over the in-SIF install so
@@ -32,7 +43,7 @@ Mechanism — see :func:`apply_default_binds`:
     destination path REPLACES the default (operator override
     wins; we de-dupe by destination, not by full string).
   * Missing host source dir → SKIP that default silently. The
-    operator may not have a ``~/.scitex/todo/`` yet (clean
+    operator may not have a ``~/.scitex/cards/`` yet (clean
     install, fresh laptop), or a fresh deploy host may not have
     the canonical ``~/proj/scitex-agent-container/`` checkout —
     we don't create either from sac code.
@@ -57,11 +68,8 @@ __all__ = [
 # ``host:container[:mode]`` apptainer's ``--bind`` consumes.
 # ``~`` is expanded against the host's ``$HOME`` at resolution time.
 _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
-    # P3a-2 — scitex-todo single shared store (operator directive
-    # feedback_scitex_todo_single_shared_store).
-    "~/.scitex/todo:/home/agent/.scitex/todo:rw",
-    # S6 store migration (scitex-todo -> scitex-cards). Same shape and same
-    # reason as the todo bind above, and the reason is NOT obvious: the store
+    # S6 store migration (scitex-todo -> scitex-cards). The reason this bind
+    # has to exist at all is NOT obvious: the store
     # resolver keys off the AGENT's $HOME=/home/agent, so host-side reach is
     # not enough. An agent whose spec binds the operator's ENTIRE home rw
     # still cannot resolve ~/.scitex/cards — the data is present and
@@ -221,6 +229,43 @@ _FLEET_DEFAULT_BINDS: tuple[str, ...] = (
     # bounded, deterministic checks and does NOT run the test suite. CI runs
     # the tests. There is no test suite in the commit path for a testmon cache
     # to accelerate.
+    #
+    # RETIRED 2026-08-19 — "~/.scitex/todo:/home/agent/.scitex/todo:rw"
+    #   (was: P3a-2, scitex-todo single shared store, operator directive
+    #    feedback_scitex_todo_single_shared_store)
+    #
+    # Archived rather than deleted, on the operator's instruction that a
+    # retired thing should stay findable: 「消すというよりアーカイブでいい
+    # んじゃないですかね。すなわち探そうと思えば探せるみたいな」. A silent
+    # absence tells the next reader nothing about why the entry went, and
+    # invites someone to "fix" its absence by adding it back.
+    #
+    # WHY IT WENT: scitex-todo was superseded by scitex-cards, and the
+    # HOME-level store the bind targets is no longer read by anything.
+    # Measured 2026-08-19 with rg --no-ignore over every checkout under
+    # ~/proj, carrying a control term in the same pass so a zero could not
+    # mean "the search did not run":
+    #     scitex-cards       0 hits in *.py (docs/logs only)
+    #     scitex-live-paper  prose in docs/research/, and a PROJECT-LOCAL
+    #                        .scitex/todo/tasks.yaml, not ~/.scitex/todo
+    #     scitex-hub         LIVE CODE at apps/workspace/todo_app/
+    #                        middleware.py:302 — but it builds
+    #                        base / project.slug / ".scitex" / "todo" /
+    #                        "tasks.yaml" where base is a WORKSPACE root, not
+    #                        $HOME, and refuses any store escaping it
+    # The host directory itself held one 4-byte board.pid naming a pid that
+    # is not running.
+    #
+    # THE TRAP, recorded because the naive check gets it backwards: the
+    # string ".scitex/todo" names TWO unrelated things — a per-project store
+    # under a workspace, and this HOME-level one. A substring search cannot
+    # tell them apart, and hub's five hits argued for keeping the bind until
+    # the paths were actually read. Matching the string is not matching the
+    # dependency.
+    #
+    # If something turns out to need it, prefer an EXPLICIT bind in that
+    # agent's spec over restoring a fleet-wide default (operator, same day:
+    # 「必ずスペックで明示的に渡して下さい」).
 )
 
 

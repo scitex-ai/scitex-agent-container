@@ -1,4 +1,4 @@
-"""Session-continuity resolution — ``fresh`` by default, opt-in ``continue``.
+"""Session-continuity resolution — ``continue`` by default, opt-in ``fresh``.
 
 Single source of truth for two related decisions:
 
@@ -113,13 +113,33 @@ def role_wants_continuity(role: str | None) -> bool:
 
 
 def default_session_for_role(role: str | None) -> str:
-    """Session mode for a spec that OMITTED ``claude.session``, given role.
+    """Session mode for a spec that OMITTED ``claude.session``: ``continue``.
 
-    Coordinator/long-lived role → ``"continue"``; everything else (incl. no
-    role) → ``"fresh"``. This is the role-based half of the precedence chain
-    ``CLI > explicit spec > role-default > global default (fresh)``.
+    CONTINUE FOR EVERY ROLE, INCLUDING NONE. Operator ruling 2026-08-18:
+    「フレッシュは基本的に使いません、最初の起動に必要な時だけで ... スペックは
+    全てレジュームで」 — fresh is essentially never used; only where a FIRST
+    boot needs it; every spec resumes.
+
+    This inverts the previous polarity and that is the whole point. The old
+    rule was an ALLOWLIST: a role had to appear in ``_CONTINUITY_ROLES`` or
+    match a prefix to keep its memory, and anything unenumerated silently got
+    ``fresh``. Measured 2026-08-18, that is not hypothetical — scitex-hub's
+    role is ``product-lead-orchestrator``, which matches neither the exact set
+    nor any prefix (it begins ``product-``, not ``lead-``), so it resolved to
+    ``fresh`` and lost a day of working memory on restart. 91 of 117 live
+    specs omit ``claude.session`` entirely, so the default decided the
+    fleet's memory and nobody had chosen it.
+
+    A capsule that genuinely wants a hermetic session is UNAFFECTED in
+    practice: with no prior session on disk there is nothing to continue, so
+    the first boot is fresh either way. What changes is the SECOND boot, and
+    that is exactly the case the operator is protecting.
+
+    ``role`` is retained in the signature (callers pass it) and
+    :func:`role_wants_continuity` is kept for callers that still ask the
+    role question directly, but the role no longer GATES the default.
     """
-    return SESSION_CONTINUE if role_wants_continuity(role) else SESSION_FRESH
+    return SESSION_CONTINUE
 
 
 def wants_continue(session: str | None) -> bool:

@@ -544,7 +544,7 @@ def test_install_accepts_the_short_local_name() -> None:
         # Act
         runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "-y"])
     # Assert
-    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+    assert [a[2] for a in captured] == ["scitex-agent-container-accounts-refresh"]
 
 
 def test_install_accepts_the_canonical_name_too() -> None:
@@ -552,9 +552,12 @@ def test_install_accepts_the_canonical_name_too() -> None:
     with _captured_delegations() as captured:
         runner = CliRunner()
         # Act
-        runner.invoke(dev_group, ["timer", "install", "sac.accounts-refresh", "-y"])
+        runner.invoke(
+            dev_group,
+            ["timer", "install", "scitex-agent-container-accounts-refresh", "-y"],
+        )
     # Assert
-    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+    assert [a[2] for a in captured] == ["scitex-agent-container-accounts-refresh"]
 
 
 def test_install_forwards_dry_run_to_the_delegation() -> None:
@@ -733,7 +736,7 @@ def test_a_refusal_offers_the_manual_command() -> None:
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
     assert (
-        "systemctl --user status sac.accounts-refresh.timer" in result.stderr
+        f"systemctl --user status {'scitex-agent-container-accounts-refresh'}.timer" in result.stderr
     ) is (not delegation.supported), (
         f"probe says supported={delegation.supported}. When sac refuses it "
         "must hand the operator the manual command; when it delegates it "

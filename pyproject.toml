@@ -103,7 +103,23 @@ dependencies = [
 mcp = [
     # F-CS15: sac MCP server. fastmcp 2.x and 3.x both supported via
     # the safe_mount shim (matches scitex-* package convention).
-    "fastmcp>=2.0",
+    #
+    # 2.x SUPPORT IS SHIM-BACKED BUT UNTESTED, and saying so is the honest
+    # form of this claim. The suite installs [dev], which floors fastmcp at
+    # >=3.0 (see the note there and the measurement behind it), so nothing
+    # in CI ever exercises the 2.x branch of `mcp_group._list_tools`. The
+    # floor stays at 2.0 because the runtime shim really does handle both
+    # and narrowing it would break the scitex-* convention for consumers
+    # who only want the server — but a 2.x regression here would reach a
+    # user before it reached a test.
+    #
+    # `mcp<2` is NOT an untested claim like the fastmcp floor above: mcp
+    # 2.0.0 removes `Server.list_tools`, which `mcp_group._list_tools`
+    # probes for and the whole `_mcp` suite calls. Until the 2.x API is
+    # supported, admitting it here would ship a server that cannot list
+    # its own tools.
+    "fastmcp>=2.0,<4",
+    "mcp>=1.29,<2",
 ]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
@@ -346,7 +362,32 @@ dev = [
     # collection-skipped on dev boxes. Keeping fastmcp also as a [mcp]
     # extra so runtime installs that only need the MCP server can
     # opt-in without pulling the rest of [dev].
-    "fastmcp>=2.0",
+    #
+    # PINNED, AND THE PIN THAT MATTERS IS `mcp`, NOT `fastmcp`.
+    #
+    # `Server.list_tools` is an API of the `mcp` python-sdk, which fastmcp
+    # pulls transitively. Neither was pinned, there is no lockfile, and
+    # `uv pip install -e .[dev]` re-resolves on every CI run — so the suite
+    # was running against whatever the index served that minute. Measured
+    # across three runs of the SAME workflow on the same py3.11:
+    #
+    #   run 32184153812  fastmcp==3.4.7    mcp==1.29.0  ->  17094 passed
+    #   run 32185071483  fastmcp==2.14.1   mcp==2.0.0   ->     29 failed
+    #   run 32185515... fastmcp==4.0.0b3  mcp==2.0.0   ->     26 failed
+    #
+    # `fastmcp` moves in both directions across those rows and the outcome
+    # does not follow it; `mcp` does. mcp 2.0.0 (2026-07-28) removed
+    # `Server.list_tools`, and every failure is that attribute. So the
+    # first version of this pin — a `fastmcp>=3.0` floor — named the wrong
+    # package: it let 4.0.0b3 in and changed nothing about the failure.
+    #
+    # `<2` on mcp is the bound the code is actually written against. `<4`
+    # on fastmcp keeps the pre-release out of a resolution that has already
+    # been observed reaching for one; the floor stays at 3.0 because the
+    # TESTS call `server.list_tools()` outright while the SOURCE tolerates
+    # more (`cli_pkg/mcp_group._list_tools` branches on hasattr).
+    "fastmcp>=3.0,<4",
+    "mcp>=1.29,<2",
 ]
 docs = [
     "sphinx>=7.0",
@@ -468,6 +509,62 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # filters for the card-event kinds and ignores everything else, incl.
 # sac's OWN liveness-tick anomaly events on the same bus. Bus-only
 # contract: no import of scitex_todo.
+# DECLARED IN BOTH GROUPS, and the duplication is the correct migration
+# state — not an oversight to tidy up later.
+#
+# MEASURED 2026-08-20 by scitex-cards: this consumer has NEVER been invoked in
+# production. The running notify daemon executes scitex-cards 0.42.0, whose
+# `_hooks/_plugins.py` reads `scitex_cards.hooks` and has ZERO references to
+# the retired group. sac was registered only under the retired name, so every
+# card event was dispatched to an EMPTY SET — succeeded, reported success,
+# called nobody. Corroborating symptoms, all explained by that one fact:
+#
+#     notifyd-liveness.json  last_delivery_at: null   never delivered, ever
+#     local inbox            150 rows, all unseen     enqueued, never pushed
+#     agents still get cards                          the PULL rail is separate
+#
+# Nothing anywhere reported a failure. That is the signature of this defect
+# class, and scitex-cards' own docstring recorded the identical state on
+# 2026-08-17 — the fix shipped in 0.48.0 and has never executed, because the
+# unit whose Description reads "supervised so a package upgrade actually
+# reaches it" points ExecStart at a hand-made venv that `pip install -U` never
+# touches.
+#
+# WHY BOTH RATHER THAN A MOVE. 0.42.0 (running now) reads only the new group,
+# so adding it revives delivery immediately. 0.48.0 reads both and dedupes, so
+# nothing double-fires. And leaving the retired entry in place preserves the
+# fleet's only registration under that name, which is what lets scitex-cards
+# verify the alias actually works when 0.48.0 finally runs — deleting it would
+# make "the alias works" indistinguishable from "nobody was left".
+#
+# THE NAME AND THE DOTTED PATH MUST STAY BYTE-IDENTICAL between the two
+# blocks. 0.48.0 dedupes on the tuple `(ep.name, ep.value)`:
+#
+#     seen  = {(ep.name, ep.value) for ep in current}
+#     extra = [ep for ep in retired if (ep.name, ep.value) not in seen]
+#
+# so renaming the entry or moving the callable on one side only turns the
+# alias meant to FIX delivery into a double-delivery bug. A migration is
+# exactly when tidying a name is tempting; do not, until the retired block
+# goes away entirely.
+#
+# C10 — sac's consumer on the shared card-event bus. When the board emits a
+# card-event (commented / created / reassigned / status_changed / completed /
+# committed / pushed / merged), this callable is invoked in the board's
+# process; it resolves the card's owner + collaborators + subscribers and
+# delivers the notification to each via the local ``sac listen`` daemon's
+# ``/v1/notify`` router endpoint — so a CONTAINERIZED owner-agent (whose a2a
+# port is unreachable inbound) still receives it. The consumer filters for the
+# card-event kinds and ignores everything else, incl. sac's OWN liveness-tick
+# anomaly events on the same bus. Bus-only contract: no import of the board
+# package.
+[project.entry-points."scitex_cards.hooks"]
+scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
+
+# The retired spelling, kept deliberately. See the note above: it is the
+# fleet's only registration under this group and therefore the only way to
+# verify the 0.48.0 alias when it runs. Remove it only once that verification
+# has happened and scitex-cards says the group is closed.
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
@@ -745,7 +842,7 @@ required_plugins = ["pytest-asyncio", "pytest-xdist"]
 
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
+addopts = "-v --tb=short -p tests._store_isolation -m 'not integration and not docker_smoke'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
