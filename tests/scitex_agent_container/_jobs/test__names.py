@@ -141,12 +141,15 @@ def test_is_ours_rejects_a_foreign_job() -> None:
 
 
 def test_resolve_finds_a_real_declared_job_by_local_name() -> None:
-    # Arrange — against the REAL declarations, not a hand-picked list.
+    # Arrange — against the REAL declarations, not a hand-picked list. The
+    # literals elsewhere in this file stay on the legacy dotted shape ON
+    # PURPOSE: they pin that the PARSER still handles it, which is what a
+    # host mid-cutover types.
     declared = [j.name for j in provide_jobs()]
     # Act
     got = _names.resolve("accounts-refresh", declared)
     # Assert
-    assert got == "sac.accounts-refresh"
+    assert got == "scitex-agent-container-accounts-refresh"
 
 
 def test_resolve_raises_on_an_unknown_name() -> None:

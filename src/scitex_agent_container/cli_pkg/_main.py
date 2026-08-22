@@ -259,7 +259,7 @@ class _MainGroup(LazyGroup):
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
-        "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
+        "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",

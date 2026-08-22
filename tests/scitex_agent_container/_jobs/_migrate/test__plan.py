@@ -316,3 +316,40 @@ def test_a_step_renders_its_argv_for_the_dry_run() -> None:
     rendered = step.render()
     # Assert
     assert "systemctl stop x" in rendered
+
+
+def test_a_held_job_plans_the_cutover_when_include_held_is_set() -> None:
+    # Arrange — the hold text itself names the supervised command meant to
+    # clear it, so the override has to actually reach the planner.
+    held = [r for r in _renames.RENAMES if r.held][0]
+    # Act
+    steps = _plan.plan_one(
+        held, present=frozenset(held.old_units()), include_held=True
+    )
+    # Assert
+    assert steps != ()
+
+
+def test_include_held_does_not_bypass_stop_before_install() -> None:
+    # Arrange — the override must not buy its way past the ordering this
+    # module exists to guarantee: installing the new unit before displacing
+    # the old one leaves BOTH supervising the same command.
+    held = [r for r in _renames.RENAMES if r.held][0]
+    steps = _plan.plan_one(
+        held, present=frozenset(held.old_units()), include_held=True
+    )
+    actions = _actions(steps)
+    # Act
+    stopped_before_installed = actions.index("stop") < actions.index("install")
+    # Assert
+    assert stopped_before_installed
+
+
+def test_the_full_plan_honours_include_held_for_the_named_job() -> None:
+    # Arrange — the CLI narrows `renames` to one job before setting the
+    # flag, so plan() must thread it through rather than drop it.
+    held = [r for r in _renames.RENAMES if r.held][0]
+    # Act
+    steps = _plan.plan((held,), present=frozenset(held.old_units()), include_held=True)
+    # Assert
+    assert held.new in {s.target for s in steps if s.action == "install"}

@@ -164,6 +164,19 @@ def _print_report(outcome: GcOutcome, *, apply: bool) -> None:
         "--apply, off on a dry run (a report stays a pure report)."
     ),
 )
+@click.option(
+    "--exit-zero",
+    "exit_zero",
+    is_flag=True,
+    default=False,
+    help=(
+        "Always exit 0. The verdict is unchanged and still printed, still in "
+        "the JSON `exit_code`, and still recorded by --alarm — only the "
+        "PROCESS status is neutralised. For unattended runners where a "
+        "non-zero status means 'this job is unhealthy', not 'this job found "
+        "something a human must decide'."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for cron).")
 @click.pass_context
 def worktree_gc(
@@ -175,6 +188,7 @@ def worktree_gc(
     min_age_hours: float,
     cap: int,
     alarm: bool | None,
+    exit_zero: bool,
     as_json: bool,
 ) -> None:
     """Remove worktrees that are PROVABLY safe to remove. Keep everything else.
@@ -219,7 +233,8 @@ def worktree_gc(
     \b
     Exit codes:  0 = all repos under cap.  1 = a repo is still over cap
     after the pass.  2 = a repo could not be READ (unknown outranks
-    known-bad: it is a known-bad you cannot see).
+    known-bad: it is a known-bad you cannot see).  --exit-zero keeps the
+    verdict in the report and the JSON but always exits 0.
     """
     if bool(repos) == all_repos:
         raise click.UsageError(
@@ -247,6 +262,38 @@ def worktree_gc(
         cap=cap,
     )
     code = exit_code_for(outcome)
+    # MEASURED 2026-08-20: this verb runs as
+    # scitex-agent-container-worktree-gc under the ecosystem supervisor. It
+    # exited 1 on all three of its runs, which reads as a broken job — and it
+    # was not broken. Exit 1 here means "a repo is still over cap", i.e. every
+    # kept worktree failed a safety leg and a HUMAN must decide. That is a
+    # finding, not ill health.
+    #
+    # The cost was concrete: a duplicate systemd timer for this same job could
+    # not be retired, because the rule for retiring one was "the supervisor has
+    # a recorded exit-0 for it" and this job could never produce one. A finding
+    # rendered as a failure kept a second scheduler alive.
+    #
+    # Its sibling `sac host sync --check` carries the same flag for the same
+    # reason, and its comment records where that confusion led last time: a
+    # unit marked `failed` for doing its job put the host into `degraded`, and
+    # an installer read `degraded` as "systemd is absent" and silently stopped
+    # installing dotfiles sync there.
+    #
+    # THE FINDING IS NOT DISCARDED, and that is the condition for using this
+    # flag at all. A flag that always exits 0 does destroy the distinction if
+    # the exit code is the only place the distinction lives. Here it is not:
+    # `--alarm` (on by default with --apply, which is how the scheduled job
+    # runs) records every repo's cap verdict in sac's own event log, and the
+    # verdict is still printed and still in the JSON `exit_code`. Neutralising
+    # the PROCESS status moves the signal onto the rail built for it instead of
+    # the one systemd reads as health.
+    #
+    # A job with no such rail must NOT reach for this flag — for those, the
+    # runner needs to carry "finished with findings" as its own outcome rather
+    # than folding it into ok/not-ok. That belongs in the JobSpec contract, and
+    # scitex-dev owns it.
+    status = 0 if exit_zero else code
 
     # Make the shout DURABLE: record each cap verdict in sac's own event
     # log. Defaults to riding --apply only, so a dry run stays a pure report.
@@ -271,13 +318,13 @@ def worktree_gc(
                 "failed": list(alarm_outcome.failed),
             }
         click.echo(json.dumps(payload, indent=2))
-        raise SystemExit(code)
+        raise SystemExit(status)
 
     _print_report(outcome, apply=apply)
     console.print(f"[dim]{outcome.summary_line()}[/dim]")
     if alarm_outcome is not None:
         console.print(f"[dim]{alarm_outcome.summary_line()}[/dim]")
-    raise SystemExit(code)
+    raise SystemExit(status)
 
 
 def register(worktree_group) -> None:

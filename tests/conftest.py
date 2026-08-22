@@ -42,6 +42,50 @@ os.environ["COVERAGE_FILE"] = str(_COVERAGE_DIR / ".coverage")
 # tests/scitex_agent_container/test__build_priority.py.
 os.environ.setdefault("SAC_BUILD_NO_NICE", "1")
 
+# --- the suite must not inherit the CONTAINER's spec-env manifest ----------
+# `SAC_SPEC_ENV_KEYS` is injected at agent launch and names the spec-env keys
+# the launch PROMISED to provide. `resolve_spec_env` (runtimes/_mcp_spec_env.py)
+# reads the REAL os.environ and RAISES SpecEnvUnresolvedError when a promised
+# key is missing — deliberately, because a silently-degraded MCP config
+# rebuilds the mid-session identity/store loss of
+# card sac-env-injection-lost-on-mcp-reconnect-20260721.
+#
+# That guard is correct in production and WRONG to inherit in tests. Every
+# agent in this fleet runs pytest INSIDE its own container, where the var is
+# set (10 keys), while tests legitimately construct a controlled env without
+# them. The guard then fires during `build_sdk_options` and kills tests that
+# have nothing to do with spec-env.
+#
+# Measured 2026-08-18 on develop @4a03f69c, same commit, same worktree, only
+# the environment differing:
+#
+#   SAC_SPEC_ENV_KEYS set (inside a container)
+#       runtimes/test__sdk_common.py      2 failed, 26 passed, 19 errors
+#   SAC_SPEC_ENV_KEYS unset (CI, or any plain shell)
+#       runtimes/test__sdk_common.py      47 passed
+#
+# plus 4 more failures elsewhere that also pass once it is unset — 25 false
+# failures from one leaked variable.
+#
+# WHY THIS IS WORSE THAN AN ORDINARY RED: it is invisible and it is uniform.
+# CI never sets the var, so the gate is green and cannot see it; every agent
+# runs in a container, so every agent sees the same false red and concludes
+# trunk is broken. An A/B against a clean baseline does NOT catch it either,
+# because both arms carry the leak — which is how it survived being carded as
+# "develop is RED before any change" (2026-08-17) for a day.
+#
+# Deleted, not set to "": an EMPTY manifest is a meaningful value to
+# `resolve_spec_env` (it means "nothing was promised"), and writing one would
+# assert a promise this process never made. Absence is the honest state.
+#
+# Module body, not a fixture, and NOT restored afterwards: the leak also
+# travels into subprocesses a test spawns with an inherited env, which a
+# function-scoped fixture would re-open the moment it restored. Tests that
+# exercise the guard are unaffected — they build a FAKE environ dict with
+# their own setenv/delenv helpers (tests/.../runtimes/test__mcp_spec_env.py)
+# and never consult the ambient one, so the guard keeps its own coverage.
+os.environ.pop("SAC_SPEC_ENV_KEYS", None)
+
 # --- NEVER let a test drive the LIVE listen watchdog ----------------------
 # `scripts/systemd/sac-listen-health-probe.sh` persists a FAILURE LEDGER at
 #   $HOME/.scitex/agent-container/runtime/listen-health.state

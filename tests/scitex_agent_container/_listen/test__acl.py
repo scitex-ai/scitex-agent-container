@@ -82,7 +82,7 @@ def test_acl_allows_self_send(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_acl_allows_intra_group_parent_to_child(db_path: Path) -> None:
+def test_acl_allows_intra_group_parent_to_child(db_path: Path, pg_schema: str) -> None:
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
@@ -96,7 +96,7 @@ def test_acl_allows_intra_group_parent_to_child(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path) -> None:
+def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path, pg_schema: str) -> None:
     """Handoff §4: 'parent↔child *and* sibling↔sibling, bidirectional'."""
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
@@ -112,7 +112,7 @@ def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_acl_allows_cross_group_by_default(db_path: Path) -> None:
+def test_acl_allows_cross_group_by_default(db_path: Path, pg_schema: str) -> None:
     """Messaging default-allow (operator 2026-07-03): two unrelated
     lineage families, no grant → ALLOW."""
     # Arrange — two unrelated families
@@ -129,13 +129,13 @@ def test_acl_allows_cross_group_by_default(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_acl_blocked_sender_is_blocked(db_path: Path) -> None:
+def test_acl_blocked_sender_is_blocked(db_path: Path, pg_schema: str) -> None:
     """Override preserved: an explicit block still yields a "block"
     decision even under the cross-group default-allow."""
     # Arrange — two unrelated families + an explicit block
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
-    block_send(sender="child-1", target="child-2", db_path=db_path)
+    block_send(sender="child-1", target="child-2")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="child-1",
@@ -147,7 +147,7 @@ def test_acl_blocked_sender_is_blocked(db_path: Path) -> None:
     assert decision == "block"
 
 
-def test_acl_allows_cross_group_with_explicit_grant(db_path: Path) -> None:
+def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: str) -> None:
     """Explicit cross-group grant flips a deny to allow."""
     # Arrange — two unrelated families + grant child-1 → child-2
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
@@ -197,7 +197,7 @@ def test_acl_spoof_deny_reason_names_both_identities(db_path: Path) -> None:
     assert reason is not None and "alice" in reason and "bob" in reason
 
 
-def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path) -> None:
+def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path, pg_schema: str) -> None:
     """Host-wide bearer + ``metadata.from_agent`` set → admin path
     (cross-host forwarder). The metadata claim is honoured verbatim.
     """
@@ -340,7 +340,7 @@ def _payload(sender: str, content: str = "x") -> dict:
 
 
 def test_http_node_message_send_allows_cross_group_by_default(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """End-to-end: messaging default-allow — a cross-group sender (two
     unrelated lineage families) now lands (< 400)."""
@@ -360,7 +360,7 @@ def test_http_node_message_send_allows_cross_group_by_default(
 
 
 def test_http_node_message_send_403_body_carries_per_spec_reason(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """A per-spec ``inbound.siblings=deny`` override still 403s and the
     body explains the denial (the deny path survives default-allow)."""
@@ -382,7 +382,7 @@ def test_http_node_message_send_403_body_carries_per_spec_reason(
 
 
 def test_http_node_message_send_allows_intra_group(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """Intra-group send (sibling-to-sibling) lands."""
     # Arrange
@@ -401,7 +401,7 @@ def test_http_node_message_send_allows_intra_group(
 
 
 def test_http_node_message_send_allows_after_explicit_grant(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """A cross-group grant flips the deny to an allow."""
     # Arrange
@@ -427,7 +427,7 @@ def test_http_node_message_send_allows_after_explicit_grant(
 
 
 def test_http_per_node_bearer_allows_matching_from_agent(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """Per-node bearer for worker-a + ``metadata.from_agent=worker-a``
     + intra-group target → allow.
@@ -449,7 +449,7 @@ def test_http_per_node_bearer_allows_matching_from_agent(
 
 
 def test_http_per_node_bearer_denies_spoofed_from_agent_with_403(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """Per-node bearer for worker-a + ``metadata.from_agent=worker-b``
     → 403 identity spoof (the acceptance criterion).
@@ -472,7 +472,7 @@ def test_http_per_node_bearer_denies_spoofed_from_agent_with_403(
 
 
 def test_http_per_node_bearer_403_body_explains_spoof(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """The 403 body identifies the resolved name vs the claimed
     name so the operator can see which identity tried to spoof."""
@@ -568,7 +568,7 @@ def _denied_attempt_rows(target: str, db_path: Path) -> list[dict]:
 
 
 @pytest.fixture
-def cross_group_deny_scenario(isolated_listen_env, db_path: Path) -> dict:
+def cross_group_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
     """A denied send via host bearer (admin caller path).
 
     Since messaging is now DEFAULT-ALLOW cross-group (operator
@@ -590,7 +590,7 @@ def cross_group_deny_scenario(isolated_listen_env, db_path: Path) -> dict:
     return {"resp": resp, "notifs": notifs, "db_path": db_path}
 
 
-def test_cross_group_deny_returns_403_to_sender(cross_group_deny_scenario) -> None:
+def test_cross_group_deny_returns_403_to_sender(cross_group_deny_scenario, pg_schema: str) -> None:
     # Arrange
     resp = cross_group_deny_scenario["resp"]
     # Act
@@ -600,7 +600,7 @@ def test_cross_group_deny_returns_403_to_sender(cross_group_deny_scenario) -> No
 
 
 def test_cross_group_deny_publishes_one_denied_attempt_to_target_inbox(
-    cross_group_deny_scenario,
+    cross_group_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     notifs = cross_group_deny_scenario["notifs"]
@@ -611,7 +611,7 @@ def test_cross_group_deny_publishes_one_denied_attempt_to_target_inbox(
 
 
 def test_cross_group_deny_notification_identifies_the_sender(
-    cross_group_deny_scenario,
+    cross_group_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = cross_group_deny_scenario["notifs"][0]["event"]
@@ -622,7 +622,7 @@ def test_cross_group_deny_notification_identifies_the_sender(
 
 
 def test_cross_group_deny_notification_identifies_the_receiver(
-    cross_group_deny_scenario,
+    cross_group_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = cross_group_deny_scenario["notifs"][0]["event"]
@@ -633,7 +633,7 @@ def test_cross_group_deny_notification_identifies_the_receiver(
 
 
 def test_cross_group_deny_notification_carries_reason(
-    cross_group_deny_scenario,
+    cross_group_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = cross_group_deny_scenario["notifs"][0]["event"]
@@ -644,7 +644,7 @@ def test_cross_group_deny_notification_carries_reason(
 
 
 def test_cross_group_deny_notification_carries_positive_timestamp(
-    cross_group_deny_scenario,
+    cross_group_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = cross_group_deny_scenario["notifs"][0]["event"]
@@ -661,7 +661,7 @@ _SECRET = "PII / credentials / anything the sender shoved in here"
 
 
 @pytest.fixture
-def body_leak_scenario(isolated_listen_env, db_path: Path) -> dict:
+def body_leak_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
     """Denied send carrying a secret in its body — must not leak. Denial
     is triggered by a per-spec ``inbound.siblings=deny`` (the surviving
     deny path under messaging default-allow)."""
@@ -679,7 +679,7 @@ def body_leak_scenario(isolated_listen_env, db_path: Path) -> dict:
     return {"resp": resp, "notifs": notifs}
 
 
-def test_body_leak_scenario_denies_with_403(body_leak_scenario) -> None:
+def test_body_leak_scenario_denies_with_403(body_leak_scenario, pg_schema: str) -> None:
     # Arrange
     resp = body_leak_scenario["resp"]
     # Act
@@ -689,7 +689,7 @@ def test_body_leak_scenario_denies_with_403(body_leak_scenario) -> None:
 
 
 def test_body_leak_scenario_notification_content_is_empty(
-    body_leak_scenario,
+    body_leak_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = body_leak_scenario["notifs"][0]["event"]
@@ -700,7 +700,7 @@ def test_body_leak_scenario_notification_content_is_empty(
 
 
 def test_body_leak_scenario_secret_absent_from_serialized_notification(
-    body_leak_scenario,
+    body_leak_scenario, pg_schema: str,
 ) -> None:
     """Defence-in-depth: the entire stored frame (round-tripped JSON)
     must not contain the secret — guards against a future accidental
@@ -720,7 +720,7 @@ def test_body_leak_scenario_secret_absent_from_serialized_notification(
 
 
 @pytest.fixture
-def fanout_scope_scenario(isolated_listen_env, db_path: Path) -> dict:
+def fanout_scope_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
     """A per-spec denied send — only the *real* target's inbox should
     carry a notif; bystander targets and the empty-name inbox stay
     untouched. Denial via ``inbound.siblings=deny`` on child-2 (siblings
@@ -746,7 +746,7 @@ def fanout_scope_scenario(isolated_listen_env, db_path: Path) -> dict:
 
 
 def test_fanout_scope_scenario_target_inbox_has_exactly_one_notif(
-    fanout_scope_scenario,
+    fanout_scope_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     notifs = fanout_scope_scenario["target_notifs"]
@@ -757,7 +757,7 @@ def test_fanout_scope_scenario_target_inbox_has_exactly_one_notif(
 
 
 def test_fanout_scope_scenario_bystander_inbox_is_empty(
-    fanout_scope_scenario,
+    fanout_scope_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     notifs = fanout_scope_scenario["bystander_notifs"]
@@ -768,7 +768,7 @@ def test_fanout_scope_scenario_bystander_inbox_is_empty(
 
 
 def test_fanout_scope_scenario_empty_name_inbox_is_empty(
-    fanout_scope_scenario,
+    fanout_scope_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     notifs = fanout_scope_scenario["empty_notifs"]
@@ -782,7 +782,7 @@ def test_fanout_scope_scenario_empty_name_inbox_is_empty(
 
 
 @pytest.fixture
-def spoof_deny_scenario(isolated_listen_env, db_path: Path) -> dict:
+def spoof_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
     """Per-node bearer for worker-a claims to be worker-b. ACL denies
     as spoof; the notification on worker-b's inbox must name the
     AUTHENTICATED identity (worker-a), not the spoofed claim
@@ -803,7 +803,7 @@ def spoof_deny_scenario(isolated_listen_env, db_path: Path) -> dict:
     return {"resp": resp, "notifs": notifs}
 
 
-def test_spoof_deny_returns_403(spoof_deny_scenario) -> None:
+def test_spoof_deny_returns_403(spoof_deny_scenario, pg_schema: str) -> None:
     # Arrange
     resp = spoof_deny_scenario["resp"]
     # Act
@@ -813,7 +813,7 @@ def test_spoof_deny_returns_403(spoof_deny_scenario) -> None:
 
 
 def test_spoof_deny_notification_names_authenticated_identity(
-    spoof_deny_scenario,
+    spoof_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = spoof_deny_scenario["notifs"][0]["event"]
@@ -824,7 +824,7 @@ def test_spoof_deny_notification_names_authenticated_identity(
 
 
 def test_spoof_deny_notification_reason_mentions_spoof(
-    spoof_deny_scenario,
+    spoof_deny_scenario, pg_schema: str,
 ) -> None:
     # Arrange
     event = spoof_deny_scenario["notifs"][0]["event"]
@@ -838,7 +838,7 @@ def test_spoof_deny_notification_reason_mentions_spoof(
 
 
 @pytest.fixture
-def live_broker_event(isolated_listen_env, db_path: Path) -> dict:
+def live_broker_event(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
     """End-to-end on the broker fast path: a live subscriber on the
     target's inbox receives the denied-attempt event the moment the
     denial happens (not just on next reconnect / replay). Uses
@@ -881,7 +881,7 @@ def live_broker_event(isolated_listen_env, db_path: Path) -> dict:
     return asyncio.run(driver())
 
 
-def test_live_broker_event_kind_is_denied_attempt(live_broker_event) -> None:
+def test_live_broker_event_kind_is_denied_attempt(live_broker_event, pg_schema: str) -> None:
     # Arrange
     event = live_broker_event
     # Act
@@ -890,7 +890,7 @@ def test_live_broker_event_kind_is_denied_attempt(live_broker_event) -> None:
     assert kind == "denied_attempt"
 
 
-def test_live_broker_event_names_the_sender(live_broker_event) -> None:
+def test_live_broker_event_names_the_sender(live_broker_event, pg_schema: str) -> None:
     # Arrange
     event = live_broker_event
     # Act
@@ -899,7 +899,7 @@ def test_live_broker_event_names_the_sender(live_broker_event) -> None:
     assert sender == "child-1"
 
 
-def test_live_broker_event_names_the_receiver(live_broker_event) -> None:
+def test_live_broker_event_names_the_receiver(live_broker_event, pg_schema: str) -> None:
     # Arrange
     event = live_broker_event
     # Act
@@ -908,7 +908,7 @@ def test_live_broker_event_names_the_receiver(live_broker_event) -> None:
     assert receiver == "child-2"
 
 
-def test_live_broker_event_content_is_empty(live_broker_event) -> None:
+def test_live_broker_event_content_is_empty(live_broker_event, pg_schema: str) -> None:
     # Arrange
     event = live_broker_event
     # Act
@@ -917,7 +917,7 @@ def test_live_broker_event_content_is_empty(live_broker_event) -> None:
     assert content == ""
 
 
-def test_live_broker_event_carries_deny_reason(live_broker_event) -> None:
+def test_live_broker_event_carries_deny_reason(live_broker_event, pg_schema: str) -> None:
     # Arrange
     event = live_broker_event
     # Act
@@ -926,7 +926,7 @@ def test_live_broker_event_carries_deny_reason(live_broker_event) -> None:
     assert "inbound deny" in reason
 
 
-def test_live_broker_event_does_not_leak_body(live_broker_event) -> None:
+def test_live_broker_event_does_not_leak_body(live_broker_event, pg_schema: str) -> None:
     import json as _json
 
     # Arrange
