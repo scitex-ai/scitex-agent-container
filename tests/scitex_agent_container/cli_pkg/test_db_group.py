@@ -93,7 +93,7 @@ def test_db_show_json_payload_names_the_store_it_read(db_path: Path):
     # Act
     result = runner.invoke(db_show, ["--json"])
     # Assert
-    assert json.loads(result.output)["store"] == str(db_path)
+    assert json.loads(result.stdout)["store"] == str(db_path)
 
 
 def test_db_show_console_output_names_the_store_it_read(db_path: Path):
@@ -211,7 +211,7 @@ def test_db_query_with_where_clause_filters_rows_in_json(db_path: Path):
         db_query,
         ["--table", "instances", "--where", "name='keep-me'", "--json"],
     )
-    rows = json.loads(result.output)
+    rows = json.loads(result.stdout)
     # Assert
     assert [r["name"] for r in rows] == ["keep-me"]
 
@@ -248,7 +248,7 @@ def test_db_migrate_resolves_registry_dir_from_env_variable(
     try:
         # Act
         result = runner.invoke(db_migrate, ["--host", "h", "--json"])
-        body = json.loads(result.output)
+        body = json.loads(result.stdout)
         # Assert
         assert body == {"registry_dir": str(reg), "imported": 1, "skipped": 0}
     finally:
@@ -367,7 +367,7 @@ def test_db_export_dry_run_reports_row_counts_for_instances(db_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["row_counts"]["instances"] == 1
 
@@ -381,7 +381,7 @@ def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["host"] == "h"
 
@@ -471,7 +471,7 @@ def test_db_import_reads_payload_from_filesystem_path(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["inserted"]["instances"] == 1
 
@@ -495,7 +495,7 @@ def test_db_import_dry_run_json_reports_would_insert_counts(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["would_insert"]["instances"] == 1
 
@@ -519,7 +519,7 @@ def test_db_import_dry_run_json_flags_payload_as_dry_run(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["dry_run"] is True
 

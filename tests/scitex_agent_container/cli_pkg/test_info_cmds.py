@@ -156,7 +156,7 @@ def test_find_json_includes_matching_agent(tmp_path):
     runner = CliRunner()
     # Act
     result = runner.invoke(find, ["HPC", "--dir", str(tmp_path), "--json"])
-    names = [m["name"] for m in json.loads(result.output)]
+    names = [m["name"] for m in json.loads(result.stdout)]
     # Assert
     assert "alpha" in names
 
@@ -168,7 +168,7 @@ def test_find_json_excludes_non_matching_agent(tmp_path):
     runner = CliRunner()
     # Act
     result = runner.invoke(find, ["HPC", "--dir", str(tmp_path), "--json"])
-    names = [m["name"] for m in json.loads(result.output)]
+    names = [m["name"] for m in json.loads(result.stdout)]
     # Assert
     assert "beta" not in names
 
@@ -204,7 +204,7 @@ def test_find_skips_invalid_yaml_but_includes_valid(tmp_path):
     runner = CliRunner()
     # Act
     result = runner.invoke(find, ["HPC", "--dir", str(tmp_path), "--json"])
-    names = [m["name"] for m in json.loads(result.output)]
+    names = [m["name"] for m in json.loads(result.stdout)]
     # Assert
     assert "ok" in names
 
@@ -218,7 +218,7 @@ def test_find_default_dir_is_cwd(tmp_path):
         runner = CliRunner()
         # Act
         result = runner.invoke(find, ["X", "--json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # Assert
         assert any(m["name"] == "ad" for m in data)
     finally:
@@ -233,7 +233,7 @@ def test_find_search_path_not_a_dir_returns_empty(tmp_path):
     # Act
     result = runner.invoke(find, ["X", "--dir", str(p), "--json"])
     # Assert
-    assert json.loads(result.output) == []
+    assert json.loads(result.stdout) == []
 
 
 # ===========================================================================
@@ -454,7 +454,7 @@ def test_list_python_apis_json_includes_package_root():
     runner = CliRunner()
     # Act
     result = runner.invoke(list_python_apis, ["--json", "-d", "1"])
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     names = [row["Name"] for row in data]
     # Assert -- the real top-level module always appears at depth 0.
     assert "scitex_agent_container" in names

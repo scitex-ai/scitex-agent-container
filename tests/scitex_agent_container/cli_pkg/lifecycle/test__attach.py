@@ -56,8 +56,10 @@ def test_remote_attach_argv_runs_tmux_attach_on_the_named_session() -> None:
 
     # Act
     argv = _remote_attach_argv("tui-spartan-dev", "zzz-unknown-peer-zzz")
-    # Assert — tmux attach runs DIRECTLY on the peer (no `bash -lc` wrapper).
-    assert argv[-4:] == ["tmux", "attach", "-t", "tui-spartan-dev"]
+    # Assert — tmux attach runs DIRECTLY on the peer (no `bash -lc` wrapper),
+    # on the EXACT-match target (=name:): a bare -t prefix-matches, which
+    # would hand the operator a SIBLING agent's TUI (incident 2026-08-14).
+    assert argv[-4:] == ["tmux", "attach", "-t", "=tui-spartan-dev:"]
 
 
 def test_remote_attach_argv_uses_no_login_shell() -> None:

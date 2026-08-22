@@ -152,6 +152,18 @@ class TargetFacts:
     rejected_spec_keys: tuple[str, ...] | None = None
     ports_in_use: tuple[int, ...] | None = None
     hub_reachable_from_target: bool | None = None
+    #: Declared paths the agent must RUN IN that are absent on the target —
+    #: today just ``spec.workdir``, which is the container's ``--pwd``. There is
+    #: no ``spec.repo``: the workdir IS the checkout. Same three values as
+    #: ``missing_bind_sources``: ``None`` nobody looked, ``()`` looked and
+    #: nothing missing (which a spec declaring no workdir satisfies by
+    #: construction), non-empty names what is absent.
+    missing_workdir_paths: tuple[str, ...] | None = None
+    #: The groups the TARGET's own sac resolves from this spec's labels. ``()``
+    #: is a REAL answer and a damning one — it is what a daemon too old to read
+    #: spec labels returns for every agent — but it is not a verdict about the
+    #: spec, so the check treats it as undetermined rather than as a refusal.
+    target_resolved_groups: tuple[str, ...] | None = None
     #: Whether ``command -v sac`` finds it in the NON-INTERACTIVE ssh PATH —
     #: which is the PATH every remote sac call actually runs under.
     sac_on_path: bool | None = None
@@ -210,6 +222,20 @@ class SourceFacts:
     session_marker: str | None = None
 
 
+#: RELOCATION's rollup policy, stated once, here, at the aggregation site.
+#:
+#: Whether an undetermined check refuses is a property of the CONSUMER, not of
+#: the three-valued verdict: a dashboard paints an unknown amber and carries on,
+#: and it is right to. Relocation refuses, because proceeding means stopping an
+#: agent on one machine and starting it on another that nobody has verified.
+#:
+#: It is a named constant rather than an ``if`` inside twelve checks so that the
+#: policy can be read (and, by a different consumer, replaced) in one place. Each
+#: check's job ends at reporting pass / fail / undetermined; deciding what an
+#: undetermined one MEANS is this module's job and nothing else's.
+UNKNOWN_BLOCKS_RELOCATION = True
+
+
 @dataclass(frozen=True)
 class PreflightReport:
     """The whole answer, in one shape.
@@ -219,6 +245,12 @@ class PreflightReport:
     something is unknown, False when anything failed. Unknowns are reported
     SEPARATELY from failures so a reader can tell "this is wrong" from "I could
     not tell" — and neither reads as go.
+
+    The three-valued verdict is per-check (:class:`Check`) and the rollup is
+    derived from it; nothing anywhere carries a boolean plus a flag. That is
+    deliberate so the fleet-wide status type — ``{package, ok, checks:[{name, ok,
+    detail, hint}], summary}``, being extended to three values in scitex-dev — can
+    be adopted here as a rename rather than a rewrite.
     """
 
     agent: str
@@ -246,6 +278,18 @@ class PreflightReport:
         if self.unknown:
             return None
         return True
+
+    @property
+    def blocks(self) -> bool:
+        """Must this relocation be refused? The policy, APPLIED — not re-decided.
+
+        Reads :data:`UNKNOWN_BLOCKS_RELOCATION` rather than assuming it, so a
+        consumer that wants unknowns to be advisory changes one constant instead
+        of hunting down every ``is not True`` at the call sites.
+        """
+        if self.failed:
+            return True
+        return bool(self.unknown) and UNKNOWN_BLOCKS_RELOCATION
 
     def blocking_reasons(self) -> tuple[str, ...]:
         """Every reason this relocation must not proceed, each with its hint.

@@ -110,7 +110,7 @@ def test_list_json_output_contains_all_stems(fake_skills_root):
     runner = CliRunner()
     # Act
     result = runner.invoke(skills_group, ["list", "--json"])
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     stems = sorted(d["name"] for d in data)
     # Assert
     assert stems == ["01_alpha", "02_beta"]
@@ -173,7 +173,7 @@ def test_get_json_payload_carries_name(fake_skills_root):
     runner = CliRunner()
     # Act
     result = runner.invoke(skills_group, ["get", "02_beta", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["name"] == "02_beta"
 
@@ -183,7 +183,7 @@ def test_get_json_payload_carries_content(fake_skills_root):
     runner = CliRunner()
     # Act
     result = runner.invoke(skills_group, ["get", "02_beta", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "beta" in payload["content"]
 

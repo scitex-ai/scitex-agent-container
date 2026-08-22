@@ -76,10 +76,10 @@ from pathlib import Path
 from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
 from ._secret_pool import (
     _SECRETS_ENVRC_VAR,
-    _pool_env,
     _pool_source_label,
     _read_env_file,
     _write_env_file,
+    read_pool,
 )
 
 # The env-var the telegrammer MCP reads its bot token from (see the shared
@@ -218,15 +218,42 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     agent starts normally: a missing bot token degrades one comms rail, it
     does not fail a boot. The token VALUE is never logged; only slot names,
     paths, and the agent name appear.
+
+    WHICH token is not decided here. That is
+    :func:`._cct_token_resolution.resolve_cct_token`, which this function is
+    otherwise identical to plus a file write — so the fleet-wide collision
+    census and the ownership ledger read the SAME derivation this writes,
+    and a second one cannot drift into existence beside it.
     """
-    if not _channel_requested(config):
-        return
+    # Imported inside the function on purpose: _cct_token_resolution imports
+    # this module's private helpers at module scope, and this call is the one
+    # edge that would close the cycle. The derivation module is the lower
+    # layer; the writer is the only thing above it.
+    from ._cct_token_resolution import (
+        SOURCE_ENV_FILE,
+        SOURCE_POOL,
+        TOKEN_DISABLED,
+        TOKEN_NO_CHANNEL,
+        TOKEN_RESOLVED,
+        resolve_cct_token,
+    )
+
     agent_name = getattr(config, "name", "") or ""
     workdir = getattr(config, "workdir", "") or ""
     env_file = dest / ".env"
+
+    # ONE pool read, shared with the resolution: sourcing ~28 secret files
+    # forks a bash, and doing it twice per deploy would double that cost for
+    # an answer that must be the same both times.
+    pool = read_pool()
+    resolution = resolve_cct_token(config, dest=dest, pool=pool)
+
+    if resolution.outcome in (TOKEN_NO_CHANNEL, TOKEN_DISABLED):
+        return
+
     existing = _read_env_file(env_file) if env_file.is_file() else {}
 
-    if existing.get(_TOKEN_VAR):
+    if resolution.source == SOURCE_ENV_FILE:
         # Hand-authored .envrc (or a prior deploy) already provided the
         # token — authoritative. Only backfill the identity default.
         if not existing.get(_AGENT_ID_VAR):
@@ -243,28 +270,32 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
             )
         return
 
-    declared = _declared_slot(config)
-    candidates = [declared] if declared else _slot_candidates(agent_name, workdir)
+    if resolution.outcome == TOKEN_RESOLVED:
+        if resolution.source == SOURCE_POOL:
+            value = pool.env.get(f"{_POOL_PREFIX}{resolution.slot}", "")
+            origin = f"pool slot {_POOL_PREFIX}{resolution.slot}"
+        else:  # SOURCE_SPEC_ENV — a token pinned in spec.apptainer.env.
+            value = str((getattr(config, "env", None) or {}).get(_TOKEN_VAR, "") or "")
+            origin = f"spec.apptainer.env {_TOKEN_VAR}"
+        # Mirrored into .env even for SOURCE_SPEC_ENV, where the --env flag
+        # already wins at runtime: prune_tokenless_telegrammer_mcp reads THIS
+        # file, so leaving it empty would delete the MCP server out from under
+        # an agent that does have a bot.
+        existing[_TOKEN_VAR] = value
+        existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
+        _write_env_file(env_file, existing)
+        _logger().info(
+            "cct: resolved bot token for agent %r from %s (value not logged) "
+            "-> %s; %s=%s.",
+            agent_name,
+            origin,
+            env_file,
+            _AGENT_ID_VAR,
+            existing[_AGENT_ID_VAR],
+        )
+        return
 
-    pool = _pool_env()
-    for slot in candidates:
-        value = pool.get(f"{_POOL_PREFIX}{slot}", "")
-        if value:
-            existing[_TOKEN_VAR] = value
-            existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
-            _write_env_file(env_file, existing)
-            _logger().info(
-                "cct: resolved bot token for agent %r from pool slot "
-                "%s%s (value not logged) -> %s; %s=%s.",
-                agent_name,
-                _POOL_PREFIX,
-                slot,
-                env_file,
-                _AGENT_ID_VAR,
-                existing[_AGENT_ID_VAR],
-            )
-            return
-
+    candidates = list(resolution.candidates)
     _logger().warning(
         "cct: no Telegram bot token for agent %r although spec.claude.channels "
         "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "

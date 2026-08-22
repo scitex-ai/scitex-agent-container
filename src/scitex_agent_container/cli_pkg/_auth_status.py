@@ -37,6 +37,7 @@ import time
 import click
 from rich.table import Table
 
+from .._runners._tmux._target import exact_target
 from .._runners._tmux.auth_status import evaluate, probe_to_state
 from ._helpers import _json_flag, console
 
@@ -95,7 +96,7 @@ def _capture(session: str) -> str | None:
     # capture; None is the honest "could not read" sentinel — never a crash)
     try:
         out = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p", "-J"],
+            ["tmux", "capture-pane", "-t", exact_target(session), "-p", "-J"],
             capture_output=True,
             text=True,
             timeout=10,

@@ -39,10 +39,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import time
 from pathlib import Path
 
+from ._sibling import warn_if_newer_sibling
 from ._status import DriftState, DriftStatus
 
 # How long a successful ``git fetch`` for a given repo stays "fresh".
@@ -374,15 +374,19 @@ def warn_if_spec_source_drifted(
     newest one that exists, it merely has not propagated. NOT_A_REPO /
     UNREACHABLE never block either — drift is *unknown* there, not present.
 
-    ``stream`` defaults to ``None`` and is resolved to ``sys.stderr`` at
-    CALL time (not import time) so a test's ``capsys`` / a runtime
-    stderr redirect is honoured. Pass an explicit stream to override.
+    ``stream=None`` (the default) routes the report through
+    ``scitex-logging`` — level-tagged, module-stamped, mirrored to the
+    rotating file — because a bare unprefixed line in lifecycle output is
+    exactly the no-discipline print the operator called out on 2026-08-15
+    (a ``sac-drift:`` line with no level sat between properly-tagged
+    ``WARN:`` lines in ``sac-restart``'s output). scitex-logging emits to
+    stderr, so ``capsys`` still observes it. Passing an EXPLICIT stream
+    keeps the old raw-print contract — that seam is deliberate and some
+    callers own their report's destination.
 
     NEVER raises for any reason other than the deliberate strict-mode
     block: the drift computation itself is fully guarded.
     """
-    if stream is None:
-        stream = sys.stderr
     # stx-allow: fallback (reason: the drift check is a best-effort guard;
     # an unforeseen bug in it must NEVER crash a launch — degrade to a
     # silent "unknown" status and let the agent start)
@@ -396,8 +400,50 @@ def warn_if_spec_source_drifted(
             detail=f"drift check raised {type(exc).__name__}: {exc}",
         )
     refusing = bool(strict and status.is_stale)
-    for line in drift_warning_lines(status, agent=agent, refusing=refusing):
-        print(line, file=stream, flush=True)
+    lines = drift_warning_lines(status, agent=agent, refusing=refusing)
+    if lines:
+        if stream is None:
+            # scitex-logging DIRECTLY — no sac-side wrapper, no sac-side
+            # logger. Operator ruling 2026-08-15: 「use scitex-logging」/
+            # 「you must not re-create logger on your side」/「it is not
+            # ssot」. The import is inside the function, not at module
+            # scope, because scitex_logging configures handlers on first
+            # import and a launch must not pay that at import time.
+            import scitex_logging
+
+            log = scitex_logging.getLogger(__name__)
+            # A refusal is an error; EVERYTHING ELSE is a warning — including
+            # NOT_A_REPO / UNREACHABLE, where drift is merely UNKNOWN.
+            #
+            # Those two were briefly routed to ``info`` on the grounds that an
+            # unknown is not a problem. Measured against the installed sac,
+            # that made the line VANISH: the default handler level filters
+            # info, so "give this diagnostic a level" turned into "delete this
+            # diagnostic". Downgrading a line that always printed is a
+            # REGRESSION dressed as tidying — the operator loses the report
+            # and nothing announces the loss.
+            #
+            # Level is chosen by what the READER must do, not by how the
+            # emitter feels about the state: "I could not check whether your
+            # spec is stale" is a caveat on the launch that just happened, and
+            # it has to be visible for that launch to be trusted.
+            emit = log.error if refusing else log.warning
+            for line in lines:
+                emit(line)
+        else:
+            for line in lines:
+                print(line, file=stream, flush=True)
+    # Sibling-copy staleness — a DIFFERENT mechanism from git drift, and
+    # deliberately INDEPENDENT of it: it must fire even when the spec
+    # source is NOT_A_REPO (the deliberately-not-a-repo live layout is the
+    # exact incident case), and it NEVER refuses. It is advisory and
+    # degrades to silence on any internal error.
+    try:
+        warn_if_newer_sibling(spec_path, agent=agent, stream=stream)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: the sibling check is advisory and already fully guarded inside _sibling; this second guard keeps "a warning must never crash a launch" true even if that guarantee regressed)
+        pass
     if refusing:
         raise SpecSourceDriftError(status, agent=agent)
     return status

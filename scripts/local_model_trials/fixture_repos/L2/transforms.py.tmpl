@@ -1,0 +1,152 @@
+"""Line-transform library: small composable text transforms.
+
+Every transform is a class with apply(lines) -> new list of lines.
+REGISTRY maps a short name to the class; pipeline.py composes them.
+"""
+
+import re
+
+_PUNCT_RE = re.compile(r"[^\w\s]")
+
+
+class TransformBase:
+    name = "base"
+
+    def apply(self, lines):
+        raise NotImplementedError
+
+
+class Uppercase(TransformBase):
+    name = "upper"
+
+    def apply(self, lines):
+        return [line.upper() for line in lines]
+
+
+class Lowercase(TransformBase):
+    name = "lower"
+
+    def apply(self, lines):
+        return [line.lower() for line in lines]
+
+
+class Capitalize(TransformBase):
+    name = "capitalize"
+
+    def apply(self, lines):
+        return [line.capitalize() for line in lines]
+
+
+class StripWhitespace(TransformBase):
+    name = "strip"
+
+    def apply(self, lines):
+        return [line.strip() for line in lines]
+
+
+class StripPunctuation(TransformBase):
+    name = "nopunct"
+
+    def apply(self, lines):
+        return [_PUNCT_RE.sub("", line) for line in lines]
+
+
+class Deduplicate(TransformBase):
+    name = "dedupe"
+
+    def apply(self, lines):
+        seen, out = set(), []
+        for line in lines:
+            if line not in seen:
+                seen.add(line)
+                out.append(line)
+        return out
+
+
+class SortLines(TransformBase):
+    name = "sort"
+
+    def apply(self, lines):
+        return sorted(lines)
+
+
+class ReverseLines(TransformBase):
+    name = "reverse"
+
+    def apply(self, lines):
+        return list(reversed(lines))
+
+
+class NumberLines(TransformBase):
+    name = "number"
+
+    def apply(self, lines):
+        return [f"{i + 1}: {line}" for i, line in enumerate(lines)]
+
+
+class DropEmpty(TransformBase):
+    name = "dropempty"
+
+    def apply(self, lines):
+        return [line for line in lines if line.strip()]
+
+
+class Indent(TransformBase):
+    name = "indent"
+
+    def apply(self, lines):
+        return ["    " + line for line in lines]
+
+
+class SqueezeSpaces(TransformBase):
+    name = "squeeze"
+
+    def apply(self, lines):
+        return [" ".join(line.split()) for line in lines]
+
+
+class TrimEnds(TransformBase):
+    name = "trimends"
+
+    def apply(self, lines):
+        return [line.rstrip("\n\r") for line in lines]
+
+
+class Repeat(TransformBase):
+    name = "repeat"
+
+    def apply(self, lines):
+        out = []
+        for line in lines:
+            out.append(line)
+            out.append(line)
+        return out
+
+
+REGISTRY = {
+    cls.name: cls
+    for cls in (
+        Uppercase, Lowercase, Capitalize, StripWhitespace,
+        StripPunctuation, Deduplicate, SortLines, ReverseLines,
+        NumberLines, DropEmpty, Indent, SqueezeSpaces, TrimEnds, Repeat,
+    )
+}
+
+
+def get_transform(name):
+    try:
+        return REGISTRY[name]
+    except KeyError:
+        raise KeyError(f"unknown transform: {name}") from None
+
+
+def available_transforms():
+    return sorted(REGISTRY)
+
+
+def register(cls):
+    """Register a TransformBase subclass under its `name`."""
+    if not issubclass(cls, TransformBase):
+        raise TypeError("register expects a TransformBase subclass")
+    REGISTRY[cls.name] = cls
+    return cls

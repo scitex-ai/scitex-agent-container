@@ -344,3 +344,47 @@ def test_an_alive_agent_no_op_returns_success(tmp_path, registry):
     # absence let a restart report success over an agent that never cycled
     # (incident 2026-07-12). See :mod:`._lifecycle._start_outcome`.
     assert bool(ok) is True and outcome_kind(ok) == KIND_ALREADY_RUNNING
+
+
+def test_an_alive_no_op_announces_agent_and_session_loudly(
+    tmp_path, registry, caplog
+):
+    """The no-op branch must EMIT what it found — never exit 0 in silence.
+
+    Incident 2026-08-14 (card sac-tmux-prefix-match-false-alive-20260814):
+    `sac agents start scitex-cards` exited 0 having done NOTHING, its
+    liveness pinned by a prefix-matched SIBLING tmux session. A start that
+    declines to launch must say so to the caller AND name the session it
+    believed in, so a mismatched session name is visible at a glance.
+    """
+    # Arrange
+    import logging as _logging
+
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [
+            Signal(
+                SOURCE_DELIVERY,
+                ALIVE,
+                "1 live inbox subscriber",
+                INSTRUMENT_LISTEN_BROKER,
+            )
+        ],
+    )
+    caplog.set_level(_logging.INFO, logger="scitex_agent_container")
+    # Act
+    lc.agent_start(
+        str(spec),
+        registry=registry,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=_Handover(),
+        sleep_fn=_no_sleep,
+        verdict_override=alive,
+    )
+    # Assert — one loud line naming the agent AND the tmux session it
+    # believed in ("(tmux session tui-alpha" — the pane-pid clause follows
+    # only when a live local pane resolves, so it is not pinned here).
+    assert "alpha is already running (tmux session tui-alpha" in caplog.text

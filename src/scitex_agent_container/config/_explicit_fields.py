@@ -42,6 +42,13 @@ EXCLUDED from the required map, each with its reason:
   * ``spec.startup`` — listed in ``_KNOWN_SPEC_KEYS`` but materialised
     by NO parser (``getattr(config, "startup", None)`` is always None);
     a dead key cannot be meaningfully required.
+  * ``spec.residency`` — the v4 residency axis (``resident`` |
+    ``one-shot``), added AFTER the corpus was written and DEFAULTED to
+    ``resident`` (``_residency_types``). Requiring it today would
+    red-start every live spec for declaring nothing new; the v3→v4
+    converter materializes the explicit line per spec, and turning
+    omission into an error is that later step — the same posture
+    ``to_home_layers`` took (see ``_validation._KNOWN_SPEC_KEYS``).
   * ``spec.multiplexer`` / ``spec.env-file`` / ``spec.exclude_hooks`` /
     ``spec.exclude_skills`` — read by ``load_v3`` but ABSENT from
     ``_KNOWN_SPEC_KEYS``, so ``validate_raw`` rejects them as unknown;
@@ -83,13 +90,13 @@ from ._acl_types import (
     OutboundCommsSpec,
 )
 from ._apptainer_spec import ApptainerSpec
+from ._harness_types import HARNESS_KEY, LEGACY_HARNESS_KEY
 from ._proxy_types import ProxySpec
 from ._types import (
     A2ASpec,
     AutonomousSpec,
     ClaudeSpec,
     ContainerSpec,
-    ContextManagementConfig,
     HealthSpec,
     HookSpec,
     RestartSpec,
@@ -110,6 +117,12 @@ class RequiredField:
     type_str: str  # human-readable expected type
     default_repr: str  # the CURRENT default, as shown in the hint
     paste_value: Any  # value emitted in the paste-ready YAML block
+    # A DEPRECATED spelling that also satisfies this requirement. The
+    # red-start ruling bans a migration PHASE, not a renamed key: a spec
+    # that already declares the axis under its old name has written the
+    # field, so demanding the new spelling too would be a second
+    # declaration of one thing. ``""`` = no alias (the normal case).
+    legacy_path: str = ""
 
 
 def _default_of(field: dataclasses.Field) -> Any:
@@ -165,7 +178,17 @@ def _top_level_fields() -> list[RequiredField]:
     """Hand-authored top-level ``spec.*`` scalars (no 1:1 dataclass)."""
     return [
         RequiredField("runtime", "str", "'tui'", "tui"),
-        RequiredField("provider", "str", "'anthropic'", "anthropic"),
+        # The harness axis. ``spec.provider`` is its deprecated alias and
+        # satisfies the requirement, so the ~100 specs written before the
+        # rename keep loading; the paste-ready hint emits the canonical
+        # spelling so anything scaffolded from here is already migrated.
+        RequiredField(
+            HARNESS_KEY,
+            "str",
+            "'anthropic'",
+            "anthropic",
+            legacy_path=LEGACY_HARNESS_KEY,
+        ),
         RequiredField(
             "workdir",
             "str | None",
@@ -229,7 +252,11 @@ def _both_kinds_fields() -> list[RequiredField]:
         exclude=("container_workdir",),
     )
     fields += _section("hooks", HookSpec)
-    fields += _section("context_management", ContextManagementConfig)
+    # context_management is GONE from the required set (2026-08-15): all 109
+    # live specs declared strategy=noop and nothing read any of its five
+    # fields. Requiring a block that cannot do anything taught readers the
+    # opposite of the truth. The key itself stays TOLERATED in _validation's
+    # known-fields list until the fleet sweep strips it from deployed specs.
     fields += _section("a2a", A2ASpec)
     fields += _section("comms.outbound", OutboundCommsSpec)
     fields += _section("comms.inbound", InboundCommsSpec)

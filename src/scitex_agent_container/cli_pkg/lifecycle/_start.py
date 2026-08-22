@@ -16,7 +16,7 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
-from ._start_gate_options import spec_gate_options
+from ._start_gate_options import spec_gate_options, verify_window_option
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
 
@@ -186,6 +186,7 @@ from ._start_preflight_gate import make_preflight_runner
     help="Replace existing materialised yamls under --params-out.",
 )
 @spec_gate_options
+@verify_window_option
 @click.option(
     "--no-redispatch",
     "no_redispatch",

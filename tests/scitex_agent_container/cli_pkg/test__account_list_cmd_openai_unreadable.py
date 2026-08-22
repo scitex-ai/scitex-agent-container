@@ -124,7 +124,7 @@ def test_list_json_stays_parseable_when_the_openai_store_is_unreadable():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert isinstance(json.loads(result.output), dict), result.output
+    assert isinstance(json.loads(result.stdout), dict), result.output
 
 
 def test_list_json_reports_the_unreadable_store_as_an_error_not_as_emptiness():
@@ -134,7 +134,7 @@ def test_list_json_reports_the_unreadable_store_as_an_error_not_as_emptiness():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert json.loads(result.output)["openai_error"] is not None, result.output
+    assert json.loads(result.stdout)["openai_error"] is not None, result.output
 
 
 def test_list_human_output_names_the_store_as_unreadable():
@@ -161,7 +161,7 @@ def test_control_healthy_store_reports_no_error():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert json.loads(result.output)["openai_error"] is None, result.output
+    assert json.loads(result.stdout)["openai_error"] is None, result.output
 
 
 def test_control_absent_store_is_not_reported_as_unreadable():
@@ -171,7 +171,7 @@ def test_control_absent_store_is_not_reported_as_unreadable():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert json.loads(result.output)["openai_error"] is None, result.output
+    assert json.loads(result.stdout)["openai_error"] is None, result.output
 
 
 def test_control_absent_store_still_exits_zero():
@@ -192,7 +192,7 @@ def test_control_healthy_store_still_lists_the_openai_account():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert json.loads(result.output)["openai_accounts"], result.output
+    assert json.loads(result.stdout)["openai_accounts"], result.output
 
 
 def test_control_unreadable_store_does_not_leak_the_claude_section():
@@ -203,4 +203,4 @@ def test_control_unreadable_store_does_not_leak_the_claude_section():
     # Act
     result = runner.invoke(account, ["list", "--json"])
     # Assert
-    assert "stored" in json.loads(result.output), result.output
+    assert "stored" in json.loads(result.stdout), result.output

@@ -154,7 +154,7 @@ def _resolve_def_name(layer: str) -> str:
 
 @click.group(name="image", cls=HelpRecursiveGroup)
 def image_group() -> None:
-    """Container image lifecycle (apptainer + docker; delegates to scitex-container)."""
+    """Container image lifecycle (apptainer — the only engine sac builds for)."""
 
 
 # Read-only reporting verbs (list / status / snapshot) — extracted to

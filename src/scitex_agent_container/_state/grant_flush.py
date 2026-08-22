@@ -78,8 +78,8 @@ def unblock_and_clear_pending(
     from .state_db_pending_approval import clear_pending_prompt
 
     grant_send(sender=sender, target=target, db_path=db_path, note=note)
-    unblocked = unblock_send(sender=sender, target=target, db_path=db_path)
-    cleared = clear_pending_prompt(sender=sender, target=target, db_path=db_path)
+    unblocked = unblock_send(sender=sender, target=target)
+    cleared = clear_pending_prompt(sender=sender, target=target)
     return {
         "sender": sender,
         "target": target,
@@ -123,8 +123,8 @@ def block_and_clear_pending(
     from .state_db_blocks import block_send
     from .state_db_pending_approval import clear_pending_prompt
 
-    block_send(sender=sender, target=target, db_path=db_path, note=note)
-    cleared = clear_pending_prompt(sender=sender, target=target, db_path=db_path)
+    block_send(sender=sender, target=target, note=note)
+    cleared = clear_pending_prompt(sender=sender, target=target)
     return {
         "sender": sender,
         "target": target,

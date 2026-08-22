@@ -45,9 +45,13 @@ def test_uncreatable_container_path_falls_back_to_tmp() -> None:
 
 
 def test_uncreatable_path_warns_loudly(capsys) -> None:
-    # Arrange
+    # Arrange — the WARN now goes through scitex-logging, whose stream handler
+    # resolves sys.stderr at emit time (LazyStderrStreamHandler), so capsys
+    # still sees it. Asserting on .err rather than .out is the POINT of the
+    # change: this diagnostic used to be written to bare stdout on an agent
+    # launch path where stdout is often attached to nothing.
     container_only = "/proc/sac-test-does-not-exist/work"
     # Act
     resolve_host_cwd(container_only)
     # Assert
-    assert "not host-creatable" in capsys.readouterr().out
+    assert "not host-creatable" in capsys.readouterr().err

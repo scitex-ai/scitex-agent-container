@@ -359,7 +359,7 @@ def _interpret(
             "no heartbeat recorded yet; the agent may still be finishing boot "
             "(sidecar reachable but session not ready) — retry shortly"
         )
-    if hb_fresh and hb_state in ("idle", "starting"):
+    if hb_fresh and hb_state in ("idle", "ready", "starting"):
         return (
             "agent is alive but did not consume the turn (heartbeat fresh, "
             f"state={hb_state!r}); it may still be finishing boot, or the turn "

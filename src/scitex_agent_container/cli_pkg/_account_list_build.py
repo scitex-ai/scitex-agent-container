@@ -56,8 +56,28 @@ def _per_account_usage_cache_path(name: str):
     return _store_path(None, Path.home()) / name / "usage.json"
 
 
-def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
+def usage_for_account(
+    acct_meta: dict, *, refresh: bool = False, passive: bool = False
+) -> dict | None:
     """Live PER-ACCOUNT usage fetch (5-min cache); ``--refresh`` busts it.
+
+    ``passive=True`` READS AND NOTHING ELSE — the cache, never the network.
+
+    That mode exists because THIS FUNCTION CAN ROTATE A CREDENTIAL. The
+    ``fetch_usage_for_credentials`` call below refreshes the OAuth token when it
+    is expired (and again on a 401), and that refresh rewrites the account's
+    ``.credentials.json`` in place. The refresh token is SINGLE USE: the server
+    invalidates the previous one, so every agent still holding the old access
+    token — on this host and on every other host that binds the same snapshot —
+    starts getting 401s. That is INCIDENT 2026-08-09, written up in
+    :mod:`._account_refresh_gate`, whose ``needs_refresh`` gate guards
+    ``sac accounts refresh`` and never guarded this path.
+
+    A LISTING MUST NOT ROTATE ANYTHING, and a listing that fans out across the
+    fleet must not do it N times at once, which is why the fleet view passes
+    ``passive=True`` for every host including this one. The local single-host
+    view keeps its historical behaviour so nothing an operator relies on
+    changes silently.
 
     The snapshot lives at
     ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
@@ -85,6 +105,12 @@ def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
     name = acct_meta.get("name")
     if not name:
         return None
+    if passive:
+        # The ONLY statement on this branch, deliberately: everything below can
+        # reach the network and can rewrite the credential. Returning here makes
+        # the passivity a property of the control flow rather than a promise in
+        # prose that a later edit could quietly break.
+        return read_account_usage_cache(name)
     store = _store_path(None, Path.home())
     creds_path = store / name / ".credentials.json"
     if not creds_path.is_file():
@@ -148,7 +174,12 @@ def verify_stored_identities(accounts: list[dict], *, opener=None) -> dict:
 
 
 def build_stored_rows(
-    accounts: list[dict], *, refresh: bool = False, opener=None
+    accounts: list[dict],
+    *,
+    refresh: bool = False,
+    opener=None,
+    passive: bool = False,
+    host: str = "",
 ) -> list[AccountRow]:
     """Convert stored-account dicts into :class:`AccountRow` for rendering.
 
@@ -176,11 +207,12 @@ def build_stored_rows(
     for acct in accounts:
         name = acct["name"]
         fresh = account_freshness(name)
-        usage = usage_for_account(acct, refresh=refresh) or {}
+        usage = usage_for_account(acct, refresh=refresh, passive=passive) or {}
         ident = identities.get(name)
         reading = classify_usage(usage, ident)
         rows.append(
             AccountRow(
+                host=host,
                 name=name,
                 freshness_state=fresh.state,
                 freshness_hours=fresh.hours,
@@ -202,7 +234,12 @@ def build_stored_rows(
 
 
 def build_stored_json(
-    accounts: list[dict], *, refresh: bool = False, opener=None
+    accounts: list[dict],
+    *,
+    refresh: bool = False,
+    opener=None,
+    passive: bool = False,
+    host: str = "",
 ) -> list[dict]:
     """Enrich stored-account dicts for ``sac accounts list --json``.
 
@@ -229,11 +266,17 @@ def build_stored_json(
         name = acct["name"]
         entry["provider"] = "claude-code"
         entry["qualified_id"] = f"claude-code:{name}"
+        # WHICH MACHINE this credential lives on. Empty on the historical
+        # single-host path (nothing there had a second machine to disambiguate
+        # from); the fleet view stamps it, because a credential is a per-host
+        # FILE and the same account is routinely valid here and expired there.
+        if host:
+            entry["host"] = host
         entry.update(read_account_plan(name))
         fresh = account_freshness(name)
         entry["freshness"] = fresh.state
         entry["freshness_hours"] = fresh.hours
-        usage = usage_for_account(acct, refresh=refresh)
+        usage = usage_for_account(acct, refresh=refresh, passive=passive)
         entry["usage"] = usage
         ident = identities.get(name)
         reading = classify_usage(usage or {}, ident)

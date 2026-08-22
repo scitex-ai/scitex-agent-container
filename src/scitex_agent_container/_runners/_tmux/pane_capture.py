@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import subprocess
 
+from ._target import exact_target
+
 _MAX_CHARS = 10_000
 _TMUX_SERVER = "sac"
 
@@ -21,7 +23,16 @@ def pane_capture(name: str, max_chars: int = _MAX_CHARS) -> str:
     session = f"sac-{name}"
     try:
         result = subprocess.run(
-            ["tmux", "-L", _TMUX_SERVER, "capture-pane", "-t", session, "-p", "-J"],
+            [
+                "tmux",
+                "-L",
+                _TMUX_SERVER,
+                "capture-pane",
+                "-t",
+                exact_target(session),
+                "-p",
+                "-J",
+            ],
             capture_output=True,
             text=True,
         )

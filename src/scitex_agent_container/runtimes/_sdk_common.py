@@ -462,4 +462,20 @@ def build_sdk_options(
 
     bake_spec_env_into_servers(kwargs.get("mcp_servers"), os.environ)
 
+    # ARGV IS PUBLIC — the assembled config must not ride on it. The SDK
+    # serialises an ``mcp_servers`` DICT into ``--mcp-config <json>`` on the
+    # ``claude`` child's command line, env blocks and all, and
+    # ``/proc/<pid>/cmdline`` is world-readable (``/proc/<pid>/environ`` is
+    # not). Every bake above therefore lands in a string any local user can
+    # read with ``ps`` — measured on scitex-compute-04 2026-08-14, a live
+    # Telegram bot token in cleartext (card
+    # sac-bot-token-plaintext-in-process-argv-20260814). Writing the same
+    # config to a 0600 per-agent file and passing the PATH keeps what claude
+    # loads identical while argv stops carrying values at all. Runs LAST, so
+    # the file holds exactly what the inline JSON would have held. See
+    # runtimes/_mcp_config_file.
+    from ._mcp_config_file import externalize_mcp_servers
+
+    externalize_mcp_servers(kwargs, agent_name)
+
     return ClaudeAgentOptions(**kwargs)

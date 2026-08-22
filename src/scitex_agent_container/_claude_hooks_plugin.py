@@ -82,6 +82,7 @@ def provide_hooks() -> "tuple[HookRule, ...]":
             event="pre-tool-use",
             severity="deny",
             matches=("Bash",),
+            provider=_PROVIDER,
             script=DENY_RAW_APPTAINER_BUILD,
         ),
     )

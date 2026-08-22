@@ -69,21 +69,40 @@ def format_unknown_host_error(
     peers: Mapping[str, "PeerSpec"],
     *,
     verb: str = "start",
+    local_names: Collection[str] = (),
 ) -> str:
     """Actionable message for a spec.host that resolves to nowhere.
 
     Lists the registered peers (the ``sac host list`` view) so the operator
     can immediately see whether the fix is a typo correction or a missing
     ``peers:`` entry in ``~/.scitex/agent-container/config.yaml``.
+
+    ``local_names`` — every spelling that DOES denote this machine — is
+    printed alongside, because the refusal has two very different causes and
+    the operator cannot tell them apart without it: the pin names a machine
+    that is genuinely elsewhere (fix the pin or register the peer), or the
+    pin names THIS machine under a name nothing here recognises (fix the
+    ledger). The second is what took ``scitex-nas-03`` down on 2026-08-14 —
+    the message said only "neither this machine nor a registered peer",
+    which is true and unhelpful when the machine IS the pinned host.
     """
     peer_names = ", ".join(sorted(peers)) if peers else "(none registered)"
     lines = [
         f"Cannot {verb} agent {name!r}: spec.host {target_host!r} is neither "
         f"this machine nor a registered peer.",
+    ]
+    known = sorted({n for n in local_names if n})
+    if known:
+        lines.append(f"This machine answers to: {', '.join(known)}")
+    lines += [
         f"Registered peers: {peer_names}",
         "  (from ~/.scitex/agent-container/config.yaml `peers:`; "
         "inspect with `sac host list`)",
         "Fix ONE of:",
+        f"  * if this machine IS {target_host!r}, say so in the host REGISTRY "
+        f"— add this machine's `hostname -s` to that host's `aliases:` in "
+        f"$SCITEX_DIR/dev/hosts.yaml (inspect with `scitex-dev host show "
+        f"{target_host}`); sac reads identity from there, so no spec changes,",
         "  * correct spec.host to this machine's resolved hostname "
         "(`hostname -s`) or a registered peer name,",
         f"  * register {target_host!r} under `peers:` (glob patterns like "
@@ -184,6 +203,7 @@ def format_route_error(
     *,
     verb: str,
     current_host: str = "",
+    local_names: Collection[str] = (),
 ) -> str:
     """Pick the right unroutable message for ``spec_host``'s shape.
 
@@ -199,7 +219,9 @@ def format_route_error(
     sequence type and explain a refusal the resolver never made.
     """
     if isinstance(spec_host, str):
-        return format_unknown_host_error(name, spec_host, peers, verb=verb)
+        return format_unknown_host_error(
+            name, spec_host, peers, verb=verb, local_names=local_names
+        )
     return format_unroutable_chain_error(
         name, route, peers, verb=verb, current_host=current_host
     )
@@ -253,6 +275,7 @@ def resolve_start_dispatch_peer(
                 peers,
                 verb="start",
                 current_host=current_host,
+                local_names=local_names,
             )
         )
     kind, peer = route_to_legacy_kind(route)
@@ -347,6 +370,7 @@ def resolve_spec_host_peer(
                 peers,
                 verb=verb,
                 current_host=current_host or "",
+                local_names=local_names,
             )
         )
     kind, peer = route_to_legacy_kind(route)

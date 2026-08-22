@@ -699,19 +699,26 @@ def test_build_stored_rows_propagates_reset_at_7d_from_cache(sandbox_home):
 
 
 def _stage_account_with_expiry_seconds(
-    home: Path, name: str, *, expires_in_s: int
+    home: Path, name: str, *, expires_in_s: int, base_ts: float | None = None
 ) -> None:
     """Write a real account snapshot with a forward-looking ``expiresAt``.
 
     expiresAt is stored as unix-ms by claude-code; the freshness reader
     accepts both seconds and ms (treats values > 1e12 as ms). We write
     ms to match the production shape.
+
+    ``base_ts`` anchors the expiry to a caller-chosen instant instead of
+    "now". Two stagings anchored to the SAME base are exactly
+    ``expires_in_s`` apart; without it each staging re-reads the clock,
+    so the gap between them is eroded by however long the caller spent
+    between the two calls.
     """
     import time
 
     save_account(name, {"email_address": f"{name}@x"}, home=home)
     accts_dir = home / ".scitex" / "agent-container" / "accounts" / name
-    expires_at_ms = int((time.time() + expires_in_s) * 1000)
+    anchor = time.time() if base_ts is None else base_ts
+    expires_at_ms = int((anchor + expires_in_s) * 1000)
     (accts_dir / ".credentials.json").write_text(
         json.dumps(
             {
@@ -776,14 +783,54 @@ def test_build_stored_rows_60s_apart_delta_about_60s(sandbox_home):
     assert 50 < delta_s < 70, f"expected ~60s TTL delta, got {delta_s:.1f}s"
 
 
-def test_build_stored_rows_60s_apart_rendered_ttl_differs(sandbox_home):
-    """The minute-resolution renderer surfaces the 60s tick as a string change."""
+def _rendered_ttl_pair_60s_apart(home: Path) -> tuple[str, str]:
+    """Render two real on-disk credentials whose TTLs are exactly 60s apart.
+
+    Both expiries are anchored to ONE ``base`` and both are read back at
+    that same ``base``, so the pair differs by exactly 60 seconds and by
+    nothing else. The credential is still written to and re-read from a
+    real file through the real reader — only the clock is pinned.
+    """
+    import time
+
+    from scitex_agent_container._account.creds_sync import account_freshness
+
+    base = time.time()
+    _stage_account_with_expiry_seconds(
+        home, "work", expires_in_s=2 * 3600 + 48 * 60, base_ts=base
+    )
+    hours_t0 = account_freshness("work", home=home, now=base).hours
+    _stage_account_with_expiry_seconds(
+        home, "work", expires_in_s=2 * 3600 + 47 * 60, base_ts=base
+    )
+    hours_t1 = account_freshness("work", home=home, now=base).hours
+    return format_ttl_live(hours_t0), format_ttl_live(hours_t1)
+
+
+def test_freshness_60s_apart_rendered_ttl_differs(sandbox_home):
+    """The minute-resolution renderer surfaces a 60s tick as a string change.
+
+    Regression guard for the pre-bullet-2 ``+2.8h`` format, which
+    collapsed a whole minute into the same string. The 60-second gap is
+    the point of the test, so it must not be widened to buy margin.
+
+    This previously read the pair through two live ``build_stored_rows``
+    calls and compared the rendered strings. That had ZERO margin: each
+    staging re-read the clock, so the on-disk gap was ``60 - a + b``
+    where ``a``/``b`` are the two read durations. The first call is
+    systematically the slower one (it pays the first-touch imports and
+    identity verification), so the gap was reliably UNDER 60s, and once
+    ``a`` reached ~1s the two values truncated to the same minute and
+    the test failed with ``'+2h47m' == '+2h47m'`` (observed on the
+    py3.11 lane, PR #1010). Pinning the clock removes the jitter without
+    weakening the claim; the real-clock half of the contract is covered
+    by ``test_build_stored_rows_60s_apart_delta_about_60s``, which
+    carries a ±10s margin.
+    """
     # Arrange — fresh ``$HOME`` (sandbox_home autouse fixture).
     home = sandbox_home
     # Act
-    rows_t0, rows_t1 = _ttl_tick_pair(home)
-    s0 = format_ttl_live(rows_t0[0].freshness_hours)
-    s1 = format_ttl_live(rows_t1[0].freshness_hours)
+    s0, s1 = _rendered_ttl_pair_60s_apart(home)
     # Assert
     assert s0 != s1, f"rendered TTL did not tick: {s0!r} == {s1!r}"
 
@@ -939,7 +986,7 @@ def test_cli_list_json_usage_as_of_keeps_iso_t_separator(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert — usage payload present + carries ISO ``T``. If the renderer
     # ever drops the cache, this assertion fires loudly so we notice.
@@ -1023,7 +1070,7 @@ def test_cli_list_json_carries_through_reset_at_5h(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert
     assert usage["reset_at_5h"] == "2026-05-31T12:05:00+00:00"
@@ -1036,7 +1083,7 @@ def test_cli_list_json_carries_through_reset_at_7d(sandbox_home):
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     usage = payload["stored"][0]["usage"]
     # Assert
     assert usage["reset_at_7d"] == "2026-06-04T08:00:00+00:00"

@@ -1,203 +1,226 @@
-"""CLI-seam tests for the ``sac agents start`` credential preflight gate.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""An unloadable spec must be refused by NAME, never by the lead credential.
 
-These drive the REAL click entry point (``cli_pkg.lifecycle._start.start``)
-rather than the resolver alone, because the seam is where the last defect
-of this class hid: PR #949 shipped a click default the resolver read as
-"be lenient", silently disabling a gate on every CLI start, and every
-unit test passed because none crossed click → gate → resolver.
+Measured 2026-08-19. ``POST /agents`` for an agent name with no spec on
+this host answered::
 
-The gate itself is unit-tested in
-``tests/scitex_agent_container/_state/test__preflight_creds_spec.py``.
-What is proved HERE is only that the CLI reaches it, with the target's
-own spec, and honours its verdict in both directions.
+    HTTP 502
+    {"returncode": 1, "stdout": "",
+     "stderr": "Error: OAuth token in /home/ywatanabe/.claude/.credentials.json
+                expired 257594 seconds ago. Run `claude login` to refresh."}
 
-Style: one assert per test, AAA markers, no monkeypatch fixture params.
+Every word of that is true about the FILE and none of it is about the
+REQUEST. The caller (hub, trying to stand up a scholar agent) could not
+tell whether to fix their call or wait for the daemon owner, and spent
+the interval reporting a permissions bug that did not exist.
+
+Cause: ``_iter_target_configs`` swallowed the spec load error and yielded
+a bare ``None``; the gate then asked the only question it had left — is
+the lead's ``~/.claude/.credentials.json`` fresh? — and reported THAT.
+Two unrelated faults printed the same sentence, and only one of them was
+fixable by the caller.
+
+Operator ruling, 2026-08-19: 「勝手にデフォルトのクレデンシャルズを使わない」
+— a silent fall back to a default is what the constitution forbids, and
+the requirement is to fail loudly and early instead.
+
+These tests pin both halves: the refusal NAMES the load error, and the
+lead credential file is not consulted on any path through this gate.
+
+PA-306: no ``unittest.mock`` / ``monkeypatch``. Production collaborators
+are swapped at the module namespace with an explicit save/restore
+``_swap``, matching ``test__restart_noop_reports_false.py``.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-from typing import Iterator
+from contextlib import contextmanager
+from typing import Callable, Iterator
 
-import pytest
-import yaml
-from click.testing import CliRunner
+import scitex_agent_container._state._preflight_creds as creds_mod
+import scitex_agent_container.config as config_mod
+import scitex_agent_container.config._resolve as resolve_mod
+from scitex_agent_container.cli_pkg.lifecycle._start_preflight_gate import (
+    any_target_needs_anthropic_oauth,
+    make_preflight_runner,
+)
 
-from scitex_agent_container.cli_pkg.lifecycle._start import start
-from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
-
-_ONE_HOUR_S = 3600
-
-
-def _write_creds(path: Path, expires_at_ms: int) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "sk-ant-oat-fake",
-                    "refreshToken": "sk-ant-ort-fake",
-                    "expiresAt": expires_at_ms,
-                    "scopes": ["user:inference"],
-                    "subscriptionType": "max",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
+_MISSING_SPEC = "spec file is absent on this host"
 
 
-def _fresh(path: Path) -> Path:
-    import time
-
-    return _write_creds(path, int((time.time() + _ONE_HOUR_S) * 1000))
-
-
-def _stale(path: Path) -> Path:
-    import time
-
-    return _write_creds(path, int((time.time() - _ONE_HOUR_S) * 1000))
-
-
-@pytest.fixture
-def isolated_home(tmp_path: Path) -> Iterator[Path]:
-    """Pin ``$HOME`` to a tmp dir and strip the API-key opt-out env vars."""
-    # Arrange
-    saved = {
-        "HOME": os.environ.get("HOME"),
-        "ANTHROPIC_API_KEY": os.environ.pop("ANTHROPIC_API_KEY", None),
-        "SAC_ANTHROPIC_API_KEY": os.environ.pop("SAC_ANTHROPIC_API_KEY", None),
-    }
-    os.environ["HOME"] = str(tmp_path)
+@contextmanager
+def _swap(module: object, name: str, fn: Callable) -> Iterator[None]:
+    saved = getattr(module, name)
+    setattr(module, name, fn)
     try:
-        yield tmp_path
+        yield
     finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        setattr(module, name, saved)
 
 
-def _write_spec(home: Path, name: str, pool: list[Path]) -> Path:
-    """Materialise a loadable v3 spec declaring ``pool`` as its account pool.
+class _Claude:
+    def __init__(self, provider=None):
+        self.provider = provider
 
-    ``host`` names a peer that is deliberately NOT registered, so the run
-    stops at the cross-host dispatch guard immediately after the preflight
-    — the gate's verdict is observed without launching anything.
-    """
-    doc = explicit_doc(
-        {
-            "host": "sac-test-unregistered-peer",
-            "workdir": str(home),
-            "claude": {"credentials_files": [str(p) for p in pool]},
-        }
+
+class _Cfg:
+    def __init__(self, name="agent", provider=None):
+        self.name = name
+        self.claude = _Claude(provider)
+
+
+def _runner(target: str):
+    return make_preflight_runner(
+        single_targets=[target],
+        bulk_yamls=[],
+        no_redispatch=False,
+        broker_self=False,
     )
-    spec_dir = home / "agents" / name
-    spec_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = spec_dir / f"{name}.yaml"
-    spec_path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-    return spec_path
 
 
-class TestStartHonoursTheSpecsOwnCredentials:
-    def test_start_is_not_refused_when_a_declared_pool_entry_is_fresh(
-        self, isolated_home: Path
-    ) -> None:
-        # Arrange — the 2026-08-10 outage shape: lead token dead, pool fresh.
-        _stale(isolated_home / ".claude" / ".credentials.json")
-        good = _fresh(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        spec = _write_spec(isolated_home, "poolagent", [good])
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert — the lead file is never even named; it is not this agent's.
-        assert ".claude/.credentials.json expired" not in result.output
+@contextmanager
+def _spec_that_will_not_load(message: str) -> Iterator[None]:
+    def _boom(_resolved):
+        raise FileNotFoundError(message)
 
-    def test_start_is_refused_when_every_declared_entry_is_expired(
-        self, isolated_home: Path
-    ) -> None:
-        # Arrange — inverse control: lead token FRESH (the old gate would
-        # have waved this through), every declared credential dead.
-        _fresh(isolated_home / ".claude" / ".credentials.json")
-        dead_a = _stale(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        dead_b = _stale(isolated_home / "accounts" / "beta" / ".credentials.json")
-        spec = _write_spec(isolated_home, "deadpool", [dead_a, dead_b])
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert
-        assert "every credential its spec declares is unusable" in result.output
-
-    def test_refusal_exits_nonzero(self, isolated_home: Path) -> None:
-        # Arrange — the gate is an ERROR, never a warning: a refusal must
-        # cost the caller a non-zero exit, not just a line of output.
-        _fresh(isolated_home / ".claude" / ".credentials.json")
-        dead = _stale(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        spec = _write_spec(isolated_home, "deadpool", [dead])
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert
-        assert result.exit_code == 1
-
-    def test_refusal_happens_before_any_dispatch_attempt(
-        self, isolated_home: Path
-    ) -> None:
-        # Arrange — the spec pins an unregistered peer, so reaching the
-        # dispatch stage is loudly visible. The gate must fire first.
-        _fresh(isolated_home / ".claude" / ".credentials.json")
-        dead = _stale(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        spec = _write_spec(isolated_home, "deadpool", [dead])
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert
-        assert "registered peer" not in result.output
-
-    def test_refusal_names_every_declared_candidate(self, isolated_home: Path) -> None:
-        # Arrange
-        _fresh(isolated_home / ".claude" / ".credentials.json")
-        dead_a = _stale(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        dead_b = _stale(isolated_home / "accounts" / "beta" / ".credentials.json")
-        spec = _write_spec(isolated_home, "deadpool", [dead_a, dead_b])
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert
-        assert str(dead_a) in result.output and str(dead_b) in result.output
-
-    def test_api_key_env_skips_the_gate_at_the_cli_seam(
-        self, isolated_home: Path
-    ) -> None:
-        # Arrange — every credential dead, but the operator opted into the
-        # API-key auth path, so the OAuth gate must not fire at all.
-        _stale(isolated_home / ".claude" / ".credentials.json")
-        dead = _stale(isolated_home / "accounts" / "alpha" / ".credentials.json")
-        spec = _write_spec(isolated_home, "keyagent", [dead])
-        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-fake"
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(spec), "-y"])
-        # Assert
-        assert "every credential its spec declares is unusable" not in result.output
+    with _swap(resolve_mod, "resolve_with_prefix", lambda raw: raw):
+        with _swap(config_mod, "load_config", _boom):
+            yield
 
 
-class TestUndeclaredSpecKeepsTheLeadFileGate:
-    def test_unloadable_spec_still_gates_on_the_expired_lead_file(
-        self, isolated_home: Path
-    ) -> None:
-        # Arrange — a spec that will not parse keeps the defensive default:
-        # gate on the lead file rather than skip the check.
-        _stale(isolated_home / ".claude" / ".credentials.json")
-        agents_dir = isolated_home / "agents"
-        (agents_dir / "broken").mkdir(parents=True)
-        (agents_dir / "broken" / "broken.yaml").write_text("{{{ not yaml")
-        runner = CliRunner()
-        # Act
-        result = runner.invoke(start, [str(agents_dir), "-y"])
-        # Assert
-        assert "expired" in result.output
+@contextmanager
+def _spec_that_loads(cfg: _Cfg) -> Iterator[None]:
+    with _swap(resolve_mod, "resolve_with_prefix", lambda raw: raw):
+        with _swap(config_mod, "load_config", lambda _r: cfg):
+            yield
+
+
+def _refuse(target: str = "scitex-scholar", message: str = _MISSING_SPEC) -> str:
+    """Run the gate against an unloadable spec; return its exit status word.
+
+    Swallows the ``SystemExit`` here so each test spends its single
+    permitted assertion on the BEHAVIOUR rather than on the raise.
+    """
+    run = _runner(target)
+    with _spec_that_will_not_load(message):
+        with _swap(creds_mod, "check_spec_oauth_credentials", lambda *a, **k: None):
+            try:
+                run()
+            except SystemExit:
+                return "refused"
+    return "dispatched"
+
+
+def _refusal_stderr(capsys, message: str = _MISSING_SPEC) -> str:
+    _refuse(message=message)
+    return capsys.readouterr().err
+
+
+def _lead_check_calls() -> list[int]:
+    calls: list[int] = []
+    run = _runner("scitex-scholar")
+    with _spec_that_will_not_load(_MISSING_SPEC):
+        with _swap(creds_mod, "check_oauth_token_expiry", lambda *a, **k: calls.append(1)):
+            with _swap(creds_mod, "check_spec_oauth_credentials", lambda *a, **k: None):
+                try:
+                    run()
+                except SystemExit:
+                    pass
+    return calls
+
+
+def _spec_checked_with(cfg: _Cfg) -> list[object]:
+    seen: list[object] = []
+    run = _runner(cfg.name)
+    with _spec_that_loads(cfg):
+        with _swap(
+            creds_mod,
+            "check_spec_oauth_credentials",
+            lambda c, *a, **k: seen.append(c),
+        ):
+            run()
+    return seen
+
+
+def test_an_unloadable_spec_is_refused_rather_than_dispatched():
+    # Arrange
+    target = "scitex-scholar"
+    # Act
+    outcome = _refuse(target)
+    # Assert
+    assert outcome == "refused"
+
+
+def test_the_refusal_names_the_target(capsys):
+    # Arrange
+    expected = "scitex-scholar"
+    # Act
+    err = _refusal_stderr(capsys)
+    # Assert
+    assert expected in err
+
+
+def test_the_refusal_carries_the_underlying_load_error(capsys):
+    # Arrange
+    expected = _MISSING_SPEC
+    # Act
+    err = _refusal_stderr(capsys, message=expected)
+    # Assert
+    assert expected in err
+
+
+def test_the_refusal_does_not_blame_an_expired_credential(capsys):
+    # Arrange: the old gate reported the lead file's expiry here.
+    forbidden = "expired"
+    # Act
+    err = _refusal_stderr(capsys)
+    # Assert
+    assert forbidden not in err
+
+
+def test_the_lead_credential_check_is_never_called_for_an_unloadable_spec():
+    # Arrange: a tripwire on the exact function the old gate called.
+    expected: list[int] = []
+    # Act
+    calls = _lead_check_calls()
+    # Assert
+    assert calls == expected
+
+
+def test_a_loadable_spec_still_reaches_the_spec_credential_check():
+    # Arrange
+    cfg = _Cfg(name="paper-scitex-clew")
+    # Act
+    seen = _spec_checked_with(cfg)
+    # Assert
+    assert seen == [cfg]
+
+
+def test_a_provider_backed_spec_skips_the_credential_check():
+    # Arrange
+    cfg = _Cfg(name="handyman-01", provider="qwen38")
+    # Act
+    seen = _spec_checked_with(cfg)
+    # Assert
+    assert seen == []
+
+
+def test_an_unloadable_spec_still_counts_as_needing_oauth():
+    # Arrange
+    target = "scitex-scholar"
+    # Act
+    with _spec_that_will_not_load(_MISSING_SPEC):
+        result = any_target_needs_anthropic_oauth([target], [])
+    # Assert
+    assert result is True
+
+
+def test_a_provider_backed_spec_does_not_need_oauth():
+    # Arrange
+    cfg = _Cfg(name="handyman-01", provider="qwen38")
+    # Act
+    with _spec_that_loads(cfg):
+        result = any_target_needs_anthropic_oauth([cfg.name], [])
+    # Assert
+    assert result is False

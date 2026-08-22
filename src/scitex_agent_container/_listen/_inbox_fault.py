@@ -93,14 +93,40 @@ _DETAIL = {
         "scitex-cards card assigned to it), or ask the operator."
     ),
     FAULT_NOT_RUNNING: (
-        "NOT RUNNING — this registry row declares an agent, but no live session "
-        "was observed for it (the probe SUCCEEDED, so this is real absence, not "
-        "a failed look). The row outlived the process. Its 0 inbox subscribers "
-        "mean 'nobody is home', NOT 'a detached adapter': nothing will "
-        "reconnect to drain its queue until someone deliberately starts it, so "
-        "waiting for a reply will never succeed."
+        "NOT RUNNING ON {host} — this registry row declares an agent, and no "
+        "live tmux session for it exists ON THIS HOST. The probe ran and "
+        "observed a real absence HERE; it says nothing about any other host, "
+        "because it can only see {host}'s sessions. If the agent is pinned "
+        "elsewhere the row outlived the process ON THIS HOST ONLY — ASK THAT "
+        "HOST before concluding it is down; `sac agents start <name>` run "
+        "there reports whether it is already running. Once that is ruled out, "
+        "the row outlived the process: its 0 inbox subscribers mean 'nobody "
+        "is home', NOT 'a detached adapter', and nothing will reconnect to "
+        "drain its queue until someone deliberately starts it."
     ),
 }
+
+#: Resolved once. ``gethostname`` is cheap, but this is formatted per ROW on a
+#: fleet-sized response and the value cannot change within a process.
+_THIS_HOST: str | None = None
+
+
+def _this_host() -> str:
+    """This daemon's hostname, for naming the population a probe covered.
+
+    Falls back to the literal ``"this host"`` so the message degrades to the
+    previous, still-honest phrasing rather than raising inside an ADVISORY
+    overlay that must never fail the status route.
+    """
+    global _THIS_HOST
+    if _THIS_HOST is None:
+        try:
+            import socket
+
+            _THIS_HOST = socket.gethostname() or "this host"
+        except Exception:  # stx-allow: fallback (reason: the fault overlay is advisory; a hostname lookup must never fail the status route)
+            _THIS_HOST = "this host"
+    return _THIS_HOST
 
 
 def session_snapshot() -> dict | None:
@@ -241,7 +267,9 @@ def annotate_faults(
         new = dict(row)
         new["fault"] = fault
         if fault is not None:
-            new["fault_detail"] = _DETAIL[fault]
+            # `.format` on a template with no placeholders is a no-op, so the
+            # DEAF entry is unaffected and needs no branch here.
+            new["fault_detail"] = _DETAIL[fault].format(host=_this_host())
         out.append(new)
     return out
 

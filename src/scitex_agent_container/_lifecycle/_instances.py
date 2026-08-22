@@ -84,6 +84,47 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     return pid
 
 
+def _runtime_session_name(config: AgentConfig, runtime: Any) -> str | None:
+    """Resolve the multiplexer session the runtime just launched into.
+
+    Asks the runtime itself (:meth:`runtimes.base.RuntimeBase.session_name`)
+    rather than re-deriving the name from a convention, so the string
+    landing in ``instances.screen`` is THE SAME one the runtime passed to
+    ``tmux new-session -s`` — a re-derivation is free to drift from what
+    was actually created, and a drifted name probes an empty answer that
+    reads exactly like a dead agent.
+
+    Why the column must be filled at all: ``screen`` is the only column in
+    ``instances`` naming something the OS can be asked about independently
+    of sac's own bookkeeping. Nothing wrote it, so every "did this agent
+    cycle?" question could only be answered from the rows sac itself had
+    just written — an echo, not evidence. MEASURED 2026-08-14 on
+    scitex-compute-04: three ``instances`` rows for one agent, all with
+    ``screen`` NULL and pids matching no live process, while the ONE real
+    tmux session (``tui-scitex-agent-container``) had been alive since the
+    previous day. ``sac agents stop`` / ``restart`` reported success over
+    it every time.
+
+    Returns ``None`` (honestly "this runtime has no session to name") for
+    a runtime without the seam, a runtime that has no multiplexer at all
+    (SDK / apptainer / docker), or a probe that failed. ``None`` is SAFE
+    by construction: the restart postcondition reads a NULL ``screen`` as
+    "cannot verify" rather than as "verified", so an absent name costs an
+    abstention — whereas a GUESSED name would buy a false verification,
+    which is the very failure this exists to kill.
+    """
+    getter = getattr(runtime, "session_name", None)
+    if not callable(getter):
+        return None
+    try:
+        session = getter(config)
+    except Exception:  # stx-allow: fallback (reason: a session-name probe hiccup must never block an agent start; NULL is the honest "unknown" and downstream reads it as "cannot verify" — see docstring)
+        return None
+    if not isinstance(session, str) or not session.strip():
+        return None
+    return session
+
+
 def _state_dir_for(config: AgentConfig, runtime: Any):
     """Per-agent runtime state dir, via the runtime's own resolver.
 
@@ -170,10 +211,20 @@ def record_local_instance(
     # ``os.kill``, so a peer's pid could collide with an unrelated local
     # process and vouch for a dead agent as alive). Those correctly stay
     # NULL.
+    #
+    # ``screen`` is the same story one column over: the runtime names the
+    # multiplexer session it just created (see
+    # :func:`_runtime_session_name`), so the row carries a handle the OS
+    # can be asked about WITHOUT re-reading sac's own bookkeeping. The
+    # three remote call sites leave it NULL for the same reason they leave
+    # ``pid`` NULL — a peer's tmux session is not in this host's namespace,
+    # so a name recorded here could only ever be probed against the wrong
+    # server.
     instance_id = record_instance_start(
         name=config.name,
         host=host,
         pid=_runtime_pid(config, runtime),
+        screen=_runtime_session_name(config, runtime),
         a2a_port=a2a_port,
         bound_port=a2a_port,
         remote=False,
@@ -236,6 +287,24 @@ def record_local_instance(
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
+
+    # v4 step 5 — THE BIRTH CERTIFICATE (operator requirement 2026-08-14:
+    # 「起動した後にコンパイルされた最終的なスペックをエージェントが持つ
+    # ようにしてください…状態なのでdb に入れるのがよさそうですよね」).
+    # This is the one point where the COMPILED config and the freshly
+    # minted incarnation id are both in hand, so the fully-resolved spec
+    # (secrets referenced by slot/source name, never by value) is
+    # recorded here, keyed by the same id the beats and the ExitRecord
+    # carry. Best-effort with a LOGGED origin, same contract as the
+    # sibling side-writes above — see ``_birth_certificate``.
+    from ._birth_certificate import write_birth_certificate
+
+    # No ``db_path``: the certificate went to per-host PostgreSQL on
+    # 2026-08-19. This function's own ``db_path`` still names the SQLite
+    # state.db that ``record_local_instance`` above writes to — the two
+    # records now live in two different databases, which is exactly what
+    # the migration is doing, one table at a time.
+    write_birth_certificate(config, instance_id)
     return instance_id
 
 

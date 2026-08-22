@@ -116,10 +116,11 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). |
+| `sac doctor [--fleet]` | Diagnose agent-spec source drift (locally, or `--fleet` across peers). Also runs the poller-singleton check. |
+| `sac doctor --pollers` | Is more than one live Telegram poller holding the same bot token on this host? Read-only; `ok` / `violation` / `unknown`, never a token value. |
 | `sac subagent get-state` | Pure state data for every matching Claude Code Agent-tool subagent (Type 2). |
 | `sac mcp list-tools` | Local MCP introspection (no MCP server bundled — sac agents spawn their own via `to_home/.mcp.json`). |
-| `sac skills list / get` | Bundled agent-facing skills. |
+| `sac dev skills list / get` | Bundled agent-facing skills. |
 | `sac list-python-apis` | Enumerate the public Python API. |
 | `sac auto-accept` | Auto-accept TUI handler for legacy claude-code agents (the apptainer/SDK runner doesn't need it). |
 

@@ -26,24 +26,22 @@ def _write_transcript(path: Path, *records: dict) -> None:
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
 
-def test_record_dispatch_noop_without_from_agent(tmp_path: Path) -> None:
+def test_record_dispatch_noop_without_from_agent(tmp_path: Path, pg_schema: str) -> None:
     # Arrange
-    db = tmp_path / "state.db"
     # Act
     row_id = outbound.record_dispatch(
-        db_path=db, agent="a", from_agent="", dispatch_id="d1"
+        agent="a", from_agent="", dispatch_id="d1"
     )
     # Assert
     assert row_id is None
 
 
-def test_record_dispatch_records_pending_inbound(tmp_path: Path) -> None:
+def test_record_dispatch_records_pending_inbound(tmp_path: Path, pg_schema: str) -> None:
     # Arrange
-    db = tmp_path / "state.db"
     # Act
-    outbound.record_dispatch(db_path=db, agent="a", from_agent="lead", dispatch_id="d1")
+    outbound.record_dispatch(agent="a", from_agent="lead", dispatch_id="d1")
     # Assert
-    assert len(ledger.list_inbound(agent="a", db_path=db)) == 1
+    assert len(ledger.list_inbound(agent="a")) == 1
 
 
 def test_summarize_transcript_returns_last_assistant_text(tmp_path: Path) -> None:
@@ -77,12 +75,10 @@ def test_summarize_transcript_unknown_when_no_assistant_reply(tmp_path: Path) ->
     assert status == "unknown"
 
 
-def test_flush_one_completion_false_when_queue_empty(tmp_path: Path) -> None:
+def test_flush_one_completion_false_when_queue_empty(tmp_path: Path, pg_schema: str) -> None:
     # Arrange — nothing recorded.
-    db = tmp_path / "state.db"
     # Act
     flushed = outbound.flush_one_completion(
-        db_path=db,
         agent="a",
         transcript_path=None,
         listen_url="http://127.0.0.1:7878",
@@ -93,10 +89,9 @@ def test_flush_one_completion_false_when_queue_empty(tmp_path: Path) -> None:
     assert flushed is False
 
 
-def test_flush_one_completion_pushes_to_requester(tmp_path: Path) -> None:
+def test_flush_one_completion_pushes_to_requester(tmp_path: Path, pg_schema: str) -> None:
     # Arrange — one queued dispatch + a transcript with a reply.
-    db = tmp_path / "state.db"
-    outbound.record_dispatch(db_path=db, agent="a", from_agent="lead", dispatch_id="d1")
+    outbound.record_dispatch(agent="a", from_agent="lead", dispatch_id="d1")
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
@@ -112,7 +107,6 @@ def test_flush_one_completion_pushes_to_requester(tmp_path: Path) -> None:
 
     # Act
     outbound.flush_one_completion(
-        db_path=db,
         agent="a",
         transcript_path=transcript,
         listen_url="http://127.0.0.1:7878",
@@ -123,13 +117,11 @@ def test_flush_one_completion_pushes_to_requester(tmp_path: Path) -> None:
     assert captured["requester"] == "lead"
 
 
-def test_flush_one_completion_marks_reported_on_success(tmp_path: Path) -> None:
+def test_flush_one_completion_marks_reported_on_success(tmp_path: Path, pg_schema: str) -> None:
     # Arrange
-    db = tmp_path / "state.db"
-    outbound.record_dispatch(db_path=db, agent="a", from_agent="lead", dispatch_id="d1")
+    outbound.record_dispatch(agent="a", from_agent="lead", dispatch_id="d1")
     # Act
     outbound.flush_one_completion(
-        db_path=db,
         agent="a",
         transcript_path=None,
         listen_url="http://127.0.0.1:7878",
@@ -137,16 +129,16 @@ def test_flush_one_completion_marks_reported_on_success(tmp_path: Path) -> None:
         push_fn=lambda **_kw: None,
     )
     # Assert
-    rows = ledger.list_inbound(agent="a", db_path=db)
+    rows = ledger.list_inbound(agent="a")
     assert rows[0]["status"] == ledger.STATUS_REPORTED
 
 
 def test_flush_one_completion_marks_failed_and_raises_on_push_error(
     tmp_path: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — a push that fails loud (no live subscriber).
-    db = tmp_path / "state.db"
-    outbound.record_dispatch(db_path=db, agent="a", from_agent="lead", dispatch_id="d1")
+    outbound.record_dispatch(agent="a", from_agent="lead", dispatch_id="d1")
 
     def boom(**_kw: Any) -> None:
         raise RuntimeError("no live subscriber")
@@ -155,8 +147,7 @@ def test_flush_one_completion_marks_failed_and_raises_on_push_error(
     # Assert
     with pytest.raises(RuntimeError):
         outbound.flush_one_completion(
-            db_path=db,
-            agent="a",
+                agent="a",
             transcript_path=None,
             listen_url="http://127.0.0.1:7878",
             bearer=None,
@@ -219,18 +210,51 @@ def _run_main_with(env: dict[str, str], stdin_text: str) -> int:
                 os.environ[k] = v
 
 
-def test_main_returns_zero_when_queue_empty(tmp_path: Path) -> None:
-    # Arrange — wired env, empty ledger, a transcript path on stdin.
-    db = tmp_path / "state.db"
+def test_main_returns_zero_when_queue_empty(tmp_path: Path, pg_schema: str) -> None:
+    """Wired env, empty ledger, a transcript path on stdin.
+
+    ``SCITEX_AGENT_CONTAINER_STATE_DB`` IS DELIBERATELY ABSENT, and its absence
+    is now the interesting half — see the sibling test below. The two env vars
+    here are the two ``main`` still needs: who to report as, and where the bus
+    is.
+    """
+    # Arrange
     env = {
         "SCITEX_AGENT_CONTAINER_AGENT": "a",
-        "SCITEX_AGENT_CONTAINER_STATE_DB": str(db),
         "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
     }
     # Act
     rc = _run_main_with(env, json.dumps({"transcript_path": str(tmp_path / "x.jsonl")}))
     # Assert
     assert rc == 0
+
+
+def test_main_still_flushes_without_the_retired_state_db_env(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """The ledger moved to PostgreSQL, so a SQLite path must not gate the flush.
+
+    ``main`` used to refuse unless ``SCITEX_AGENT_CONTAINER_STATE_DB`` was set,
+    which was right while the ledger was a file and became a trap the moment it
+    was not: an agent without that variable would have silently stopped
+    reporting completions, with the refusal resting on a fact that no longer
+    bears on whether the work can be done.
+
+    Pinned as a POSITIVE outcome rather than "does not crash": a pending row is
+    recorded first, so a `main` that still gated on the retired variable would
+    return before flushing it and leave the row pending.
+    """
+    # Arrange — one pending dispatch, and no STATE_DB anywhere in the env.
+    ledger.record_inbound(agent="a", from_agent="lead", dispatch_id="d1")
+    env = {
+        "SCITEX_AGENT_CONTAINER_AGENT": "a",
+        "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
+    }
+    _run_main_with(env, json.dumps({"transcript_path": str(tmp_path / "x.jsonl")}))
+    # Act
+    rows = ledger.list_inbound(agent="a")
+    # Assert
+    assert rows and rows[0]["status"] != ledger.STATUS_PENDING
 
 
 def test_main_noop_when_agent_env_absent(tmp_path: Path) -> None:

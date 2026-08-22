@@ -1,4 +1,4 @@
-"""`sac skills` — list / get / install agent-facing skills bundled with this package.
+"""`sac dev skills` — list / get / install agent-facing skills bundled with this package.
 
 Self-contained. No scitex-dev runtime dep — walks the package's own
 `_skills/scitex-agent-container/` directory directly.
@@ -37,10 +37,10 @@ def skills_group() -> None:
 
     \b
     Examples:
-      $ sac skills list
-      $ sac skills get 01_installation
-      $ sac skills install                      # → ~/.scitex/dev/skills/scitex-agent-container/
-      $ sac skills install --claude-symlink     # also expose to ~/.claude/skills/scitex/
+      $ sac dev skills list
+      $ sac dev skills get 01_installation
+      $ sac dev skills install                      # → ~/.scitex/dev/skills/scitex-agent-container/
+      $ sac dev skills install --claude-symlink     # also expose to ~/.claude/skills/scitex/
     """
 
 
@@ -51,8 +51,8 @@ def skills_list(as_json: bool) -> None:
 
     \b
     Example:
-      $ sac skills list
-      $ sac skills list --json
+      $ sac dev skills list
+      $ sac dev skills list --json
     """
     root = _skills_root()
     files = _list_skill_files(root)
@@ -82,8 +82,8 @@ def skills_get(name: str, as_json: bool) -> None:
 
     \b
     Example:
-      $ sac skills get 01_installation
-      $ sac skills get 02_quick-start --json
+      $ sac dev skills get 01_installation
+      $ sac dev skills get 02_quick-start --json
     """
     root = _skills_root()
     target_stem = name[:-3] if name.endswith(".md") else name
@@ -149,9 +149,9 @@ def skills_install(
 
     \b
     Example:
-      $ sac skills install
-      $ sac skills install --claude-symlink
-      $ sac skills install --no-link --dest /tmp/sac-skills
+      $ sac dev skills install
+      $ sac dev skills install --claude-symlink
+      $ sac dev skills install --no-link --dest /tmp/sac-skills
     """
     del yes  # accepted for §2 compliance; install is non-interactive
     src = _skills_root().resolve()

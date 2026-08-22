@@ -41,6 +41,28 @@ def _swap(name: str, fn: Callable) -> Iterator[None]:
         setattr(stop_mod, name, saved)
 
 
+#: Fixture agent names. The prefix is LOAD-BEARING — do not shorten these.
+#:
+#: They used to be "a" and "b", and that reached the REAL FLEET. Measured
+#: 2026-08-19: `_stop` resolves each target name through
+#: `config._resolve.resolve_with_prefix`, which PREFIX-MATCHED "b" to the
+#: live agent "business", decided it was REMOTE, and issued
+#:
+#:     ssh ywata-note-win-net -- 'sac agents stop b --json'
+#:
+#: The `_swap("agent_stop", ...)` above does not cover that path — a remote
+#: target never calls the local function — so the swap gave the APPEARANCE
+#: of isolation while a production stop went out over SSH. It failed only
+#: because this container could not resolve that hostname; anywhere DNS
+#: works, the test would have stopped a real agent AND THEN PASSED, since
+#: `exit_code == 0` is what it asserts.
+#:
+#: A `tmp_path` fixture bounds what the test SETS UP, never what the code
+#: under test REACHES FOR. These names are chosen so that no real agent can
+#: ever be a prefix-extension of them.
+FIXTURE_AGENTS = ("pytest-fixture-a", "pytest-fixture-b")
+
+
 def _seed(tmp_path: Path, names) -> Path:
     """Seed a directory with N agents (each <name>/<name>.yaml)."""
     root = tmp_path / "agents"
@@ -64,7 +86,7 @@ class _FakeCfg:
 @pytest.fixture
 def dry_run_result(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, [str(root), "extra", "--dry-run"])
@@ -107,7 +129,7 @@ def test_dry_run_lists_targets_mentions_bulk_yaml(dry_run_result):
 @pytest.fixture
 def bulk_no_yes_result(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, [str(root)])
@@ -141,7 +163,7 @@ def test_bulk_without_yes_refuses_prints_message(bulk_no_yes_result):
 @pytest.fixture
 def bulk_with_yes_run(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     stopped: list = []
     # Act
     with (
@@ -172,7 +194,7 @@ def test_bulk_with_yes_stops_all_invokes_agent_stop_per_agent(bulk_with_yes_run)
     # Act
     names = sorted(s[0] for s in stopped)
     # Assert
-    assert names == ["a", "b"]
+    assert names == sorted(FIXTURE_AGENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +208,7 @@ def bulk_failure_result(tmp_path):
     def _boom(_name, _force, *, prune_runtime=False):
         raise RuntimeError("boom")
 
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     # Act
     with (
         _swap("load_config", lambda p: _FakeCfg(Path(p).stem)),
@@ -519,7 +541,7 @@ def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["zeta", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("dispatched") is True
 
@@ -631,7 +653,7 @@ def test_force_release_json_envelope_carries_force_released_flag(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("force_released") is True
 
@@ -645,7 +667,7 @@ def test_force_release_json_envelope_carries_release_exit_reason(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("exit_reason") == "peer-unreachable-force-released"
 

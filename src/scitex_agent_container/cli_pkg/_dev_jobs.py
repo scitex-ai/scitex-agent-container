@@ -4,6 +4,9 @@ THE GROUP NAME IS THE ``JobSpec.kind``. That is the whole design, it is
 the ecosystem-wide grammar (operator decision, 2026-08-11 — every SciTeX
 package exposes ``scitex-<pkg> dev {service,timer,cron} <verb>``), and it
 is the countermeasure to the outage below rather than a cosmetic rename.
+The tables that encode it now live in :mod:`._dev_jobs_grammar`; this
+module holds the Click command builders that consume them, and
+re-exports every public name so existing imports keep resolving.
 
 WHAT THE OLD SHAPE COST
 =======================
@@ -58,6 +61,21 @@ filtered ``kind="daemon"``, never legal, and delegated to an
 ``ecosystem daemon`` that does not exist). A long-running job is
 ``kind="service"``.
 
+INSTALL IS NOT ENABLE, WHICH IS WHY ``enable`` IS BULK
+======================================================
+``install`` and ``enable`` are both bulk verbs here: given no NAME they
+act on every job of the kind. That is not symmetry for its own sake.
+scitex-dev's ``_jobs_units.do_install`` writes the unit files and then
+merely PRINTS the ``systemctl --user enable --now`` line to stderr, so a
+host that has been "installed" carries N correct, INERT units. Arming
+them was N hand-typed commands until 2026-08-15, and seven of sac's ten
+timers were duly found ``disabled`` on scitex-compute-04. ``disable``
+stays strictly per-name — the reasoning for the asymmetry is on
+:data:`._dev_jobs_grammar._BULK_VERBS`.
+
+The collective apply that CALLS these verbs from host provisioning lives
+in :mod:`._dev_jobs_apply`.
+
 Graceful degradation: a scitex-dev that predates the ``scitex_dev.jobs``
 contract raises ``ImportError`` on the lazy import; every command catches
 it and prints an upgrade hint instead of a stack trace.
@@ -72,175 +90,20 @@ These commands are attached onto ``dev_group`` at import time via
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
-
 import click
 
 from .._jobs import _names
 from . import _dev_jobs_backend as _backend
-
-# The scitex-dev release that first ships ``scitex_dev.jobs`` (PR #91).
-# scitex-dev 0.15.0 is the last release WITHOUT it; the jobs contract is
-# in scitex-dev's Unreleased section -> first available in 0.16.0.
-_JOBS_MIN_VERSION = "0.16.0"
-
-#: ``sac dev <group>`` -> the ``JobSpec.kind`` values that group lists.
-#:
-#: THE SSOT for this mapping, and the reason it is module-level rather
-#: than inlined: ``_jobs_audit.audit_jobs`` imports THIS dict to check
-#: that every kind sac declares has a consumer able to see it, and that
-#: no group filters on a kind the validator would reject. If the audit
-#: re-declared the mapping instead of importing the one production uses,
-#: the audit would be checking its own opinion — a declaration with no
-#: live counterpart, i.e. the exact disease it exists to detect.
-#:
-#: Every entry except the deprecated alias maps a group to EXACTLY the
-#: kind of the same name. That identity is the invariant; it is checked,
-#: not trusted.
-GROUP_KINDS: dict[str, frozenset[str]] = {
-    "service": frozenset({"service"}),
-    "timer": frozenset({"timer"}),
-    "cron": frozenset({"cron"}),
-    # Deprecated alias — see DEPRECATED_GROUPS. Covers both unit kinds,
-    # which is what `scitex-dev ecosystem systemd` has always selected.
-    "systemd": frozenset({"service", "timer"}),
-}
-
-_YYYY_MM = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
-
-@dataclass(frozen=True)
-class Deprecation:
-    """A dated retirement plan for a CLI surface.
-
-    Every field is load-bearing and validated at construction, because a
-    deprecation with a missing or malformed date is indistinguishable
-    from no deprecation at all — which is how "temporary" aliases become
-    permanent API.
-    """
-
-    since: str
-    remove_after: str
-    replacement: str
-
-    def __post_init__(self) -> None:
-        for field, value in (
-            ("since", self.since),
-            ("remove_after", self.remove_after),
-        ):
-            if not _YYYY_MM.match(value):
-                raise ValueError(
-                    f"Deprecation.{field}={value!r} must be YYYY-MM — a vague "
-                    "date is the same as no date"
-                )
-        if self.remove_after <= self.since:
-            raise ValueError(
-                f"Deprecation.remove_after={self.remove_after!r} must be after "
-                f"since={self.since!r}"
-            )
-        if not self.replacement:
-            raise ValueError(
-                "Deprecation.replacement must name what to use instead — a "
-                "deprecation with no replacement is just a complaint"
-            )
-
-    def is_expired(self, today: str) -> bool:
-        """True once ``today`` (``YYYY-MM``) is past ``remove_after``."""
-        if not _YYYY_MM.match(today):
-            raise ValueError(f"today={today!r} must be YYYY-MM")
-        return today > self.remove_after
-
-    def notice(self, group: str) -> str:
-        """The stderr line printed on every use of the deprecated group."""
-        return (
-            f"DEPRECATED: `sac dev {group}` is deprecated since {self.since} "
-            f"and will be REMOVED after {self.remove_after}. "
-            f"Use: {self.replacement}. "
-            "(The group name is now the JobSpec kind — `systemd` is a "
-            "delivery mechanism, not a kind.)"
-        )
-
-
-#: Groups kept only for compatibility. A group listed here MUST also be
-#: in GROUP_KINDS; the audit checks that a deprecated alias never becomes
-#: the only way to reach a kind.
-DEPRECATED_GROUPS: dict[str, Deprecation] = {
-    "systemd": Deprecation(
-        since="2026-08",
-        remove_after="2026-10",
-        replacement="`sac dev service` / `sac dev timer`",
-    ),
-}
-
-#: Verbs that take a job NAME and act on ONE job.
-_NAMED_VERBS: frozenset[str] = frozenset(
-    {"status", "start", "stop", "restart", "enable", "disable"}
+from ._dev_jobs_grammar import (
+    _BULK_VERBS,
+    _JOBS_MIN_VERSION,
+    _NAMED_VERBS,
+    _VERB_SUMMARY,
+    DEPRECATED_GROUPS,
+    Deprecation,
+    GROUP_KINDS,
+    GROUP_VERBS,
 )
-
-#: How each verb reads at the start of its one-line help. Spelled out
-#: rather than ``verb.capitalize()`` because that produces "Status one of
-#: sac's timer jobs", which is not a sentence.
-_VERB_SUMMARY: dict[str, str] = {
-    "status": "Show the status of",
-    "start": "Start",
-    "stop": "Stop",
-    "restart": "Restart",
-    "enable": "Enable",
-    "disable": "Disable",
-    "install": "Install",
-    "uninstall": "Uninstall",
-}
-
-#: Verbs that act on EVERY job of the kind unless given an optional name,
-#: and mutate the host, so they require ``--yes``.
-_BULK_VERBS: frozenset[str] = frozenset({"install", "uninstall"})
-
-#: ``sac dev <group>`` -> its verbs. Per KIND, deliberately not uniform.
-#:
-#: MATCHED VERBATIM to scitex-dev's counterpart (PR #566), because the
-#: grammar is only worth anything if the two agree. A verb sac exposed
-#: that the shared layer will never serve is a permanent exit-4 — a
-#: declaration with no live counterpart, which is precisely what
-#: ``_jobs_audit`` exists to eliminate. Two deliberate consequences:
-#:
-#: * ``service`` has NO ``enable``/``disable``. systemd services support
-#:   them and an earlier revision here exposed them, but #566 does not,
-#:   so they would be inert. If #566 adds them, add them back.
-#: * ``cron`` has NO ``exec``, which #566 does have. sac declares no
-#:   ``kind="cron"`` job, and ``exec``'s argv shape is positional
-#:   (``exec <name> --apply``) rather than the uniform ``--name`` every
-#:   other verb takes — measured on scitex-dev 0.43.1. Wiring an
-#:   untestable special case for an empty group is the same disease in
-#:   the other direction; it belongs with the first cron job sac owns.
-#:
-#: The rest is per-kind reasoning:
-#:
-#: * ``service`` — a long-running unit: the runtime lifecycle applies.
-#: * ``timer``   — scheduled, not run by hand. ``enable``/``disable`` is
-#:   the systemd idiom for a timer (``enable --now`` starts it), so
-#:   ``start``/``stop``/``restart`` would be three ways to say the same
-#:   thing with different edge cases.
-#: * ``cron``    — a crontab line is present or commented out. There is
-#:   no runtime object to start, stop or ask for status, so those verbs
-#:   do not exist here instead of existing and erroring.
-#: * ``systemd`` — the deprecated alias keeps EXACTLY its historical
-#:   surface. New verbs are reachable only through the kind groups, so
-#:   nothing new can be built on the alias.
-GROUP_VERBS: dict[str, tuple[str, ...]] = {
-    "service": (
-        "list",
-        "status",
-        "start",
-        "stop",
-        "restart",
-        "install",
-        "uninstall",
-    ),
-    "timer": ("list", "status", "enable", "disable", "install", "uninstall"),
-    "cron": ("list", "enable", "disable", "install", "uninstall"),
-    "systemd": ("list", "install", "uninstall"),
-}
 
 
 def _degrade_msg() -> str:
@@ -301,7 +164,13 @@ def _kind_of(group: str) -> str:
 
 
 def _delegate(
-    kind: str, verb: str, name: str | None, yes: bool, dry_run: bool = False
+    kind: str,
+    verb: str,
+    name: str | None,
+    yes: bool,
+    dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
 ) -> int:
     """Resolve + run one ecosystem delegation. THE single mutation seam.
 
@@ -309,6 +178,12 @@ def _delegate(
     yes, dry_run)`` tuples a verb delegates with, rather than shelling out
     to a real ``scitex-dev`` that would rewrite the host's units and
     crontab. The delegation ARGUMENTS are what those tests are about.
+
+    ``adopt`` and ``force`` default to False and callers pass them BY
+    KEYWORD, so the positional call shape those tests capture is unchanged:
+    a five-element tuple before this parameter existed, five after. A
+    required parameter — or a positional call — would have rewritten every
+    one of those assertions to prove nothing about the behaviour that moved.
     """
     delegation = _backend.resolve(kind, verb)
     if not delegation.supported:
@@ -324,7 +199,14 @@ def _delegate(
             err=True,
         )
         raise SystemExit(4)
-    return _backend.invoke(delegation, name=name, yes=yes, dry_run=dry_run)
+    return _backend.invoke(
+        delegation,
+        name=name,
+        yes=yes,
+        dry_run=dry_run,
+        adopt=adopt,
+        force=force,
+    )
 
 
 def _resolve_one(group: str, typed: str) -> str:
@@ -376,8 +258,50 @@ def _add_list_command(grp, group: str) -> None:
             click.echo(f"  {'':24s} {j.description}")
 
 
+def _adoption_options(verb: str):
+    """``--adopt`` / ``--force``, attached ONLY to the verb that has them.
+
+    Both are real options on ``scitex-dev ecosystem timer install`` and on
+    nothing else in the group. Declaring them unconditionally would let
+    ``sac dev timer uninstall --force`` parse here and then fail downstream
+    on a command that has no such option — trading one misleading message
+    for another.
+
+    They exist at all because scitex-dev's refusal names them. MEASURED
+    2026-08-20: ``install`` on an existing unit prints "Use --adopt to keep
+    the existing supervisor (writes nothing), or --force to overwrite", and
+    following that advice returned ``Error: No such option '--force'``. The
+    wrapper forwarded the message and not the flags.
+    """
+
+    def decorate(fn):
+        if verb != "install":
+            return fn
+        fn = click.option(
+            "--force",
+            is_flag=True,
+            default=False,
+            help=(
+                "Overwrite even when another supervisor exists. Forwarded "
+                "to scitex-dev, which reports loudly what it replaced."
+            ),
+        )(fn)
+        fn = click.option(
+            "--adopt",
+            is_flag=True,
+            default=False,
+            help=(
+                "Keep an existing supervisor of ANY mechanism and write "
+                "nothing. Forwarded to scitex-dev."
+            ),
+        )(fn)
+        return fn
+
+    return decorate
+
+
 def _add_bulk_command(grp, group: str, verb: str) -> None:
-    """Attach ``install`` / ``uninstall``: every job of the kind, or one."""
+    """Attach a verb that acts on every job of the kind, or one named one."""
 
     @grp.command(verb)
     @click.argument("name", required=False)
@@ -395,7 +319,8 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
         default=False,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _bulk(name, dry_run, yes, _verb=verb):
+    @_adoption_options(verb)
+    def _bulk(name, dry_run, yes, adopt=False, force=False, _verb=verb):
         _announce_deprecation(group)
         jobs = _jobs_or_degrade(group)
         if name is not None:
@@ -406,7 +331,20 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
             return
         rc = 0
         for j in jobs:
-            code = _delegate(_kind_of(group), _verb, j.name, yes, dry_run)
+            code = _delegate(
+                _kind_of(group),
+                _verb,
+                j.name,
+                yes,
+                dry_run,
+                # BY KEYWORD, and that is load-bearing. The tests replace
+                # `_delegate` with a lambda that captures `*args`, so passing
+                # these positionally would grow every captured tuple from five
+                # elements to seven and break assertions about a call shape
+                # this change does not alter.
+                adopt=adopt,
+                force=force,
+            )
             rc = rc or code
         raise SystemExit(rc)
 

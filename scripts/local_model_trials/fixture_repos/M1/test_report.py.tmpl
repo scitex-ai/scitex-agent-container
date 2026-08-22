@@ -1,0 +1,9 @@
+from report import room_summary, total_area
+
+
+def test_room_summary():
+    assert room_summary("kitchen", 3, 4) == "kitchen: area=12 perimeter=14"
+
+
+def test_total_area():
+    assert total_area([("a", 2, 3), ("b", 1, 5)]) == 11

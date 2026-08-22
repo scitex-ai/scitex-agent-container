@@ -199,6 +199,37 @@ def register_comms_node(
                 f"ADR-0014: names are globally unique. Rename or "
                 f"unregister one and re-run `sac registry sync --all`."
             )
+        # Same source, but the existing row is a TOMBSTONE — the agent
+        # stopped, and ``unregister_comms_node`` recorded that. A dead
+        # row is a record of a past placement, NOT a live claim on
+        # ``(host, a2a_port)``, so it must not refuse the restart that
+        # follows it. Without this, an agent that stops and comes back
+        # on a DIFFERENT port can never re-register: the collision check
+        # below compares against the dead port, raises, and every caller
+        # swallows it best-effort — so the agent stays absent from the
+        # federated graph forever and peers only ever see
+        # ``unknown_target``. ``spec.a2a.port: auto`` makes "a different
+        # port" the NORMAL outcome of a restart, so this fires on
+        # ordinary lifecycle, not on an edge case. Reproduced on two
+        # hosts 2026-08-20: ``business`` live on 19012 behind a
+        # tombstone at 19033, and ``scitex-dev`` live on 19008 behind an
+        # 11-day-old tombstone at 19003.
+        #
+        # This is the same convergence the ``same_target`` branch above
+        # already performs ("re-activates a tombstoned row, which is the
+        # natural way a node came back sync converges") — it was simply
+        # unreachable whenever the port moved. Cross-host conflicts are
+        # deliberately NOT covered: that check runs first and still
+        # raises, because ADR-0014 name uniqueness is about WHO owns the
+        # name, which a tombstone does not answer.
+        if existing["ended_at"] is not None:
+            conn.execute(
+                "UPDATE comms_nodes SET host = ?, a2a_port = ?, "
+                "updated_at = ?, ended_at = NULL, source_host = ? "
+                "WHERE name = ?",
+                (host, a2a_port, now, source_host, name),
+            )
+            return
         # Same source, different target. PR L1 (operator directive
         # 12847) — fail loud on collision, no silent last-writer-wins.
         if not replace:

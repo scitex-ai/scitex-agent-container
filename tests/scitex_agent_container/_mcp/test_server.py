@@ -176,7 +176,7 @@ def test_cli_doctor_output_mentions_server_label(runner: CliRunner):
 def list_tools_json_payload(runner: CliRunner) -> dict:
     result = runner.invoke(mcp_cli_group, ["list-tools", "--json"])
     assert result.exit_code == 0, result.output
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 def test_cli_list_tools_json_reports_at_least_one_tool(

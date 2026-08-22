@@ -37,7 +37,11 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container.config import load_config
+from scitex_agent_container.config import AgentConfig, load_config
+from scitex_agent_container.config._harness_types import (
+    V4_HARNESS_DISPATCH_CARD,
+    HarnessRuntimeMismatchError,
+)
 from scitex_agent_container.runtimes._apptainer_auth import (
     CredentialExpiredError,
     credentials_file_bind,
@@ -1286,3 +1290,78 @@ def test_spec_env_key_not_in_fleet_defaults_still_reaches_argv(tmp_path) -> None
     argv = _argv_for_env(tmp_path, env_block)
     # Assert
     assert _env_values(argv, "AGENT_ONLY_FLAG") == ["agent-value"]
+
+
+# ---------------------------------------------------------------------------
+# v4 step-2 harness guard — build_run_argv refuses a wrong-vendor launch
+# BEFORE any side effect (card
+# sac-v4-layering-refactor-harness-runtime-inference-20260813). Pre-fix,
+# the ``getattr(config, "provider", None)`` read in the pre-built
+# runner_argv branch was DEAD (the harness rename removed the field), so a
+# ``harness: openai`` spec got OPENAI_* auth provisioning (the auth step
+# reads config.harness correctly — pre-fix it raised ProviderEnvError over
+# a missing key) and then the CLAUDE runner module: a silent wrong-vendor
+# launch whenever the key resolved.
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_raises_harness_mismatch_for_openai_harness(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the pre-built runner_argv path, whose dispatch held the
+    # dead provider read.
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=tmp_path / "state",
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_run_argv_openai_harness_refuses_before_any_side_effect(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the guard sits at the top of the function, before the
+    # workspace-home mkdir / overlay provisioning / auth provisioning.
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    state_dir = tmp_path / "state"
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=state_dir,
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError:  # stx-allow: test-capture (reason: STX-TQ002; the raise itself is pinned by the sibling test.)
+        pass
+    # Assert
+    assert not state_dir.exists()
+
+
+def test_build_run_argv_openai_harness_refusal_names_the_v4_card(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=tmp_path / "state",
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)

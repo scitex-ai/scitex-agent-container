@@ -261,9 +261,13 @@ class TuiSessionRuntime(
             self._mux.stop(name)
         self.materialize_workspace(config)
 
-        from .._lifecycle._runtime_select import warn_if_legacy_apptainer_runtime
+        from .._lifecycle._runtime_select import (
+            warn_if_legacy_apptainer_runtime,
+            warn_if_legacy_harness_key,
+        )
 
         warn_if_legacy_apptainer_runtime(config)
+        warn_if_legacy_harness_key(config)
 
         # Render the ``apptainer exec ... claude`` argv via the injection
         # seam (default :meth:`_default_argv` resolves the SIF + calls
@@ -445,6 +449,13 @@ class TuiSessionRuntime(
             session_name_for(config),
             pane_pid_fn=getattr(self._mux, "pane_pid", None),
         )
+
+    def session_name(self, config: AgentConfig) -> str | None:
+        """The ``tui-<name>`` session — the seam ``instances.screen`` reads.
+
+        THE SAME call :meth:`start` passes to ``tmux new-session -s``.
+        """
+        return session_name_for(config)
 
     def is_responsive(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S
