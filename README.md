@@ -318,6 +318,7 @@ sac fleet sync                            # cross-host spec audit (fails loud on
 
 # Diagnostics / introspection
 sac doctor [--fleet]                      # diagnose agent-spec source drift
+sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
 sac skills list / get                     # bundled agent-facing skills

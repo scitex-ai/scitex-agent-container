@@ -393,3 +393,77 @@ def test_the_legacy_name_reaches_the_rendered_env_flags() -> None:
     flags = fleet_env_flags(config, defaults={})
     # Assert
     assert f"{LEGACY_BOARD_ID_ENV}=scitex-agent-container" in flags
+
+
+# ----------------------------------------------------------------------
+# Deriving the identity from the agent's own name (2026-08-20)
+# ----------------------------------------------------------------------
+#
+# proj-scitex-hub launched with NEITHER identity spelling declared and could
+# not use scitex-cards at all. Measured across the fleet's specs that day: 96
+# declare an identity equal to the agent name, 9 differ (6 templates carrying
+# placeholders, 3 deliberate aliases), and 16-17 declare nothing. Every alias
+# DECLARES its identity, so filling in from the name cannot override one.
+
+
+def test_absent_identity_is_filled_in_from_the_agent_name() -> None:
+    # Arrange
+    env: dict[str, str] = {}
+    # Act
+    result = apply_board_identity_alias(env, agent_name="proj-scitex-hub")
+    # Assert
+    assert result[BOARD_ID_ENV] == "proj-scitex-hub"
+
+
+def test_a_declared_identity_beats_the_agent_name() -> None:
+    """The deliberate-alias case: scitex-agent-container-04 -> scitex-agent-container.
+
+    Falsifiable, and it is the one that matters: make the derivation
+    unconditional and this goes RED, because three real specs on the fleet
+    declare an identity that is NOT their directory name on purpose.
+    """
+    # Arrange
+    env = {BOARD_ID_ENV: "scitex-agent-container"}
+    # Act
+    result = apply_board_identity_alias(env, agent_name="scitex-agent-container-04")
+    # Assert
+    assert result[BOARD_ID_ENV] == "scitex-agent-container"
+
+
+def test_a_legacy_declared_identity_also_beats_the_agent_name() -> None:
+    # Arrange
+    env = {LEGACY_BOARD_ID_ENV: "scitex-hub"}
+    # Act
+    result = apply_board_identity_alias(env, agent_name="scitex-hub-mobile-ux")
+    # Assert
+    assert result[BOARD_ID_ENV] == "scitex-hub"
+
+
+def test_no_name_and_no_declaration_still_injects_nothing() -> None:
+    """Without a name there IS no answer, and inventing one is the bug this
+    module exists to prevent — a wrong author is worse than an absent launch."""
+    # Arrange
+    env: dict[str, str] = {}
+    # Act
+    result = apply_board_identity_alias(env, agent_name=None)
+    # Assert
+    assert BOARD_ID_ENV not in result
+
+
+def test_a_blank_agent_name_is_not_an_identity() -> None:
+    # Arrange
+    env: dict[str, str] = {}
+    # Act
+    result = apply_board_identity_alias(env, agent_name="   ")
+    # Assert
+    assert BOARD_ID_ENV not in result
+
+
+def test_the_legacy_name_is_still_never_written_back() -> None:
+    """Deriving must not undo the migration this module's docstring describes."""
+    # Arrange
+    env: dict[str, str] = {}
+    # Act
+    result = apply_board_identity_alias(env, agent_name="proj-scitex-hub")
+    # Assert
+    assert LEGACY_BOARD_ID_ENV not in result

@@ -108,9 +108,22 @@ class TestArgumentValidationExitsBeforePreflight:
 
 
 class TestExpiredCredsBlocksDispatch:
-    """When the lead's OAuth token is expired and a real target is
-    being dispatched, the CLI must exit 1 with the expiry message on
-    stderr — no traceback bubbling up."""
+    """An UNRESOLVABLE target must exit 1 cleanly, naming the spec fault.
+
+    Note what these targets actually are: ``any-target-name`` does not
+    resolve to anything on disk. So this class never exercised "a real
+    target with an expired token" — it exercised the path where the spec
+    would not load and the gate fell back to the lead's
+    ``~/.claude/.credentials.json``. That fallback is gone (operator,
+    2026-08-19: 「勝手にデフォルトのクレデンシャルズを使わない」), so the
+    message now names the spec fault instead of the credential.
+
+    The genuine expired-credential contract is unchanged and is covered
+    by ``test_anthropic_backed_spec_still_runs_preflight`` below, which
+    uses a spec that RESOLVES and declares expired credentials.
+
+    Exit code 1 and "no traceback" are unchanged either way, which is why
+    the sibling tests here still pass without modification."""
 
     def test_expired_creds_exits_one_for_single_target(
         self, tmp_path: Path, env_save_restore
@@ -126,7 +139,7 @@ class TestExpiredCredsBlocksDispatch:
         # Assert
         assert result.exit_code == 1
 
-    def test_expired_creds_error_message_mentions_claude_login(
+    def test_unresolvable_target_message_names_the_spec_fault(
         self, tmp_path: Path, env_save_restore
     ) -> None:
         # Arrange
@@ -138,7 +151,21 @@ class TestExpiredCredsBlocksDispatch:
         # Act
         result = runner.invoke(start, ["any-target-name"], catch_exceptions=False)
         # Assert
-        assert "claude login" in result.output
+        assert "spec could not be loaded" in result.output
+
+    def test_unresolvable_target_does_not_blame_the_lead_credential(
+        self, tmp_path: Path, env_save_restore
+    ) -> None:
+        # Arrange — the lead token IS expired here; it must stay irrelevant.
+        env_save_restore.set("HOME", str(tmp_path))
+        env_save_restore.delete("ANTHROPIC_API_KEY")
+        env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
+        _install_expired_creds(tmp_path)
+        runner = CliRunner()
+        # Act
+        result = runner.invoke(start, ["any-target-name"], catch_exceptions=False)
+        # Assert
+        assert "claude login" not in result.output
 
     def test_expired_creds_does_not_raise_unhandled_traceback(
         self, tmp_path: Path, env_save_restore
@@ -319,12 +346,15 @@ class TestProviderBackedSpecBypassesPreflight:
         # Assert — preflight DID fire (the existing Anthropic path is unchanged).
         assert "claude login" in result.output
 
-    def test_unresolvable_target_defaults_to_running_oauth_preflight(
+    def test_unresolvable_target_is_refused_by_name_not_by_credential(
         self, tmp_path: Path, env_save_restore
     ) -> None:
-        # Arrange — defensive default: if a spec can't be loaded,
-        # the preflight still fires (better to surface the OAuth
-        # state than to silently skip on a broken spec).
+        # Arrange — the old "defensive default" ran the OAuth preflight
+        # when a spec would not load, so an UNREGISTERED NAME was
+        # reported as an EXPIRED TOKEN. Measured 2026-08-19: a spawn for
+        # a name with no spec answered 502 carrying "OAuth token ...
+        # expired 257594 seconds ago", and the caller spent the interval
+        # chasing a permissions bug that did not exist.
         env_save_restore.set("HOME", str(tmp_path))
         env_save_restore.delete("ANTHROPIC_API_KEY")
         env_save_restore.delete("SAC_ANTHROPIC_API_KEY")
@@ -332,6 +362,5 @@ class TestProviderBackedSpecBypassesPreflight:
         runner = CliRunner()
         # Act — target name doesn't resolve to anything on disk.
         result = runner.invoke(start, ["nonexistent-target-9c4f7a"])
-        # Assert — preflight fired (defensive); operator sees the
-        # OAuth message before they get the spec-resolve error.
-        assert "claude login" in result.output
+        # Assert — the refusal names the target, not the lead credential.
+        assert "nonexistent-target-9c4f7a" in result.output

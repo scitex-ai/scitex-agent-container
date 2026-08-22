@@ -13,6 +13,7 @@ of ``sac network probe`` / ``sac installation boot``.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 
@@ -187,7 +188,42 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
             "error: no command supplied. Try: sac host exec PEER -- <cmd>", err=True
         )
         raise SystemExit(2)
-    ssh_argv = build_ssh_argv(peer, list(argv), peers)
+    # QUOTE HERE, NOT IN build_ssh_argv. The two have different contracts and
+    # conflating them has already caused one outage.
+    #
+    # ssh word-joins every token after the host and hands the result to the
+    # remote LOGIN SHELL, which re-parses it. So `build_ssh_argv` takes an
+    # ALREADY-QUOTED remote command — callers like `_spec_handoff.ssh_runner`
+    # deliberately pass a single element such as `sh -c 'echo REACHED'`. On
+    # 2026-08-17 a `shlex.join` was added inside that function, quoted those
+    # already-quoted elements a second time, and produced rc=127 on every
+    # preamble peer ("bash: line 1: sh -c 'echo REACHED': command not found"),
+    # taking scitex-hub down and unstartable by any path.
+    #
+    # `sac host exec` is the opposite contract: `argv` is a list of ARGV WORDS
+    # typed by a human, and nothing has quoted them. Passing them raw let the
+    # remote shell re-split on metacharacters, which is silent and wrong rather
+    # than loud and wrong. Measured 2026-08-20 by scitex-cards, then reproduced
+    # here on scitex-compute-03:
+    #
+    #   sac host exec <peer> -- echo AAA-scitex-BBB '|' grep -cE 'scitex|cards'
+    #     -> bash: line 1: cards: command not found
+    #   sac host exec <peer> -- bash -lc 'echo AAA-scitex-BBB | grep -cE "..."'
+    #     -> 0        (the answer is 1)
+    #
+    # The second is the dangerous one: a mangled command returned a plausible
+    # NUMBER. They had counted 3 cron lines on that host minutes earlier, and
+    # only that contradiction made them re-check instead of reporting "no cron
+    # lines" as a measurement. This module's own `_run_peer_command` docstring
+    # already states the rule this violates — "a transport must never render
+    # 'I could not run it' identically to 'it ran and produced nothing'". This
+    # is the same rule with a number instead of an empty string.
+    #
+    # shlex.quote is a NO-OP on any word that needs no quoting, so the rendered
+    # argv is byte-identical for every invocation that was already correct.
+    # Only arguments carrying metacharacters change — exactly the broken ones.
+    quoted = [shlex.quote(word) for word in argv]
+    ssh_argv = build_ssh_argv(peer, quoted, peers)
     raise SystemExit(_run_peer_command(ssh_argv))
 
 

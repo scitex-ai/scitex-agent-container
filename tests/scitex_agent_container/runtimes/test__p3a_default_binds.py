@@ -50,18 +50,20 @@ def fake_home(tmp_path: Path) -> Iterator[Path]:
 # ---------------------------------------------------------------------------
 
 
-def test_default_binds_for_host_returns_todo_bind_when_host_dir_exists(
+def test_default_binds_for_host_returns_cards_bind_when_host_dir_exists(
     fake_home: Path,
 ) -> None:
-    # Arrange
-    (fake_home / ".scitex" / "todo").mkdir(parents=True)
+    # Arrange — retargeted from the retired todo bind. The cards store had
+    # NO coverage of its own, so this closes a real gap rather than merely
+    # relocating an assertion.
+    (fake_home / ".scitex" / "cards").mkdir(parents=True)
     # Act
     binds = default_binds_for_host()
     # Assert
-    assert any("/.scitex/todo:" in b for b in binds)
+    assert any("/.scitex/cards:" in b for b in binds)
 
 
-def test_default_binds_for_host_skips_todo_bind_when_host_dir_missing(
+def test_default_binds_for_host_skips_cards_bind_when_host_dir_missing(
     fake_home: Path,
 ) -> None:
     # Arrange — fake_home (tmp_path) is freshly created with no .scitex
@@ -69,7 +71,7 @@ def test_default_binds_for_host_skips_todo_bind_when_host_dir_missing(
     # Act
     binds = default_binds_for_host()
     # Assert
-    assert not any("/.scitex/todo:" in b for b in binds)
+    assert not any("/.scitex/cards:" in b for b in binds)
 
 
 def test_default_binds_for_host_returns_telegrammer_bind_when_host_dir_exists(
@@ -141,12 +143,14 @@ def test_apply_default_binds_prepends_defaults_when_spec_has_no_overlap(
     fake_home: Path,
 ) -> None:
     # Arrange
-    (fake_home / ".scitex" / "todo").mkdir(parents=True)
+    (fake_home / ".scitex" / "cards").mkdir(parents=True)
     spec_binds = ["~/proj:/home/agent/proj:ro"]
     # Act
     result = apply_default_binds(spec_binds)
-    # Assert — first entry is the P3a-2 default, second is the spec entry.
-    assert "/.scitex/todo:" in result[0] and result[-1] == "~/proj:/home/agent/proj:ro"
+    # Assert — defaults come first, the spec entry last. (Was pinned on the
+    # todo bind purely because it happened to head the tuple; cards heads it
+    # now, and the ORDERING is what this test is actually about.)
+    assert "/.scitex/cards:" in result[0] and result[-1] == "~/proj:/home/agent/proj:ro"
 
 
 def test_apply_default_binds_lets_explicit_spec_entry_override_default(
@@ -154,13 +158,13 @@ def test_apply_default_binds_lets_explicit_spec_entry_override_default(
 ) -> None:
     # Arrange — spec carries the SAME destination as the default; the
     # spec wins (de-dup by destination).
-    (fake_home / ".scitex" / "todo").mkdir(parents=True)
-    spec_binds = ["/tmp/operator-todo:/home/agent/.scitex/todo:rw"]
+    (fake_home / ".scitex" / "cards").mkdir(parents=True)
+    spec_binds = ["/tmp/operator-cards:/home/agent/.scitex/cards:rw"]
     # Act
     result = apply_default_binds(spec_binds)
-    # Assert — exactly one entry whose destination is /home/agent/.scitex/todo.
-    todo_entries = [b for b in result if "/home/agent/.scitex/todo" in b]
-    assert todo_entries == ["/tmp/operator-todo:/home/agent/.scitex/todo:rw"]
+    # Assert — exactly one entry whose destination is /home/agent/.scitex/cards.
+    cards_entries = [b for b in result if "/home/agent/.scitex/cards" in b]
+    assert cards_entries == ["/tmp/operator-cards:/home/agent/.scitex/cards:rw"]
 
 
 def test_apply_default_binds_returns_spec_only_when_host_dir_missing(
@@ -180,11 +184,11 @@ def test_apply_default_binds_returns_spec_only_when_host_dir_missing(
 
 def test_apply_default_binds_handles_empty_spec_binds(fake_home: Path) -> None:
     # Arrange
-    (fake_home / ".scitex" / "todo").mkdir(parents=True)
+    (fake_home / ".scitex" / "cards").mkdir(parents=True)
     # Act
     result = apply_default_binds([])
     # Assert
-    assert any("/.scitex/todo:" in b for b in result)
+    assert any("/.scitex/cards:" in b for b in result)
 
 
 def test_apply_default_binds_accepts_iterable_of_strings(fake_home: Path) -> None:
@@ -430,6 +434,37 @@ def test_fleet_defaults_include_host_tmp_handoff_bind_read_only() -> None:
 # sac never used testmon itself. The assertion is INVERTED so that re-adding the
 # plumbing fails loudly rather than quietly reappearing on every agent.
 # ---------------------------------------------------------------------------
+
+
+def test_fleet_defaults_carry_no_todo_bind() -> None:
+    # Arrange — read the static fleet-default tuple directly.
+    from scitex_agent_container.runtimes._p3a_default_binds import (
+        _FLEET_DEFAULT_BINDS,
+    )
+
+    # Act
+    todo = [b for b in _FLEET_DEFAULT_BINDS if "/.scitex/todo" in b]
+    # Assert — scitex-todo was superseded by scitex-cards and nothing in the
+    # fleet reads the HOME-level store. Measured 2026-08-19 across every
+    # checkout under ~/proj with a control term: cards has 0 hits in *.py,
+    # live-paper's are prose, and hub's todo_app builds a WORKSPACE-scoped
+    # path (base / slug / .scitex / todo / tasks.yaml), never ~/.scitex/todo.
+    assert todo == []
+
+
+def test_the_retired_todo_bind_stays_findable_in_the_source() -> None:
+    # Arrange — the operator asked for retirement by ARCHIVE, not deletion:
+    # 「消すというよりアーカイブでいいんじゃないですかね。すなわち探そうと
+    # 思えば探せるみたいな」. A bare removal satisfies the test above and
+    # loses the reason, which is what invites someone to add it back.
+    from pathlib import Path
+
+    import scitex_agent_container.runtimes._p3a_default_binds as mod
+
+    # Act
+    source = Path(mod.__file__).read_text(encoding="utf-8")
+    # Assert
+    assert "RETIRED 2026-08-19" in source
 
 
 def test_fleet_defaults_carry_no_testmon_cache_bind() -> None:

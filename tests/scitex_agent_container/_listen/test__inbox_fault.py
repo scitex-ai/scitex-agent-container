@@ -257,3 +257,78 @@ def test_annotate_does_not_mutate_the_input_row():
     annotate_faults([row], snapshot={"tui-alpha": 1}, runtime_is_tui_fn=TUI)
     # Assert
     assert "fault" not in row
+
+
+# ---------------------------------------------------------------------------
+# The NOT_RUNNING verdict must name the POPULATION its probe covered.
+#
+# Three independent reproductions, 2026-08-17..19 (hub twice, then
+# paper-scitex-clew). The message said "the probe SUCCEEDED, so this is real
+# absence, not a failed look" about agents alive on ANOTHER host — clew with a
+# 2-second-old heartbeat on compute-02, hub eight minutes into a live PR poll
+# on compute-03. It then told the reader "waiting for a reply will never
+# succeed", which is an instruction to restart a healthy agent.
+#
+# The sentence pre-empts the exact objection a careful reader would raise,
+# which is why it was believed. On the clew reading the OPERATOR and I agreed
+# on the false fact; nothing broke only because I tried starting it on the
+# other host rather than acting on the verdict.
+#
+# A probe of THIS host's tmux sessions can only speak for THIS host.
+# ---------------------------------------------------------------------------
+
+
+def _stopped_detail() -> str:
+    """The rendered NOT_RUNNING detail — empty snapshot means no session here."""
+    return annotate_faults([_row()], snapshot={}, runtime_is_tui_fn=TUI)[0][
+        "fault_detail"
+    ]
+
+
+def test_the_not_running_verdict_names_the_host_it_observed():
+    # Arrange
+    import socket
+
+    expected = socket.gethostname()
+    # Act
+    detail = _stopped_detail()
+    # Assert
+    assert expected in detail
+
+
+def test_the_not_running_verdict_no_longer_claims_unqualified_absence():
+    # Arrange: the exact phrase that was believed three times.
+    forbidden = "real absence, not a failed look"
+    # Act
+    detail = _stopped_detail()
+    # Assert
+    assert forbidden not in detail
+
+
+def test_the_not_running_verdict_says_it_cannot_speak_for_other_hosts():
+    # Arrange
+    expected = "says nothing about any other host"
+    # Act
+    detail = _stopped_detail()
+    # Assert
+    assert expected in detail
+
+
+def test_the_not_running_verdict_tells_the_reader_to_ask_the_pinned_host():
+    # Arrange: the remedy, so the message ends in the right ACTION rather than
+    # in a restart of a live agent.
+    expected = "ASK THAT HOST"
+    # Act
+    detail = _stopped_detail()
+    # Assert
+    assert expected in detail
+
+
+def test_the_deaf_verdict_survives_the_host_formatting():
+    # Arrange: the DEAF template carries no placeholder, so .format must be a
+    # no-op on it rather than raising or mangling it.
+    rows = [_row()]
+    # Act
+    out = annotate_faults(rows, snapshot={"tui-alpha": 1}, runtime_is_tui_fn=TUI)
+    # Assert
+    assert out[0]["fault_detail"].startswith("RUNNING BUT DEAF")

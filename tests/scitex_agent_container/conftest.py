@@ -80,3 +80,29 @@ def _clear_agent_identity() -> Iterator[None]:
     agent's value would otherwise win over test-controlled overrides.
     """
     yield from _save_restore_yield(_AGENT_IDENTITY_KEYS)
+
+
+
+# ----------------------------------------------------------------------
+# The PostgreSQL store isolation MOVED UP to tests/conftest.py on
+# 2026-08-20, and the move is the fix for a recurrence of the incident its
+# own docstring describes.
+#
+# It lived here, and this directory is `tests/scitex_agent_container/`.
+# `tests/smoke/`, `tests/develop/`, `tests/integration/` and
+# `tests/examples/` are its SIBLINGS, not its children, so none of them was
+# covered. When `acl_deny_notify` moved to PostgreSQL, the smoke suite began
+# writing fixture rows (`alpha`, `beta`, `gamma`) into the live per-host
+# store exactly as the lifecycle tests had done under #1154 — the same
+# failure, one directory over.
+#
+# A whole-suite run happened to be protected, because collecting this
+# package imports this file and the assignment is process-wide. Running
+# `tests/smoke/` ALONE was not. Protection by import order is not
+# protection; the guard now sits at the root of the test tree, where being
+# imported first is structural.
+#
+# `pg_schema` went up with it: a test that needs a REAL store must be able
+# to ask for one from any directory, and leaving it here would have made
+# the isolated-store escape hatch reachable from only one subtree.
+# ----------------------------------------------------------------------
