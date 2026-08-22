@@ -85,7 +85,7 @@ COMMAND_CATEGORIES = [
         ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
+    ("Introspection", ["whoami", "mcp", "list-python-apis", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -107,7 +107,10 @@ class _MainGroup(LazyGroup):
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
         "image": f"{_PKG}.image_group:image_group",
-        "skills": f"{_PKG}.skills_group:skills_group",
+        # `skills` is NOT here — it moved under `dev` (audit-cli §13:
+        # self-maintenance commands nest under the `dev` group). The legacy
+        # top-level spelling lives in LAZY_RENAMED below, so `sac skills`
+        # keeps working and tells the caller where it went.
         # Git-worktree hygiene (repo-scoped, not agent-scoped): report +
         # reap PROVABLY-safe stale worktrees, alarm on a repo still over
         # its cap. The permanent countermeasure to worktree sprawl
@@ -259,7 +262,7 @@ class _MainGroup(LazyGroup):
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
-        "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
+        "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
@@ -278,6 +281,12 @@ class _MainGroup(LazyGroup):
     # a redirect to stderr and exits with code 2). Soft warnings let
     # stale scripts persist indefinitely; hard errors force the fix.
     LAZY_RENAMED = {
+        # Self-maintenance moved under `dev` (audit-cli §13; doctrine
+        # 20_dev-commands.md). Kept as a redirect rather than deleted:
+        # `sac skills` is in operators' muscle memory and in scripts, and a
+        # bare "no such command" would teach nothing. The redirect names the
+        # new path.
+        "skills": (f"{_PKG}.skills_group:skills_group", "sac dev skills"),
         # Lifecycle
         "start": (f"{_PKG}.lifecycle:start", "sac agents start"),
         "stop": (f"{_PKG}.lifecycle:stop", "sac agents stop"),

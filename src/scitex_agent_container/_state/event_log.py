@@ -34,6 +34,36 @@ DEFAULT_CAP_LINES = 500
 PREVIEW_MAX_CHARS = 300
 
 
+def _redacted_preview(text: Any) -> str:
+    """Redact secret-shaped values, THEN truncate to the preview cap.
+
+    Every preview this module writes lands in a DURABLE per-agent JSONL under
+    the events root. Tool inputs and tool responses are arbitrary text an agent
+    happened to handle, so anything the agent read — a credential file, an
+    environment dump, a command that echoed a token — was being written to disk
+    in cleartext and kept.
+
+    Redaction runs BEFORE truncation so the matcher always sees the whole
+    string. Stated honestly: against the CURRENT patterns that ordering is
+    defence in depth rather than a demonstrated fix — a truncated ``sk-ant-``
+    fragment still matches its own pattern, so truncate-first would usually
+    redact too. The order is chosen because it cannot be worse and because the
+    pattern set is expected to grow: any future pattern anchored on a suffix,
+    a length, or a checksum WOULD be defeated by seeing 300 characters instead
+    of the text. Do not reorder these two steps to save a slice.
+
+    ``_redact_secrets`` is imported, never modified — it already has three
+    other consumers (interactive_login, agent_meta, config_files) and widening
+    it for this caller would change their output too.
+    """
+    from ._meta.secrets import _redact_secrets
+
+    s = text if isinstance(text, str) else str(text)
+    if not s:
+        return ""
+    return _redact_secrets(s)[:PREVIEW_MAX_CHARS]
+
+
 def _default_root() -> Path:
     """Resolve the per-agent events ring-buffer root.
 
@@ -86,7 +116,7 @@ def _preview_tool_input(tool_name: str, tool_input: dict | None) -> str:
         s = ""
     if not isinstance(s, str):
         s = str(s)
-    return s[:PREVIEW_MAX_CHARS]
+    return _redacted_preview(s)
 
 
 def append_event(
@@ -119,10 +149,10 @@ def append_event(
                         content = " ".join(
                             c.get("text", "") for c in content if isinstance(c, dict)
                         )
-                    record["result_preview"] = str(content)[:PREVIEW_MAX_CHARS]
+                    record["result_preview"] = _redacted_preview(content)
         if kind == "prompt":
             prompt = payload.get("prompt") or payload.get("user_prompt") or ""
-            record["prompt_preview"] = str(prompt)[:PREVIEW_MAX_CHARS]
+            record["prompt_preview"] = _redacted_preview(prompt)
         if kind == "stop":
             record["stop_hook_active"] = bool(payload.get("stop_hook_active"))
 

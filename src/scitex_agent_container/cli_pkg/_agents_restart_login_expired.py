@@ -51,6 +51,31 @@ def _print_report(report) -> None:
     console.print(f"    [dim]{report.detail}[/dim]", soft_wrap=True)
 
 
+def already_summarised_by_count(report) -> bool:
+    """True when this report's per-agent detail adds nothing to the count line.
+
+    A ``no-session`` UNOBSERVED is a DETERMINATE reading handed to
+    fleet-reconcile, and the pass already prints it once, by count:
+
+        "105 registered agent(s) have no live session — fleet-reconcile's half
+         of the fleet, not this pass's."
+
+    Printing each of those agents as well repeats one sentence ~105 times per
+    pass, every 5 minutes. Measured on compute-04 2026-08-18: 93,778 UNOBSERVED
+    lines in a 32 MB timer log (~105 per pass x ~893 passes ~= 74 hours), while
+    the summary above appeared once per pass and said everything the 105 did.
+
+    An INDETERMINATE UNOBSERVED is never suppressed. Those mean "nothing was
+    learned about this agent", they are why a pass cannot report a clean fleet,
+    and losing them would turn a loud gap into a silent one — the opposite of
+    the fix. The distinction is the point, not an optimisation.
+
+    ``.reason`` is only read once the verdict is UNOBSERVED (``and`` short
+    circuits), which is the same access the no_session tuple below already makes.
+    """
+    return report.verdict is Verdict.UNOBSERVED and report.reason == "no-session"
+
+
 @click.command(name="restart-login-expired")
 @click.option(
     "--apply",
@@ -172,7 +197,12 @@ def restart_login_expired(
         f"{len(outcome.reports) - len(unseen)} corroborated login-expired "
         f"agent(s), {len(unseen)} NOT observed\n"
     )
+    # See :func:`already_summarised_by_count` — the no-session population is printed
+    # once, by count, below; repeating it per-agent is what put 93,778 lines in a
+    # 32 MB timer log. Indeterminate UNOBSERVED reports still print individually.
     for report in outcome.reports:
+        if already_summarised_by_count(report):
+            continue
         _print_report(report)
 
     counts = outcome.counts()

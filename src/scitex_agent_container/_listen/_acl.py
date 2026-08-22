@@ -301,7 +301,7 @@ def check_send_acl(
     # cross-group deny that does push.
     from .._state.state_db_blocks import has_block as _has_block
 
-    if _has_block(sender=sender, target=target, db_path=db_path):
+    if _has_block(sender=sender, target=target):
         return ("block", f"blocked: {sender!r} → {target!r}")
 
     # Phase-3 (ADR-0010 Step 2) — per-spec outbound/inbound deny layered

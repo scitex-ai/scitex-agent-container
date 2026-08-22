@@ -6,6 +6,50 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-08-18
+
+**A promotion, and the promotion IS the repair.** `main` was RED on
+`test_audit.py::test_audit_all_clean` (PS-140, PS-226, PS-231) while holding code
+that had never changed. The auditor moved, not the repo: commit `27369448` passed
+GREEN under scitex-dev 0.50.0 and went red under 0.51.0 and 0.54.0 — same commit,
+same workflow, a newer rule corpus. `main` pins only the open floor
+`scitex-dev>=0.49.2`, so a nightly cron re-runs the last release against whatever
+scitex-dev ships that day. `develop` took the identical red and repaired it in
+#1117; this carries that repair across. `main` could not have held a unique defect
+in any case — its tree hash equals the merge-base tree, and its one unique commit
+is an empty promotion merge.
+
+The control that settles it: under the SAME auditor 0.54.0, on the same runner, on
+the same day, `develop`'s tip ran green (17081 passed) while `main` ran red.
+
+### Fixed
+
+- **The audit gate goes green again (#1117).** PS-140 and the PS-231 exemptions
+  land together, because landing either alone leaves the gate red and makes the
+  other look like the cause.
+- **25 false test failures traced to an inherited env var (#1123).** `conftest.py`
+  now drops `SAC_SPEC_ENV_KEYS` at module scope. The container exports it, pytest
+  inherited it, and the suite reported 2 failed / 19 errors that vanished with the
+  variable unset — 47 passed. Deleted rather than set to `""`, because an empty
+  manifest is itself meaningful; at module scope rather than in a fixture, because
+  the leak travels into subprocesses.
+- **`restart --login-expired` stops reprinting the population its own count line
+  already reports (#1126).** The per-agent UNOBSERVED/no-session lines duplicated
+  the summary on every 5-minute pass.
+- **`host exec` no longer swallows the peer's output (#1101).**
+- **`priority` routes singleton-reconcile through the peer map (#1102).**
+- **SSH quoting is owned by the builder, for both branches (#1103).** An
+  `env_preamble` must not change how a command is quoted; the command is a real
+  argv list and both branches space-join it.
+
+### Added
+
+- **The account quota cache refreshes on a schedule (#1085).** Placement decisions
+  were reading day-old numbers; a stale snapshot now triggers a re-measure rather
+  than being trusted.
+- **`send` names the verb that actually reaches the agent (#1104).** Only a PROVEN
+  route switches the verb — a strategy alone does not.
+
 ## [0.26.1] - 2026-08-17
 
 Six commits, and the theme is the same defect in five different places: **a

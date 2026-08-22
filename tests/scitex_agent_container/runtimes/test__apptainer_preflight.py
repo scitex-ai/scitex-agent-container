@@ -6,6 +6,7 @@ See docs/adr/0001-isolation-hardening.md (D2 + D4).
 from __future__ import annotations
 
 import shlex
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,30 @@ from scitex_agent_container.runtimes._apptainer_runtime import (
 
 
 def _cfg(workdir: Path, **kw) -> AgentConfig:
+    # tmpfs_size="" is DECLARED here, never inherited.
+    #
+    # Every test in this file asserts on the INNER argv (everything
+    # after the SIF path). ``--workdir`` is an OUTER flag and no
+    # assertion here reads it. But building the argv calls
+    # ``tmpfs_workdir_flags``, which runs ``shutil.disk_usage`` against
+    # the real filesystem and raises ``TmpfsSpaceError`` when free space
+    # is below ``tmpfs_size``. Under the 2G default that makes these
+    # verdicts depend on ambient free disk the tests neither control nor
+    # are about.
+    #
+    # 2026-08-19: a shared CI runner at 91% full turned that dependency
+    # into named, code-shaped failures here — test_preflight_wrapper_*
+    # and test_preflight_script_* all went red on a full disk, which
+    # sends readers to their own diff for a condition no diff caused.
+    #
+    # The guard itself is correct and stays. It is covered
+    # deterministically in ``test__apptainer_tmpfs.py``, which requests
+    # 10 EiB so it fires on any host rather than only on a full one.
+    #
+    # Normalise on EVERY path, including callers that pass their own
+    # spec — a setdefault would leave those reinheriting the 2G default.
+    ap = kw.pop("apptainer", None) or ApptainerSpec()
+    kw["apptainer"] = replace(ap, tmpfs_size="")
     return AgentConfig(
         name=kw.pop("name", "iso"),
         runtime="apptainer",
