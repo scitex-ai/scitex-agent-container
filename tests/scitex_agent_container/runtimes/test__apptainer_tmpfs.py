@@ -11,6 +11,7 @@ from scitex_agent_container.runtimes._apptainer_tmpfs import (
     TmpfsSpaceError,
     parse_tmpfs_size_bytes,
     tmpfs_workdir_flags,
+    verify_tmpfs_headroom,
 )
 
 # ---------------------------------------------------------------------------
@@ -131,22 +132,50 @@ def test_flags_skips_when_operator_declares_short_workdir(tmp_path: Path) -> Non
     assert flags == []
 
 
-def test_flags_fail_loud_when_space_insufficient(tmp_path: Path) -> None:
+def test_verify_headroom_fails_loud_when_space_insufficient(tmp_path: Path) -> None:
     # Arrange — request more than any real filesystem can offer so the
     # free-space guard fires deterministically (10 EiB exceeds every disk).
+    # This is the GUARD-IS-ALIVE control: if it ever stops raising, the
+    # launch-time guarantee has been silently removed.
     cfg = _Cfg(ApptainerSpec(tmpfs_size="10737418240G"))
     # Act
     ctx = pytest.raises(TmpfsSpaceError)
     # Assert
     with ctx:
-        tmpfs_workdir_flags(cfg, tmp_path)
+        verify_tmpfs_headroom(cfg, tmp_path)
+
+
+def test_flags_do_not_check_space_even_when_it_is_insufficient(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the SAME impossible size that makes verify_tmpfs_headroom
+    # raise above. Building argv must not consult the disk at all: this
+    # function is reached by `sac agents explain` and by run(dry_run=True),
+    # which start nothing.
+    cfg = _Cfg(ApptainerSpec(tmpfs_size="10737418240G"))
+    # Act
+    flags = tmpfs_workdir_flags(cfg, tmp_path)
+    # Assert — emits the workdir, raises nothing
+    assert flags == ["--workdir", str(tmp_path / "tmp-scratch")]
 
 
 def test_flags_propagates_parse_error_on_bad_size(tmp_path: Path) -> None:
-    # Arrange
+    # Arrange — an unparseable size is a CONFIG error, not a resource
+    # condition: it is wrong on every host regardless of disk, so it must
+    # still surface at argv-construction time rather than at launch.
     cfg = _Cfg(ApptainerSpec(tmpfs_size="garbage"))
     # Act
     ctx = pytest.raises(ValueError)
     # Assert
     with ctx:
         tmpfs_workdir_flags(cfg, tmp_path)
+
+
+def test_verify_headroom_is_a_noop_when_operator_opted_out(tmp_path: Path) -> None:
+    # Arrange — tmpfs_size="" means the operator declined sac's workdir, so
+    # there is no scratch dir to size and nothing to guarantee.
+    cfg = _Cfg(ApptainerSpec(tmpfs_size=""))
+    # Act
+    result = verify_tmpfs_headroom(cfg, tmp_path)
+    # Assert
+    assert result is None

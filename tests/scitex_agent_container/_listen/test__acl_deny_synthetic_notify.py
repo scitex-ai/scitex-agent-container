@@ -122,7 +122,7 @@ def _synthetic_rows(target: str, db_path: Path) -> list[dict]:
 
 
 def test_cross_group_deny_publishes_synthetic_notification(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
@@ -139,7 +139,7 @@ def test_cross_group_deny_publishes_synthetic_notification(
 
 
 def test_synthetic_notification_sender_is_daemon(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — the frame must not appear to come from the sender
     # (that would impersonate a granted peer at the receiver). As a sac
@@ -162,7 +162,7 @@ def test_synthetic_notification_sender_is_daemon(
 
 
 def test_synthetic_notification_sender_literal_is_daemon(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — pin the literal wire value so a rename of the constant
     # can't silently drift the on-the-wire sender the operator's bracket
@@ -181,7 +181,7 @@ def test_synthetic_notification_sender_literal_is_daemon(
 
 
 def test_synthetic_notification_embeds_grant_command(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — operator-actionable: the content MUST embed the exact
     # CLI to grant if the attempt was intended.
@@ -200,7 +200,7 @@ def test_synthetic_notification_embeds_grant_command(
 
 
 def test_synthetic_notification_does_not_leak_message_body(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — receiver decides on identity; the synthetic frame
     # MUST NOT reveal the denied body pre-decision.
@@ -219,7 +219,7 @@ def test_synthetic_notification_does_not_leak_message_body(
 
 
 def test_synthetic_notification_extra_carries_grant_command(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — structured field for richer clients.
     app = create_app(token=_TOKEN)
@@ -242,7 +242,7 @@ def test_synthetic_notification_extra_carries_grant_command(
 
 
 def test_deny_records_rate_limit_log_timestamp(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
     app = create_app(token=_TOKEN)
@@ -253,7 +253,7 @@ def test_deny_records_rate_limit_log_timestamp(
             json=_send_payload("worker-a"),
             headers={"authorization": f"Bearer {_TOKEN}"},
         )
-    stamp = last_notified_at(sender="worker-a", target="lead", db_path=isolated_state)
+    stamp = last_notified_at(sender="worker-a", target="lead")
     # Assert — admit MUST have written a row to the rate-limit log.
     assert stamp is not None
 
@@ -266,7 +266,7 @@ def test_deny_records_rate_limit_log_timestamp(
 
 
 def test_second_deny_inside_cooldown_publishes_no_extra_synthetic(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — set a long cool-down so the second post is throttled.
     os.environ["SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S"] = "3600"

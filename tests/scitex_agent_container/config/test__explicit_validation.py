@@ -322,13 +322,18 @@ def test_paste_ready_hint_round_trips_to_green(
 def test_paste_ready_hint_preserves_omission_behaviour(
     tmp_path: Path, _round_trip_healed: dict
 ) -> None:
-    # Arrange — pasted claude.session must reproduce what omission meant:
-    # role-less agent -> 'fresh' (null keeps the role-derived default).
+    # Arrange — THE INVARIANT IS UNCHANGED: a pasted explicit
+    # `session: null` must resolve to whatever OMISSION resolves to, so a
+    # round-tripped spec never silently changes an agent's memory. Only the
+    # value moved: omission now means 'continue' for every role (operator,
+    # 2026-08-18, 「スペックは全てレジュームで」). Asserted as a literal rather
+    # than by calling default_session_for_role() — a test parameterised by
+    # the implementation it checks cannot fail.
     healed_path = _write_doc(tmp_path, _round_trip_healed, "healed-session")
     # Act
     cfg = load_config(healed_path)
     # Assert
-    assert cfg.claude.session == "fresh"
+    assert cfg.claude.session == "continue"
 
 
 # ---------------------------------------------------------------------------

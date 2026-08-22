@@ -164,7 +164,13 @@ def _kind_of(group: str) -> str:
 
 
 def _delegate(
-    kind: str, verb: str, name: str | None, yes: bool, dry_run: bool = False
+    kind: str,
+    verb: str,
+    name: str | None,
+    yes: bool,
+    dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
 ) -> int:
     """Resolve + run one ecosystem delegation. THE single mutation seam.
 
@@ -172,6 +178,12 @@ def _delegate(
     yes, dry_run)`` tuples a verb delegates with, rather than shelling out
     to a real ``scitex-dev`` that would rewrite the host's units and
     crontab. The delegation ARGUMENTS are what those tests are about.
+
+    ``adopt`` and ``force`` default to False and callers pass them BY
+    KEYWORD, so the positional call shape those tests capture is unchanged:
+    a five-element tuple before this parameter existed, five after. A
+    required parameter — or a positional call — would have rewritten every
+    one of those assertions to prove nothing about the behaviour that moved.
     """
     delegation = _backend.resolve(kind, verb)
     if not delegation.supported:
@@ -187,7 +199,14 @@ def _delegate(
             err=True,
         )
         raise SystemExit(4)
-    return _backend.invoke(delegation, name=name, yes=yes, dry_run=dry_run)
+    return _backend.invoke(
+        delegation,
+        name=name,
+        yes=yes,
+        dry_run=dry_run,
+        adopt=adopt,
+        force=force,
+    )
 
 
 def _resolve_one(group: str, typed: str) -> str:
@@ -239,6 +258,48 @@ def _add_list_command(grp, group: str) -> None:
             click.echo(f"  {'':24s} {j.description}")
 
 
+def _adoption_options(verb: str):
+    """``--adopt`` / ``--force``, attached ONLY to the verb that has them.
+
+    Both are real options on ``scitex-dev ecosystem timer install`` and on
+    nothing else in the group. Declaring them unconditionally would let
+    ``sac dev timer uninstall --force`` parse here and then fail downstream
+    on a command that has no such option — trading one misleading message
+    for another.
+
+    They exist at all because scitex-dev's refusal names them. MEASURED
+    2026-08-20: ``install`` on an existing unit prints "Use --adopt to keep
+    the existing supervisor (writes nothing), or --force to overwrite", and
+    following that advice returned ``Error: No such option '--force'``. The
+    wrapper forwarded the message and not the flags.
+    """
+
+    def decorate(fn):
+        if verb != "install":
+            return fn
+        fn = click.option(
+            "--force",
+            is_flag=True,
+            default=False,
+            help=(
+                "Overwrite even when another supervisor exists. Forwarded "
+                "to scitex-dev, which reports loudly what it replaced."
+            ),
+        )(fn)
+        fn = click.option(
+            "--adopt",
+            is_flag=True,
+            default=False,
+            help=(
+                "Keep an existing supervisor of ANY mechanism and write "
+                "nothing. Forwarded to scitex-dev."
+            ),
+        )(fn)
+        return fn
+
+    return decorate
+
+
 def _add_bulk_command(grp, group: str, verb: str) -> None:
     """Attach a verb that acts on every job of the kind, or one named one."""
 
@@ -258,7 +319,8 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
         default=False,
         help="Confirm. Forwarded to scitex-dev.",
     )
-    def _bulk(name, dry_run, yes, _verb=verb):
+    @_adoption_options(verb)
+    def _bulk(name, dry_run, yes, adopt=False, force=False, _verb=verb):
         _announce_deprecation(group)
         jobs = _jobs_or_degrade(group)
         if name is not None:
@@ -269,7 +331,20 @@ def _add_bulk_command(grp, group: str, verb: str) -> None:
             return
         rc = 0
         for j in jobs:
-            code = _delegate(_kind_of(group), _verb, j.name, yes, dry_run)
+            code = _delegate(
+                _kind_of(group),
+                _verb,
+                j.name,
+                yes,
+                dry_run,
+                # BY KEYWORD, and that is load-bearing. The tests replace
+                # `_delegate` with a lambda that captures `*args`, so passing
+                # these positionally would grow every captured tuple from five
+                # elements to seven and break assertions about a call shape
+                # this change does not alter.
+                adopt=adopt,
+                force=force,
+            )
             rc = rc or code
         raise SystemExit(rc)
 
