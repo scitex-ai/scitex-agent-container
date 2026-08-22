@@ -842,6 +842,33 @@ required_plugins = ["pytest-asyncio", "pytest-xdist"]
 
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+# DUMP EVERY THREAD'S STACK WHEN A TEST STOPS MAKING PROGRESS.
+#
+# Purely diagnostic: pytest arms faulthandler and dumps tracebacks after this
+# many seconds in ONE test. It does not fail, kill or skip anything — a slow
+# test that finishes still passes, and the dump is the only side effect. That
+# is why this is safe to set on a suite whose normal full run is ~6 minutes.
+#
+# WHY IT EXISTS. A matrix leg has now hung THREE times by this repo's own
+# count (see the comments in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml:
+# PR #594's 1h39m, a duplicate py3.11 leg at 40+ min while its siblings
+# finished in 11). MEASURED 2026-08-21 on run 32482771853: the py3.13 leg
+# stalled at 67-68% and produced NO OUTPUT AT ALL for 36.5 minutes before the
+# job's 45-minute timeout killed it — no test line, no traceback, nine orphan
+# python processes reaped by the runner. Its py3.11 sibling passed in 6m12s on
+# the same diff, concurrently, on a different host.
+#
+# Two agents then spent an evening refuting six hypotheses (the diff, an
+# ambient Postgres error at the stall boundary, the host's store, within-run
+# collision, a third repo's CI, and both runners on that box) and still could
+# not say WHAT it blocked on — because the log cannot answer that question.
+# This line makes the next occurrence answer it by itself.
+#
+# 300s is chosen against the observed suite: the whole run takes ~6 minutes, so
+# no healthy single test comes near five minutes, and a real hang exceeds it
+# long before the job's 45-minute wall.
+faulthandler_timeout = 300
 addopts = "-v --tb=short -p tests._store_isolation -m 'not integration and not docker_smoke'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
