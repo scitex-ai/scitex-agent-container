@@ -180,3 +180,63 @@ def test_local_json_carries_state_field(local_drifted_source):
     payload = json.loads(result.stdout)
     # Assert
     assert payload["local"]["state"] == "behind"
+
+
+# ---------------------------------------------------------------------------
+# sac doctor --pollers  (one live Telegram poller per bot token?)
+# ---------------------------------------------------------------------------
+#
+# These drive the REAL host /proc, so the STATE is whatever this machine is
+# actually doing right now and must NOT be asserted. What IS deterministic --
+# and what these pin -- is that the check runs, reports one of exactly three
+# values, and rides along by default. The state TRANSITIONS are measured
+# against real spawned processes in
+# tests/.../runtimes/test__cct_poller_singleton.py, where the population is
+# controlled.
+
+_POLLER_STATES = {"ok", "violation", "unknown"}
+
+
+def test_pollers_json_carries_a_three_valued_state():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--pollers", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["pollers"]["state"] in _POLLER_STATES
+
+
+def test_pollers_only_omits_the_drift_check():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--pollers", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "local" not in payload
+
+
+def test_pollers_human_output_names_the_check():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--pollers"])
+    # Assert
+    assert "telegram pollers" in result.output
+
+
+def test_default_doctor_runs_the_poller_check_too(local_drifted_source):
+    # Arrange -- a check nobody remembers to run is how a 409 storm survives
+    # for weeks, so the poller verdict must appear without being asked for.
+    # Act
+    result = CliRunner().invoke(doctor, ["--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["pollers"]["state"] in _POLLER_STATES
+
+
+def test_default_doctor_still_carries_the_drift_verdict(local_drifted_source):
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["local"]["state"] == "behind"
