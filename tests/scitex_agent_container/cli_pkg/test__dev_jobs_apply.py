@@ -80,14 +80,25 @@ def _declared_timers() -> list[str]:
 
 
 class _Recorder:
-    """Capture every ``(kind, verb, name, yes, dry_run)`` delegation."""
+    """Capture every ``(kind, verb, name, yes, dry_run)`` delegation.
+
+    ``**passed`` absorbs the seam's OPTIONAL keyword arguments — ``adopt``
+    and ``force`` today — and keeps them out of ``calls``, so the five-element
+    tuple every assertion below reads is unchanged by a parameter being added
+    upstream. Without it a new keyword raises TypeError inside the Click
+    callback, which surfaces as a non-zero exit and an EMPTY ``calls`` list:
+    the tests then fail saying the verb delegated for no jobs, which is true
+    and describes the recorder rather than the code.
+    """
 
     def __init__(self, rc: int = 0) -> None:
         self.calls: list[tuple] = []
+        self.passed: list[dict] = []
         self._rc = rc
 
-    def __call__(self, kind, verb, name, yes, dry_run=False) -> int:
+    def __call__(self, kind, verb, name, yes, dry_run=False, **passed) -> int:
         self.calls.append((kind, verb, name, yes, dry_run))
+        self.passed.append(passed)
         return self._rc
 
     def names_for(self, verb: str) -> list[str]:
@@ -474,3 +485,27 @@ def test_every_rendered_service_has_an_execstart(rendered_units) -> None:
     without = [n for n, (_t, service) in rendered_units.items() if "ExecStart=" not in service]
     # Assert
     assert without == []
+
+
+def test_install_forwards_force_to_the_delegation_seam() -> None:
+    """The end-to-end shape of the defect: install's refusal names --force."""
+    # Arrange
+    recorder = _Recorder()
+    # Act
+    with _delegating_to(recorder):
+        CliRunner().invoke(
+            dj._make_group("timer"), ["install", "host-sync-check", "--yes", "--force"]
+        )
+    # Assert
+    assert recorder.passed and recorder.passed[0].get("force") is True
+
+
+def test_uninstall_rejects_force_because_upstream_has_no_such_option() -> None:
+    """Forwarding a flag the target verb lacks trades one wrong message for another."""
+    # Arrange
+    argv = ["uninstall", "host-sync-check", "--yes", "--force"]
+    # Act
+    with _delegating_to(_Recorder()):
+        result = CliRunner().invoke(dj._make_group("timer"), argv)
+    # Assert
+    assert result.exit_code != 0

@@ -416,7 +416,7 @@ def resolve_node_host(
     with open_db(db_path) as conn:
         row = conn.execute(
             """
-            SELECT host, a2a_port
+            SELECT host, a2a_port, bound_port
               FROM instances
              WHERE name = ? AND ended_at IS NULL
              ORDER BY started_at DESC, id DESC
@@ -425,11 +425,34 @@ def resolve_node_host(
             (name,),
         ).fetchone()
     if row is not None:
+        # PREFER bound_port, fall back to the legacy a2a_port. Reading only
+        # a2a_port discarded a usable address that was sitting in the same
+        # row: `_send_resolve` has preferred bound_port over the legacy
+        # column since it was introduced, and the writers populate BOTH
+        # (`record_instance_start(a2a_port=bound, bound_port=bound)`), so a
+        # row where only bound_port survived resolved to "no port" here and
+        # 502'd at the forwarder while the sibling resolver would have
+        # reached it. Same row, same moment, two answers — the asymmetry was
+        # the defect, not the null.
+        port = row["a2a_port"]
+        if port is None:
+            port = row["bound_port"]
         return {
             "host": str(row["host"]),
-            "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+            "a2a_port": int(port) if port is not None else None,
         }
     # Fall through to comms_nodes (ADR-0014).
+    #
+    # NOT ALSO FALLING THROUGH WHEN THE ROW EXISTS BUT CARRIES NO PORT, and
+    # the reason is that this function answers TWO questions with one value.
+    # `is_local_node` consults it and reads ONLY ``host``: a live row means
+    # "the agent is on that host", which stays true whether or not a port is
+    # recorded. Falling through on a portless row would hand the locality
+    # decision to ``comms_nodes``, which may name a DIFFERENT host — so an
+    # agent that is genuinely local could start being forwarded away, and a
+    # routing repair would have silently changed what "local" means.
+    # Splitting locality from addressability is the real fix and it is a
+    # bigger change than this one; see the a2a card.
     return resolve_comms_node_host(name=name, db_path=db_path)
 
 

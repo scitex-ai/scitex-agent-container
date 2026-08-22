@@ -329,7 +329,7 @@ def _push_kind(lead_env, *, kind: str, summary: str, from_agent: str) -> dict:
         )
 
 
-def test_push_to_lead_returns_server_msg_id(lead_env) -> None:
+def test_push_to_lead_returns_server_msg_id(lead_env, pg_schema: str) -> None:
     # Arrange
     kind = "done"
     # Act
@@ -340,7 +340,7 @@ def test_push_to_lead_returns_server_msg_id(lead_env) -> None:
     assert isinstance(out.get("msg_id"), str) and out["msg_id"]
 
 
-def test_push_to_lead_persists_event_with_kind(lead_env) -> None:
+def test_push_to_lead_persists_event_with_kind(lead_env, pg_schema: str) -> None:
     # Arrange — push then read back from the durable table.
     kind = "blocker"
     # Act
@@ -353,7 +353,7 @@ def test_push_to_lead_persists_event_with_kind(lead_env) -> None:
     assert rows and rows[0]["event"].get("kind") == "blocker"
 
 
-def test_push_to_lead_persists_summary_as_content(lead_env) -> None:
+def test_push_to_lead_persists_summary_as_content(lead_env, pg_schema: str) -> None:
     # Arrange
     summary = "phase 2/4"
     # Act
@@ -363,7 +363,7 @@ def test_push_to_lead_persists_summary_as_content(lead_env) -> None:
     assert rows and rows[0]["event"].get("content") == "phase 2/4"
 
 
-def test_push_to_lead_persists_from_agent(lead_env) -> None:
+def test_push_to_lead_persists_from_agent(lead_env, pg_schema: str) -> None:
     # Arrange
     sender = "bob"
     # Act
@@ -424,7 +424,7 @@ def test_push_to_lead_loud_on_unreachable_lead(lead_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env) -> None:
+def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env, pg_schema: str) -> None:
     # Arrange — real lead listen on a free port; real peer-token; real
     # same-group lineage so the ACL admits the send. The agent identity
     # is ``alice``; the lead identity is ``lead`` (matches lead_env's

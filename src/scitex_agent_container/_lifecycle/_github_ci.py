@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable
+from typing import Callable, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,39 @@ def _run_gh(args: list) -> str:
         logger.warning("_github_ci: gh invocation failed: %s", exc)
         return ""
     return proc.stdout or ""
+
+
+class GhProbe(NamedTuple):
+    """A gh invocation with its failure INTACT.
+
+    ``_run_gh`` deliberately flattens every failure to ``""`` — right for the
+    verdict path, where a missing answer and an unreadable one both mean "no
+    verdict this tick". It is wrong for any caller that must tell "GitHub says
+    this does not exist" from "I could not ask GitHub", because those two
+    warrant opposite actions and ``""`` is the same value for both.
+
+    Added BESIDE ``_run_gh`` rather than widening it: that function has several
+    callers who rely on the flattening, and changing its return shape to serve
+    one new caller would make every one of them handle a case they do not have.
+    """
+
+    stdout: str
+    returncode: int
+    stderr: str
+
+
+def _run_gh_probe(args: list) -> GhProbe:
+    """Run ``gh <args>`` and return stdout, exit code and stderr separately."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, check=False
+        )
+    except Exception as exc:  # stx-allow: fallback (gh missing / spawn error is UNKNOWN, not absence — see GhProbe)
+        logger.warning("_github_ci: gh probe failed to spawn: %s", exc)
+        return GhProbe("", -1, str(exc))
+    return GhProbe(proc.stdout or "", proc.returncode, proc.stderr or "")
 
 
 #: REST check-run ``conclusion`` -> the bucket vocabulary `gh pr checks`

@@ -509,6 +509,62 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # filters for the card-event kinds and ignores everything else, incl.
 # sac's OWN liveness-tick anomaly events on the same bus. Bus-only
 # contract: no import of scitex_todo.
+# DECLARED IN BOTH GROUPS, and the duplication is the correct migration
+# state — not an oversight to tidy up later.
+#
+# MEASURED 2026-08-20 by scitex-cards: this consumer has NEVER been invoked in
+# production. The running notify daemon executes scitex-cards 0.42.0, whose
+# `_hooks/_plugins.py` reads `scitex_cards.hooks` and has ZERO references to
+# the retired group. sac was registered only under the retired name, so every
+# card event was dispatched to an EMPTY SET — succeeded, reported success,
+# called nobody. Corroborating symptoms, all explained by that one fact:
+#
+#     notifyd-liveness.json  last_delivery_at: null   never delivered, ever
+#     local inbox            150 rows, all unseen     enqueued, never pushed
+#     agents still get cards                          the PULL rail is separate
+#
+# Nothing anywhere reported a failure. That is the signature of this defect
+# class, and scitex-cards' own docstring recorded the identical state on
+# 2026-08-17 — the fix shipped in 0.48.0 and has never executed, because the
+# unit whose Description reads "supervised so a package upgrade actually
+# reaches it" points ExecStart at a hand-made venv that `pip install -U` never
+# touches.
+#
+# WHY BOTH RATHER THAN A MOVE. 0.42.0 (running now) reads only the new group,
+# so adding it revives delivery immediately. 0.48.0 reads both and dedupes, so
+# nothing double-fires. And leaving the retired entry in place preserves the
+# fleet's only registration under that name, which is what lets scitex-cards
+# verify the alias actually works when 0.48.0 finally runs — deleting it would
+# make "the alias works" indistinguishable from "nobody was left".
+#
+# THE NAME AND THE DOTTED PATH MUST STAY BYTE-IDENTICAL between the two
+# blocks. 0.48.0 dedupes on the tuple `(ep.name, ep.value)`:
+#
+#     seen  = {(ep.name, ep.value) for ep in current}
+#     extra = [ep for ep in retired if (ep.name, ep.value) not in seen]
+#
+# so renaming the entry or moving the callable on one side only turns the
+# alias meant to FIX delivery into a double-delivery bug. A migration is
+# exactly when tidying a name is tempting; do not, until the retired block
+# goes away entirely.
+#
+# C10 — sac's consumer on the shared card-event bus. When the board emits a
+# card-event (commented / created / reassigned / status_changed / completed /
+# committed / pushed / merged), this callable is invoked in the board's
+# process; it resolves the card's owner + collaborators + subscribers and
+# delivers the notification to each via the local ``sac listen`` daemon's
+# ``/v1/notify`` router endpoint — so a CONTAINERIZED owner-agent (whose a2a
+# port is unreachable inbound) still receives it. The consumer filters for the
+# card-event kinds and ignores everything else, incl. sac's OWN liveness-tick
+# anomaly events on the same bus. Bus-only contract: no import of the board
+# package.
+[project.entry-points."scitex_cards.hooks"]
+scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
+
+# The retired spelling, kept deliberately. See the note above: it is the
+# fleet's only registration under this group and therefore the only way to
+# verify the 0.48.0 alias when it runs. Remove it only once that verification
+# has happened and scitex-cards says the group is closed.
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
@@ -786,7 +842,34 @@ required_plugins = ["pytest-asyncio", "pytest-xdist"]
 
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
+
+# DUMP EVERY THREAD'S STACK WHEN A TEST STOPS MAKING PROGRESS.
+#
+# Purely diagnostic: pytest arms faulthandler and dumps tracebacks after this
+# many seconds in ONE test. It does not fail, kill or skip anything — a slow
+# test that finishes still passes, and the dump is the only side effect. That
+# is why this is safe to set on a suite whose normal full run is ~6 minutes.
+#
+# WHY IT EXISTS. A matrix leg has now hung THREE times by this repo's own
+# count (see the comments in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml:
+# PR #594's 1h39m, a duplicate py3.11 leg at 40+ min while its siblings
+# finished in 11). MEASURED 2026-08-21 on run 32482771853: the py3.13 leg
+# stalled at 67-68% and produced NO OUTPUT AT ALL for 36.5 minutes before the
+# job's 45-minute timeout killed it — no test line, no traceback, nine orphan
+# python processes reaped by the runner. Its py3.11 sibling passed in 6m12s on
+# the same diff, concurrently, on a different host.
+#
+# Two agents then spent an evening refuting six hypotheses (the diff, an
+# ambient Postgres error at the stall boundary, the host's store, within-run
+# collision, a third repo's CI, and both runners on that box) and still could
+# not say WHAT it blocked on — because the log cannot answer that question.
+# This line makes the next occurrence answer it by itself.
+#
+# 300s is chosen against the observed suite: the whole run takes ~6 minutes, so
+# no healthy single test comes near five minutes, and a real hang exceeds it
+# long before the job's 45-minute wall.
+faulthandler_timeout = 300
+addopts = "-v --tb=short -p tests._store_isolation -m 'not integration and not docker_smoke'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",

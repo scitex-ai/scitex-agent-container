@@ -92,7 +92,6 @@ KNOWN_TABLES = (
     "comms_grants",
     "comms_nodes",
     "node_comms_policy",
-    "acl_deny_notify_log",
     # ``incarnations`` was here until 2026-08-19. It now lives in per-host
     # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
     # through `sac db query`. Removed rather than left behind: a whitelisted
@@ -191,20 +190,13 @@ def init_schema(db_path: Path | None = None) -> Path:
         migrate_node_comms_policy_add_group_names(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_DIARY)
-        # Task #27 — ACL block/unblock flow tables. Both CREATE TABLE
-        # scripts are idempotent; running them inline here means a
-        # fresh state.db carries the tables without a separate
-        # migration step. The owning modules expose the schema
-        # strings; we pull them through the same connection so
-        # ``init_schema`` stays atomic.
-        from . import state_db_acl_deny_notify as _adn
-        from . import state_db_blocks as _blocks
-
-        # ``pending_prompts`` was created here until 2026-08-20. It moved
-        # to per-host PostgreSQL; its schema is created on first open by
-        # ``state_db_pending_approval.open_pending_prompt_store``, so there
-        # is nothing to run here.
-        conn.executescript(_blocks._SCHEMA)
+        # Task #27's two ACL tables were both created here until 2026-08-20.
+        # ``pending_prompts`` and ``comms_blocks`` have BOTH moved to per-host
+        # PostgreSQL; each store creates its own schema on first open
+        # (``state_db_pending_approval.open_pending_prompt_store`` /
+        # ``state_db_blocks.open_blocks_store``), so there is nothing to run
+        # here for either. What is left of the pair in SQLite is
+        # ``comms_grants``, which lives in ``state_db_nodes`` and has not moved.
         # The ``incarnations`` birth-certificate table used to be created
         # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
         # this comment block used to make — "lives in the EXISTING sqlite
@@ -212,12 +204,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         # migration carries it along" — is now kept. Its schema is created
         # on first open by :func:`state_db_incarnations.open_incarnation_store`,
         # so there is nothing to run here.
-        # sac-comms item D (lead a2a c42b3e3c): rate-limit log for
-        # synthetic ACL-deny notifications published at the target
-        # receiver. One row per (sender, target) pair carrying the
-        # last-notify timestamp; the check + update lives in
-        # :func:`state_db_acl_deny_notify.should_notify_acl_deny`.
-        conn.executescript(_adn._SCHEMA)
+        # sac-comms item D's rate-limit log (acl_deny_notify_log) was created
+        # here until 2026-08-20. It moved to per-host PostgreSQL alongside the
+        # two task-#27 tables above; its schema is created on first open by
+        # ``state_db_acl_deny_notify.open_deny_notify_store``.
         conn.commit()
     return path
 
