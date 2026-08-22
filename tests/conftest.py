@@ -647,3 +647,38 @@ def _isolate_event_log(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Pat
             os.environ.pop(_EVENT_LOG_KEY, None)
         else:
             os.environ[_EVENT_LOG_KEY] = saved
+
+# ---------------------------------------------------------------------------
+# STORE ISOLATION THAT SURVIVES A CLEARED addopts
+#
+# tests/_store_isolation.py is registered via `-p tests._store_isolation` in
+# pyproject's addopts, and its docstring calls that unconditional. It is
+# unconditional with respect to WHICH DIRECTORY a run collects -- the
+# sibling-escape bug it was written for. It is NOT unconditional with respect
+# to the command line: `-o addopts=` erases the whole string. MEASURED on a
+# clean worktree, one probe test printing SCITEX_STORE_DSN:
+#
+#     pytest <probe>              -> ...@127.0.0.1:1/tests_must_not_write_to_the_fleet_store
+#     pytest <probe> -o addopts=  -> ...@127.0.0.1:55432/scitex   <- the LIVE per-host store
+#
+# and the same flag also un-deselects the integration and docker_smoke suites.
+# An agent reached for exactly that flag on 2026-08-22 to "simplify" a run.
+#
+# conftest loading is NOT controlled by addopts, so importing here restores the
+# guard on every invocation. The pyproject entry STAYS -- `-p` loads earlier,
+# which still matters for the directory case -- and importing a module twice is
+# a no-op.
+#
+# Imported HERE rather than from a repo-root conftest.py: a root conftest is the
+# canonical home for pytest_plugins, but it trips PS-103 (top-level-junk-file)
+# and drags a root __pycache__ in with it, which would need two whitelist
+# entries including build junk. This file is already loaded for everything under
+# tests/, which is every test in the repo.
+#
+# The module-level assignment is the load-bearing half (it covers collection and
+# session-scoped fixtures, per that module's own measured note); the autouse
+# fixture re-asserts it per test, and is imported so it applies here too.
+# ---------------------------------------------------------------------------
+from tests._store_isolation import (  # noqa: E402,F401
+    _no_accidental_fleet_store_writes,
+)
