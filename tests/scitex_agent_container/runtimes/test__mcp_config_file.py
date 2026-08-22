@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import json
 import os
+import resource
+import signal
 import stat
 import time
 from pathlib import Path
@@ -264,127 +266,206 @@ def test_unwritable_location_raises_instead_of_falling_back(tmp_path: Path) -> N
 # every concurrent build_sdk_options("alpha", ...) targeted one shared path.
 #
 # A race cannot be tested by racing -- a passing timing test proves nothing.
-# These pin the PROPERTIES that make the race impossible instead.
+# These pin the PROPERTIES that make the race impossible instead, and every
+# one of them OBSERVES THE REAL ARTIFACT rather than patching a seam
+# (PA-306 forbids mocks, and the observations below are strictly stronger
+# than the spies they replaced -- a spy only proves os.replace was CALLED):
+#
+#   st_ino          an in-place O_TRUNC rewrite KEEPS the target's inode; a
+#                   rename installs a DIFFERENT one. One stat call separates
+#                   the two implementations.
+#   a held fd       an open descriptor names the INODE, not the path, so a
+#                   reader that opened the config first keeps reading
+#                   whatever the writer did to that inode. That reader IS
+#                   the one CI tripped over.
+#   RLIMIT_FSIZE    a real, kernel-imposed ceiling on the write, hit after
+#                   the point where the old form had already destroyed the
+#                   target. Making the DIRECTORY unwritable does NOT work as
+#                   a failure injector here: write_mcp_config_file chmods it
+#                   back to 0700 itself (measured 2026-08-22 -- the write
+#                   simply succeeds).
 # ---------------------------------------------------------------------------
 
+#: An existing, valid config -- what a reader could be holding open when a
+#: rewrite starts.
+_PREVIOUS_CONFIG = json.dumps({"mcpServers": {"old": {}}})
 
-def test_target_still_holds_valid_json_right_up_to_the_rename(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The window that produced the CI failure: mid-write, the target is valid.
-
-    Under the old O_TRUNC form the target was empty here, which is exactly
-    what a concurrent reader hit.
-    """
-    # Arrange: an existing, valid config a reader could be holding open.
-    from scitex_agent_container._runners import _atomic
-
-    directory = tmp_path / "d"
-    directory.mkdir()
-    (directory / "a.mcp.json").write_text(json.dumps({"mcpServers": {"old": {}}}))
-    seen: dict[str, str] = {}
-    real_replace = _atomic.os.replace
-
-    def _spy(src, dst):
-        # The instant before the swap — the target must NOT be truncated.
-        seen["content"] = Path(dst).read_text(encoding="utf-8")
-        return real_replace(src, dst)
-
-    monkeypatch.setattr(_atomic.os, "replace", _spy)
-    # Act
-    write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
-    # Assert
-    assert json.loads(seen["content"])["mcpServers"] == {"old": {}}
+#: A file-size ceiling far below the payload, so the write fails mid-flight.
+_TINY_FILE_LIMIT = 64
 
 
-def test_a_failed_write_leaves_the_previous_config_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Atomicity's other half: a write that fails must not destroy the old file."""
-    # Arrange
-    from scitex_agent_container._runners import _atomic
-
+def _seeded_config_dir(tmp_path: Path, body: str, mode: int) -> Path:
+    """A config dir already holding ``a.mcp.json`` with ``body`` at ``mode``."""
     directory = tmp_path / "d"
     directory.mkdir()
     target = directory / "a.mcp.json"
-    previous = json.dumps({"mcpServers": {"old": {}}})
-    target.write_text(previous)
-
-    def _boom(src, dst):
-        raise OSError("rename refused")
-
-    monkeypatch.setattr(_atomic.os, "replace", _boom)
-    # Act
-    with pytest.raises(McpConfigWriteError):
-        write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
-    # Assert
-    assert target.read_text() == previous
+    target.write_text(body, encoding="utf-8")
+    os.chmod(target, mode)
+    return directory
 
 
-def test_a_failed_write_leaves_no_stray_temp_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _rewrite(directory: Path) -> str:
+    """Write the secret-bearing config into ``directory``; return its path."""
+    return write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+
+
+def _what_a_holding_reader_reads(directory: Path) -> str:
+    """What a reader that opened the config BEFORE a rewrite reads after it.
+
+    The descriptor is bound to the inode the config had on entry. An atomic
+    rename leaves that inode untouched and moves a different one into the
+    path, so the reader still sees the old bytes; an in-place ``O_TRUNC``
+    rewrite mutates the reader's own inode under it, so the reader sees the
+    new payload -- or, at the wrong instant, nothing at all, which is the
+    ``json.loads("")`` CI reported.
+    """
+    handle = (directory / "a.mcp.json").open("r", encoding="utf-8")
+    try:
+        _rewrite(directory)
+        return handle.read()
+    finally:
+        handle.close()
+
+
+def _rewrite_under_a_tiny_file_size_limit(directory: Path) -> None:
+    """Run the write with ``RLIMIT_FSIZE`` far below the payload it must store.
+
+    A REAL, kernel-imposed obstacle rather than an injected one. ``SIGXFSZ``
+    is ignored for the duration so an over-limit write reports an error
+    instead of killing the process; the limit and the handler are both
+    restored before returning, so the window is confined to this one call.
+
+    The two implementations answer it very differently, MEASURED 2026-08-22:
+
+      * the atomic form buffers the payload and flushes it, so the flush
+        raises ``EFBIG``, the temp file is unlinked, and the call ends in
+        ``McpConfigWriteError`` (swallowed here — the caller asserts on the
+        DIRECTORY, not on the exception);
+      * the old ``os.write`` form got a SHORT COUNT back (64 of 239 bytes)
+        and never checked it, so it reported SUCCESS while leaving a
+        truncated stub where the config used to be.
+
+    Nothing is asserted here on purpose. If this obstacle ever stops biting,
+    the write simply succeeds and the callers' assertions go red — they can
+    never pass vacuously.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    previous_handler = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    try:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (_TINY_FILE_LIMIT, hard))
+        try:
+            _rewrite(directory)
+        except McpConfigWriteError:
+            pass
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        signal.signal(signal.SIGXFSZ, previous_handler)
+
+
+def test_a_rewrite_replaces_the_config_inode(tmp_path: Path) -> None:
+    """The file is REPLACED, never written into in place.
+
+    ``O_TRUNC`` preserves ``st_ino``; ``os.replace`` installs a new inode.
+    That one number is the whole difference between the racy write and the
+    atomic one, and it is a property of the artifact on disk.
+    """
     # Arrange
-    from scitex_agent_container._runners import _atomic
+    directory = _seeded_config_dir(tmp_path, _PREVIOUS_CONFIG, MCP_CONFIG_FILE_MODE)
+    before = os.stat(directory / "a.mcp.json").st_ino
+    # Act
+    _rewrite(directory)
+    # Assert
+    assert os.stat(directory / "a.mcp.json").st_ino != before
 
+
+def test_a_holding_reader_still_reads_the_previous_config(tmp_path: Path) -> None:
+    """The CI reader, reproduced without racing: it keeps its own inode."""
+    # Arrange
+    directory = _seeded_config_dir(tmp_path, _PREVIOUS_CONFIG, MCP_CONFIG_FILE_MODE)
+    # Act
+    seen = _what_a_holding_reader_reads(directory)
+    # Assert
+    assert seen == _PREVIOUS_CONFIG
+
+
+def test_a_failed_write_leaves_the_previous_config_intact(tmp_path: Path) -> None:
+    """Atomicity's other half: a write that cannot finish must not destroy
+    what was already there.
+
+    The old form truncated the target FIRST and wrote second, so anything
+    that went wrong in between left the agent with a mangled MCP config. It
+    did not even need an exception to do it: under the size limit it kept
+    the short count ``os.write`` returned and reported success.
+    """
+    # Arrange
+    directory = _seeded_config_dir(tmp_path, _PREVIOUS_CONFIG, MCP_CONFIG_FILE_MODE)
+    # Act
+    _rewrite_under_a_tiny_file_size_limit(directory)
+    # Assert
+    assert (directory / "a.mcp.json").read_text(encoding="utf-8") == _PREVIOUS_CONFIG
+
+
+def test_a_failed_write_leaves_no_file_behind(tmp_path: Path) -> None:
+    """No stray temp file, and no truncated stub either.
+
+    The old form's ``O_CREAT`` created the target before it had the bytes to
+    fill it, so a write that could not complete still published a partial
+    config for ``claude`` to load.
+    """
+    # Arrange
     directory = tmp_path / "d"
     directory.mkdir()
-
-    def _boom(src, dst):
-        raise OSError("rename refused")
-
-    monkeypatch.setattr(_atomic.os, "replace", _boom)
     # Act
-    with pytest.raises(McpConfigWriteError):
-        write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    _rewrite_under_a_tiny_file_size_limit(directory)
     # Assert
     assert list(directory.iterdir()) == []
 
 
 def test_a_successful_write_leaves_only_the_config_behind(tmp_path: Path) -> None:
+    """GUARD, not a regression test — the old form passed this too.
+
+    It pins that the temp file the atomic write now creates is always renamed
+    away and never accumulates.
+    """
     # Arrange
     directory = tmp_path / "d"
     # Act
-    write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    _rewrite(directory)
     # Assert
     assert [q.name for q in directory.iterdir()] == ["a.mcp.json"]
 
 
-def test_the_inode_that_receives_the_secret_is_never_world_readable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The secret window, asserted DURING the write rather than after it.
+def test_the_world_readable_file_is_replaced_not_rewritten(tmp_path: Path) -> None:
+    """The 0644 inode an older sac left must not be the one that gets filled.
 
-    ``test_preexisting_world_readable_file_is_tightened`` above checks the
+    ``test_preexisting_world_readable_file_is_tightened`` above pins the
     FINAL mode, and the old code reached 0600 too -- by writing the resolved
-    secret literals into the pre-existing 0644 inode and chmod-ing afterwards.
-    A final-state assertion cannot tell those apart, so this one inspects the
-    inode that actually receives the payload, at the moment it holds it.
+    secret literals into the pre-existing 0644 inode and chmod-ing after. A
+    final-state assertion cannot tell those apart. Inode identity can: the
+    payload lands on a fresh mkstemp inode, so the world-readable one is no
+    longer the file at all.
     """
-    # Arrange: a world-readable file left by an older sac.
-    from scitex_agent_container._runners import _atomic
-
-    directory = tmp_path / "d"
-    directory.mkdir()
-    stale = directory / "a.mcp.json"
-    stale.write_text("{}")
-    os.chmod(stale, 0o644)
-    seen: dict[str, Any] = {}
-    real_replace = _atomic.os.replace
-
-    def _spy(src, dst):
-        # src is the inode holding the payload right now.
-        seen["mode"] = stat.S_IMODE(os.stat(src).st_mode)
-        seen["body"] = Path(src).read_text(encoding="utf-8")
-        return real_replace(src, dst)
-
-    monkeypatch.setattr(_atomic.os, "replace", _spy)
+    # Arrange
+    directory = _seeded_config_dir(tmp_path, "{}", 0o644)
+    stale_inode = os.stat(directory / "a.mcp.json").st_ino
     # Act
-    path = write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    path = _rewrite(directory)
     # Assert
-    assert SENTINEL in seen["body"]
-    assert seen["mode"] == MCP_CONFIG_FILE_MODE
-    assert stat.S_IMODE(os.stat(path).st_mode) == MCP_CONFIG_FILE_MODE
+    assert os.stat(path).st_ino != stale_inode
+
+
+def test_the_world_readable_inode_never_receives_the_secret(tmp_path: Path) -> None:
+    """...and that inode never holds the secret, at any instant.
+
+    Read through a descriptor opened while the file was still 0644: whatever
+    that descriptor can see, every local user could have seen too.
+    """
+    # Arrange
+    directory = _seeded_config_dir(tmp_path, "{}", 0o644)
+    # Act
+    seen = _what_a_holding_reader_reads(directory)
+    # Assert
+    assert SENTINEL not in seen
 
 
 # ---------------------------------------------------------------------------
