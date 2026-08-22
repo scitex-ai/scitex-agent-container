@@ -1,76 +1,76 @@
 name: cla
 
-# ┌───────────────────────────────────────────────────────────────────────────┐
-# │ NAMED EXCEPTION to the "no GitHub-hosted runners" rule. READ BEFORE       │
-# │ "FIXING" THE runs-on BELOW. This is the ONLY ubuntu-latest left in the    │
-# │ repo, and it is deliberate, argued and escalated — not an oversight.      │
-# └───────────────────────────────────────────────────────────────────────────┘
+# CALLS the org reusable rather than re-implementing it (PS-231).
 #
-# The operator's rule (2026-07-14) is absolute: no hosted runners, no
-# exceptions; if Spartan breaks, that is OURS to fix. Every other workflow in
-# this repo now obeys it. This one does not, because obeying it here would
-# re-open — WIDER — the exact security hole we closed today.
+# WHY THIS ONE COULD BE CONVERTED WHEN THE OTHER FOUR COULD NOT. All five of
+# this repo's PS-231 workflows were diffed against the org copy in BOTH
+# directions on 2026-08-18, and four turned out to hold leaf-only capabilities
+# that must be pushed upstream before their local body can be deleted. This one
+# does not: the org reusable is a strict superset, verified field by field
+# rather than by size.
 #
-# THE ARGUMENT, in four facts that only bite when combined:
+#   path-to-signatures   org "signatures/cla.json"          identical
+#   branch               org "cla-signatures"               identical
+#   allowlist            org input, default bot*,ywatanabe1989   identical
+#   runs_on              org input, default ["ubuntu-latest"]    identical posture
+#   path-to-document     org derives it from ${{ github.repository }}
+#                        and inputs.default_branch — BETTER than the hardcoded
+#                        URL this file used to carry, which would have rotted
+#                        silently on a repo rename.
 #
-#   1. THE TRIGGERS ARE UNAUTHENTICATED. This is a PUBLIC repo. `issue_comment`
-#      fires when ANYONE comments on ANY issue or PR. `pull_request_target`
-#      fires when ANYONE opens a fork PR. No membership, no merged-PR history,
-#      no approval — a GitHub account is the entire barrier to entry.
+# THE SECURITY PROPERTY IS PRESERVED, AND THAT WAS THE THING TO CHECK. This
+# workflow runs a third-party action under `issue_comment` and
+# `pull_request_target`, which are UNAUTHENTICATED triggers on a public repo:
+# `pull_request_target` runs in the BASE repo's context and `issue_comment` is
+# not gated at all, so the fork-PR approval setting does not cover them. Spartan
+# runners are persistent and their $HOME is the operator's real home holding the
+# live fleet credential, so moving this onto a self-hosted runner would let a
+# stranger execute third-party code beside that credential by commenting on an
+# issue. That is why ubuntu-latest here is a deliberate exception (PS-224),
+# escalated to the operator rather than silently created.
 #
-#   2. THE FORK-PR APPROVAL GATE DOES NOT COVER THESE EVENTS. We set fork-PR
-#      approval to `all_external_contributors` today precisely so outside code
-#      cannot run on our hardware unreviewed. That setting gates `pull_request`
-#      runs from forks. It does NOT gate `pull_request_target` — which runs in
-#      the BASE repo's context, with secrets and a write token, BY DESIGN — and
-#      it does not gate `issue_comment` at all. These two events are the
-#      documented way AROUND that gate; it is why `pull_request_target` has the
-#      reputation it has.
+# `runs_on` IS PASSED EXPLICITLY BELOW, and the explicitness is the point. The
+# org reusable's default is already '["ubuntu-latest"]' (org #29 inverted it so
+# self-hosted is opt-in), so passing nothing would land on the same runner —
+# this is not a behaviour change. It is a change in WHERE THE DECISION LIVES.
 #
-#   3. THE BODY IS THIRD-PARTY CODE. `contributor-assistant/github-action` is
-#      not ours. It is SHA-pinned below (see the hardening note), but it is
-#      still someone else's JS executing inside our job.
+# Relying on the default made this repo's security posture a property of a file
+# in ANOTHER repository, readable only by someone who thinks to go and look.
+# Two things happened that argue against that:
 #
-#   4. ON SPARTAN, $HOME IS THE OPERATOR'S REAL HOME. These are PERSISTENT
-#      self-hosted runners, not ephemeral VMs. That home holds
-#      ~/.claude/.credentials.json — the live credential for the entire agent
-#      fleet — plus SSH keys and fleet state. This is not hypothetical: the
-#      pytest-matrix workflow carries a comment explaining that it deliberately
-#      does NOT provision credentials, because doing so would CLOBBER the live
-#      fleet credential on every CI run.
+#   * That remote default can be changed by a PR none of this repo's reviewers
+#     see. Inheriting safety silently is one edit away from inheriting danger
+#     silently — the same argument org #29 itself used to invert the default
+#     ("a default is not a decision anyone makes — it is one they never see").
+#   * The org file's `description:` for this input still says "Defaults to the
+#     Spartan pool" — stale prose from before the inversion, sitting directly
+#     above a comment saying the opposite and a literal `default:` saying the
+#     opposite again. On 2026-08-18 that stale line was read as authoritative
+#     and very nearly produced a false security-regression report against this
+#     very PR. Prose about a value is not the value.
 #
-#   COMPOSE THEM: moving this workflow to Spartan would let any stranger on the
-#   internet cause third-party code to execute on the machine holding the
-#   fleet's credentials — at will, with no approval step, by leaving a comment
-#   on an issue. That is strictly WORSE than the fork-PR hole we just closed:
-#   that one at least required a merged PR, and now an approval on top. This
-#   would require typing a sentence into a comment box.
+# With the value written here, nobody has to consult a remote file at all to
+# know where this job runs. If you are tempted to change it to a self-hosted
+# pool, read the paragraph above first: that is a security regression, not a
+# compliance win.
 #
-# WHAT THIS EXCEPTION IS *NOT*: it is not "the fork's code runs on our box."
-# This workflow never checks out the PR head; a contributor's diff is never
-# executed. The exposure is (3) supply chain, plus (1)+(2) an unauthenticated
-# trigger, landing on (4) the crown-jewel node. That is enough.
+# NOTE FOR THE no-hosted-runners GUARD (SAC-CI004): a caller has no local
+# `runs-on:`, so a guard that parses only local `runs-on:` keys cannot see where
+# this job runs and must NOT conclude the hosted-runner allowlist entry has
+# become unnecessary. That entry is the security argument, not bookkeeping.
+# Unresolvable is not unhosted.
 #
-# HARDENING APPLIED WHILE IT STAYS HOSTED — not a substitute for the decision,
-# just a refusal to leave it untouched: the action is now pinned to a COMMIT
-# SHA instead of the mutable tag `v2.6.1`. A tag can be repointed by its owner
-# at any time; a SHA cannot. Same code today, no silent-swap window tomorrow.
+# SECRET NAMING (PS-168 §1): per-package secrets in .github/workflows/ carry the
+# SCITEX_AGENT_CONTAINER_ prefix. The prefix belongs to THIS repo's secret store,
+# so the mapping below keeps the prefixed name on our side and hands it to the
+# reusable under the parameter name the reusable declares. GITHUB_TOKEN is the
+# GitHub-builtin and is provided to the reusable automatically.
 #
-# TO CLOSE THIS EXCEPTION PROPERLY, pick one (both are real work; neither
-# belongs inside a runner-migration PR):
-#   (a) Provision an EPHEMERAL / isolated self-hosted runner — its own throwaway
-#       $HOME, no fleet credentials — and route untrusted-trigger workflows to
-#       it. This is the general fix, and it also unblocks any future workflow
-#       that must run on outside input.
-#   (b) Replace the third-party action with our own script against the GitHub
-#       API. That removes the supply-chain leg, but the unauthenticated trigger
-#       still lands on the crown-jewel node, so (b) ALONE IS NOT SUFFICIENT
-#       unless combined with (a).
-#
-# ESCALATED to the operator as a named exception rather than silently creating
-# the hole, per instruction. If the operator wants zero hosted runners even at
-# this cost, the answer is (a) — and until (a) exists, DELETING the CLA gate
-# outright is a more honest option than moving it onto Spartan.
+# TRIGGERS ARE UNCHANGED ON PURPOSE. The org reusable also has an owner
+# direct-push bypass job gated on `github.event_name == 'push'`. This caller does
+# not send `push`, so that job never fires and behaviour matches what this repo
+# had before. Adding `push` would ENABLE a new bypass — a behaviour change, not a
+# consolidation — so it is deliberately left for a separate, reviewable decision.
 
 on:
   issue_comment:
@@ -86,36 +86,12 @@ permissions:
 
 jobs:
   CLAssistant:
-    # THE ONE DELIBERATE ubuntu-latest IN THIS REPO — read the block comment
-    # above before touching this line. Moving it to spartan-cpu is a SECURITY
-    # REGRESSION, not a compliance win.
-    runs-on: ubuntu-latest
-    steps:
-      - name: CLA Assistant
-        # SHA-pinned (was `@v2.6.1`, a mutable tag). ca4a40a is the commit that
-        # v2.6.1 resolved to when this was pinned. Bump deliberately, by SHA.
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08  # v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PS-168 §1 (workflow-secret-env-prefix): per-package secrets in
-          # .github/workflows/ must carry the SCITEX_AGENT_CONTAINER_ prefix.
-          # GITHUB_TOKEN above is the GitHub-builtin (cross-cutting, allow-
-          # listed); GH_PERSONAL_ACCESS_TOKEN is a repo-set secret the CLA
-          # assistant needs for writing to the cla-signatures branch on behalf
-          # of external contributors, so it MUST carry the package prefix.
-          # The repo secret must be added under the prefixed name in GitHub
-          # Settings → Secrets → Actions for this workflow to function for
-          # non-allow-listed contributors; ywatanabe1989's own PRs are
-          # allow-listed below and never exercise this token, so a missing
-          # secret is recoverable without breaking maintainer flow.
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_GH_PERSONAL_ACCESS_TOKEN }}
-        with:
-          path-to-signatures: "signatures/cla.json"
-          path-to-document: "https://github.com/ywatanabe1989/scitex-agent-container/blob/main/CLA.md"
-          branch: "cla-signatures"
-          allowlist: bot*,ywatanabe1989
-          custom-allsigned-prcomment: |
-            Thank you for signing the SciTeX CLA. Your contribution can now be reviewed.
-          custom-notsigned-prcomment: |
-            Please sign the [SciTeX CLA](https://github.com/ywatanabe1989/scitex-agent-container/blob/main/CLA.md) before your contribution can be merged.
-            Comment `I have read and agree to the SciTeX CLA.` to sign.
+    uses: scitex-ai/.github/.github/workflows/cla.yml@main
+    with:
+      # MUST be a JSON ARRAY STRING — the reusable feeds it to fromJSON. A YAML
+      # list decodes to something fromJSON rejects, and the resulting label
+      # mismatch makes the job QUEUE FOREVER rather than fail, which is
+      # indistinguishable from "still waiting" in the run list.
+      runs_on: '["ubuntu-latest"]'
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_GH_PERSONAL_ACCESS_TOKEN }}
