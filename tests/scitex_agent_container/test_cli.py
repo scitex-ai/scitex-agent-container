@@ -200,7 +200,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "list", "nonexistent", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "error" in data
 
     def test_agents_health_unknown_name_json_exits_nonzero(self):
@@ -217,7 +217,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "health", "nonexistent", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "error" in data
 
     def test_list_python_apis_command_exits_zero(self):
@@ -250,7 +250,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["list-python-apis", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list) and len(data) > 0
 
     def test_help_recursive_command_exits_zero(self):
@@ -342,7 +342,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert len(data) == 1
 
     def test_agents_find_in_directory_match_has_expected_name(self):
@@ -351,7 +351,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert data[0]["name"] == "test-gpu-agent"
 
     def test_agents_find_in_directory_match_has_gpu_capability(self):
@@ -360,7 +360,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert "gpu" in data[0]["capabilities"]
 
     def test_agents_check_local_agent_runs_preflight(self):

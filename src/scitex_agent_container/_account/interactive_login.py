@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .._runners._tmux._target import exact_target
 from .._runners._tmux.tmux import TmuxManager, TuiInputNotReadyError
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ def _capture_joined(session: str) -> str:
     sees the whole URL, not a truncated first fragment.
     """
     result = subprocess.run(
-        ["tmux", "capture-pane", "-t", session, "-p", "-J"],
+        ["tmux", "capture-pane", "-t", exact_target(session), "-p", "-J"],
         capture_output=True,
         text=True,
         check=False,
@@ -194,7 +195,16 @@ def _resize_wide(session: str, width: int = 400, height: int = 50) -> None:
     # is the real de-wrap safety net, so a resize failure is irrelevant.)
     try:
         subprocess.run(
-            ["tmux", "resize-window", "-t", session, "-x", str(width), "-y", str(height)],
+            [
+                "tmux",
+                "resize-window",
+                "-t",
+                exact_target(session),
+                "-x",
+                str(width),
+                "-y",
+                str(height),
+            ],
             capture_output=True,
             check=False,
         )

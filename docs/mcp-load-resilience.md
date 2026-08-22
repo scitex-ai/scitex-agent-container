@@ -5,6 +5,10 @@ Sibling of [`mcp-cold-start.md`](./mcp-cold-start.md). That doc covers the
 covers the **mid-session** failure: a healthy, connected stdio MCP that gets
 **dropped under host load** and never comes back.
 
+> **Scope: the Claude Code harness.** Like its sibling, this document
+> describes Claude Code's stdio-MCP *client* behaviour, not sac's and not
+> MCP's in general.
+
 ## The incident (2026-07-09)
 
 The `scitex-agent-container` MCP surface (`host_exec_local`, `agent_restart`,

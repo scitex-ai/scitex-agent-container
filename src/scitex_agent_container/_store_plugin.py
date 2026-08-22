@@ -259,6 +259,38 @@ INSTANCES = Schema.build(
 )
 
 
+# The birth certificate (v4 step 5, operator directive 2026-08-14): the
+# COMPILED spec recorded at launch, keyed by incarnation id, plus the
+# death mirror. PER_HOST truth with the SAME idiom as ``sac_instances``
+# — the observing host is describing ITS OWN launch of ITS OWN process,
+# so ``host`` joins the identity and SINGLE_WRITER keeps the birth host
+# the only author — and it SYNCS, deliberately: an incarnation born on
+# host A must be visible from host B (the record answers "how was this
+# agent born", which the fleet asks about agents it did not launch), and
+# the rows are write-once by construction (``incarnation_id`` is a
+# globally-unique uuid7; every field is filled at birth or exactly once
+# at death), so replication can never diverge — a second, DIFFERENT
+# value for any field is a real contradiction and IMMUTABLE reports it
+# as a MergeConflict instead of quietly picking one. The exit trio uses
+# the same fill-once IMMUTABLE shape as ``instances.ended_at``: a
+# process is born once and dies once.
+INCARNATIONS = Schema.build(
+    "sac_incarnations",
+    {
+        "incarnation_id": _identity(FieldKind.TEXT),
+        "host": _identity(FieldKind.TEXT),
+        "agent_id": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True, indexed=True),
+        "spec_id": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "spec_git_sha": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "born_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "compiled_spec_json": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "exit_reason": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "exit_code": _data(FieldKind.INTEGER, MergeRule.IMMUTABLE),
+        "exited_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+    },
+)
+
+
 # The two ACL tables. Both are FLEET truth, and both are declared rather
 # than deferred because getting an ACL wrong is a PRIVILEGE bug: an ACL
 # that silently diverges between hosts means the same agent is authorised
@@ -314,6 +346,7 @@ CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
     ),
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
+    "sac_incarnations": (INCARNATIONS, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
 }
 
 
@@ -326,6 +359,7 @@ SOURCE_TABLE: dict[str, str] = {
     "sac_node_comms_policy": "node_comms_policy",
     "sac_lineage": "lineage",
     "sac_instances": "instances",
+    "sac_incarnations": "incarnations",
 }
 
 
@@ -349,10 +383,11 @@ NEVER_SYNCED: dict[str, str] = {
         "skips or replays frames with no error anywhere"
     ),
     "acl_deny_notify_log": (
-        "a per-host rate-limit ledger (last_notified_at). Merging it "
-        "suppresses a deny-notification on a host that never sent one — "
-        "the failure is a notification that does NOT arrive, which is "
-        "invisible by construction"
+        "a per-host rate-limit ledger (last_notified_at) — since 2026-08-20 a "
+        "per-host PostgreSQL store rather than a SQLite table, which does not "
+        "change the ruling. Merging it suppresses a deny-notification on a "
+        "host that never sent one — the failure is a notification that does "
+        "NOT arrive, which is invisible by construction"
     ),
     "instance_heartbeats": (
         "the per-sample heartbeat STREAM, thousands of rows per agent per "
@@ -430,6 +465,7 @@ def provide() -> list:
 __all__ = [
     "CLASSIFIED",
     "COMMS_NODES",
+    "INCARNATIONS",
     "INSTANCES",
     "LINEAGE",
     "NEVER_SYNCED",

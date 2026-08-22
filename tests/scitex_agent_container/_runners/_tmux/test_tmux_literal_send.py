@@ -37,8 +37,12 @@ class TestSendTextLiteralUsesDashL:
         runner = _RunnerRecorder()
         # Act
         TmuxManager.send_text_literal("tui-x", "go work", runner=runner)
-        # Assert — one send-keys, ``-l`` immediately before the text.
-        assert runner.argvs == [["tmux", "send-keys", "-t", "tui-x", "-l", "go work"]]
+        # Assert — one send-keys, ``-l`` immediately before the text, on the
+        # EXACT-match target (=name: — a bare -t prefix-matches and can land
+        # keys in a SIBLING's pane; incident 2026-08-14).
+        assert runner.argvs == [
+            ["tmux", "send-keys", "-t", "=tui-x:", "-l", "go work"]
+        ]
 
     def test_literal_paste_sends_no_enter(self) -> None:
         # Arrange
@@ -59,8 +63,15 @@ class TestSendTextAndSubmitLiteralThenEnter:
         TmuxManager.send_text_and_submit(
             "tui-x", "mission", sleep_fn=_zero_sleep, runner=runner
         )
-        # Assert — first call pastes the text literally.
-        assert runner.argvs[0] == ["tmux", "send-keys", "-t", "tui-x", "-l", "mission"]
+        # Assert — first call pastes the text literally (exact =name: target).
+        assert runner.argvs[0] == [
+            "tmux",
+            "send-keys",
+            "-t",
+            "=tui-x:",
+            "-l",
+            "mission",
+        ]
 
     def test_enter_leg_is_named_key_without_dash_l(self) -> None:
         # Arrange
@@ -69,5 +80,6 @@ class TestSendTextAndSubmitLiteralThenEnter:
         TmuxManager.send_text_and_submit(
             "tui-x", "mission", sleep_fn=_zero_sleep, runner=runner
         )
-        # Assert — the submit is a SEPARATE named Enter, never ``-l``.
-        assert runner.argvs[-1] == ["tmux", "send-keys", "-t", "tui-x", "Enter"]
+        # Assert — the submit is a SEPARATE named Enter, never ``-l``
+        # (exact =name: target, same as the text leg).
+        assert runner.argvs[-1] == ["tmux", "send-keys", "-t", "=tui-x:", "Enter"]

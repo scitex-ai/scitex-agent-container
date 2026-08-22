@@ -79,9 +79,17 @@ def _table_filter_clauses(
         # the row is upserted on every agent_start with no historical
         # tail (latest write wins).
         "node_comms_policy": ("WHERE updated_at >= ?", (since,)),
-        # acl_deny_notify_log — rate-limit ledger keyed on (sender, target);
-        # the ts-equivalent column is ``last_notified_at`` (REAL).
-        "acl_deny_notify_log": ("WHERE last_notified_at >= ?", (since,)),
+        # acl_deny_notify_log's entry lived here until 2026-08-20. The table
+        # moved to per-host PostgreSQL and left KNOWN_TABLES, so this mapping
+        # could never be selected again — and a WHERE clause naming a table
+        # SQLite no longer has reads as "sac still exports this".
+        # v4 step 5 — birth certificates. A row moves when it is BORN or
+        # when its death is mirrored on, so filter on either stamp (same
+        # shape as ``instances``).
+        "incarnations": (
+            "WHERE born_at >= ? OR exited_at >= ?",
+            (since, since),
+        ),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 

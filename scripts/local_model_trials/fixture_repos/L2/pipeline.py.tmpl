@@ -1,0 +1,36 @@
+"""Compose line transforms into pipelines."""
+
+from transforms import (
+    Deduplicate,
+    DropEmpty,
+    SortLines,
+    StripWhitespace,
+    Uppercase,
+    get_transform,
+)
+
+
+class Pipeline:
+    def __init__(self, names):
+        self._transforms = [get_transform(name)() for name in names]
+
+    def run(self, lines):
+        for transform in self._transforms:
+            lines = transform.apply(lines)
+        return lines
+
+
+def uppercase_lines(lines):
+    return Uppercase().apply(lines)
+
+
+def clean_lines(lines):
+    """Strip, drop empties, dedupe — the standard tidy-up."""
+    pipe = [StripWhitespace(), DropEmpty(), Deduplicate()]
+    for transform in pipe:
+        lines = transform.apply(lines)
+    return lines
+
+
+def sorted_unique(lines):
+    return SortLines().apply(Deduplicate().apply(lines))

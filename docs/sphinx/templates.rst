@@ -25,9 +25,12 @@ Pattern Templates
      - Smallest valid ``spec.yaml``
      - Starting point. The fewest fields that load and start.
    * - ``hello-agent``
-     - claude-session inside an Apptainer SIF
-     - **Default**. F-CS17 made sac container-only; this is the
-       canonical single-turn pattern.
+     - ``claude-session`` runner inside an Apptainer SIF
+     - **Default harness** (``harness: anthropic``). F-CS17 made sac
+       container-only; this is the canonical single-turn pattern. It is
+       the default because it is the harness the fleet runs, not because
+       it is the only one sac knows — see :doc:`spec-reference` for
+       ``spec.harness``.
    * - ``full-agent``
      - Fully-featured agent
      - Health, restart, A2A, and ``to_home/`` wiring all enabled.

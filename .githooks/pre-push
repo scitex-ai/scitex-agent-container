@@ -127,6 +127,36 @@ if ! "${RUFF_ARGV[@]}" check \
   exit 1
 fi
 
+# --- No raw print() in src/ (T201) -----------------------------------------
+#
+# Mirror of the "No raw print() in src/ (T201)" step in
+# .github/workflows/lint.yml — kept here so the failure lands at push time
+# rather than after a CI round-trip. Both use the SAME rule and the SAME
+# allowlist ([tool.ruff.lint.per-file-ignores] in pyproject.toml), so they
+# cannot drift apart in strictness.
+#
+# sac's diagnostics belong to scitex-logging, which stamps the emitting module
+# on every record; a raw print carries no origin and dies with whatever stream
+# was attached. Note T201 deliberately does NOT flag
+# `print(..., file=<injected stream>)` — a caller-supplied stream is a
+# reporting contract, not an unrouted diagnostic. tests/ is out of scope.
+if ! "${RUFF_ARGV[@]}" check --select T201,T203 src/; then
+  echo "" >&2
+  echo "PRE-PUSH BLOCKED: raw print() found in src/." >&2
+  echo "sac diagnostics go through scitex-logging so they carry the module" >&2
+  echo "they came from and survive in the rotating runtime log:" >&2
+  echo "" >&2
+  echo "    from .._logging import get_logger" >&2
+  echo "    get_logger(__name__).warning(\"...\")" >&2
+  echo "" >&2
+  echo "User-facing CLI output belongs to the existing idiom instead —" >&2
+  echo "rich console.print(...) or cli_pkg._helpers._console.system_msg(...)." >&2
+  echo "If stdout genuinely IS the interface (a protocol frame, a hook's" >&2
+  echo "return value), add that ONE file to [tool.ruff.lint.per-file-ignores]" >&2
+  echo "in pyproject.toml with a written reason." >&2
+  exit 1
+fi
+
 # --- Register the push on its card (ADR-0024, the rail's first leg) ---------
 #
 # The operator's requirement, verbatim (2026-08-12): 「プッシュに連動して、

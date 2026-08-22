@@ -352,11 +352,16 @@ def check_cct_rail_at_start(config, *, dest: Path | None = None, **kwargs) -> st
     try:
         return alarm_cct_rail(assess_cct_rail(config, dest=dest), **kwargs)
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
+        # No caller-injected stream here (unlike alarm_cct_rail's err_stream
+        # seam a few lines up), so this had no reporting contract to honour and
+        # is routed through scitex-logging: it is the only account of a rail
+        # assessment that silently did not happen.
+        from .._logging import get_logger
+
+        get_logger(__name__).warning(
             f"[cct-rail] could not assess the Telegram rail for "
             f"{getattr(config, 'name', '?')!r}: {exc}. The agent starts "
-            f"normally; its rail state is UNOBSERVED.",
-            file=sys.stderr,
+            f"normally; its rail state is UNOBSERVED."
         )
         return "skipped"
 

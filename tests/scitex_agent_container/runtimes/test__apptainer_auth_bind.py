@@ -47,7 +47,7 @@ def _openai_config_with_pinned_file(creds: Path) -> AgentConfig:
     return AgentConfig(
         name="oai",
         runtime="apptainer",
-        provider="openai",
+        harness="openai",
         workdir="/tmp/oai-wd",
         claude=ClaudeSpec(credentials_file=str(creds)),
     )

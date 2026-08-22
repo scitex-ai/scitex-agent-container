@@ -231,8 +231,10 @@ def _probe_tmux_pids(session: str | None) -> dict[str, int | None]:
     if not session:
         return {"server": None, "pane": None}
     try:
+        from ..._runners._tmux._target import exact_target
+
         r = subprocess.run(
-            ["tmux", "display", "-p", "-t", f"{session}:0", "#{pane_pid}"],
+            ["tmux", "display", "-p", "-t", exact_target(f"{session}:0"), "#{pane_pid}"],
             capture_output=True,
             text=True,
             timeout=3,

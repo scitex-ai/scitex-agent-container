@@ -201,3 +201,88 @@ def test_annotate_rows_separates_reachable_from_deaf_peers():
     deaf = [r["name"] for r in out if r["inbox_reachable"] == UNREACHABLE]
     # Assert
     assert deaf == ["claude-code-telegrammer", "scitex-dev"]
+
+
+# ---------------------------------------------------------------------------
+# A hostless row is not automatically LOCAL — turn_url still names its host.
+#
+# Measured 2026-08-19. `agent_status paper-scitex-clew`, run on compute-04,
+# returned a row with NO `host` key and turn_url http://ywata-note-win:19012/…
+# while the agent was alive on compute-02 with a 2-second-old heartbeat.
+# The hostless row was treated as local, so the local broker's zero stood as a
+# real observation, `inbox_reachable` became UNREACHABLE instead of UNKNOWN,
+# and classify_fault's cross-host guard (UNKNOWN -> no fault) never fired. The
+# verdict read "the probe SUCCEEDED, so this is real absence, not a failed
+# look" about a healthy agent on a machine this daemon cannot see.
+#
+# The row already carried the host. Nothing consulted it.
+# ---------------------------------------------------------------------------
+
+
+def test_hostless_row_whose_turn_url_is_remote_is_unknown():
+    """The measured clew case: no host key, turn_url on another machine."""
+    # Arrange
+    row = {"name": "paper-scitex-clew", "turn_url": "http://elsewhere:19012/v1/turn"}
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_reachable"] == UNKNOWN
+
+
+def test_hostless_remote_row_reports_null_subscribers_not_a_fabricated_zero():
+    """A zero we did not observe is a false accusation, not a reading."""
+    # Arrange
+    row = {"name": "paper-scitex-clew", "turn_url": "http://elsewhere:19012/v1/turn"}
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_subscribers"] is None
+
+
+def test_hostless_row_whose_turn_url_is_local_is_still_observed_locally():
+    """The fix must not make every hostless row unknown — that would lose
+    genuine deaf-inbox detection for local agents."""
+    # Arrange
+    row = {"name": "local-agent", "turn_url": f"http://{LOCAL}:19001/v1/turn"}
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_reachable"] == UNREACHABLE
+
+
+def test_an_explicit_host_still_wins_over_the_turn_url():
+    """turn_url is a FALLBACK. A declared host is the stronger statement and
+    must not be second-guessed by a URL that may be stale."""
+    # Arrange
+    row = {
+        "name": "declared",
+        "host": LOCAL,
+        "turn_url": "http://elsewhere:19012/v1/turn",
+    }
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_reachable"] == UNREACHABLE
+
+
+def test_a_malformed_turn_url_falls_back_to_the_previous_behaviour():
+    """An unparseable URL yields no host evidence, so the row is treated as
+    local exactly as it was before this fix — the change adds a reading, it
+    does not introduce a new way to fail."""
+    # Arrange
+    row = {"name": "hostless", "turn_url": "::::not a url::::"}
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_reachable"] == UNREACHABLE
+
+
+def test_a_non_string_turn_url_does_not_raise():
+    """Registry rows are not schema-guaranteed here; a wrong type must not
+    take down GET /agents for every other row in the same response."""
+    # Arrange
+    row = {"name": "hostless", "turn_url": 19012}
+    # Act
+    out = annotate_reachability(row, subscriber_counts={}, local_host=LOCAL)
+    # Assert
+    assert out["inbox_reachable"] == UNREACHABLE

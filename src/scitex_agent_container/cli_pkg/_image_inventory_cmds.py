@@ -19,6 +19,7 @@ commands).
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from pathlib import Path
 
@@ -65,6 +66,17 @@ def image_list(as_json: bool) -> None:
     for p in entries:
         is_sandbox = p.is_dir()
         size_bytes = _dir_size_bytes(p) if is_sandbox else p.stat().st_size
+        # RESOLVE THE SYMLINK. `sac-base.sif` is a symlink onto a DATED file
+        # (`sac-base/sac-base-2026-0816-110731.sif`), and the listing printed
+        # only the link name — so two hosts four days apart rendered
+        # identically. Naming the target is what makes them distinguishable.
+        # stx-allow: fallback (reason: a broken/absent link must still list, so
+        # resolution failure degrades to "" rather than dropping the row.)
+        try:
+            resolved = p.resolve()
+            target = resolved.name if resolved.name != p.name else ""
+        except OSError:  # stx-allow: fallback (reason: see inline comment)
+            target = ""
         versions.append(
             {
                 "package": p.parent.parent.name,
@@ -73,12 +85,26 @@ def image_list(as_json: bool) -> None:
                 "kind": "sandbox" if is_sandbox else "sif",
                 "size_bytes": size_bytes,
                 "mtime": p.stat().st_mtime,
+                # The link target, "" when the entry is not a symlink.
+                "resolves_to": target,
             }
         )
-    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
     if as_json:
+        # STDOUT IS THE PAYLOAD. The scan-root banner below is a human
+        # courtesy printed to stdout, so emitting it here made
+        # ``sac image list --json | jq`` fail on the very first byte:
+        #
+        #   scan root: /home/…/.scitex/*/containers/
+        #   [ … ]
+        #
+        # A ``--json`` surface promises stdout is EXACTLY one JSON
+        # document; the banner is for the human render only. (Found by
+        # tightening test_image_group's parse off `result.output`'s
+        # prefix-skip, which had been hiding this since the banner
+        # landed.)
         click.echo(json.dumps(versions, indent=2, default=str))
         return
+    console.print(f"[dim]scan root: {root}/*/containers/[/dim]")
     if not versions:
         console.print(
             f"[dim](no SIFs under {root}/*/containers/ — "
@@ -90,7 +116,25 @@ def image_list(as_json: bool) -> None:
         size_mb = v["size_bytes"] / (1024 * 1024)
         tag = "sandbox" if v["kind"] == "sandbox" else "sif"
         label = f"{v['package']}/{v['name']}"
-        console.print(f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB")
+        # BUILT date, because a listing of sizes alone cannot answer "is this
+        # host running the same image as that one?". On 2026-08-16 nas-03 and
+        # compute-03 ran a 08-12 SIF while compute-04 ran 08-16; the agents
+        # execute sac from INSIDE the image, so a four-day gap silently broke
+        # token resolution on two hosts while every host-side check looked
+        # clean. The date is what makes that comparable at a glance.
+        built = _dt.datetime.fromtimestamp(v["mtime"]).strftime("%Y-%m-%d %H:%M")
+        suffix = f"  -> {v['resolves_to']}" if v.get("resolves_to") else ""
+        console.print(
+            f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}"
+        )
+    # NECESSARY, NOT SUFFICIENT — do not let a fresh date retire the content
+    # question. scitex-hpc measured a bake on 2026-07-18 whose build-context
+    # source was develop HEAD (1e4870fd) while the INSTALLED wheel was pre-fix
+    # (1edf17d0), because `uv pip install --force-reinstall` reinstalls without
+    # rebuilding and uv's cache is keyed on VERSION, not content. `built_at`
+    # would have read "just now" and been perfectly true. Only a content assert
+    # (sha the changed files against the source ref) separates those two, and
+    # that is tracked as sac-sif-build-content-assert-force-reinstall.
 
 
 @click.command("status")

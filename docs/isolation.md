@@ -84,9 +84,11 @@ Default: the container **shares the host's network namespace**.
 should NOT be able to bypass sac listen's bearer auth by talking to
 its loopback directly. With shared netns it can.
 
-**Fix:** `--net --network=none` (full isolation; agent loses Claude
+**Fix:** `--net --network=none` (full isolation; agent loses inference
 API access) OR `--net --network=bridge` (independent netns + explicit
-egress allowlist for `api.anthropic.com`). Bridge + allowlist is the
+egress allowlist for the inference endpoint this agent is configured
+for — `api.anthropic.com` by default, the `spec.claude.provider`
+`base_url` host under an override). Bridge + allowlist is the
 realistic answer; pure isolation kills the agent.
 
 **Realistic trade-off (current sac default).** sac currently uses the
@@ -141,7 +143,7 @@ leak vector (previous-run state contaminates the next run):
 |---|---|
 | `/tmp` writes | accumulating garbage; race conditions if two runs overlap |
 | `~/.cache/pip`, build artifacts | unintended reproducibility break (same SIF, different overlay → different result) |
-| Claude session state | prior conversation leaks into next start |
+| agent session state | prior conversation leaks into next start |
 | accidentally shared overlay | horizontal contamination between agents |
 
 **Fix:**
@@ -300,8 +302,8 @@ spec:
       - "--containall"        # §1: filesystem isolation
       - "--cleanenv"          # §2: environment isolation
       # Network (§4): pick one based on workload —
-      #   --net --network=none  → no egress (most secure; agent can't reach Claude API)
-      #   --net --network=bridge  → bridged + allowlist (realistic for Claude agents)
+      #   --net --network=none  → no egress (most secure; agent can't reach its inference API)
+      #   --net --network=bridge  → bridged + allowlist (the realistic shape for any agent)
       # PID / IPC / UTS (§5): not in --containall; add if you need them.
       #   "--pid", "--ipc", "--uts"
 ```

@@ -291,29 +291,56 @@ def test_an_unsupported_verdict_names_every_path_it_probed() -> None:
 # --- the GATE: --dry-run / --yes must survive the pass-through ---
 
 
+def _disable_delegation() -> "backend.Delegation":
+    """`ecosystem dev timer disable` — the verb the gate exists for.
+
+    Shared by the three tests below so each can pin ONE fact about the
+    argv the pass-through builds for it (this module's rule: one
+    assertion per test).
+    """
+    return backend.Delegation(
+        path=("dev", "timer"), verb="disable", supported=True, evidence="fixture"
+    )
+
+
 def test_the_pass_through_forwards_dry_run() -> None:
     # Arrange — scitex-dev's gate is load-bearing: `timer disable
     # sac.accounts-refresh` stops the fleet's SOLE OAuth refresher. A
     # pass-through that drops the flag turns a guarded command into an
     # unguarded one.
-    delegation = backend.Delegation(
-        path=("dev", "timer"), verb="disable", supported=True, evidence="fixture"
-    )
+    delegation = _disable_delegation()
     # Act
     argv = backend.build_argv(
         delegation, name="sac.accounts-refresh", yes=False, dry_run=True, exe="sd"
     )
     # Assert
-    assert argv == [
-        "sd",
-        "ecosystem",
-        "dev",
-        "timer",
-        "disable",
-        "--name",
-        "sac.accounts-refresh",
-        "--dry-run",
-    ]
+    assert "--dry-run" in argv
+
+
+def test_the_pass_through_routes_to_the_dev_timer_disable_verb() -> None:
+    # Arrange
+    delegation = _disable_delegation()
+    # Act
+    argv = backend.build_argv(
+        delegation, name="sac.accounts-refresh", yes=False, dry_run=True, exe="sd"
+    )
+    # Assert — the ROUTE is fixed; only the name's shape moves with the floor.
+    assert argv[:5] == ["sd", "ecosystem", "dev", "timer", "disable"]
+
+
+def test_the_pass_through_still_names_the_job_it_disables() -> None:
+    # Arrange
+    delegation = _disable_delegation()
+    # Act
+    argv = backend.build_argv(
+        delegation, name="sac.accounts-refresh", yes=False, dry_run=True, exe="sd"
+    )
+    # Assert — the name must SURVIVE; its SHAPE is not ours to pin.
+    # scitex-dev <=0.47 takes the job as `--name X`; >=0.48 takes it
+    # positionally. Both are correct, and `name_style_for` reads the
+    # INSTALLED cli to decide, so pinning the literal argv here reds on a
+    # correct code path the moment the floor moves.
+    assert "sac.accounts-refresh" in argv
 
 
 def test_the_pass_through_forwards_yes() -> None:
@@ -441,3 +468,41 @@ def test_an_unreadable_tree_refuses_a_verb_that_never_shipped() -> None:
         backend.reset_capability_cache()
     # Assert
     assert got.supported is False
+
+
+def _install_delegation() -> "backend.Delegation":
+    """`timer install` — the only verb upstream carrying --adopt/--force."""
+    return backend.Delegation(
+        path=("timer",), verb="install", supported=True, evidence="fixture"
+    )
+
+
+def test_the_pass_through_forwards_adopt() -> None:
+    """MEASURED 2026-08-20: install's refusal names --adopt; the wrapper had no
+    such option, so following its own advice errored."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, adopt=True, exe="sd")
+    # Assert
+    assert "--adopt" in argv
+
+
+def test_the_pass_through_forwards_force() -> None:
+    """The other half of that same refusal message."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, force=True, exe="sd")
+    # Assert
+    assert "--force" in argv
+
+
+def test_neither_flag_appears_unless_asked() -> None:
+    """Non-vacuity: one that always appended both would pass the two above."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, exe="sd")
+    # Assert
+    assert not {"--adopt", "--force"} & set(argv)

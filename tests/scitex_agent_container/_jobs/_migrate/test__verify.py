@@ -145,3 +145,119 @@ def test_a_host_without_systemctl_cannot_supervise_units() -> None:
     got = _verify.systemd_user_available(which=which)
     # Assert
     assert got is False
+
+
+# ---------------------------------------------------------------------------
+# ARMING — a rename must preserve it
+#
+# Measured 2026-08-19 on the real accounts-refresh cutover: every step ran
+# green and left the fleet's sole OAuth refresher INSTALLED AND DISABLED. Unit
+# files were counted; enablement was not. Zero active supervisors satisfies
+# "not two supervisors" perfectly, so the check could not have caught the one
+# outcome that mattered.
+# ---------------------------------------------------------------------------
+
+#: Only the .timer is ever enabled — a timer job's .service is `static`.
+ARMED_OLD = frozenset({WORKTREE_GC.old + ".timer"})
+ARMED_NEW = frozenset({WORKTREE_GC.new + ".timer"})
+NOTHING_ARMED: frozenset[str] = frozenset()
+
+
+def test_a_rename_that_disarms_the_job_is_not_armed_ok() -> None:
+    # Arrange — THE incident: armed before, installed disabled after.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    got = _verify.verify_exactly_one(
+        WORKTREE_GC,
+        present=present,
+        armed_before=ARMED_OLD,
+        armed_now=NOTHING_ARMED,
+    ).armed_ok
+    # Assert
+    assert got is False
+
+
+def test_the_installation_claim_alone_cannot_see_a_disarmed_rename() -> None:
+    # Arrange — the regression documented: this is the OLD check's verdict on
+    # the incident. It passes, which is exactly why arming needed its own
+    # signal rather than being folded into `ok`.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    got = _verify.verify_exactly_one(
+        WORKTREE_GC,
+        present=present,
+        armed_before=ARMED_OLD,
+        armed_now=NOTHING_ARMED,
+    ).ok
+    # Assert
+    assert got is True
+
+
+def test_a_deliberately_disabled_job_stays_a_non_finding() -> None:
+    # Arrange — heal-agent-auth's shape: disabled BEFORE the cutover on
+    # purpose (it is mutually exclusive with restart-login-expired-agents,
+    # "enable exactly one"). A guard demanding every timer be enabled would
+    # cry wolf here, and a guard that cries wolf gets ignored.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    got = _verify.verify_exactly_one(
+        WORKTREE_GC,
+        present=present,
+        armed_before=NOTHING_ARMED,
+        armed_now=NOTHING_ARMED,
+    ).armed_ok
+    # Assert
+    assert got is True
+
+
+def test_arming_preserved_across_the_rename_is_armed_ok() -> None:
+    # Arrange — the correct cutover.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    got = _verify.verify_exactly_one(
+        WORKTREE_GC,
+        present=present,
+        armed_before=ARMED_OLD,
+        armed_now=ARMED_NEW,
+    ).armed_ok
+    # Assert
+    assert got is True
+
+
+def test_unmeasured_arming_is_unknown_not_a_pass() -> None:
+    # Arrange — a caller that never looked. Collapsing this into True is the
+    # unknown-into-a-pole bug; collapsing it into False makes every such
+    # caller report a false alarm.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    got = _verify.verify_exactly_one(WORKTREE_GC, present=present).armed_ok
+    # Assert
+    assert got is None
+
+
+def test_the_unarmed_verdict_carries_the_command_that_fixes_it() -> None:
+    # Arrange — an operator reading "FAIL" must not have to re-derive the fix.
+    # Asserting on the UNIT NAME would be vacuous: every verdict lists the new
+    # units, so such a test passes even when the unarmed branch is dead. A
+    # sabotage control caught exactly that, so this asserts on something only
+    # the unarmed branch emits.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    verdict = _verify.verify_exactly_one(
+        WORKTREE_GC,
+        present=present,
+        armed_before=ARMED_OLD,
+        armed_now=NOTHING_ARMED,
+    ).verdict
+    # Assert
+    assert "systemctl --user enable --now" in verdict
+
+
+def test_the_unmeasured_verdict_says_arming_was_not_checked() -> None:
+    # Arrange — an OK line that silently omits an unrun check is how a
+    # migration gets believed for a property nobody verified.
+    present = frozenset(WORKTREE_GC.new_units())
+    # Act
+    verdict = _verify.verify_exactly_one(WORKTREE_GC, present=present).verdict
+    # Assert
+    assert "NOT CHECKED" in verdict

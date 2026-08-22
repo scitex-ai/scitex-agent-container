@@ -192,7 +192,7 @@ def _openai_family_config(workdir: Path) -> AgentConfig:
     return AgentConfig(
         name="oai-agent",
         runtime="apptainer",
-        provider="openai",
+        harness="openai",
         workdir=str(workdir),
         claude=ClaudeSpec(),
     )

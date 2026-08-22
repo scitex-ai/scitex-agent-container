@@ -77,7 +77,22 @@ class ProbeTransportError(RuntimeError):
     Distinct from a target that answered badly. Raised only when the container
     could not get its command onto the host at all, which must leave EVERY fact
     unknown rather than any fact false.
+
+    ``status`` KEEPS THE HTTP CODE, and it is not decoration. The refusal that
+    actually happens here is a 403 from the LOCAL listen daemon — the one being
+    asked to broker the ssh — and that is a statement about this container's
+    authorization, not about the target. On 2026-08-11 nine relocation probes
+    were refused exactly that way while every target involved was healthy.
+    Flattening it into text lost the one bit that separates "I was refused
+    before I could ask" from "the target answered no".
     """
+
+    def __init__(
+        self, message: str, *, status: int | None = None, kind: str = ""
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -170,6 +185,44 @@ def _chain(spec) -> list[str]:
         return []
 
 
+def _transport_error(exc: Exception, host: str) -> ProbeTransportError:
+    """Wrap a broker failure, keeping WHO refused and saying so in words.
+
+    ``request_host_exec`` raises with ``.status`` and ``.body`` on an HTTP
+    rejection. A 403 there is the LOCAL daemon declining to broker — this
+    container's group could not be resolved, or resolves to nothing eligible —
+    and the message must not let that read as a verdict on ``host``. The
+    difference decides where the operator goes next: fix the daemon he is
+    standing next to, or fix the machine he was moving onto.
+
+    Read by duck-typing rather than by importing the client's exception class,
+    so this module keeps its "no transport knowledge" property.
+    """
+    status = getattr(exc, "status", None)
+    body = getattr(exc, "body", None)
+    kind = ""
+    reason = ""
+    if isinstance(body, dict):
+        kind = str(body.get("kind") or "")
+        reason = str(body.get("reason") or "")
+    if status == 403:
+        return ProbeTransportError(
+            "the LOCAL listen daemon refused to broker this probe (HTTP 403"
+            + (f" {kind}" if kind else "")
+            + (f": {reason}" if reason else "")
+            + f"). That is this container's authorization here, NOT a statement about "
+            f"{host} — nothing about the target was measured. Fix the broker's group "
+            "resolution (or run the probe from the bare host) and re-run",
+            status=403,
+            kind=kind or "acl_deny",
+        )
+    return ProbeTransportError(
+        f"could not run the probe on the host for {host}: {type(exc).__name__}: {exc}",
+        status=status if isinstance(status, int) else None,
+        kind=kind,
+    )
+
+
 def run_probe_script(
     host: str,
     script: str,
@@ -200,9 +253,7 @@ def run_probe_script(
     try:
         body = exec_fn(argv, timeout_s=timeout_s)
     except Exception as exc:  # stx-allow: fallback (reason: re-raised as ProbeTransportError so every fact stays UNKNOWN; nothing is swallowed and nothing degrades to False)
-        raise ProbeTransportError(
-            f"could not run the probe on the host for {host}: {type(exc).__name__}: {exc}"
-        ) from exc
+        raise _transport_error(exc, host) from exc
 
     if not isinstance(body, dict):
         raise ProbeTransportError(

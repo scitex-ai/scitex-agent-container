@@ -130,15 +130,54 @@ mkdir -p "$APPTAINER_TMPDIR"
 # So this change is HAZARD REMOVAL, not a root-cause fix. It stays because the
 # hazard is real and the justifying assumption is provably dead.
 #
-# THE AGE GUARD IS THE FIX: it puts the word this comment always used — LEFTOVER —
-# into the MECHANISM instead of into an assumption the world can quietly
-# invalidate underneath it. A leftover from a prior run is minutes-to-hours old; a
-# concurrent sibling is seconds old. `--older` separates them no matter how many
-# runners share the node, which is exactly the property "serialised" did not have.
+# THE AGE GUARD WAS NOT ENOUGH, AND THE REASON IS INSTRUCTIVE (2026-08-15).
+# The argument above — "a leftover is minutes-to-hours old, a concurrent sibling is
+# seconds old, so `--older` separates them" — is CORRECT about the population it
+# considered: CI jobs. It is silent about the population it did not: LIVE FLEET
+# AGENTS on the same machine. A `_tui_turn_bridge` is long-lived by construction,
+# so it is ALWAYS older than any age floor. The filter keys on exactly the property
+# agents always have, which makes it structurally unable to exclude them.
+#
+# MEASURED on scitex-compute-04, from the HOST (an in-container pgrep sees a
+# different PID namespace and reports 0 — that near-miss nearly refuted this):
+#     pgrep --older 600 -f 'python.* -m scitex_agent_container'  ->  11 PIDs,
+#         every one a live agent turn bridge, two peers mid-turn among them
+#     Runner.Listener processes on the same host              ->  2
+# This script is shared by SEVEN workflows (pytest-matrix, lint, import-smoke,
+# newb-docs, spartan-canary, autobump-sweep, publish), so it fired on ordinary PR
+# CI, not just releases.
+#
+# THE FIX IS SCOPE, NOT TIMING. An age floor is a PROXY for "is this process
+# mine"; a runner workspace path is the thing itself. We now kill only processes
+# whose CWD lives under a runner `_work` tree — which a fleet agent's never does,
+# at any age. The age floor is KEPT as a second, independent condition so a
+# genuinely concurrent sibling stays protected even inside the workspace.
+#
+# ACCEPTED TRADE-OFF, stated rather than hidden: a leftover whose cwd is gone or
+# has moved outside `_work` will no longer be reaped. That is UNDER-reaping, and
+# it is the right direction — a leaked a2a port costs a retry, a SIGTERMed agent
+# costs an operator's morning. If port exhaustion resurfaces, fix it with a
+# port-scoped cleanup, never by widening this kill.
 _REAP_MIN_AGE_S=600
-if pkill --help 2>&1 | grep -q -- '--older'; then
-    pkill --older "$_REAP_MIN_AGE_S" -f 'python.* -m scitex_agent_container' 2>/dev/null || true
-    pkill --older "$_REAP_MIN_AGE_S" -f 'apptainer.*ci-cpu'                   2>/dev/null || true
+_reap_scoped() {
+    # Kill matching processes ONLY when their cwd is inside a runner workspace.
+    # Reads /proc/<pid>/cwd, so it cannot be fooled by argv.
+    local pat="$1" pid cwd
+    while read -r pid; do
+        [ -n "$pid" ] || continue
+        cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" || continue
+        case "$cwd" in
+            */actions-runner*/_work/*) kill "$pid" 2>/dev/null || true ;;
+        esac
+    done < <(pgrep --older "$_REAP_MIN_AGE_S" -f "$pat" 2>/dev/null || true)
+}
+if [ -z "${GITHUB_ACTIONS:-}" ]; then
+    # Never reap outside CI. Running this script by hand on a dev box must not be
+    # able to kill anything, whatever else is true.
+    :
+elif pkill --help 2>&1 | grep -q -- '--older'; then
+    _reap_scoped 'python.* -m scitex_agent_container'
+    _reap_scoped 'apptainer.*ci-cpu'
 else
     # procps too old for --older. Reaping leftovers is a nice-to-have; killing the
     # sibling matrix legs is not. Skip LOUDLY rather than shoot blind — a silently

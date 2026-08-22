@@ -40,9 +40,29 @@ def test_post_via_ssh_curl_includes_target_host_in_argv(
     assert "example.invalid" in argv
 
 
-def test_post_via_ssh_curl_embeds_bearer_in_remote_curl_when_set(
+#: A FAKE, token-shaped value. Never a real credential — these tests assert
+#: on its ABSENCE from argv, so it must be distinctive enough that a
+#: substring match cannot be satisfied by unrelated text.
+_FAKE_BEARER = "sacfakebearer0PLACEHOLDER778899deadbeef"
+
+
+def test_post_via_ssh_curl_keeps_bearer_out_of_every_argv_element(
     tmp_path, env_save_restore, subprocess_shim
 ):
+    """THE REGRESSION GUARD for the ssh/curl bearer-in-argv disclosure.
+
+    The helper used to splice the token into the remote command as
+    ``-H 'Authorization: Bearer <value>'``. That string is an argument of the
+    local ``ssh`` process and of the remote shell + ``curl`` processes, and
+    ``/proc/<pid>/cmdline`` is world-readable — so every cross-host
+    ``message:send`` published the destination's peer-token to every local
+    user on BOTH hosts. Measured before the fix: 2 live pids carried a
+    token-shaped sentinel; after: 0.
+
+    Asserting over EVERY element (not just ``argv[-1]``) is deliberate: the
+    point is that no argument carries the value, wherever a future refactor
+    might move it.
+    """
     # Arrange
     env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
@@ -55,13 +75,74 @@ def test_post_via_ssh_curl_embeds_bearer_in_remote_curl_when_set(
         port=9999,
         path="/agents/a/message:send",
         body=b"{}",
-        bearer="secret-token-zz",
+        bearer=_FAKE_BEARER,
         timeout_s=5,
     )
     argv = subprocess_shim.argv_for("ssh")
-    remote_curl = argv[-1]
+    leaked = [part for part in argv if _FAKE_BEARER in part]
+    # Assert — count, never the matching text.
+    assert len(leaked) == 0
+
+
+def test_post_via_ssh_curl_takes_the_bearer_from_a_curl_config_on_stdin(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    """The remote reads the header from ``curl --config -``, the house shape.
+
+    Matches the in-house precedent set by
+    ``_hostsync._push_tokens_io.probe_peer_listen_auth`` rather than
+    inventing a second way to hand a live bearer to a remote curl.
+    """
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    _post_via_ssh_curl(
+        host="example.invalid",
+        port=9999,
+        path="/agents/a/message:send",
+        body=b"{}",
+        bearer=_FAKE_BEARER,
+        timeout_s=5,
+    )
+    remote = subprocess_shim.argv_for("ssh")[-1]
     # Assert
-    assert "Authorization: Bearer secret-token-zz" in remote_curl
+    assert "--config -" in remote
+
+
+def test_post_via_ssh_curl_leaves_the_no_bearer_remote_command_unchanged(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    """``/v1/turn`` carries no token, so its remote command must not move.
+
+    The fix is scoped to the authenticated path precisely so the
+    ControlMaster-sharing ``/v1/turn`` transport keeps the exact command it
+    has always had.
+    """
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    _post_via_ssh_curl(
+        host="example.invalid",
+        port=9999,
+        path="/v1/turn",
+        body=b"{}",
+        bearer=None,
+        timeout_s=5,
+    )
+    remote = subprocess_shim.argv_for("ssh")[-1]
+    # Assert
+    assert remote == (
+        "curl -sS --max-time 5 -X POST -H 'Content-Type: application/json' "
+        "-d @- http://127.0.0.1:9999/v1/turn"
+    )
 
 
 def test_post_via_ssh_curl_omits_authorization_header_when_bearer_is_none(
@@ -109,9 +190,19 @@ def test_post_via_ssh_curl_returns_curl_stdout_bytes_verbatim(
     assert (rc, stdout) == (0, b'{"ok": true}')
 
 
-def test_post_via_ssh_curl_rejects_single_quote_in_bearer(
+def test_post_via_ssh_curl_rejects_a_newline_in_bearer(
     tmp_path, env_save_restore, subprocess_shim
 ):
+    """A newline would spill the token into the request body.
+
+    The bearer is framed as the FIRST LINE of ssh stdin, with the body as the
+    remainder, so a value containing a newline would be split across the two
+    — sending a truncated header and a corrupted body. Refuse loudly instead.
+
+    (The old single-quote refusal this replaces guarded a shell-quoting
+    hazard that no longer exists: the value is not spliced into a shell
+    command any more, which is the whole point of the fix.)
+    """
     # Arrange
     env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
@@ -128,9 +219,65 @@ def test_post_via_ssh_curl_rejects_single_quote_in_bearer(
             port=9999,
             path="/v1/turn",
             body=b"{}",
-            bearer="quoted'token",
+            bearer="line-one\nline-two",
             timeout_s=5,
         )
+
+
+def test_post_via_ssh_curl_rejects_a_double_quote_in_bearer(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    """``"`` is special to curl's config parser inside a quoted value."""
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    import pytest
+
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act
+    # Assert
+    with pytest.raises(ValueError):
+        _post_via_ssh_curl(
+            host="example.invalid",
+            port=9999,
+            path="/v1/turn",
+            body=b"{}",
+            bearer='quoted"token',
+            timeout_s=5,
+        )
+
+
+def test_post_via_ssh_curl_refusal_message_withholds_the_bearer_value(
+    tmp_path, env_save_restore, subprocess_shim
+):
+    """The refusal must not print the credential it is refusing.
+
+    A message complaining about an exposed secret, which quotes the secret,
+    is its own disclosure — and this one reaches logs.
+    """
+    # Arrange
+    env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
+    env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
+    subprocess_shim.install("ssh", exit=0, stdout="{}")
+    from scitex_agent_container._network._ssh_curl import _post_via_ssh_curl
+
+    # Act — catch by hand so the single assertion is the one that matters.
+    message = ""
+    try:
+        _post_via_ssh_curl(
+            host="example.invalid",
+            port=9999,
+            path="/v1/turn",
+            body=b"{}",
+            bearer=f'{_FAKE_BEARER}"',
+            timeout_s=5,
+        )
+    except ValueError as exc:
+        message = str(exc)
+    # Assert
+    assert _FAKE_BEARER not in message
 
 
 def test_post_via_ssh_curl_rejects_empty_host_argument(

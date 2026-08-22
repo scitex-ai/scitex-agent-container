@@ -1,7 +1,10 @@
 """Tests for ``sac agent send``.
 
-Covers the resume-path wrapper:
-read session_id → cd workdir → exec claude --resume <sid> -p.
+Covers the three HTTP delivery paths (in-SIF host-listen proxy, cross-host
+peer ``/v1/turn``, local loopback ``/v1/turn``) and the REFUSAL that
+terminates the command when all of them decline. The host-side
+``claude --resume`` fallback these tests were originally written around was
+removed 2026-08-14 — see the block comment where its tests used to be.
 
 PA-306: no ``unittest.mock``. Production collaborators are swapped at
 the module namespace via ``_swap`` context managers, and env mutations
@@ -28,24 +31,9 @@ from scitex_agent_container.cli_pkg.send_cmds import send
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
-@contextmanager
-def _swap(name: str, fn: Callable) -> Iterator[None]:
-    saved = getattr(send_mod, name)
-    setattr(send_mod, name, fn)
-    try:
-        yield
-    finally:
-        setattr(send_mod, name, saved)
-
-
-@contextmanager
-def _swap_subprocess_call(fn: Callable) -> Iterator[None]:
-    saved = send_mod.subprocess.call
-    send_mod.subprocess.call = fn  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        send_mod.subprocess.call = saved  # type: ignore[assignment]
+# The generic ``_swap(name, fn)`` module-namespace helper lived here and is
+# gone with its last caller: every remaining swap targets a specific
+# collaborator (``os.kill``, ``post_turn_to_url``) and says so in its name.
 
 
 @contextmanager
@@ -124,30 +112,28 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
 def isolated_env(tmp_path):
     """PA-306: env + send_mod.state_dir_for save/restore in one fixture.
 
-    Also pins ``resolve_config`` to the seeded yaml root so a pre-existing
-    ``~/.scitex/agent-container/agents/<name>/spec.yaml`` on the dev box
-    cannot shadow the per-test fixture (resolver search order puts the
-    home install root before ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``), and
-    isolates ``state.db`` so the local-send branch sees no stray active
-    row for the seeded agent.
+    Isolates ``state.db`` so the local-send branch sees no stray active
+    row for the seeded agent — which is what drives the send to its
+    terminal REFUSAL branch (2026-08-14: there is no longer a
+    ``claude --resume`` fallback to fall into).
+
+    The ``resolve_config`` pin this fixture used to carry is gone with
+    the resume path: the command no longer loads the agent's spec at all
+    on the way to refusing, so there is nothing for a stray
+    ``~/.scitex/agent-container/agents/<name>/spec.yaml`` to shadow.
     """
     yaml_root = _seed_agent(tmp_path, "alpha", "abc-123-def")
     key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
     saved_env = os.environ.get(key)
     saved_state = send_mod.state_dir_for
-    saved_resolve = send_mod.resolve_config
     os.environ[key] = str(yaml_root)
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
-    )
-    send_mod.resolve_config = (  # type: ignore[assignment]
-        lambda name: str(yaml_root / name / "spec.yaml")
     )
     with _empty_state_db(tmp_path):
         try:
             yield tmp_path
         finally:
-            send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
             send_mod.state_dir_for = saved_state  # type: ignore[assignment]
             if saved_env is None:
                 os.environ.pop(key, None)
@@ -283,250 +269,68 @@ def test_key_esc_without_pid_file_reports_not_running(isolated_env):
 
 
 # ---------------------------------------------------------------------------
-# Missing session_id
+# NO DELIVERY PATH LEFT -> REFUSE (2026-08-14 containment invariant)
+#
+# What USED to live here: "Missing session_id", "Happy path: resume
+# invocation", "--no-stream", "--model / --max-turns forwarding" and
+# "Trailing -- passthrough" — ~20 tests, all of them asserting the SHAPE of
+# a `claude --resume` argv the command ran ON THE BARE HOST whenever no A2A
+# port was recorded. That fallback was the one path that genuinely launched
+# an agent turn outside apptainer during normal operation, and it could not
+# have worked anyway: a contained agent's session lives in the CONTAINER's
+# ~/.claude/projects/ store, so a host-side resume finds nothing or resumes
+# an unrelated host session.
+#
+# Those tests are not ported, they are DELETED, because their subject is
+# gone. What replaces them is the property that took its place: with every
+# HTTP delivery path declined, the command refuses and says why.
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def isolated_env_without_session_id(tmp_path):
-    """isolated_env, but with the session_id file deleted before yield."""
-    yaml_root = _seed_agent(tmp_path, "alpha", "sid-1")
-    key = "SCITEX_AGENT_CONTAINER_YAML_DIRS"
-    saved_env = os.environ.get(key)
-    saved_state = send_mod.state_dir_for
-    saved_resolve = send_mod.resolve_config
-    os.environ[key] = str(yaml_root)
-    send_mod.state_dir_for = (  # type: ignore[assignment]
-        lambda name, root=None: tmp_path / "state" / name
-    )
-    send_mod.resolve_config = (  # type: ignore[assignment]
-        lambda name: str(yaml_root / name / "spec.yaml")
-    )
-    (tmp_path / "state" / "alpha" / "session_id").unlink()
-    with _empty_state_db(tmp_path):
-        try:
-            yield tmp_path
-        finally:
-            send_mod.resolve_config = saved_resolve  # type: ignore[assignment]
-            send_mod.state_dir_for = saved_state  # type: ignore[assignment]
-            if saved_env is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = saved_env
-
-
-def _invoke_send_without_session_id():
-    """Run ``send alpha hi`` against a missing session_id and return result."""
-    with _swap("_find_claude_binary", lambda: "/usr/bin/true"):
-        runner = CliRunner()
-        return runner.invoke(send, ["alpha", "hi"])
-
-
-def test_missing_session_id_exits_nonzero(isolated_env_without_session_id):
-    # Arrange
-    invoke = _invoke_send_without_session_id
+def test_no_delivery_path_exits_nonzero(isolated_env):
+    # Arrange — isolated_env leaves an empty state.db, so no a2a_port exists.
+    runner = CliRunner()
     # Act
-    result = invoke()
+    result = runner.invoke(send, ["alpha", "follow up please"])
     # Assert
-    assert result.exit_code != 0
+    assert result.exit_code != 0, result.output
 
 
-def test_missing_session_id_reports_no_session_recorded(
-    isolated_env_without_session_id,
-):
+def test_no_delivery_path_reports_the_missing_a2a_port(isolated_env):
     # Arrange
-    invoke = _invoke_send_without_session_id
+    runner = CliRunner()
     # Act
-    result = invoke()
+    result = runner.invoke(send, ["alpha", "follow up please"])
     # Assert
-    assert "No session_id recorded" in result.output
+    assert "no A2A port is recorded" in result.output, result.output
 
 
-# ---------------------------------------------------------------------------
-# Happy path: resume invocation
-# ---------------------------------------------------------------------------
-
-
-def _invoke_happy_path():
-    """Run ``send alpha 'follow up please'`` and capture argv/cwd."""
-    captured: dict = {}
-
-    def fake_call(argv, cwd=None):
-        captured["argv"] = argv
-        captured["cwd"] = cwd
-        return 0
-
-    with (
-        _swap("_find_claude_binary", lambda: "/usr/local/bin/claude"),
-        _swap_subprocess_call(fake_call),
-    ):
-        captured["result"] = CliRunner().invoke(send, ["alpha", "follow up please"])
-    return captured
-
-
-def test_happy_path_exits_zero(isolated_env):
+def test_no_delivery_path_says_the_agent_is_contained(isolated_env):
     # Arrange
-    invoke = _invoke_happy_path
+    runner = CliRunner()
     # Act
-    captured = invoke()
+    result = runner.invoke(send, ["alpha", "follow up please"])
     # Assert
-    assert captured["result"].exit_code == 0, captured["result"].output
+    assert "apptainer" in result.output, result.output
 
 
-def test_happy_path_invokes_claude_with_resume_prefix(isolated_env):
+def test_no_delivery_path_names_the_recovery_command(isolated_env):
     # Arrange
-    invoke = _invoke_happy_path
+    runner = CliRunner()
     # Act
-    captured = invoke()
+    result = runner.invoke(send, ["alpha", "follow up please"])
     # Assert
-    assert captured["argv"][:5] == [
-        "/usr/local/bin/claude",
-        "--resume",
-        "abc-123-def",
-        "-p",
-        "follow up please",
-    ]
+    assert "sac agents start alpha" in result.output, result.output
 
 
-@pytest.mark.parametrize(
-    "flag",
-    ["--output-format", "stream-json"],
-)
-def test_happy_path_argv_contains_streaming_flag(isolated_env, flag):
+def test_send_no_longer_exposes_a_no_stream_flag(isolated_env):
+    """The flag only ever shaped the removed claude argv."""
     # Arrange
-    invoke = _invoke_happy_path
+    runner = CliRunner()
     # Act
-    captured = invoke()
+    result = runner.invoke(send, ["alpha", "hi", "--no-stream"])
     # Assert
-    assert flag in captured["argv"]
-
-
-def test_happy_path_runs_in_agent_workdir(isolated_env):
-    # Arrange
-    expected_cwd = str(isolated_env / "workdir")
-    # Act
-    captured = _invoke_happy_path()
-    # Assert
-    assert expected_cwd == captured["cwd"]
-
-
-# ---------------------------------------------------------------------------
-# --no-stream
-# ---------------------------------------------------------------------------
-
-
-def _invoke_no_stream():
-    """Run ``send alpha hello --no-stream`` and capture argv/result."""
-    captured: dict = {}
-    with (
-        _swap("_find_claude_binary", lambda: "/x/claude"),
-        _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
-    ):
-        captured["result"] = CliRunner().invoke(send, ["alpha", "hello", "--no-stream"])
-    return captured
-
-
-def test_no_stream_exits_zero(isolated_env):
-    # Arrange
-    invoke = _invoke_no_stream
-    # Act
-    captured = invoke()
-    # Assert
-    assert captured["result"].exit_code == 0
-
-
-@pytest.mark.parametrize(
-    "flag",
-    ["stream-json", "--output-format"],
-)
-def test_no_stream_strips_streaming_flag(isolated_env, flag):
-    # Arrange
-    invoke = _invoke_no_stream
-    # Act
-    captured = invoke()
-    # Assert
-    assert flag not in captured["argv"]
-
-
-# ---------------------------------------------------------------------------
-# --model / --max-turns forwarding
-# ---------------------------------------------------------------------------
-
-
-def _invoke_model_and_max_turns():
-    """Run ``send alpha hi --model opus --max-turns 3`` and capture argv."""
-    captured: dict = {}
-    with (
-        _swap("_find_claude_binary", lambda: "/x/claude"),
-        _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
-    ):
-        captured["result"] = CliRunner().invoke(
-            send, ["alpha", "hi", "--model", "opus", "--max-turns", "3"]
-        )
-    return captured
-
-
-def test_model_and_max_turns_invocation_exits_zero(isolated_env):
-    # Arrange
-    invoke = _invoke_model_and_max_turns
-    # Act
-    captured = invoke()
-    # Assert
-    assert captured["result"].exit_code == 0
-
-
-@pytest.mark.parametrize(
-    "token",
-    ["--model", "opus", "--max-turns", "3"],
-)
-def test_model_and_max_turns_forwarded_in_argv(isolated_env, token):
-    # Arrange
-    invoke = _invoke_model_and_max_turns
-    # Act
-    captured = invoke()
-    # Assert
-    assert token in captured["argv"]
-
-
-# ---------------------------------------------------------------------------
-# Trailing ``--`` passthrough
-# ---------------------------------------------------------------------------
-
-
-def _invoke_double_dash_passthrough():
-    """Run ``send alpha hi -- --dangerously-skip-permissions --debug``."""
-    captured: dict = {}
-    with (
-        _swap("_find_claude_binary", lambda: "/x/claude"),
-        _swap_subprocess_call(lambda argv, cwd=None: captured.update(argv=argv) or 0),
-    ):
-        captured["result"] = CliRunner().invoke(
-            send,
-            ["alpha", "hi", "--", "--dangerously-skip-permissions", "--debug"],
-        )
-    return captured
-
-
-def test_double_dash_invocation_exits_zero(isolated_env):
-    # Arrange
-    invoke = _invoke_double_dash_passthrough
-    # Act
-    captured = invoke()
-    # Assert
-    assert captured["result"].exit_code == 0, captured["result"].output
-
-
-@pytest.mark.parametrize(
-    "passthrough_arg",
-    ["--dangerously-skip-permissions", "--debug"],
-)
-def test_double_dash_forwards_extra_arg_to_argv(isolated_env, passthrough_arg):
-    # Arrange
-    invoke = _invoke_double_dash_passthrough
-    # Act
-    captured = invoke()
-    # Assert
-    assert passthrough_arg in captured["argv"]
+    assert "no such option" in result.output.lower(), result.output
 
 
 # ---------------------------------------------------------------------------
@@ -710,9 +514,8 @@ def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
     assert result.exit_code == 0
 
 
-def test_local_send_without_a2a_port_falls_through_to_resume(remote_send_env):
-    # Arrange — a LOCAL row WITHOUT a bound port must NOT take the HTTP
-    # path; it falls through to the host-side claude --resume shellout.
+def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env):
+    # Arrange — a LOCAL row WITHOUT a bound port must not be POSTed to.
     from scitex_agent_container._state.state_db import record_instance_start
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
@@ -722,12 +525,28 @@ def test_local_send_without_a2a_port_falls_through_to_resume(remote_send_env):
         posted["url"] = url
         return "SHOULD-NOT-HAPPEN"
 
-    # Act — no session_id seeded, so resume errors; we only assert the
-    # HTTP path was NOT taken (no post_turn_to_url call captured).
+    # Act
     with _swap_peer_post_turn_to_url(fake_post):
         CliRunner().invoke(send, ["local-b", "hi"])
     # Assert
     assert "url" not in posted
+
+
+def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_env):
+    """The old name for this was "falls through to resume" — it no longer does."""
+    # Arrange
+    from scitex_agent_container._state.state_db import record_instance_start
+
+    record_instance_start(name="local-b", host="lead-host", a2a_port=None)
+
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+        return "SHOULD-NOT-HAPPEN"
+
+    # Act
+    with _swap_peer_post_turn_to_url(fake_post):
+        result = CliRunner().invoke(send, ["local-b", "hi"])
+    # Assert
+    assert "no A2A port is recorded" in result.output, result.output
 
 
 def test_local_send_failure_wraps_peer_error(remote_send_env):

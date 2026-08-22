@@ -237,8 +237,12 @@ def _remedy(name: str, config: AgentConfig, pid: int | None) -> str:
             f"   # STAT 'D' = uninterruptible I/O: SIGKILL cannot land until "
             f"the syscall returns"
         )
-    # "" and "tui" both select TuiSessionRuntime (see _runtime_select).
-    if (getattr(config, "runtime", "") or "").strip().lower() in ("", "tui"):
+    # Every TUI-entry spelling selects TuiSessionRuntime (harness
+    # registry derivation, v4 step 4 — see _runtime_select).
+    from ..config._harness_registry import CLAUDE_CODE_TUI, runtime_spellings_for
+
+    runtime_spelling = (getattr(config, "runtime", "") or "").strip().lower()
+    if runtime_spelling in runtime_spellings_for(CLAUDE_CODE_TUI):
         lines.append(f"  tmux kill-session -t tui-{name}")
     lines.append(f"  sac agents start {name} -y --fresh")
     return "\n".join(lines)

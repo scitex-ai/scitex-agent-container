@@ -6,7 +6,327 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-08-18
+
+**A promotion, and the promotion IS the repair.** `main` was RED on
+`test_audit.py::test_audit_all_clean` (PS-140, PS-226, PS-231) while holding code
+that had never changed. The auditor moved, not the repo: commit `27369448` passed
+GREEN under scitex-dev 0.50.0 and went red under 0.51.0 and 0.54.0 — same commit,
+same workflow, a newer rule corpus. `main` pins only the open floor
+`scitex-dev>=0.49.2`, so a nightly cron re-runs the last release against whatever
+scitex-dev ships that day. `develop` took the identical red and repaired it in
+#1117; this carries that repair across. `main` could not have held a unique defect
+in any case — its tree hash equals the merge-base tree, and its one unique commit
+is an empty promotion merge.
+
+The control that settles it: under the SAME auditor 0.54.0, on the same runner, on
+the same day, `develop`'s tip ran green (17081 passed) while `main` ran red.
+
 ### Fixed
+
+- **The audit gate goes green again (#1117).** PS-140 and the PS-231 exemptions
+  land together, because landing either alone leaves the gate red and makes the
+  other look like the cause.
+- **25 false test failures traced to an inherited env var (#1123).** `conftest.py`
+  now drops `SAC_SPEC_ENV_KEYS` at module scope. The container exports it, pytest
+  inherited it, and the suite reported 2 failed / 19 errors that vanished with the
+  variable unset — 47 passed. Deleted rather than set to `""`, because an empty
+  manifest is itself meaningful; at module scope rather than in a fixture, because
+  the leak travels into subprocesses.
+- **`restart --login-expired` stops reprinting the population its own count line
+  already reports (#1126).** The per-agent UNOBSERVED/no-session lines duplicated
+  the summary on every 5-minute pass.
+- **`host exec` no longer swallows the peer's output (#1101).**
+- **`priority` routes singleton-reconcile through the peer map (#1102).**
+- **SSH quoting is owned by the builder, for both branches (#1103).** An
+  `env_preamble` must not change how a command is quoted; the command is a real
+  argv list and both branches space-join it.
+
+### Added
+
+- **The account quota cache refreshes on a schedule (#1085).** Placement decisions
+  were reading day-old numbers; a stale snapshot now triggers a re-measure rather
+  than being trusted.
+- **`send` names the verb that actually reaches the agent (#1104).** Only a PROVEN
+  route switches the verb — a strategy alone does not.
+
+## [0.26.1] - 2026-08-17
+
+Six commits, and the theme is the same defect in five different places: **a
+check that runs, computes the correct answer, and has no consumer.** A broken
+check gets contradicted eventually; these were right, and the information died
+in the field.
+
+### Fixed
+
+- **A STALE quota snapshot now triggers a re-measure instead of being trusted
+  (#1095).** Measured on scitex-hub, compute-03: its quota cache was present,
+  well-formed, and 23 HOURS OLD. The boot gate asked only "does a cache exist",
+  so the picker read the pinned account's previous-day percentages — 7d=15% —
+  as evidence the pin was fine. The account was at 7d=100%, capped until Aug 22.
+  hub answered "You've hit your weekly limit" on every turn while the restart
+  reported success. Refreshing that one cache revived it: the picker then chose
+  a 7d=8% account by itself. The selector was never wrong; it was fed a day-old
+  number and had no way to know.
+
+  PRESENCE and AGE now answer different questions and stay separate. Presence
+  means this host runs a quota system, so the gate is ARMED — always. Age means
+  the numbers may no longer be true, so the cache is re-measured before the
+  pick. The first attempt at this fix routed staleness into the ABSENT-cache
+  path, which DEGRADES when its refresh fails — that would have started booting
+  agents on a present-but-blind cache instead of refusing them, re-opening the
+  2026-07-20 incident while fixing hub's. Two existing tests caught it.
+
+- **The status line FITS, and shows the 7d quota (#1097, #1098).** Measured by
+  rendering a live payload through the production renderer: 131 characters,
+  truncated by the pane at ~86, mid `Opus 5 (1M conte…`. Truncation eats from
+  the RIGHT, so it discarded ctx, 5h and the account — every NUMBER — while
+  keeping the identity, which is the one part a human already knows.
+
+  Two redundancies were paying for it: the agent name appeared twice (once as
+  the name, once as the workdir basename, because sac repos are named after
+  their agent), and the model carried the payload's prose parenthetical.
+
+  `7d` is the substantive half. hub's incident was a 7d=100% account while 5h
+  read LOW; the pane displayed the reassuring number and hid the fatal one, and
+  `seven_day.used_percentage` was in the payload the whole time.
+
+  The width budget is 76 and it is MEASURED, not chosen. #1097 shipped 80 on
+  the reasoning that 80 is the standard terminal width; measuring the host's
+  real tmux panes found TWO populations — 89 columns and 80 — so an 80-char
+  line was fine on the pane whose truncation prompted the fix and still
+  truncated on seven agents. Host tmux runs `window-size latest`, so a pane can
+  shrink to 80 under a running agent; the budget targets the minimum. Do not
+  probe the width at runtime: `tput cols` returns 80 from the terminfo DEFAULT
+  with no tty, which is right by coincidence at 80 columns and silently wrong
+  at 89.
+
+- **`sac host sync --check` no longer reports a finding as ill health (#1093).**
+  `--exit-zero` for the timer: a check that finds drift has done its job, and
+  an exit code that conflates "I found something" with "I failed" turns the
+  unit red for working correctly.
+
+### Changed
+
+- **`accounts list` refreshes the quota snapshot before rendering it (#1094).**
+  Operator, asked twice: 「sac accounts list should automatically refresh the
+  snapshot beforehand … it is just time consuming for me to type it by
+  myself」. A stale snapshot here is worse than none — measured the same day,
+  same account, two hosts: one read 7d=15% while the account was capped at
+  100%. This is the command an operator reaches for to decide which account to
+  use. `--no-refresh-quota` opts out. The refresh is USAGE-ONLY and never
+  touches a credential.
+
+- **A failed dispatch now NAMES the `host:` line that chose the peer (#1096).**
+  2026-08-09: fleet specs carried `host: ywata-note-win`; the lifecycle verbs
+  dispatched there and twelve agents died with `Permission denied (publickey)`
+  — a message naming the AGENT and never the field that picked the destination.
+
+  Not a refusal and not a probe. `_host_chain.resolve_host_chain` deliberately
+  exempts a bare STRING pin from the reachability oracle: for a LIST the verdict
+  CHOOSES among alternatives, but a pin has no alternatives, so probing could
+  only REFUSE — and the module's invariant is "never a licence to reject a host
+  the operator asked for". The pin is still obeyed and the peer's error
+  propagates unchanged; only the silence is removed.
+
+## [0.26.0] - 2026-08-17
+
+Promotes 50 commits of accumulated `develop` work to `main`. Cut because
+the fleet had drifted into the state a frozen version number produces:
+**five installs all reporting `0.25.0` and running four different builds**
+(measured 2026-08-17 — compute-01/02/03 on `g42c71961`, compute-04 on
+`ga039898d`, the laptop on `g96820bd1`, an agent container on `ge3600683`).
+A version that does not move stops being an answer to "what is running
+here", and every propagation check downstream of it inherits the lie.
+
+It also unblocks the release pipeline itself. `sac freshness check` reported
+`release-run: last release run (main) ended in 'failure' — NOTHING SHIPPED`,
+and the three failures were all on `main` only:
+`test__env_snapshot.py::test_snapshot_is_not_written_under_world_writable_tmp`,
+plus two in `test__restart_verify_session.py`. All 26 tests in those files
+pass on `develop` (measured before cutting this), so `main` was failing on
+code `develop` had already fixed — the promotion IS the repair, not a
+change that needs one.
+
+### Added
+
+- **`accounts list` states each account once, not once per host.** The
+  fleet view rendered the cross product — four accounts times every host
+  that answered — so a healthy five-host fleet produced twenty rows
+  carrying four accounts' worth of information. Identity and usage belong
+  to the Anthropic account and are now stated once (freshest cache wins);
+  credential freshness belongs to one file on one machine and is NEVER
+  collapsed, so three VALID hosts cannot hide one EXPIRED one — divergence
+  renders as `VALID x2; EXPIRED on <host>`. `--by-host` keeps the exploded
+  view. (#1087)
+- **sac renders its own status line**, naming agent@host, workdir, model,
+  context, 5h quota and the active account. The account field exists
+  because nothing inside a running agent could answer "which account am I
+  actually using" — every check had to be made from outside the container.
+  (#1086)
+- `agents list` marks the caller's own row with `is_self` (#1074).
+- `image list` shows `built_at` and the resolved symlink target (#1073).
+- A drift warning when a spec's inert sibling copy is newer (#1083).
+- Codex Python SDK as a fourth harness (#1047), `resolve_harness_key` and
+  the HarnessDescriptor registry, and `spec.residency resident|one-shot`.
+- Fleet-wide `agents list` and `accounts list` with an honest reachability
+  header — a partial fleet never renders as a whole one (#1050).
+- `start` verifies the launch before reporting it, so a dead agent is never
+  reported as SUCCESS.
+
+### Changed
+
+- **BREAKING: apptainer is the only container engine.** `container.runtime`
+  is abolished rather than kept as a one-value field — a vocabulary word no
+  implementation stands behind is a promise the code will break.
+- **claude-hud is gone entirely, including the opt-in that kept it.** The
+  status line no longer delegates to any external renderer and
+  `statusline.py` imports no subprocess module at all; a test asserts that
+  against the production source so a future shell-out cannot creep back in
+  however it is spelled. (#1088)
+
+### Fixed
+
+- 26 fixes across the CI verdict ring (owner resolution, poll budgets,
+  consecutive-failure caps), auth healing, credential rotation, and the
+  account store. Notable: the auth-heal narrator no longer announces it
+  "CANNOT report a clean fleet" while reporting one (#1084), and `ci-owner`
+  reports the repo name GitHub returns rather than a constructed guess
+  (#1081).
+
+## [0.25.0] - 2026-08-16
+
+### Fixed
+
+- **Nothing ever applied the declared JobSpecs to a host; provisioning now
+  does, and arming is collective.** sac declares nine periodic jobs and
+  registers them with scitex-dev correctly — `discover_jobs()` finds all
+  nine — but no code path in this repo had ever called an apply verb.
+  Measured before the change: `rg` over the whole tree for any
+  `ecosystem up|install` / `dev {timer,cron,service} install` invocation
+  returned **24 hits and zero of them executable** — READMEs, the
+  CHANGELOG, docstrings and test comments. `sac installation boot`, sac's
+  only host-provisioning path, listed seven steps and applied nothing.
+
+  Four states were being conflated, and only the first two were ever true:
+  **DECLARED** (a JobSpec in the repo), **REGISTERED** (`discover_jobs()`
+  can find it), **APPLIED** (a unit file exists on this host) and **ARMED**
+  (`systemctl enable`, the only state that fires). The mechanical cause of
+  the gap is that scitex-dev's `do_install` writes the unit files and then
+  merely PRINTS `systemctl --user enable --now <unit>` to stderr without
+  running it — so one `install` applied all nine timers and arming them
+  took nine hand-typed commands. On 2026-08-15 seven of ten sac timers
+  were duly found `disabled` on scitex-compute-04, including the sweep
+  that restarts agents wedged behind a frozen "Login expired" banner.
+
+  Two changes close the sac-side half. `sac dev timer enable` and
+  `sac dev cron enable` are now BULK verbs: given no NAME they arm every
+  declared job of that kind, exactly as `install` already did. `disable`
+  stays strictly per-name and the asymmetry is deliberate — bulk enable is
+  convergence, bulk disable is a fleet outage with one word of typing
+  (`sac.accounts-refresh` is the fleet's sole OAuth refresher against a
+  single-use token). And `sac installation boot` gained a step that
+  applies AND arms every declared job, reporting per-job APPLIED/ARMED
+  state and never aborting the bootstrap when a host cannot arm.
+
+  That step is the BASE CASE, stated as such: a convergence timer cannot
+  arm itself, so the recursion needs something that runs unconditionally
+  on a host with nothing. The periodic half that re-asserts the invariant
+  afterwards is deliberately NOT declared here — one job converging every
+  registered leaf belongs in scitex-dev's own provider, not as N copies in
+  N leaf packages. It is carded there
+  (`scitex-dev-collective-apply-and-convergence-for-declared-jobs-20260815`)
+  together with a second finding: `ecosystem up` lowers timer JobSpecs to
+  crontab lines while `ecosystem dev timer install` writes per-leaf units,
+  both surfaces are live, and calling the former on a host carrying the
+  latter would double-supervise all nine sac timers.
+
+### Changed
+
+- **`cli_pkg/_dev_jobs.py` split at the line it already had.** The
+  grammar tables (`GROUP_KINDS`, `GROUP_VERBS`, `Deprecation`, the verb
+  shape sets) move to `cli_pkg/_dev_jobs_grammar.py`; `_dev_jobs.py` keeps
+  the Click command builders and re-exports every public name, so
+  `_jobs_audit` and the existing tests are untouched. The file was at
+  512/512 lines; it is now 371.
+
+### Removed
+
+- **`spec.container.runtime` — the container-ENGINE choice is abolished.**
+  Operator, 2026-08-14: 「runtime を選べること自体を廃止、apptainer 一本化」
+  「うちはかつ丼だけ出す店です」. What was abolished is the CHOICE, not just
+  the alternatives, and what is bought back is containment as a default
+  guarantee: by default nothing leaks out, and there is one fewer field a
+  reader can be wrong about.
+
+  The field was not a stale option, it was a stale LIE. Measured on
+  scitex-compute-04 before the change: **112 of 112 spec files declared it,
+  every one of them spelling `none`** — the value meaning "no container
+  engine" — while every one of those agents ran inside apptainer. The fleet
+  told the same lie on ywata-note-win (106/106) and scitex-compute-03
+  (105/107). Nothing read the field. It was
+  parsed into `ContainerSpec.runtime` and consulted by no launch path; the
+  engine actually dispatched comes from `spec.runtime` (the HARNESS
+  launch-mode axis), a different field that merely shares the name.
+
+  Declaring the key is now a hard load error naming the one-line fix, the
+  same posture `spec.access` and `apptainer.container_workdir` took when
+  they were removed. There is deliberately no accept-and-ignore branch and
+  no deprecation window. The check keys on key PRESENCE, not truthiness:
+  the check it replaces read `if cr and cr not in VALID_CONTAINER_RUNTIMES`,
+  so a `runtime:` written empty or null passed unexamined — the exact shape
+  that lets a removed field survive a migration sweep unnoticed.
+  `VALID_CONTAINER_RUNTIMES` is gone and was deliberately not replaced by a
+  one-member set: a set of one is still a menu.
+
+  **Sequencing note for operators.** Old code REQUIRES the key (explicit-fields
+  ruling) and new code REJECTS it, so the two states are mutually exclusive.
+  Strip the line from a host's specs immediately AFTER upgrading that host's
+  sac, never before.
+
+- **`sac agents send`: the bare-host `claude --resume` fallback is gone** —
+  the one path that genuinely ran an agent outside apptainer during normal
+  operation. When no A2A port was recorded, the command shelled out to a
+  full Claude agent TURN on the host, in the agent's workdir, with the host
+  operator's `~/.claude` credentials. It could not have worked anyway: a
+  contained agent's session lives in the CONTAINER's `~/.claude/projects/`
+  store, so a host-side resume finds nothing or resumes an unrelated host
+  session — worse than an error, because it looks like it worked. The
+  command now refuses and names the real condition. `--no-stream` and the
+  trailing `-- <forward>` escape hatch went with it: both existed only to
+  shape a `claude` argv that is no longer built.
+
+### Fixed
+
+- **The MCP `image_build` tool advertised an engine that does not exist, and
+  could never have run.** Its signature carried `runtime: str = "docker"` —
+  an engine ripped out 2026-05-13, offered as the DEFAULT — and it passed
+  `--runtime`, `--target` and `--image` to `sac image build`, which accepts
+  none of the three. Every call died on "no such option" before building
+  anything, while the documented surface read as a working capability. It
+  now mirrors the CLI exactly: positional layer, `--sandbox`, `--dry-run`,
+  and no engine parameter at all.
+
+- **The "no container engine" refusals no longer point at ripped-out
+  engines.** `ClaudeSessionRuntime` / `OpenAISessionRuntime` told the
+  operator they required `spec.runtime: docker | podman` — engines gone
+  since 2026-05-13 — sending the reader after a knob that had not existed
+  for months instead of at the launch-mode spelling that was actually
+  wrong. Both now name apptainer and state that sac never runs an agent
+  outside it. Behaviour is unchanged and was already correct: they fail
+  CLOSED, returning False rather than falling back to the host.
+
+### Added
+
+- **A test that pins the containment invariant** (`tests/scitex_agent_container/
+  config/test__container_engine.py`). The repo had argv-shape assertions
+  and a resolver unit test, but nothing that said "and there is no OTHER way
+  an agent gets launched". It pins: the adapter set `_get_runtime` may return
+  is closed to the two apptainer-dispatching runtimes, for every accepted
+  `spec.runtime` spelling; every SDK spelling resolves a real
+  `ApptainerContainerRuntime` and never `None`; both session runtimes fail
+  CLOSED when no engine resolves; and `sac agents send` refuses instead of
+  running the turn on the host.
 
 - **The `#NNN` rule now lives in ONE place, and stops firing on hex colours
   and code.** The rule was correct and the wording was good, but it existed

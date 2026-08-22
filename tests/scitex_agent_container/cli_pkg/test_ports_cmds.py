@@ -262,7 +262,7 @@ def test_cli_json_output_has_listen_key(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "listen" in payload
 
@@ -272,7 +272,7 @@ def test_cli_json_output_has_reference_section(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert isinstance(payload["reference"], list) and payload["reference"]
 
@@ -293,7 +293,7 @@ def test_cli_json_includes_seeded_a2a_claim(isolated_state) -> None:
     runner = CliRunner()
     # Act
     result = runner.invoke(main, ["ports", "--json", "--timeout", "0.1"])
-    owners = {row["owner"] for row in json.loads(result.output)["a2a_claims"]}
+    owners = {row["owner"] for row in json.loads(result.stdout)["a2a_claims"]}
     # Assert
     assert "cli-agent" in owners
 

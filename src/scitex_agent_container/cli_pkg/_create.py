@@ -45,7 +45,6 @@ freed the ``create`` name back up.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
@@ -57,6 +56,7 @@ from ._create_templates import (  # noqa: F401
     _MINIMAL_TEMPLATE,
     _TEMPLATES,
 )
+from ._helpers._console import system_msg
 from ._new_dir_template import (
     DirTemplateError,
     discover_dir_templates,
@@ -334,11 +334,7 @@ def create(
             )
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
-        print(
-            f"Wrote {agent_dir} (template={kind}, dir-template).",
-            file=sys.stderr,
-            flush=True,
-        )
+        system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return
 
     if spec_path.exists() and not force:
@@ -393,11 +389,7 @@ def create(
     to_home = agent_dir / "to_home"
     to_home.mkdir(parents=True, exist_ok=True)
 
-    print(
-        f"Wrote {spec_path} (template={kind}).",
-        file=sys.stderr,
-        flush=True,
-    )
+    system_msg(f"Wrote {spec_path} (template={kind}).")
 
 
 __all__ = ["create"]

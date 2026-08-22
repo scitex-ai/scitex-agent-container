@@ -1,8 +1,8 @@
 """Tests for the setup-audit and auth-rotation fields on the
 ``collect_rich`` payload.
 
-These tests cover the three concerns raised alongside the claude-hud
-statusline discussion (2026-04-17):
+These tests cover the three concerns raised alongside the statusline
+discussion (2026-04-17):
 
 1. The plan label must come from ``rateLimitTier`` (credentials.json),
    not from ``billingType`` (claude.json). The latter only reports
@@ -392,7 +392,7 @@ def rich_payload_with_plugins_and_mcp(tmp_path: Path, env_save_restore) -> dict:
         json.dumps(
             {
                 "plugins": {
-                    "claude-hud@claude-hud": [{"scope": "user", "version": "0.0.10"}]
+                    "sample-plugin@sample-marketplace": [{"scope": "user", "version": "0.0.10"}]
                 }
             }
         )
@@ -434,7 +434,7 @@ def test_collect_rich_lists_installed_plugin_by_name(
     # Act
     plugins = rich_payload_with_plugins_and_mcp["installed_plugins"]
     # Assert
-    assert plugins and plugins[0]["name"] == "claude-hud@claude-hud"
+    assert plugins and plugins[0]["name"] == "sample-plugin@sample-marketplace"
 
 
 def test_collect_rich_emits_structured_mcp_servers_entry(

@@ -147,7 +147,24 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -uo pipefail
+          # `-e`, AND IT IS THE WHOLE POINT OF THIS STEP.
+          #
+          # This ran `set -uo pipefail` — no `-e` — with `gh issue comment`
+          # followed by `echo` in the reopen branch. Without `-e` the step's exit
+          # status is the LAST command's, so a comment that failed (revoked
+          # token, Issues disabled, rate limit) was masked by the echo's exit 0
+          # and this step went GREEN having reported nothing.
+          #
+          # That is the original disease inside the thing meant to be the cure:
+          # a nightly alarm that cannot report, reporting success. The nightly
+          # it guards is exactly the run nobody reads, so nothing downstream
+          # would have contradicted it.
+          #
+          # Found while adding the missing sibling alarm to the SIF nightly
+          # (PR #998). Kept as its OWN change rather than folded in there — a
+          # notify fix riding along inside a notify PR is how a reviewer misses
+          # it.
+          set -euo pipefail
           title="[nightly] python matrix failed on the hosted runner"
           # ONE issue, reopened and commented — not one issue per night. A
           # nightly that files 30 identical issues in a month teaches everyone
@@ -164,9 +181,25 @@ jobs:
           regression exists. The release gate runs all three versions and will block a tag
           on the same fault, later and more expensively."
           if [ -n "$num" ]; then
+            # An already-open issue makes `reopen` exit non-zero; that is not a
+            # reporting failure, so it stays the ONLY tolerated error here.
             gh issue reopen "$num" --repo "$REPO" >/dev/null 2>&1 || true
             gh issue comment "$num" --repo "$REPO" --body "$body"
             echo "commented on existing issue #$num"
           else
             gh issue create --repo "$REPO" --title "$title" --body "$body"
           fi
+
+          # POST-CONDITION. `set -e` above now fails the step on a non-zero gh
+          # exit, but "the command returned 0" and "an open issue now exists"
+          # are different claims, and only the second one is this alarm having
+          # done its job.
+          open_num="$(gh issue list --repo "$REPO" --state open --limit 20 \
+                        --search "in:title \"$title\"" --json number,title \
+                        --jq "[.[] | select(.title == \"$title\") | .number] | first // empty")"
+          if [ -z "$open_num" ]; then
+            echo "::error::ALARM FAILED SILENTLY — reporting commands succeeded but" \
+                 "no OPEN issue titled '$title' exists in $REPO afterwards."
+            exit 1
+          fi
+          echo "alarm delivered: $REPO#$open_num"

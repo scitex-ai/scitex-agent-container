@@ -60,7 +60,7 @@ def test_notify_dry_run_json_includes_envelope(
         fleet_group,
         ["notify", "blocker", "--summary", "creds gone", "--dry-run", "--json"],
     )
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["envelope"]["method"] == "message/send"
 
@@ -75,7 +75,7 @@ def test_notify_dry_run_carries_kind(tmp_path: Path, env_save_restore) -> None:
         fleet_group,
         ["notify", "status", "--summary", "x", "--dry-run", "--json"],
     )
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["envelope"]["params"]["metadata"]["kind"] == "status"
 
@@ -92,7 +92,7 @@ def test_notify_dry_run_reports_lead_address(
         fleet_group,
         ["notify", "done", "--summary", "x", "--dry-run", "--json"],
     )
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert — the dry-run output must reveal where production WOULD
     # have POSTed so the operator can sanity-check the address.
     assert payload["lead"] == {"name": "lead", "host": "mba", "a2a_port": 8642}
@@ -153,7 +153,7 @@ def test_notify_explicit_from_agent_wins_over_env(
             "--json",
         ],
     )
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["envelope"]["params"]["metadata"]["from_agent"] == "flag-name"
 

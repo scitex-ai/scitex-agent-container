@@ -155,7 +155,7 @@ def test_in_sif_delete_emits_outcome_json_to_stdout(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["ok"] is True
 
@@ -166,7 +166,7 @@ def test_in_sif_delete_emits_http_status_in_outcome(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["http_status"] == 200
 
@@ -196,7 +196,7 @@ def test_in_sif_delete_emits_kind_acl_deny_in_outcome(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["unrelated-target"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "acl_deny"
 
@@ -279,7 +279,7 @@ def test_in_sif_delete_emits_kind_transport_on_transport_error(env_save_restore)
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["any-name"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "transport"
 

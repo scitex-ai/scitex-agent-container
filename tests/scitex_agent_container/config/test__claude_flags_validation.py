@@ -148,3 +148,131 @@ def test_a_non_string_element_is_rejected() -> None:
     errors = _errors_for(flags)
     # Assert
     assert any("flags[1]" in e and "string" in e for e in errors)
+
+
+# --------------------------------------------------------------------------
+# An INLINE ``--mcp-config`` blob may not carry a credential
+#
+# THE HOLE THIS PINS. ``spec.claude.flags`` is appended VERBATIM to the inner
+# claude argv, and a process argv is world-readable via /proc/<pid>/cmdline.
+# PR #1055 had just removed exactly this disclosure from the SDK path (the
+# MCP config now goes to a 0600 file and only the PATH travels) — but an
+# inline ``--mcp-config {...}`` written into spec.claude.flags re-opened it
+# through a field nothing checked, and BELOW the apptainer secret sweep:
+# ``redact_secret_env_to_file`` runs over the FLAG region only, before the
+# SIF and the inner command are appended.
+#
+# Reordering that sweep would NOT have closed this. Its recogniser matches
+# ``--env KEY=VALUE`` pairs; an MCP blob is not one, so the sweep would have
+# walked past it wherever it ran. The check has to understand the blob, which
+# is why it lives here, at the spec boundary, where the flag list is still a
+# clean list of tokens and every downstream argv consumer is covered at once.
+#
+# Measured with a real spec + real build_run_argv: before, a token-shaped
+# sentinel inside the blob's env block was visible in ``ps -eo args`` on the
+# launched process (1 pid, /proc/<pid>/cmdline mode 0444); after, the spec is
+# refused at load and no argv is built at all (0 pids).
+# --------------------------------------------------------------------------
+
+_SECRET_BLOB = (
+    '{"mcpServers": {"demo": {"type": "stdio", "command": "/bin/true", '
+    '"env": {"DEMO_API_KEY": "ZZZ-sentinel-mcp-not-a-real-token"}}}}'
+)
+
+
+def test_inline_mcp_config_carrying_a_secret_is_rejected() -> None:
+    """The split spelling: ``["--mcp-config", "{...}"]``."""
+    # Arrange
+    flags = ["--strict-mcp-config", "--mcp-config", _SECRET_BLOB]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert any("--mcp-config" in e and "DEMO_API_KEY" in e for e in errors)
+
+
+def test_glued_inline_mcp_config_carrying_a_secret_is_rejected() -> None:
+    """The glued spelling must not be a way around the same rule."""
+    # Arrange
+    flags = [f"--mcp-config={_SECRET_BLOB}"]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert any("DEMO_API_KEY" in e for e in errors)
+
+
+def test_the_refusal_never_quotes_the_secret_value() -> None:
+    """A message about an exposed credential must not restate it.
+
+    This text reaches logs and terminals; naming the KEY is what makes the
+    error actionable, and withholding the VALUE is what keeps the complaint
+    from becoming a second disclosure.
+    """
+    # Arrange
+    flags = ["--mcp-config", _SECRET_BLOB]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert not any("ZZZ-sentinel-mcp-not-a-real-token" in e for e in errors)
+
+
+def test_the_refusal_points_at_the_file_path_form() -> None:
+    """The fix must be in the message: pass a PATH, which the flag accepts."""
+    # Arrange
+    flags = ["--mcp-config", _SECRET_BLOB]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert any(".mcp.json" in e for e in errors)
+
+
+# --------------------------------------------------------------------------
+# ...and the shapes that must keep booting. A false positive here blocks a
+# live agent, which is the same harm inverted.
+# --------------------------------------------------------------------------
+
+
+def test_the_live_capsule_empty_inline_blob_is_accepted() -> None:
+    """Three live capsule specs pass exactly this; it carries no credential."""
+    # Arrange
+    flags = ["--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}']
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert errors == []
+
+
+def test_an_inline_blob_with_a_non_secret_env_is_accepted() -> None:
+    """The rule keys on a SECRET-shaped name, not on having an env block."""
+    # Arrange
+    blob = (
+        '{"mcpServers": {"demo": {"type": "stdio", "command": "/bin/true", '
+        '"env": {"DEMO_BASE_URL": "https://example.invalid"}}}}'
+    )
+    # Act
+    errors = _errors_for(["--mcp-config", blob])
+    # Assert
+    assert errors == []
+
+
+def test_an_mcp_config_given_as_a_path_is_accepted() -> None:
+    """The safe form the refusal steers authors toward must stay legal."""
+    # Arrange
+    flags = ["--mcp-config", "/home/agent/.mcp.json"]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert errors == []
+
+
+def test_an_unparseable_inline_blob_is_not_refused_by_this_rule() -> None:
+    """claude rejects malformed JSON itself, loudly and with a better message.
+
+    Guessing at the contents of something we cannot parse would only produce
+    false refusals on valid specs.
+    """
+    # Arrange
+    flags = ["--mcp-config", "{not json at all"]
+    # Act
+    errors = _errors_for(flags)
+    # Assert
+    assert errors == []
