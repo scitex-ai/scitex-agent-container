@@ -36,6 +36,7 @@ from ..runtimes._cct_poller_singleton import (
     POLLER_OK,
     POLLER_UNKNOWN,
     POLLER_VIOLATION,
+    SCOPE_NOTE,
     PollerSingletonVerdict,
     check_poller_singleton,
 )
@@ -92,8 +93,15 @@ def _render_pollers_human(verdict: PollerSingletonVerdict) -> None:
     )
     for poller in verdict.pollers:
         owner = poller.agent or "(agent unknown)"
-        fingerprint = poller.token_fp or "(token unreadable)"
-        console.print(f"  pid {poller.pid:<8} {fingerprint}  {owner}")
+        if poller.token_fp:
+            mark = poller.token_fp
+        elif poller.disabled:
+            mark = "(no token — by design)"
+        else:
+            mark = "(token unreadable)"
+        console.print(f"  pid {poller.pid:<8} {mark:<24}  {owner}")
+    console.print(f"  [dim]{verdict.population()}[/dim]")
+    console.print(f"  [dim]{SCOPE_NOTE}[/dim]")
     if verdict.is_alarming:
         console.print(f"  [{style}]{verdict.detail}[/{style}]")
         console.print(f"  [bold]hint[/bold]  {verdict.hint()}")

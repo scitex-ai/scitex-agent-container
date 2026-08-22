@@ -72,23 +72,55 @@ _SEARCH_TOOLS = frozenset(
     }
 )
 
-#: Env keys naming the agent that owns a poller, most specific first.
-#: ``CCT_AGENT_ID`` is the telegram identity sac writes per agent (see
-#: :func:`._cct_token_pool._default_agent_id`); the two ``*_NAME`` keys are the
-#: runtime's own agent-name vars, inherited by every stdio child (see
-#: :mod:`..._lifecycle._orphan_mcp_cleanup`).
+#: Env keys naming the agent that owns a poller, MOST AUTHORITATIVE FIRST.
+#:
+#: ``SAC_NAME`` leads, and the order is not cosmetic — it was measured. On
+#: compute-04, 2026-08-22 17:02Z, this process::
+#:
+#:     pid 574160   CCT_AGENT_ID=handyman-01   SAC_NAME=handyman-06
+#:
+#: A ``CCT_AGENT_ID``-first order named it handyman-01, and a VIOLATION report
+#: that names the wrong agent sends the remediation to an innocent one — worse
+#: than naming nobody, because the rest of the row (pid, fingerprint) is right
+#: and gives the reader no reason to doubt it.
+#:
+#: Note what the same measurement rules OUT: reading the PARENT instead would
+#: not have helped. The parent claude process carried the SAME
+#: ``CCT_AGENT_ID=handyman-01`` alongside ``SAC_NAME=handyman-06``, so the
+#: defect is which KEY is trusted, not which process is read. ``CCT_AGENT_ID``
+#: is a TELEGRAM identity — it can be, and here is, a different thing from the
+#: agent — so it is kept last, as a name of last resort. ``SAC_NAME`` and
+#: ``SCITEX_AGENT_CONTAINER_NAME`` are the runtime's own agent-name vars,
+#: inherited by every stdio child (see :mod:`..._lifecycle._orphan_mcp_cleanup`),
+#: and they agreed with the parent on all ten live servers measured.
 _OWNER_ENV_KEYS: tuple[str, ...] = (
-    _AGENT_ID_VAR,
-    "SCITEX_AGENT_CONTAINER_NAME",
     "SAC_NAME",
+    "SCITEX_AGENT_CONTAINER_NAME",
+    _AGENT_ID_VAR,
 )
 
-#: WHY a poller yielded no fingerprint. Both are UNKNOWN, and they need
-#: DIFFERENT remedies — one is a vantage problem (run as the owning uid), the
-#: other is a process that was never started through sac. A single "could not
-#: resolve" would send the reader to the wrong fix half the time.
+#: WHY a poller yielded no fingerprint. THREE different facts wearing one
+#: shape, and they need three different responses:
+#:
+#: * ``UNRESOLVED_ENVIRON`` — sac could not READ the environment. Vantage
+#:   problem; re-run as the owning uid. UNKNOWN.
+#: * ``UNRESOLVED_NO_TOKEN`` — the environment is readable and the variable is
+#:   ABSENT. The process was started outside sac's env, so sac cannot tell
+#:   whether it polls some token by another route. UNKNOWN.
+#: * ``TOKEN_DISABLED`` — the variable is PRESENT and EMPTY. Somebody set it
+#:   to nothing on purpose (the handyman family's spec does exactly this, to
+#:   stop several agents sharing one bot). An empty string is not a bot token,
+#:   so this process cannot collide with anything: it is excluded from the
+#:   invariant rather than clouding it. NOT unknown.
+#:
+#: Measured on compute-04, 2026-08-22: of 10 live servers, 4 carried real and
+#: distinct tokens, 6 were EMPTY by design, 1 was ABSENT. Folding EMPTY into
+#: UNKNOWN made a perfectly healthy host report UNKNOWN on every single run —
+#: a check that is never green gets muted, which is the gate-that-cannot-fail
+#: arriving from the other direction.
 UNRESOLVED_ENVIRON = "environ-unreadable"
 UNRESOLVED_NO_TOKEN = "no-token-in-env"
+TOKEN_DISABLED = "token-empty"
 
 
 @dataclass(frozen=True)
@@ -105,15 +137,25 @@ class LivePoller:
     agent: str = ""
     #: Why the token is unresolved. Operator-facing, never a value.
     detail: str = ""
-    #: :data:`UNRESOLVED_ENVIRON` / :data:`UNRESOLVED_NO_TOKEN` when
-    #: unresolved, ``""`` when resolved. Machine-readable so the remedy can
-    #: branch without parsing prose.
+    #: :data:`UNRESOLVED_ENVIRON` / :data:`UNRESOLVED_NO_TOKEN` /
+    #: :data:`TOKEN_DISABLED` when there is no fingerprint, ``""`` when
+    #: resolved. Machine-readable so the remedy can branch without parsing
+    #: prose.
     reason: str = ""
 
     @property
     def resolved(self) -> bool:
         """True iff a token fingerprint was obtained for this process."""
         return bool(self.token_fp)
+
+    @property
+    def disabled(self) -> bool:
+        """True iff this process was deliberately given an EMPTY bot token.
+
+        It holds no token, so it cannot be the second consumer of anyone's.
+        Excluded from the invariant — see :data:`TOKEN_DISABLED`.
+        """
+        return self.reason == TOKEN_DISABLED
 
     def to_dict(self) -> dict:
         """JSON-friendly projection (for ``--json`` surfaces)."""
@@ -220,17 +262,33 @@ def poller_from_pid(pid: int, pid_dir: Path) -> LivePoller:
                 "which bot it polls — this is NOT a report that it has none."
             ),
         )
-    token = str(env.get(_TOKEN_VAR, "") or "").strip()
     agent = _owner_from_env(env)
+    present = _TOKEN_VAR in env
+    token = str(env.get(_TOKEN_VAR, "") or "").strip()
+
+    if present and not token:
+        return LivePoller(
+            pid=pid,
+            agent=agent,
+            reason=TOKEN_DISABLED,
+            detail=(
+                f"{_TOKEN_VAR} is present and DELIBERATELY EMPTY, so this "
+                "process holds no bot token and cannot be a second consumer "
+                "of anyone's. Excluded from the one-poller-per-token "
+                "invariant. Nothing to fix — the handyman family's spec "
+                "empties it on purpose to stop several agents sharing a bot."
+            ),
+        )
     if not token:
         return LivePoller(
             pid=pid,
             agent=agent,
             reason=UNRESOLVED_NO_TOKEN,
             detail=(
-                f"the process environment is readable but carries no "
-                f"{_TOKEN_VAR}, so this poller cannot be matched against the "
-                "others. It was started outside sac's env."
+                f"the process environment is readable and {_TOKEN_VAR} is "
+                "ABSENT from it, so this process was started outside sac's "
+                "env and sac cannot tell whether it polls some token by "
+                "another route."
             ),
         )
     return LivePoller(pid=pid, token_fp=fingerprint_token(token), agent=agent)
@@ -273,6 +331,7 @@ def scan_live_pollers(
 
 __all__ = [
     "POLLER_SCRIPT_MARKERS",
+    "TOKEN_DISABLED",
     "UNRESOLVED_ENVIRON",
     "UNRESOLVED_NO_TOKEN",
     "LivePoller",

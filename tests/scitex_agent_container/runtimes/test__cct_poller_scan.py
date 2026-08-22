@@ -152,6 +152,58 @@ def test_the_owning_agent_comes_from_the_process_env(tmp_path):
     assert poller.agent == "scitex-agent-container"
 
 
+def test_sac_name_beats_a_disagreeing_cct_agent_id(tmp_path):
+    # Arrange — MEASURED, compute-04 2026-08-22 17:02Z, pid 574160 exactly:
+    # CCT_AGENT_ID said handyman-01 while SAC_NAME said handyman-06, and the
+    # PARENT carried the same wrong CCT_AGENT_ID — so trusting the telegram
+    # identity named an innocent agent as the offender.
+    pid_dir = _write_proc(
+        tmp_path,
+        574160,
+        _BUN_POLLER,
+        {
+            "CCT_BOT_TOKEN": "t",
+            "CCT_AGENT_ID": "handyman-01",
+            "SAC_NAME": "handyman-06",
+        },
+    )
+    # Act
+    poller = poller_from_pid(574160, pid_dir)
+    # Assert
+    assert poller.agent == "handyman-06"
+
+
+def test_an_empty_token_is_disabled_not_unresolved(tmp_path):
+    # Arrange — the handyman family sets CCT_BOT_TOKEN="" on purpose. An empty
+    # string is not a bot token, so this process cannot be anyone's second
+    # consumer.
+    pid_dir = _write_proc(tmp_path, 4242, _BUN_POLLER, {"CCT_BOT_TOKEN": ""})
+    # Act
+    poller = poller_from_pid(4242, pid_dir)
+    # Assert
+    assert poller.disabled is True
+
+
+def test_an_absent_token_is_not_disabled(tmp_path):
+    # Arrange — THE DISTINCTION: absent means started outside sac's env, and
+    # sac cannot tell whether it polls something by another route.
+    pid_dir = _write_proc(tmp_path, 4242, _BUN_POLLER, {"PATH": "/usr/bin"})
+    # Act
+    poller = poller_from_pid(4242, pid_dir)
+    # Assert
+    assert poller.disabled is False
+
+
+def test_the_disabled_detail_does_not_blame_sac_provisioning(tmp_path):
+    # Arrange — the old wording said "started outside sac's env", which is
+    # FALSE for these: sac started them, from a sac spec, emptied on purpose.
+    pid_dir = _write_proc(tmp_path, 4242, _BUN_POLLER, {"CCT_BOT_TOKEN": ""})
+    # Act
+    poller = poller_from_pid(4242, pid_dir)
+    # Assert
+    assert "outside sac's env" not in poller.detail
+
+
 def test_the_scan_excludes_the_calling_process(tmp_path):
     # Arrange — a poller-shaped argv written under OUR OWN pid. A detector
     # that can appear in its own population is not measuring the host.

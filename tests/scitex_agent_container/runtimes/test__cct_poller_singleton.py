@@ -19,6 +19,13 @@ THE THIRD VALUE IS TESTED TOO. A live poller whose token cannot be read must
 come back UNKNOWN, never OK — an unread process could be the twin of a read
 one, and collapsing that into an all-clear is the bug this fleet ships most.
 
+AND THE OPPOSITE FAILURE, which a live run found after the first commit: a
+server whose ``CCT_BOT_TOKEN`` is DELIBERATELY EMPTY holds no token and cannot
+collide with anything, so it must NOT drag the host into UNKNOWN. Measured on
+compute-04, 2026-08-22: 10 live servers, 4 real tokens, 6 empty by design —
+i.e. the fleet's healthy steady state returned UNKNOWN on every run. A check
+that is never green is muted, and a muted check is not a check.
+
 PA-307 / STX-TQ002 / STX-TQ007 — one assert per test, full AAA markers.
 """
 
@@ -74,11 +81,18 @@ class _PollerFarm:
         self._procs: list[subprocess.Popen] = []
 
     def spawn(self, *, token: str | None, agent: str = "") -> int:
-        """Start one live poller; return its pid once /proc shows it."""
+        """Start one live poller; return its pid once /proc shows it.
+
+        ``token=None`` leaves ``CCT_BOT_TOKEN`` ABSENT (a server started
+        outside sac's env); ``token=""`` sets it PRESENT AND EMPTY (the
+        handyman family's deliberate no-bot shape). The two are different
+        facts and the detector must not conflate them.
+        """
         env = {"PATH": "/usr/bin:/bin"}
         if token is not None:
             env["CCT_BOT_TOKEN"] = token
         if agent:
+            env["SAC_NAME"] = agent
             env["CCT_AGENT_ID"] = agent
         proc = subprocess.Popen(
             [str(self.bun), "run", str(self.script)],
@@ -268,6 +282,66 @@ def test_an_unreadable_environ_hint_names_the_vantage():
     verdict = verdict_for(pollers)
     # Assert
     assert "OWNER-ONLY" in verdict.hint()
+
+
+def test_a_deliberately_tokenless_server_does_not_make_the_host_unknown(farm):
+    # Arrange — THE HEALTHY FLEET STEADY STATE, reproduced from the compute-04
+    # census of 2026-08-22: real tokens alongside servers whose CCT_BOT_TOKEN
+    # is EMPTY on purpose. Reporting unknown here would mean this check is
+    # never green on a healthy host, and a check that is never green is muted.
+    farm.spawn(token=_TOKEN_A, agent="scitex-agent-container")
+    farm.spawn(token="", agent="handyman-01")
+    farm.spawn(token="", agent="handyman-02")
+    # Act
+    verdict = check_poller_singleton(proc_root=farm.proc_root)
+    # Assert
+    assert verdict.state == POLLER_OK
+
+
+def test_the_tokenless_servers_are_still_reported(farm):
+    # Arrange — excluded from the invariant, NOT hidden from the reader.
+    farm.spawn(token=_TOKEN_A, agent="scitex-agent-container")
+    first = farm.spawn(token="", agent="handyman-01")
+    second = farm.spawn(token="", agent="handyman-02")
+    # Act
+    verdict = check_poller_singleton(proc_root=farm.proc_root)
+    # Assert
+    assert sorted(verdict.disabled_pids) == sorted([first, second])
+
+
+def test_two_tokenless_servers_are_not_a_duplicate(farm):
+    # Arrange — THE COLLISION THIS AVOIDS: grouping on a field that is
+    # deliberately empty manufactures a duplicate out of two agents that
+    # simply have no bot. Six empty strings are not one agent with six
+    # servers.
+    farm.spawn(token="", agent="handyman-01")
+    farm.spawn(token="", agent="handyman-02")
+    # Act
+    verdict = check_poller_singleton(proc_root=farm.proc_root)
+    # Assert
+    assert verdict.duplicates == ()
+
+
+def test_the_population_examined_is_reported_beside_the_count(farm):
+    # Arrange — "0 violations across 0 examined" and "across 3" must not
+    # render the same.
+    farm.spawn(token=_TOKEN_A, agent="scitex-agent-container")
+    farm.spawn(token="", agent="handyman-01")
+    # Act
+    verdict = check_poller_singleton(proc_root=farm.proc_root)
+    # Assert
+    assert "2 live server(s) examined" in verdict.population()
+
+
+def test_every_verdict_states_that_it_is_host_scoped(farm):
+    # Arrange — a per-host ok is not a fleet all-clear: measured 2026-08-22,
+    # one fingerprint was live on compute-04 AND compute-03 at once and a
+    # per-host probe returned ok on both. An unstated limit is a defect.
+    farm.spawn(token=_TOKEN_A, agent="scitex-agent-container")
+    # Act
+    payload = check_poller_singleton(proc_root=farm.proc_root).to_dict()
+    # Assert
+    assert payload["scope"] == "host" and "GLOBAL" in payload["scope_note"]
 
 
 def test_an_unscannable_proc_root_is_unknown(tmp_path):

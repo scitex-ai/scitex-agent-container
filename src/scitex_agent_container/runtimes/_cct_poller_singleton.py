@@ -29,10 +29,21 @@ this makes verifiable. A fix without a detector cannot be shown to have worked.
 
 THE INVARIANT
 -------------
-``count(distinct token fingerprints) == count(live pollers)``
+``count(distinct token fingerprints) == count(token-holding servers)``
 
 One fingerprint carried by two live pids IS the fault, and is the only thing
 reported as :data:`POLLER_VIOLATION`.
+
+The population is the SERVER (``telegram-server.ts``), not a poller process,
+and that choice is load-bearing: measured 2026-08-22, a host with a live
+token conflict had NO poller process at all — the rival holding the contended
+token was a server. A server holding a real token is a poller-in-waiting, so a
+poller census sees the fault only AFTER it becomes one.
+
+A server carrying a DELIBERATELY EMPTY token holds no token at all and is
+excluded from the invariant rather than clouding it — see
+:data:`.._cct_poller_scan.TOKEN_DISABLED` for the measurement that forced
+that distinction.
 
 THREE-VALUED, AND THE THIRD VALUE IS LOAD-BEARING
 -------------------------------------------------
@@ -74,6 +85,25 @@ POLLER_VIOLATION = "violation"
 #: the process scan itself could not run. NOT a soft OK.
 POLLER_UNKNOWN = "unknown"
 
+#: The limit of this check, stated in every result rather than left to be
+#: discovered. Telegram permits one ``getUpdates`` consumer per token
+#: GLOBALLY, and this reads ONE host's ``/proc``. A cross-host duplicate is
+#: real and this cannot see it: measured 2026-08-22, fingerprint
+#: ``00ec09b9ad73`` was held on compute-04 AND compute-03 at once, and a
+#: per-host probe returned OK on both while the fault was live across them.
+#:
+#: The PID namespace is the same trap one level down: run inside an apptainer
+#: container with ``--containall``, ``/proc`` shows only that container's
+#: processes — one server where the host has ten — and the small number reads
+#: exactly like a clean host. Run it on the HOST.
+SCOPE_NOTE = (
+    "HOST-SCOPED, and Telegram's one-consumer-per-token rule is GLOBAL: a "
+    "duplicate split across two hosts is invisible here and an ok on one host "
+    "is not a fleet all-clear. Run this on the HOST, not inside a container — "
+    "a --containall PID namespace shows only its own processes, which reads "
+    "like a clean host."
+)
+
 
 @dataclass(frozen=True)
 class DuplicatePollers:
@@ -100,6 +130,9 @@ class PollerSingletonVerdict:
     pollers: tuple[LivePoller, ...] = ()
     duplicates: tuple[DuplicatePollers, ...] = ()
     unresolved_pids: tuple[int, ...] = ()
+    #: Live servers deliberately given an EMPTY token. Reported, never counted
+    #: against the invariant — see :data:`.._cct_poller_scan.TOKEN_DISABLED`.
+    disabled_pids: tuple[int, ...] = ()
     #: False when the process scan itself could not run — the reason a zero
     #: count must not read as OK.
     scanned: bool = True
@@ -130,6 +163,22 @@ class PollerSingletonVerdict:
             if not p.resolved and p.reason == UNRESOLVED_ENVIRON
         )
 
+    def population(self) -> str:
+        """What was actually examined. Never let a clean count stand alone.
+
+        "0 violations" means nothing until the same reading says how much was
+        looked at: ``0 across 0 examined`` and ``0 across 10`` are different
+        facts and must not render the same. scitex-hub's rule, adopted after
+        it caught itself reporting "0 x 409 Conflict" over a window in which
+        nothing at all had happened.
+        """
+        return (
+            f"{len(self.pollers)} live server(s) examined, "
+            f"{self.distinct_fingerprints} real token(s), "
+            f"{len(self.disabled_pids)} deliberately tokenless, "
+            f"{len(self.unresolved_pids)} unreadable"
+        )
+
     def summary(self) -> str:
         """One-line human summary of the verdict."""
         live = len(self.pollers)
@@ -146,7 +195,15 @@ class PollerSingletonVerdict:
                 f"unknown — {len(self.unresolved_pids)} of {live} live "
                 "poller(s) would not yield a token"
             )
-        return f"{live} live poller(s), {self.distinct_fingerprints} distinct token(s)"
+        disabled = (
+            f", {len(self.disabled_pids)} deliberately tokenless"
+            if self.disabled_pids
+            else ""
+        )
+        return (
+            f"{live} live server(s) on this host, "
+            f"{self.distinct_fingerprints} distinct token(s){disabled}"
+        )
 
     def hint(self) -> str:
         """What to DO. Empty for OK — an all-clear needs no remedy.
@@ -207,15 +264,20 @@ class PollerSingletonVerdict:
         (:meth:`.._drift.DriftStatus.to_dict`) — ``state`` / ``detail`` /
         ``summary`` plus this check's own fields — with ``hint`` added because
         a failing check that does not say what to do is a check people learn
-        to scroll past.
+        to scroll past, and ``scope_note`` because an unstated limit is the
+        same defect as a wrong hint.
         """
         return {
             "state": self.state,
+            "scope": "host",
+            "scope_note": SCOPE_NOTE,
             "live_pollers": len(self.pollers),
             "distinct_fingerprints": self.distinct_fingerprints,
+            "population": self.population(),
             "pollers": [p.to_dict() for p in self.pollers],
             "duplicates": [d.to_dict() for d in self.duplicates],
             "unresolved_pids": list(self.unresolved_pids),
+            "disabled_pids": list(self.disabled_pids),
             "scanned": self.scanned,
             "proc_root": self.proc_root,
             "detail": self.detail,
@@ -259,7 +321,8 @@ def verdict_for(
     """
     pollers = tuple(pollers)
     duplicates = group_duplicates(pollers)
-    unresolved = tuple(p.pid for p in pollers if not p.resolved)
+    disabled = tuple(p.pid for p in pollers if p.disabled)
+    unresolved = tuple(p.pid for p in pollers if not p.resolved and not p.disabled)
     distinct = len({p.token_fp for p in pollers if p.token_fp})
 
     if duplicates:
@@ -268,6 +331,7 @@ def verdict_for(
             pollers=pollers,
             duplicates=duplicates,
             unresolved_pids=unresolved,
+            disabled_pids=disabled,
             proc_root=proc_root,
             detail=(
                 f"{len(pollers)} live poller(s) under {proc_root} resolve to "
@@ -279,17 +343,19 @@ def verdict_for(
         )
 
     if unresolved:
-        why = "; ".join(f"pid {p.pid}: {p.detail}" for p in pollers if not p.resolved)
+        blind = [p for p in pollers if not p.resolved and not p.disabled]
+        why = "; ".join(f"pid {p.pid}: {p.detail}" for p in blind)
         return PollerSingletonVerdict(
             state=POLLER_UNKNOWN,
             pollers=pollers,
             unresolved_pids=unresolved,
+            disabled_pids=disabled,
             proc_root=proc_root,
             detail=(
-                f"{len(unresolved)} of {len(pollers)} live poller(s) yielded no "
+                f"{len(unresolved)} of {len(pollers)} live server(s) yielded no "
                 f"{_TOKEN_VAR}, so the one-poller-per-token invariant cannot be "
-                "asserted: an unread poller could hold the same token as a read "
-                f"one. {why}"
+                "asserted: an unread server could hold the same token as a read "
+                f"one. {why} ({SCOPE_NOTE})"
             ),
         )
 
@@ -299,18 +365,21 @@ def verdict_for(
             proc_root=proc_root,
             detail=(
                 f"the scan ran against {proc_root} and found no live Telegram "
-                "poller. Nothing can conflict with nothing."
+                f"server. Nothing can conflict with nothing. ({SCOPE_NOTE})"
             ),
         )
 
     return PollerSingletonVerdict(
         state=POLLER_OK,
         pollers=pollers,
+        disabled_pids=disabled,
         proc_root=proc_root,
         detail=(
-            f"{len(pollers)} live poller(s) under {proc_root}, each holding a "
-            "distinct bot token. count(distinct fingerprints) == "
-            "count(live pollers)."
+            f"{len(pollers)} live server(s) under {proc_root}; "
+            f"{distinct} hold a real bot token and no two hold the same one "
+            f"({len(disabled)} carry a deliberately EMPTY token and hold none, "
+            "so they cannot collide with anything). count(distinct "
+            f"fingerprints) == count(token-holding servers). ({SCOPE_NOTE})"
         ),
     )
 
@@ -360,6 +429,7 @@ __all__ = [
     "POLLER_OK",
     "POLLER_UNKNOWN",
     "POLLER_VIOLATION",
+    "SCOPE_NOTE",
     "DuplicatePollers",
     "PollerSingletonVerdict",
     "check_poller_singleton",
