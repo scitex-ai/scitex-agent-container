@@ -299,6 +299,8 @@ def build_argv(
     name: str | None,
     yes: bool,
     dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
     exe: str = "scitex-dev",
     leaf: object | None = None,
 ) -> list[str]:
@@ -317,6 +319,20 @@ def build_argv(
     refresher; a pass-through that dropped either flag would convert a
     guarded command into an unguarded one, which is strictly worse than
     not offering the verb.
+
+    ``--adopt`` and ``--force`` are forwarded for the same reason, and the
+    argument is not hypothetical. MEASURED 2026-08-20 on scitex-compute-04:
+    ``sac dev timer install host-sync-check -y`` refused because a unit
+    already existed, and printed scitex-dev's own remedy — "Use --adopt to
+    keep the existing supervisor (writes nothing), or --force to overwrite."
+    Both flags are real options on ``scitex-dev ecosystem timer install``;
+    neither existed on the wrapper, so the command answered its own advice
+    with ``Error: No such option '--force'``.
+
+    A dropped flag is worse there than a missing verb, in the same way and
+    for a sharper reason: the reader meets that text while repairing a unit,
+    trusts it, and the failure it produces looks like a broken CLI rather
+    than a message describing a command that is not the one they ran.
 
     The job NAME follows :func:`name_style_for` — ``--name X`` or a bare
     positional, as the INSTALLED scitex-dev actually declares it. It was
@@ -339,6 +355,10 @@ def build_argv(
         argv.append("--dry-run")
     if yes:
         argv.append("--yes")
+    if adopt:
+        argv.append("--adopt")
+    if force:
+        argv.append("--force")
     return argv
 
 
@@ -348,6 +368,8 @@ def invoke(
     name: str | None,
     yes: bool,
     dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
 ) -> int:
     """Run the resolved ``scitex-dev ecosystem`` command; return its exit code.
 
@@ -364,7 +386,15 @@ def invoke(
             "scitex-dev to use `sac dev` job verbs"
         )
     return subprocess.call(
-        build_argv(delegation, name=name, yes=yes, dry_run=dry_run, exe=exe)
+        build_argv(
+            delegation,
+            name=name,
+            yes=yes,
+            dry_run=dry_run,
+            adopt=adopt,
+            force=force,
+            exe=exe,
+        )
     )
 
 

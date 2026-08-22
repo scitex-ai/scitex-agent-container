@@ -316,3 +316,168 @@ def test_malformed_env_window_fails_loud(clean_window_env) -> None:
     # Assert
     with raiser:
         resolve_verify_window()
+
+
+# ---------------------------------------------------------------------------
+# apptainer FATAL must not be swallowed (operator instruction, 2026-08-20)
+# ---------------------------------------------------------------------------
+
+_APPTAINER_FATAL = (
+    "INFO:    Converting SIF file to temporary sandbox...\n"
+    "FATAL:   container creation failed: mount hook function failure: "
+    "mount /home/ywatanabe/absent -> /absent error: "
+    "while mounting /home/ywatanabe/absent: stat /home/ywatanabe/absent: "
+    "no such file or directory\n"
+)
+
+
+def _write_boot_log(state_dir: Path, text: str, *, mtime: float | None = None) -> Path:
+    """A real boot.stderr.log, optionally back-dated to a prior launch."""
+    path = state_dir / "boot.stderr.log"
+    path.write_text(text, encoding="utf-8")
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_apptainer_fatal_outranks_a_fresh_heartbeat(
+    clean_window_env, tmp_path: Path
+) -> None:
+    """THE DEFECT THIS FIXES, in one test.
+
+    Both signals are present: a beat stamped after launch AND a FATAL
+    saying the container was never created. Before 2026-08-20 the beat
+    won and `sac agents start` printed SUCC over a dead launch. A FATAL
+    is positive evidence of failure; a beat is not proof of success —
+    fleet-wide, all but one of ~118 beats were written by an OBSERVER,
+    not by the runner.
+    """
+    # Arrange
+    launched_at = time.time()
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    _write_boot_log(tmp_path, _APPTAINER_FATAL)
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert verdict.status == VERIFIED_FAILED
+
+
+def test_apptainer_fatal_verdict_is_not_ok(clean_window_env, tmp_path: Path) -> None:
+    """It must flip the caller exit code, which is what "fail loudly" means."""
+    # Arrange
+    launched_at = time.time()
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    _write_boot_log(tmp_path, _APPTAINER_FATAL)
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert verdict.ok is False
+
+
+def test_apptainer_fatal_evidence_quotes_the_fatal_line(
+    clean_window_env, tmp_path: Path
+) -> None:
+    """The operator gets the CAUSE, not just a verdict word."""
+    # Arrange
+    launched_at = time.time()
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    _write_boot_log(tmp_path, _APPTAINER_FATAL)
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert "mount hook function failure" in verdict.evidence
+
+
+def test_apptainer_fatal_names_the_log_it_was_read_from(
+    clean_window_env, tmp_path: Path
+) -> None:
+    """Naming the FILE is what lets someone go deeper than the tail."""
+    # Arrange
+    launched_at = time.time()
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    log = _write_boot_log(tmp_path, _APPTAINER_FATAL)
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert verdict.log_path == str(log)
+
+
+def test_a_stale_fatal_from_a_previous_launch_is_ignored(
+    clean_window_env, tmp_path: Path
+) -> None:
+    """THE GUARD THAT KEEPS THIS FIX FROM BECOMING WORSE THAN THE DEFECT.
+
+    boot.stderr.log is not truncated per launch, so a FATAL from a start
+    that failed yesterday is still on disk today. Without the mtime
+    check, every subsequent start of that agent would fail forever —
+    converting silent success into permanent silent failure. Only a log
+    modified at or after ``launched_at`` testifies about THIS launch.
+    """
+    # Arrange
+    launched_at = time.time()
+    _write_boot_log(tmp_path, _APPTAINER_FATAL, mtime=launched_at - 3600.0)
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert verdict.status == VERIFIED_UP
+
+
+def test_a_clean_boot_log_still_verifies_up(clean_window_env, tmp_path: Path) -> None:
+    """POSITIVE CONTROL — the check must not fail launches that are fine.
+
+    Without this, a function that returned FATAL for every boot log would
+    satisfy every test above and break every start in the fleet. Measured
+    2026-08-20 before shipping: 50 boot logs across four hosts, ZERO
+    containing a FATAL, so this is the arm that carries the whole fleet.
+    """
+    # Arrange
+    launched_at = time.time()
+    _write_boot_log(tmp_path, "INFO:    Converting SIF file to temporary sandbox...\n")
+    write_heartbeat(tmp_path, pid=4242, state="ready")
+    # Act
+    verdict = verify_launch(
+        _config(),
+        _AliveRuntime(),
+        launched_at=launched_at,
+        window_s=2.0,
+        poll_interval_s=0.05,
+        state_dir=tmp_path,
+    )
+    # Assert
+    assert verdict.status == VERIFIED_UP

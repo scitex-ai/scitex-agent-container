@@ -93,8 +93,36 @@ def resolve_owner(
 #: ``gh`` call per repo per tick.
 _CANONICAL_CACHE: dict = {}
 
+#: Cache sentinel. ``None`` is now a MEANINGFUL cached value ("GitHub says this
+#: repo does not exist"), so a plain ``.get(repo)`` returning ``None`` can no
+#: longer be read as "not cached" — that would re-probe every absent repo on
+#: every tick and lose the whole saving.
+_UNCACHED = object()
 
-def _canonical_name_with_owner(repo: str) -> str:
+#: Substrings that mean GitHub ANSWERED and the answer was "no such repository".
+#: Deliberately narrow. The asymmetry is the point: a false ABSENT silently
+#: drops a real repo from the poll set and CI verdicts for it stop arriving with
+#: nothing to notice; a false UNKNOWN merely keeps polling, which is today's
+#: behaviour. So anything not clearly an absence is treated as unknown.
+#: A BARE "not found" is deliberately NOT in this list. It would match
+#: `gh: command not found` — a missing binary, which is the most UNKNOWN
+#: situation there is — and turn it into "every repo is absent", emptying the
+#: poll set on a host where gh simply is not installed. Each marker below has
+#: to name a REPOSITORY.
+_ABSENT_MARKERS = (
+    "could not resolve to a repository",
+    "no such repository",
+    "404: not found",
+)
+
+
+def _says_no_such_repo(stderr: str) -> bool:
+    """True only when gh's stderr states the repository does not exist."""
+    low = (stderr or "").lower()
+    return any(m in low for m in _ABSENT_MARKERS)
+
+
+def _canonical_name_with_owner(repo: str) -> str | None:
     """Return GitHub's canonical ``owner/name`` for ``repo``.
 
     A constructed ``<org>/<project>`` string is a GUESS about who owns the
@@ -110,19 +138,31 @@ def _canonical_name_with_owner(repo: str) -> str:
     previous behaviour, so a gh outage degrades to a guess rather than to
     an empty poll list.
     """
-    cached = _CANONICAL_CACHE.get(repo)
-    if cached is not None:
+    # NOTE the default. Plain ``.get(repo)`` returns None for a MISSING key,
+    # which is indistinguishable from the cached value None ("absent repo") —
+    # so without the sentinel default this returns None for every uncached
+    # repo and never probes at all.
+    cached = _CANONICAL_CACHE.get(repo, _UNCACHED)
+    if cached is not _UNCACHED:
         return cached
     try:
-        from ._github_ci import _run_gh
+        from ._github_ci import _run_gh_probe
 
-        raw = _run_gh(
+        probe = _run_gh_probe(
             ["repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"]
         )
-    except Exception:  # stx-allow: fallback (gh missing → keep the constructed name)
-        raw = ""
-    resolved = (raw or "").strip()
-    out = resolved if "/" in resolved else repo
+    except Exception:  # stx-allow: fallback (gh missing → UNKNOWN, keep the constructed name)
+        probe = None
+    resolved = (probe.stdout if probe else "").strip()
+    if "/" in resolved:
+        out = resolved
+    elif probe is not None and _says_no_such_repo(probe.stderr):
+        # GitHub answered, and the answer was "there is no such repository".
+        out = None
+    else:
+        # UNKNOWN — network, auth, rate limit, gh missing. Keep the constructed
+        # guess, which is exactly the previous behaviour.
+        out = repo
     _CANONICAL_CACHE[repo] = out
     return out
 
@@ -164,7 +204,23 @@ def tracked_repos(
             continue
         if isinstance(project, str) and project.strip():
             projects.add(project.strip())
-    return sorted({canonicalize(f"{resolved_org}/{p}") for p in projects})
+    # DROP the ones GitHub says do not exist. Measured 2026-08-20: 22 of the 94
+    # names built from agent specs resolve to no repo in either org
+    # (SAC_PLACEHOLDER_PROJECT, <PROJECT>, handyman-01..08, canary-resume-test,
+    # …). Each cost one REST call per tick per host, forever, to be told 404 —
+    # and the poller cannot deliver a verdict for a repo that does not exist, so
+    # polling it was never doing anything but spending the shared budget.
+    #
+    # ``canonicalize`` returns None ONLY for a definite absence; an unknown
+    # answer keeps the constructed guess, so a gh outage still degrades to
+    # today's behaviour rather than to an empty poll list.
+    return sorted(
+        {
+            name
+            for name in (canonicalize(f"{resolved_org}/{p}") for p in projects)
+            if name
+        }
+    )
 
 
 __all__ = [

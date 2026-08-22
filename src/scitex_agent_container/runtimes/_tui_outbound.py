@@ -46,24 +46,29 @@ __all__ = [
 
 def record_dispatch(
     *,
-    db_path: Path,
     agent: str,
     from_agent: str,
     dispatch_id: Optional[str] = None,
-) -> int | None:
+) -> dict[str, Any] | None:
     """Record a requester-bearing inbound wake into the inbound ledger.
 
     No-op (returns ``None``) when ``from_agent`` is empty — an operator
     ``sac agents send`` without a peer, or a boot turn, has nobody to
-    report back to. Returns the ledger row id otherwise. Called by the
-    bridge with the agent's host-side ``state.db`` path.
+    report back to. Returns the ledger row's IDENTITY otherwise.
+
+    ``db_path`` is gone: the ledger moved to PostgreSQL, so there is no
+    state.db to point at. The bridge no longer needs the agent's host-side
+    file bound into the container for this to work — an endpoint suffices.
+
+    The return type changed from ``int`` to the identity mapping, and that is
+    safe here rather than merely tolerable: measured 2026-08-20, no caller in
+    this repo binds this function's return value at all.
     """
     if not from_agent:
         return None
     from .._state.inbound_ledger import record_inbound
 
     return record_inbound(
-        db_path=db_path,
         agent=agent,
         from_agent=from_agent,
         dispatch_id=dispatch_id,
@@ -147,7 +152,6 @@ def _assistant_text(rec: Any) -> str:
 
 def flush_one_completion(
     *,
-    db_path: Path,
     agent: str,
     transcript_path: Path | None,
     listen_url: str,
@@ -174,10 +178,13 @@ def flush_one_completion(
         mark_reported,
     )
 
-    claimed = claim_oldest_pending(agent=agent, db_path=db_path)
+    claimed = claim_oldest_pending(agent=agent)
     if claimed is None:
         return False
-    row_id = int(claimed["id"])
+    # The claimed mapping IS the handle now — the ledger's autoincrement id
+    # is gone, and nothing here needed it to be a number. See
+    # `_state.inbound_ledger` for the measurement behind that.
+    handle = claimed
     requester = str(claimed.get("from_agent") or "").strip()
     dispatch_id = claimed.get("dispatch_id")
     did = dispatch_id if isinstance(dispatch_id, str) and dispatch_id else None
@@ -213,9 +220,9 @@ def flush_one_completion(
             dispatch_id=did,
         )
     except Exception:
-        mark_reported(row_id, status=STATUS_FAILED, db_path=db_path)
+        mark_reported(handle, status=STATUS_FAILED)
         raise
-    mark_reported(row_id, status=STATUS_REPORTED, db_path=db_path)
+    mark_reported(handle, status=STATUS_REPORTED)
     log.info(
         "tui-outbound: completion report pushed to %s (dispatch_id=%s, status=%s)",
         requester,
@@ -260,21 +267,28 @@ def main(argv: list[str] | None = None) -> int:
             transcript_path = None
 
     agent = os.environ.get("SCITEX_AGENT_CONTAINER_AGENT", "").strip()
-    db_path_s = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB", "").strip()
     listen_url = os.environ.get("SAC_LISTEN_BASE_URL", "").strip()
     bearer = os.environ.get("SAC_LISTEN_BEARER", "").strip() or None
-    if not agent or not db_path_s or not listen_url:
+    # SCITEX_AGENT_CONTAINER_STATE_DB IS NO LONGER PART OF THIS GATE, and
+    # dropping it is the point rather than tidying. It named the SQLite file
+    # the ledger used to live in; the ledger is PostgreSQL now and this path
+    # reads nothing from it. Left in place, an agent without that variable
+    # would silently stop reporting completions — the gate would be refusing
+    # on a fact that no longer bears on whether the work can be done.
+    #
+    # The two that remain are the two this path actually needs: who to report
+    # AS, and where the bus is.
+    if not agent or not listen_url:
         # Not a wired sac TUI agent context (or no bus) — nothing to report.
         return 0
     try:
         flush_one_completion(
-            db_path=Path(db_path_s),
             agent=agent,
             transcript_path=transcript_path,
             listen_url=listen_url,
             bearer=bearer,
         )
-    except Exception as exc:  # stx-allow: fallback (reason: a completion-push failure must not wedge the agent's turn loop; the row is already marked failed + this logs loud — the requester can fall back to the agent's logs)
+    except Exception as exc:  # stx-allow: fallback (reason: a completion-push failure must not wedge the agent's turn loop; the row is already marked failed + this logs loud at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging, so the requester can read it there)
         log.warning("tui-outbound: completion flush failed: %s", exc)
     return 0
 

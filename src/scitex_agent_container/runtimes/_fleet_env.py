@@ -105,14 +105,75 @@ CONFIG_SECTION = "fleet_default_env"
 # per agent until each restarts onto this cleaned environment; that is correct
 # behaviour, not a leftover. Do NOT "fix" it by reintroducing the key.
 #
-# FLEET_DEFAULT_ENV is now EMPTY, and that is a valid state — the mechanism
-# survives for operator overrides via ``config.yaml``'s ``fleet_default_env``.
-# Asserted by test_dead_read_routing_key_* in
-# tests/scitex_agent_container/runtimes/test__fleet_env.py.
+# FLEET_DEFAULT_ENV was EMPTY between 2026-07-29 and 2026-08-19, and that was
+# a valid state — the mechanism survives for operator overrides via
+# ``config.yaml``'s ``fleet_default_env``. Asserted by
+# test_an_empty_fleet_default_env_is_a_valid_state.
+#
+# SCITEX_STORE_DSN (2026-08-19, the operator's SQLite-eradication order:
+# 「sqlite 根絶をしてください」「fail fast, fail loud, no fallbacks」).
+#
+# READ THE TWO PARAGRAPHS ABOVE BEFORE ADDING ANOTHER KEY HERE. Two store
+# variables were declared here and later retired for STATING a routing policy
+# nothing enforced, and one of them cost a live diagnosis: an inert setting
+# that appears to answer the question spends the diagnostician's trust. So the
+# bar for a third store variable is not "it seems right" — it is that the
+# variable is demonstrably READ FOR BEHAVIOUR by its consumer.
+#
+# THAT BAR IS MET, AND MEASURED IN BOTH ARMS rather than argued:
+#
+#     with SCITEX_STORE_DSN set     scitex_dev.store.host_store() resolves to
+#                                   the injected DSN; Store opens; a put/get
+#                                   round trip returns typed values, and the
+#                                   row is visible in Postgres through a
+#                                   SECOND, INDEPENDENT client (raw psycopg,
+#                                   plain SQL) rather than through the library
+#                                   that chose the backend
+#     with it UNSET                 host_store() resolves to a UNIX socket and
+#                                   Store() raises StoreTargetError naming the
+#                                   missing socket path
+#
+# The unset arm is the point: the failure is LOUD and there is no SQLite path
+# to slip into. That is scitex-dev's design, in their own words at
+# ``resolve_target``: "deliberately no SQLite fallback ... a host whose
+# Postgres is down must fail loudly rather than start writing to a private
+# local file that shares nothing."
+#
+# test_store_dsn_is_read_for_behaviour_by_its_consumer asserts BOTH arms, so
+# if scitex-dev ever stops honouring the variable, sac goes RED here instead
+# of quietly injecting an inert string into every container for months. That
+# test is the guard the two retired variables never had.
+#
+# WHY THE DEFAULT IS NEEDED AT ALL — sac containers cannot use scitex-dev's
+# own default. ``host_store`` derives a socket path from ``$HOME`` and assumes
+# PostgreSQL's default port, giving
+# ``/home/agent/.scitex/pg/.s.PGSQL.5432`` inside a container. Two things are
+# wrong with that here, and only the second is sac's fault:
+#
+#   * the fleet's Postgres listens on 55432, and the port is part of the
+#     SOCKET FILENAME, so the socket that exists
+#     (``~/.scitex/pg/run/.s.PGSQL.55432``) can never be found by a resolver
+#     that has no port parameter. Reported to scitex-dev.
+#   * ``$HOME`` inside the container is ``/home/agent``, not the operator's
+#     home where the socket actually lives.
+#
+# TCP RATHER THAN THE SOCKET, deliberately: this mirrors SCITEX_CARDS_DB,
+# which is the DSN shape already proven fleet-wide in production, and the
+# same ``.pgpass`` line authenticates it — the entry wildcards the DATABASE
+# (``127.0.0.1:55432:*:scitex_cards``), so the credential is not a lucky
+# match. Following the working neighbour beats inventing a second shape.
+#
+# HOST-SPECIFIC OVERRIDES ARE THE OPERATOR'S LAYER, not a reason to compute
+# this value: a host whose Postgres is elsewhere sets
+# ``spec.fleet_default_env`` in ``config.yaml``, and a single agent that must
+# not receive it sets the key in its own ``spec.env``. A host with no
+# Postgres at all gets a loud refusal, which is the requested behaviour.
 #
 # These are opaque strings to sac. It never reads, parses or branches on them.
 # --------------------------------------------------------------------------
-FLEET_DEFAULT_ENV: dict[str, str] = {}
+FLEET_DEFAULT_ENV: dict[str, str] = {
+    "SCITEX_STORE_DSN": "postgresql://scitex_cards@127.0.0.1:55432/scitex",
+}
 
 
 def _config_path() -> Path:
@@ -248,7 +309,13 @@ def effective_env(
     merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
     apptainer = getattr(config, "apptainer", None)
     raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
-    return apply_board_identity_alias(merged, raw_args=raw_args)
+    # The agent's own name is passed so a spec that declares NEITHER identity
+    # spelling still launches with one. See the branch in
+    # ``apply_board_identity_alias`` for why the name is the right answer and
+    # why it cannot override a deliberate alias.
+    return apply_board_identity_alias(
+        merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
+    )
 
 
 def fleet_env_flags(

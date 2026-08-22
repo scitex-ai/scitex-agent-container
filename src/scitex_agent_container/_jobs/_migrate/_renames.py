@@ -122,15 +122,28 @@ RENAMES: tuple[Rename, ...] = (
             "run `sac dev migrate-job-names --only accounts-refresh "
             "--include-held --yes` in a watched window, then confirm "
             "`sac accounts status` still resolves every account BEFORE "
-            "walking away. Until then the spec keeps its legacy name ON "
-            "PURPOSE, so every CLI verb keeps naming the unit that is really "
-            "running — a spec renamed ahead of its unit would report the "
-            "refresher as absent while it refreshes."
+            "walking away. THE SPEC HAS ALREADY MOVED to the new name, and "
+            "it had to: `sac dev timer install` resolves only names a "
+            "JobSpec DECLARES, so install-new answered `no job named "
+            "'scitex-agent-container-accounts-refresh' here` while the spec "
+            "was held (measured 2026-08-19; attempted in the other order the "
+            "night before, which left the fleet with zero refreshers for ~2 "
+            "minutes). Until this cutover runs, `sac dev timer status "
+            "accounts-refresh` therefore names a unit the host does not "
+            "carry and reports the refresher ABSENT while "
+            "`sac.accounts-refresh.timer` keeps firing — a misreport on one "
+            "manual verb, which nothing automated can escalate, because "
+            "nothing in this repo installs or enables a timer by itself."
         ),
     ),
     Rename(
         old="sac.accounts-keepalive",
         new="scitex-agent-container-accounts-keepalive",
+        kind="timer",
+    ),
+    Rename(
+        old="sac.accounts-quota-cache",
+        new="scitex-agent-container-accounts-quota-cache",
         kind="timer",
     ),
     Rename(
@@ -141,11 +154,6 @@ RENAMES: tuple[Rename, ...] = (
     Rename(
         old="sac.freshness-refresh",
         new="scitex-agent-container-freshness-refresh",
-        kind="timer",
-    ),
-    Rename(
-        old="sac.heal-agent-auth",
-        new="scitex-agent-container-heal-agent-auth",
         kind="timer",
     ),
     Rename(

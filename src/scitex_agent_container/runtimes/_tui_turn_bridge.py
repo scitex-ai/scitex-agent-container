@@ -332,15 +332,18 @@ def _build_on_turn(
         if from_agent:
             try:
                 from ._tui_outbound import record_dispatch
-                from .tui_session import state_dir_for_config
 
+                # No state.db path any more: the inbound ledger is PostgreSQL.
+                # `state_dir_for_config` is no longer imported here because it
+                # was imported ONLY to build that path — and an import kept for
+                # a vanished use is how a module keeps a dependency nobody can
+                # see the reason for.
                 record_dispatch(
-                    db_path=state_dir_for_config(config) / "state.db",
                     agent=config.name,
                     from_agent=from_agent,
                     dispatch_id=dispatch_id,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged for the operator)
+            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging)
                 logging.getLogger(__name__).warning(
                     "tui-outbound: failed to record inbound dispatch for %s: %s",
                     config.name,

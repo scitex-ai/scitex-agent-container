@@ -108,7 +108,8 @@ async def node_message_send(request: Request) -> Response:
     # ``metadata.from_agent`` we received, so cross-group denials
     # fire at the receiving host (handoff §4 acceptance).
     from .._state.state_db import _resolve_host as _resolve_local_host
-    from .._state.state_db_nodes import is_local_node, resolve_node_host
+    from .._state.state_db_forward import resolve_forward_target
+    from .._state.state_db_nodes import is_local_node
 
     # Prefer the per-app ``local_host`` configured at ``create_app``
     # time; fall back to the env-based resolver for callers that
@@ -118,13 +119,20 @@ async def node_message_send(request: Request) -> Response:
         None
     )
     if not is_local_node(name=name, local_host=local_host):
-        target_info = resolve_node_host(name=name)
+        # ADDRESSABILITY, not locality. `is_local_node` above answers "which
+        # host", for which a live instances row suffices with or without a
+        # port; this asks "where do I POST", for which it does not. They used
+        # to be one call, so a live row with a NULL port was handed back as
+        # the answer and 502'd here — without ever consulting comms_nodes,
+        # which may hold a working address for the same name.
+        target_info = resolve_forward_target(name=name)
         if target_info is None:
             return JSONResponse(
                 {
                     "error": (
-                        f"target {name!r} resolves to a non-local host but no "
-                        "instance row carries its address — cannot forward"
+                        f"target {name!r} resolves to a non-local host but "
+                        "neither its instance row nor the comms_nodes graph "
+                        "carries a usable address — cannot forward"
                     )
                 },
                 status_code=502,

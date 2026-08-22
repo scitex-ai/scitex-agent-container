@@ -58,7 +58,40 @@ logger = logging.getLogger(__name__)
 #: selection notice.
 UNVERIFIABLE_MARKER = "QUOTA UNVERIFIABLE"
 
-__all__ = ["UNVERIFIABLE_MARKER", "pick_with_quota_evidence"]
+#: Stable marker opening the per-boot selection record. Distinct token from
+#: :data:`UNVERIFIABLE_MARKER` so `grep` can ask "which account did this boot
+#: choose" WITHOUT also matching the degraded-boot warning, and vice versa.
+SELECTION_MARKER = "ACCOUNT SELECTED"
+
+#: 7d utilisation at or above which the selected account can do NO work at all.
+#:
+#: Deliberately NOT `_quota_rank.NEAR_CAP_7D_PCT`. Near-cap means TIGHT and is
+#: the ranker's business — it already prefers headroom, and in a busy fleet
+#: every candidate is near-cap, so warning on it would fire on every boot and
+#: be tuned out. This threshold means IMPOSSIBLE: the account has no weekly
+#: budget left, so the agent will boot, report success, and answer "You've hit
+#: your weekly limit" on every turn.
+#:
+#: MEASURED 2026-08-21, ywata-note-win, all four stored accounts at once:
+#: scitex-01=100%, wyusuuke=100%, ywatanabe-scitex-ai=99%, ywata1989=90%. A
+#: near-cap threshold would have warned about all four and distinguished
+#: nothing. Only two of them were actually unusable.
+NO_HEADROOM_7D_PCT = 100.0
+
+#: Which branch of :func:`pick_with_quota_evidence` produced the account. The
+#: value is logged verbatim, because "which gate was armed" is precisely the
+#: question that could not be answered after the fact on 2026-08-21.
+SELECTED_VIA_ARMED = "gate armed, cache already fresh"
+SELECTED_VIA_ARMED_REFRESHED = "gate armed, cache re-measured first (was stale)"
+SELECTED_VIA_ARMED_BUILT = "gate armed, cache built on demand (host had none)"
+SELECTED_VIA_DEGRADED = "gate DISARMED, quota unverifiable on this host"
+
+__all__ = [
+    "NO_HEADROOM_7D_PCT",
+    "SELECTION_MARKER",
+    "UNVERIFIABLE_MARKER",
+    "pick_with_quota_evidence",
+]
 
 
 def pick_with_quota_evidence(
@@ -135,12 +168,19 @@ def pick_with_quota_evidence(
                 quota_cache_path=quota_cache_path,
                 store_dir=store_dir,
             )
-        return _pick_armed(
+        picked = _pick_armed(
             pick,
             agent_name=agent_name,
             quota_cache_path=quota_cache_path,
             store_dir=store_dir,
             already_refreshed=refreshed,
+        )
+        return _record_selection(
+            picked,
+            agent_name=agent_name,
+            branch=SELECTED_VIA_ARMED_REFRESHED if refreshed else SELECTED_VIA_ARMED,
+            quota_cache_path=quota_cache_path,
+            log_stream=log_stream,
         )
 
     blocker = _build_evidence_once(
@@ -149,11 +189,18 @@ def pick_with_quota_evidence(
         store_dir=store_dir,
     )
     if blocker is None:
-        return _pick_armed(
+        picked = _pick_armed(
             pick,
             agent_name=agent_name,
             quota_cache_path=quota_cache_path,
             store_dir=store_dir,
+        )
+        return _record_selection(
+            picked,
+            agent_name=agent_name,
+            branch=SELECTED_VIA_ARMED_BUILT,
+            quota_cache_path=quota_cache_path,
+            log_stream=log_stream,
         )
 
     picked = pick(False)
@@ -164,7 +211,126 @@ def pick_with_quota_evidence(
         quota_cache_path=quota_cache_path,
         log_stream=log_stream,
     )
+    return _record_selection(
+        picked,
+        agent_name=agent_name,
+        branch=SELECTED_VIA_DEGRADED,
+        quota_cache_path=quota_cache_path,
+        log_stream=log_stream,
+    )
+
+
+def _record_selection(
+    picked: str,
+    *,
+    agent_name: str,
+    branch: str,
+    quota_cache_path: Path | str | None,
+    log_stream: Any = None,
+) -> str:
+    """Say which account this boot chose, and on what evidence. Returns *picked*.
+
+    A PASS-THROUGH so every ``return`` in :func:`pick_with_quota_evidence` can
+    wrap its result without restructuring the control flow — the branch that
+    chose the account stays visible in the branch that reports it.
+
+    WHY THIS EXISTS. On 2026-08-21 ``business`` booted on an account at
+    ``d7=100%`` and answered "You've hit your weekly limit" on every turn. sac
+    printed ``SUCC``, tmux was alive, and all three startup prompts reported
+    ``idle-gated submit verified``. Reconstructing it afterwards was IMPOSSIBLE:
+    the only trace of the boot anywhere under ``~/.scitex/agent-container/runtime``
+    was auth-heal noting the agent was "no longer login-expired". Nothing named
+    the account, its quota, or which gate had been armed — so "did the guard run
+    and choose this, or was it never consulted?" had no answer in the logs, and
+    the investigation went looking for a picker bug that the code does not have
+    (``_quota_rank.EXPIRING_MIN_HEADROOM_PCT`` already excludes a capped account
+    from the expiring-capacity preference, by construction).
+
+    So this is a RECORD, not a gate. It changes no decision. The picker's
+    "quota is a preference, not a hard gate — an all-blocked fleet still returns
+    the least-bad fresh account" is deliberate and stays exactly as it is:
+    refusing when every account is busy would brick the fleet.
+
+    TWO FAILURE MODES, ONE LINE. Besides the unanswerable-afterwards problem, it
+    closes a second one measured the same night: the operator had DISTRIBUTED
+    ``ywata1989`` to that host with ``sac accounts send-credentials --to`` and
+    the launcher selected ``scitex-01`` regardless. Distributing credential
+    material and selecting the boot account are decided in different places, and
+    nothing in either output said so. This line is where they become comparable.
+    """
+    from .._account.quota_cache import read_quota_entry
+
+    entry = read_quota_entry(account=picked, cache_path=quota_cache_path) or {}
+    h5 = entry.get("h5")
+    d7 = entry.get("d7")
+
+    def _pct(value: Any) -> str:
+        # "?" rather than a number we do not have. The whole family of bugs this
+        # module documents begins with an unknown quota rendered as if known.
+        return f"{value:g}%" if _is_pct(value) else "?"
+
+    logger.info(
+        "%s — %s: %s (5h=%s 7d=%s) [%s]",
+        SELECTION_MARKER,
+        agent_name,
+        picked,
+        _pct(h5),
+        _pct(d7),
+        branch,
+    )
+
+    if _is_pct(d7) and float(d7) >= NO_HEADROOM_7D_PCT:
+        _warn_no_headroom(
+            picked,
+            agent_name=agent_name,
+            d7=float(d7),
+            branch=branch,
+            log_stream=log_stream,
+        )
+
     return picked
+
+
+def _is_pct(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _warn_no_headroom(
+    picked: str,
+    *,
+    agent_name: str,
+    d7: float,
+    branch: str,
+    log_stream: Any,
+) -> None:
+    """Say — once, loudly — that this boot has no weekly budget to spend.
+
+    NOT a refusal. Every stored account can be capped at once (measured
+    2026-08-21: four of four at 90-100%), and refusing then would leave the
+    operator with no way to start anything. The agent boots; the operator simply
+    finds out NOW rather than from an agent that looks healthy and answers
+    nothing.
+
+    Mirrors :func:`_warn_unverifiable`'s delivery exactly — a caller-supplied
+    stream means the output is being CAPTURED, so it must not reach a logger.
+    """
+    text = (
+        f"{SELECTION_MARKER} — {agent_name}: starting on account {picked}, which "
+        f"has NO weekly budget left (7d={d7:g}%). The agent will start and report "
+        "success, its tmux pane will be alive, and every turn will answer "
+        '"You\'ve hit your weekly limit" until the 7d window resets. Chosen via: '
+        f"{branch}. This is a REPORT, not a refusal — when every stored account is "
+        "capped there is nothing better to pick. To see the whole pool run "
+        "`sac accounts list`; to re-measure it run `sac accounts "
+        "refresh-quota-cache`."
+    )
+    if log_stream is not None:
+        print(f"[sac:creds] {text}", file=log_stream)
+        return
+
+    from ..cli_pkg._helpers._console import system_msg
+
+    system_msg(text, style="warn")
 
 
 def _refresh_stale_evidence(
