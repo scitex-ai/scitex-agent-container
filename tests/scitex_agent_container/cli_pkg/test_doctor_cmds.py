@@ -240,3 +240,107 @@ def test_default_doctor_still_carries_the_drift_verdict(local_drifted_source):
     payload = json.loads(result.stdout)
     # Assert
     assert payload["local"]["state"] == "behind"
+
+
+# ---------------------------------------------------------------------------
+# sac doctor --collisions  (do two SPECS resolve to the same bot token?)
+# ---------------------------------------------------------------------------
+#
+# The OTHER half of the one-token-one-poller invariant, and the half the
+# poller check structurally cannot reach: it reads SPECS + the secrets pool,
+# so it sees a duplicate split across hosts and sees it before either process
+# starts. Measured 2026-08-22, one bot token was held on compute-04 and
+# compute-03 at once and the per-host poller probe returned ok on BOTH.
+#
+# These drive the REAL host spec tree and the REAL pool, so the STATE is
+# whatever this machine is actually configured as and must NOT be asserted.
+# What IS deterministic -- and what these pin -- is that the check runs,
+# reports one of exactly three values, rides along by default, and states its
+# own scope. The state TRANSITIONS are measured against synthetic spec trees
+# in tests/.../runtimes/test__cct_token_collision.py, where the population is
+# controlled.
+
+_COLLISION_STATES = {"ok", "violation", "unknown"}
+
+
+def test_collisions_json_carries_a_three_valued_state():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["token_collisions"]["state"] in _COLLISION_STATES
+
+
+def test_collisions_only_omits_the_drift_check():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "local" not in payload
+
+
+def test_collisions_only_omits_the_poller_check():
+    # Arrange -- the two checks are complements, not duplicates, so asking for
+    # one must not silently run the other.
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "pollers" not in payload
+
+
+def test_pollers_only_omits_the_collision_check():
+    # Arrange -- the same statement from the other side.
+    # Act
+    result = CliRunner().invoke(doctor, ["--pollers", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "token_collisions" not in payload
+
+
+def test_collisions_human_output_names_the_check():
+    # Arrange
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions"])
+    # Assert
+    assert "spec bot tokens" in result.output
+
+
+def test_collisions_output_states_how_many_specs_were_examined():
+    # Arrange -- a clean count means nothing without its denominator: a peer
+    # published a census that was 3-of-10 and read as 3-of-3.
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions"])
+    # Assert
+    assert "spec(s) examined" in result.output
+
+
+def test_collisions_json_points_at_the_other_half_of_the_invariant():
+    # Arrange -- an unstated limit is the same defect as a wrong hint, and
+    # neither of these checks alone is a fleet all-clear.
+    # Act
+    result = CliRunner().invoke(doctor, ["--collisions", "--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "sac doctor --pollers" in payload["token_collisions"]["scope_note"]
+
+
+def test_default_doctor_runs_the_collision_check_too(local_drifted_source):
+    # Arrange -- a check nobody remembers to run is how a config collision
+    # survives a process kill and returns on the next start.
+    # Act
+    result = CliRunner().invoke(doctor, ["--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["token_collisions"]["state"] in _COLLISION_STATES
+
+
+def test_default_doctor_still_carries_the_poller_verdict(local_drifted_source):
+    # Arrange -- adding a check must not displace the one already there.
+    # Act
+    result = CliRunner().invoke(doctor, ["--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["pollers"]["state"] in _POLLER_STATES
