@@ -110,7 +110,17 @@ FROZEN_SQLITE = frozenset(
         "_lifecycle/_rename_plan.py",
         "_state/auth_state.py",
         "_state/dispatch_ledger.py",
-        "_state/inbound_ledger.py",
+        # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
+        # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
+        # missing endpoint but an AUTOINCREMENT id that looked public: returned
+        # by record_inbound, taken by mark_reported. Measured before assuming —
+        # no caller in this repo binds that return value, and mark_reported is
+        # always handed a claim-derived id — so the integer only ever
+        # round-tripped claim -> settle inside one Stop hook. The natural key
+        # replaced it with no surrogate, which matters because surrogate ids do
+        # not survive a store boundary and this fleet has already paid for that
+        # once. The atomic BEGIN IMMEDIATE claim became an optimistic loop on
+        # Row.seq, preserving "two concurrent Stop hooks never double-report".
         "_state/port_allocator.py",
         "_state/state_db.py",
         "_state/state_db_health.py",
@@ -138,10 +148,35 @@ _IMPORTS_SQLITE = re.compile(
 #: construction; see the module docstring. THIS LIST MAY ONLY SHRINK.
 FROZEN_SQLITE_DDL = frozenset(
     {
-        "_state/state_db_acl_deny_notify.py",
+        # _state/state_db_acl_deny_notify.py LEFT THIS SET 2026-08-20 — the
+        # FIFTH table, moved in the same PR as comms_blocks because the two are
+        # siblings that both lose a line from one block of init_schema.
+        #
+        # It is also the first table whose move had a SECOND SITE: it was in
+        # KNOWN_TABLES, so state_db_export would have queried a table SQLite no
+        # longer has. comms_blocks was not, which is exactly why the pair had
+        # to be checked separately rather than assumed symmetric.
+        #
+        # And this list's OWN staleness gate is what caught the omission: the
+        # DDL left the module in one commit and the entry stayed here, which
+        # `test_the_ddl_freeze_list_has_no_stale_entries` reported. A ratchet
+        # that only checks one direction would have gone green on a half-done
+        # migration.
         "_state/state_db_acl_policy.py",
-        "_state/state_db_blocks.py",
-        "_state/state_db_pending_approval.py",
+        # _state/state_db_blocks.py LEFT THIS SET 2026-08-20 — the FOURTH table
+        # to move to PostgreSQL, and the first where the migration's own
+        # PREDICTION was wrong in the safe direction. It was scoped as "a
+        # DURABLE decision, not a transient flag, so it almost certainly holds
+        # real rows and DOES need a migration". It holds zero: 52 SQLite
+        # databases read across compute-01..04 (the fleet state.db plus every
+        # per-agent shard), zero rows in all of them. Nobody has ever blocked
+        # anyone. Checking beat carrying the previous slice's conclusion over.
+        # _state/state_db_pending_approval.py LEFT THIS SET 2026-08-20 — the
+        # THIRD table to move to PostgreSQL, and the first whose SQLite verb
+        # had no store equivalent: it DELETEd, and the store only hides. That
+        # turned out to be the better primitive (the decision stays in the
+        # oplog with its actor) but it introduced a lifecycle the SQLite
+        # version did not have, and the module documents it.
         "_state/state_db_schema.py",
         # _state/state_db_incarnations.py LEFT THIS SET 2026-08-19 — the
         # SECOND table to move to PostgreSQL, and the first to leave via

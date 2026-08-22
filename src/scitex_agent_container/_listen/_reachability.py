@@ -57,7 +57,35 @@ __all__ = [
     "UNREACHABLE",
     "annotate_reachability",
     "annotate_rows",
+    "resolve_annotation_host",
 ]
+
+
+def resolve_annotation_host(app_state: Any) -> str | None:
+    """The host identity to weigh rows against, for BOTH annotate paths.
+
+    ``create_app`` declares ``local_host`` and defaults it to ``None``, and
+    the one production caller (``cli_pkg.listen_cmds``) never passes it. So
+    ``app.state.local_host`` is ``None`` in production, always. Read alone it
+    makes :func:`_is_locally_observable` answer ``False`` for every row that
+    carries any host evidence, and every such row is annotated ``unknown`` —
+    including rows on THIS host, whose subscriber count we can see perfectly.
+
+    The env resolver is therefore not a nicety, it is the only thing that
+    supplies an identity in production. It lives here, in one function, for a
+    measured reason: the fallback was added to the single-row path in #1174
+    and NOT to the list path, so ``GET /agents`` — the endpoint ``a2a_peers``
+    reads and the one every "nobody is reachable" report comes through — kept
+    returning ``unknown`` for the whole fleet after the fix shipped. Two call
+    sites asking one question is how half a fix looks like a whole one.
+
+    Returns ``None`` only if the resolver itself cannot answer, which
+    ``_is_locally_observable`` correctly reads as "we don't know who WE are"
+    and degrades to ``unknown`` — never to a fabricated ``unreachable``.
+    """
+    from .._state.state_db import _resolve_host
+
+    return getattr(app_state, "local_host", None) or _resolve_host(None)
 
 
 def _is_locally_observable(row: Mapping[str, Any], local_host: str | None) -> bool:

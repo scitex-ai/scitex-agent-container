@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
+import contextlib
 from pathlib import Path
 
 from scitex_agent_container._lifecycle._ci_owner import resolve_owner, tracked_repos
@@ -160,43 +161,117 @@ def test_tracked_repos_collapses_two_projects_that_resolve_to_one_repo(
     assert repos == ["an-org/new-name"]
 
 
+def _probe_seam(stdout="", returncode=0, stderr="", calls=None):
+    """Build a fake ``_run_gh_probe``. Returns the real GhProbe shape."""
+    from scitex_agent_container._lifecycle._github_ci import GhProbe
+
+    def fake(args):
+        if calls is not None:
+            calls.append(args)
+        return GhProbe(stdout, returncode, stderr)
+
+    return fake
+
+
+@contextlib.contextmanager
+def _seamed_probe(**kw):
+    """Swap ``_github_ci._run_gh_probe`` and clear the canonical cache.
+
+    The cache MUST be cleared on both sides: it is module-global and now
+    caches ``None`` as a meaningful value, so a leaked entry would make the
+    next test read a verdict it never produced.
+    """
+    from scitex_agent_container._lifecycle import _ci_owner as mod
+    import scitex_agent_container._lifecycle._github_ci as ghmod
+
+    mod._CANONICAL_CACHE.clear()
+    real = ghmod._run_gh_probe
+    ghmod._run_gh_probe = _probe_seam(**kw)
+    try:
+        yield mod
+    finally:
+        ghmod._run_gh_probe = real
+        mod._CANONICAL_CACHE.clear()
+
+
 def test_canonical_lookup_falls_back_to_the_guess_when_gh_gives_nothing():
     # Arrange — a gh outage must degrade to the previous behaviour (a
     # guess), never to an empty poll list that silently watches nothing.
-    from scitex_agent_container._lifecycle import _ci_owner as mod
-
-    mod._CANONICAL_CACHE.clear()
-    saved = mod._run_gh if hasattr(mod, "_run_gh") else None
-    import scitex_agent_container._lifecycle._github_ci as ghmod
-
-    real = ghmod._run_gh
-    ghmod._run_gh = lambda args: ""
-    try:
+    with _seamed_probe(stdout="", returncode=1, stderr="dial tcp: i/o timeout") as mod:
         # Act
         out = mod._canonical_name_with_owner("an-org/a-repo")
-    finally:
-        ghmod._run_gh = real
-        mod._CANONICAL_CACHE.clear()
     # Assert
     assert out == "an-org/a-repo"
+
+
+def test_canonical_lookup_returns_none_when_github_says_no_such_repo():
+    # Arrange — GitHub ANSWERED, and the answer was that it does not exist.
+    # This is the case worth one REST call per tick per host, forever.
+    with _seamed_probe(
+        stdout="",
+        returncode=1,
+        stderr="GraphQL: Could not resolve to a Repository with the name 'an-org/nope'. (repository)",
+    ) as mod:
+        # Act
+        out = mod._canonical_name_with_owner("an-org/nope")
+    # Assert
+    assert out is None
+
+
+def test_a_rate_limited_probe_is_unknown_and_keeps_the_repo():
+    # Arrange — THE ASYMMETRY THIS FIX TURNS ON. A 403 is GitHub declining to
+    # answer, not GitHub saying the repo is absent. Treating it as absence
+    # would drop the whole poll set during exactly the rate-limit incident
+    # this change exists to relieve — and it would do so silently.
+    with _seamed_probe(
+        stdout="",
+        returncode=1,
+        stderr="HTTP 403: API rate limit exceeded for user ID 1234 (https://api.github.com/...)",
+    ) as mod:
+        # Act
+        out = mod._canonical_name_with_owner("an-org/a-repo")
+    # Assert
+    assert out == "an-org/a-repo"
+
+
+def test_tracked_repos_drops_a_repo_github_says_does_not_exist(tmp_path: Path):
+    # Arrange — the end-to-end consequence: an absent name must not reach the
+    # poll set, because the loop spends a REST call on every member of it.
+    agents = tmp_path / "agents"
+    _write_spec(agents, "proj-real", "real-repo")
+    _write_spec(agents, "proj-ghost", "ghost-repo")
+    # Act
+    repos = tracked_repos(
+        agents_dir=agents,
+        org="an-org",
+        canonicalize=lambda repo: None if "ghost" in repo else repo,
+    )
+    # Assert
+    assert repos == ["an-org/real-repo"]
 
 
 def test_canonical_lookup_is_cached_so_a_tick_costs_one_call_per_repo():
     # Arrange — without a cache the poll loop spends one gh call per repo
     # per tick, forever.
-    from scitex_agent_container._lifecycle import _ci_owner as mod
-    import scitex_agent_container._lifecycle._github_ci as ghmod
-
-    mod._CANONICAL_CACHE.clear()
     calls: list = []
-    real = ghmod._run_gh
-    ghmod._run_gh = lambda args: calls.append(args) or "an-org/canonical"
-    try:
+    with _seamed_probe(stdout="an-org/canonical", calls=calls) as mod:
         # Act
         mod._canonical_name_with_owner("an-org/a-repo")
         mod._canonical_name_with_owner("an-org/a-repo")
-    finally:
-        ghmod._run_gh = real
-        mod._CANONICAL_CACHE.clear()
+    # Assert
+    assert len(calls) == 1
+
+
+def test_an_absent_verdict_is_cached_too():
+    # Arrange — None is now a MEANINGFUL cached value. If the cache treated it
+    # as "not cached", every absent repo would be re-probed every tick and the
+    # saving this change exists for would be exactly zero.
+    calls: list = []
+    with _seamed_probe(
+        stdout="", returncode=1, stderr="Could not resolve to a Repository", calls=calls
+    ) as mod:
+        # Act
+        mod._canonical_name_with_owner("an-org/nope")
+        mod._canonical_name_with_owner("an-org/nope")
     # Assert
     assert len(calls) == 1
