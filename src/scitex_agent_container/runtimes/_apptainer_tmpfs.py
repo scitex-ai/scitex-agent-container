@@ -89,9 +89,38 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
       * the operator already declared ``-W``/``--workdir`` in
         ``apptainer.raw_args`` (relaxed escape-hatch — don't duplicate).
 
-    Creates the scratch dir under ``<state_dir>/tmp-scratch`` and
-    verifies the backing filesystem has at least ``tmpfs_size`` bytes
-    free, raising :class:`TmpfsSpaceError` if not.
+    Creates the scratch dir under ``<state_dir>/tmp-scratch``.
+
+    Does NOT check free space — that is :func:`verify_tmpfs_headroom`,
+    called on the real launch path only. This function is reached by
+    ``sac agents explain`` and by ``run(dry_run=True)``, which start
+    nothing and must not fail on a host condition they do not depend on.
+    """
+    resolved = _resolve_scratch(config, state_dir)
+    if resolved is None:
+        return []
+
+    scratch, _size, _need_bytes = resolved
+    scratch.mkdir(parents=True, exist_ok=True)
+    return ["--workdir", str(scratch)]
+
+
+def _resolve_scratch(config, state_dir: Path) -> tuple[Path, str, int] | None:
+    """Resolve ``(scratch_dir, size_str, need_bytes)``, or ``None`` when sac
+    does not manage this agent's workdir (operator opt-out, or an explicit
+    ``-W``/``--workdir`` in ``raw_args``).
+
+    Shared by :func:`tmpfs_workdir_flags` and :func:`verify_tmpfs_headroom`
+    so the two can never disagree about WHICH directory is being sized —
+    the flag and the check must describe the same path or the guarantee is
+    about a directory the container does not use.
+
+    ``parse_tmpfs_size_bytes`` is called HERE, so an unparseable
+    ``tmpfs_size`` still fails loud at argv-construction time. That is
+    deliberate: a bad size string is a CONFIG error, present on every host
+    regardless of disk, and it should surface the moment the spec is read.
+    Only the free-space check — a RESOURCE condition, true on one host at
+    one moment — belongs at launch.
     """
     ap = getattr(config, "apptainer", None)
     if ap is None:
@@ -104,15 +133,43 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
         raw_args = list(getattr(ap, "raw_args", None) or [])
 
     if not size:
-        return []
+        return None
 
     # Operator already pinned a workdir → respect it, emit nothing.
     if any(a in ("-W", "--workdir") for a in raw_args):
-        return []
+        return None
 
-    need_bytes = parse_tmpfs_size_bytes(size)
+    return state_dir.expanduser() / "tmp-scratch", size, parse_tmpfs_size_bytes(size)
 
-    scratch = state_dir.expanduser() / "tmp-scratch"
+
+def verify_tmpfs_headroom(config, state_dir: Path) -> None:
+    """Raise :class:`TmpfsSpaceError` unless the filesystem backing the
+    scratch dir has at least ``spec.apptainer.tmpfs_size`` bytes free.
+
+    CALL THIS ONLY ON A REAL LAUNCH PATH. It asks a question about the host
+    RIGHT NOW, so it is only meaningful immediately before starting a
+    container — and it is actively wrong anywhere else.
+
+    Why it is not in ``tmpfs_workdir_flags`` (which is where it used to
+    live): that function is also reached by ``sac agents explain`` and by
+    ``run(dry_run=True)``, neither of which starts anything. A full disk
+    therefore made two READ-ONLY commands fail — so an operator diagnosing
+    a full host could not run ``explain`` at exactly the moment it was
+    most useful. It also wired ~21 argv-building test files' verdicts to
+    ambient free disk they neither control nor test, which on a 91%-full
+    shared CI runner (2026-08-19) produced failures carrying unrelated
+    TEST NAMES and sent readers to their own diffs for hours.
+
+    This mirrors the placement ``_apptainer_runtime`` already chose for
+    ``reconcile_overlay_venv_for_launch`` — past the ``dry_run`` return,
+    for the same stated reason: a read-only command must not do
+    launch-time work.
+    """
+    resolved = _resolve_scratch(config, state_dir)
+    if resolved is None:
+        return
+
+    scratch, size, need_bytes = resolved
     scratch.mkdir(parents=True, exist_ok=True)
 
     usage = shutil.disk_usage(scratch)
@@ -125,7 +182,10 @@ def tmpfs_workdir_flags(config, state_dir: Path) -> list[str]:
             "lower spec.apptainer.tmpfs_size."
         )
 
-    return ["--workdir", str(scratch)]
 
-
-__all__ = ["tmpfs_workdir_flags", "parse_tmpfs_size_bytes", "TmpfsSpaceError"]
+__all__ = [
+    "tmpfs_workdir_flags",
+    "verify_tmpfs_headroom",
+    "parse_tmpfs_size_bytes",
+    "TmpfsSpaceError",
+]

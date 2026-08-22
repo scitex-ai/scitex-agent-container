@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import traceback
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,63 @@ def _run(*args: str):
     return CliRunner().invoke(main, ["guard", "deletions", *args])
 
 
+def _run_json(*args: str) -> dict:
+    """Parse the command's JSON stdout, or fail with everything the runner saw.
+
+    TWO defects, both measured on click 8.4.2 on 2026-08-20.
+
+    ONE — the wrong stream. ``result.output`` INTERLEAVES stdout and stderr.
+    Measured with a positive control (write to ``sys.stderr`` at call time, so
+    it reaches the stream CliRunner actually swapped in)::
+
+        .output -> '{"ok": true}\nSTDERR-MARKER\n'   json.loads FAILS
+        .stdout -> '{"ok": true}\n'                  json.loads OK
+
+    A control matters here because the obvious experiment does NOT work: a
+    logging handler created at import time holds the PRE-SWAP stderr, so its
+    output never enters the capture and ``.output`` looks stdout-clean. That
+    run cannot fail for any input.
+
+    The CLI's contract is JSON *on stdout*; any log line from any module on
+    stderr is not part of it. So parse ``.stdout``.
+
+    TWO — the silent report. When parsing did fail on develop, the entire
+    diagnostic was::
+
+        json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+    `char 0` does NOT distinguish "stdout was empty" from "something non-JSON
+    came first" — both land there. So the message below prints all three
+    streams, the exit code, and the swallowed traceback, and lets the reader
+    tell those apart instead of guessing.
+
+    This does NOT tolerate the failure: an unparseable payload still fails the
+    test. It only makes the failure say something.
+    """
+    result = _run(*args)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        try:
+            stderr = result.stderr
+        except (ValueError, AttributeError):  # stx-allow: fallback (reason: click does not always capture stderr separately; a missing stderr must not replace the real failure with an error about reading it. SINK: the assertion message below, which pytest prints on failure)
+            stderr = "<not captured separately>"
+        detail = [
+            "guard deletions --json produced no parseable JSON on stdout.",
+            f"  json error : {exc}",
+            f"  exit_code  : {result.exit_code}",
+            f"  stdout     : {result.output!r}",
+            f"  stderr     : {stderr!r}",
+            f"  exception  : {result.exception!r}",
+        ]
+        if result.exc_info is not None:
+            detail.append(
+                "  traceback  :\n"
+                + "".join(traceback.format_exception(*result.exc_info))
+            )
+        raise AssertionError("\n".join(detail)) from exc
+
+
 def test_incident_exits_with_the_violations_code(incident_repo: Path) -> None:
     """3 — the declared domain code, never 1."""
     # Arrange
@@ -132,7 +190,7 @@ def test_json_still_lists_every_deleted_method(incident_repo: Path) -> None:
     # Arrange
     args = ("--repo", str(incident_repo), "--base", "HEAD", "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert "transforms.py::class:Scaler.apply" in {
         d["key"] for d in payload["deletions"]
@@ -220,7 +278,7 @@ def test_missing_baseline_json_verdict_is_undetermined(repo: Path) -> None:
     # Arrange
     args = ("--repo", str(repo), "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert payload["verdict"] == "could-not-determine"
 
@@ -242,7 +300,7 @@ def test_json_verdict_is_violations_on_the_incident(
     # Arrange
     args = ("--repo", str(incident_repo), "--base", "HEAD", "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert payload["verdict"] == "violations"
 
@@ -252,7 +310,7 @@ def test_json_carries_the_declared_exit_code(incident_repo: Path) -> None:
     # Arrange
     args = ("--repo", str(incident_repo), "--base", "HEAD", "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert payload["exit_code"] == 3
 
@@ -262,7 +320,7 @@ def test_json_top_level_keys_are_stable(incident_repo: Path) -> None:
     # Arrange
     args = ("--repo", str(incident_repo), "--base", "HEAD", "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert set(payload) == {
         "verdict", "exit_code", "baseline", "target", "files_compared",
@@ -278,7 +336,7 @@ def test_json_deletion_entry_carries_its_allow_key(
     # Arrange
     args = ("--repo", str(incident_repo), "--base", "HEAD", "--json")
     # Act
-    payload = json.loads(_run(*args).output)
+    payload = _run_json(*args)
     # Assert
     assert "transforms.py::class:Scaler" in {
         d["key"] for d in payload["deletions"]

@@ -52,15 +52,53 @@ CONTAINER_ENGINE = "apptainer"
 _REMOVED_MESSAGE = (
     "spec.container.runtime has been REMOVED — "
     f"{CONTAINER_ENGINE} is the only container engine, so there is "
-    "nothing left to select. DELETE the `runtime:` line from the "
-    "`container:` block; the agent runs inside "
-    f"{CONTAINER_ENGINE} either way. No launch path ever read this "
-    "field, so deleting the line changes nothing except what the spec "
-    "claims about itself."
+    "nothing left to select. No launch path ever read this field, so "
+    "deleting it changes nothing except what the spec claims about "
+    "itself.\n"
+    "\n"
+    "  DELETE the INDENTED one, under `container:`:\n"
+    "\n"
+    "      spec:\n"
+    "        container:\n"
+    "          runtime: ...      <-- DELETE THIS LINE\n"
+    "\n"
+    "  KEEP the one directly under `spec:` — it is a DIFFERENT, LIVE "
+    "field (the harness launch mode, e.g. `tui`) that merely shares the "
+    "name:\n"
+    "\n"
+    "      spec:\n"
+    "        runtime: tui        <-- LEAVE THIS ALONE\n"
+    "\n"
+    "  So do not act on a bare `grep runtime:` — check the indentation "
+    "first."
 )
 # The message names no other engine ON PURPOSE — not even to say one is
 # gone. A removal notice that lists alternatives has rebuilt the menu it
 # was meant to close, and the reader now has a new thing to wonder about.
+#
+# BUT IT MUST NAME THE NESTING, and that is not stylistic. Measured
+# 2026-08-20 across the 122 live specs on compute-04:
+#
+#     with `spec.runtime` (LIVE)       122 / 122
+#     with `spec.container.runtime`      0 / 122
+#
+# So EVERY spec a reader could be holding contains a `runtime:` line that
+# must NOT be deleted, and the one this error is about is absent from all
+# of them. The earlier wording said only "DELETE the `runtime:` line from
+# the `container:` block". A reader who greps `runtime:` — the obvious
+# move, since the message quotes the leaf key — finds exactly one hit,
+# the live one, in 122 cases out of 122.
+#
+# That is not hypothetical. On 2026-08-20 the operator hit this error on a
+# host whose checkout still carried the removed key, ran the grep, and was
+# one keystroke from deleting `runtime: tui` from a working agent. The
+# error text was the whole cause: it was accurate about the field and
+# ambiguous about WHICH LINE, and ambiguity in a remedy is executed, not
+# puzzled over.
+#
+# A removal notice is an instruction someone will follow literally. It has
+# to be safe to follow literally on a spec that does NOT have the field,
+# because that is the spec most readers are looking at.
 
 
 def container_runtime_removed_error(spec: object) -> list[str]:
