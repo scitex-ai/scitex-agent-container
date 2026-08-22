@@ -20,6 +20,7 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
+from scitex_agent_container.runtimes import prompts as _prompts
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
     session_name_for,
@@ -116,7 +117,19 @@ class _MemoryMultiplexer:
         # (post-2026-06-14 lead a2a 278159b5) short-circuits in the
         # in-memory unit suite. The fake doesn't render first-launch
         # modals; the drain has no work to do and must not block.
-        return "\n".join(sess.pane) + "\n? for shortcuts"
+        #
+        # "bypass permissions" is the STATUS BAR a real idle pane carries, and
+        # it is what `prompts._detect_done` keys on. Without it this fake
+        # models a pane that is neither ready nor busy — a state no live agent
+        # is ever in — so every delivery test would exercise the refusal path
+        # rather than the path it means to test. Modelling an IDLE pane is the
+        # honest default here; tests that want a busy one say so explicitly by
+        # overriding capture_content (see the busy-pane tests below).
+        return (
+            "\n".join(sess.pane)
+            + "\n? for shortcuts"
+            + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+        )
 
     @classmethod
     def capture_logs(cls, session_name: str, lines: int = 50) -> str:
@@ -716,6 +729,79 @@ def test_tui_runtime_send_turn_skips_send_when_no_session(
     # the runtime guarded the send instead of letting it create a
     # phantom entry via the implicit dict-insert path.
     assert "tui-sigma" not in mux._sessions
+
+
+# A pane frame captured VERBATIM from a live handyman mid-turn on
+# scitex-compute-04, 2026-08-18. Kept literal rather than paraphrased: the
+# whole point of the test below is which substrings are and are not present,
+# so a tidied-up imitation would test the imitation.
+_BUSY_PANE = """\
+● Showing recent commits on hm01-audit branch
+  ⎿  $ timeout 7 git -C /home/ywatanabe/proj/scitex-cards log --oneline -8
+✻ Slithering… (5m 39s · ↓ 12.2k tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's
+     current work
+                                                          7% until auto-compact
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  handyman-01@compute-04 | local-coder | qwen38-27b | ctx:69%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+"""
+
+
+def test_busy_pane_still_satisfies_the_input_ready_predicate(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    """The gate `send_turn` relies on cannot see a working agent.
+
+    This is a CHARACTERISATION test: it asserts today's behaviour so the
+    mechanism is pinned, not the behaviour we want. `_detect_done` keys on
+    "bypass permissions", and the status bar carries that string while the
+    agent is mid-turn — verified on live panes, busy and idle, in one capture.
+    So the predicate documented as "at the main input prompt" is really
+    "no modal is blocking", and it returns True for an agent that is working.
+    """
+    # Arrange
+    del mux  # not needed; this exercises the predicate directly
+    busy_frame = _BUSY_PANE
+    # Act
+    ready = _prompts.is_ready(busy_frame)
+    # Assert — the busy frame passes the ready check. That is the defect.
+    assert ready is True, (
+        "if this now fails, is_ready() has learned to detect a working agent "
+        "and the xfail below should be re-examined"
+    )
+
+
+def test_send_turn_refuses_when_the_pane_is_busy(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    """A turn typed into a working pane must not be reported as delivered.
+
+    The caller's only signal is this bool: the turn bridge answers
+    200 {"delivered": true} on True, and `sac peer post-turn` exits 0. So a
+    True here is the last point at which the fleet can distinguish "the agent
+    took the work" from "keystrokes were sent at a busy terminal", and today
+    it cannot. The operator's standing rule is "use handyman first, escalate
+    when work does not progress" — an unobservable non-progress condition
+    means that escalation can never trigger.
+    """
+    # Arrange — a live session whose pane is mid-turn.
+    class _BusyMux(mux):  # type: ignore[misc, valid-type]
+        @classmethod
+        def capture_content(cls, session_name: str) -> str:
+            del session_name
+            return _BUSY_PANE
+
+    _BusyMux.reset()
+    runtime = TuiSessionRuntime(multiplexer=_BusyMux, command_builder=_fake_builder)
+    config = _Config(name="busy-pane")
+    runtime.start(config)
+    # Act
+    delivered = runtime.send_turn(config, "work-that-will-be-dropped")
+    # Assert
+    assert delivered is False
 
 
 # ---------------------------------------------------------------------------
