@@ -2,7 +2,7 @@
 description: |
   [TOPIC] ONE Telegram bot token, ONE consumer — the two checks that observe it, why neither alone is an all-clear, and the ownership ledger that answers "who holds this bot?".
   [DETAILS] Telegram's getUpdates admits exactly one consumer per token GLOBALLY. `sac doctor --pollers` (`runtimes/_cct_poller_singleton`) reads /proc: it sees a LIVE duplicate including an orphaned poller, and is HOST-SCOPED. `sac doctor --collisions` (`runtimes/_cct_token_collision`) reads SPECS + the secrets pool: it sees a duplicate BEFORE anything starts and ACROSS hosts, and sees no process at all. Measured 2026-08-22: one token held on compute-04 and compute-03 while the per-host probe read ok on both. Both are read-only, three-valued (ok/violation/unknown), never gate a start, and never read a token value — only sha256:<12hex> fingerprints. At start each agent records its claim into the per-host `cct_token_owner` PostgreSQL ledger (write-only; nothing decides on it yet).
-tags: [scitex-agent-container-one-token-one-poller]
+tags: [scitex-agent-container-telegram-one-token-one-poller]
 ---
 
 # One token, one poller — two checks, and neither is enough alone
