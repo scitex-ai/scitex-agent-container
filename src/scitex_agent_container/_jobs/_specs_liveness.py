@@ -23,15 +23,43 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["liveness_jobs"]
 
 
-def liveness_jobs() -> "list[JobSpec]":
-    """The fleet-liveness JobSpecs, in their historical order."""
+def liveness_jobs(*, executable: str | None = None) -> "list[JobSpec]":
+    """The fleet-liveness JobSpecs, in their historical order.
+
+    ``executable`` is the same test seam :func:`._sac_bin.sac_bin` exposes,
+    threaded through so a test can resolve the payload against a venv-shaped
+    tree it built on disk. Without it the rendered command depends on whether
+    the RUNNING environment happens to have a ``sac`` console script beside
+    its interpreter — true in production, false under a PYTHONPATH-only CI
+    run — and a population guard over these specs would then assert an
+    environmental fact rather than a property of the specs.
+    """
     from scitex_dev.jobs import JobSpec
+
+    from ._sac_bin import sac_bin
+
+    # ABSOLUTE, resolved per host -- see :mod:`._sac_bin`. A bare `sac`
+    # after the absolute `timeout` head is invisible to resolve_execstart
+    # and is looked up on the supervisor's PATH, which is how every sac
+    # job on scitex-compute-01 sat at exit 127 (measured 2026-08-20).
+    sac = sac_bin(executable=executable)
 
     return [
         JobSpec(
             name="scitex-agent-container-fleet-reconcile",
             schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents reconcile --apply",
+            # SELF-BOUNDING (300s) — the bound lives in the command because
+            # this job lands on CRON, where `timeout_sec` cannot follow it.
+            # A no-op pass takes ~seconds; this bounds the pathological one
+            # (`--limit` restarts, each a stop+settle+start). A pass killed at
+            # this timeout is SAFE: the restart history is persisted per
+            # restart, not at the end, so the next tick still honours the
+            # debounce for anything already bounced.
+            #
+            # This is the job whose UNBOUNDED cron line was measured piling
+            # up fourteen concurrent instances, the oldest 45 minutes old
+            # (2026-07-18) — the incident that motivated the guard.
+            command=f"/usr/bin/timeout 300 {sac} agents reconcile --apply",
             description=(
                 "The enforcer of 'should be running => is running'. Restarts "
                 "agents whose tmux session is GONE while their spec asks to be "
@@ -63,17 +91,18 @@ def liveness_jobs() -> "list[JobSpec]":
             # read each — cheap enough to run often.
             on_boot_sec="5min",
             on_unit_active_sec="5min",
-            # A no-op pass takes ~seconds; this bounds the pathological one
-            # (`--limit` restarts, each a stop+settle+start). A pass killed at
-            # this timeout is SAFE: the restart history is persisted per
-            # restart, not at the end, so the next tick still honours the
-            # debounce for anything already bounced.
-            timeout_sec=300,
         ),
         JobSpec(
             name="scitex-agent-container-restart-login-expired-agents",
             schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
-            command="sac agents restart-login-expired --apply",
+            # SELF-BOUNDING (300s), mirroring fleet-reconcile: bounds the
+            # pathological pass (`--limit` restarts, each a stop+settle+start)
+            # plus the ~4s capture interval. A pass killed here is SAFE —
+            # history is persisted per restart, so the next tick still honours
+            # the debounce for anything bounced.
+            command=(
+                f"/usr/bin/timeout 300 {sac} agents restart-login-expired --apply"
+            ),
             description=(
                 "Restarts LIVE agents wedged behind a frozen 'Login expired' "
                 "banner (auth-dead but tmux-alive) — the half fleet-reconcile "
@@ -99,10 +128,5 @@ def liveness_jobs() -> "list[JobSpec]":
             # plus two pane captures ~4s apart.
             on_boot_sec="5min",
             on_unit_active_sec="5min",
-            # Mirrors fleet-reconcile: bounds the pathological pass (`--limit`
-            # restarts, each a stop+settle+start) plus the ~4s capture interval.
-            # A pass killed here is SAFE — history is persisted per restart, so
-            # the next tick still honours the debounce for anything bounced.
-            timeout_sec=300,
         ),
     ]

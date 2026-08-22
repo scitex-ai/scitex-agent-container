@@ -879,7 +879,7 @@ def _send_payload(text: str, *, from_agent: str) -> dict:
     }
 
 
-def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
+def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str) -> None:
     """End-to-end: a POST to host B's ``message:send`` for a target
     pinned to host A arrives on host A's broker.
     """
@@ -961,7 +961,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env) -> None:
     assert event.get("content") == "hi from b"
 
 
-def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env) -> None:
+def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_schema: str) -> None:
     """The forwarded event keeps the original ``from_agent`` so
     host A's ACL can gate on the real sender, not the forwarding
     host's identity.
@@ -1271,7 +1271,7 @@ def _drive_ssh_cross_host_send(
 
 
 def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
-    cross_host_ssh_env,
+    cross_host_ssh_env, pg_schema: str,
 ) -> None:
     """End-to-end ssh-transport: a POST to host B's ``message:send`` for
     a target pinned to host A arrives on host A's broker through the
@@ -1290,7 +1290,7 @@ def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
 
 
 def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
-    cross_host_ssh_env,
+    cross_host_ssh_env, pg_schema: str,
 ) -> None:
     """The forwarded event keeps the original ``from_agent`` across the
     ssh transport so host A's ACL gates on the real sender, not the
@@ -1309,7 +1309,7 @@ def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
 
 
 def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
-    cross_host_ssh_env,
+    cross_host_ssh_env, pg_schema: str,
 ) -> None:
     """A cross-group send delivered across the ssh transport lands at the
     destination. (Under messaging DEFAULT-ALLOW, operator 2026-07-03, the
@@ -1338,7 +1338,7 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
 
 
 def test_cross_host_send_without_grant_returns_403_from_target_listen(
-    cross_host_ssh_env,
+    cross_host_ssh_env, pg_schema: str,
 ) -> None:
     """A receiver-side ACL deny must surface across the ssh transport as
     a non-2xx response to the originating sender (loud failure, no silent
@@ -1381,7 +1381,7 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
 
 
 def test_cross_host_send_via_ssh_shim_uses_peer_token_bearer_header(
-    cross_host_ssh_env,
+    cross_host_ssh_env, pg_schema: str,
 ) -> None:
     """The shim's captured Authorization header matches the destination
     host's bearer (``peer-tokens/host-a.token``) — proves the forwarder
@@ -1481,7 +1481,7 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
 
 
 def test_message_send_with_ack_metadata_yields_ack_true_event(
-    cross_host_env,
+    cross_host_env, pg_schema: str,
 ) -> None:
     # Arrange
     metadata = {"from_agent": "bob", "ack": True}
@@ -1492,7 +1492,7 @@ def test_message_send_with_ack_metadata_yields_ack_true_event(
 
 
 def test_message_send_without_ack_metadata_yields_falsey_ack_event(
-    cross_host_env,
+    cross_host_env, pg_schema: str,
 ) -> None:
     # Arrange
     metadata = {"from_agent": "bob"}
@@ -1503,7 +1503,7 @@ def test_message_send_without_ack_metadata_yields_falsey_ack_event(
 
 
 def test_message_send_threads_dispatch_id_into_published_event(
-    cross_host_env,
+    cross_host_env, pg_schema: str,
 ) -> None:
     # Arrange
     # The sender-minted dispatch_id must ride from metadata onto the

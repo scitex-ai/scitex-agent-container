@@ -40,6 +40,52 @@ _BINARIES = (
 _SOURCE_MAP = {"bash": "bash_source", "zsh": "zsh_source"}
 
 
+def _tracked_in_a_git_repo(path: Path) -> Path | None:
+    """The repo root when ``path`` is a TRACKED file in a git repo, else None.
+
+    MEASURED 2026-08-20, found by the dotfiles agent while building the fleet
+    git sync. On every fleet host `~/.bashrc` is a symlink:
+
+        /home/ywatanabe/.bashrc -> /home/ywatanabe/.dotfiles/src/.bashrc
+
+    so appending to it writes a TRACKED file in the dotfiles repo. Four hosts
+    ended up carrying the same "local edit" — not four humans, one installer.
+    Those checkouts are permanently dirty, an ff-only pull will not apply, and
+    that is a direct contributor to the fleet running five different dotfiles
+    heads.
+
+    The path is RESOLVED first, because the symlink is the whole mechanism: the
+    file we would open is not the file the name refers to.
+
+    `git ls-files --error-unmatch` rather than `git status`, because the
+    question is "is this file under version control", not "is it currently
+    modified" — an unmodified tracked file is exactly as wrong to append to,
+    and would silently become the modified one.
+    """
+    import subprocess
+
+    real = path.resolve()
+    try:
+        root = subprocess.run(
+            ["git", "-C", str(real.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if root.returncode != 0:
+            return None
+        tracked = subprocess.run(
+            ["git", "-C", str(real.parent), "ls-files", "--error-unmatch", str(real)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # An unusable git is not evidence that the file is untracked, but it is
+        # also not a reason to block a local install. Fall through to appending
+        # and say nothing false.
+        return None
+    if tracked.returncode != 0:
+        return None
+    return Path(root.stdout.strip())
+
+
 def _install_cached(*args, **kwargs) -> None:
     """Replacement callback for ``install-shell-completion``."""
     # Re-resolve Path.home() each call (not at attach time) so $HOME
@@ -94,6 +140,24 @@ def _install_cached(*args, **kwargs) -> None:
 
         # Add the source line in rc if not already present.
         if rc_path.is_file() and marker in rc_path.read_text():
+            continue
+        repo = _tracked_in_a_git_repo(rc_path)
+        if repo is not None:
+            # REFUSE, and say exactly what to add and where. The line belongs
+            # IN the dotfiles repo — committed once and carried to every host
+            # by the sync that already exists — not appended per host forever
+            # by an installer that makes the checkout dirty each time.
+            click.echo(
+                f"refusing to append to {rc_path}: it resolves to "
+                f"{rc_path.resolve()}, a file tracked in {repo}. Appending "
+                f"would leave that checkout permanently dirty and block an "
+                f"ff-only pull, on this host and on every host that installs "
+                f"sac.\n"
+                f"  Add this line to that file yourself and commit it, so it "
+                f"reaches every host once:\n"
+                f"    {source_line}  {marker}",
+                err=True,
+            )
             continue
         with rc_path.open("a") as fh:
             fh.write(f"\n{source_line}  {marker}\n")

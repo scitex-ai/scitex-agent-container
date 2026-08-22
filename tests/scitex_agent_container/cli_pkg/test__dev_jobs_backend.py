@@ -468,3 +468,41 @@ def test_an_unreadable_tree_refuses_a_verb_that_never_shipped() -> None:
         backend.reset_capability_cache()
     # Assert
     assert got.supported is False
+
+
+def _install_delegation() -> "backend.Delegation":
+    """`timer install` — the only verb upstream carrying --adopt/--force."""
+    return backend.Delegation(
+        path=("timer",), verb="install", supported=True, evidence="fixture"
+    )
+
+
+def test_the_pass_through_forwards_adopt() -> None:
+    """MEASURED 2026-08-20: install's refusal names --adopt; the wrapper had no
+    such option, so following its own advice errored."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, adopt=True, exe="sd")
+    # Assert
+    assert "--adopt" in argv
+
+
+def test_the_pass_through_forwards_force() -> None:
+    """The other half of that same refusal message."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, force=True, exe="sd")
+    # Assert
+    assert "--force" in argv
+
+
+def test_neither_flag_appears_unless_asked() -> None:
+    """Non-vacuity: one that always appended both would pass the two above."""
+    # Arrange
+    delegation = _install_delegation()
+    # Act
+    argv = backend.build_argv(delegation, name="sac.x", yes=True, exe="sd")
+    # Assert
+    assert not {"--adopt", "--force"} & set(argv)

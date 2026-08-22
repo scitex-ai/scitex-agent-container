@@ -383,10 +383,11 @@ NEVER_SYNCED: dict[str, str] = {
         "skips or replays frames with no error anywhere"
     ),
     "acl_deny_notify_log": (
-        "a per-host rate-limit ledger (last_notified_at). Merging it "
-        "suppresses a deny-notification on a host that never sent one — "
-        "the failure is a notification that does NOT arrive, which is "
-        "invisible by construction"
+        "a per-host rate-limit ledger (last_notified_at) — since 2026-08-20 a "
+        "per-host PostgreSQL store rather than a SQLite table, which does not "
+        "change the ruling. Merging it suppresses a deny-notification on a "
+        "host that never sent one — the failure is a notification that does "
+        "NOT arrive, which is invisible by construction"
     ),
     "instance_heartbeats": (
         "the per-sample heartbeat STREAM, thousands of rows per agent per "

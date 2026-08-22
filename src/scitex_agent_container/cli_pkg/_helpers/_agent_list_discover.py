@@ -162,14 +162,8 @@ def defined_agent_rows(
             pass
         if machine and labels.get("machine") != machine:
             continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
+        if capability and not _al._label_capability_matches(labels, capability):
+            continue
         if group and not _al._label_group_matches(labels, group):
             continue
         # FIX (no double-parse): a spec that ``load_config`` accepted is
@@ -450,14 +444,8 @@ def remote_instance_rows(
             labels = {}
         if machine and labels.get("machine") != machine:
             continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
+        if capability and not _al._label_capability_matches(labels, capability):
+            continue
         if group and not _al._label_group_matches(labels, group):
             continue
         candidates.append(

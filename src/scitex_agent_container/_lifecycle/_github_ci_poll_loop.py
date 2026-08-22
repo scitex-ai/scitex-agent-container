@@ -134,11 +134,21 @@ async def github_ci_poll_loop(
         # the listen server even after bind.
         for repo in list(repos_source()):
             for pr in list_prs(repo):
+                head_sha = pr.get("head_sha", "")
                 deliver(
                     repo,
                     pr["number"],
-                    pr.get("head_sha", ""),
-                    conclusion_for(repo, pr["number"]),
+                    head_sha,
+                    # PASS THE SHA WE ALREADY HAVE. ``pr_ci_conclusion`` falls
+                    # back to its own ``gh api repos/<r>/pulls/<n>`` lookup when
+                    # ``head_sha`` is empty, and ``list_open_prs`` has ALREADY
+                    # returned it in the very dict being read on this line — so
+                    # omitting it bought a third REST call per PR per tick for
+                    # a value sitting in local memory. The source comment on
+                    # ``pr_ci_conclusion`` asked for this ("the poll loop
+                    # already holds it ... and should pass it to save the
+                    # call"); it had simply never been done.
+                    conclusion_for(repo, pr["number"], head_sha=head_sha),
                     pr_body=pr.get("body", ""),
                 )
 
@@ -157,7 +167,7 @@ async def github_ci_poll_loop(
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # stx-allow: fallback (loop must survive a transient GitHub/registry error; logged, retried next tick)
+            except Exception as exc:  # stx-allow: fallback (loop must survive a transient GitHub/registry error; retried next tick). SINK, measured 2026-08-20: logger.warning on this module's logger, which reaches journald because the poller only ever runs inside `sac listen` and sac-listen.service is a systemd user unit with the default StandardOutput=journal — `journalctl --user -u sac-listen.service | grep github_ci_poll_loop` is the check, and it is how the abandoned-tick ERRO on the line below was actually found today.
                 logger.warning(
                     "github_ci_poll_loop: tick failed (%s); retry next tick", exc
                 )
