@@ -21,7 +21,6 @@ from ._parsers import (
     parse_claude,
     parse_comms,
     parse_container,
-    parse_context_management,
     parse_extensions,
     parse_health,
     parse_hooks,
@@ -278,19 +277,28 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # back-compat consumers and populated from the new homes.
     claude_spec = parse_claude(spec)
     apptainer_spec = parse_apptainer(spec)
-    # Role-based session-continuity default ("fresh by default, opt-in
-    # continue", 2026-06-22). ``claude.session`` now defaults to ``fresh``
-    # (parse_claude) so experiment capsules — which carry no coordinator
-    # role — start hermetic. But LONG-LIVED coordinator agents
-    # (lead/head/worker/telegrammer/project-maintainer/…) must keep their
-    # conversation across restarts. Those specs are hand-deployed OUTSIDE
-    # this repo and none of them set ``claude.session``, so we map an
-    # OMITTED field back to ``continue`` BY ROLE here — the one place that
-    # sees both the ``metadata.labels.role`` and the env-injected fleet
-    # role. An EXPLICIT ``session:`` (top-level or nested) is authored
-    # intent and is left untouched (so ``session: fresh`` on a coordinator
-    # stays fresh); a later CLI ``--continue`` / ``--fresh`` still wins by
-    # mutating ``config.claude.session`` after load.
+    # Session-continuity default for an OMITTED ``session:`` — ``continue``,
+    # unconditionally (operator 2026-08-18: 「スペックは全てレジュームで」).
+    #
+    # THIS USED TO BE ROLE-BASED and defaulted to ``fresh``; the polarity was
+    # inverted deliberately, so do not read the role lookup below as a gate.
+    # The old rule was an ALLOWLIST — a role had to be enumerated to keep its
+    # memory — and scitex-hub's ``product-lead-orchestrator`` matched neither
+    # the set nor any prefix, so it silently resolved to ``fresh`` and lost a
+    # day of working memory on restart. 91 of 117 live specs omit the field,
+    # so a default nobody chose was deciding the fleet's memory.
+    #
+    # ``_role`` is still resolved and still passed, because this is the one
+    # place that sees both ``metadata.labels.role`` and the env-injected fleet
+    # role, and ``default_session_for_role`` keeps the parameter for callers
+    # that ask the role question directly — but it no longer DECIDES.
+    #
+    # An EXPLICIT ``session:`` (top-level or nested) is authored intent and is
+    # left untouched (so ``session: fresh`` on a coordinator stays fresh); a
+    # later CLI ``--continue`` / ``--fresh`` still wins by mutating
+    # ``config.claude.session`` after load — that per-start override is the
+    # sanctioned escape hatch, and a failed start now says so (see
+    # ``_lifecycle/_start_failure_diag.fresh_retry_hint``).
     _session_authored = (
         spec.get("session") is not None
         or (spec.get("claude") or {}).get("session") is not None
@@ -414,7 +422,6 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         startup_prompts=startup_prompts,
         exclude_hooks=exclude_hooks,
         exclude_skills=exclude_skills,
-        context_management=parse_context_management(spec),
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
         mcp_servers=mcp_servers,

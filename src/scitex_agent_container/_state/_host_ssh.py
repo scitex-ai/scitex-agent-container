@@ -211,7 +211,30 @@ def build_ssh_argv(
         # compute-node bashrc kills (see docstring). The preamble is
         # responsible for sourcing Lmod (or any other env layer) on
         # its own.
-        inner = f"{preamble} && {shlex.join(list(command))}"
+        # SPACE-JOIN, NOT shlex.join — measured 2026-08-17, rc=127 on every
+        # preamble peer, which took scitex-hub down and unstartable by ANY
+        # path (agent_start from a container and agent_spawn via the host
+        # broker both die here).
+        #
+        # THE BUG WAS TWO INDIVIDUALLY-CORRECT QUOTINGS COMPOSING WRONGLY.
+        # ssh word-joins everything after the host and hands it to the remote
+        # shell, so a caller that wants ONE remote token must pre-quote it —
+        # which `_spec_handoff.ssh_runner` correctly does, passing a single
+        # element like `sh -c 'echo REACHED'`. `shlex.join` then quoted that
+        # already-quoted element AGAIN, so the remote bash saw one word and
+        # looked for a FILE by that name:
+        #
+        #   bash: line 1: sh -c 'echo REACHED': command not found
+        #
+        # Each layer's docstring correctly explained why IT quoted; neither
+        # knew the other did too.
+        #
+        # The join must match the NON-PREAMBLE branch below (`argv +=
+        # list(command)`, which ssh then space-joins), because that branch is
+        # the contract every caller was already written against. Making the
+        # two agree is the fix; quoting here and not there is what made a
+        # peer's behaviour depend on whether it happened to carry a preamble.
+        inner = f"{preamble} && {' '.join(command)}"
         argv.append(f"bash -c {shlex.quote(inner)}")
     else:
         argv += list(command)

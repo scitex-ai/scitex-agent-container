@@ -28,7 +28,7 @@ async def test_loop_disabled_when_gh_not_ready_delivers_nothing():
         ready_check=lambda: False,
         repos_source=lambda: ["o/r"],
         list_prs=lambda repo: [{"number": 1, "head_sha": "s", "body": ""}],
-        conclusion_for=lambda repo, pr: "success",
+        conclusion_for=lambda repo, pr, *, head_sha="": "success",
         deliver=lambda *a, **k: calls.append(a),
     )
     # Assert
@@ -50,7 +50,7 @@ async def test_loop_disabled_via_env_var_delivers_nothing():
             ready_check=lambda: True,
             repos_source=lambda: ["o/r"],
             list_prs=lambda repo: [{"number": 1, "head_sha": "s", "body": ""}],
-            conclusion_for=lambda repo, pr: "success",
+            conclusion_for=lambda repo, pr, *, head_sha="": "success",
             deliver=lambda *a, **k: calls.append(a),
         )
     finally:
@@ -72,7 +72,7 @@ async def test_loop_delivers_open_pr_verdict_in_one_tick():
             ready_check=lambda: True,
             repos_source=lambda: ["o/r"],
             list_prs=lambda repo: [{"number": 7, "head_sha": "abc", "body": ""}],
-            conclusion_for=lambda repo, pr: "success",
+            conclusion_for=lambda repo, pr, *, head_sha="": "success",
             deliver=lambda repo, pr, head_sha, conclusion, **k: calls.append(
                 (repo, pr, head_sha, conclusion)
             ),
@@ -101,7 +101,7 @@ async def test_loop_survives_a_tick_exception_then_cancels_cleanly():
             ready_check=lambda: True,
             repos_source=lambda: ["o/r"],
             list_prs=boom,
-            conclusion_for=lambda repo, pr: "success",
+            conclusion_for=lambda repo, pr, *, head_sha="": "success",
             deliver=lambda *a, **k: None,
         )
     )
@@ -123,7 +123,7 @@ async def test_loop_honours_cancellation_cleanly():
             ready_check=lambda: True,
             repos_source=lambda: [],
             list_prs=lambda repo: [],
-            conclusion_for=lambda repo, pr: "none",
+            conclusion_for=lambda repo, pr, *, head_sha="": "none",
             deliver=lambda *a, **k: None,
         )
     )
@@ -133,3 +133,87 @@ async def test_loop_honours_cancellation_cleanly():
     # Assert — the finally must re-raise CancelledError, not swallow it.
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# --- the tick must not re-fetch a sha it is already holding ------------
+# ``list_open_prs`` returns head_sha, and ``pr_ci_conclusion`` falls back to
+# its own `gh api repos/<r>/pulls/<n>` REST call when head_sha is empty. So
+# omitting it costs one extra REST call PER PR PER TICK for a value already
+# in local memory — measured 2026-08-20 as ~1,560 wasted calls/hour against
+# a 5,000/hour budget, on a pool that was fully exhausted at the time.
+#
+# WHY THIS ASSERTS THE SHA AND NOT "the call happened". A test that merely
+# accepted a `head_sha` keyword would pass against a loop that forwards the
+# empty string — which is precisely the bug, since empty is what triggers
+# the fallback fetch. The captured VALUE is the only thing that separates
+# "wired" from "wired to nothing".
+
+
+@pytest.mark.asyncio
+async def test_tick_forwards_the_head_sha_it_already_has_to_the_conclusion_call():
+    # Arrange — capture what the loop hands the conclusion seam.
+    seen: list = []
+
+    def conclusion_for(repo, pr, *, head_sha=""):
+        seen.append(head_sha)
+        return "success"
+
+    task = asyncio.create_task(
+        github_ci_poll_loop(
+            poll_interval_s=0.05,
+            ready_check=lambda: True,
+            repos_source=lambda: ["o/r"],
+            list_prs=lambda repo: [
+                {"number": 7, "head_sha": "deadbeef", "body": ""}
+            ],
+            conclusion_for=conclusion_for,
+            deliver=lambda *a, **k: None,
+        )
+    )
+    # Act
+    await asyncio.sleep(0.08)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # Assert — the sha from list_prs, not "" (which would re-fetch it).
+    assert "deadbeef" in seen
+
+
+# --- the post budget must fit inside the tick that starts it -----------
+# post_turn defaults to timeout_s=600.0 while the tick is bounded at
+# max(poll_interval_s, 30.0) = 300s, and run_blocking_or ABANDONS rather
+# than cancels — so one unresponsive peer could leave two ticks alive at
+# once. The dedup key hides the duplicate, so this cannot be caught by
+# looking for symptoms; it has to be pinned as an invariant.
+
+
+def test_verdict_post_budget_fits_inside_the_default_tick_bound():
+    # Arrange
+    from scitex_agent_container._lifecycle._github_ci_poll_loop import (
+        DEFAULT_CI_POLL_INTERVAL_S,
+        VERDICT_POST_TIMEOUT_S,
+    )
+
+    # Act
+    tick_bound = max(DEFAULT_CI_POLL_INTERVAL_S, 30.0)
+    # Assert
+    assert VERDICT_POST_TIMEOUT_S < tick_bound
+
+
+def test_verdict_post_budget_is_shorter_than_the_transport_default():
+    # Arrange — the whole defect is that the transport's own default
+    # (600s) is longer than the tick that wraps it.
+    import inspect
+
+    from scitex_agent_container._lifecycle._github_ci_poll_loop import (
+        VERDICT_POST_TIMEOUT_S,
+    )
+    from scitex_agent_container._network.peer import post_turn
+
+    transport_default = inspect.signature(post_turn).parameters["timeout_s"].default
+    # Act
+    bounded = VERDICT_POST_TIMEOUT_S
+    # Assert
+    assert bounded < transport_default

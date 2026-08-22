@@ -14,11 +14,21 @@ Two escape routes exist and both are closed:
    time, so a fixture that only sets ``$HOME`` CANNOT redirect them — it
    would read and write the live fleet while looking isolated.
 
-2. **The board.** Every scitex-todo call takes an explicit ``store=``.
+2. **The board.** Every scitex-cards call takes an explicit ``store=``.
+   That explicit argument is the PRIMARY isolation and it is what these
+   tests actually rely on.
+
    Belt and braces, :func:`isolated_board` ALSO points
-   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so even a call
-   that forgot to pass ``store=`` lands in the tmp file rather than on the
-   real 1,400-card board.
+   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so a call that
+   forgot to pass ``store=`` would land in the tmp file rather than on the
+   real board. WARNING, 2026-08-16: that second net is now INERT —
+   scitex_cards does not read ``SCITEX_TODO_TASKS_YAML_SHARED`` (its axis
+   is ``SCITEX_CARDS_DB``), so a forgotten ``store=`` would no longer be
+   caught. The env var is left as-is rather than renamed on a guess:
+   pointing it at the right variable without checking what scitex_cards
+   actually resolves would restore the APPEARANCE of a safety net while a
+   forgotten ``store=`` reached the live board. Verify the resolution
+   first, then re-arm it.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
 and writes, and the state.db is a real SQLite file with the real schema.
@@ -163,13 +173,6 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
-
-  context_management:
-    trigger_at_percent: 70.0
-    strategy: noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
-    state_file: ~/.scitex/agent-container/state/<agent>.json
 
   a2a:
     host: 127.0.0.1
@@ -500,7 +503,12 @@ def add_card(
     ``scitex-todo`` rejects an owner-less card outright ("creator+assignee
     are mandatory ... no silent fallback"), so ``owner`` is required.
     """
-    from scitex_todo import _store
+    # scitex_cards, not scitex_todo: v0.41.0 deleted that module outright.
+    # This is a HARD import on purpose — the callers guard with
+    # importorskip("scitex_cards"), so reaching here means the package IS
+    # installed and a failure here is a real broken path, not an absent
+    # optional peer.
+    from scitex_cards import _store
 
     _store.add_task(
         store,

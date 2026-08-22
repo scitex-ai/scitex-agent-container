@@ -19,7 +19,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 
 import click
@@ -30,31 +29,15 @@ from ..config import load_config
 from ..config._host import resolve_hostname
 from ..config._resolve import resolve_with_prefix
 from ._helpers import console
+from ._priority_ssh import _SSH_PROBE_OPTS  # noqa: F401  (re-export)
+from ._priority_ssh import _SSH_START_TIMEOUT  # noqa: F401  (re-export)
+from ._priority_ssh import peer_ssh_argv, probe_ssh, ssh_start_agent
 
-# Lightweight SSH reachability options — no TTY, short timeout, no host-key prompt.
-_SSH_PROBE_OPTS = [
-    "-o",
-    "ConnectTimeout=3",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "LogLevel=ERROR",
-]
-
-
-def _probe_ssh(host: str) -> bool:
-    """Return True if ``host`` is reachable via SSH (``hostname`` exits 0)."""
-    try:
-        result = subprocess.run(
-            ["ssh"] + _SSH_PROBE_OPTS + [host, "hostname"],
-            capture_output=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
+# Old private spellings, kept so existing imports and call sites resolve
+# unchanged after the ssh half moved to ._priority_ssh.
+_peer_ssh_argv = peer_ssh_argv
+_probe_ssh = probe_ssh
+_ssh_start_agent = ssh_start_agent
 
 
 def _priority_report(
@@ -241,43 +224,6 @@ def priority_check(
 # singleton-reconcile: sweep all locally registered agents and yield any
 # that have a higher-priority reachable host.  (fleet issue #250)
 # ---------------------------------------------------------------------------
-
-_SSH_START_TIMEOUT = 30  # seconds to wait for remote sac agent start
-
-
-def _ssh_start_agent(host: str, agent_name: str) -> bool:
-    """SSH to *host* and run ``sac agent start <agent_name>`` in the background.
-
-    Returns True if the remote command exited 0.
-    """
-    # Singleton-reconcile fans out across many hosts in parallel; share
-    # one ssh master per peer so MaxSessions / MaxStartups stay happy.
-    from .._state.host_config import ssh_control_options
-
-    cmd = [
-        "ssh",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "LogLevel=ERROR",
-        *ssh_control_options(),
-        host,
-        f"sac agent start {agent_name}",
-    ]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=_SSH_START_TIMEOUT,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
-
 
 @click.command("reconcile-singletons")
 @click.option(

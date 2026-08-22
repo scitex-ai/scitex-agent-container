@@ -76,10 +76,69 @@ def _render(record: dict[str, Any], out) -> None:
         )
 
 
-def register_keepalive_command(group: click.Group) -> None:
-    """Attach the ``keepalive`` subcommand onto ``group``."""
+def format_peer_lines(peers: "list[str]") -> list[str]:
+    """Render ``peers`` as the ``--help`` block listing what ``--to`` takes.
 
-    @group.command("keepalive")
+    Pure, so the rendering can be asserted without a host's real
+    ``config.yaml`` deciding the expected output — a test that reads the
+    live table would assert an environmental fact rather than a property
+    of this function.
+    """
+    if not peers:
+        return []
+    lines = ["Registered peers --to accepts on THIS host:"]
+    for name in sorted(peers):
+        # A wildcard row (``spartan-*``) is a TEMPLATE for per-node keys,
+        # not a name anyone can type. Printing it bare would repeat the
+        # defect this listing exists to fix: help that names something
+        # the command rejects.
+        if "*" in name:
+            lines.append(f"  {name}  (pattern — substitute a real node name)")
+        else:
+            lines.append(f"  {name}")
+    return lines
+
+
+def _registered_peer_lines() -> list[str]:
+    """The peer keys ``--to`` will actually accept, for ``--help``.
+
+    ``--to`` is documented as "a peer key from config.yaml", and the
+    shipped examples named ``compute-04`` and ``laptop`` — neither of
+    which is a key on any host. Copy-pasting the documentation therefore
+    failed. Reading the real table at render time means the help cannot
+    drift from what the command accepts.
+
+    Returns ``[]`` on ANY failure. ``--help`` must render on a machine
+    with no config, an unreadable config or a malformed one; a help
+    screen that raises is worse than a help screen that omits a hint.
+    """
+    try:
+        from .._state.host_config import load as load_host_config
+
+        peers = list(load_host_config().peers)
+    except Exception:  # stx-allow: fallback (reason: --help must never raise; an unreadable/absent config yields no hint rather than a crash)
+        return []
+    return format_peer_lines(peers)
+
+
+class _PeerListingCommand(click.Command):
+    """A command whose ``--help`` ends with the peer keys ``--to`` takes."""
+
+    def format_epilog(self, ctx, formatter) -> None:
+        super().format_epilog(ctx, formatter)
+        lines = _registered_peer_lines()
+        if not lines:
+            return
+        formatter.write_paragraph()
+        with formatter.indentation():
+            for line in lines:
+                formatter.write_text(line)
+
+
+def register_keepalive_command(group: click.Group) -> None:
+    """Attach ``send-credentials`` (and its ``keepalive`` alias) onto ``group``."""
+
+    @click.command("send-credentials", cls=_PeerListingCommand)
     @click.option(
         "--account",
         "account_labels",
@@ -109,7 +168,9 @@ def register_keepalive_command(group: click.Group) -> None:
         required=True,
         help=(
             "Peer to push ACCESS-ONLY material to (repeatable). Must be a "
-            "peer key from ~/.scitex/agent-container/config.yaml."
+            "peer key from ~/.scitex/agent-container/config.yaml — this "
+            "--help lists the ones registered here, and `sac host list` "
+            "shows them with their ssh targets."
         ),
     )
     @click.option(
@@ -157,6 +218,20 @@ def register_keepalive_command(group: click.Group) -> None:
         ),
     )
     @click.option(
+        "--optional-peer",
+        "optional_peers",
+        multiple=True,
+        metavar="PEER",
+        help=(
+            "Declare a peer as INTERMITTENT: it is still pushed to, and any "
+            "failure is still printed, but its failure does not fail the run. "
+            "For laptops and anything else that is legitimately off. Must "
+            "also appear in --to. Repeatable. Nothing is implicit here — a "
+            "peer is optional only because the command line says so, so the "
+            "unit file states exactly which hosts may be absent."
+        ),
+    )
+    @click.option(
         "--json",
         "as_json",
         is_flag=True,
@@ -171,6 +246,7 @@ def register_keepalive_command(group: click.Group) -> None:
         remote_path: str | None,
         force: bool,
         sweep: bool,
+        optional_peers: tuple[str, ...],
         as_json: bool,
     ) -> None:
         """Copy this host's CURRENT access token to peers, access-only.
@@ -190,10 +266,10 @@ def register_keepalive_command(group: click.Group) -> None:
         sha256 fingerprints.
 
         \b
-        Examples:
-          $ sac accounts keepalive --account alpha-example-com --to compute-04
-          $ sac accounts keepalive --all --to compute-04 --to laptop
-          $ sac accounts keepalive --all --to compute-04 --sweep
+        Examples (peer keys below are real; run --help to see THIS host's):
+          $ sac accounts send-credentials --account alpha-example-com --to scitex-compute-04
+          $ sac accounts send-credentials --all --to scitex-compute-04 --to ywata-note-win
+          $ sac accounts send-credentials --all --to scitex-compute-04 --sweep
         """
         import json as _json
         import sys
@@ -230,10 +306,23 @@ def register_keepalive_command(group: click.Group) -> None:
                 err=True,
             )
 
+        # An optional peer must be one we are actually pushing to. Silently
+        # accepting a name that is not in --to would let a typo disarm
+        # nothing while looking like it disarmed something.
+        optional = set(optional_peers)
+        unknown_optional = sorted(optional - set(peers))
+        if unknown_optional:
+            raise click.UsageError(
+                "--optional-peer names host(s) absent from --to: "
+                f"{', '.join(unknown_optional)}. An optional peer must also "
+                "be a target, or the declaration applies to nothing."
+            )
+
         floor = MIN_VALIDITY_S if min_validity is None else min_validity
         records: list[dict[str, Any]] = []
         verified_peers: list[str] = []
         failed = False
+        tolerated: list[str] = []
 
         for account_label in accounts:
             for peer in peers:
@@ -256,17 +345,23 @@ def register_keepalive_command(group: click.Group) -> None:
                     KeepaliveError,
                     SnapshotPushError,
                 ) as exc:  # stx-allow: fallback (reason: see inline comment)
-                    failed = True
+                    is_optional = peer in optional
+                    if is_optional:
+                        tolerated.append(f"{peer}/{account_label}")
+                    else:
+                        failed = True
                     records.append(
                         {
                             "account": account_label,
                             "peer": peer,
                             "ok": False,
                             "error": str(exc),
+                            "optional": is_optional,
                         }
                     )
+                    label = "FAILED (optional peer)" if is_optional else "FAILED"
                     click.echo(
-                        f"  {peer:20s}  {account_label}: FAILED — {exc}", err=True
+                        f"  {peer:20s}  {account_label}: {label} — {exc}", err=True
                     )
                     continue
 
@@ -305,6 +400,18 @@ def register_keepalive_command(group: click.Group) -> None:
             for line in str(output).splitlines():
                 click.echo(f"    {line}", err=True)
 
+        # A tolerated failure must never be a silent one. The whole point of
+        # declaring a peer optional is to keep the RED meaningful for the
+        # always-on hosts; that only works if the run still says out loud
+        # what it forgave, and how many.
+        if tolerated:
+            click.echo(
+                f"  TOLERATED: {len(tolerated)} failure(s) on declared "
+                f"optional peer(s) — {', '.join(tolerated)}. Exit stays 0 for "
+                "these; they were declared intermittent with --optional-peer.",
+                err=True,
+            )
+
         if as_json:
             click.echo(  # stx-allow: STX-IO006
                 _json.dumps(records, ensure_ascii=False, indent=2)
@@ -313,5 +420,47 @@ def register_keepalive_command(group: click.Group) -> None:
         if failed:
             sys.exit(1)
 
+    group.add_command(account_keepalive, "send-credentials")
 
-__all__ = ["register_keepalive_command"]
+    # ``keepalive`` is a PUBLISHED contract, so this is a migration, not a
+    # rename: the old name keeps WORKING and is merely hidden from --help.
+    # A redirect that printed "renamed to X" and exited would break the
+    # systemd units and operator muscle memory that already call it, which
+    # is the opposite of what a rename is for. Remove the alias only once
+    # nothing on any host invokes it.
+    legacy = click.Command(
+        name="keepalive",
+        callback=_deprecated(account_keepalive.callback),
+        params=list(account_keepalive.params),
+        help=account_keepalive.help,
+        short_help="Deprecated alias for send-credentials.",
+        epilog=account_keepalive.epilog,
+        hidden=True,
+    )
+    group.add_command(legacy, "keepalive")
+
+
+def _deprecated(callback):
+    """Wrap ``callback`` so the legacy name says so — on stderr, then runs.
+
+    stderr, not stdout: ``--json`` consumers parse stdout, and a warning
+    that lands there would turn a working script into a JSON parse error.
+    That is the whole failure this alias exists to prevent.
+    """
+    import functools
+
+    @functools.wraps(callback)
+    def _run(*args, **kwargs):
+        click.echo(
+            "warning: `sac accounts keepalive` is now "
+            "`sac accounts send-credentials` — it copies credentials to "
+            "peers, which is what the new name says. The old name still "
+            "works and will be removed once nothing calls it.",
+            err=True,
+        )
+        return callback(*args, **kwargs)
+
+    return _run
+
+
+__all__ = ["format_peer_lines", "register_keepalive_command"]

@@ -65,8 +65,23 @@ def disk_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
 
 
 @pytest.fixture
-def comms_env(disk_tmp: Path) -> Iterator[dict[str, Any]]:
-    """Isolated state.db + HOME + registry + runtime roots.
+def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
+    """Isolated state.db + HOME + registry + runtime roots + PostgreSQL schema.
+
+    ``pg_schema`` FIRST, and it is not decoration. When this fixture was
+    written the comms state lived entirely in the ``state.db`` below, so
+    isolating a tmp SQLite file and HOME was the whole job. The ACL tables
+    have since moved to the per-host PostgreSQL store, and without this
+    dependency the deny path writes its rate-limit rows into the LIVE fleet
+    store — measured 2026-08-20, ``alpha``/``beta``/``gamma`` rows in
+    production, and a 30-minute cool-down that then made
+    ``test_listen_denied_send_persists_two_channel_events_rows`` fail on
+    every re-run within the window.
+
+    Ordered before ``disk_tmp`` deliberately: ``pg_schema`` connects while
+    HOME is still real, and this fixture goes on to sandbox HOME. libpq
+    finds its password file under HOME, so the reverse order strands the
+    schema's own CREATE.
 
     Touches every read-path the comms code may consult (env var,
     module-level constant) so neither code path leaks into the

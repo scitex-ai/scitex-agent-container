@@ -211,6 +211,13 @@ def _refuse_uncontained_send(name: str) -> NoReturn:
     ``~/.claude/projects/`` store, so a host-side resume either finds
     nothing or resumes some unrelated host session — which is worse than
     an error, because it looks like it worked.
+
+    THIS MESSAGE IS FOR A DEFINED AGENT ONLY. A name that was never an
+    agent reaches the same dead end, and until 2026-08-20 it got this
+    same text — which describes the other cause in vocabulary that
+    presupposes the agent EXISTS ("the agent's live session", "(re)start
+    the agent"). ``_refuse_unknown_agent`` handles that case; the caller
+    decides which applies.
     """
     raise click.ClickException(
         f"agent {name!r}: no A2A port is recorded, so this turn has no "
@@ -224,6 +231,99 @@ def _refuse_uncontained_send(name: str) -> NoReturn:
         f"`sac agents start {name} -y` — then re-send. Verify with "
         f"`sac agents list {name} --json`: a2a_port must be non-null.\n"
         f"  State dir: {state_dir_for(name)}"
+    )
+
+
+def _is_known_agent(name: str) -> bool:
+    """Whether ``name`` is an agent AT ALL — a spec on disk, or any row.
+
+    DELIBERATELY BROADER than "running" and broader than "reachable". A
+    stopped agent, an agent whose row is tombstoned, and one recorded
+    with ``a2a_port=None`` are all KNOWN — they exist and the operator
+    can act on them, so the port-oriented refusal is the right advice.
+    Only a name with no spec in the agents/ cascade AND no ``instances``
+    row it has ever had is unknown.
+
+    The two halves are both needed and neither implies the other: an
+    agent defined but never started has a spec and no row, and a row can
+    outlive (or arrive without) a locally visible spec — a cross-host
+    agent's row is written into this host's store by dispatch/sync while
+    its spec lives on the peer. Checking only one half would call a real
+    agent nonexistent, which is the same class of wrong answer this
+    whole change exists to remove.
+    """
+    from ..config._resolve import enumerate_agent_names
+
+    # `enumerate_agent_names` and NOT `_discover_defined_agents`: the
+    # latter hardcodes its roots (project scope + ~/.scitex/.../agents)
+    # and does not honour SCITEX_AGENT_CONTAINER_YAML_DIRS, so an agent
+    # reachable through the operator-env cascade would be reported
+    # NONEXISTENT — the precise wrong answer this function exists to
+    # stop. It only stats `<dir>/<name>/spec.{yaml,yml}`, so the refusal
+    # path still parses no YAML on its way to refusing.
+    #
+    # It can also RAISE (AmbiguousRegistryScope: both the project-local
+    # and fleet registries exist and $SAC_AGENT_SCOPE is unset). Treat
+    # that as KNOWN, not as unknown. "I could not determine whether this
+    # agent exists" is the third value, and collapsing it into "it does
+    # not exist" would make this function assert the very kind of
+    # unestablished cause it was written to remove — and would turn a
+    # clean refusal into an unrelated crash on any host with both
+    # registries. Erring toward the port-oriented message keeps the
+    # pre-existing behaviour whenever existence is undecidable.
+    try:
+        if name in enumerate_agent_names():
+            return True
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        return True
+    from .._state.state_db import open_db
+
+    with open_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM instances WHERE name = ? LIMIT 1", (name,)
+        ).fetchone()
+    return row is not None
+
+
+def _refuse_unknown_agent(name: str) -> NoReturn:
+    """Refuse a send to a name that was never an agent.
+
+    Delivery declines identically whether an agent is defined-but-
+    unreachable or was never defined at all, so both land at the same
+    dead end. Until 2026-08-20 both also got the SAME message —
+    ``_refuse_uncontained_send``'s — which says "no A2A port is
+    recorded" and prescribes ``sac agents start <name>``. Every word of
+    that presupposes the agent exists.
+
+    MEASURED: ``ci-watch`` dispatched to five names
+    (``proj-scitex-{stats,str,types,dict,datetime}``) 351 times, each
+    refused here, 0 successes. A peer read the text, took the named
+    cause at face value, and reported the failures as instances of an
+    unrelated port-registration defect then under active investigation.
+    The state DB showed those five with ``definitions=0`` and
+    ``instances=0`` EVER — not stopped, not tombstoned, never
+    registered. The remedy was trusted precisely because it was
+    specific, and it pointed at the wrong thing.
+
+    A refusal must not name a cause it has not established. Where two
+    states share one symptom, the message says which one was observed.
+    """
+    raise click.ClickException(
+        f"agent {name!r}: NOT DEFINED — no spec.yaml for this name under "
+        f"any agents/ tree (project-scope .scitex/agent-container/agents/ "
+        f"or ~/.scitex/agent-container/agents/).\n"
+        f"  This is NOT a missing-port problem and NOT a stopped agent: "
+        f"there is nothing to (re)start, because this name has never been "
+        f"an agent. Starting it is not the fix and will fail the same way.\n"
+        f"  Fix: check the name for a typo (`sac agents list`), or define "
+        f"the agent first (`sac agents create {name}`), then start it, "
+        f"then re-send.\n"
+        f"  If a SCHEDULED JOB is sending here, it is dispatching to a name "
+        f"that does not exist — fix the job's target list rather than this "
+        f"agent.\n"
+        f"  (There is still deliberately NO host-side fallback: every sac "
+        f"agent runs inside {CONTAINER_ENGINE}, so sac never runs the turn "
+        f"on the bare host. That guarantee holds for both causes.)"
     )
 
 
@@ -340,4 +440,11 @@ def send(
 
     # Every delivery path declined. Refuse — do NOT run the turn on the
     # bare host. See _refuse_uncontained_send for what used to happen here.
+    #
+    # Two different states land here and they need different remedies, so
+    # establish WHICH before naming a cause: an agent that exists but has
+    # no reachable port, versus a name that was never an agent at all.
+    # Telling the second to `sac agents start` is advice that cannot work.
+    if not _is_known_agent(name):
+        _refuse_unknown_agent(name)
     _refuse_uncontained_send(name)

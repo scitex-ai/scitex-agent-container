@@ -426,6 +426,79 @@ def test_maybe_broker_in_sif_forwards_foreground_to_body(sif_env, listen_env) ->
 
 
 # ---------------------------------------------------------------------------
+# HTTP 202 accepted-but-in-flight is UNKNOWN, not failure
+#
+# Measured 2026-08-15: starting a stopped `scitex-dev` raised RuntimeError and
+# reported exit 1 while the agent came up fine and answered on its a2a port
+# seconds later. The old code read `if rc != 0: raise`, and a 202 body carries
+# no `returncode` at all — so `None != 0` sent the UNKNOWN case down the
+# failure branch. These three pin all three arms of the signal.
+# ---------------------------------------------------------------------------
+
+_ACCEPTED_202 = (
+    b'{"name":"child","status":"accepted","phase":"launch","deadline_s":30.0,'
+    b'"poll":"/agents/child/status",'
+    b'"detail":"still in flight at the 30s server deadline. This is NOT a '
+    b'failure: the spawn is running."}'
+)
+
+
+def test_in_flight_spawn_does_not_raise(sif_env, listen_env) -> None:
+    # Arrange
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(_ACCEPTED_202, status=202)
+    # Act — must not raise; the host said the spawn is still running.
+    result = maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+    # Assert
+    assert result is True
+
+
+def test_in_flight_spawn_returns_true_so_caller_skips_local_start(
+    sif_env, listen_env
+) -> None:
+    # Arrange — False would send the caller down the LOCAL start path against
+    # an agent that is already launching, i.e. start a SECOND one. That is the
+    # damage `_spawn_client` warns about on this exact 202 branch.
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(_ACCEPTED_202, status=202)
+    # Act
+    brokered = maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+    # Assert
+    assert brokered is True, "in-flight must count as brokered, never as 'do it locally'"
+
+
+def test_a_genuine_nonzero_returncode_still_raises(sif_env, listen_env) -> None:
+    # Arrange — the failure arm must survive the fix; this is the control that
+    # proves the new branch did not simply swallow every bad outcome.
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(b'{"name":"child","returncode":3}')
+
+    def _act():
+        return maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+
+    # Act
+    raised = pytest.raises(RuntimeError, match="returncode=3")
+    # Assert
+    with raised:
+        _act()
+
+
+# ---------------------------------------------------------------------------
 # agent_start integration — in-SIF detection redirects to broker
 # ---------------------------------------------------------------------------
 

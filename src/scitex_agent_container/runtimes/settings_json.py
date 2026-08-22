@@ -318,8 +318,9 @@ def setup_settings_json(
     # Register sac-statusline as the statusLine command so the JSON payload
     # is persisted to ~/.scitex/agent-container/runtime/statusline/<agent>.json each
     # turn. sac agent status prefers this authoritative source over the JSONL
-    # approximation (sac issue #52). No-op if claude-hud is absent — the
-    # script falls back to a minimal echo.
+    # approximation (sac issue #52). sac-statusline both persists the payload
+    # and renders the line itself, so this is the only statusLine command an
+    # agent ever needs and it depends on nothing outside sac.
     settings["statusLine"] = {"type": "command", "command": "sac-statusline"}
 
     if not settings:

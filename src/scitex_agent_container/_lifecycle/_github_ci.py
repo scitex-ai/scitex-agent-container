@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable
+from typing import Callable, NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,71 @@ def _run_gh(args: list) -> str:
     return proc.stdout or ""
 
 
-def pr_ci_conclusion(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
+class GhProbe(NamedTuple):
+    """A gh invocation with its failure INTACT.
+
+    ``_run_gh`` deliberately flattens every failure to ``""`` — right for the
+    verdict path, where a missing answer and an unreadable one both mean "no
+    verdict this tick". It is wrong for any caller that must tell "GitHub says
+    this does not exist" from "I could not ask GitHub", because those two
+    warrant opposite actions and ``""`` is the same value for both.
+
+    Added BESIDE ``_run_gh`` rather than widening it: that function has several
+    callers who rely on the flattening, and changing its return shape to serve
+    one new caller would make every one of them handle a case they do not have.
+    """
+
+    stdout: str
+    returncode: int
+    stderr: str
+
+
+def _run_gh_probe(args: list) -> GhProbe:
+    """Run ``gh <args>`` and return stdout, exit code and stderr separately."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, check=False
+        )
+    except Exception as exc:  # stx-allow: fallback (gh missing / spawn error is UNKNOWN, not absence — see GhProbe)
+        logger.warning("_github_ci: gh probe failed to spawn: %s", exc)
+        return GhProbe("", -1, str(exc))
+    return GhProbe(proc.stdout or "", proc.returncode, proc.stderr or "")
+
+
+#: REST check-run ``conclusion`` -> the bucket vocabulary `gh pr checks`
+#: uses, so the mapping below this stays untouched. Anything unrecognised is
+#: PENDING, never SUCCESS: an unknown state must not read as green.
+_BUCKET_FOR_CONCLUSION = {
+    "success": "pass",
+    "skipped": "skipping",
+    "neutral": "skipping",
+    "failure": "fail",
+    "timed_out": "fail",
+    "action_required": "fail",
+    "startup_failure": "fail",
+    "stale": "fail",
+    "cancelled": "cancel",
+}
+
+#: REST commit-status ``state`` -> the same vocabulary. Same rule: unknown
+#: is pending, not pass.
+_BUCKET_FOR_STATE = {
+    "success": "pass",
+    "failure": "fail",
+    "error": "fail",
+    "pending": "pending",
+}
+
+
+def pr_ci_conclusion(
+    repo: str,
+    pr: int,
+    *,
+    head_sha: str = "",
+    run: GhRunner = _run_gh,
+) -> str:
     """Return the PR's overall CI conclusion.
 
     One of :data:`CONCLUSION_SUCCESS`, :data:`CONCLUSION_FAILURE`,
@@ -77,14 +141,57 @@ def pr_ci_conclusion(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
       * else (all ``pass``/``skipping``, non-empty) → ``success``
       * empty list or unparseable output → ``none`` (deliver nothing)
     """
-    raw = run(["pr", "checks", str(pr), "-R", repo, "--json", "bucket"])
+    # REST, not `gh pr checks --json bucket` (a GraphQL POST). See
+    # `list_open_prs` for the quota measurement that forced this.
+    #
+    # PARITY MATTERS HERE AND IS EASY TO GET WRONG. `gh pr checks` merges TWO
+    # GitHub concepts: check-runs (the Actions/App API) AND commit statuses
+    # (the older Status API that external CI still uses). Substituting only
+    # `/check-runs` would silently DROP the statuses — a green verdict that is
+    # green because it stopped looking. MEASURED 2026-08-19 on one open PR per
+    # repo: scitex-agent-container check_runs=8 statuses=0, but scitex-dev
+    # check_runs=16 statuses=1. The status arm is NOT hypothetical today, and
+    # even where it is empty the code must ask, because "no external CI right
+    # now" is a fleet fact and not a guarantee.
+    #
+    # The sha is fetched via REST (`pr_head_sha`, already REST in this
+    # module) when the caller does not supply one; the poll loop already
+    # holds it from `list_open_prs` and should pass it to save the call.
+    # `pr_head_sha` is defined BELOW this function, so it is resolved at
+    # call time rather than at import — Python looks the name up in the
+    # module globals when the call executes, by which point it exists.
+    sha = (head_sha or "").strip()
+    if not sha:
+        sha = pr_head_sha(repo, pr, run=run)
+    if not sha:
+        return CONCLUSION_NONE
+    buckets: set[str] = set()
+
+    raw = run(["api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100"])
     try:
-        rows = json.loads(raw) if raw.strip() else []
+        payload = json.loads(raw) if raw.strip() else {}
     except (ValueError, TypeError):
+        payload = {}
+    for cr in (payload or {}).get("check_runs", []) or []:
+        if not isinstance(cr, dict):
+            continue
+        if str(cr.get("status", "")) != "completed":
+            buckets.add("pending")
+            continue
+        buckets.add(_BUCKET_FOR_CONCLUSION.get(str(cr.get("conclusion", "")), "pending"))
+
+    raw_st = run(["api", f"repos/{repo}/commits/{sha}/status"])
+    try:
+        st = json.loads(raw_st) if raw_st.strip() else {}
+    except (ValueError, TypeError):
+        st = {}
+    for one in (st or {}).get("statuses", []) or []:
+        if not isinstance(one, dict):
+            continue
+        buckets.add(_BUCKET_FOR_STATE.get(str(one.get("state", "")), "pending"))
+
+    if not buckets:
         return CONCLUSION_NONE
-    if not isinstance(rows, list) or not rows:
-        return CONCLUSION_NONE
-    buckets = {str(r.get("bucket", "")) for r in rows if isinstance(r, dict)}
     if buckets & _FAILING_BUCKETS:
         return CONCLUSION_FAILURE
     if "pending" in buckets:
@@ -92,6 +199,34 @@ def pr_ci_conclusion(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
     if buckets:
         return CONCLUSION_SUCCESS
     return CONCLUSION_NONE
+
+
+def failing_check_names(repo: str, pr: int, *, run: GhRunner = _run_gh) -> list:
+    """Return the NAMES of the PR's checks currently in a failing bucket.
+
+    :func:`pr_ci_conclusion` asks only for ``bucket``, which is all a
+    pass/fail verdict needs — but it means the ring cannot tell "a
+    different check failed this time" from "the same check has been red
+    across every head sha", and those warrant different advice. Deliberately
+    a SEPARATE call rather than widening the hot path: this is only needed
+    on the rare escalation tick, not on every poll.
+
+    Sorted and de-duplicated. Unparseable / empty output → ``[]``, so a
+    caller can always render the escalation without a name.
+    """
+    raw = run(["pr", "checks", str(pr), "-R", repo, "--json", "name,bucket"])
+    try:
+        rows = json.loads(raw) if raw.strip() else []
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    names = {
+        str(r.get("name", "")).strip()
+        for r in rows
+        if isinstance(r, dict) and str(r.get("bucket", "")) in _FAILING_BUCKETS
+    }
+    return sorted(n for n in names if n)
 
 
 def pr_head_sha(repo: str, pr: int, *, run: GhRunner = _run_gh) -> str:
@@ -108,16 +243,21 @@ def list_open_prs(repo: str, *, run: GhRunner = _run_gh) -> list:
     for the dedup key, body for the ``Owner:`` fallback). Unparseable /
     empty output → ``[]`` (the tick polls nothing for this repo).
     """
+    # REST, not `gh pr list --json`. MEASURED 2026-08-19: this poller ran on
+    # five hosts against one account and burned 10,634 GraphQL points/hour
+    # against a 5,000/hour pool — the account was dead for 32 minutes of every
+    # hour and every agent's PR operations failed during that window. `gh pr
+    # list --json` is a GraphQL POST; `gh api repos/<r>/pulls` is REST, and
+    # REST sat at 4,300/5,000 unused throughout. Same data, the other pool.
+    #
+    # `head_sha_for` in this same module already uses REST for exactly this
+    # reason; this call site simply had not followed it.
     raw = run(
         [
-            "pr",
-            "list",
-            "-R",
-            repo,
-            "--state",
-            "open",
-            "--json",
-            "number,headRefOid,body",
+            "api",
+            f"repos/{repo}/pulls?state=open&per_page=100",
+            "--jq",
+            "[.[] | {number: .number, headRefOid: .head.sha, body: .body}]",
         ]
     )
     try:
@@ -172,6 +312,7 @@ __all__ = [
     "CONCLUSION_NONE",
     "CONCLUSION_PENDING",
     "CONCLUSION_SUCCESS",
+    "failing_check_names",
     "gh_ready",
     "list_open_prs",
     "pr_ci_conclusion",

@@ -111,7 +111,7 @@ material on the host.
 ### `~/.claude/settings.json`
 
 Per-user Claude Code settings. Common keys: `permissions`, `statusLine`
-(command used to render the bottom bar, often claude-hud),
+(command used to render the bottom bar; sac agents run `sac-statusline`),
 `enabledPlugins`. Contains no secrets but may reveal which plugins /
 skills are enabled.
 

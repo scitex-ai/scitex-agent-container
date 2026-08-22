@@ -127,7 +127,28 @@ def list_accounts(
         # credentials snapshot is MISSING but whose `account.json` remains —
         # that is a real account in a broken state and callers must still
         # see it, which a "has credentials" test alone would hide.
-        if account_dir.name.startswith("_"):
+        # DOT-PREFIXED DIRS ARE BOOKKEEPING TOO, and omitting them shipped a
+        # visible bug. Measured 2026-08-16: an editor left
+        # `.swap-backup-20260815` in the store, and `sac accounts list` — which
+        # the operator watches on a 10s refresh — rendered it as a real account:
+        #
+        #     - claude-code:.swap-backup-20260815
+        #         5h  [      unknown       ] (unknown)
+        #         ! no usage snapshot
+        #
+        # It reached that far because the structural test below DELIBERATELY
+        # admits a BARE directory: an account whose metadata and credentials
+        # are both gone is a real account in a broken state and callers must
+        # still see it. Editor litter is bare in exactly the same way, so the
+        # structural test cannot tell them apart — which is precisely why the
+        # `_` skip exists above it, and why `.` belongs in the same rule rather
+        # than in a new one. Neither prefix is a legal account name; both mark
+        # something the store keeps beside its accounts.
+        #
+        # The operator's judgement on finding it: 「dirty codebase means buggy
+        # project」. Deleting the stray file would have cleared the symptom and
+        # left the enumerator ready to do it again on the next editor crash.
+        if account_dir.name.startswith(("_", ".")):
             continue
         meta_file = account_dir / _METADATA_FILENAME
         if (

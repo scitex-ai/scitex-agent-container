@@ -68,6 +68,27 @@ def _measure(unit_dir: Path) -> tuple[frozenset[str], frozenset[str]]:
     return frozenset(files), frozenset(dirs)
 
 
+def _measure_armed(unit_dir: Path) -> frozenset[str]:
+    """Which units are ARMED — i.e. enabled to fire.
+
+    Read from the same directory as :func:`_measure`, not from ``systemctl``,
+    for two reasons. It honours ``--unit-dir`` (so this is testable without a
+    live systemd), and enablement genuinely IS a filesystem fact: ``systemctl
+    --user enable`` creates a symlink under ``<target>.wants/`` and says so —
+
+        Created symlink .../timers.target.wants/foo.timer -> .../foo.timer
+
+    so the ``.wants`` entries are the enablement, not a proxy for it.
+    """
+    if not unit_dir.is_dir():
+        return frozenset()
+    armed: set[str] = set()
+    for child in unit_dir.iterdir():
+        if child.is_dir() and child.name.endswith(".wants"):
+            armed.update(entry.name for entry in child.iterdir())
+    return frozenset(armed)
+
+
 def _displace_dir(unit_dir: Path, stamp: str) -> Path:
     """``.old/<timestamp>/`` beside the units. NOTHING is ever deleted."""
     return unit_dir / ".old" / stamp
@@ -240,11 +261,16 @@ def register_migrate_command(dev_group: click.Group) -> None:
 
         renames = _select(tuple(only), include_held)
         present, dropins = _measure(directory)
+        # Captured BEFORE the plan runs, because the plan's own `disable` step
+        # destroys the evidence. Without this, "was it armed before?" becomes
+        # unanswerable the moment the migration starts.
+        armed_before = _measure_armed(directory)
         steps = _migrate.plan(
             renames,
             present=present,
             dropin_dirs=dropins,
             install_argv=_install_argv_factory(),
+            include_held=include_held,
         )
 
         chosen = _migrate.selection(env=dict(__import__("os").environ), home=Path.home())
@@ -283,14 +309,25 @@ def register_migrate_command(dev_group: click.Group) -> None:
         )
 
         after, _ = _measure(directory)
-        click.echo("\nVerification (exactly one supervisor per job):")
+        armed_now = _measure_armed(directory)
+        click.echo("\nVerification (exactly one supervisor per job, and armed):")
         bad = 0
         for rename in renames:
-            if rename.held:
-                continue
-            result = _migrate.verify_exactly_one(rename, present=after)
+            # NOT skipped when `rename.held`. `_select` has ALREADY decided what
+            # this invocation acts on — a held job is only in `renames` because
+            # --include-held asked for it — so re-testing `held` here silently
+            # undid the caller's decision and verified NOTHING for the one job
+            # being migrated. Measured 2026-08-19: the accounts-refresh cutover
+            # printed the "Verification" header with nothing beneath it, which
+            # reads as "nothing to report" and meant "nothing was checked".
+            result = _migrate.verify_exactly_one(
+                rename,
+                present=after,
+                armed_before=armed_before,
+                armed_now=armed_now,
+            )
             click.echo("  " + result.verdict)
-            if not result.ok:
+            if not result.ok or result.armed_ok is False:
                 bad += 1
 
         if failed:

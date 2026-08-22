@@ -222,14 +222,35 @@ def test_ssh_start_agent_returns_false_when_remote_exits_nonzero(subprocess_shim
     assert result is False
 
 
-def test_ssh_start_agent_runs_sac_start_command_on_target_host(subprocess_shim):
+def test_ssh_start_agent_targets_the_named_host(subprocess_shim):
     # Arrange
     subprocess_shim.install("ssh", exit=0)
     # Act
     _ssh_start_agent("target-host", "my-agent")
     # Assert
-    argv = subprocess_shim.argv_for("ssh")
-    assert "target-host" in argv and "sac agent start my-agent" in argv
+    assert "target-host" in subprocess_shim.argv_for("ssh")
+
+
+def test_ssh_start_agent_runs_sac_start_command_on_target_host(subprocess_shim):
+    """The remote command line is `sac agent start <name>`.
+
+    ASSERTED ON THE JOINED COMMAND LINE, not on tokenisation. This used to
+    pass the command as ONE argv element (``f"sac agent start {name}"``) and
+    now passes four. Both reach the remote identically — ssh joins every token
+    after the host with spaces and hands the result to the login shell (see
+    ``build_ssh_argv``) — so tokenisation was never the property worth pinning.
+
+    The split form is REQUIRED, not cosmetic: ``_is_sac_invocation`` decides
+    whether to inject the registry's ``SCITEX_DIR=<root>`` pin by testing
+    ``basename(command[0]) == "sac"``. Against the joined string that basename
+    is the whole sentence, so the pin would silently never apply on this path.
+    """
+    # Arrange
+    subprocess_shim.install("ssh", exit=0)
+    # Act
+    _ssh_start_agent("target-host", "my-agent")
+    # Assert
+    assert "sac agent start my-agent" in " ".join(subprocess_shim.argv_for("ssh"))
 
 
 def test_ssh_start_agent_returns_false_when_ssh_binary_missing(

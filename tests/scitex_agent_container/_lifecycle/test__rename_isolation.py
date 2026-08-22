@@ -13,6 +13,7 @@ So: assert the isolation, do not assume it.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -96,14 +97,20 @@ def test_isolated_board_redirects_scitex_todos_default_store(board: Path):
     ``store=None`` makes scitex-todo resolve its default store. If that
     still resolved to the live 1,400-card board, one missing keyword in the
     rename code would reassign real cards. The fixture points
-    ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, and scitex-todo
+    ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, and scitex-cards
     reads that env var at CALL time — so this holds.
 
     Skips when the optional peer is absent (sac's own CI); there is no
     default store to redirect then, and faking one would prove nothing.
     """
     # Arrange
-    _store = pytest.importorskip("scitex_todo._store")
+    # Skip only when the optional peer is genuinely ABSENT; if it is present
+    # but the submodule path has moved, FAIL. `importorskip` on the full
+    # dotted path cannot tell those apart — ModuleNotFoundError is an
+    # ImportError subclass, so a rename or deletion becomes a silent skip,
+    # which is what scitex_todo._store had already become here.
+    pytest.importorskip("scitex_cards")
+    _store = importlib.import_module("scitex_cards._store")
     # Act
     resolved = _store.resolve_tasks_path()
     # Assert
