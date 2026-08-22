@@ -286,6 +286,47 @@ def test_a_violation_outranks_an_inconclusive_pool_read(fleet: Path) -> None:
     assert verdict.state == COLLISION_VIOLATION
 
 
+def test_a_spec_tree_that_does_not_exist_is_unknown_not_ok(tmp_path: Path) -> None:
+    """A root that was never read must not render as a clean fleet.
+
+    CASE E from the adversarial pass: a non-existent spec tree returned "ok"
+    with scanned=True. Zero claimants is a legitimate OK ("nothing can
+    conflict"), so "enumerated and found nothing" and "never looked" collapse
+    into the same verdict unless the missing root is caught. This check exists
+    to refuse exactly that collapse.
+    """
+    # Arrange — a path nobody created.
+    missing = tmp_path / "no-such-spec-tree"
+    # Act
+    verdict = check_token_collisions(agents_dir=str(missing), pool=_pool())
+    # Assert
+    assert verdict.state == COLLISION_UNKNOWN
+
+
+def test_a_missing_spec_tree_is_reported_as_not_scanned(tmp_path: Path) -> None:
+    # Arrange
+    missing = tmp_path / "no-such-spec-tree"
+    # Act
+    verdict = check_token_collisions(agents_dir=str(missing), pool=_pool())
+    # Assert — the verdict must SAY it never looked, not merely decline to be ok.
+    assert verdict.scanned is False
+
+
+def test_an_empty_spec_tree_is_still_ok(tmp_path: Path) -> None:
+    """The other half: a root that EXISTS and holds nothing is genuinely clean.
+
+    Without this, the fix above could be 'return unknown whenever the count is
+    zero', which would make an empty fleet permanently alarming.
+    """
+    # Arrange — the directory exists, it just has no specs in it.
+    empty = tmp_path / "empty-spec-tree"
+    empty.mkdir()
+    # Act
+    verdict = check_token_collisions(agents_dir=str(empty), pool=_pool())
+    # Assert
+    assert verdict.state == COLLISION_OK
+
+
 def test_an_unloadable_spec_is_unknown(fleet: Path) -> None:
     # Arrange — a spec sac cannot read is a claim it cannot COMPUTE.
     _write_spec(fleet, "zz-one", env={"CCT_BOT_TOKEN_SLOT": "ZZ_ONE"})

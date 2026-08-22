@@ -122,6 +122,11 @@ def spec_paths(agents_dir: str | None = None) -> list[Path]:
     parameter rather than an env lookup so the caller states WHICH spec tree it
     means — useful for auditing a peer's synced tree, and it keeps the tests
     from having to intercept ``$SCITEX_DIR`` to say the same thing.
+
+    RAISES :class:`FileNotFoundError` when the root is not a directory. An
+    empty list means "enumerated, nothing there"; a missing root means "never
+    looked", and a caller that cannot tell them apart reports a clean fleet it
+    never read.
     """
     if agents_dir:
         root = Path(agents_dir).expanduser()
@@ -130,7 +135,21 @@ def spec_paths(agents_dir: str | None = None) -> list[Path]:
 
         root = agents_root()
     if not root.is_dir():
-        return []
+        # RAISE, do not return []. An absent spec tree is "could not be
+        # enumerated", not "enumerated and found nothing" -- and the two render
+        # identically downstream: zero claimants is a legitimate OK, so a
+        # missing root would report the fleet CLEAN on the strength of never
+        # having looked at it. That is the exact collapse this check exists to
+        # refuse, and it was caught by the adversarial pass (CASE E: a spec tree
+        # that does not exist returned "ok", scanned=True).
+        #
+        # check_token_collisions already converts this to COLLISION_UNKNOWN with
+        # "Nothing was learned; this is not an all-clear." Raising routes the
+        # case into that existing path rather than adding a second one.
+        raise FileNotFoundError(
+            f"spec tree {root} is not a directory, so no spec could be "
+            "enumerated"
+        )
     return [p for p in sorted(root.glob("*/spec.yaml")) if p.is_file()]
 
 
