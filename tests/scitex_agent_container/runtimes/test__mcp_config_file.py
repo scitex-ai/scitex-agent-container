@@ -253,6 +253,141 @@ def test_unwritable_location_raises_instead_of_falling_back(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# The write is ATOMIC — a concurrent reader never sees an empty file
+#
+# MEASURED on CI 2026-08-22, pytest-matrix py3.11, xdist worker gw4:
+#   test_compose_attaches_mcp_servers
+#   -> read_mcp_servers -> json.loads("")
+#   -> JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+# The old write opened with O_TRUNC and then wrote, so the file was EMPTY on
+# disk between the two syscalls. The filename is keyed on the AGENT NAME, so
+# every concurrent build_sdk_options("alpha", ...) targeted one shared path.
+#
+# A race cannot be tested by racing -- a passing timing test proves nothing.
+# These pin the PROPERTIES that make the race impossible instead.
+# ---------------------------------------------------------------------------
+
+
+def test_target_still_holds_valid_json_right_up_to_the_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window that produced the CI failure: mid-write, the target is valid.
+
+    Under the old O_TRUNC form the target was empty here, which is exactly
+    what a concurrent reader hit.
+    """
+    # Arrange: an existing, valid config a reader could be holding open.
+    from scitex_agent_container._runners import _atomic
+
+    directory = tmp_path / "d"
+    directory.mkdir()
+    (directory / "a.mcp.json").write_text(json.dumps({"mcpServers": {"old": {}}}))
+    seen: dict[str, str] = {}
+    real_replace = _atomic.os.replace
+
+    def _spy(src, dst):
+        # The instant before the swap — the target must NOT be truncated.
+        seen["content"] = Path(dst).read_text(encoding="utf-8")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(_atomic.os, "replace", _spy)
+    # Act
+    write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    # Assert
+    assert json.loads(seen["content"])["mcpServers"] == {"old": {}}
+
+
+def test_a_failed_write_leaves_the_previous_config_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Atomicity's other half: a write that fails must not destroy the old file."""
+    # Arrange
+    from scitex_agent_container._runners import _atomic
+
+    directory = tmp_path / "d"
+    directory.mkdir()
+    target = directory / "a.mcp.json"
+    previous = json.dumps({"mcpServers": {"old": {}}})
+    target.write_text(previous)
+
+    def _boom(src, dst):
+        raise OSError("rename refused")
+
+    monkeypatch.setattr(_atomic.os, "replace", _boom)
+    # Act
+    with pytest.raises(McpConfigWriteError):
+        write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    # Assert
+    assert target.read_text() == previous
+
+
+def test_a_failed_write_leaves_no_stray_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    from scitex_agent_container._runners import _atomic
+
+    directory = tmp_path / "d"
+    directory.mkdir()
+
+    def _boom(src, dst):
+        raise OSError("rename refused")
+
+    monkeypatch.setattr(_atomic.os, "replace", _boom)
+    # Act
+    with pytest.raises(McpConfigWriteError):
+        write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    # Assert
+    assert list(directory.iterdir()) == []
+
+
+def test_a_successful_write_leaves_only_the_config_behind(tmp_path: Path) -> None:
+    # Arrange
+    directory = tmp_path / "d"
+    # Act
+    write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    # Assert
+    assert [q.name for q in directory.iterdir()] == ["a.mcp.json"]
+
+
+def test_the_inode_that_receives_the_secret_is_never_world_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The secret window, asserted DURING the write rather than after it.
+
+    ``test_preexisting_world_readable_file_is_tightened`` above checks the
+    FINAL mode, and the old code reached 0600 too -- by writing the resolved
+    secret literals into the pre-existing 0644 inode and chmod-ing afterwards.
+    A final-state assertion cannot tell those apart, so this one inspects the
+    inode that actually receives the payload, at the moment it holds it.
+    """
+    # Arrange: a world-readable file left by an older sac.
+    from scitex_agent_container._runners import _atomic
+
+    directory = tmp_path / "d"
+    directory.mkdir()
+    stale = directory / "a.mcp.json"
+    stale.write_text("{}")
+    os.chmod(stale, 0o644)
+    seen: dict[str, Any] = {}
+    real_replace = _atomic.os.replace
+
+    def _spy(src, dst):
+        # src is the inode holding the payload right now.
+        seen["mode"] = stat.S_IMODE(os.stat(src).st_mode)
+        seen["body"] = Path(src).read_text(encoding="utf-8")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(_atomic.os, "replace", _spy)
+    # Act
+    path = write_mcp_config_file("a", _server_with_secret(), dirs=[directory])
+    # Assert
+    assert SENTINEL in seen["body"]
+    assert seen["mode"] == MCP_CONFIG_FILE_MODE
+    assert stat.S_IMODE(os.stat(path).st_mode) == MCP_CONFIG_FILE_MODE
+
+
+# ---------------------------------------------------------------------------
 # externalize_mcp_servers — the narrow no-op cases
 # ---------------------------------------------------------------------------
 
