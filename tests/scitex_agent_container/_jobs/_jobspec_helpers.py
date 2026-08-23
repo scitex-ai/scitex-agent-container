@@ -40,3 +40,21 @@ def _split_command(command: str) -> tuple[str, str, str]:
 def _job(name: str):
     (match,) = [j for j in provide_jobs() if j.name == name]
     return match
+
+
+def _peer_sets(command: str) -> tuple[set[str], set[str]]:
+    """``(targeted, declared_optional)`` — the two peer sets in a command.
+
+    Read from the command rather than restated in each test on purpose. An
+    assertion that hard-codes both the peer list and the expected peer list is
+    parameterised by the value it is checking and cannot fail — the same trap
+    :func:`_split_command` avoids by checking the payload's SHAPE. Pulling both
+    sets out of the one string under test keeps the relation between them
+    (targeted vs forgiven) the thing being asserted.
+    """
+    tokens = command.split()
+    targeted = {tokens[i + 1] for i, t in enumerate(tokens) if t == "--to"}
+    optional = {
+        tokens[i + 1] for i, t in enumerate(tokens) if t == "--optional-peer"
+    }
+    return targeted, optional

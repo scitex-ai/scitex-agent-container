@@ -120,12 +120,39 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # without ever hanging forever. A pass killed here leaves the
             # peer's previous credential intact — nothing is published
             # unverified.
+            # ywata-note-win IS DECLARED OPTIONAL, and that declaration is the
+            # difference between two rails running the same verb.
+            #
+            # MEASURED 2026-08-23, both sides, because a divergence claim needs
+            # both. The INSTALLED timer unit on compute-04 carries a drop-in
+            # (…keepalive.service.d/optional-peer.conf) whose ExecStart ends
+            # `--optional-peer ywata-note-win`. This JobSpec did not. Same verb,
+            # two policies — and only one of them was in git.
+            #
+            # The cost, from the supervisor's own execution log
+            # (~/.scitex/dev/runtime/periodic-executions.jsonl, surfaced by
+            # handyman-06): the supervisor rail failed 96 of 416 runs = 23.1%,
+            # still failing the day this was written, while the timer rail with
+            # the declaration runs ~2 failures/day over the same window.
+            #
+            # The laptop is DOCUMENTED intermittently reachable — the 2026-08-16
+            # "No route to host" incident is the reason --optional-peer exists at
+            # all. A peer known to come and go must be declared, or every one of
+            # its absences reds a unit whose real job (keeping the always-on
+            # hosts' credentials alive) succeeded.
+            #
+            # NOT CLAIMED: that this explains all 96. Every failed record carries
+            # error=None, so the failing peer is still unidentified; output
+            # capture in the execution log is the instrument that would prove it.
+            # This change is justified on its own — one verb, one policy — rather
+            # than on being the whole cause.
             command=(
                 "/usr/bin/timeout 300 "
                 f"{sac} accounts keepalive --all "
                 "--to ywata-note-win "
                 "--to scitex-compute-03 "
-                "--to scitex-compute-04"
+                "--to scitex-compute-04 "
+                "--optional-peer ywata-note-win"
             ),
             description=(
                 "The DISTRIBUTION half of the single-refresher model, and "
