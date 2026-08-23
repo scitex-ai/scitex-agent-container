@@ -31,7 +31,7 @@ So the exposed set is "every value of every spec-env key, plus every
 per-secret patch can bound.
 
 THE FIX
-=======
+-------
 The SDK's own ``else`` branch passes a ``str``/``Path`` through verbatim::
 
     cmd.extend(["--mcp-config", str(self._options.mcp_servers)])
