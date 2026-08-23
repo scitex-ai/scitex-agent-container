@@ -300,6 +300,27 @@ import sys
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
+# scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
+# Through 0.48.0, comment_task / update_task rebuilt a card from the doc the
+# caller happened to hold and DROPPED every comment row that doc had not
+# seen — a peer's comment written between your read and your write was
+# destroyed silently, with a success report. 0.49.0 added this symbol to fix
+# that and indexed its rows POSITIONALLY (row[0]), which is KeyError(0) on
+# psycopg's dict_row, so on PostgreSQL every card holding comments became
+# READ-ONLY: uncommentable, unupdatable, uncompletable, undeletable. 0.49.1
+# reads row["author"]. THE FLOOR IS >=0.49.1 AND MUST NEVER BE >=0.49.0.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR, and that distinction is the
+# whole lesson of 2026-08-23: it passed on the broken 0.49.0, because the
+# function was there and wrong. Measured that day, five independent gates
+# went green on that artifact within one hour — this probe, the master-side
+# SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
+# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# So the FLOOR is what excludes the broken release; this import only catches
+# a version string that lies; and only a post-deploy write to a card that
+# ALREADY HAS a comment proves the path actually runs.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)

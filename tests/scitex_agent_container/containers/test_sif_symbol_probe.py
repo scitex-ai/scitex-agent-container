@@ -120,6 +120,17 @@ def test_probe_checks_the_wip_statuses_symbol() -> None:
     assert ("scitex_cards._throughput", "WIP_STATUSES") in from_imports
 
 
+def test_probe_checks_the_comment_merge_symbol() -> None:
+    # Arrange — scitex-cards 0.49.0's comment-preserving mirror write. The bare
+    # `import scitex_cards` CANNOT catch its absence: 0.48.0 imports perfectly
+    # and then silently drops peer comment rows on every card write.
+    source = _probe_source()
+    # Act
+    from_imports = _from_imports(source)
+    # Assert
+    assert ("scitex_cards._mirror_rows", "_merge_unseen_comment_rows") in from_imports
+
+
 def test_probe_fails_loud_on_a_bad_sif() -> None:
     # Arrange — a gate that can only PASS is a hope; the probe must sys.exit()
     # non-zero so a mis-baked SIF is REJECTED, not silently published.
@@ -250,4 +261,27 @@ def test_bake_recipes_do_not_use_the_deleted_name(path) -> None:
     # Assert
     assert not offenders, (
         "deleted module referenced in executable position:\n" + "\n".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("path", EMBEDS, ids=lambda p: p.name)
+def test_every_probe_copy_carries_the_comment_merge_symbol(path) -> None:
+    """A floor bump that reaches ONE probe copy is not a fix.
+
+    The probe exists four times — the shipped asset plus these three embedded
+    heredocs — and each gates a different path (local bake, layered bake,
+    Spartan bake, master-side verify of a pulled SIF). On 2026-08-23 the
+    scitex-cards floor was raised to 0.49.0 because below it every card write
+    silently destroys peer comment rows; a copy left un-updated keeps baking
+    images that carry the defect while the other copies report a clean gate.
+    Token check, not AST: these are shell heredocs and do not parse as Python.
+    """
+    # Arrange
+    source = path.read_text(encoding="utf-8")
+    # Act
+    present = "_merge_unseen_comment_rows" in source
+    # Assert
+    assert present, (
+        f"{path.name} embeds the symbol probe but not the 0.49.0 "
+        "comment-merge check — this copy still passes on a 0.48.0 image"
     )
