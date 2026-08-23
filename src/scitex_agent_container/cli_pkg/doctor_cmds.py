@@ -45,6 +45,7 @@ import click
 
 from .._drift import DriftState, DriftStatus, check_spec_source_drift
 from .._drift._fleet import HostDrift, check_fleet_drift
+from .._readiness import NodeReadiness, node_readiness_for_this_host
 from ..runtimes._cct_poller_singleton import (
     POLLER_OK,
     POLLER_UNKNOWN,
@@ -153,6 +154,42 @@ def _render_collisions_human(verdict: TokenCollisionVerdict) -> None:
         console.print(f"  [bold]hint[/bold]  {verdict.hint()}")
 
 
+def _render_node_human(readiness: NodeReadiness) -> None:
+    """Lead with the number the operator actually asked for.
+
+    "How many tools would an agent get here" is the question; the verdict word
+    is the summary of it. Printing the verdict alone would repeat the original
+    defect in a new place — a green word with nothing behind it.
+    """
+    label = {
+        "ready": "[green]ready[/green]",
+        "crippled": "[yellow]crippled[/yellow]",
+        "cannot-deploy": "[red]cannot-deploy[/red]",
+        "unknown": "[yellow]unknown[/yellow]",
+    }.get(readiness.verdict, readiness.verdict)
+    console.print(f"node: {label}")
+    # The count on its own line, and said as a FLOOR. An agent shipping its own
+    # .mcp.json can have more; what failed on compute-01 was agents that had
+    # nothing else to fall back on.
+    console.print(
+        f"  tools: {readiness.tool_count} MCP server(s) "
+        f"(baseline floor — an agent with no per-agent .mcp.json)"
+    )
+    if readiness.baseline_dir:
+        console.print(f"  baseline: {readiness.baseline_dir}")
+    for link in readiness.dangling_links:
+        console.print(f"  [red]dangling symlink[/red]: {link}  (deploys abort here)")
+    for broken in readiness.broken_servers:
+        console.print(
+            f"  [red]{broken.state}[/red]: {broken.name}"
+            + (f" -> {broken.command}" if broken.command else "")
+        )
+        if broken.detail:
+            console.print(f"      {broken.detail}")
+    for note in readiness.notes:
+        console.print(f"  {note}")
+
+
 def _render_fleet(ctx: click.Context, as_json: bool, strict: bool, timeout: int) -> int:
     """ssh every peer, render the drift table. Returns exit code."""
     from .._state.host_config import load as _load_host_config
@@ -196,11 +233,13 @@ def _render_local(
     with_drift: bool = True,
     with_pollers: bool = True,
     with_collisions: bool = True,
+    with_node: bool = True,
 ) -> int:
     """Run + render the requested local checks. Returns exit code.
 
     ``--strict`` fails on a drifted spec source OR an alarming poller verdict
-    OR an alarming collision verdict — each of which includes UNKNOWN,
+    OR an alarming collision verdict OR a node that would not produce a
+    fully-equipped agent — each of which includes UNKNOWN,
     matching ``sac agents cct-audit``: an invariant sac could not assert is
     not an invariant that held.
     """
@@ -210,6 +249,7 @@ def _render_local(
     status = check_spec_source_drift(_local_agents_spec_dir()) if with_drift else None
     verdict = check_poller_singleton() if with_pollers else None
     collisions = check_token_collisions() if with_collisions else None
+    readiness = node_readiness_for_this_host() if with_node else None
 
     if status is not None:
         payload["local"] = status.to_dict()
@@ -220,6 +260,9 @@ def _render_local(
     if collisions is not None:
         payload["token_collisions"] = collisions.to_dict()
         failed = failed or collisions.is_alarming
+    if readiness is not None:
+        payload["node"] = readiness.to_dict()
+        failed = failed or readiness.is_alarming
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
@@ -230,6 +273,8 @@ def _render_local(
             _render_pollers_human(verdict)
         if collisions is not None:
             _render_collisions_human(collisions)
+        if readiness is not None:
+            _render_node_human(readiness)
 
     return 1 if (strict and failed) else 0
 
@@ -263,6 +308,16 @@ def _render_local(
     ),
 )
 @click.option(
+    "--node",
+    "node",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run ONLY the node-readiness check: how many MCP servers would an "
+        "agent started on THIS host actually get?"
+    ),
+)
+@click.option(
     "--strict",
     "strict",
     is_flag=True,
@@ -286,6 +341,7 @@ def doctor(
     fleet: bool,
     pollers: bool,
     collisions: bool,
+    node: bool,
     strict: bool,
     timeout: int,
     as_json: bool,
@@ -294,7 +350,8 @@ def doctor(
 
     \b
     Examples:
-      $ sac doctor                 # drift + live pollers + spec collisions
+      $ sac doctor                 # drift + pollers + collisions + node
+      $ sac doctor --node          # only: would an agent here have tools?
       $ sac doctor --pollers       # only: one live poller per bot token?
       $ sac doctor --collisions    # only: do two SPECS take the same bot?
       $ sac doctor --fleet         # per-host drift table for every peer
@@ -312,7 +369,19 @@ def doctor(
     poller probe returned ok on both. Neither check alone is an all-clear.
 
     \b
-    Both are READ-ONLY and three-valued — ok / violation / unknown. They
+    \b
+    --node ANSWERS A DIFFERENT KIND OF QUESTION — an OUTCOME, not an install.
+    Measured 2026-08-23 on scitex-compute-01: sac installed and current,
+    listen alive since boot, 121 specs on disk, images present, egress fine —
+    and an agent started there came up with ZERO MCP servers and no error.
+    Every existing check passed. So --node asks how many declared servers this
+    host can actually honour, and reports a declared-but-unservable channel as
+    BROKEN rather than absent: an agent read `command: /usr/bin/true` for its
+    Telegram server, correctly inferred "someone disabled this for me", and
+    told the operator so. No such decision had been made.
+
+    \b
+    All three are READ-ONLY and three-valued — ok / violation / unknown. They
     report duplicates; they do not kill, lock or refuse them, and an
     unreadable /proc/<pid>/environ or an inconclusive pool read is reported
     as unknown rather than quietly counted as fine. No bot token VALUE is
@@ -323,10 +392,21 @@ def doctor(
         code = _render_fleet(ctx, as_json, strict, timeout)
     elif pollers:
         code = _render_local(
-            ctx, as_json, strict, with_drift=False, with_collisions=False
+            ctx, as_json, strict, with_drift=False, with_collisions=False, with_node=False
         )
     elif collisions:
-        code = _render_local(ctx, as_json, strict, with_drift=False, with_pollers=False)
+        code = _render_local(
+            ctx, as_json, strict, with_drift=False, with_pollers=False, with_node=False
+        )
+    elif node:
+        code = _render_local(
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_pollers=False,
+            with_collisions=False,
+        )
     else:
         code = _render_local(ctx, as_json, strict)
     if code:
