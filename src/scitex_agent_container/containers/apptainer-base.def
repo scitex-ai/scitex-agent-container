@@ -242,6 +242,49 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
+    # ---- 3b. A STABLE PATH FOR THE BROWSER -----------------------------
+    # Puppeteer installs under a VERSION-NUMBERED directory:
+    #
+    #   /root/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome
+    #   /root/.cache/puppeteer/chrome-headless-shell/linux-<ver>/.../chrome-headless-shell
+    #
+    # and the install above is UNPINNED, so that <ver> moves on every
+    # rebuild. Nothing outside this image can therefore name the browser
+    # and still be correct tomorrow.
+    #
+    # WHY THIS EXISTS, measured 2026-08-23. The shared agent baseline
+    # pinned a browser as
+    #   --executablePath /home/agent/.cache/ms-playwright/chromium-1228/...
+    # That path exists in NO container: not the base browser (a different
+    # root entirely), and not the four per-agent overlays that DO carry
+    # ms-playwright, which are on chromium-1234. So chrome-devtools and
+    # playwright were declared for every agent and could start for none of
+    # them -- silently, because an MCP server that fails to launch produces
+    # no error anyone reads.
+    #
+    # Repointing that config at today's versioned path would fix it until
+    # the next rebuild and then break it the same way again. A version
+    # inside a path IS the defect, so the image publishes a stable name and
+    # the config names THAT.
+    mkdir -p /opt/browser
+    for _b in chrome chrome-headless-shell; do
+        # Highest version last, so a cache holding several resolves to the
+        # newest rather than to whatever sorts first lexically.
+        _found=$(ls -1d /root/.cache/puppeteer/"$_b"/linux-*/*/"$_b" 2>/dev/null | sort -V | tail -n 1)
+        if [ -n "$_found" ] && [ -x "$_found" ]; then
+            ln -sfn "$_found" /opt/browser/"$_b"
+            echo "BROWSER: /opt/browser/$_b -> $_found"
+        else
+            # LOUD, because the `|| true` above makes a failed download
+            # indistinguishable from a successful one. An image that
+            # silently ships without a browser is exactly how the fleet came
+            # to run two dead MCP servers without anyone noticing.
+            echo "BROWSER: WARNING - no $_b under /root/.cache/puppeteer;" \
+                 "browser MCP servers will not start in this image" >&2
+        fi
+    done
+    unset _b _found
+
     rm -rf /var/lib/apt/lists/*
 
     # ---- 4. Rust toolchain + cargo-binstall ----------------------------
