@@ -326,6 +326,16 @@ def register_keepalive_command(group: click.Group) -> None:
 
         for account_label in accounts:
             for peer in peers:
+                # Name the attempt BEFORE it runs: a run killed mid-push
+                # (the 2026-08-15 failure exited non-zero with ZERO journal
+                # output) must still leave a line saying WHICH peer/account
+                # it was on, or the silence returns. The outcome line below
+                # follows; it never replaces this one.
+                click.echo(
+                    f"  {peer:20s}  {account_label}: pushing "
+                    "access-only credential...",
+                    err=True,
+                )
                 # stx-allow: fallback (reason: one unreachable or refusing
                 # peer must NOT abort the remaining peers — each host's
                 # credential is independent, and aborting would leave the
@@ -383,6 +393,12 @@ def register_keepalive_command(group: click.Group) -> None:
                     err=True,
                 )
                 continue
+            # Same pre-attempt naming as the push loop: a run killed between
+            # the verified push and the sweep restart would otherwise die
+            # without saying it was sweeping THIS peer.
+            click.echo(
+                f"  {peer:20s}  sweeping login-expired agents...", err=True
+            )
             # stx-allow: fallback (reason: the credential IS published and
             # verified at this point; a sweep failure must be reported
             # against THIS peer and must not discard the successful push or
