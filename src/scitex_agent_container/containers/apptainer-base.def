@@ -625,7 +625,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards>=0.41.0" \
+        "scitex-cards>=0.49.0" \
         "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -703,6 +703,27 @@ import sys
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
+# scitex-cards 0.49.0: the comment-preserving mirror write. BELOW 0.49.0,
+# `comment_task` / `update_task` rewrite a card's `card_json` from the
+# copy the caller happens to hold, DROPPING every comment row that copy
+# has not seen — a peer's comment written between your read and your
+# write is destroyed, silently, and the card looks fine afterwards.
+#
+# This probe exists because the bare `import scitex_cards` above CANNOT
+# catch that: 0.48.0 imports perfectly. Measured 2026-08-23 against both
+# artifacts — the symbol is defined in 0.49.0 (_mirror_rows.py, and
+# exported in that module's __all__) and appears in ZERO files of the
+# installed 0.48.0. So the import discriminates the exact defect, which
+# is the entire standard this gate holds itself to.
+#
+# It is also what makes the `scitex-cards>=0.49.0` floor above ENFORCED
+# rather than merely stated. A floor is a request to the resolver; this
+# is the assertion that the resolver honoured it. Note that asserting
+# "version >= floor" would NOT have worked here: while the floor read
+# >=0.41.0, a resolved 0.48.0 satisfied it and a version-comparison gate
+# would have passed on the very image that carries the defect.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+
 
 
 # sac #633: auto-provisions a new agent's container overlay root; without
@@ -739,7 +760,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.41.0``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.49.0``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #

@@ -10,6 +10,16 @@ import sys
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
+# scitex-cards 0.49.0: the comment-preserving mirror write. Below it,
+# comment_task / update_task rewrite card_json from the copy the caller
+# holds and DROP every comment row that copy has not seen — a peer's
+# comment written between your read and your write is destroyed silently.
+# The bare `import scitex_cards` above cannot catch this: 0.48.0 imports
+# perfectly. Measured 2026-08-23 against both artifacts — defined in
+# 0.49.0's _mirror_rows (and in its __all__), absent from every file of
+# 0.48.0 — so this import discriminates the exact defect.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)

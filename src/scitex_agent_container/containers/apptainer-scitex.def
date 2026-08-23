@@ -307,7 +307,7 @@ From: ./sac-base.sif
         # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
         # occurrences of that fallback, the copy in the CURRENT image has 1.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards>=0.41.0"
+            "scitex-cards>=0.49.0"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -382,7 +382,7 @@ From: ./sac-base.sif
         # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
         # was guarding against it.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards>=0.41.0"
+            "scitex-cards>=0.49.0"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
@@ -450,6 +450,15 @@ import sys
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
+
+# scitex-cards 0.49.0: the comment-preserving mirror write. Below it,
+# comment_task / update_task rewrite card_json from the copy the caller
+# holds and DROP every comment row that copy has not seen. The bare
+# `import scitex_cards` above cannot catch that — 0.48.0 imports
+# perfectly. Measured 2026-08-23 against both artifacts: defined in
+# 0.49.0's _mirror_rows (and in its __all__), absent from every file of
+# 0.48.0. Keep this in lockstep with the other probe copies.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 
 
 
