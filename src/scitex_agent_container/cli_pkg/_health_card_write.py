@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# File: src/scitex_agent_container/_card_write_probe.py
+# File: src/scitex_agent_container/cli_pkg/_health_card_write.py
 """BEHAVIOURAL probe: can this image actually record work on a real card?
 
 Every card-store gate we own asserts PRESENCE. This one asserts BEHAVIOUR, and

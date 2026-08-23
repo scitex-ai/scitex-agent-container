@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# File: tests/scitex_agent_container/test__card_write_probe.py
+# File: tests/scitex_agent_container/cli_pkg/test__health_card_write.py
 """Tests for the behavioural card-write probe.
 
 The module under test exists because THREE presence checks passed on a broken
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from scitex_agent_container._card_write_probe import (
+from scitex_agent_container.cli_pkg._health_card_write import (
     BROKEN,
     OK,
     UNKNOWN,
