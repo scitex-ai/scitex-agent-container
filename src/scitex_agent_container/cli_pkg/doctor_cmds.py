@@ -1,18 +1,20 @@
 """``sac doctor`` — drift + health diagnostics.
 
-Two local checks and one fleet check:
+Three local checks and one fleet check:
 
 * ``sac doctor`` — check THIS host's agent-spec source repo against its
-  remote (the same comparison the launch-time guard runs) AND assert that
-  no two live Telegram pollers share a bot token, then print both verdicts.
-* ``sac doctor --pollers`` — the poller check alone.
+  remote (the same comparison the launch-time guard runs), assert that no two
+  live Telegram pollers share a bot token, and assert that no two SPECS
+  resolve to the same one, then print all three verdicts.
+* ``sac doctor --pollers`` — the live poller check alone.
+* ``sac doctor --collisions`` — the static spec-collision check alone.
 * ``sac doctor --fleet`` — ssh every configured peer and render a
   per-host drift table (current / N-behind / M-ahead / diverged /
   unreachable / not-a-repo).
 
-``--strict`` makes a drifted result — or an alarming poller verdict — a
-non-zero exit (CI gate). Both surfaces are resilient: an unreachable peer
-is reported, never crashed.
+``--strict`` makes a drifted result — or an alarming poller or collision
+verdict — a non-zero exit (CI gate). Every surface is resilient: an
+unreachable peer is reported, never crashed.
 
 WHY THE POLLER CHECK LIVES HERE, and why it is on by default: it observes a
 fault that has never had an instrument. An orphaned ``telegram-server.ts``
@@ -22,6 +24,17 @@ inbound messages with no error anywhere. See
 :mod:`..runtimes._cct_poller_singleton`. Every previous sighting came from an
 agent happening to read its own log mid-incident; a check nobody has to
 remember to run is the difference between that and a measurement.
+
+AND WHY THE COLLISION CHECK IS BESIDE IT RATHER THAN INSIDE IT: they are the
+two halves of one invariant and neither can do the other's job. The poller
+check reads ``/proc`` and is HOST-SCOPED — measured 2026-08-22, one bot token
+was held on compute-04 and compute-03 at once and the per-host probe returned
+ok on BOTH. The collision check reads SPECS and is fleet-wide and STATIC, so
+it sees that pair before either process starts, and sees no process at all.
+Killing the duplicate poller ended that incident and fixed nothing: the specs
+still collided, so it would have returned on the next start. Two verdicts,
+side by side, each naming the other's blind spot.
+See :mod:`..runtimes._cct_token_collision`.
 """
 
 from __future__ import annotations
@@ -32,6 +45,7 @@ import click
 
 from .._drift import DriftState, DriftStatus, check_spec_source_drift
 from .._drift._fleet import HostDrift, check_fleet_drift
+from .._readiness import NodeReadiness, node_readiness_for_this_host
 from ..runtimes._cct_poller_singleton import (
     POLLER_OK,
     POLLER_UNKNOWN,
@@ -40,6 +54,14 @@ from ..runtimes._cct_poller_singleton import (
     PollerSingletonVerdict,
     check_poller_singleton,
 )
+from ..runtimes._cct_token_collision import (
+    COLLISION_OK,
+    COLLISION_UNKNOWN,
+    COLLISION_VIOLATION,
+    TokenCollisionVerdict,
+    check_token_collisions,
+)
+from ..runtimes._cct_token_collision import SCOPE_NOTE as COLLISION_SCOPE_NOTE
 from ._helpers import _json_flag, console
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -60,6 +82,15 @@ _POLLER_STYLE = {
     POLLER_OK: "green",
     POLLER_VIOLATION: "red",
     POLLER_UNKNOWN: "yellow",
+}
+
+# Same three-valued palette for the static spec-collision check, and UNKNOWN
+# is yellow here for the same reason: a census sac could not compute must not
+# look like one that came back clean.
+_COLLISION_STYLE = {
+    COLLISION_OK: "green",
+    COLLISION_VIOLATION: "red",
+    COLLISION_UNKNOWN: "yellow",
 }
 
 
@@ -107,6 +138,58 @@ def _render_pollers_human(verdict: PollerSingletonVerdict) -> None:
         console.print(f"  [bold]hint[/bold]  {verdict.hint()}")
 
 
+def _render_collisions_human(verdict: TokenCollisionVerdict) -> None:
+    """Print the static spec-collision verdict, and its remedy when alarming."""
+    style = _COLLISION_STYLE.get(verdict.state, "white")
+    console.print(
+        f"[bold]spec bot tokens[/bold]  [{style}]{verdict.summary()}[/{style}]"
+    )
+    for collision in verdict.collisions:
+        mark = "cross-host" if collision.cross_host else "same host"
+        console.print(f"  {collision.token_fp:<24} {collision.describe()}  ({mark})")
+    console.print(f"  [dim]{verdict.population()}[/dim]")
+    console.print(f"  [dim]{COLLISION_SCOPE_NOTE}[/dim]")
+    if verdict.is_alarming:
+        console.print(f"  [{style}]{verdict.detail}[/{style}]")
+        console.print(f"  [bold]hint[/bold]  {verdict.hint()}")
+
+
+def _render_node_human(readiness: NodeReadiness) -> None:
+    """Lead with the number the operator actually asked for.
+
+    "How many tools would an agent get here" is the question; the verdict word
+    is the summary of it. Printing the verdict alone would repeat the original
+    defect in a new place — a green word with nothing behind it.
+    """
+    label = {
+        "ready": "[green]ready[/green]",
+        "crippled": "[yellow]crippled[/yellow]",
+        "cannot-deploy": "[red]cannot-deploy[/red]",
+        "unknown": "[yellow]unknown[/yellow]",
+    }.get(readiness.verdict, readiness.verdict)
+    console.print(f"node: {label}")
+    # The count on its own line, and said as a FLOOR. An agent shipping its own
+    # .mcp.json can have more; what failed on compute-01 was agents that had
+    # nothing else to fall back on.
+    console.print(
+        f"  tools: {readiness.tool_count} MCP server(s) "
+        f"(baseline floor — an agent with no per-agent .mcp.json)"
+    )
+    if readiness.baseline_dir:
+        console.print(f"  baseline: {readiness.baseline_dir}")
+    for link in readiness.dangling_links:
+        console.print(f"  [red]dangling symlink[/red]: {link}  (deploys abort here)")
+    for broken in readiness.broken_servers:
+        console.print(
+            f"  [red]{broken.state}[/red]: {broken.name}"
+            + (f" -> {broken.command}" if broken.command else "")
+        )
+        if broken.detail:
+            console.print(f"      {broken.detail}")
+    for note in readiness.notes:
+        console.print(f"  {note}")
+
+
 def _render_fleet(ctx: click.Context, as_json: bool, strict: bool, timeout: int) -> int:
     """ssh every peer, render the drift table. Returns exit code."""
     from .._state.host_config import load as _load_host_config
@@ -149,18 +232,24 @@ def _render_local(
     *,
     with_drift: bool = True,
     with_pollers: bool = True,
+    with_collisions: bool = True,
+    with_node: bool = True,
 ) -> int:
     """Run + render the requested local checks. Returns exit code.
 
     ``--strict`` fails on a drifted spec source OR an alarming poller verdict
-    — which includes UNKNOWN, matching ``sac agents cct-audit``: an invariant
-    sac could not assert is not an invariant that held.
+    OR an alarming collision verdict OR a node that would not produce a
+    fully-equipped agent — each of which includes UNKNOWN,
+    matching ``sac agents cct-audit``: an invariant sac could not assert is
+    not an invariant that held.
     """
     payload: dict = {}
     failed = False
 
     status = check_spec_source_drift(_local_agents_spec_dir()) if with_drift else None
     verdict = check_poller_singleton() if with_pollers else None
+    collisions = check_token_collisions() if with_collisions else None
+    readiness = node_readiness_for_this_host() if with_node else None
 
     if status is not None:
         payload["local"] = status.to_dict()
@@ -168,6 +257,12 @@ def _render_local(
     if verdict is not None:
         payload["pollers"] = verdict.to_dict()
         failed = failed or verdict.is_alarming
+    if collisions is not None:
+        payload["token_collisions"] = collisions.to_dict()
+        failed = failed or collisions.is_alarming
+    if readiness is not None:
+        payload["node"] = readiness.to_dict()
+        failed = failed or readiness.is_alarming
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
@@ -176,6 +271,10 @@ def _render_local(
             _render_local_human(status)
         if verdict is not None:
             _render_pollers_human(verdict)
+        if collisions is not None:
+            _render_collisions_human(collisions)
+        if readiness is not None:
+            _render_node_human(readiness)
 
     return 1 if (strict and failed) else 0
 
@@ -199,13 +298,33 @@ def _render_local(
     ),
 )
 @click.option(
+    "--collisions",
+    "collisions",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run ONLY the static spec-collision check: do two registered SPECS "
+        "resolve to the same bot token? Fleet-wide; reads specs, not /proc."
+    ),
+)
+@click.option(
+    "--node",
+    "node",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run ONLY the node-readiness check: how many MCP servers would an "
+        "agent started on THIS host actually get?"
+    ),
+)
+@click.option(
     "--strict",
     "strict",
     is_flag=True,
     default=False,
     help=(
-        "Exit non-zero when any checked source is drifted, or the poller "
-        "verdict is violation/unknown (CI gate)."
+        "Exit non-zero when any checked source is drifted, or the poller or "
+        "collision verdict is violation/unknown (CI gate)."
     ),
 )
 @click.option(
@@ -221,31 +340,73 @@ def doctor(
     ctx: click.Context,
     fleet: bool,
     pollers: bool,
+    collisions: bool,
+    node: bool,
     strict: bool,
     timeout: int,
     as_json: bool,
 ) -> None:
-    """Diagnose spec-source drift and duplicate Telegram pollers.
+    """Diagnose spec-source drift and duplicate Telegram bot tokens.
 
     \b
     Examples:
-      $ sac doctor                 # spec source vs remote + poller singleton
+      $ sac doctor                 # drift + pollers + collisions + node
+      $ sac doctor --node          # only: would an agent here have tools?
       $ sac doctor --pollers       # only: one live poller per bot token?
+      $ sac doctor --collisions    # only: do two SPECS take the same bot?
       $ sac doctor --fleet         # per-host drift table for every peer
       $ sac doctor --fleet --json
       $ sac doctor --fleet --strict   # exit 1 if any host drifted
 
     \b
-    The poller check is READ-ONLY and three-valued — ok / violation /
-    unknown. It reports duplicates; it does not kill, lock or prevent them,
-    and an unreadable /proc/<pid>/environ is reported as unknown rather than
-    quietly counted as fine. No bot token VALUE is ever read out: only an
-    opaque sha256:<12hex> fingerprint appears anywhere in the output.
+    TWO HALVES OF ONE INVARIANT — Telegram admits ONE getUpdates consumer per
+    bot token, globally:
+      --pollers     reads /proc. Sees a LIVE duplicate, including an orphan
+                    whose spec no longer asks for the rail. HOST-SCOPED.
+      --collisions  reads SPECS + the secrets pool. Sees a duplicate BEFORE
+                    anything starts, and across hosts. Sees no process.
+    Measured 2026-08-22: one token was held on two hosts and the per-host
+    poller probe returned ok on both. Neither check alone is an all-clear.
+
+    \b
+    \b
+    --node ANSWERS A DIFFERENT KIND OF QUESTION — an OUTCOME, not an install.
+    Measured 2026-08-23 on scitex-compute-01: sac installed and current,
+    listen alive since boot, 121 specs on disk, images present, egress fine —
+    and an agent started there came up with ZERO MCP servers and no error.
+    Every existing check passed. So --node asks how many declared servers this
+    host can actually honour, and reports a declared-but-unservable channel as
+    BROKEN rather than absent: an agent read `command: /usr/bin/true` for its
+    Telegram server, correctly inferred "someone disabled this for me", and
+    told the operator so. No such decision had been made.
+
+    \b
+    All three are READ-ONLY and three-valued — ok / violation / unknown. They
+    report duplicates; they do not kill, lock or refuse them, and an
+    unreadable /proc/<pid>/environ or an inconclusive pool read is reported
+    as unknown rather than quietly counted as fine. No bot token VALUE is
+    ever read out: only an opaque sha256:<12hex> fingerprint appears anywhere
+    in the output.
     """
     if fleet:
         code = _render_fleet(ctx, as_json, strict, timeout)
     elif pollers:
-        code = _render_local(ctx, as_json, strict, with_drift=False)
+        code = _render_local(
+            ctx, as_json, strict, with_drift=False, with_collisions=False, with_node=False
+        )
+    elif collisions:
+        code = _render_local(
+            ctx, as_json, strict, with_drift=False, with_pollers=False, with_node=False
+        )
+    elif node:
+        code = _render_local(
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_pollers=False,
+            with_collisions=False,
+        )
     else:
         code = _render_local(ctx, as_json, strict)
     if code:

@@ -22,7 +22,7 @@ after it passes a MECHANICAL gate, never on the strength of the worker's
 self-report. A gate reachable by exactly one script is not a gate.
 
 Surface
-=======
+-------
 * :func:`check_deletions` — the whole answer, as one validated
   :class:`DeletionReport`. Never a bool: ``clean``, ``violations`` and
   ``could-not-determine`` are three distinct verdicts, and the third one
