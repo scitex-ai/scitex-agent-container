@@ -135,7 +135,7 @@ class ServerVerdict:
     """One declared MCP server, and whether this host can actually serve it."""
 
     name: str
-    #: "servable" | "stub" | "command-missing" | "malformed"
+    #: "servable" | "stub" | "command-missing" | "arg-path-missing" | "malformed"
     state: str
     #: The command as declared. Never a secret: commands are paths, and env
     #: values (which DO hold tokens) are deliberately not read here.
@@ -259,16 +259,26 @@ def _judge_server(name: str, spec: object) -> ServerVerdict:
         return ServerVerdict(
             name=name, state="command-missing", command=command, detail="command does not exist on this host"
         )
+    # ARGUMENTS ARE PART OF SERVABILITY, and this cost a real false pass.
+    # `dotfiles` caught it on 2026-08-23 in a config I had just shipped: two
+    # servers whose command is the perfectly-real `npx`, pinned via
+    # --executablePath to
+    #   /home/agent/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome
+    # which does not exist in the container (control: /home/agent/.cache DOES
+    # exist, so the absence is real). An earlier version of this function only
+    # checked args ending in .ts, so both were reported SERVABLE — the exact
+    # silent pass this module exists to abolish, committed by the module
+    # itself. Any absolute path argument is now checked.
     args = spec.get("args")
     if isinstance(args, list):
         for arg in args:
             text = str(arg)
-            if text.startswith("/") and text.endswith(".ts") and not Path(text).exists():
+            if text.startswith("/") and not Path(text).exists():
                 return ServerVerdict(
                     name=name,
-                    state="command-missing",
+                    state="arg-path-missing",
                     command=command,
-                    detail=f"script argument does not exist on this host: {text}",
+                    detail=f"argument path does not exist on this host: {text}",
                 )
     return ServerVerdict(name=name, state="servable", command=command)
 

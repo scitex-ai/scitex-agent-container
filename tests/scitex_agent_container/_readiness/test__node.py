@@ -192,3 +192,79 @@ def test_malformed_mcp_json_refuses_rather_than_reporting_zero_servers(tmp_path)
 
     # Assert
     assert result.verdict == "cannot-deploy"
+
+
+def test_a_pinned_executable_that_does_not_exist_is_not_servable(tmp_path) -> None:
+    # Arrange: the case `dotfiles` caught on 2026-08-23 in a config I had just
+    # shipped. The command is the perfectly-real `npx`; the breakage is an
+    # --executablePath pointing at a chromium that is not installed. An
+    # earlier version of this check only validated args ending in .ts and
+    # therefore called this SERVABLE — a silent pass, committed by the module
+    # whose entire purpose is to abolish silent passes.
+    missing_chrome = tmp_path / "ms-playwright" / "chromium-1228" / "chrome"
+    root = _write_baseline(
+        tmp_path / "to_home",
+        {
+            "cards": _servable(tmp_path, "cards"),
+            "playwright": {
+                "command": "npx",
+                "args": [
+                    "-y",
+                    "@playwright/mcp@latest",
+                    "--headless",
+                    "--executable-path",
+                    str(missing_chrome),
+                ],
+            },
+        },
+    )
+
+    # Act
+    result = assess_node_readiness(root)
+
+    # Assert
+    assert [v.state for v in result.broken_servers] == ["arg-path-missing"]
+
+
+def test_the_missing_argument_path_is_named(tmp_path) -> None:
+    # Arrange
+    missing_chrome = tmp_path / "ms-playwright" / "chromium-1228" / "chrome"
+    root = _write_baseline(
+        tmp_path / "to_home",
+        {
+            "cards": _servable(tmp_path, "cards"),
+            "playwright": {
+                "command": "npx",
+                "args": ["--executable-path", str(missing_chrome)],
+            },
+        },
+    )
+
+    # Act
+    result = assess_node_readiness(root)
+
+    # Assert: naming the path is what turns "playwright is broken" into
+    # something someone can act on without re-deriving the config.
+    assert str(missing_chrome) in result.broken_servers[0].detail
+
+
+def test_a_relative_argument_is_not_judged(tmp_path) -> None:
+    # Arrange: a bare flag or a package spec is resolved by the tool itself at
+    # launch, not by us. Treating those as paths would make this check fail on
+    # every healthy config — a check that cannot pass is as useless as one
+    # that cannot fail.
+    root = _write_baseline(
+        tmp_path / "to_home",
+        {
+            "playwright": {
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest", "--headless"],
+            },
+        },
+    )
+
+    # Act
+    result = assess_node_readiness(root)
+
+    # Assert
+    assert result.verdict == "ready"
