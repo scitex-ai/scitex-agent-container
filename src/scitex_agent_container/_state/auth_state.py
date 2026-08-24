@@ -56,11 +56,11 @@ A CACHE IS NOT TRUTH — IT HAS AN AGE
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+import logging
 
-from .state_db import DEFAULT_DB_PATH, init_schema, now_iso, open_db
+from datetime import datetime, timezone
+
+from .state_db import now_iso
 
 __all__ = [
     "STALE_AFTER_S",
@@ -87,56 +87,112 @@ STALE_AFTER_S = 900.0
 # in :func:`verdict_for`'s SUPERSEDED check.
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS agent_auth_state (
-    name         TEXT PRIMARY KEY,
-    auth_failed  INTEGER NOT NULL,
-    checked_at   TEXT NOT NULL,
-    banner       TEXT,
-    reason       TEXT,
-    note         TEXT
-);
-"""
+#: One logical store per host. The record identity is the agent NAME alone —
+#: NO host column, deliberately. `host_store` already resolves to THIS host's
+#: PostgreSQL, so two hosts' rows live in two different databases: the per-host
+#: database IS the isolation, and a host field would add a failure mode while
+#: buying nothing until federation exists. This matches the closest precedent,
+#: `state_db_acl_deny_notify` (explicitly "a per-host rate-limit ledger", which
+#: also keeps its SQLite key and carries no host column).
+logger = logging.getLogger(__name__)
 
-_COLUMNS = "name, auth_failed, checked_at, banner, reason, note"
+STORE_NAME = "auth_state"
+
+#: Every write from this host is attributed to one actor. MULTI_WRITER because
+#: several processes on one host legitimately write this cache — the watchdog
+#: (`sac agents auth-status`), and the heal path.
+_ACTOR = "scitex-agent-container"
+
+_FIELDS = ("auth_failed", "checked_at", "banner", "reason", "note")
 
 
-def _resolve_db_path(db_path: Path | None) -> Path:
-    """The state.db this module reads/writes (``None`` → the process default)."""
-    return Path(db_path) if db_path else DEFAULT_DB_PATH
+def _schema():
+    """Identity is `name`; every other field is LAST_WRITER_WINS.
 
-
-def _ensure_schema(db_path: Path | None) -> None:
-    """Create ``agent_auth_state`` if missing — WRITE path only.
-
-    Deliberately NOT called by :func:`list_auth_states`: a reader that ran DDL
-    would take a write lock on state.db every time an operator typed
-    ``sac agents list``.
+    Built lazily so importing this module does not import scitex-dev, and via
+    ``Schema.build`` rather than the bare constructor so the primitive asserts
+    the reserved-column and identity rules instead of us assuming them.
     """
-    init_schema(db_path)
-    with open_db(db_path) as conn:
-        conn.executescript(_SCHEMA)
+    from scitex_dev.store import FieldKind, FieldPolicy, FieldRole, MergeRule, Schema
+
+    def ident(kind):
+        return FieldPolicy(
+            kind=kind,
+            role=FieldRole.IDENTITY,
+            required=True,
+            merge=MergeRule.IMMUTABLE,
+            indexed=False,
+        )
+
+    def fact(kind):
+        return FieldPolicy(
+            kind=kind,
+            role=FieldRole.DATA,
+            required=False,
+            merge=MergeRule.LAST_WRITER_WINS,
+            indexed=False,
+        )
+
+    return Schema.build(
+        STORE_NAME,
+        {
+            "name": ident(FieldKind.TEXT),
+            "auth_failed": fact(FieldKind.INTEGER),
+            "checked_at": fact(FieldKind.TEXT),
+            "banner": fact(FieldKind.TEXT),
+            "reason": fact(FieldKind.TEXT),
+            "note": fact(FieldKind.TEXT),
+        },
+    )
 
 
-def _row_to_state(row: sqlite3.Row) -> dict:
-    """One db row → the plain cached-verdict dict the readers consume."""
+def auth_state_store_target():
+    """Resolve WHERE the verdicts live. Pure — does not connect."""
+    from scitex_dev.store import host_store
+
+    return host_store(pkg="scitex_agent_container", name=STORE_NAME)
+
+
+def _open_store():
+    """Open the per-host store. Raises StoreTargetError NAMING the DSN if down."""
+    import socket
+
+    from scitex_dev.store import Store, WriterPolicy
+
+    return Store(
+        auth_state_store_target(),
+        _schema(),
+        node=socket.gethostname(),
+        writer_policy=WriterPolicy.MULTI_WRITER,
+        actor=_ACTOR,
+    )
+
+
+def _row_to_state(row) -> dict:
+    """Normalise a stored ``Row`` into the shape every reader expects.
+
+    ``Row.values`` is the SCHEMA FIELDS ONLY — the store's own bookkeeping
+    (hlc, seq, origin, owner, hidden) hangs off sibling attributes and
+    deliberately does not ride along. The SQLite version returned
+    ``dict(sqlite3.Row)``, which was likewise exactly the table columns, so
+    every caller sees the shape it always did.
+    """
+    v = row.values
     return {
-        "auth_failed": bool(row["auth_failed"]),
-        "checked_at": row["checked_at"] or "",
-        "banner": row["banner"] or None,
-        "reason": row["reason"] or "",
-        "note": row["note"] or "",
+        "name": v.get("name"),
+        "auth_failed": bool(v.get("auth_failed")),
+        "checked_at": v.get("checked_at"),
+        "banner": v.get("banner") or None,
+        "reason": v.get("reason") or "",
+        "note": v.get("note") or "",
     }
-
-
-# --- write path (the watchdog) ----------------------------------------------
 
 
 def record_auth_checks(
     checks: list[dict],
     *,
     checked_at: str | None = None,
-    db_path: Path | None = None,
+    db_path=None,
 ) -> int:
     """UPSERT a batch of auth verdicts. Returns how many rows were written.
 
@@ -150,51 +206,67 @@ def record_auth_checks(
     of comfortable lie this feature exists to kill. Leaving its previous row
     untouched is the honest outcome: the stamp simply ages, and the reader marks
     it stale.
+
+    ALL FIVE FIELDS ARE SENT ON EVERY WRITE, including empty ones. The SQLite
+    ``ON CONFLICT DO UPDATE`` overwrote every column unconditionally, so a
+    recovered agent's stale ``banner`` was cleared by the next sweep. Sending
+    only the non-empty fields would leave that banner in place forever, which
+    reads as "still failing" long after it stopped.
+
+    ``db_path`` is ACCEPTED AND IGNORED. It named a SQLite file and there is no
+    file; it stays in the signature only so the ten existing call sites keep
+    working across this change, and it should be removed in a follow-up.
     """
     if not checks:
         return 0
+    from scitex_dev.store import ANY_REVISION
+
     stamp = checked_at or now_iso()
-    _ensure_schema(db_path)
     written = 0
-    with open_db(db_path) as conn:
-        for check in checks:
-            name = str(check.get("name") or "").strip()
-            if not name:
-                continue
-            conn.execute(
-                f"INSERT INTO agent_auth_state ({_COLUMNS}) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(name) DO UPDATE SET "
-                "auth_failed=excluded.auth_failed, "
-                "checked_at=excluded.checked_at, "
-                "banner=excluded.banner, "
-                "reason=excluded.reason, "
-                "note=excluded.note",
-                (
-                    name,
-                    1 if check.get("auth_failed") else 0,
-                    stamp,
-                    check.get("banner") or None,
-                    check.get("reason") or "",
-                    check.get("note") or "",
-                ),
-            )
-            written += 1
+    store = _open_store()
+    try:
+        with store.batch():
+            for check in checks:
+                name = str(check.get("name") or "").strip()
+                if not name:
+                    continue
+                # A put onto a HIDDEN record is invisible: apply_entry carries
+                # `hidden` forward through an upsert and this schema declares no
+                # hide-flag field. So a previously-cleared agent that starts
+                # failing again would write verdicts nobody could read. Unhide
+                # first, guarded on the three-valued state (None = absent, so
+                # there is nothing to unhide).
+                if store.is_hidden({"name": name}):
+                    store.unhide({"name": name}, expected_revision=ANY_REVISION)
+                store.put(
+                    {
+                        "name": name,
+                        "auth_failed": 1 if check.get("auth_failed") else 0,
+                        "checked_at": stamp,
+                        "banner": check.get("banner") or None,
+                        "reason": check.get("reason") or "",
+                        "note": check.get("note") or "",
+                    },
+                    expected_revision=ANY_REVISION,
+                )
+                written += 1
+    finally:
+        store.close()
     return written
 
 
 def record_auth_check(
     name: str,
-    auth_failed: bool,
     *,
+    auth_failed: bool,
     banner: str | None = None,
     reason: str = "",
     note: str = "",
     checked_at: str | None = None,
-    db_path: Path | None = None,
-) -> None:
-    """UPSERT ONE agent's auth verdict (thin wrapper over the batch write)."""
-    record_auth_checks(
+    db_path=None,
+) -> int:
+    """UPSERT a single verdict. Thin wrapper over :func:`record_auth_checks`."""
+    return record_auth_checks(
         [
             {
                 "name": name,
@@ -205,63 +277,81 @@ def record_auth_check(
             }
         ],
         checked_at=checked_at,
-        db_path=db_path,
     )
 
 
-def clear_auth_state(name: str, *, db_path: Path | None = None) -> bool:
-    """Drop ``name``'s cached verdict. Idempotent; True iff a row was deleted."""
-    _ensure_schema(db_path)
-    with open_db(db_path) as conn:
-        cur = conn.execute("DELETE FROM agent_auth_state WHERE name=?", (name,))
-        return cur.rowcount > 0
+def clear_auth_state(name: str, *, db_path=None) -> bool:
+    """Forget one agent's verdict. True when a row was actually removed.
 
-
-# --- read path (``sac agents list`` — keep this CHEAP) -----------------------
-
-
-def list_auth_states(*, db_path: Path | None = None) -> dict[str, dict]:
-    """``{agent_name: verdict}`` for every cached check, in ONE db read.
-
-    The ``sac agents list`` read. Mirrors the one-query shape of
-    ``port_allocator.list_claims()`` and is deliberately the cheapest thing that
-    can work: ONE connect, ONE ``SELECT``, and NO ``init_schema`` (see
-    :func:`_ensure_schema` for why a reader must not run DDL).
-
-    Tolerant by design — a state.db that does not exist yet, an
-    ``agent_auth_state`` table no watchdog has ever created, or any sqlite
-    hiccup all return ``{}``: "nobody has been checked". Every row then renders
-    as never-checked, which is the honest answer. This must never crash, and
-    never stall, ``sac agents list``.
+    Mirrors the old ``DELETE ... WHERE name=?`` and its ``rowcount > 0``: a
+    request to clear a name that was never recorded is not an error, it is
+    simply False.
     """
-    path = _resolve_db_path(db_path)
-    # Guard BEFORE connecting: sqlite3.connect() CREATES a missing file, and a
-    # READ has no business materialising an empty state.db on a fresh host.
-    if not path.is_file():
-        return {}
-    # stx-allow: fallback (reason: the auth cache ENRICHES the agent list; a db
-    # that is missing/locked/schema-less means "not checked yet", never a failed
-    # `sac agents list`.)
+    from scitex_dev.store import ANY_REVISION
+
+    store = _open_store()
     try:
-        conn = sqlite3.connect(path, timeout=5.0)
-    except sqlite3.Error:  # stx-allow: fallback (reason: see inline comment)
-        return {}
-    try:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(f"SELECT {_COLUMNS} FROM agent_auth_state").fetchall()
-    except sqlite3.Error:  # stx-allow: fallback (reason: table not created yet — no watchdog has run on this host)
-        return {}
+        # HIDE, not delete: the primitive has no hard delete — a record is
+        # retired by hiding it, and `is_hidden` is THREE-VALUED (True / False /
+        # None-for-absent). None is what reproduces the old `rowcount > 0`:
+        # clearing a name that was never recorded is False, not an error.
+        state = store.is_hidden({"name": name})
+        if state is None or state:
+            return False
+        store.hide({"name": name}, expected_revision=ANY_REVISION)
+        return True
     finally:
-        conn.close()
-    return {str(r["name"]): _row_to_state(r) for r in rows}
+        store.close()
 
 
-def get_auth_state(name: str, *, db_path: Path | None = None) -> dict | None:
-    """One agent's cached verdict, or ``None`` when it has never been checked."""
-    return list_auth_states(db_path=db_path).get(name)
+def list_auth_states(*, db_path=None) -> dict[str, dict]:
+    """Every recorded verdict, keyed by agent name.
+
+    ON THE HOT PATH. This is called once per ``sac agents list``, and the shape
+    is what keeps it affordable: ONE store open and ONE bulk read for the WHOLE
+    fleet, looked up per row from the returned dict — never a per-agent store
+    hit. The port made the fixed cost of that single open dearer than SQLite's;
+    it did not make the call count grow.
+
+    AN UNREACHABLE STORE IS REPORTED, NOT SWALLOWED SILENTLY. It returns the
+    empty shape so ``sac agents list`` still renders, but it logs at ERROR with
+    the DSN in the message. That distinction matters: an empty dict from a
+    REACHABLE store means "no watchdog has run", and an empty dict from an
+    unreachable one means "I could not look" — the two must never be
+    indistinguishable, because the second silently renders every wedged agent
+    as green.
+    """
+    try:
+        store = _open_store()
+    except Exception as exc:  # stx-allow: fallback (reason: `sac agents list` must still render when this host's PostgreSQL is down; the store's own error NAMES the DSN and is logged at ERROR here. SINK: logger.error on this module's logger -> journald via sac-listen.service, or the caller's stderr for a direct CLI run; `journalctl --user | grep "auth cache unreadable"` is the check)
+        logger.error("auth cache unreadable, rendering as no-verdict: %s", exc)
+        return {}
+    try:
+        return {
+            str(row.values.get("name")): _row_to_state(row)
+            for row in store.rows()
+            if row.values.get("name")
+        }
+    finally:
+        store.close()
 
 
-# --- staleness (a cache is not truth — it has an age) ------------------------
+def get_auth_state(name: str, *, db_path=None) -> dict | None:
+    """One agent's verdict, or None when nothing is recorded for it.
+
+    Same unreachable-store contract as :func:`list_auth_states`: logged loudly,
+    then None, so an agent START is never blocked by a stopped PostgreSQL.
+    """
+    try:
+        store = _open_store()
+    except Exception as exc:  # stx-allow: fallback (reason: `agent start` calls this through resolve_start_verdict with NO try/except of its own; letting it raise would make a stopped PostgreSQL fail every start on the host, where a missing state.db was benign. UNKNOWN falls through to a real start, which is the safe direction. SINK: logger.error as above)
+        logger.error("auth cache unreadable for %s: %s", name, exc)
+        return None
+    try:
+        rec = store.get({"name": name})
+        return _row_to_state(rec) if rec else None
+    finally:
+        store.close()
 
 
 def parse_ts(stamp: str | None) -> datetime | None:
