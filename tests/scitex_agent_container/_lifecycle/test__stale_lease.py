@@ -27,6 +27,26 @@ from typing import Iterator
 import pytest
 
 
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    This file's spec enables ``health``, so the start path spawns the
+    health monitor. With the real ``threading.Thread`` that daemon thread
+    OUTLIVES the test and, ~90 s later, writes a birth certificate and logs
+    an ERROR into whatever test is running then (develop red, 2026-08-24;
+    measured with a capture-immune probe). Same shape as ``FakeThread`` in
+    ``test_lifecycle.py``. PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
@@ -427,6 +447,7 @@ def _drive_dead_runtime_start_scenario(
         runtime_factory=lambda _c: runtime,
         handover_mod=_Handover(),
         sleep_fn=lambda _s: None,
+        thread_factory=FakeThread,
     )
     rows = [r for r in list_active_instances() if r["name"] == "zombie"]
     return runtime, rows, dead_pid
