@@ -34,7 +34,12 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[3]
+# LIVES IN tests/develop/, NOT the mirror tree. tests/<pkg>/ asserts that a
+# matching src/<pkg>/.../X.py exists; these scripts live at the REPO ROOT under
+# scripts/ and have no src counterpart, so a test_*.py under tests/<pkg>/ is an
+# orphan and PS-204 §2 fails the build. Same trap as PR #1026's
+# _helpers/test_ports.py -- the directory is blessed, so nothing warns you until CI.
+REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
 
 # A port nothing listens on. Chosen high and odd; the test asserts unreachability
