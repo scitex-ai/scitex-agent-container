@@ -257,16 +257,29 @@ def record_auth_checks(
 
 def record_auth_check(
     name: str,
-    *,
     auth_failed: bool,
+    *,
     banner: str | None = None,
     reason: str = "",
     note: str = "",
     checked_at: str | None = None,
     db_path=None,
-) -> int:
-    """UPSERT a single verdict. Thin wrapper over :func:`record_auth_checks`."""
-    return record_auth_checks(
+) -> None:
+    """UPSERT ONE agent's auth verdict (thin wrapper over the batch write).
+
+    THE SIGNATURE IS THE ORIGINAL ONE, deliberately. An earlier draft of this
+    port made ``auth_failed`` keyword-only and returned the write count
+    instead of ``None``. Both are arguably nicer — a bare ``True`` in a call
+    is unreadable, and a count is more informative than nothing — and both
+    were WRONG TO CHANGE HERE. This is a backend port: it moves where the row
+    is stored. An API change riding along inside it is a second, silent,
+    breaking change hidden by the first, which is the failure this migration
+    has been careful to avoid everywhere else (``written_by`` rendering,
+    timestamp formats). It broke every positional caller, and the only reason
+    that cost nothing is that the sole caller was this module's own test
+    file. Improve the signature in its own change, with its own reasoning.
+    """
+    record_auth_checks(
         [
             {
                 "name": name,

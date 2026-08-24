@@ -105,10 +105,23 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "scitex_agent_container"
 #: standardise on PostgreSQL — raise it as a decision, not a diff.
 FROZEN_SQLITE = frozenset(
     {
-        "_authheal/_specimen.py",
+        # _authheal/_specimen.py LEFT THIS SET 2026-08-24, and NOT because it
+        # was ported — because it should never have been reading storage at
+        # all. It opened state.db directly to SELECT from agent_auth_state, a
+        # table it does not own. When that table moved to PostgreSQL the read
+        # would have returned "<state.db unreadable>" FOREVER rather than
+        # failing, since the call sits inside a deliberate fallback that
+        # records an unavailable reading instead of aborting the specimen. It
+        # now goes through auth_state.get_auth_state(), so the next backend
+        # move carries it along instead of stranding it.
         "_lifecycle/_rename_db.py",
         "_lifecycle/_rename_plan.py",
-        "_state/auth_state.py",
+        # _state/auth_state.py LEFT THIS SET 2026-08-24 — the agent auth-verdict
+        # cache, moved to per-host PostgreSQL via scitex_dev.store. db_path is
+        # gone from every function: it named a file, and there is no file. The
+        # accompanying scripts/migrate_auth_state_to_postgres.py carries the
+        # existing rows so the cache is not cold on the first `sac agents list`
+        # after the switch.
         "_state/dispatch_ledger.py",
         # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
