@@ -107,7 +107,20 @@ FROZEN_SQLITE = frozenset(
     {
         "_authheal/_specimen.py",
         "_lifecycle/_rename_db.py",
-        "_lifecycle/_rename_plan.py",
+        # _lifecycle/_rename_plan.py LEFT THIS SET 2026-08-24, and like
+        # _authheal/_specimen.py it left WITHOUT being ported — it was reading
+        # a table it does not own. It opened its own sqlite3 connection to
+        # SELECT a pid FROM `instances`, which belongs to state_db_instances.
+        # That read would have survived the `instances` move to PostgreSQL
+        # without raising and simply answered "not running" for every agent,
+        # because this caller treats any error as absence of evidence. It now
+        # calls list_active_instances(), so the accessor's backend is the only
+        # thing that has to change when that table moves.
+        #
+        # `_rename_db.py` deliberately STAYS: it enumerates sqlite_master to
+        # rewrite an agent's rows across every table, which is SQLite-engine
+        # code rather than merely SQLite-backed, and is a rewrite rather than
+        # a port. It leaves this set when that rewrite happens, not before.
         "_state/auth_state.py",
         "_state/dispatch_ledger.py",
         # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
