@@ -276,13 +276,18 @@ def _is_known_agent(name: str) -> bool:
             return True
     except Exception:  # stx-allow: fallback (reason: see comment above)
         return True
-    from .._state.state_db import open_db
+    # Through the OWNING module, not through its table. This used to open a
+    # raw connection and SELECT from ``instances`` directly, which reads the
+    # same rows today and strands the moment that table moves backend — the
+    # sqlite->PostgreSQL migration is doing exactly that, and the identical
+    # pattern in ``_authheal/_specimen`` would have silently returned "no such
+    # row" forever. ``last_known_instance`` already answers this question
+    # (latest row for the name, active OR ended, ``None`` when never seen),
+    # so nothing new had to be written — the accessor was there and this call
+    # site was simply going around it.
+    from .._state.state_db_instances import last_known_instance
 
-    with open_db() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM instances WHERE name = ? LIMIT 1", (name,)
-        ).fetchone()
-    return row is not None
+    return last_known_instance(name) is not None
 
 
 def _refuse_unknown_agent(name: str) -> NoReturn:
