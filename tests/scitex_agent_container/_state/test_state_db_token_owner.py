@@ -37,12 +37,7 @@ and the point is that the REAL resolver reads the REAL variable.
 
 from __future__ import annotations
 
-import os
-import uuid
-from typing import Iterator
-
 import psycopg
-import pytest
 
 from scitex_agent_container._account._rotation_audit import fingerprint_token
 from scitex_agent_container._state.state_db_token_owner import (
@@ -52,42 +47,19 @@ from scitex_agent_container._state.state_db_token_owner import (
     token_owner_rows,
 )
 
-#: The per-host store. Loopback only — every fleet PostgreSQL refuses
-#: non-local connections at pg_hba.
-_BASE_DSN = os.environ.get(
-    "SAC_TEST_PG_DSN", "postgresql://scitex_cards@127.0.0.1:55432/scitex"
-)
+#: The per-host store, shared with every other PostgreSQL-backed test.
+#:
+#: Was a private copy carrying ``postgresql://scitex_cards@...``. That role is
+#: the fleet's retired shared superuser (now NOLOGIN), so the literal had to go
+#: from all four sites at once; importing removes the chance of a fifth copy
+#: drifting. ``tests/_store_isolation.py`` owns the value and the identity.
+from tests._store_isolation import PG_BASE_DSN as _BASE_DSN  # noqa: E402
 
 # A value-shaped string that must never reach the ledger. Only its fingerprint
 # may, and the module refuses anything that is not one.
 _SECRET = "zz-not-a-real-bot-token-0000000000"
 _FP = fingerprint_token(_SECRET) or ""
 _FP_OTHER = fingerprint_token(_SECRET + "-other") or ""
-
-
-@pytest.fixture()
-def pg_schema() -> Iterator[str]:
-    """A throwaway PostgreSQL schema, wired in via ``SCITEX_STORE_DSN``.
-
-    Yields the schema name. Anything the module writes lands here and is
-    dropped afterwards, so the live ledger is never touched.
-    """
-    schema = "sac_test_" + uuid.uuid4().hex[:12]
-    with psycopg.connect(_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-        conn.execute(f'CREATE SCHEMA "{schema}"')
-
-    key = "SCITEX_STORE_DSN"
-    saved = os.environ.get(key)
-    os.environ[key] = f"{_BASE_DSN}?options=-csearch_path%3D{schema}"
-    try:
-        yield schema
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        with psycopg.connect(_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 def _tables_in(schema: str) -> set[str]:
