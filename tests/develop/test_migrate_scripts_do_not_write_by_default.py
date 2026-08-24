@@ -10,42 +10,70 @@ stopped it.
 Its own sibling already had the safe shape. `migrate_verdict_delivered_to_postgres.py`
 takes `--commit`, documented as "actually write; without it this is a dry run
 that writes nothing". The safe pattern existed one file away and the later
-script did not follow it, so this test pins the property for BOTH rather than
-fixing one and leaving the next author to guess.
+script did not follow it, so this pins the property for BOTH rather than fixing
+one and leaving the next author to guess.
 
 HOW IT DETECTS A WRITE, WITHOUT MOCKS. It points the store at a DSN that cannot
 be reached and gives the script real rows to move. Then:
 
-    bare invocation  -> returns 0, no exception   (it never opened the store)
-    --commit         -> raises                    (it tried, and the DSN is dead)
+    bare invocation  -> returns 0, announces a dry run   (never opened the store)
+    --commit         -> raises                           (it tried; the DSN is dead)
 
 The unreachable DSN IS the instrument: a script that writes cannot stay silent
 against it, and a script that dry-runs cannot fail against it. Both directions
-are asserted, because a test that only checks the safe case would still pass if
+are asserted, because a test that only checked the safe case would still pass if
 the script were changed to write nothing ever.
+
+LIVES IN tests/develop/, NOT the mirror tree. tests/<pkg>/ asserts that a
+matching src/<pkg>/.../X.py exists; these scripts live at the REPO ROOT under
+scripts/ and have no src counterpart, so a test_*.py under tests/<pkg>/ is an
+orphan and PS-204 §2 fails the build. Same trap as PR #1026's
+_helpers/test_ports.py -- the directory is blessed, so nothing warns until CI.
+
+NO MONKEYPATCH (PA-306 §3 forbids mock fixtures). Env and argv are saved and
+restored directly, the same shape as `env_save_restore` in
+tests/scitex_agent_container/_helpers/subprocess_shim.py and the
+`slurm_state_env` fixture in tests/integration/test_render_cli.py.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import os
 import sqlite3
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-# LIVES IN tests/develop/, NOT the mirror tree. tests/<pkg>/ asserts that a
-# matching src/<pkg>/.../X.py exists; these scripts live at the REPO ROOT under
-# scripts/ and have no src counterpart, so a test_*.py under tests/<pkg>/ is an
-# orphan and PS-204 §2 fails the build. Same trap as PR #1026's
-# _helpers/test_ports.py -- the directory is blessed, so nothing warns you until CI.
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
 
-# A port nothing listens on. Chosen high and odd; the test asserts unreachability
-# rather than assuming it, so a surprise listener fails loudly instead of
-# silently turning this into a no-op.
+#: A port nothing listens on. The scripts must fail against it if they write.
 DEAD_DSN = "postgresql://nobody@127.0.0.1:59999/nothing"
+
+
+@contextlib.contextmanager
+def _dead_store_and_argv(argv: list[str]):
+    """Point the store at an unreachable DSN and set argv, then restore both.
+
+    PA-306: replaces ``monkeypatch.setenv`` / ``monkeypatch.setattr`` with plain
+    save/restore of real state.
+    """
+    saved_dsn = os.environ.get("SCITEX_STORE_DSN")
+    saved_argv = list(sys.argv)
+    os.environ["SCITEX_STORE_DSN"] = DEAD_DSN
+    sys.argv = argv
+    try:
+        yield
+    finally:
+        sys.argv = saved_argv
+        if saved_dsn is None:
+            os.environ.pop("SCITEX_STORE_DSN", None)
+        else:
+            os.environ["SCITEX_STORE_DSN"] = saved_dsn
 
 
 def _load(name: str):
@@ -53,9 +81,9 @@ def _load(name: str):
     if not path.exists():
         pytest.skip(f"{name} not present in this checkout")
     spec = importlib.util.spec_from_file_location(name.replace(".py", ""), path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _sqlite_with_one_incarnation(tmp_path: Path) -> Path:
@@ -78,49 +106,79 @@ def _sqlite_with_one_incarnation(tmp_path: Path) -> Path:
     return db
 
 
-def test_incarnations_migration_writes_nothing_without_commit(tmp_path, monkeypatch, capsys):
-    """The bare invocation must be a dry run."""
-    monkeypatch.setenv("SCITEX_STORE_DSN", DEAD_DSN)
+@dataclass(frozen=True)
+class Run:
+    """What one invocation of a migration script did."""
+
+    rc: int | None
+    out: str
+    error: BaseException | None
+
+
+def _run_incarnations(tmp_path, capsys, extra: list[str]) -> Run:
     db = _sqlite_with_one_incarnation(tmp_path)
-    mod = _load("migrate_incarnations_to_postgres.py")
-
-    monkeypatch.setattr(sys, "argv", ["migrate", "--db", str(db)])
-    rc = mod.main()
-
-    assert rc == 0, "a dry run must succeed"
-    out = capsys.readouterr().out
-    assert "writing nothing" in out, (
-        f"bare invocation did not announce a dry run. stdout:\n{out}"
-    )
-
-
-def test_incarnations_migration_DOES_try_to_write_with_commit(tmp_path, monkeypatch):
-    """NEGATIVE CONTROL: --commit must actually reach for the store.
-
-    Without this, the test above would still pass if the script were broken to
-    never write at all -- a guard that cannot fail is not a guard.
-    """
-    monkeypatch.setenv("SCITEX_STORE_DSN", DEAD_DSN)
-    db = _sqlite_with_one_incarnation(tmp_path)
-    mod = _load("migrate_incarnations_to_postgres.py")
-
-    monkeypatch.setattr(sys, "argv", ["migrate", "--db", str(db), "--commit"])
-    with pytest.raises(Exception) as exc:
-        mod.main()
-    # It must fail because it tried to REACH the store, not for some other reason.
-    assert "59999" in str(exc.value) or "nothing" in str(exc.value).lower(), (
-        f"--commit failed, but not in a way that shows it reached for the dead "
-        f"store: {exc.value!r}"
-    )
+    module = _load("migrate_incarnations_to_postgres.py")
+    argv = ["migrate", "--db", str(db), *extra]
+    rc: int | None = None
+    err: BaseException | None = None
+    with _dead_store_and_argv(argv):
+        try:
+            rc = module.main()
+        except BaseException as exc:
+            err = exc
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
 
 
-def test_verdict_delivered_migration_also_writes_nothing_without_commit(tmp_path, monkeypatch, capsys):
+def test_incarnations_bare_invocation_succeeds(tmp_path, capsys):
+    """A dry run is a success, not an error."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_incarnations(target, capsys, [])
+    # Assert
+    assert run.rc == 0
+
+
+def test_incarnations_bare_invocation_announces_a_dry_run(tmp_path, capsys):
+    """It must SAY it wrote nothing, so a reader is not left guessing."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_incarnations(target, capsys, [])
+    # Assert
+    assert "writing nothing" in run.out
+
+
+def test_incarnations_bare_invocation_never_reaches_the_store(tmp_path, capsys):
+    """The dead DSN is the detector: a writer could not have stayed silent."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_incarnations(target, capsys, [])
+    # Assert
+    assert run.error is None
+
+
+def test_incarnations_commit_does_reach_for_the_store(tmp_path, capsys):
+    """NEGATIVE CONTROL — without this, the tests above would still pass if the
+    script were broken to never write at all. A guard that cannot fail is not a
+    guard."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_incarnations(target, capsys, ["--commit"])
+    # Assert
+    assert run.error is not None
+
+
+def test_verdict_delivered_bare_invocation_succeeds(tmp_path):
     """The sibling already had the safe shape; pin it so it stays that way."""
-    monkeypatch.setenv("SCITEX_STORE_DSN", DEAD_DSN)
-    mod = _load("migrate_verdict_delivered_to_postgres.py")
+    # Arrange
+    module = _load("migrate_verdict_delivered_to_postgres.py")
     empty = tmp_path / "empty.db"
     sqlite3.connect(empty).close()
-
-    monkeypatch.setattr(sys, "argv", ["migrate", "--state-db", str(empty)])
-    rc = mod.main(["--state-db", str(empty)])
+    # Act
+    with _dead_store_and_argv(["migrate"]):
+        rc = module.main(["--state-db", str(empty)])
+    # Assert
     assert rc == 0
