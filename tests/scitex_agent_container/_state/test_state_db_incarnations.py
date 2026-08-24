@@ -39,11 +39,9 @@ and the point is that the REAL resolver reads the REAL variable.
 from __future__ import annotations
 
 import os
-import uuid
-from typing import Iterator
+from urllib.parse import urlsplit
 
 import psycopg
-import pytest
 
 from scitex_agent_container._state.state_db_incarnations import (
     STORE_NAME,
@@ -54,37 +52,13 @@ from scitex_agent_container._state.state_db_incarnations import (
     record_incarnation_exit,
 )
 
-#: The per-host store. Loopback only — every fleet PostgreSQL refuses
-#: non-local connections at pg_hba, measured 2026-08-19.
-_BASE_DSN = os.environ.get(
-    "SAC_TEST_PG_DSN", "postgresql://scitex_cards@127.0.0.1:55432/scitex"
-)
-
-
-@pytest.fixture()
-def pg_schema() -> Iterator[str]:
-    """A throwaway PostgreSQL schema, wired in via ``SCITEX_STORE_DSN``.
-
-    Yields the schema name. Anything the module writes lands here and is
-    dropped afterwards, so the live birth-certificate store is never
-    touched.
-    """
-    schema = "sac_test_" + uuid.uuid4().hex[:12]
-    with psycopg.connect(_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-        conn.execute(f'CREATE SCHEMA "{schema}"')
-
-    key = "SCITEX_STORE_DSN"
-    saved = os.environ.get(key)
-    os.environ[key] = f"{_BASE_DSN}?options=-csearch_path%3D{schema}"
-    try:
-        yield schema
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        with psycopg.connect(_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+#: The per-host store, shared with every other PostgreSQL-backed test.
+#:
+#: Was a private copy carrying ``postgresql://scitex_cards@...``. That role is
+#: the fleet's retired shared superuser (now NOLOGIN), so the literal had to go
+#: from all four sites at once; importing removes the chance of a fifth copy
+#: drifting. ``tests/_store_isolation.py`` owns the value and the identity.
+from tests._store_isolation import PG_BASE_DSN as _BASE_DSN  # noqa: E402
 
 
 def _tables_in(schema: str) -> set[str]:
@@ -161,8 +135,18 @@ def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> 
     any reformatting that still names them — including both forms above.
     """
     # Arrange: the endpoint the fixture routed this test's writes through.
-    host_port, _, database = _BASE_DSN.split("@", 1)[-1].partition("/")
-    host, _, port = host_port.partition(":")
+    #
+    # Parsed, not sliced. The previous form was
+    # ``_BASE_DSN.split("@", 1)[-1].partition("/")``, which reads the host out
+    # of the userinfo separator — so when the DSN stopped carrying userinfo
+    # (2026-08-24, the shared superuser was retired) ``split`` found no "@",
+    # returned the WHOLE string, and ``partition("/")`` then split inside
+    # ``postgresql://``. It yielded host="postgresql:" and asserted that
+    # against the locator: a green-looking parse producing nonsense.
+    parsed = urlsplit(_BASE_DSN)
+    host = parsed.hostname or ""
+    port = str(parsed.port or "")
+    database = parsed.path.lstrip("/")
     # Act
     locator = init_incarnations_schema()
     # Assert
