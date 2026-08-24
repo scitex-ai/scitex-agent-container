@@ -242,13 +242,62 @@ def ssh_runner(peer: str, peers: Mapping[str, PeerSpec]) -> PeerShell:
     return run
 
 
+#: What each non-zero exit from :func:`manifest_script` actually PROVES.
+#:
+#: The script's own exits are documented (1 = cd failed, 3 = no md5sum), and
+#: the shell contributes two more that mean the script never ran at all. The
+#: previous message reported every one of them as "Could not read the spec
+#: manifest", which names the wrong subject: on 126/127 the manifest was never
+#: consulted, so the spec dir is not evidence of anything. A reader who
+#: believes that message goes looking for a missing or corrupt spec on the
+#: peer and finds a perfectly good one.
+_MANIFEST_RC_MEANING: dict[int, str] = {
+    1: (
+        "the spec directory exists on the peer but could not be entered "
+        "(`cd` failed) — check its permissions and ownership, not its contents"
+    ),
+    3: (
+        "the peer has no `md5sum`, so delivery cannot be verified — sac "
+        "refuses to proceed unverified rather than claim a transfer it "
+        "cannot check"
+    ),
+    126: (
+        "a command in the manifest script was found but is not executable on "
+        "the peer — the spec manifest was never read, so this says nothing "
+        "about the spec directory"
+    ),
+    127: (
+        "a command in the manifest script (or in the ssh wrapper around it) "
+        "was NOT FOUND on the peer — the spec manifest was never read, so "
+        "this says nothing about the spec directory. Usual causes: a "
+        "non-POSIX login shell, a PATH that a non-interactive ssh session "
+        "does not get, or `find`/`sh` missing from a minimal image"
+    ),
+}
+
+
 def read_remote_manifest(remote_dir: str, shell: PeerShell) -> dict[str, str]:
-    """``{relpath: md5}`` as the PEER reports it. Empty when absent."""
+    """``{relpath: md5}`` as the PEER reports it. Empty when absent.
+
+    A non-zero exit is reported as WHAT IT PROVES, not as the outcome the
+    caller was hoping for. The return code already distinguishes "the peer
+    could not read your spec" from "the peer could not run your script", and
+    reporting both as the former sends the reader to the wrong machine's
+    wrong directory.
+    """
     result = shell(manifest_script(remote_dir))
     if result.returncode != 0:
+        meaning = _MANIFEST_RC_MEANING.get(result.returncode)
+        headline = (
+            f"Spec manifest step failed on the peer (rc={result.returncode})"
+            if meaning
+            else f"Could not read the spec manifest at {remote_dir} "
+            f"(rc={result.returncode})"
+        )
+        detail = f"\n{meaning}." if meaning else ""
         raise RuntimeError(
-            f"Could not read the spec manifest at {remote_dir} "
-            f"(rc={result.returncode}).\n"
+            f"{headline}.{detail}\n"
+            f"spec dir: {remote_dir}\n"
             f"stderr:\n{result.stderr.decode('utf-8', 'replace')}"
         )
     return parse_manifest(result.stdout.decode("utf-8", "replace"))

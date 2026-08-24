@@ -242,6 +242,49 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the caveat about SDK/claude-session agents.
     npx puppeteer browsers install chrome-headless-shell || true
 
+    # ---- 3b. A STABLE PATH FOR THE BROWSER -----------------------------
+    # Puppeteer installs under a VERSION-NUMBERED directory:
+    #
+    #   /root/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome
+    #   /root/.cache/puppeteer/chrome-headless-shell/linux-<ver>/.../chrome-headless-shell
+    #
+    # and the install above is UNPINNED, so that <ver> moves on every
+    # rebuild. Nothing outside this image can therefore name the browser
+    # and still be correct tomorrow.
+    #
+    # WHY THIS EXISTS, measured 2026-08-23. The shared agent baseline
+    # pinned a browser as
+    #   --executablePath /home/agent/.cache/ms-playwright/chromium-1228/...
+    # That path exists in NO container: not the base browser (a different
+    # root entirely), and not the four per-agent overlays that DO carry
+    # ms-playwright, which are on chromium-1234. So chrome-devtools and
+    # playwright were declared for every agent and could start for none of
+    # them -- silently, because an MCP server that fails to launch produces
+    # no error anyone reads.
+    #
+    # Repointing that config at today's versioned path would fix it until
+    # the next rebuild and then break it the same way again. A version
+    # inside a path IS the defect, so the image publishes a stable name and
+    # the config names THAT.
+    mkdir -p /opt/browser
+    for _b in chrome chrome-headless-shell; do
+        # Highest version last, so a cache holding several resolves to the
+        # newest rather than to whatever sorts first lexically.
+        _found=$(ls -1d /root/.cache/puppeteer/"$_b"/linux-*/*/"$_b" 2>/dev/null | sort -V | tail -n 1)
+        if [ -n "$_found" ] && [ -x "$_found" ]; then
+            ln -sfn "$_found" /opt/browser/"$_b"
+            echo "BROWSER: /opt/browser/$_b -> $_found"
+        else
+            # LOUD, because the `|| true` above makes a failed download
+            # indistinguishable from a successful one. An image that
+            # silently ships without a browser is exactly how the fleet came
+            # to run two dead MCP servers without anyone noticing.
+            echo "BROWSER: WARNING - no $_b under /root/.cache/puppeteer;" \
+                 "browser MCP servers will not start in this image" >&2
+        fi
+    done
+    unset _b _found
+
     rm -rf /var/lib/apt/lists/*
 
     # ---- 4. Rust toolchain + cargo-binstall ----------------------------
@@ -582,7 +625,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards>=0.41.0" \
+        "scitex-cards>=0.49.1" \
         "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
@@ -660,6 +703,33 @@ import sys
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
+# scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
+# Through 0.48.0, comment_task / update_task rebuilt a card from the doc the
+# caller happened to hold and DROPPED every comment row that doc had not
+# seen — a peer's comment written between your read and your write was
+# destroyed silently, with a success report. 0.49.0 added this symbol to fix
+# that and indexed its rows POSITIONALLY (row[0]), which is KeyError(0) on
+# psycopg's dict_row, so on PostgreSQL every card holding comments became
+# READ-ONLY: uncommentable, unupdatable, uncompletable, undeletable. 0.49.1
+# reads row["author"]. THE FLOOR IS >=0.49.1 AND MUST NEVER BE >=0.49.0.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR, and that distinction is the
+# whole lesson of 2026-08-23: it passed on the broken 0.49.0, because the
+# function was there and wrong. Measured that day, five independent gates
+# went green on that artifact within one hour — this probe, the master-side
+# SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
+# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# So the FLOOR is what excludes the broken release; this import only catches
+# a version string that lies; and only a post-deploy write to a card that
+# ALREADY HAS a comment proves the path actually runs.
+#
+# A VERSION-COMPARISON GATE WOULD NOT HAVE HELPED EITHER. While the floor
+# read >=0.41.0, a resolved 0.48.0 satisfied it, so "version >= floor" would
+# have passed on the very image carrying the defect. A floor is a request to
+# the resolver; it becomes evidence only once it names the version you
+# actually need — which is why the number above moved, not just this comment.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+
 
 
 # sac #633: auto-provisions a new agent's container overlay root; without
@@ -696,7 +766,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.41.0``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.49.1``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #

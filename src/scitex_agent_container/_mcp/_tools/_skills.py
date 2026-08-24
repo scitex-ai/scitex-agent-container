@@ -1,4 +1,4 @@
-"""``sac skills ...`` tools (F-CS15) — Python API + MCP wrappers.
+"""``sac dev skills ...`` tools (F-CS15) — Python API + MCP wrappers.
 
 Required pair per scitex MCP convention §5: every package exposes
 ``<pkg>_skills_list`` and ``<pkg>_skills_get`` so an agent can

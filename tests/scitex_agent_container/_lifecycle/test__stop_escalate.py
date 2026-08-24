@@ -49,6 +49,27 @@ _SIGTERM_DEAF = (
 )
 
 
+
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    This file's spec enables ``health``, so the start path spawns the
+    health monitor. With the real ``threading.Thread`` that daemon thread
+    OUTLIVES the test and, ~90 s later, writes a birth certificate and logs
+    an ERROR into whatever test is running then (develop red, 2026-08-24;
+    measured with a capture-immune probe). Same shape as ``FakeThread`` in
+    ``test_lifecycle.py``. PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
 def _no_sleep(_seconds: float) -> None:
     return None
 
@@ -581,6 +602,7 @@ def _restart(tmp_path: Path, runtime: Any, *, name: str = "alpha") -> bool:
         # leg (and off the network).
         successor_auth_check=lambda _path: None,
         wait_for_stop_timeout_s=0.05,
+        thread_factory=FakeThread,
     )
 
 

@@ -6,6 +6,82 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.3] - 2026-08-24
+
+**Off SQLite.** Every remaining piece of runtime state that a container wrote
+to a private SQLite file now lives in the per-host PostgreSQL on `:55432`,
+where a second agent on the same host can see it. This is the release that
+carries the migration the operator directed on 2026-08-24, plus the day's
+repairs to the things the migration exposed.
+
+### Changed
+- **State moved off SQLite onto per-host PostgreSQL**: both remaining ACL
+  tables (#1161) and the ACL pending-prompt flag (#1158); the inbound dispatch
+  ledger (#1169); the agent auth cache (#1203); relocation residency, leases
+  and journal (#1207); and the two raw `instances` readers now go through the
+  accessor that already existed (#1208).
+- `PGUSER=<host_user>__<agent>` is derived at launch, so 116 specs need no
+  per-spec line (#1204). The incarnations migration is dry-run by default;
+  writing is the opt-in (#1202).
+- Images pin `scitex-cards>=0.49.1` and gate it **by symbol**, so an image
+  that eats or locks cards cannot ship (#1200).
+- `skills` nests under `dev`; the old spelling redirects (#1122).
+
+### Fixed
+- **Test isolation.** The health monitor leaked out of 25 lifecycle tests and
+  wrote a birth-certificate ERROR into whichever test ran ~90 s later, which
+  turned `develop` red at random and blamed whatever PR was open; `agent_restart`
+  now forwards `thread_factory` like every other seam, and `isolated_state`
+  restores `DEFAULT_STATE_ROOT` (#1211, following #1182). The suite no longer
+  writes into the live fleet store (#1155, #1188); the pg fixtures skip where no
+  cluster exists instead of failing (#1205); the audit gate probes the binary the
+  auditor runs (#1157); a dependency's display form is no longer asserted (#1163).
+- **CI.** The verdict rail pointed at a retired superuser, which broke every run
+  (#1209); a hung test dumps its own stack instead of dying silently (#1185);
+  the ci-ring stops re-fetching a sha it holds and stops polling repos GitHub
+  says do not exist (#1171, #1173); the status tool measured the wrong runner
+  pool (#1165); CLA calls the org reusable (#1115); an unresolvable caller job
+  is reported as such (#1116); HookRule provider arg and the PS-140 import test
+  combined so the trunk could go green (#1113); two RST underlines no longer
+  trip check-merge-conflict (#1196); the loopback bind race is closed rather
+  than narrowed (#1198).
+- **Comms and a2a.** The reachability LIST endpoint never resolved its own host
+  (#1180); `inbox_reachable` could never say "reachable" in production (#1174);
+  addressability is split from locality so a portless row stops routing
+  (#1179); a usable port in the same row is no longer discarded (#1177); a
+  refusal no longer names a cause it has not established (#1176); a tombstone
+  no longer refuses the restart after it (#1175); a probe that could not RUN
+  no longer reports the pane alive (#1178); the card-event consumer, never
+  invoked in production, now is (#1167); the a2a target that is unknown but
+  host-local resolves.
+- **Accounts.** keepalive names the peer before the attempt (#1190) and declares
+  the laptop optional so 23.1% of its runs stop going red (#1197); the help no
+  longer names peers that exist nowhere and keepalive names an outcome (#1183);
+  a boot that reports SUCC says which account it chose (#1184).
+- **Spec handoff.** rc=127 (command not found) was reported as "could not read
+  the spec manifest"; each documented exit now says what it proves (#1210).
+- **Secrets.** Event-log previews no longer write unredacted secrets to a
+  durable JSONL (#1172); `host exec` no longer lets the remote shell re-split
+  the user's argv (#1166).
+- The per-agent MCP config write no longer leaves the file empty mid-write
+  (#1189); `agents list` read the container's HOME and saw 1 agent of 122
+  (#1193), and `--capability` searches purpose and role (#1118); `to_home`'s
+  guard covers the current board identity (#1192); worktree-gc keeps a
+  worktree an ignored file alone could not (#1168); the removed-field error no
+  longer tells the reader to delete a live line (#1164); the completion
+  installer no longer writes into a tracked rc file (#1162); an agent with no
+  identity line launches with one (#1160); a scheduled command no longer
+  depends on the ambient PATH (#1159); dev-jobs forwards the two flags its
+  refusal names (#1170).
+
+### Added
+- `sac doctor --node` asks whether an agent here would have tools (#1194),
+  reports specs that collide across hosts (#1191), and checks for one Telegram
+  poller per bot token — the 409 storm had no instrument (#1187).
+- Images publish a stable browser path so config can name it (#1195).
+- A pinned test for the TUI delivery gap: `send_turn` reports success without
+  evidence (#1114).
+
 ## [0.26.2] - 2026-08-18
 
 **A promotion, and the promotion IS the repair.** `main` was RED on

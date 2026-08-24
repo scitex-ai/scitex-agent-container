@@ -305,6 +305,7 @@ def effective_env(
     being stored three layers downstream in someone else's database.
     """
     from ._board_identity_env import apply_board_identity_alias
+    from ._pg_identity_env import apply_pg_identity
 
     merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
     apptainer = getattr(config, "apptainer", None)
@@ -313,8 +314,14 @@ def effective_env(
     # spelling still launches with one. See the branch in
     # ``apply_board_identity_alias`` for why the name is the right answer and
     # why it cannot override a deliberate alias.
-    return apply_board_identity_alias(
+    aliased = apply_board_identity_alias(
         merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
+    )
+    # Same shape for the PostgreSQL login: ``PGUSER=<host_user>__<name>``
+    # unless a spec declares its own (b2 of the pg55432 role rework — see
+    # ``_pg_identity_env`` for why specs stopped carrying DSN userinfo).
+    return apply_pg_identity(
+        aliased, raw_args=raw_args, agent_name=getattr(config, "name", None)
     )
 
 

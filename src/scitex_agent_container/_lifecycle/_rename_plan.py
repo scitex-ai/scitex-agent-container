@@ -131,21 +131,25 @@ def _open_instance_pid(db_path: Path, name: str) -> int | None:
     """Return the pid of an open ``instances`` row for ``name``, if any."""
     if not db_path.is_file():
         return None
-    import sqlite3
+    # Through the OWNING module, not through its table. The raw SELECT this
+    # replaces would keep reading a SQLite ``instances`` table after that
+    # table moves backend, and would report "not running" for every agent
+    # rather than failing — the same silent-stranding shape found in
+    # ``_authheal/_specimen`` during the sqlite->PostgreSQL migration.
+    #
+    # ``list_active_instances`` already applies ``ended_at IS NULL`` and
+    # orders by ``started_at DESC``, so only this function's two extra
+    # conditions remain here: the name, and a pid that is actually recorded.
+    from .._state.state_db_instances import list_active_instances
 
-    conn = sqlite3.connect(str(db_path))
     try:
-        row = conn.execute(
-            "SELECT pid FROM instances "
-            "WHERE name = ? AND ended_at IS NULL AND pid IS NOT NULL "
-            "ORDER BY started_at DESC LIMIT 1",
-            (name,),
-        ).fetchone()
-    except sqlite3.Error:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running)
+        rows = list_active_instances(db_path=db_path)
+    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
         return None
-    finally:
-        conn.close()
-    return int(row[0]) if row else None
+    for row in rows:
+        if row.get("name") == name and row.get("pid") is not None:
+            return int(row["pid"])
+    return None
 
 
 def probe_running(name: str, layout: Layout) -> tuple[str, str]:

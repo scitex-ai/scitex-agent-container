@@ -30,6 +30,9 @@ migration's own clock would look like the whole fleet was born at 00:40 on
 look new" failure. So this writes through the store directly, preserving
 every recorded value verbatim.
 
+A DRY RUN IS THE DEFAULT. Pass ``--commit`` to actually write. The bare
+invocation reports what would move and touches nothing.
+
 IT IS IDEMPOTENT and it VERIFIES: each record is read back through the same
 dialect production reads through, and a mismatch is reported rather than
 counted as a success. Nothing is deleted from SQLite — the old table stays
@@ -79,10 +82,25 @@ def main() -> int:
         default=None,
         help="SQLite state.db to read (default: sac's resolved DEFAULT_DB_PATH)",
     )
+    # WRITING IS OPT-IN. This script used to write by DEFAULT, with --dry-run
+    # as the opt-in — so the bare, obvious invocation was the destructive one.
+    # Its own sibling, migrate_verdict_delivered_to_postgres.py, already had the
+    # safe shape ("--commit ... without it this is a dry run that writes
+    # nothing"); this one did not follow it. Measured 2026-08-24: running this
+    # bare on the live host wrote 242 rows. That was harmless only because the
+    # upsert preserves born_at, not because any guard stopped it.
+    ap.add_argument(
+        "--commit",
+        action="store_true",
+        help="actually write; without it this is a dry run that writes nothing",
+    )
+    # Accepted and ignored, so an existing runbook or shell history that passes
+    # --dry-run keeps working and keeps meaning the same thing. Removing it would
+    # turn a safe old invocation into an argparse error for no gain.
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="report what would move, write nothing",
+        help="no-op: a dry run is now the default (kept for older runbooks)",
     )
     args = ap.parse_args()
 
@@ -108,8 +126,10 @@ def main() -> int:
     if not rows:
         return 0
 
-    if args.dry_run:
-        print("--dry-run: writing nothing")
+    if not args.commit:
+        print("dry run (no --commit): writing nothing")
+        print(f"  would write {len(rows)} row(s) to {incarnation_store_target().locator}")
+        print("  re-run with --commit to apply")
         return 0
 
     store = open_incarnation_store()

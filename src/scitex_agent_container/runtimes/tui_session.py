@@ -31,6 +31,7 @@ from .._runners._tmux.tmux import (
     TuiInputNotReadyError,
 )
 from ..config import AgentConfig
+from . import _tui_delivery
 from ._apptainer_build_argv import build_run_argv
 from ._tui_auth_stage import TuiAuthStageError
 from ._tui_boot_drain import TuiBootDrainMixin
@@ -477,33 +478,34 @@ class TuiSessionRuntime(
         *,
         wait_ready: bool = True,
     ) -> bool:
-        """Deliver one turn of input to the in-tmux TUI.
+        """Deliver one turn to the in-tmux TUI; ``False`` when NOT delivered.
 
-        Uses ``send_text_and_submit`` (text first, settle delay, then a separate
-        ``Enter``) — the bare primitive proven to reach the claude TUI input and
-        submit cleanly on the live host. Returns ``False`` (and skips the send)
-        when sac's tmux session for this agent does not exist — the TUI analogue
-        of the SDK "no live turn endpoint" guard, so a caller can distinguish
-        "delivered" from "no runtime to deliver to".
-
-        When ``wait_ready`` (the default; skippable for the in-memory unit
-        suite), first :meth:`wait_until_input_ready` to drain any first-launch /
-        mid-session modal via the :mod:`runtimes.prompts` registry before
-        delivering, so keystrokes never land on a not-yet-bound input.
+        False covers three distinct cases a caller must tell apart: no tmux
+        session (nothing to deliver to), and — since 2026-08-18 — a pane that
+        would PARK the turn rather than run it, either mid-turn or already
+        holding queued input. See :mod:`runtimes._tui_delivery` for the
+        mechanism and the measurement, and :mod:`runtimes._pane_acceptance`
+        for why "not busy" is not the test.
         """
-        name = session_name_for(config)
-        if not self._mux.exists(name):
-            return False
-        if wait_ready:
-            self.wait_until_input_ready(config)
-        self._mux.send_text_and_submit(name, text)
-        return True
+        return _tui_delivery.send_turn_to_pane(
+            self._mux,
+            session_name_for(config),
+            text,
+            wait_ready=wait_ready,
+            ensure_ready=lambda: self.wait_until_input_ready(config),
+        )
 
     def logs(self, config: AgentConfig, lines: int = 50) -> str:
         """Return the last ``lines`` of pane output; empty string when the
         session does not exist (distinguish via ``is_running`` first).
         """
-        name = session_name_for(config)
-        if not self._mux.exists(name):
-            return ""
-        return str(self._mux.capture_logs(name, lines=lines))
+        return _tui_delivery.capture_pane_logs(
+            self._mux, session_name_for(config), lines
+        )
+
+    def why_not_deliverable(self, config: AgentConfig) -> str | None:
+        """Reason a turn would not be delivered now, or None if it would be.
+
+        So a caller's error can name the ACTUAL cause instead of guessing one.
+        """
+        return _tui_delivery.why_not_deliverable(self._mux, session_name_for(config))

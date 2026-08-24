@@ -31,7 +31,7 @@ So the exposed set is "every value of every spec-env key, plus every
 per-secret patch can bound.
 
 THE FIX
-=======
+-------
 The SDK's own ``else`` branch passes a ``str``/``Path`` through verbatim::
 
     cmd.extend(["--mcp-config", str(self._options.mcp_servers)])
@@ -76,6 +76,8 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
+
+from .._runners._atomic import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -161,17 +163,31 @@ def write_mcp_config_file(
         try:
             directory.mkdir(parents=True, exist_ok=True)
             os.chmod(directory, MCP_CONFIG_DIR_MODE)
-            fd = os.open(
-                path,
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                MCP_CONFIG_FILE_MODE,
-            )
-            try:
-                os.write(fd, payload.encode("utf-8"))
-            finally:
-                os.close(fd)
-            # An inherited file predating this fix may be 0644; O_CREAT's mode
-            # only applies on creation, so tighten unconditionally.
+            # ATOMIC, and both halves of that matter.
+            #
+            # THE RACE. The previous form opened with O_TRUNC and then wrote,
+            # which leaves the file EMPTY ON DISK between the two syscalls. A
+            # reader in that window gets "" and json.loads raises
+            # "Expecting value: line 1 column 1 (char 0)". MEASURED on CI
+            # 2026-08-22, py3.11 leg, xdist worker gw4: several tests call
+            # build_sdk_options("alpha", ...) concurrently and all of them
+            # resolve to the SAME $HOME/.sac/mcp/alpha.mcp.json, because the
+            # filename is keyed on the AGENT NAME while $HOME is shared. Not a
+            # test-only fault: in production the same window lets a starting
+            # `claude` read an empty MCP config and come up with no servers.
+            #
+            # THE SECRET WINDOW. O_CREAT's mode applies only when the file is
+            # CREATED, so rewriting a pre-existing 0644 file wrote the server
+            # env blocks -- resolved secret literals, per MCP_CONFIG_FILE_MODE
+            # above -- at 0644 and only tightened AFTER the content was there.
+            # mkstemp creates at 0600 and os.replace preserves the source mode,
+            # so the payload is never world-readable even transiently.
+            #
+            # atomic_write_text gives each writer a UNIQUE temp name, which is
+            # what makes two concurrent writers safe rather than merely making
+            # one reader safe -- see its docstring for the fixed-.tmp collision
+            # it was written to fix.
+            atomic_write_text(path, payload)
             os.chmod(path, MCP_CONFIG_FILE_MODE)
         except OSError as exc:
             errors.append(f"{path}: {exc}")

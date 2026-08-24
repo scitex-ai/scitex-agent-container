@@ -43,6 +43,7 @@ from scitex_agent_container._listen._handler_deadline import (
     AGENT_START_DEADLINE_S,
     client_timeout_for,
 )
+from scitex_agent_container._runners import _session_state
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
@@ -548,12 +549,27 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     }
     saved = {k: os.environ.get(k) for k in keys}
     saved_default = state_db.DEFAULT_DB_PATH
+    # ``_session_state.DEFAULT_STATE_ROOT`` is bound ONCE, at import time, from
+    # ``runtime_base_dir()`` (_session_state.py:76). Restoring the env var is
+    # therefore NOT enough: whichever test first drags that module into the
+    # interpreter decides the constant for the whole worker, and if that happens
+    # while this fixture's redirect is live the constant keeps pointing into a
+    # tmp_path that pytest then deletes. conftest's autouse
+    # ``_assert_state_floor_intact`` catches it at teardown, and everything
+    # after it in the worker ERRORs -- measured 2026-08-24: this file alone,
+    # then tests/scitex_agent_container/runtimes/test__cct_token_pool.py, gave
+    # 89 passed / 61 errors in one process purely from this leak.
+    # Rebinding it explicitly (same shape as ``state_db.DEFAULT_DB_PATH`` above)
+    # makes the redirect deliberate and, crucially, UNDOES it.
+    saved_state_root = _session_state.DEFAULT_STATE_ROOT
     os.environ.update(keys)
     state_db.DEFAULT_DB_PATH = db
+    _session_state.DEFAULT_STATE_ROOT = runtime_dir
     state_db.init_schema(db)
     try:
         yield db
     finally:
+        _session_state.DEFAULT_STATE_ROOT = saved_state_root
         state_db.DEFAULT_DB_PATH = saved_default
         for k, prev in saved.items():
             if prev is None:

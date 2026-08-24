@@ -25,11 +25,11 @@ it does not depend on which directory the run happens to collect.
 
 from __future__ import annotations
 
+import getpass
 import os
 from typing import Iterator
 
 import pytest
-
 
 # ----------------------------------------------------------------------
 # PostgreSQL isolation for the sqlite -> Postgres migration (2026-08-19)
@@ -37,9 +37,35 @@ import pytest
 
 #: The per-host store. Loopback only — every fleet PostgreSQL refuses
 #: non-local connections at pg_hba, measured 2026-08-19.
-PG_BASE_DSN = os.environ.get(
-    "SAC_TEST_PG_DSN", "postgresql://scitex_cards@127.0.0.1:55432/scitex"
-)
+#:
+#: NO USERINFO IN THE DSN (2026-08-24). This used to read
+#: ``postgresql://scitex_cards@...``. That role was the fleet's single shared
+#: superuser and it has been demoted to NOLOGIN, so a DSN naming it now fails
+#: to authenticate everywhere at once. Identity travels in ``PGUSER`` instead
+#: (the same convention every agent launches with — see
+#: ``runtimes/_pg_identity_env``), and the password stays in ``~/.pgpass``
+#: where libpq finds it without any credential entering this file.
+PG_BASE_DSN = os.environ.get("SAC_TEST_PG_DSN", "postgresql://127.0.0.1:55432/scitex")
+
+
+def _default_test_pg_user() -> str:
+    """The login role tests authenticate as when nothing declares one.
+
+    Derived, never hardcoded: the roles are ``<os-user>__<consumer>`` and the
+    owner varies by machine, so a literal would work on one host and fail on
+    the next. ``__cli`` is the interactive/tooling leaf — the same one a shell
+    on the host uses.
+
+    It must be a LOGIN role: libpq's own fallback is the bare OS user, which
+    in this role tree is the NOLOGIN permission umbrella, so leaving PGUSER
+    unset authenticates as a role that deliberately cannot log in.
+    """
+    return f"{getpass.getuser()}__cli"
+
+
+#: Resolved at import for the same reason as the password file below: a test
+#: that sandboxes the environment must not change who the fixture connects as.
+PG_TEST_USER = os.environ.get("PGUSER") or _default_test_pg_user()
 
 #: The password file, resolved AT IMPORT and pinned for the fixture below.
 #:
@@ -167,9 +193,41 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
     saved_pgpass = os.environ.get(pgpass_key)
     os.environ[pgpass_key] = _PGPASS_AT_IMPORT
 
+    # Identity for the fixture's OWN connections. Set alongside PGPASSFILE and
+    # for the same reason: the DSN carries no userinfo any more, so without
+    # this libpq falls back to the OS user (a NOLOGIN role).
+    pguser_key = "PGUSER"
+    saved_pguser = os.environ.get(pguser_key)
+    os.environ[pguser_key] = PG_TEST_USER
+
     schema = "sac_test_" + uuid.uuid4().hex[:12]
-    with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-        conn.execute(f'CREATE SCHEMA "{schema}"')
+    try:
+        with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
+            conn.execute(f'CREATE SCHEMA "{schema}"')
+    except psycopg.OperationalError as exc:
+        # SKIP, not fail: not every machine that runs this suite still has a
+        # local cluster. The fleet's stores were consolidated onto the primary
+        # and one laptop on 2026-08-24, while the self-hosted CI runners live
+        # on hosts that no longer keep one — those runners were reporting four
+        # ERRORs per job for an absent server rather than for anything in the
+        # code under test.
+        #
+        # This is the same rule the fixture already states for the suite at
+        # large ("a test that does not need PostgreSQL must not fail because
+        # PostgreSQL is down"), applied one level down: a test that DOES need
+        # PostgreSQL still must not fail on a host that legitimately has none.
+        # The reason string names the DSN so a skip on a host that is SUPPOSED
+        # to have a cluster reads as the misconfiguration it is, instead of
+        # disappearing into a skip count.
+        for key_, saved_ in ((pgpass_key, saved_pgpass), (pguser_key, saved_pguser)):
+            if saved_ is None:
+                os.environ.pop(key_, None)
+            else:
+                os.environ[key_] = saved_
+        pytest.skip(
+            f"no reachable PostgreSQL for the test fixture at {PG_BASE_DSN} "
+            f"as {PG_TEST_USER}: {exc}"
+        )
 
     key = "SCITEX_STORE_DSN"
     saved = os.environ.get(key)
@@ -183,7 +241,8 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
             os.environ[key] = saved
         with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        if saved_pgpass is None:
-            os.environ.pop(pgpass_key, None)
-        else:
-            os.environ[pgpass_key] = saved_pgpass
+        for key_, saved_ in ((pgpass_key, saved_pgpass), (pguser_key, saved_pguser)):
+            if saved_ is None:
+                os.environ.pop(key_, None)
+            else:
+                os.environ[key_] = saved_

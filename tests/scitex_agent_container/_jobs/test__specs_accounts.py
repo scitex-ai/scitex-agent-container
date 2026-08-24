@@ -23,7 +23,7 @@ jobs_mod = pytest.importorskip(
 
 from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
 
-from ._jobspec_helpers import _job, _split_command  # noqa: E402
+from ._jobspec_helpers import _job, _peer_sets, _split_command  # noqa: E402
 
 
 def test_accounts_keepalive_job_name_is_package_prefixed() -> None:
@@ -54,7 +54,76 @@ def test_accounts_keepalive_command_pushes_to_every_access_only_peer() -> None:
     job = _job("scitex-agent-container-accounts-keepalive")
     # Assert
     bound, _payload, rest = _split_command(job.command)
-    assert (bound, rest) == ("/usr/bin/timeout 300", "accounts keepalive --all --to ywata-note-win --to scitex-compute-03 --to scitex-compute-04")
+    assert (bound, rest) == (
+        "/usr/bin/timeout 300",
+        "accounts keepalive --all "
+        "--to ywata-note-win --to scitex-compute-03 --to scitex-compute-04 "
+        "--optional-peer ywata-note-win",
+    )
+
+#: Hosts DOCUMENTED as intermittently reachable, so a failure to reach one is
+#: not evidence the job failed. ywata-note-win earns this by measurement, not
+#: opinion: the 2026-08-16 "No route to host" incident is the reason
+#: `--optional-peer` exists at all. The next entry here should arrive the same
+#: way — with an incident behind it — never on a hunch that a host looks flaky.
+_INTERMITTENT_PEERS = frozenset({"ywata-note-win"})
+
+def test_accounts_keepalive_still_targets_the_intermittent_peer() -> None:
+    # Arrange — the PREMISE of the test below, asserted separately so it
+    # cannot fail silently. "Declared optional" is only meaningful for a host
+    # the job actually pushes to; if ywata-note-win ever drops out of the peer
+    # list, the optional-peer assertion would pass vacuously and stop guarding
+    # anything. This turns that into its own red line: drop the host, and you
+    # are told to drop it from _INTERMITTENT_PEERS too.
+    # Act
+    job = _job("scitex-agent-container-accounts-keepalive")
+    targeted, _optional = _peer_sets(job.command)
+    # Assert
+    assert _INTERMITTENT_PEERS <= targeted, (
+        f"no longer targeted at all: {sorted(_INTERMITTENT_PEERS - targeted)}"
+        " — if that is deliberate, remove it from _INTERMITTENT_PEERS so the"
+        " optional-peer assertion does not start passing vacuously"
+    )
+
+def test_accounts_keepalive_declares_every_intermittent_peer_optional() -> None:
+    # Arrange — THE PROPERTY, not the string. The whole-command assertion
+    # above goes red on ANY edit and gets updated by whoever made the edit,
+    # which makes it a changelog rather than a guard. This states the rule that
+    # must survive the next peer-list edit: a host documented as intermittently
+    # reachable must be declared optional wherever it is targeted.
+    #
+    # The cost of leaving it undeclared was measured on 2026-08-23 from the
+    # supervisor's own execution log: 96 of 416 runs failed (23.1%) on the rail
+    # WITHOUT the declaration, against ~2/day on the rail with it. Undeclared,
+    # one absence of a laptop reds a unit whose real job — keeping the
+    # ALWAYS-ON hosts' credentials alive — succeeded. A red that does not mean
+    # "act" is worse than no red: it trains everyone to skip the alarm that
+    # eventually matters.
+    # Act
+    job = _job("scitex-agent-container-accounts-keepalive")
+    _targeted, optional = _peer_sets(job.command)
+    # Assert
+    assert _INTERMITTENT_PEERS <= optional, (
+        "targeted but not declared optional: "
+        f"{sorted(_INTERMITTENT_PEERS - optional)}"
+    )
+
+def test_accounts_keepalive_declares_optional_only_hosts_it_targets() -> None:
+    # Arrange — the other direction, and it is not symmetry for its own sake.
+    # `--optional-peer` names a host whose failure is FORGIVEN. A name there
+    # that appears in no `--to` is either a typo or a stale entry, and either
+    # way it forgives nothing while reading as though a decision was made.
+    # Worse, that same typo inside a real pair (`--to a --optional-peer
+    # a-typo`) leaves the intermittent host targeted and NOT forgiven — the
+    # exact failure the test above exists to prevent, wearing the appearance
+    # of a fix.
+    # Act
+    job = _job("scitex-agent-container-accounts-keepalive")
+    targeted, optional = _peer_sets(job.command)
+    # Assert
+    assert optional <= targeted, (
+        f"declared optional but never targeted: {sorted(optional - targeted)}"
+    )
 
 def test_accounts_keepalive_command_runs_the_copying_verb_not_a_minting_one() -> None:
     # Arrange — belt-and-braces, the counterpart of accounts-refresh's

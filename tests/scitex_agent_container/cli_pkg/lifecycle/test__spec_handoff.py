@@ -408,3 +408,113 @@ def test_a_failing_extraction_is_reported_with_the_peers_stderr(spec_src):
 
 
 # EOF
+
+
+class PeerExitingWith:
+    """A peer whose shell exits with a chosen code.
+
+    The RETURN CODE is the subject under test here, so it is supplied
+    directly rather than provoked: reproducing a real rc=127 would mean
+    breaking a PATH on a real machine, which tests what the machine did,
+    not what our message says about it.
+    """
+
+    def __init__(self, returncode: int, stderr: bytes = b"") -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+    def __call__(self, script: str, stdin: bytes | None = None):
+        return subprocess.CompletedProcess(
+            args=[], returncode=self.returncode, stdout=b"", stderr=self.stderr
+        )
+
+
+def manifest_failure_message(returncode: int, stderr: bytes = b"") -> str:
+    """The ``RuntimeError`` text raised for ``returncode``.
+
+    Captured through one helper so every claim about that message is its own
+    single-assertion test, the way ``rerouted_delivery_error`` does above.
+    """
+    peer = PeerExitingWith(returncode, stderr)
+    with pytest.raises(RuntimeError) as excinfo:
+        read_remote_manifest(REMOTE_DIR, peer)
+    return str(excinfo.value)
+
+
+def test_command_not_found_does_not_accuse_the_spec_manifest():
+    """rc=127 proves the script never ran, so the manifest was never read.
+
+    Reporting it as "could not read the spec manifest" sends the reader to
+    hunt a missing or corrupt spec on the peer that was fine all along.
+    """
+    # Arrange
+    # Act
+    message = manifest_failure_message(127)
+    # Assert
+    assert "Could not read the spec manifest" not in message
+
+
+def test_command_not_found_names_the_missing_command_as_the_cause():
+    # Arrange
+    # Act
+    message = manifest_failure_message(127)
+    # Assert
+    assert "NOT FOUND on the peer" in message
+
+
+def test_command_not_found_still_reports_the_spec_dir():
+    """Correcting the accusation must not cost the reader the path."""
+    # Arrange
+    # Act
+    message = manifest_failure_message(127)
+    # Assert
+    assert REMOTE_DIR in message
+
+
+def test_a_non_executable_command_is_distinguished_from_a_missing_one():
+    """126 and 127 are different faults and get different remedies."""
+    # Arrange
+    # Act
+    message = manifest_failure_message(126)
+    # Assert
+    assert "not executable" in message
+
+
+def test_a_peer_without_md5sum_is_named_as_such():
+    """Exit 3 is the script's OWN signal — it already knows why it stopped."""
+    # Arrange
+    # Act
+    message = manifest_failure_message(3)
+    # Assert
+    assert "no `md5sum`" in message
+
+
+def test_an_unenterable_spec_dir_points_at_permissions_not_contents():
+    """Exit 1 is the script's ``cd`` failing: the directory IS there."""
+    # Arrange
+    # Act
+    message = manifest_failure_message(1)
+    # Assert
+    assert "could not be entered" in message
+
+
+def test_an_undocumented_exit_keeps_the_original_message():
+    """A claim is made only for codes whose meaning the script fixes.
+
+    Anything else stays exactly as vague as our knowledge of it — inventing a
+    cause for an unknown code is the same defect in the other direction.
+    """
+    # Arrange
+    # Act
+    message = manifest_failure_message(11)
+    # Assert
+    assert "Could not read the spec manifest" in message
+
+
+def test_the_peers_own_stderr_survives_the_rewrite():
+    """Whatever the peer itself said is the most specific evidence there is."""
+    # Arrange
+    # Act
+    message = manifest_failure_message(127, b"sh: 1: find: not found")
+    # Assert
+    assert "sh: 1: find: not found" in message

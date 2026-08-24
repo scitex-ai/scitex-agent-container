@@ -29,10 +29,12 @@ from scitex_agent_container._state import auth_state as aus
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def db(tmp_path: Path) -> Path:
-    """A per-test state.db path; the writer creates the schema on demand."""
-    return tmp_path / "state.db"
+# The `db` fixture is GONE. It handed each test a per-test ``state.db`` PATH,
+# and after the PostgreSQL port there is no file to point at — ``db_path``
+# left every function in this module. The round-trip tests below now take the
+# shared ``pg_schema`` fixture instead: a throwaway PostgreSQL schema, dropped
+# afterwards, so they exercise the REAL backend the code now uses rather than
+# a dialect production can never take.
 
 
 @pytest.fixture
@@ -51,71 +53,71 @@ def _stamp(moment: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_recorded_failing_agent_reads_back_as_auth_failed(db: Path) -> None:
+def test_recorded_failing_agent_reads_back_as_auth_failed(pg_schema: str) -> None:
     # Arrange
-    aus.record_auth_check("figrecipe", True, banner="Login expired", db_path=db)
+    aus.record_auth_check("figrecipe", True, banner="Login expired")
     # Act
-    state = aus.list_auth_states(db_path=db)["figrecipe"]
+    state = aus.list_auth_states()["figrecipe"]
     # Assert
     assert state["auth_failed"] is True
 
 
-def test_recorded_healthy_agent_reads_back_as_not_failed(db: Path) -> None:
+def test_recorded_healthy_agent_reads_back_as_not_failed(pg_schema: str) -> None:
     # Arrange
-    aus.record_auth_check("worker", False, db_path=db)
+    aus.record_auth_check("worker", False)
     # Act
-    state = aus.list_auth_states(db_path=db)["worker"]
+    state = aus.list_auth_states()["worker"]
     # Assert
     assert state["auth_failed"] is False
 
 
-def test_recorded_check_carries_the_diagnosed_reason(db: Path) -> None:
+def test_recorded_check_carries_the_diagnosed_reason(pg_schema: str) -> None:
     # Arrange
-    aus.record_auth_check("figrecipe", True, reason="revoked", db_path=db)
+    aus.record_auth_check("figrecipe", True, reason="revoked")
     # Act
-    state = aus.list_auth_states(db_path=db)["figrecipe"]
+    state = aus.list_auth_states()["figrecipe"]
     # Assert
     assert state["reason"] == "revoked"
 
 
-def test_recorded_check_stamps_checked_at(db: Path) -> None:
+def test_recorded_check_stamps_checked_at(pg_schema: str) -> None:
     # Arrange
-    aus.record_auth_check("worker", False, checked_at="2026-07-13T11:59:00Z", db_path=db)
+    aus.record_auth_check("worker", False, checked_at="2026-07-13T11:59:00Z")
     # Act
-    state = aus.list_auth_states(db_path=db)["worker"]
+    state = aus.list_auth_states()["worker"]
     # Assert
     assert state["checked_at"] == "2026-07-13T11:59:00Z"
 
 
-def test_re_recording_an_agent_overwrites_rather_than_duplicating(db: Path) -> None:
+def test_re_recording_an_agent_overwrites_rather_than_duplicating(pg_schema: str) -> None:
     # Arrange — the watchdog re-runs and the agent has recovered.
-    aus.record_auth_check("figrecipe", True, db_path=db)
-    aus.record_auth_check("figrecipe", False, db_path=db)
+    aus.record_auth_check("figrecipe", True)
+    aus.record_auth_check("figrecipe", False)
     # Act
-    state = aus.list_auth_states(db_path=db)["figrecipe"]
+    state = aus.list_auth_states()["figrecipe"]
     # Assert
     assert state["auth_failed"] is False
 
 
-def test_batch_write_records_every_named_agent(db: Path) -> None:
+def test_batch_write_records_every_named_agent(pg_schema: str) -> None:
     # Arrange
     checks = [
         {"name": "a", "auth_failed": False},
         {"name": "b", "auth_failed": True},
     ]
-    aus.record_auth_checks(checks, db_path=db)
+    aus.record_auth_checks(checks)
     # Act
-    names = sorted(aus.list_auth_states(db_path=db))
+    names = sorted(aus.list_auth_states())
     # Assert
     assert names == ["a", "b"]
 
 
-def test_clear_auth_state_removes_the_agents_verdict(db: Path) -> None:
+def test_clear_auth_state_removes_the_agents_verdict(pg_schema: str) -> None:
     # Arrange
-    aus.record_auth_check("figrecipe", True, db_path=db)
-    aus.clear_auth_state("figrecipe", db_path=db)
+    aus.record_auth_check("figrecipe", True)
+    aus.clear_auth_state("figrecipe")
     # Act
-    states = aus.list_auth_states(db_path=db)
+    states = aus.list_auth_states()
     # Assert
     assert "figrecipe" not in states
 
@@ -144,17 +146,14 @@ def test_read_of_absent_db_does_not_create_it(tmp_path: Path) -> None:
     assert missing.exists() is False
 
 
-def test_read_of_db_without_the_table_returns_no_verdicts(tmp_path: Path) -> None:
-    # Arrange — a real, pre-existing state.db that no watchdog has written to,
-    # so `agent_auth_state` does not exist yet.
-    from scitex_agent_container._state.state_db import init_schema
-
-    db_path = tmp_path / "state.db"
-    init_schema(db_path)
-    # Act
-    states = aus.list_auth_states(db_path=db_path)
-    # Assert
-    assert states == {}
+# test_read_of_db_without_the_table_returns_no_verdicts was REMOVED
+# 2026-08-24. It built a real state.db with no `agent_auth_state` table and
+# asserted the reader returned no verdicts. After the PostgreSQL port there is
+# neither a file nor a lazily-created table, and — the reason it had to go
+# rather than be adapted — it still PASSED, because an unreachable store also
+# returns {}. A test that cannot fail is worse than no test. The behaviour
+# that replaced it (an unreachable store degrades to no verdicts AND says so
+# in the log) is asserted in tests/develop/test_auth_state_on_postgres.py.
 
 
 # ---------------------------------------------------------------------------
@@ -303,16 +302,15 @@ def test_verdict_for_never_checked_agent_is_not_called_failing() -> None:
 
 
 def test_stored_verdict_survives_the_full_write_read_verdict_path(
-    db: Path, now: datetime
+    pg_schema: str, now: datetime
 ) -> None:
     # Arrange — the real end-to-end shape: watchdog writes, list reads, rule
-    # applies. No mocks anywhere: a real sqlite file, a real row.
+    # applies. No mocks anywhere: a real PostgreSQL schema, a real row.
     aus.record_auth_checks(
         [{"name": "figrecipe", "auth_failed": True, "reason": "revoked"}],
         checked_at=_stamp(now - timedelta(minutes=3)),
-        db_path=db,
     )
-    states = aus.list_auth_states(db_path=db)
+    states = aus.list_auth_states()
     # Act
     fields = aus.verdict_for(states.get("figrecipe"), now=now)
     # Assert

@@ -59,9 +59,11 @@ import errno
 import shutil
 import socket
 import subprocess
+import urllib.request
 
 import pytest
 
+from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 from tests.scitex_agent_container._helpers.ports import (
     DeadPortAllocator,
     bind_without_listen,
@@ -410,4 +412,92 @@ def test_reserved_port_close_inside_block_is_safe():
     # Act
     err = _bind_error(port)
     # Assert — no double-close explosion on the way out of the block.
+    assert err is None
+
+
+# ---------------------------------------------------------------------------
+# run_loopback(sock=...) — closing the window rather than narrowing it.
+#
+# reserved_port is honest that it cannot get to zero on its own: "between that
+# close() and the server's bind() the port IS free ... If a server DOES accept
+# an fd, pass it this socket instead and the race disappears entirely."
+# uvicorn.Config accepts fd=, so these assert the entirely.
+#
+# This is not theoretical. The gap fired on develop 2026-08-23 (py3.12,
+# [Errno 98] on a port the loopback helper had just been handed) and, per
+# _helpers/ports.py, on 2026-08-12 against py3.11. Which leg goes red is
+# whichever worker loses the race, which is why the same bug looks like a
+# different bug each time.
+# ---------------------------------------------------------------------------
+
+
+async def _no_content_app(scope, receive, send) -> None:
+    """Smallest ASGI app that proves a real server bound and answered."""
+    await send({"type": "http.response.start", "status": 204, "headers": []})
+    await send({"type": "http.response.body", "body": b""})
+
+
+def test_run_loopback_serves_on_the_very_port_that_was_reserved():
+    # Arrange — the whole point: the port the server ends up on must be the
+    # port that was HELD, with no interval in which anyone could take it.
+    with reserved_port() as sock:
+        reserved = int(sock.getsockname()[1])
+        # Act
+        with run_loopback(_no_content_app, sock=sock) as served:
+            pass
+    # Assert
+    assert served == reserved
+
+
+def test_run_loopback_with_a_socket_actually_answers():
+    # Arrange — equality of port numbers would also hold if the server never
+    # started, so bind a real request to it. This is the falsifying half.
+    with reserved_port() as sock:
+        port = int(sock.getsockname()[1])
+        # Act
+        with run_loopback(_no_content_app, sock=sock):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/", timeout=10
+            ) as resp:
+                status = resp.status
+    # Assert
+    assert status == 204
+
+
+def test_run_loopback_refuses_a_port_and_a_socket_together():
+    # Arrange — two sources for one value is how a test ends up asserting
+    # against a port the server is not on.
+    sock = bind_without_listen()
+    port = int(sock.getsockname()[1])
+    # Act
+    def _both() -> None:
+        with run_loopback(_no_content_app, port, sock=sock):
+            pass
+    # Assert
+    with pytest.raises(TypeError):
+        _both()
+    sock.close()
+
+
+def test_run_loopback_requires_either_a_port_or_a_socket():
+    # Arrange — omitting both used to be a TypeError from the signature; it
+    # must stay an error now that port is optional.
+    app = _no_content_app
+    # Act
+    def _neither() -> None:
+        with run_loopback(app):
+            pass
+    # Assert
+    with pytest.raises(TypeError):
+        _neither()
+
+
+def test_old_idiom_hands_over_a_port_anyone_can_take():
+    # Arrange — the negative control for the four above. If this ever stops
+    # passing, the old idiom has been fixed elsewhere and these tests have
+    # stopped discriminating between the two shapes.
+    port = _old_broken_closed_port()
+    # Act
+    err = _bind_error(port)
+    # Assert — free for the taking, which is the bug the fd path removes.
     assert err is None
