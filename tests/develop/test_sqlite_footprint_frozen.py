@@ -105,7 +105,15 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "scitex_agent_container"
 #: standardise on PostgreSQL — raise it as a decision, not a diff.
 FROZEN_SQLITE = frozenset(
     {
-        "_authheal/_specimen.py",
+        # _authheal/_specimen.py LEFT THIS SET 2026-08-24, and NOT because it
+        # was ported — because it should never have been reading storage at
+        # all. It opened state.db directly to SELECT from agent_auth_state, a
+        # table it does not own. When that table moved to PostgreSQL the read
+        # would have returned "<state.db unreadable>" FOREVER rather than
+        # failing, since the call sits inside a deliberate fallback that
+        # records an unavailable reading instead of aborting the specimen. It
+        # now goes through auth_state.get_auth_state(), so the next backend
+        # move carries it along instead of stranding it.
         "_lifecycle/_rename_db.py",
         # _lifecycle/_rename_plan.py LEFT THIS SET 2026-08-24, and like
         # _authheal/_specimen.py it left WITHOUT being ported — it was reading
@@ -121,7 +129,22 @@ FROZEN_SQLITE = frozenset(
         # rewrite an agent's rows across every table, which is SQLite-engine
         # code rather than merely SQLite-backed, and is a rewrite rather than
         # a port. It leaves this set when that rewrite happens, not before.
-        "_state/auth_state.py",
+        #
+        # _state/auth_state.py LEFT THIS SET 2026-08-24 — the agent auth-verdict
+        # cache, moved to per-host PostgreSQL via scitex_dev.store. db_path is
+        # gone from every function: it named a file, and there is no file. The
+        # accompanying scripts/migrate_auth_state_to_postgres.py carries the
+        # existing rows so the cache is not cold on the first `sac agents list`
+        # after the switch.
+        #
+        # THE CONFLICT THAT PRODUCED THIS BLOCK is worth one line, because it
+        # will recur: two PRs shrank this set on the same afternoon, each
+        # deleting its own entry and keeping the other's. Both deletions were
+        # correct and git could not know that. Resolving toward EITHER side
+        # alone would have silently re-added a stale entry — which is the
+        # precise failure the "no stale entries" test exists to catch, so it
+        # would have failed loudly rather than rotted. Expect more of these as
+        # the migration lands; take both removals.
         "_state/dispatch_ledger.py",
         # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
