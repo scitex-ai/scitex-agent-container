@@ -36,7 +36,7 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 # burst of writers on a SINGLE node collided on the oplog (origin, seq)
 # primary key with no bounded retry -- 7/8 and 5/8 failures on the two
 # concurrency tests, reproduced three times. 0.56.6 adds this constant and
-# the retry loop that uses it, plus an advisory lock around CREATE TABLE.
+# the retry loop that uses it, plus an advisory lock around table creation.
 #
 # THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR -- the same narrow job as the
 # scitex-cards import above, and the same 2026-08-23 lesson. The FLOOR is
