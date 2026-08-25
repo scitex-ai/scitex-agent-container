@@ -12,7 +12,13 @@ Every consequence was SILENT:
   with a full implementation brief sat runnable under the other name;
 * its pull-inbox under the agent name accumulated notifications it never
   polled, including a card another agent filed for it;
-* every ``reassign_task`` returned ``assignee_liveness: unknown``.
+Recorded at the time as a fourth symptom, and WRONG: that every
+``reassign_task`` returned ``assignee_liveness: unknown``. It does — for
+every agent, drifted or not. Re-measured 2026-08-25 from an agent whose
+identity was correct and which was demonstrably running: still
+``unknown``. A field that reads the same in both states discriminates
+nothing, so it is struck from the record rather than left to mislead the
+next reader into "diagnosing" drift with it.
 
 Nothing errored, because "no cards assigned to you" and "no cards
 assigned to THIS SPELLING of you" render identically.
@@ -35,6 +41,7 @@ from types import SimpleNamespace
 
 from scitex_agent_container._lifecycle._identity_drift import (
     BOARD_IDENTITY_ENV,
+    BOARD_IDENTITY_ENV_RETIRED,
     check_board_identity_at_launch,
 )
 
@@ -129,3 +136,70 @@ def test_warning_says_the_agent_still_starts(caplog):
         check_board_identity_at_launch(config)
     # Assert
     assert "STARTS NORMALLY" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# The env var was renamed SCITEX_TODO_AGENT_ID -> SCITEX_CARDS_AGENT_ID and
+# specs carry both spellings. Reading one only re-creates the very failure
+# this module guards: on 2026-08-25 the check looked for the RETIRED name
+# alone, so 110 of 148 specs on compute-04 read as "declares no board
+# identity" and returned via the legitimate absent-identity branch.
+# ---------------------------------------------------------------------------
+
+
+def _config_under(name: str, env_key: str, board_id: str):
+    return SimpleNamespace(name=name, env={env_key: board_id})
+
+
+def test_drift_is_caught_under_the_current_env_name():
+    # Arrange: the spelling 110 of 148 live specs actually use.
+    config = _config_under("agent-a", "SCITEX_CARDS_AGENT_ID", "agent-b")
+    # Act
+    result = check_board_identity_at_launch(config)
+    # Assert
+    assert result == "agent-b"
+
+
+def test_drift_is_still_caught_under_the_retired_env_name():
+    # Arrange: 21 live specs have not been migrated yet.
+    config = _config_under("agent-a", "SCITEX_TODO_AGENT_ID", "agent-b")
+    # Act
+    result = check_board_identity_at_launch(config)
+    # Assert
+    assert result == "agent-b"
+
+
+def test_current_env_name_wins_when_a_spec_carries_both():
+    # Arrange: a half-migrated spec. The current name is what the running
+    # scitex_cards client reads, so it is the identity that has effect.
+    config = SimpleNamespace(
+        name="agent-a",
+        env={
+            BOARD_IDENTITY_ENV: "agent-current",
+            BOARD_IDENTITY_ENV_RETIRED: "agent-retired",
+        },
+    )
+    # Act
+    result = check_board_identity_at_launch(config)
+    # Assert
+    assert result == "agent-current"
+
+
+def test_warning_names_the_env_var_the_spec_declared(caplog):
+    # Arrange: "fix your board identity" is unactionable when the spec has
+    # two candidate keys and the message names neither.
+    config = _config_under("agent-a", "SCITEX_TODO_AGENT_ID", "agent-b")
+    # Act
+    with caplog.at_level(logging.WARNING):
+        check_board_identity_at_launch(config)
+    # Assert
+    assert "SCITEX_TODO_AGENT_ID" in caplog.text
+
+
+def test_the_two_env_constants_are_not_the_same_string():
+    # Arrange: a copy-paste that collapses them silently restores the
+    # single-name blindness while every other test still passes.
+    # Act
+    same = BOARD_IDENTITY_ENV == BOARD_IDENTITY_ENV_RETIRED
+    # Assert
+    assert not same

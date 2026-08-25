@@ -83,9 +83,16 @@ spec:
       - --env
       - SCITEX_AGENT_CONTAINER_STATE_DB=/state/{name}/state.db
       # The board identity. Change this without migrating the cards and
-      # every card the agent owns is orphaned.
+      # every card the agent owns is orphaned. BOTH spellings are seeded
+      # because both are on disk: the var was renamed to
+      # SCITEX_CARDS_AGENT_ID and the fleet is half migrated (measured
+      # 2026-08-25 on compute-04: 110 specs current, 21 retired). A
+      # fixture carrying only the retired name tests the minority and
+      # let a current-name blindness ship unnoticed.
       - --env
       - SCITEX_TODO_AGENT_ID={name}
+      - --env
+      - SCITEX_CARDS_AGENT_ID={name}
       - --env
       - GIT_AUTHOR_NAME=Yusuke Watanabe
     env: {{}}
