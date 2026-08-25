@@ -350,6 +350,22 @@ register_refresh_quota_cache_command(account)
 
 
 # ---------------------------------------------------------------------------
+# probe-entitlement — the PRODUCER for the per-account entitlement verdicts
+# the boot picker reads. Same relationship as refresh-quota-cache above: the
+# picker is cache-only by contract, so without a periodic run of this every
+# account reads UNKNOWN and the gate is inert. A host timer runs it.
+#
+# INCIDENT 2026-08-25: a cancelled subscription refreshed its OAuth token
+# successfully and so passed every FRESHNESS gate, while every real turn on
+# it returned 403. Freshness is not entitlement; this asks the second
+# question. Separate verb from `refresh` on purpose — this rotates nothing.
+# ---------------------------------------------------------------------------
+from ._account_probe_entitlement import register_probe_entitlement_command
+
+register_probe_entitlement_command(account)
+
+
+# ---------------------------------------------------------------------------
 # quota — agent self-awareness: read THIS agent's own account quota from
 # the bound quota-cache.json (#16 PART 4). Reads $CLAUDE_AGENT_ACCOUNT
 # (injected by SAC at launch; see config/_loaders.py) and looks up the
