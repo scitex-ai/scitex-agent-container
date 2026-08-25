@@ -57,6 +57,7 @@ CROSS_PACKAGE_IMPORTS = [
     'scitex_dev.linter._rules._lookup',
     'scitex_dev.linter.checker',
     'scitex_dev.store',
+    'scitex_dev.store._store',
     'scitex_dev.system_deps',
     'scitex_dev.versioning',
     'scitex_logging',

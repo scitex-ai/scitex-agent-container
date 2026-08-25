@@ -321,6 +321,25 @@ from scitex_cards._throughput import WIP_STATUSES
 # ALREADY HAS a comment proves the path actually runs.
 from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 
+# scitex-dev 0.56.6: the bounded (origin, seq) oplog-allocation retry.
+# Through 0.56.5, Store._append read MAX(seq) ONCE and then inserted, so a
+# burst of writers on a SINGLE node collided on the oplog (origin, seq)
+# primary key with no bounded retry -- 7/8 and 5/8 failures on the two
+# concurrency tests, reproduced three times. 0.56.6 adds this constant and
+# the retry loop that uses it, plus an advisory lock around CREATE TABLE.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR -- the same narrow job as the
+# scitex-cards import above, and the same 2026-08-23 lesson. The FLOOR is
+# what excludes the releases without the retry; this import only catches a
+# version string that lies; and only a concurrent multi-writer append after
+# deploy proves the loop actually settles under contention.
+#
+# The name is PRIVATE -- underscore-prefixed and absent from __all__ -- so
+# upstream may rename or inline it with no deprecation, and that would land
+# here as a dead bake far from scitex-dev's repo. If this line is what broke
+# the build, read scitex_dev/store/_store.py before suspecting the image.
+from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)

@@ -328,7 +328,19 @@ dev = [
     # been written to and never read from. A floor that admits 0.49.0 admits a
     # store this package cannot read, so the version that first WORKS is the
     # version this package may depend on.
-    "scitex-dev>=0.49.2",
+    #
+    # RAISED TO 0.56.6 on 2026-08-25, and the difference is again not
+    # cosmetic. Through 0.56.5, Store._append read MAX(seq) ONCE and then
+    # inserted, so concurrent writers on a SINGLE node collided on the oplog
+    # (origin, seq) primary key with no bounded retry — measured 7/8 and 5/8
+    # failures on the two concurrency tests, reproduced three times. The same
+    # release also takes a Postgres advisory lock around CREATE TABLE, which
+    # races pg_type when several Store() constructors start together. sac has
+    # now moved its own state onto this store, so a floor that admits 0.56.5
+    # admits silent write loss on exactly the path the migration depends on.
+    # The container recipes gate this BY SYMBOL (_SEQ_ALLOCATION_ATTEMPTS) —
+    # see apptainer-scitex.def; this specifier is the base layer's half.
+    "scitex-dev>=0.56.6",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
