@@ -36,7 +36,7 @@ running against, so the gate reads THE CODE UNDER TEST or fails loudly.
 This mirrors what our sibling gates already do (`test_git_hooks.py`'s
 ``_REPO``, `test_skills_quality.py`'s ``package_root``).
 
-scitex-dev >= 0.31.1 is REQUIRED (see [dev] in pyproject.toml): `path=`
+scitex-dev >= 0.31.1 is REQUIRED by this gate -- `path=`
 first exists there. Older versions also lack the CWD-git-root safety net
 (step 2), so on them the home-disk guess is the ONLY fallback. The
 fixture asserts that support rather than silently dropping `path=` —
@@ -142,7 +142,7 @@ def scitex_dev_audit():
             "installed scitex-dev's audit_all_for_package() has no `path` "
             "parameter, so this gate cannot name the tree under test and "
             "would silently audit a ~/proj guess instead. Upgrade to "
-            "scitex-dev>=0.31.1 (the [dev] floor in pyproject.toml). "
+            "scitex-dev>=0.31.1, the release where `path=` first exists. "
             "Failing loudly rather than auditing the wrong checkout."
         )
     return audit_all_for_package
