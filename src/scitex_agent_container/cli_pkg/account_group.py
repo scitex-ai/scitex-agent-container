@@ -34,7 +34,20 @@ class _AccountsGroup(HelpRecursiveGroup):
             ["refresh", "mint-token", "sync-live", "sync-openai"],
         ),
         ("Distribute to peers", ["send-credentials"]),
-        ("Watch continuously", ["watch-live", "watch-quota", "refresh-quota-cache"]),
+        (
+            "Watch continuously",
+            [
+                "watch-live",
+                "watch-quota",
+                "refresh-quota-cache",
+                # Sits beside refresh-quota-cache because it has the same
+                # shape: a timer-driven PRODUCER whose output the boot picker
+                # reads from cache. Neither is something an operator runs by
+                # hand in the normal case, and both are inert if their timer
+                # is not running.
+                "probe-entitlement",
+            ],
+        ),
     ]
 
 
