@@ -26,6 +26,7 @@ from .._account.creds_sync import (
     _read_oauth_expiry_raw,
 )
 from .._state.account_store import _store_path
+from ._entitlement import read_entitlement
 
 # Health states for one account's snapshot. Mirrors
 # :class:`_account.creds_sync.Freshness` but anchored on a *name* so the
@@ -33,6 +34,15 @@ from .._state.account_store import _store_path
 _VALID = "VALID"
 _EXPIRED = "EXPIRED"
 _ABSENT = "ABSENT"
+#: The token is FRESH but the account may not USE it. INCIDENT
+#: 2026-08-25: a cancelled subscription refreshes its OAuth token
+#: perfectly well, so it read VALID here while every real turn on it
+#: returned 403 "OAuth authentication is currently not allowed for this
+#: organization". Freshness and entitlement are different questions;
+#: this state is the second one. Read from a cached verdict written
+#: out-of-band by the host timer -- see :mod:`._entitlement` for why it
+#: must not be probed live at boot, and why UNKNOWN never lands here.
+_FORBIDDEN = "FORBIDDEN"
 
 
 class NoHealthyAccountError(RuntimeError):
@@ -94,6 +104,10 @@ class AccountHealth:
     hours_remaining: float | None
     snapshot_path: str | None = None
     expires_at_raw: float | None = None
+    #: For a FORBIDDEN record, the API's own words. An operator seeing
+    #: "your token is fine but you cannot use it" needs to be told why
+    #: in the same breath, or the state looks like our bug.
+    entitlement_detail: str = ""
 
     @property
     def is_healthy(self) -> bool:
@@ -137,6 +151,25 @@ def account_health(
     expiry = _oauth_expiry_to_seconds(raw)
     hours = (expiry - now_ts) / 3600.0
     state = _VALID if expiry > now_ts else _EXPIRED
+
+    # ENTITLEMENT is asked only of an otherwise-usable snapshot. An
+    # EXPIRED token's problem is already named, and overwriting that
+    # with FORBIDDEN would hide the actionable fault behind a second
+    # one. A local file read; no network. Only a MEASURED denial
+    # downgrades the state -- UNKNOWN leaves it exactly as freshness
+    # found it, per the constitution's three-valued rule.
+    if state == _VALID:
+        verdict = read_entitlement(name, store / name, now=now_ts)
+        if verdict.blocks_use:
+            return AccountHealth(
+                name=name,
+                state=_FORBIDDEN,
+                hours_remaining=hours,
+                snapshot_path=str(snapshot),
+                expires_at_raw=raw,
+                entitlement_detail=verdict.detail,
+            )
+
     return AccountHealth(
         name=name,
         state=state,

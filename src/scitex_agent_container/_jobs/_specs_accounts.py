@@ -253,4 +253,72 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             on_boot_sec="2min",
             on_unit_active_sec="5min",
         ),
+        JobSpec(
+            name="scitex-agent-container-accounts-entitlement",
+            schedule="*/30 * * * *",  # every 30min (cron form; timer below)
+            # SELF-BOUNDING (120s). One minimal request per stored account
+            # (4 today), max_tokens=1; 120s covers all of them on a slow
+            # network and never hangs. A pass killed here leaves the
+            # PREVIOUS verdicts in place, and they age out to UNKNOWN on
+            # their own after 24h rather than being believed forever.
+            command=(
+                "/usr/bin/timeout 120 "
+                f"{sac} accounts probe-entitlement --all"
+            ),
+            description=(
+                "Asks each stored account the question FRESHNESS CANNOT "
+                "ANSWER: may it still RUN? INCIDENT 2026-08-25 — the "
+                "operator cancelled a subscription and nothing noticed. "
+                "OAuth refresh is independent of entitlement, so that "
+                "account kept refreshing successfully (09:17 UTC, new "
+                "expiry 17:17) and read VALID to every gate while every "
+                "real turn on it returned 403 'OAuth authentication is "
+                "currently not allowed for this organization'. Agents were "
+                "routed onto it and died mid-turn. This job writes a "
+                "three-valued verdict beside each credential, which the "
+                "boot picker reads as a local file — it never probes live "
+                "at boot, because pick_healthy_account is cache-only by "
+                "contract and must never burn quota at start-up. WITHOUT "
+                "THIS JOB THE GATE IS INERT: every account reads UNKNOWN, "
+                "which blocks nothing and changes nothing. Read-only — it "
+                "rotates no credential and cannot cost a token, which is "
+                "why it is a separate verb from accounts-refresh. Exits 0 "
+                "even when an account is FORBIDDEN: recording a cancelled "
+                "subscription is this job SUCCEEDING. NOT armed by this "
+                "declaration."
+            ),
+            kind="timer",
+            # 30min is chosen against WHAT THIS SIGNAL MEASURES, which is
+            # the slowest of the three in this file. Entitlement changes
+            # only when a human cancels or restores a subscription — not
+            # continuously like the 5h quota window, and not on a token
+            # clock like refresh. So the cadence is not set by how fast the
+            # truth moves; it is set by HOW LONG A STALE ANSWER COSTS, in
+            # each direction:
+            #
+            #   cancelled -> not yet noticed: up to 30min of agents being
+            #     routed onto a dead account. Bounded and self-correcting.
+            #     The incident that motivated this ran UNBOUNDED.
+            #   restored -> not yet noticed: up to 30min before the account
+            #     rejoins the pool. Costs nothing but a little capacity, and
+            #     THIS is the direction the operator actually exercises —
+            #     「私はよくまたアカウントが必要ならサブスク戻すので」.
+            #
+            # Both are comfortably inside the 24h staleness horizon in
+            # _creds/_entitlement.py, so a verdict is never believed past
+            # the point where this job stopping would matter: if the timer
+            # dies, every verdict decays to UNKNOWN and the gate opens
+            # rather than silently holding accounts out on month-old
+            # evidence.
+            #
+            # NOT faster, deliberately: nothing can act on a fresher answer.
+            # A subscription does not lapse between two 30min ticks in a way
+            # anyone could respond to, and a shorter period only multiplies
+            # calls against an endpoint whose rate limits we do not control.
+            # If a case ever appears where a 30min-old verdict caused a wrong
+            # decision, that is evidence to shorten it — evidence, not a
+            # guess.
+            on_boot_sec="3min",
+            on_unit_active_sec="30min",
+        ),
     ]

@@ -34,7 +34,20 @@ class _AccountsGroup(HelpRecursiveGroup):
             ["refresh", "mint-token", "sync-live", "sync-openai"],
         ),
         ("Distribute to peers", ["send-credentials"]),
-        ("Watch continuously", ["watch-live", "watch-quota", "refresh-quota-cache"]),
+        (
+            "Watch continuously",
+            [
+                "watch-live",
+                "watch-quota",
+                "refresh-quota-cache",
+                # Sits beside refresh-quota-cache because it has the same
+                # shape: a timer-driven PRODUCER whose output the boot picker
+                # reads from cache. Neither is something an operator runs by
+                # hand in the normal case, and both are inert if their timer
+                # is not running.
+                "probe-entitlement",
+            ],
+        ),
     ]
 
 
@@ -347,6 +360,22 @@ register_refresh_command(account)
 from ._account_refresh_quota_cache import register_refresh_quota_cache_command
 
 register_refresh_quota_cache_command(account)
+
+
+# ---------------------------------------------------------------------------
+# probe-entitlement — the PRODUCER for the per-account entitlement verdicts
+# the boot picker reads. Same relationship as refresh-quota-cache above: the
+# picker is cache-only by contract, so without a periodic run of this every
+# account reads UNKNOWN and the gate is inert. A host timer runs it.
+#
+# INCIDENT 2026-08-25: a cancelled subscription refreshed its OAuth token
+# successfully and so passed every FRESHNESS gate, while every real turn on
+# it returned 403. Freshness is not entitlement; this asks the second
+# question. Separate verb from `refresh` on purpose — this rotates nothing.
+# ---------------------------------------------------------------------------
+from ._account_probe_entitlement import register_probe_entitlement_command
+
+register_probe_entitlement_command(account)
 
 
 # ---------------------------------------------------------------------------

@@ -46,14 +46,48 @@ def test_no_tabled_row_names_an_undeclared_job() -> None:
 
 
 def test_every_declared_job_has_a_row() -> None:
-    # Arrange — a job added without a row would never migrate.
-    tabled = frozenset(r.new for r in _renames.RENAMES) | frozenset(
-        r.old for r in _renames.RENAMES
+    # Arrange — a job added without a row would never migrate. A job BORN
+    # canonical has nothing to migrate and cannot have a row at all
+    # (Rename rejects old == new), so it must be accounted for explicitly
+    # in BORN_CANONICAL rather than by silently shrinking this guard.
+    tabled = (
+        frozenset(r.new for r in _renames.RENAMES)
+        | frozenset(r.old for r in _renames.RENAMES)
+        | _renames.BORN_CANONICAL
     )
     # Act
     uncovered = _declared_names() - tabled
     # Assert
     assert uncovered == frozenset()
+
+
+def test_born_canonical_names_are_actually_declared() -> None:
+    # Arrange — the exemption must not outlive the job. A stale entry here
+    # would silently widen the guard above for a name nothing declares.
+    # Act
+    orphans = _renames.BORN_CANONICAL - _declared_names()
+    # Assert
+    assert orphans == frozenset()
+
+
+def test_no_born_canonical_name_also_has_a_rename_row() -> None:
+    # Arrange — the two claims are contradictory: a job cannot both have
+    # been born under the canonical name and have a legacy unit to migrate
+    # away from. Overlap means one of them is wrong.
+    tabled_new = frozenset(r.new for r in _renames.RENAMES)
+    # Act
+    contradictory = _renames.BORN_CANONICAL & tabled_new
+    # Assert
+    assert contradictory == frozenset()
+
+
+def test_born_canonical_names_carry_no_legacy_prefix() -> None:
+    # Arrange — "born canonical" is a claim about the NAME. A `sac.*` name
+    # in this set would be asserting the opposite of what the set means.
+    # Act
+    legacy = [n for n in _renames.BORN_CANONICAL if n.startswith("sac.")]
+    # Assert
+    assert legacy == []
 
 
 def test_a_held_row_declares_its_new_name_so_install_can_resolve_it() -> None:
