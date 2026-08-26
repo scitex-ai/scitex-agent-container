@@ -324,7 +324,17 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
         JobSpec(
             name="scitex-agent-container-accounts-snapshot-live",
             schedule="*/2 * * * *",  # every 2min (cron form; timer below)
-            command=f"/usr/bin/timeout 60 {sac} accounts sync-live",
+            # --poll IS LOAD-BEARING, not cosmetic. Without it this timer
+            # failed EVERY TWO MINUTES on every host whose live credential was
+            # absent or expired -- on 2026-08-26 that was three of the five it
+            # was armed on (compute-01 absent, compute-03 expired ~7.9d,
+            # laptop-01 expired ~4.6d). An expired live credential is the
+            # NORMAL state of a host nobody logged into today, so the
+            # fail-loud contract that is right for a hand-run invocation makes
+            # a SCHEDULED one permanently red: 720 failures a day that protect
+            # nothing and drown out any real problem. --poll turns "nothing to
+            # snapshot" into exit 0 and leaves every safety refusal intact.
+            command=f"/usr/bin/timeout 60 {sac} accounts sync-live --poll",
             description=(
                 "Snapshots a `claude /login` performed in ANY host's TUI into "
                 "that host's account store, so logging in from an arbitrary "
