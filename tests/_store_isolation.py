@@ -82,6 +82,31 @@ PG_REQUIRED = os.environ.get("SAC_TEST_PG_REQUIRED") == "1"
 FLEET_SYSTEM_ID = os.environ.get("SAC_TEST_PG_FORBIDDEN_SYSTEM_ID", "7672112238472680366")
 
 
+def pg_endpoint_port() -> str:
+    """The PORT of the database under test, as a locator would print it.
+
+    Four tests assert that ``init_*_schema()`` returns a locator NAMING the
+    endpoint it wrote to — the property being that state cannot land somewhere
+    without saying where. They each hardcoded ``"55432"``, which was not the
+    property but an assumption about the environment: the fleet's loopback
+    port. It held only because every runner happened to have the fleet cluster
+    there.
+
+    MEASURED 2026-08-26: the moment CI provisioned its own throwaway database
+    on an ephemeral port, all four failed with
+    ``assert '55432' in 'postgres[host=127.0.0.1 db=postgres port=46313]'``.
+    The locator was correct; the expectation was pinned to a machine.
+
+    Deriving it from ``PG_BASE_DSN`` keeps the assertion testing the thing it
+    was written to test — the locator names the endpoint — while surviving any
+    database the suite is pointed at.
+    """
+    from urllib.parse import urlsplit
+
+    port = urlsplit(PG_BASE_DSN).port
+    return str(port) if port else "5432"
+
+
 def _default_test_pg_user() -> str:
     """The login role tests authenticate as when nothing declares one.
 

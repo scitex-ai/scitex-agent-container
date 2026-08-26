@@ -26,6 +26,8 @@ never touched. Real store, real database, no mocks (PA-306), one assert each
 
 from __future__ import annotations
 
+from tests._store_isolation import pg_endpoint_port
+
 from functools import partial
 
 import pytest
@@ -66,7 +68,7 @@ def _relocation(to_host: str, at: float) -> Relocation:
 
 def test_init_reports_where_the_state_went(pg_schema: str) -> None:
     # Arrange
-    expected_fragment = "55432"
+    expected_fragment = pg_endpoint_port()
     # Act
     locator = init_relocation_schema()
     # Assert
