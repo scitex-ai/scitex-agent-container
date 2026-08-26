@@ -60,7 +60,8 @@ def _ci_pytest_report_flag() -> str:
     """
     text = _CI_SCRIPT.read_text()
     invocation = [
-        line for line in text.splitlines()
+        line
+        for line in text.splitlines()
         if "python -m pytest tests/" in line and not line.lstrip().startswith("#")
     ]
     assert len(invocation) == 1, (
@@ -96,10 +97,14 @@ def _run_pytest_with(report_flag: str, workdir: Path) -> str:
     )
     proc = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
+            sys.executable,
+            "-m",
+            "pytest",
             f"-{report_flag}",
-            "-c", str(ini),
-            "-p", "no:cacheprovider",
+            "-c",
+            str(ini),
+            "-p",
+            "no:cacheprovider",
             str(workdir / "test_subject.py"),
         ],
         capture_output=True,
@@ -117,8 +122,11 @@ def _run_pytest_with(report_flag: str, workdir: Path) -> str:
 
 def test_ci_pytest_invocation_reports_failures_errors_and_skips() -> None:
     """The flag in the real CI script carries f, E and s."""
+    # Arrange
     flag = _ci_pytest_report_flag()
+    # Act
     missing = [char for char in _REQUIRED_REPORT_CHARS if char not in flag[1:]]
+    # Assert
     assert not missing, (
         f"CI's pytest invocation uses -{flag}, which drops {missing!r}. "
         "pytest's -r REPLACES the default 'fE' rather than adding to it, so "
@@ -129,29 +137,56 @@ def test_ci_pytest_invocation_reports_failures_errors_and_skips() -> None:
 
 def test_the_flag_ci_actually_uses_produces_a_failed_line(tmp_path: Path) -> None:
     """Exercise the real flag against a real failure, not just its spelling."""
-    output = _run_pytest_with(_ci_pytest_report_flag(), tmp_path)
+    # Arrange
+    flag = _ci_pytest_report_flag()
+    # Act
+    output = _run_pytest_with(flag, tmp_path)
+    # Assert
     assert _FAILED_MARKER in output, (
         "CI's own report flag did not produce a FAILED line in the short "
         f"summary; output was:\n{output}"
     )
+
+
+def test_the_flag_ci_actually_uses_still_produces_a_skipped_line(
+    tmp_path: Path,
+) -> None:
+    """The 2026-08-26 skip-visibility fix must survive this change."""
+    # Arrange
+    flag = _ci_pytest_report_flag()
+    # Act
+    output = _run_pytest_with(flag, tmp_path)
+    # Assert
     assert _SKIPPED_MARKER in output, (
         "CI's own report flag did not produce a SKIPPED line, so the "
-        "2026-08-26 skip-visibility fix has been lost; output was:\n"
-        f"{output}"
+        f"skip-visibility fix has been lost; output was:\n{output}"
+    )
+
+
+def test_the_old_flag_still_reported_skips(tmp_path: Path) -> None:
+    """Half of the control: ``-rs`` was never wrong about skips."""
+    # Arrange
+    old_flag = "rs"
+    # Act
+    output = _run_pytest_with(old_flag, tmp_path)
+    # Assert
+    assert _SKIPPED_MARKER in output, (
+        f"-rs should still report skips; output was:\n{output}"
     )
 
 
 def test_the_old_flag_hides_failures_so_this_gate_can_fail(tmp_path: Path) -> None:
-    """The control: under the old ``-rs`` the FAILED line really is absent.
+    """The control proper: under ``-rs`` the FAILED line really is absent.
 
-    Without this, the two tests above could pass because pytest always prints
+    Without this, the tests above could pass on a pytest that always prints
     FAILED regardless of the flag -- in which case they would be describing a
-    property nothing enforces. This proves the harness can tell the difference.
+    property nothing enforces. This proves the harness can tell them apart.
     """
-    output = _run_pytest_with("rs", tmp_path)
-    assert _SKIPPED_MARKER in output, (
-        f"-rs should still report skips; output was:\n{output}"
-    )
+    # Arrange
+    old_flag = "rs"
+    # Act
+    output = _run_pytest_with(old_flag, tmp_path)
+    # Assert
     assert _FAILED_MARKER not in output, (
         "-rs unexpectedly produced a FAILED line, so this control no longer "
         "distinguishes the two flags and the gate above proves nothing. "
