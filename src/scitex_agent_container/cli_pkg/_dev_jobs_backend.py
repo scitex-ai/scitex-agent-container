@@ -95,6 +95,7 @@ and ``--dry-run`` is offered on every mutating verb sac exposes.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -364,6 +365,28 @@ def build_argv(
     return argv
 
 
+def resolve_scitex_dev(
+    *, executable: str | None = None, path: str | None = None
+) -> str | None:
+    """The ``scitex-dev`` that belongs to the interpreter we are running in.
+
+    SIBLING OF ``sys.executable`` FIRST, then PATH. Returns ``None`` when
+    neither resolves, so the caller can raise a clean ClickException.
+
+    ``executable`` and ``path`` default to ``sys.executable`` and ``$PATH``
+    and exist so this can be TESTED WITHOUT PATCHING ANYTHING. PA-306 forbids
+    mocks, and it counts the ``monkeypatch`` fixture itself — correctly: a
+    test that reaches in and rewrites ``sys.executable`` is asserting on a
+    world it invented. Taking both as arguments lets a test lay down two real
+    binaries and ask which one this function picks, which is the actual
+    question.
+    """
+    sibling = Path(executable or sys.executable).with_name("scitex-dev")
+    if sibling.exists():
+        return str(sibling)
+    return shutil.which("scitex-dev", path=path or os.environ.get("PATH"))
+
+
 def invoke(
     delegation: Delegation,
     *,
@@ -413,8 +436,7 @@ def invoke(
     """
     if not delegation.supported:
         raise ValueError("refusing to invoke an unsupported delegation")
-    sibling = Path(sys.executable).with_name("scitex-dev")
-    exe = str(sibling) if sibling.exists() else shutil.which("scitex-dev")
+    exe = resolve_scitex_dev()
     if exe is None:
         raise click.ClickException(
             "`scitex-dev` console script not found on PATH; install "
