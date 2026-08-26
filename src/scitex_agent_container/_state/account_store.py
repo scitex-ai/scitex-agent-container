@@ -25,6 +25,22 @@ from typing import Any
 
 _DEFAULT_STORE_SUBDIR = Path(".scitex") / "agent-container" / "accounts"
 _METADATA_FILENAME = "account.json"
+#: Sidecars that describe the STORED account and must never be copied
+#: into ``~/.claude`` by :func:`switch_account`. Each answers a question
+#: about the account in the store — who it is, whether the API still
+#: accepts it, how much of its quota is gone, whether the operator has
+#: rested it — and none of them says anything about the LIVE login the
+#: switch is establishing. They are listed by name rather than filtered
+#: by suffix so a new credential file added beside them still travels.
+_STORE_ONLY_SIDECARS = frozenset(
+    {
+        _METADATA_FILENAME,
+        "pause.json",
+        "entitlement.json",
+        "identity.json",
+        "usage.json",
+    }
+)
 _CREDENTIALS_FILENAME = ".credentials.json"
 
 # ``sac`` is a first-class short alias for ``agent-container``.
@@ -411,8 +427,17 @@ def switch_account(
     try:
         claude_dir.mkdir(parents=True, exist_ok=True)
         for src in account_dir.iterdir():
-            if src.name == _METADATA_FILENAME:
-                continue  # metadata stays in the account dir; never copy into ~/.claude/
+            if src.name in _STORE_ONLY_SIDECARS:
+                # These describe the STORED ACCOUNT, not the live login,
+                # and none of them has a reader under ~/.claude (checked
+                # 2026-08-26: zero references fleet-wide). Copying them
+                # there produces decision- and verdict-shaped litter in a
+                # directory that is backed up, bind-mounted and copied,
+                # where a future reader could reasonably mistake one for
+                # authority over the live session. `pause.json` is the
+                # one that made this worth naming: a switch used to
+                # deposit the operator's PAUSE DECISION into ~/.claude.
+                continue
             dst = claude_dir / src.name
             tmp = dst.with_suffix(dst.suffix + ".tmp")
             shutil.copy2(src, tmp)

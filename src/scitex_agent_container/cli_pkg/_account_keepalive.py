@@ -282,6 +282,7 @@ def register_keepalive_command(group: click.Group) -> None:
             refresh_holder_accounts,
             sweep_login_expired,
         )
+        from . import _account_keepalive_pause as _kp
 
         if bool(account_labels) == all_accounts:
             raise click.UsageError(
@@ -323,6 +324,34 @@ def register_keepalive_command(group: click.Group) -> None:
         verified_peers: list[str] = []
         failed = False
         tolerated: list[str] = []
+
+        # A PAUSED account is a DECISION, not a failure. The partition
+        # happens HERE — before the loop, before any mint, before any ssh —
+        # so a paused account can never reach `failed` below. That is the
+        # whole mechanism: no new boolean, no second tolerance list, and the
+        # exit at the end of this callback is untouched. See
+        # :mod:`._account_keepalive_pause` for why this is a skip rather
+        # than a tolerated failure, and why there is no --paused-account
+        # flag.
+        accounts, skipped = _kp.partition_paused(accounts)
+        for account_label, pause in skipped:
+            click.echo(_kp.skip_line(account_label, pause), err=True)
+            records.append(_kp.skip_record(account_label, pause))
+
+        # Empty-because-PAUSED exits 0. Empty-because-this-host-is-not-the-
+        # origin still exits 1, at the guard above. The ordering is the
+        # point: collapsing the two would re-create the always-red bug in
+        # the one case where the operator has paused everything.
+        if not accounts and skipped:
+            click.echo(
+                _kp.all_paused_line(len(skipped), all_accounts=all_accounts),
+                err=True,
+            )
+            if as_json:
+                click.echo(  # stx-allow: STX-IO006
+                    _json.dumps(records, ensure_ascii=False, indent=2)
+                )
+            return
 
         for account_label in accounts:
             for peer in peers:

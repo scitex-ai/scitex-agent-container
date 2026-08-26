@@ -307,6 +307,19 @@ def account_refresh(
     else:
         targets = [name]  # type: ignore[list-item]
 
+    # THE OTHER ACCOUNT TIMER HONOURS THE PAUSE TOO. `send-credentials`
+    # distributes a credential and `refresh` renews one; a pause the operator
+    # set must reach both, or the half that ignores it keeps failing about a
+    # rested account and keeps spending its quota to do so. See
+    # :func:`._account_keepalive_pause.refresh_targets_and_notes`.
+    from . import _account_keepalive_pause as _kp
+
+    targets, pause_notes = _kp.refresh_targets_and_notes(
+        list(targets), all_accounts=bool(do_all), home=home
+    )
+    for pause_note in pause_notes:
+        click.echo(pause_note, err=True)
+
     # Active-login family detection (for --sync-active-login). Read the live
     # ~/.claude login's refresh_token ONCE (realpath, symlinks followed) and
     # find the target account whose snapshot refresh_token EQUALS it —

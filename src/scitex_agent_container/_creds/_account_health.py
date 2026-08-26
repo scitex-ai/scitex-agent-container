@@ -27,6 +27,7 @@ from .._account.creds_sync import (
 )
 from .._state.account_store import _store_path
 from ._entitlement import read_entitlement
+from ._pause import read_pause
 
 # Health states for one account's snapshot. Mirrors
 # :class:`_account.creds_sync.Freshness` but anchored on a *name* so the
@@ -43,6 +44,13 @@ _ABSENT = "ABSENT"
 #: out-of-band by the host timer -- see :mod:`._entitlement` for why it
 #: must not be probed live at boot, and why UNKNOWN never lands here.
 _FORBIDDEN = "FORBIDDEN"
+#: The operator has DECIDED to stop using this account for a while.
+#: OPERATOR REQUEST 2026-08-26: he stops and restarts subscriptions
+#: while watching quota, and asked that nothing fail during the rest.
+#: Read from an operator-authored sidecar -- see :mod:`._pause` for why
+#: a decision must not share a file with an observation, and why this
+#: state outranks every measured one below.
+_PAUSED = "PAUSED"
 
 
 class NoHealthyAccountError(RuntimeError):
@@ -83,8 +91,13 @@ class AccountHealth:
         :func:`_account.creds_sync.slugify_email`).
     state
         ``"VALID"`` (non-expired snapshot present), ``"EXPIRED"`` (a
-        snapshot exists but its ``expiresAt`` is in the past), or
-        ``"ABSENT"`` (no snapshot file on disk, or unparseable).
+        snapshot exists but its ``expiresAt`` is in the past),
+        ``"ABSENT"`` (no snapshot file on disk, or unparseable),
+        ``"FORBIDDEN"`` (fresh, but a measured 403 says this account may
+        not use Claude Code), or ``"PAUSED"`` (the operator decided to
+        rest it). The last two are different KINDS of answer -- one
+        measured, one authored -- which is why they are separate states
+        and never collapse into each other.
     hours_remaining
         Signed hours to expiry (positive = remaining, negative =
         past) for VALID/EXPIRED; ``None`` for ABSENT.
@@ -108,6 +121,13 @@ class AccountHealth:
     #: "your token is fine but you cannot use it" needs to be told why
     #: in the same breath, or the state looks like our bug.
     entitlement_detail: str = ""
+    #: For a PAUSED record, the operator's OWN words for why he stopped
+    #: it. A SEPARATE field from ``entitlement_detail`` on purpose: one
+    #: carries what Anthropic said about us, the other carries what we
+    #: decided about Anthropic, and a single field would make a probe's
+    #: sentence and a human's sentence indistinguishable at the point of
+    #: reading. See :mod:`._pause`.
+    pause_reason: str = ""
 
     @property
     def is_healthy(self) -> bool:
@@ -140,6 +160,35 @@ def account_health(
     # expiry, so the record can never quote a different file state than
     # the one it judged (a mid-probe rewrite yields a coherent record).
     raw = _read_oauth_expiry_raw(snapshot) if snapshot.is_file() else None
+
+    # A PAUSE OUTRANKS EVERY MEASUREMENT, and is asked FIRST -- before
+    # the ABSENT return below and before the entitlement read further
+    # down. The rule this extends is already written for the layer
+    # underneath ("overwriting that with FORBIDDEN would hide the
+    # actionable fault behind a second one"): report the fact the
+    # operator can ACT on. When he has decided to rest an account,
+    # "FORBIDDEN" or "ABSENT" is a true sentence about a question nobody
+    # is asking, and rendering it would make a deliberate rest look like
+    # a fault -- the exact confusion :mod:`._pause` exists to prevent.
+    # A local file read; no network.
+    pause = read_pause(name, store / name)
+    if pause.active:
+        return AccountHealth(
+            name=name,
+            state=_PAUSED,
+            # The evidence fields are still filled in from whatever the
+            # snapshot read found, so a paused account's record can
+            # still be adjudicated without un-pausing it first.
+            hours_remaining=(
+                None
+                if raw is None
+                else (_oauth_expiry_to_seconds(raw) - now_ts) / 3600.0
+            ),
+            snapshot_path=str(snapshot),
+            expires_at_raw=raw,
+            pause_reason=pause.reason,
+        )
+
     if raw is None:
         return AccountHealth(
             name=name,
@@ -229,17 +278,24 @@ def _format_states(healths: list[AccountHealth]) -> str:
     parts: list[str] = []
     for h in healths:
         if h.hours_remaining is None or h.expires_at_raw is None:
-            parts.append(
+            base = (
                 f"{h.name}={h.state} (no numeric claudeAiOauth.expiresAt; "
                 f"file={h.snapshot_path})"
             )
         else:
             expiry_s = _oauth_expiry_to_seconds(h.expires_at_raw)
-            parts.append(
+            base = (
                 f"{h.name}={h.state} ({h.hours_remaining:+.1f}h; "
                 f"expiresAt={h.expires_at_raw:.0f} = {_iso_utc(expiry_s)}; "
                 f"file={h.snapshot_path})"
             )
+        # A boot blocked BY A PAUSE must name WHICH pause, in the first
+        # error its operator reads. Without this the message says the
+        # account is unusable and offers `claude /login` — advice that
+        # cannot work, for a condition one `sac accounts resume` lifts.
+        if h.pause_reason:
+            base += f"; paused: {h.pause_reason}"
+        parts.append(base)
     return ", ".join(parts) if parts else "(no candidates)"
 
 
