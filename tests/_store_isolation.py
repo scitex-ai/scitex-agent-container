@@ -82,6 +82,31 @@ PG_REQUIRED = os.environ.get("SAC_TEST_PG_REQUIRED") == "1"
 FLEET_SYSTEM_ID = os.environ.get("SAC_TEST_PG_FORBIDDEN_SYSTEM_ID", "7672112238472680366")
 
 
+def pg_endpoint_port() -> str:
+    """The PORT of the database under test, as a locator would print it.
+
+    Four tests assert that ``init_*_schema()`` returns a locator NAMING the
+    endpoint it wrote to — the property being that state cannot land somewhere
+    without saying where. They each hardcoded ``"55432"``, which was not the
+    property but an assumption about the environment: the fleet's loopback
+    port. It held only because every runner happened to have the fleet cluster
+    there.
+
+    MEASURED 2026-08-26: the moment CI provisioned its own throwaway database
+    on an ephemeral port, all four failed with
+    ``assert '55432' in 'postgres[host=127.0.0.1 db=postgres port=46313]'``.
+    The locator was correct; the expectation was pinned to a machine.
+
+    Deriving it from ``PG_BASE_DSN`` keeps the assertion testing the thing it
+    was written to test — the locator names the endpoint — while surviving any
+    database the suite is pointed at.
+    """
+    from urllib.parse import urlsplit
+
+    port = urlsplit(PG_BASE_DSN).port
+    return str(port) if port else "5432"
+
+
 def _default_test_pg_user() -> str:
     """The login role tests authenticate as when nothing declares one.
 
@@ -255,11 +280,18 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         ``hard`` fails the run; otherwise it skips. Either way the reason
         names the DSN and the role, so a skip on a host that is SUPPOSED to
         have a writable database reads as the misconfiguration it is instead
-        of disappearing into a skip count. The GitHub ``::warning::`` is
-        emitted on the skip path too: an annotation blocks nothing, but it
-        puts the words on the summary page, and the diagnosis of the
-        2026-08-26 incident required reconstructing the skip count by
-        arithmetic from a 9.9 MB log because nothing said it out loud.
+        of disappearing into a skip count.
+
+        VISIBILITY COMES FROM ``-rs``, NOT FROM AN ANNOTATION, and that is a
+        correction rather than a preference. The first version of this
+        printed a GitHub ``::warning::`` here. MEASURED on run
+        32919218635: the reason text appears **308 times** in the CI log
+        while the annotation appears **zero** times — pytest captures fixture
+        stdout, so the annotation never reached the step output at all. It
+        was decoration that looked like a safeguard. The mechanism that
+        actually works is ``-rs`` on the pytest invocation, which prints
+        every skip reason in the summary; that is what put those 308 lines
+        there.
         """
         _restore_identity()
         message = (
@@ -267,7 +299,6 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         )
         if hard:
             pytest.fail(message, pytrace=False)
-        print(f"::warning title=PostgreSQL coverage skipped::{message}", flush=True)
         pytest.skip(message)
 
     try:

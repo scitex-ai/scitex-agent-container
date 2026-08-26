@@ -18,6 +18,8 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
+from tests._store_isolation import pg_endpoint_port
+
 import pytest
 
 from scitex_agent_container._state.state_db_pending_approval import (
@@ -241,7 +243,7 @@ def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> 
         init_pending_prompts_schema,
     )
 
-    expected = "55432"
+    expected = pg_endpoint_port()
     # Act
     locator = init_pending_prompts_schema()
     # Assert
