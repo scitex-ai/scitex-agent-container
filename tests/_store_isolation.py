@@ -255,11 +255,18 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         ``hard`` fails the run; otherwise it skips. Either way the reason
         names the DSN and the role, so a skip on a host that is SUPPOSED to
         have a writable database reads as the misconfiguration it is instead
-        of disappearing into a skip count. The GitHub ``::warning::`` is
-        emitted on the skip path too: an annotation blocks nothing, but it
-        puts the words on the summary page, and the diagnosis of the
-        2026-08-26 incident required reconstructing the skip count by
-        arithmetic from a 9.9 MB log because nothing said it out loud.
+        of disappearing into a skip count.
+
+        VISIBILITY COMES FROM ``-rs``, NOT FROM AN ANNOTATION, and that is a
+        correction rather than a preference. The first version of this
+        printed a GitHub ``::warning::`` here. MEASURED on run
+        32919218635: the reason text appears **308 times** in the CI log
+        while the annotation appears **zero** times — pytest captures fixture
+        stdout, so the annotation never reached the step output at all. It
+        was decoration that looked like a safeguard. The mechanism that
+        actually works is ``-rs`` on the pytest invocation, which prints
+        every skip reason in the summary; that is what put those 308 lines
+        there.
         """
         _restore_identity()
         message = (
@@ -267,7 +274,6 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         )
         if hard:
             pytest.fail(message, pytrace=False)
-        print(f"::warning title=PostgreSQL coverage skipped::{message}", flush=True)
         pytest.skip(message)
 
     try:
