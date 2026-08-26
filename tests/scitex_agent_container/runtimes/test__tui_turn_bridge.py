@@ -43,6 +43,7 @@ _HAS_PORT_DISCOVERY = bool(
     shutil.which("lsof") or shutil.which("ss") or shutil.which("fuser")
 )
 
+
 def _free_a2a_port() -> int:
     """An OS-assigned port that is free RIGHT NOW, for the tests that really bind.
 
@@ -80,6 +81,43 @@ def _free_a2a_port() -> int:
 # (PEP 515 separators satisfy STX-NL001).
 _PORT = _free_a2a_port()
 _PID = 4_242
+
+
+def _port_is_free(_host: str, _port: int) -> bool:
+    """The port gate's answer, supplied by the test instead of by the machine.
+
+    ``start_turn_bridge`` takes ``port_free_fn`` as a first-class parameter
+    precisely so a caller can decide this, and the busy-path tests below
+    already inject the ``False`` half (``port_free_fn=lambda _h, _p: False``).
+    This is the symmetric ``True``: dependency injection through a declared
+    seam, not a mock, so PA-306 is satisfied.
+
+    WHY THE TESTS BELOW MUST NOT ASK THE MACHINE. ``_free_a2a_port`` picks a
+    port by binding 0 and reading the assignment back, then CLOSES the socket
+    at module import. Everything after that is a gap: on a self-hosted runner
+    with N xdist workers, several CI legs and real agents all churning the
+    ephemeral range, something else can take that port before the test bind
+    probe runs. Measured 2026-08-26, worker ``[gw5]``, port 59935 -- two
+    ``start_turn_bridge`` tests red on ``pytest-matrix-on-ubuntu-py3.11``.
+
+    That red was decided by SCHEDULING, not by the change under test. Two PRs
+    with disjoint diffs -- #1222 (``cli_pkg/_dev_jobs_backend.py``) and #1224
+    (``.github/ci/run-in-sif.sh``), neither touching ``runtimes/`` -- both
+    failed the same leg with the same error, which is what a defect neither of
+    them caused looks like.
+
+    This is the SECOND round of the same defect. The port used to be the
+    literal 19007, inside the live a2a range and genuinely held by the
+    ``figrecipe`` agent on the self-hosted runner; that stalled PR #1117
+    twice. Moving to an OS-assigned port turned a DETERMINISTIC collision into
+    a PROBABILISTIC one -- better, but still a coin flip on a busy machine.
+    Injecting the predicate removes the machine from the question entirely.
+
+    The gate itself stays covered, and better than before: the busy path is
+    asserted by injecting ``False``, and ``port_is_free``'s own real-socket
+    behaviour is tested where it belongs, against a socket the test holds open.
+    """
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +357,7 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
         a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
     # Act
-    bridge.start_turn_bridge(config, spawn=fake_spawn)
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_port_is_free)
     # Assert
     assert str(_PORT) in recorded["argv"]
 
@@ -337,7 +375,9 @@ def test_start_turn_bridge_returns_spawned_pid(
     )
     # Act
     pid = bridge.start_turn_bridge(
-        config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID)
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_port_is_free,
     )
     # Assert
     assert pid == _PID
@@ -404,7 +444,9 @@ def test_start_turn_bridge_returns_none_on_spawn_failure(
         a2a=SimpleNamespace(port=_PORT), name="boom", config_path=str(spec)
     )
     # Act
-    pid = bridge.start_turn_bridge(config, spawn=raising_spawn)
+    pid = bridge.start_turn_bridge(
+        config, spawn=raising_spawn, port_free_fn=_port_is_free
+    )
     # Assert
     assert pid is None
 
@@ -446,7 +488,11 @@ def test_start_turn_bridge_kills_preexisting_bridge_before_spawn(
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text(str(prior.pid), encoding="utf-8")
     # Act — start must SIGTERM the prior bridge before spawning the new one.
-    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    bridge.start_turn_bridge(
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_port_is_free,
+    )
     # Assert — the prior process received SIGTERM and exited.
     assert prior.wait(timeout=5) is not None
     # (defensive: make sure we never leak the helper if the assert above changes)
@@ -471,7 +517,11 @@ def test_start_turn_bridge_records_new_pid_over_prior(
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text("999999", encoding="utf-8")  # dead/stale PID
     # Act
-    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    bridge.start_turn_bridge(
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_port_is_free,
+    )
     # Assert — pidfile now holds the new bridge's PID.
     assert pid_path.read_text(encoding="utf-8").strip() == str(_PID)
 
@@ -821,7 +871,7 @@ def test_start_turn_bridge_spawns_with_the_declared_host(
     config = _cfg_with_host(_WILDCARD_HOST)
     config.config_path = str(spec)
     # Act
-    bridge.start_turn_bridge(config, spawn=fake_spawn)
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_port_is_free)
     # Assert
     assert recorded["argv"][recorded["argv"].index("--host") + 1] == _WILDCARD_HOST
 
@@ -843,7 +893,7 @@ def test_start_turn_bridge_spawns_with_loopback_for_an_undeclared_host(
     config = _cfg_with_host(None)
     config.config_path = str(spec)
     # Act
-    bridge.start_turn_bridge(config, spawn=fake_spawn)
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_port_is_free)
     # Assert
     assert recorded["argv"][recorded["argv"].index("--host") + 1] == DEFAULT_A2A_HOST
 
@@ -866,7 +916,12 @@ def test_start_turn_bridge_explicit_host_overrides_the_spec(
     config = _cfg_with_host(_WILDCARD_HOST)
     config.config_path = str(spec)
     # Act
-    bridge.start_turn_bridge(config, spawn=fake_spawn, host=DEFAULT_A2A_HOST)
+    bridge.start_turn_bridge(
+        config,
+        spawn=fake_spawn,
+        host=DEFAULT_A2A_HOST,
+        port_free_fn=_port_is_free,
+    )
     # Assert
     assert recorded["argv"][recorded["argv"].index("--host") + 1] == DEFAULT_A2A_HOST
 
@@ -976,7 +1031,12 @@ def test_write_bridge_event_names_the_agent(tmp_path: Path) -> None:
     # Act
     with log_path.open("w", encoding="utf-8") as fh:
         bridge.write_bridge_event(
-            fh, "shutdown", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+            fh,
+            "shutdown",
+            agent="figrecipe",
+            host=DEFAULT_A2A_HOST,
+            port=_PORT,
+            pid=_PID,
         )
     # Assert
     assert "agent=figrecipe" in log_path.read_text(encoding="utf-8")
