@@ -128,6 +128,19 @@ BORN_CANONICAL: frozenset[str] = frozenset(
         # No host has ever carried a `sac.accounts-entitlement` unit, so
         # there is no orphan for a migration to displace.
         "scitex-agent-container-accounts-entitlement",
+        # Added 2026-08-26. NOT a rename, deliberately, even though
+        # laptop-01 does carry a hand-written `sac-creds-watch.service`:
+        # that unit runs the `watch-live` DAEMON, while this job is a
+        # 2-minute timer over the one-shot `sync-live`. A Rename row would
+        # tell the migrator to stop the fleet's ONLY working credential
+        # watcher and install a timer in its place, in one unsupervised
+        # step — the same stop-then-install order that took the sole OAuth
+        # refresher down for ~2 minutes on 2026-08-18. Declaring it born
+        # canonical lets both run (sync-live is a no-op when the store
+        # already matches), so laptop-01 keeps its watcher until this timer
+        # is VERIFIED firing on all seven hosts; retiring the hand-written
+        # unit is a separate, deliberate step on the migration card.
+        "scitex-agent-container-accounts-snapshot-live",
     }
 )
 

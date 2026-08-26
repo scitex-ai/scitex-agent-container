@@ -321,4 +321,43 @@ def accounts_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             on_boot_sec="3min",
             on_unit_active_sec="30min",
         ),
+        JobSpec(
+            name="scitex-agent-container-accounts-snapshot-live",
+            schedule="*/2 * * * *",  # every 2min (cron form; timer below)
+            command=f"/usr/bin/timeout 60 {sac} accounts sync-live",
+            description=(
+                "Snapshots a `claude /login` performed in ANY host's TUI into "
+                "that host's account store, so logging in from an arbitrary "
+                "agent is safe. WHY IT EXISTS (measured 2026-08-25): the "
+                "credential watcher was running on laptop-01 ONLY, 1 host of "
+                "7, because it had been created there by hand as "
+                "sac-creds-watch.service and never entered this federation. "
+                "On the other six a TUI login writes the live credential and "
+                "NOTHING saves it, so the next distribution overwrites it and "
+                "the operator's login silently disappears -- the exact "
+                "conflict he described being afraid of. The same absence "
+                "shows in the data: laptop-01 was the only host whose "
+                "`.credentials.json` was current outside the distribution "
+                "burst, while nas-03's was TEN DAYS STALE (2026-08-16), the "
+                "most likely reason six subagents died that day with 'Login "
+                "expired'. WHY A TIMER AND NOT THE WATCHER, as a cost rather "
+                "than a preference: the instantaneous form is `accounts "
+                "watch-live`, a long-running daemon, and sac lowers EVERY "
+                "declared job to cron with allow_lossy=False, so a daemon has "
+                "no representation this federation can carry -- kind='service' "
+                "validates on JobSpec and then fails the lowering guard. A "
+                "2-minute poll of the one-shot `sync-live` leaves a window: a "
+                "login is lost only if a distribution burst lands inside those "
+                "2 minutes, against the 100% loss six hosts carry today, using "
+                "the path the fleet already supports. Idempotent by contract "
+                "-- creds_sync is a no-op when the store already matches or is "
+                "newer, fails loud rather than saving a stale token, and "
+                "refuses any write that would change a store's recorded "
+                "identity, the guard added in 2026-07 after sync_live "
+                "snapshotted one account's token into another account's store."
+            ),
+            kind="timer",
+            on_boot_sec="1min",
+            on_unit_active_sec="2min",
+        ),
     ]
