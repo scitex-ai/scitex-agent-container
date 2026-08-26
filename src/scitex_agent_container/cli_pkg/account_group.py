@@ -28,7 +28,21 @@ class _AccountsGroup(HelpRecursiveGroup):
 
     COMMAND_CATEGORIES = [
         ("Inspect (read-only)", ["list", "status", "quota"]),
-        ("Stored accounts", ["save", "delete", "switch", "login"]),
+        (
+            "Stored accounts",
+            [
+                "save",
+                "delete",
+                "switch",
+                "login",
+                # Beside `delete` on purpose: both take an account out of
+                # service, and a reader deciding between them should see them
+                # together. The pair exists so that choice is available at
+                # all — before it, stopping an account meant deleting it.
+                "pause",
+                "resume",
+            ],
+        ),
         (
             "Credential material",
             ["refresh", "mint-token", "sync-live", "sync-openai"],
@@ -376,6 +390,23 @@ register_refresh_quota_cache_command(account)
 from ._account_probe_entitlement import register_probe_entitlement_command
 
 register_probe_entitlement_command(account)
+
+
+# ---------------------------------------------------------------------------
+# pause / resume — the OPERATOR's own switch, and the counterpart to
+# probe-entitlement above. That verb records what Anthropic MEASURED about an
+# account; these two record what the operator DECIDED about it. Separate
+# files, disjoint writers: no probe can lift a pause, and no pause can be
+# discovered.
+#
+# OPERATOR REQUEST 2026-08-26: he stops and restarts subscriptions while
+# watching quota, and asked that nothing fail during the rest. Before this,
+# one rested account exited `sac accounts send-credentials` non-zero on every
+# pass, pinning the credential alarm red permanently.
+# ---------------------------------------------------------------------------
+from ._account_pause import register_pause_commands
+
+register_pause_commands(account)
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .._creds._pause import Pause
     from ._account_list_render import AccountRow
 
 # ``AccountRow`` is imported INSIDE the functions that construct it, not at
@@ -173,6 +174,29 @@ def verify_stored_identities(accounts: list[dict], *, opener=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def read_account_pause(name: str) -> "Pause":
+    """This host's pause decision for ``name`` — a plain local file read.
+
+    The listing reads the PAUSE DIRECTLY rather than switching from
+    :func:`account_freshness` to :func:`account_health`. Both would
+    surface PAUSED, and the swap is arguably the better long-run shape,
+    but it would also start rendering FORBIDDEN on a screen the operator
+    refreshes every few seconds — a visible behaviour change to a
+    different signal, riding along in a change about pausing. That is a
+    separate defect ("the list never surfaces the entitlement verdict")
+    and deserves its own change and its own test.
+
+    Reading the pause on its own is also strictly more capable here: a
+    paused account whose token has EXPIRED still renders as PAUSED,
+    because the decision is true regardless of what the snapshot says.
+    """
+    from .._creds._pause import read_pause
+    from .._state.account_store import _store_path
+
+    store = _store_path(None, Path.home())
+    return read_pause(name, store / name)
+
+
 def build_stored_rows(
     accounts: list[dict],
     *,
@@ -210,6 +234,7 @@ def build_stored_rows(
         usage = usage_for_account(acct, refresh=refresh, passive=passive) or {}
         ident = identities.get(name)
         reading = classify_usage(usage, ident)
+        pause = read_account_pause(name)
         rows.append(
             AccountRow(
                 host=host,
@@ -228,6 +253,8 @@ def build_stored_rows(
                 identity_state=ident.state if ident else "unverified",
                 verified_email=ident.verified_email if ident else None,
                 duplicate_of=ident.duplicate_of if ident else None,
+                pause_reason=pause.reason,
+                pause_since=pause.since,
             )
         )
     return rows
@@ -276,6 +303,17 @@ def build_stored_json(
         fresh = account_freshness(name)
         entry["freshness"] = fresh.state
         entry["freshness_hours"] = fresh.hours
+        # A SIBLING key, never folded into `freshness`. Freshness is a
+        # measurement of a token; a pause is a decision about an account.
+        # A consumer that wants either must not have to disentangle them
+        # from one string — and `None` (not `{"paused": false}`) is the
+        # only spelling of "not paused", matching the disk.
+        pause = read_account_pause(name)
+        entry["paused"] = (
+            {"reason": pause.reason, "since": pause.since, "by": pause.by}
+            if pause.active
+            else None
+        )
         usage = usage_for_account(acct, refresh=refresh, passive=passive)
         entry["usage"] = usage
         ident = identities.get(name)
