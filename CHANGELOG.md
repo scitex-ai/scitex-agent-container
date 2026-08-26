@@ -6,6 +6,45 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-26
+
+**A job that has nothing to do is not a job that failed.** The theme of this
+release is gates and scheduled work telling the truth about their own outcome:
+a paused account, an empty snapshot run, a skipped database test and a CI
+summary that listed only skips were each reporting success or failure on
+grounds that had nothing to do with the thing they measured.
+
+### Added
+- `sac accounts pause` / `resume`: an account the operator has deliberately
+  STOPPED is no longer treated as a broken one, so the keepalive job stops
+  failing on his behalf (#1226).
+- The credential pool asks whether an account may still RUN, not merely whether
+  its token is fresh (#1217).
+- The credential snapshot is declared as a **timer**, because a daemon has no
+  cron form (#1219).
+- CI provisions its own PostgreSQL instead of borrowing the fleet's, so a test
+  run can no longer depend on — or disturb — live fleet state (#1221).
+
+### Fixed
+- **A CI summary listing only skips hid the failures it was added beside.**
+  `pytest -r` REPLACES the reported set rather than appending to it, so `-rs`
+  deleted every `FAILED` line from the summary. Now `-rfEs`, with a guard that
+  fails in both directions (#1224).
+- **A PostgreSQL gate that skips silently is a gate that passes** (#1220).
+- The turn-bridge port gate no longer depends on a live port, closing a TOCTOU
+  where the probe's answer expired before the caller used it (#1225).
+- A scheduled snapshotter no longer calls "nothing to do" a failure (#1223).
+- dev-jobs delegate to the interpreter we probed, not to whatever `PATH` holds
+  (#1222).
+- **The identity drift guard read the RETIRED env name**, so it skipped 110 of
+  148 live specs — the guard was running and measuring almost nothing (#1215).
+- The image pins `scitex-dev>=0.56.6` and gates it BY SYMBOL, so a SIF built
+  without the oplog retry cannot ship (#1214).
+
+### Documentation
+- How a BYO machine joins the overlay, and the four traps that cost a day
+  (#1216).
+
 ## [0.26.3] - 2026-08-24
 
 **Off SQLite.** Every remaining piece of runtime state that a container wrote
