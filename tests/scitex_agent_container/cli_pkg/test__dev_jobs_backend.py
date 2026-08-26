@@ -410,6 +410,84 @@ def test_invoking_an_unsupported_delegation_is_refused() -> None:
         _call()
 
 
+def test_the_delegate_is_the_sibling_of_our_own_interpreter(
+    tmp_path, monkeypatch
+) -> None:
+    # Arrange — the invariant: EXECUTE the verb in the interpreter that
+    # ANSWERED the questions. Capability is probed in-process and the job
+    # name is resolved in-process, so a delegate from somewhere else means
+    # sac asked A and acted on B.
+    #
+    # MEASURED 2026-08-26: in an agent container `shutil.which("scitex-dev")`
+    # found /uvwork/bin/scitex-dev, a shim execing ANOTHER package's venv
+    # whose scitex_dev.jobs group lacks scitex-agent-container. `list` showed
+    # 11 sac timers while `status` reported the job did not exist and listed
+    # the other package's six.
+    venv_bin = tmp_path / "ours" / "bin"
+    venv_bin.mkdir(parents=True)
+    ours = venv_bin / "scitex-dev"
+    ours.write_text("#!/bin/sh\nexit 0\n")
+    ours.chmod(0o755)
+
+    impostor_dir = tmp_path / "on-path"
+    impostor_dir.mkdir()
+    impostor = impostor_dir / "scitex-dev"
+    impostor.write_text("#!/bin/sh\nexit 0\n")
+    impostor.chmod(0o755)
+
+    monkeypatch.setattr(backend.sys, "executable", str(venv_bin / "python"))
+    monkeypatch.setenv("PATH", str(impostor_dir))
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        backend.subprocess, "call", lambda argv, **kw: seen.append(argv[0]) or 0
+    )
+
+    supported = backend.Delegation(
+        path=("dev", "timer"), verb="status", supported=True, evidence="fixture"
+    )
+
+    # Act
+    backend.invoke(supported, name="scitex-agent-container-x", yes=False)
+
+    # Assert
+    assert seen == [str(ours)]
+
+
+def test_the_delegate_falls_back_to_path_when_there_is_no_sibling(
+    tmp_path, monkeypatch
+) -> None:
+    # Arrange — sibling-first must DEGRADE, not demand. Outside a venv there
+    # is no sibling next to sys.executable, and PATH is then the only answer
+    # there is; refusing would break every such caller to fix none of them.
+    bare = tmp_path / "nowhere"
+    bare.mkdir()
+
+    on_path_dir = tmp_path / "on-path"
+    on_path_dir.mkdir()
+    only = on_path_dir / "scitex-dev"
+    only.write_text("#!/bin/sh\nexit 0\n")
+    only.chmod(0o755)
+
+    monkeypatch.setattr(backend.sys, "executable", str(bare / "python"))
+    monkeypatch.setenv("PATH", str(on_path_dir))
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        backend.subprocess, "call", lambda argv, **kw: seen.append(argv[0]) or 0
+    )
+
+    supported = backend.Delegation(
+        path=("dev", "timer"), verb="status", supported=True, evidence="fixture"
+    )
+
+    # Act
+    backend.invoke(supported, name="scitex-agent-container-x", yes=False)
+
+    # Assert
+    assert seen == [str(only)]
+
+
 def test_the_manual_hint_names_the_timer_unit() -> None:
     # Arrange — the unit filename is derived from JobSpec.name verbatim by
     # scitex-dev's renderer, so the hint must mirror that exactly or it
