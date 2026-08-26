@@ -208,6 +208,135 @@ fi
 ci_tmpdir_prune
 # --- end scitex-agent-container-specific -------------------------------------
 
+# --- a throwaway PostgreSQL for the suite ------------------------------------
+# WHY THIS EXISTS. 308 tests across 28 files need a writable PostgreSQL. They
+# used to get one from the runner's own loopback :55432, and on 2026-08-26 that
+# stopped being true everywhere at once: the fleet is one primary (nas-03) plus
+# READ-ONLY REPLICAS, and every runner's local cluster is a replica. Two of the
+# three runners lacked a .pgpass row so the fixture skipped silently and the job
+# went GREEN having run none of it; the third had the row, connected, and died
+# on CREATE SCHEMA. Same commit, opposite verdicts, decided by which host drew
+# the job. The gate was a coin flip, and two thirds of the time it was blind.
+#
+# Pointing the tests at the primary instead was considered and rejected: that is
+# ~616 DDL statements per leg on the production cluster, replicated to every
+# standby, on a database that lost a primary-key index to a libc mismatch the
+# day before. Tests get their OWN database or none.
+#
+# WHY HERE and not inside the SIF: ci-cpu.sif ships no server binaries
+# (`command -v initdb pg_ctl postgres` prints nothing in it) and apptainer does
+# not nest, so the server cannot be started from the test process. This script
+# is the one place that runs on the RUNNER, and it is shared verbatim by the PR
+# gate and the release gate -- which is the point. Putting this in the workflow
+# YAML would fork those two apart again, and this file's own header is a
+# monument to what that cost last time.
+#
+# FAIL SOFT, DELIBERATELY. Every failure path below leaves SAC_TEST_PG_DSN
+# UNSET and continues. The fixture then skips with a ::warning:: naming the
+# reason (see tests/_store_isolation.py). That is a real trade and it is the
+# right way round: this script is shared by both gates, so `exit 1` here takes
+# down every build in the repo including ones that touch no database. A missing
+# test database must degrade to a LOUD skip, never to an outage.
+#
+# TEARDOWN IS BY REAPER, NOT BY TRAP, and that is forced: this script ends in
+# `exec`, which replaces the shell, so an EXIT trap would never fire. The same
+# reasoning the tmpdir prune above already uses applies -- age is what separates
+# a leftover from a live concurrent sibling, and a reaper survives SIGKILL and
+# reboots, which a trap does not.
+CI_PG_ROOT="${TMPDIR:-/tmp}/sac-ci-pg"
+mkdir -p "$CI_PG_ROOT" 2>/dev/null || true
+
+# Reap leftovers from runs that were killed before they could clean up. The 6 h
+# floor is deliberately far longer than any leg: a concurrent matrix sibling on
+# this same runner must never be shot.
+find "$CI_PG_ROOT" -mindepth 1 -maxdepth 1 -type d -mmin +360 2>/dev/null |
+    while read -r stale; do
+        if [ -f "$stale/postmaster.pid" ]; then
+            stale_pid="$(head -1 "$stale/postmaster.pid" 2>/dev/null)"
+            case "$stale_pid" in [0-9]*) kill "$stale_pid" 2>/dev/null || true ;; esac
+        fi
+        rm -rf "$stale" 2>/dev/null || true
+        echo "exec-in-sif: reaped stale CI postgres $stale"
+    done
+
+# Resolve the server image by GLOB. The filename differs per host -- measured
+# 2026-08-26: compute-03 carries postgres18.sif, compute-01 and compute-04 carry
+# postgres18-18.4.sif and compute-01 has both -- so a literal name would work on
+# one runner and not the next, which is the failure shape this whole change
+# exists to end.
+CI_PG_SIF=""
+for _cand in "$HOME"/.scitex/pg/postgres*.sif; do
+    [ -f "$_cand" ] && CI_PG_SIF="$_cand"
+done
+
+if [ -z "$CI_PG_SIF" ]; then
+    echo "::warning::no postgres SIF under $HOME/.scitex/pg — PostgreSQL tests will SKIP (loudly). Looked for postgres*.sif."
+else
+    # A free port, chosen by ASKING THE KERNEL rather than assuming. Do not
+    # hardcode: 55432 is the fleet cluster and compute-03 already runs an
+    # unrelated postgres on 5433. Binding port 0 and reading the assignment
+    # back races with other bidders in principle; in practice the window is
+    # microseconds and the alternative -- a fixed guess -- is wrong on a host
+    # nobody has probed yet.
+    CI_PG_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()' 2>/dev/null || echo "")"
+    CI_PG_DATA="$CI_PG_ROOT/$$-$(date +%s)"
+
+    if [ -z "$CI_PG_PORT" ]; then
+        echo "::warning::could not obtain a free port for the CI postgres — PostgreSQL tests will SKIP (loudly)."
+    else
+        # NOTE ON THE DATADIR: it is under TMPDIR, never under ~/.scitex/pg.
+        # That directory holds the SIFs AND the LIVE data -- ~/.scitex/pg/18/main
+        # carries standby.signal and ~/.scitex/pg/cards18 is the card store. A
+        # mistyped -D there destroys a replica of a cluster that is already one
+        # libc incident deep.
+        mkdir -p "$CI_PG_DATA"
+        if "$APPTAINER" exec --bind "$CI_PG_ROOT" "$CI_PG_SIF" \
+               initdb -D "$CI_PG_DATA" -U ci_tests --auth=trust >/dev/null 2>&1; then
+            "$APPTAINER" exec --bind "$CI_PG_ROOT" "$CI_PG_SIF" \
+                postgres -D "$CI_PG_DATA" -p "$CI_PG_PORT" \
+                -c listen_addresses=127.0.0.1 \
+                -c unix_socket_directories="$CI_PG_DATA" \
+                -c fsync=off \
+                -c full_page_writes=off -c synchronous_commit=off \
+                >"$CI_PG_DATA/server.log" 2>&1 &
+            # unix_socket_directories is NOT optional here, and the failure it
+            # prevents is not guessable from its message. MEASURED on
+            # scitex-compute-04 2026-08-26: without it the server starts, binds
+            # the TCP port, and then dies with
+            #   FATAL: could not create lock file
+            #     "/var/run/postgresql/.s.PGSQL.<port>.lock": Read-only file system
+            # A SIF is a read-only image, and PostgreSQL insists on a writable
+            # directory for its Unix socket even when every client will speak
+            # TCP. The datadir is already writable and already ours.
+            #
+            # fsync/full_page_writes off: this database is discarded at the end
+            # of the job, so durability buys nothing and costs wall clock.
+
+            CI_PG_READY=""
+            for _i in $(seq 1 40); do
+                if "$APPTAINER" exec --bind "$CI_PG_ROOT" "$CI_PG_SIF" \
+                       pg_isready -h 127.0.0.1 -p "$CI_PG_PORT" -q >/dev/null 2>&1; then
+                    CI_PG_READY=yes
+                    break
+                fi
+                sleep 0.5
+            done
+
+            if [ -n "$CI_PG_READY" ]; then
+                export APPTAINERENV_SAC_TEST_PG_DSN="postgresql://127.0.0.1:$CI_PG_PORT/postgres"
+                export APPTAINERENV_PGUSER="ci_tests"
+                echo "exec-in-sif: CI postgres ready on 127.0.0.1:$CI_PG_PORT (data=$CI_PG_DATA, image=$(basename "$CI_PG_SIF"))"
+            else
+                echo "::warning::CI postgres did not accept connections within 20s — PostgreSQL tests will SKIP (loudly). Log tail:"
+                tail -5 "$CI_PG_DATA/server.log" 2>/dev/null || true
+            fi
+        else
+            echo "::warning::initdb failed for the CI postgres — PostgreSQL tests will SKIP (loudly)."
+        fi
+    fi
+fi
+# --- end throwaway PostgreSQL ------------------------------------------------
+
 # Build the argv as an ARRAY so the GPFS bind can be dropped cleanly rather than
 # passed as an empty string. --pwd "$PWD" keeps the checkout as cwd.
 APPTAINER_ARGV=(exec --pwd "$PWD")
