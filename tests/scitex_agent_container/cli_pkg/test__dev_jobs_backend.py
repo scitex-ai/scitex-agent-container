@@ -410,6 +410,72 @@ def test_invoking_an_unsupported_delegation_is_refused() -> None:
         _call()
 
 
+def _lay_down(binary_dir: Path) -> Path:
+    """Write a real, executable ``scitex-dev`` and return it."""
+    binary_dir.mkdir(parents=True, exist_ok=True)
+    exe = binary_dir / "scitex-dev"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_the_delegate_is_the_sibling_of_our_own_interpreter(tmp_path) -> None:
+    # Arrange — the invariant: EXECUTE the verb in the interpreter that
+    # ANSWERED the questions. Capability is probed in-process and the job name
+    # resolved in-process, so a delegate from anywhere else means sac asked A
+    # and acted on B.
+    #
+    # MEASURED 2026-08-26: in an agent container `shutil.which("scitex-dev")`
+    # found /uvwork/bin/scitex-dev, a shim execing ANOTHER package's venv whose
+    # scitex_dev.jobs group lacks scitex-agent-container. `list` showed 11 sac
+    # timers while `status` said the job did not exist.
+    #
+    # NO PATCHING: both candidates are real files and the resolver is ASKED.
+    ours = _lay_down(tmp_path / "ours" / "bin")
+    _lay_down(tmp_path / "on-path")
+
+    # Act
+    resolved = backend.resolve_scitex_dev(
+        executable=str(tmp_path / "ours" / "bin" / "python"),
+        path=str(tmp_path / "on-path"),
+    )
+
+    # Assert
+    assert resolved == str(ours)
+
+
+def test_the_delegate_falls_back_to_path_when_there_is_no_sibling(tmp_path) -> None:
+    # Arrange — sibling-first must DEGRADE, not demand. Outside a venv there is
+    # no sibling next to the interpreter and PATH is the only answer there is;
+    # refusing would break every such caller to fix none of them.
+    only = _lay_down(tmp_path / "on-path")
+
+    # Act
+    resolved = backend.resolve_scitex_dev(
+        executable=str(tmp_path / "nowhere" / "python"),
+        path=str(tmp_path / "on-path"),
+    )
+
+    # Assert
+    assert resolved == str(only)
+
+
+def test_resolution_returns_none_when_neither_answers(tmp_path) -> None:
+    # Arrange — None is the third value and it must exist: the caller turns it
+    # into a clean ClickException naming what to install, rather than an opaque
+    # FileNotFoundError from deep inside subprocess.
+    (tmp_path / "empty").mkdir()
+
+    # Act
+    resolved = backend.resolve_scitex_dev(
+        executable=str(tmp_path / "nowhere" / "python"),
+        path=str(tmp_path / "empty"),
+    )
+
+    # Assert
+    assert resolved is None
+
+
 def test_the_manual_hint_names_the_timer_unit() -> None:
     # Arrange — the unit filename is derived from JobSpec.name verbatim by
     # scitex-dev's renderer, so the hint must mirror that exactly or it
