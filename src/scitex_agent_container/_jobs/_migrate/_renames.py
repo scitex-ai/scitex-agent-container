@@ -107,6 +107,43 @@ class Rename:
 #: names are exactly what ``provide_jobs()`` declares, reading the REAL
 #: provider through the REAL validator. Adding a job without a row, or a
 #: row without a job, fails the build.
+#: Jobs that never had a legacy ``sac.*`` name, so there is nothing to
+#: migrate. EXPLICIT for the same reason RENAMES is: silence here would be
+#: indistinguishable from "someone added a job and forgot the row", which is
+#: exactly what `test_every_declared_job_has_a_row` exists to catch.
+#:
+#: A row cannot express this. ``Rename.__post_init__`` rejects ``old == new``
+#: ("renames nothing"), and rightly — an identity row in the migration table
+#: would tell the migrator to stop a unit, remove it, and reinstall it under
+#: the name it already has. So the fact belongs here, as its own statement,
+#: rather than as a lie in the shape of a rename.
+#:
+#: Anything listed here is asserting: this job was BORN canonical, no host
+#: carries a legacy unit for it, and `sac dev migrate-job-names` must leave
+#: it alone.
+BORN_CANONICAL: frozenset[str] = frozenset(
+    {
+        # Added 2026-08-25, after the rename had already landed — the first
+        # job in this package that never existed under the `sac.*` prefix.
+        # No host has ever carried a `sac.accounts-entitlement` unit, so
+        # there is no orphan for a migration to displace.
+        "scitex-agent-container-accounts-entitlement",
+        # Added 2026-08-26. NOT a rename, deliberately, even though
+        # laptop-01 does carry a hand-written `sac-creds-watch.service`:
+        # that unit runs the `watch-live` DAEMON, while this job is a
+        # 2-minute timer over the one-shot `sync-live`. A Rename row would
+        # tell the migrator to stop the fleet's ONLY working credential
+        # watcher and install a timer in its place, in one unsupervised
+        # step — the same stop-then-install order that took the sole OAuth
+        # refresher down for ~2 minutes on 2026-08-18. Declaring it born
+        # canonical lets both run (sync-live is a no-op when the store
+        # already matches), so laptop-01 keeps its watcher until this timer
+        # is VERIFIED firing on all seven hosts; retiring the hand-written
+        # unit is a separate, deliberate step on the migration card.
+        "scitex-agent-container-accounts-snapshot-live",
+    }
+)
+
 RENAMES: tuple[Rename, ...] = (
     Rename(
         old="sac.accounts-refresh",

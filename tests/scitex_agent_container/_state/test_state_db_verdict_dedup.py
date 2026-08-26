@@ -48,6 +48,8 @@ and the point is that the REAL resolver reads the REAL variable.
 
 from __future__ import annotations
 
+from tests._store_isolation import pg_endpoint_port
+
 import psycopg
 
 from scitex_agent_container._state.state_db_verdict_dedup import (
@@ -105,7 +107,7 @@ def test_init_reports_where_the_state_went(pg_schema: str) -> None:
     cannot say where it is is a store nobody can verify.
     """
     # Arrange
-    expected_fragment = "55432"
+    expected_fragment = pg_endpoint_port()
     # Act
     locator = init_verdict_dedup_schema()
     # Assert

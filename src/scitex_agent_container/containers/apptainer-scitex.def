@@ -215,12 +215,16 @@ From: ./sac-base.sif
         # ecosystem system-deps`` exists and every leaf's
         # ``scitex_dev.system_deps`` entry-point is discoverable for the
         # federated install in section 3.
-        # Floors verified against live PyPI on 2026-07-13 — a floor ABOVE the
+        # Floors verified against live PyPI on 2026-07-13; scitex-dev
+        # re-verified 2026-08-25 (0.56.6 is published and unyanked, and is
+        # the NEWEST release — this floor sits exactly AT the ceiling, so a
+        # yank of 0.56.6 would brick every bake until it is lowered).
+        # A floor ABOVE the
         # newest published version makes the build UNSATISFIABLE (uv/pip
         # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
         # this recipe once already. Never raise a floor without checking that
         # the version exists.
-        #   scitex-dev    >=0.29.0 — keystone aggregator (list/install/check-superset)
+        #   scitex-dev    >=0.56.6 — keystone aggregator (list/install/check-superset)
         #   scitex-writer >=2.29.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio  >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv     >=0.2.0  — opencv-python-headless; provider declares []
@@ -268,7 +272,7 @@ From: ./sac-base.sif
         # ALREADY satisfied by the inherited base venv, so without it the
         # providers freeze at base's build and a routine rebake is a no-op.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-dev>=0.29.0" \
+            "scitex-dev>=0.56.6" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -337,7 +341,7 @@ From: ./sac-base.sif
         # already satisfies never re-resolves, so without it these providers
         # freeze at base's build and the routine rebake ships stale.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-dev>=0.29.0" \
+            "scitex-dev>=0.56.6" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -471,6 +475,25 @@ from scitex_cards._throughput import WIP_STATUSES
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.
 from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+
+# scitex-dev 0.56.6: the bounded (origin, seq) oplog-allocation retry.
+# Through 0.56.5, Store._append read MAX(seq) ONCE and then inserted, so a
+# burst of writers on a SINGLE node collided on the oplog (origin, seq)
+# primary key with no bounded retry -- 7/8 and 5/8 failures on the two
+# concurrency tests, reproduced three times. 0.56.6 adds this constant and
+# the retry loop that uses it, plus an advisory lock around table creation.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR -- the same narrow job as the
+# scitex-cards import above, and the same 2026-08-23 lesson. The FLOOR is
+# what excludes the releases without the retry; this import only catches a
+# version string that lies; and only a concurrent multi-writer append after
+# deploy proves the loop actually settles under contention.
+#
+# The name is PRIVATE -- underscore-prefixed and absent from __all__ -- so
+# upstream may rename or inline it with no deprecation, and that would land
+# here as a dead bake far from scitex-dev's repo. If this line is what broke
+# the build, read scitex_dev/store/_store.py before suspecting the image.
+from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
 
 
 

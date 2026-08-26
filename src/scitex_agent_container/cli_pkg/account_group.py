@@ -28,13 +28,40 @@ class _AccountsGroup(HelpRecursiveGroup):
 
     COMMAND_CATEGORIES = [
         ("Inspect (read-only)", ["list", "status", "quota"]),
-        ("Stored accounts", ["save", "delete", "switch", "login"]),
+        (
+            "Stored accounts",
+            [
+                "save",
+                "delete",
+                "switch",
+                "login",
+                # Beside `delete` on purpose: both take an account out of
+                # service, and a reader deciding between them should see them
+                # together. The pair exists so that choice is available at
+                # all — before it, stopping an account meant deleting it.
+                "pause",
+                "resume",
+            ],
+        ),
         (
             "Credential material",
             ["refresh", "mint-token", "sync-live", "sync-openai"],
         ),
         ("Distribute to peers", ["send-credentials"]),
-        ("Watch continuously", ["watch-live", "watch-quota", "refresh-quota-cache"]),
+        (
+            "Watch continuously",
+            [
+                "watch-live",
+                "watch-quota",
+                "refresh-quota-cache",
+                # Sits beside refresh-quota-cache because it has the same
+                # shape: a timer-driven PRODUCER whose output the boot picker
+                # reads from cache. Neither is something an operator runs by
+                # hand in the normal case, and both are inert if their timer
+                # is not running.
+                "probe-entitlement",
+            ],
+        ),
     ]
 
 
@@ -347,6 +374,39 @@ register_refresh_command(account)
 from ._account_refresh_quota_cache import register_refresh_quota_cache_command
 
 register_refresh_quota_cache_command(account)
+
+
+# ---------------------------------------------------------------------------
+# probe-entitlement — the PRODUCER for the per-account entitlement verdicts
+# the boot picker reads. Same relationship as refresh-quota-cache above: the
+# picker is cache-only by contract, so without a periodic run of this every
+# account reads UNKNOWN and the gate is inert. A host timer runs it.
+#
+# INCIDENT 2026-08-25: a cancelled subscription refreshed its OAuth token
+# successfully and so passed every FRESHNESS gate, while every real turn on
+# it returned 403. Freshness is not entitlement; this asks the second
+# question. Separate verb from `refresh` on purpose — this rotates nothing.
+# ---------------------------------------------------------------------------
+from ._account_probe_entitlement import register_probe_entitlement_command
+
+register_probe_entitlement_command(account)
+
+
+# ---------------------------------------------------------------------------
+# pause / resume — the OPERATOR's own switch, and the counterpart to
+# probe-entitlement above. That verb records what Anthropic MEASURED about an
+# account; these two record what the operator DECIDED about it. Separate
+# files, disjoint writers: no probe can lift a pause, and no pause can be
+# discovered.
+#
+# OPERATOR REQUEST 2026-08-26: he stops and restarts subscriptions while
+# watching quota, and asked that nothing fail during the rest. Before this,
+# one rested account exited `sac accounts send-credentials` non-zero on every
+# pass, pinning the credential alarm red permanently.
+# ---------------------------------------------------------------------------
+from ._account_pause import register_pause_commands
+
+register_pause_commands(account)
 
 
 # ---------------------------------------------------------------------------

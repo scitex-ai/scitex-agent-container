@@ -131,6 +131,20 @@ def test_probe_checks_the_comment_merge_symbol() -> None:
     assert ("scitex_cards._mirror_rows", "_merge_unseen_comment_rows") in from_imports
 
 
+def test_probe_checks_the_seq_allocation_symbol() -> None:
+    # Arrange - scitex-dev 0.56.6's bounded (origin, seq) oplog-allocation
+    # retry. A bare `import scitex_dev.store` CANNOT catch its absence: 0.56.5
+    # imports perfectly and then loses concurrent same-node writes on the oplog
+    # primary key (7/8 and 5/8 failures, reproduced three times). The module
+    # resolves on both releases and only the ATTRIBUTE differs, so nothing but
+    # the module+symbol pair tells the two apart.
+    source = _probe_source()
+    # Act
+    from_imports = _from_imports(source)
+    # Assert
+    assert ("scitex_dev.store._store", "_SEQ_ALLOCATION_ATTEMPTS") in from_imports
+
+
 def test_probe_fails_loud_on_a_bad_sif() -> None:
     # Arrange — a gate that can only PASS is a hope; the probe must sys.exit()
     # non-zero so a mis-baked SIF is REJECTED, not silently published.
@@ -284,4 +298,28 @@ def test_every_probe_copy_carries_the_comment_merge_symbol(path) -> None:
     assert present, (
         f"{path.name} embeds the symbol probe but not the 0.49.0 "
         "comment-merge check — this copy still passes on a 0.48.0 image"
+    )
+
+
+@pytest.mark.parametrize("path", EMBEDS, ids=lambda p: p.name)
+def test_every_probe_copy_carries_the_seq_allocation_symbol(path) -> None:
+    """The four-copy rule again, for the scitex-dev floor.
+
+    Identical reasoning to the comment-merge check above and a separate test on
+    purpose: the two floors move independently, so one symbol reaching all four
+    copies says nothing about the other. Below scitex-dev 0.56.6, Store._append
+    read MAX(seq) once and inserted, and concurrent writers on a single node
+    collided on the oplog (origin, seq) primary key with no bounded retry. A
+    copy left un-updated keeps baking images that carry that defect while the
+    other copies report a clean gate.
+    Token check, not AST: these are shell heredocs and do not parse as Python.
+    """
+    # Arrange
+    source = path.read_text(encoding="utf-8")
+    # Act
+    present = "_SEQ_ALLOCATION_ATTEMPTS" in source
+    # Assert
+    assert present, (
+        f"{path.name} embeds the symbol probe but not the 0.56.6 "
+        "seq-allocation check - this copy still passes on a 0.56.5 image"
     )

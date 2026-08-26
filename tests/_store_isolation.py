@@ -47,6 +47,65 @@ import pytest
 #: where libpq finds it without any credential entering this file.
 PG_BASE_DSN = os.environ.get("SAC_TEST_PG_DSN", "postgresql://127.0.0.1:55432/scitex")
 
+#: Was the target DECLARED, or did we fall back to the default?
+#:
+#: The distinction decides skip-vs-fail, and it is the whole point. "This
+#: laptop has no cluster" is a fact about a machine and may be skipped. "The
+#: target somebody explicitly configured does not work" is a
+#: MISCONFIGURATION, and a misconfiguration that skips is indistinguishable
+#: from a pass — which is exactly how this suite came to report green while
+#: executing zero PostgreSQL coverage.
+PG_DSN_WAS_DECLARED = "SAC_TEST_PG_DSN" in os.environ
+
+#: Set to "1" to make an unusable target a hard FAILURE rather than a skip.
+#:
+#: Intended for the RELEASE gate. A pull request may proceed with PostgreSQL
+#: coverage skipped, because the alternative is a blocked queue; a TAG must
+#: not publish having silently run none of it.
+PG_REQUIRED = os.environ.get("SAC_TEST_PG_REQUIRED") == "1"
+
+#: The fleet's replication cluster, which tests must NEVER write to.
+#:
+#: Every node of it — primary and replicas alike — reports this identifier,
+#: so one comparison recognises the production cluster no matter which host
+#: the DSN happens to resolve to, and no matter which node is primary today.
+#: That last part matters: the operator has stated failover is expected
+#: (2026-08-26), so a guard naming a HOST would protect the wrong machine the
+#: moment the primary moves. Identity travels with the cluster; addresses do
+#: not.
+#:
+#: This exists because the honest fix for CI is to give tests their own
+#: throwaway database, and the failure mode of that work is pointing at the
+#: real cluster by accident. The cluster lost a primary-key index to a libc
+#: mismatch on 2026-08-25; it does not need CI creating and dropping schemas
+#: in it as well.
+FLEET_SYSTEM_ID = os.environ.get("SAC_TEST_PG_FORBIDDEN_SYSTEM_ID", "7672112238472680366")
+
+
+def pg_endpoint_port() -> str:
+    """The PORT of the database under test, as a locator would print it.
+
+    Four tests assert that ``init_*_schema()`` returns a locator NAMING the
+    endpoint it wrote to — the property being that state cannot land somewhere
+    without saying where. They each hardcoded ``"55432"``, which was not the
+    property but an assumption about the environment: the fleet's loopback
+    port. It held only because every runner happened to have the fleet cluster
+    there.
+
+    MEASURED 2026-08-26: the moment CI provisioned its own throwaway database
+    on an ephemeral port, all four failed with
+    ``assert '55432' in 'postgres[host=127.0.0.1 db=postgres port=46313]'``.
+    The locator was correct; the expectation was pinned to a machine.
+
+    Deriving it from ``PG_BASE_DSN`` keeps the assertion testing the thing it
+    was written to test — the locator names the endpoint — while surviving any
+    database the suite is pointed at.
+    """
+    from urllib.parse import urlsplit
+
+    port = urlsplit(PG_BASE_DSN).port
+    return str(port) if port else "5432"
+
 
 def _default_test_pg_user() -> str:
     """The login role tests authenticate as when nothing declares one.
@@ -201,9 +260,93 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
     os.environ[pguser_key] = PG_TEST_USER
 
     schema = "sac_test_" + uuid.uuid4().hex[:12]
+
+    def _restore_identity() -> None:
+        """Put PGPASSFILE/PGUSER back exactly as they were.
+
+        Hoisted out of the handlers because it now has FOUR call sites and
+        one of them is a teardown that previously skipped it — see the
+        ``finally`` below.
+        """
+        for key_, saved_ in ((pgpass_key, saved_pgpass), (pguser_key, saved_pguser)):
+            if saved_ is None:
+                os.environ.pop(key_, None)
+            else:
+                os.environ[key_] = saved_
+
+    def _unusable(reason: str, *, hard: bool) -> None:
+        """Report an unusable target — loudly, and never silently.
+
+        ``hard`` fails the run; otherwise it skips. Either way the reason
+        names the DSN and the role, so a skip on a host that is SUPPOSED to
+        have a writable database reads as the misconfiguration it is instead
+        of disappearing into a skip count.
+
+        VISIBILITY COMES FROM ``-rs``, NOT FROM AN ANNOTATION, and that is a
+        correction rather than a preference. The first version of this
+        printed a GitHub ``::warning::`` here. MEASURED on run
+        32919218635: the reason text appears **308 times** in the CI log
+        while the annotation appears **zero** times — pytest captures fixture
+        stdout, so the annotation never reached the step output at all. It
+        was decoration that looked like a safeguard. The mechanism that
+        actually works is ``-rs`` on the pytest invocation, which prints
+        every skip reason in the summary; that is what put those 308 lines
+        there.
+        """
+        _restore_identity()
+        message = (
+            f"PostgreSQL fixture cannot use {PG_BASE_DSN} as {PG_TEST_USER}: {reason}"
+        )
+        if hard:
+            pytest.fail(message, pytrace=False)
+        pytest.skip(message)
+
     try:
         with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
+            # Refuse the production cluster BEFORE issuing any DDL. On a
+            # replica the CREATE would fail anyway; on the PRIMARY it would
+            # succeed, which is the outcome worth preventing.
+            row = conn.execute(
+                "SELECT system_identifier::text, pg_is_in_recovery() "
+                "FROM pg_control_system()"
+            ).fetchone()
+            if row and row[0] == FLEET_SYSTEM_ID:
+                # Same cluster, two very different situations, and collapsing
+                # them turns this guard into an outage. Measured 2026-08-26:
+                # treating both as fatal made every runner RED, because
+                # loopback on a runner IS a fleet replica and always will be.
+                if not row[1]:
+                    # NOT in recovery -> this is the PRIMARY, where a CREATE
+                    # SCHEMA would SUCCEED. That is the only case worth
+                    # failing over: the write lands in production.
+                    _unusable(
+                        f"that is the fleet PRIMARY (system_identifier={row[0]}). "
+                        f"Tests must never create schemas in production; point "
+                        f"SAC_TEST_PG_DSN at a throwaway database.",
+                        hard=True,
+                    )
+                # In recovery -> a read-only replica. Nothing can be written
+                # here, so this is simply "no writable database on this host",
+                # which per the operator's 2026-08-26 ruling (one primary, all
+                # else read-only replicas) is the PERMANENT shape of every
+                # runner until CI provisions its own database.
+                _unusable(
+                    f"loopback is a read-only replica of the fleet cluster "
+                    f"(system_identifier={row[0]}); there is no writable "
+                    f"database on this host",
+                    hard=PG_REQUIRED or PG_DSN_WAS_DECLARED,
+                )
             conn.execute(f'CREATE SCHEMA "{schema}"')
+    except psycopg.errors.ReadOnlySqlTransaction as exc:
+        # CONNECTED, but the server will not accept writes — a read-only
+        # replica. This is NOT the "no cluster here" case below and must not
+        # be folded into it: psycopg models it as InternalError, not
+        # OperationalError, so the handler that follows never saw it and the
+        # tests errored instead. Per the operator's 2026-08-26 ruling the
+        # fleet is one primary plus read-only replicas, so loopback on a
+        # runner is a replica BY DESIGN and this is now the expected shape
+        # until CI provisions its own database.
+        _unusable(f"the server is a read-only replica ({exc})", hard=PG_REQUIRED or PG_DSN_WAS_DECLARED)
     except psycopg.OperationalError as exc:
         # SKIP, not fail: not every machine that runs this suite still has a
         # local cluster. The fleet's stores were consolidated onto the primary
@@ -219,15 +362,12 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
         # The reason string names the DSN so a skip on a host that is SUPPOSED
         # to have a cluster reads as the misconfiguration it is, instead of
         # disappearing into a skip count.
-        for key_, saved_ in ((pgpass_key, saved_pgpass), (pguser_key, saved_pguser)):
-            if saved_ is None:
-                os.environ.pop(key_, None)
-            else:
-                os.environ[key_] = saved_
-        pytest.skip(
-            f"no reachable PostgreSQL for the test fixture at {PG_BASE_DSN} "
-            f"as {PG_TEST_USER}: {exc}"
-        )
+        #
+        # STILL A SKIP BY DEFAULT, but no longer a silent one, and no longer
+        # unconditional: if somebody DECLARED SAC_TEST_PG_DSN, an unreachable
+        # target is their configuration being wrong, not this machine lacking
+        # a cluster, and it fails.
+        _unusable(f"no reachable PostgreSQL ({exc})", hard=PG_REQUIRED or PG_DSN_WAS_DECLARED)
 
     key = "SCITEX_STORE_DSN"
     saved = os.environ.get(key)
@@ -239,10 +379,17 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
-        with psycopg.connect(PG_BASE_DSN, connect_timeout=10, autocommit=True) as conn:
-            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        for key_, saved_ in ((pgpass_key, saved_pgpass), (pguser_key, saved_pguser)):
-            if saved_ is None:
-                os.environ.pop(key_, None)
-            else:
-                os.environ[key_] = saved_
+        # The DROP is wrapped because the identity restore below MUST happen
+        # even when it raises. Previously it did not: the connect/DROP sat
+        # outside any try with the restore after it, so a server that went
+        # read-only or unreachable mid-run left this fixture's PGPASSFILE and
+        # PGUSER installed in os.environ for every later test on the same
+        # xdist worker. A leaked identity does not fail here; it fails
+        # somewhere else, later, as something that looks unrelated.
+        try:
+            with psycopg.connect(
+                PG_BASE_DSN, connect_timeout=10, autocommit=True
+            ) as conn:
+                conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        finally:
+            _restore_identity()

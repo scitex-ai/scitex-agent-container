@@ -249,6 +249,18 @@ def test_json_dry_run_reports_the_new_name(fleet: Layout):
     assert json.loads(result.stdout)["new"] == expected
 
 
+def test_json_dry_run_lists_the_current_board_identity_change(fleet: Layout):
+    # Arrange: the spelling most live specs use. The plan missed it until
+    # 2026-08-25 because every fixture here carried the retired one.
+    needle = "SCITEX_CARDS_AGENT_ID"
+    # Act
+    result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
+    # Assert
+    assert any(
+        needle in c["path"] for c in json.loads(result.stdout)["spec_changes"]
+    )
+
+
 def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
     # Arrange
     needle = "SCITEX_TODO_AGENT_ID"
