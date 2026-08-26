@@ -343,7 +343,10 @@ def register_keepalive_command(group: click.Group) -> None:
         # point: collapsing the two would re-create the always-red bug in
         # the one case where the operator has paused everything.
         if not accounts and skipped:
-            click.echo(_kp.all_paused_line(len(skipped)), err=True)
+            click.echo(
+                _kp.all_paused_line(len(skipped), all_accounts=all_accounts),
+                err=True,
+            )
             if as_json:
                 click.echo(  # stx-allow: STX-IO006
                     _json.dumps(records, ensure_ascii=False, indent=2)

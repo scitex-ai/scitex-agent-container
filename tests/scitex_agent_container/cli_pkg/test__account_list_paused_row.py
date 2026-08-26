@@ -31,7 +31,9 @@ import pytest
 
 from scitex_agent_container.cli_pkg._account_list_format import format_ttl_live
 from scitex_agent_container.cli_pkg._account_list_render import (
+    _PAUSE_REASON_CHARS,
     AccountRow,
+    _fmt_status,
     render_stored_table_to_str,
 )
 
@@ -125,14 +127,42 @@ def test_an_unpaused_row_still_shows_the_token_ttl(unpaused_table: str):
     assert shown is True
 
 
-def test_a_long_reason_is_truncated_rather_than_wrapping_the_table(tmp_path):
-    """The cell has neighbours; an essay in it pushes them off the screen."""
+def test_a_long_reason_is_truncated_rather_than_wrapping_the_table():
+    """The cell has neighbours; an essay in it pushes them off the screen.
+
+    ASSERTED ON THE CELL, AND THIS TEST USED TO BE UNABLE TO FAIL.
+    Reviewed 2026-08-26: it rendered a 200-character reason into a
+    160-column table and asserted ``"x" * 200 not in table``. ``rich``
+    wraps a long cell across lines, so that run of 200 x's can never
+    appear contiguously in a rendered table no matter what this code
+    does — deleting the truncation entirely left the file's seven tests
+    green and the whole list-render suite green (69 passed), while the
+    operator got a Status cell that shoved Identity and Last-update off
+    his screen. The assertion was measuring rich's line breaking.
+
+    :func:`_fmt_status` is what the application controls, so the bound
+    goes there. ``+ 20`` is head-room for the fixed prefix (``PAUSED``,
+    the age, the em-dash and the ellipsis), not slack in the claim: the
+    number that matters is that the cell is bounded by
+    ``_PAUSE_REASON_CHARS`` rather than by the reason's own length.
+    """
     # Arrange
-    row = _row(
-        pause_reason="x" * 200,
-        pause_since=time.time() - 86400,
-    )
+    reason = "x" * 200
     # Act
-    table = render_stored_table_to_str([row], width=160)
+    cell = _fmt_status("VALID", _HOURS_LEFT, pause_reason=reason, pause_since=1.0)
     # Assert
-    assert "x" * 200 not in table
+    assert len(cell) <= _PAUSE_REASON_CHARS + 20
+
+
+def test_a_short_reason_survives_intact(paused_table: str):
+    """The reversing control: truncation must not eat a normal reason.
+
+    Without it, a "fix" that returned a constant would satisfy the
+    bound above and lose the only thing the cell is carrying.
+    """
+    # Arrange
+    expected = "quota rest"
+    # Act
+    shown = expected in paused_table
+    # Assert
+    assert shown is True

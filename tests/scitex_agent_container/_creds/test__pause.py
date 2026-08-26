@@ -161,13 +161,25 @@ def test_the_probe_does_not_alter_the_operators_reason(
     assert reason == "quota rest - restarting it later"
 
 
-def test_a_paused_account_is_still_probed_underneath(
+def test_an_entitled_verdict_does_not_lift_a_pause(
     store: Path, tmp_path: Path, paused_account: Path
 ):
-    """The pause hides the account from the pool, never from the prober.
+    """A GOOD verdict must not un-pause an account either.
 
-    Deliberate: the verdict must already be current the moment the
-    operator resumes, so a restored subscription needs no second step.
+    RENAMED 2026-08-26, because the old name —
+    ``test_a_paused_account_is_still_probed_underneath`` — claimed more
+    than the body checks. Nothing here measures whether the probe runs;
+    the assertion holds whether or not one ever runs again. A reader
+    auditing "does the entitlement probe keep going during a pause?"
+    would have found that name, believed the claim was gated, and
+    stopped looking. The claim IS carried, honestly, by
+    :func:`test_a_pause_survives_the_entitlement_probe` and
+    :func:`test_resuming_reveals_the_verdict_recorded_during_the_pause`.
+
+    What this one is actually worth: the precedence tests below all use
+    a FORBIDDEN verdict, so they would still pass if a good verdict
+    cleared the pause. This is the other direction — an ENTITLED
+    reading is a measurement too, and no measurement lifts a decision.
     """
     # Arrange
     write_entitlement(paused_account, Entitlement(ALPHA, ENTITLED, checked_at=time.time()))

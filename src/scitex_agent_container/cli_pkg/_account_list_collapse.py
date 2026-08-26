@@ -93,19 +93,66 @@ def _fmt_hosts_cell(group: AccountGroup, all_hosts: list[str]) -> str:
     return f"{len(present)}/{len(all_hosts)} (not on {', '.join(missing)})"
 
 
+def _row_state(row: AccountRow) -> str:
+    """The state this row AGREES ON — a pause outranks the token reading.
+
+    A pause is a per-host FILE, exactly like the credential beside it,
+    so one machine can be resting an account while another is still
+    pushing it. That is a divergence, and this column exists to surface
+    divergence rather than average it away. Folding the pause into the
+    agreement key is what lets the cell say ``VALID x2; PAUSED on
+    compute-01`` instead of quietly rendering every host as VALID
+    because the pause lives in a field the key never looked at.
+
+    PAUSED wins over the freshness reading for the same reason
+    :func:`.._creds._account_health.account_health` checks it first:
+    when the operator has decided to rest an account, its token's TTL is
+    a true answer to a question nobody is asking.
+    """
+    return "PAUSED" if row.pause_reason else row.freshness_state
+
+
 def _fmt_status_cell(group: AccountGroup) -> str:
     """The agreed credential status, or the disagreement spelled out.
 
     Never reduces divergence to a representative value: an EXPIRED
     credential hidden behind three VALID ones is the one thing this column
     exists to surface.
+
+    Reviewed 2026-08-26: this used to call :func:`_fmt_status`
+    POSITIONALLY, dropping the pause keywords entirely, so the DEFAULT
+    ``sac accounts list`` — the collapsed table, the one the operator
+    actually types — rendered a paused account as ``VALID +7h59m``. The
+    pause was visible only under ``--refresh``, which he does not run.
     """
-    states = {r.freshness_state for r in group.rows}
+    states = {_row_state(r) for r in group.rows}
     if len(states) == 1:
-        return _fmt_status(group.rows[0].freshness_state, group.rows[0].freshness_hours)
-    majority = max(states, key=lambda s: sum(r.freshness_state == s for r in group.rows))
-    odd = [r for r in group.rows if r.freshness_state != majority]
-    detail = ", ".join(f"{r.freshness_state} on {r.host or '?'}" for r in odd)
+        head = group.rows[0]
+        return _fmt_status(
+            head.freshness_state,
+            head.freshness_hours,
+            pause_reason=head.pause_reason,
+            pause_since=head.pause_since,
+        )
+    # A TIE MUST BREAK THE SAME WAY EVERY RUN. ``max`` over a SET of
+    # equally-common states picks whichever the set happens to yield
+    # first, and Python randomises string hashing per process — so two
+    # hosts disagreeing one-to-one rendered as ``VALID x1; PAUSED on
+    # h2`` in one run and ``PAUSED x1; VALID on h1`` in the next, for
+    # identical input. Both sentences are true, which is why nobody
+    # caught it: on a screen the operator refreshes every few seconds
+    # it reads as the fleet flapping. First-seen row order is the
+    # tie-break, so the answer follows the host order the table is
+    # already printed in. A real majority is unaffected.
+    first_seen: dict[str, int] = {}
+    for row in group.rows:
+        first_seen.setdefault(_row_state(row), len(first_seen))
+    majority = max(
+        states,
+        key=lambda s: (sum(_row_state(r) == s for r in group.rows), -first_seen[s]),
+    )
+    odd = [r for r in group.rows if _row_state(r) != majority]
+    detail = ", ".join(f"{_row_state(r)} on {r.host or '?'}" for r in odd)
     return f"{majority} x{len(group.rows) - len(odd)}; {detail}"
 
 

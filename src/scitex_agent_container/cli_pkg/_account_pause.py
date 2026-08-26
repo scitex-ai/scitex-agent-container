@@ -61,13 +61,30 @@ __all__ = ["register_pause_commands"]
 
 
 def _who() -> str:
-    """``user@host`` for the audit trail. Best-effort, never a secret."""
-    import os
+    """``user@host`` for the audit trail. Best-effort, never a secret.
+
+    FALLS THROUGH THE OS, NOT STRAIGHT TO A LITERAL. Reviewed
+    2026-08-26: the first cut read only ``$USER`` / ``$LOGNAME`` and
+    recorded ``unknown@<host>`` when neither was set — which is the
+    NORMAL case for anything run from systemd, cron or a bare container
+    shell, and was in fact what the reviewer's own run wrote. A pause
+    has no expiry, so months later this field and the reason are the
+    only two things separating a deliberate rest from an abandoned
+    account; answering half of that with the string "unknown", and
+    doing so most reliably in non-interactive contexts, is the wrong
+    way to be approximate. :func:`getpass.getuser` consults ``pwd``
+    when the environment is silent.
+    """
+    import getpass
     import socket
 
-    user = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
-    # stx-allow: fallback (reason: an unresolvable hostname must not stop
-    # an operator from pausing an account; the field is an audit hint.)
+    # stx-allow: fallback (reason: an unresolvable uid or hostname must
+    # not stop an operator from pausing an account; both fields are
+    # audit hints, and the reason is the load-bearing one.)
+    try:
+        user = getpass.getuser()
+    except (KeyError, OSError):
+        user = "unknown"
     try:
         host = socket.gethostname()
     except OSError:
@@ -84,25 +101,42 @@ def _known_accounts() -> list[str]:
 def _resolve_account_dir(name: str) -> Path:
     """The account's directory, or raise a click error naming the real ones.
 
-    An unknown NAME is REFUSED rather than silently creating a pause
-    for a slug that does not exist. This matters more than it looks:
-    the store carries symlinks (``wyusuuke-gmail-com ->
-    anthropic/wyusuuke-gmail-com``), so a plausible second spelling of
-    a real account exists, resolves to the same directory, and would
-    never appear in ``sac accounts list``. Refusing anything the
-    enumerator does not name keeps the two views agreeing.
+    MEMBERSHIP IN THE ENUMERATOR, NOT MERE EXISTENCE ON DISK. Anything
+    :func:`._state.account_store.list_accounts` does not name is
+    refused, because that enumerator is what every reader of a pause
+    goes through: ``sac accounts send-credentials --all`` reaches it via
+    ``refresh_holder_accounts``, and ``sac accounts list`` calls it
+    directly.
+
+    Reviewed 2026-08-26, measured on a store with the real shape. The
+    first cut checked ``account_dir.is_dir()``, which is true of things
+    that are not accounts: ``pause anthropic`` (the PROVIDER dir),
+    ``pause _backup`` and ``pause .swap-backup-20260815`` (store
+    bookkeeping and editor litter) all exited 0 saying "paused", wrote
+    a ``pause.json`` where nothing would ever read it, and the very
+    next keepalive run still enumerated and still failed. A verb that
+    reports a decision recorded somewhere inert is the wrong direction
+    to degrade in for a change whose whole premise is that an authored
+    decision must never be silently lost.
+
+    This is reachable in the real store rather than hypothetical: the
+    accounts are symlinked short names (``wyusuuke-gmail-com ->
+    anthropic/wyusuuke-gmail-com``), so an ``ls`` shows ``anthropic``
+    sitting among the account names, and ``anthropic`` used to pause
+    successfully. Membership implies existence, so nothing legal is
+    lost — ``_``/``.``-prefixed names are documented as never being
+    account names, and a BARE account dir (no metadata, no credential)
+    is still enumerated, so it stays pausable.
     """
     from .._state.account_store import _store_path
 
-    store = _store_path(None, Path.home())
-    account_dir = store / name
-    if not account_dir.is_dir():
-        known = _known_accounts()
+    known = _known_accounts()
+    if name not in known:
         raise click.ClickException(
             f"unknown account '{name}' — this host stores: "
             f"{', '.join(known) if known else '(none)'}"
         )
-    return account_dir
+    return _store_path(None, Path.home()) / name
 
 
 def _still_servable(exclude: str) -> list[str]:
@@ -116,6 +150,35 @@ def _still_servable(exclude: str) -> list[str]:
         if account_health(name).state == "VALID":
             out.append(name)
     return out
+
+
+def _would_strand_the_picker(name: str) -> bool:
+    """Would pausing ``name`` take the LAST pickable account out of service?
+
+    Both halves are load-bearing, and the second was missing.
+
+    Reviewed 2026-08-26: the guard asked only "is anything ELSE
+    VALID?", so it fired on a target that was not VALID either — and
+    then stated, as its reason, that the target "currently reads
+    VALID". Measured on a store holding one EXPIRED and one FORBIDDEN
+    account: ``pause <the FORBIDDEN one>`` was refused, both clauses of
+    the refusal false, and the operator had to reach for ``--yes`` to
+    do something that could not have broken anything.
+
+    That is precisely the account class this feature exists for. His
+    FORBIDDEN account is the one he wants to rest, and the fleet's
+    others read EXPIRED between keepalive passes, so the real workflow
+    walked straight into a refusal built for a different situation.
+
+    An account that is not VALID cannot be picked, so pausing it
+    removes nothing from the picker's set and there is nothing to
+    refuse. The guard now asks the TARGET's own state first.
+    """
+    from .._creds._account_health import account_health
+
+    if account_health(name).state != "VALID":
+        return False
+    return not _still_servable(name)
 
 
 def register_pause_commands(group: click.Group) -> None:
@@ -149,11 +212,19 @@ def register_pause_commands(group: click.Group) -> None:
         """Stop using an account WITHOUT deleting it — a decision, not a fault.
 
         For the workflow of stopping a subscription and putting it back
-        later. While an account is paused: no agent is routed onto it,
-        its credential is not pushed to peers, and the
-        credential-distribution timer reports it SKIPPED instead of
-        failing. Nothing is deleted and no credential is touched;
+        later. Nothing is deleted and no credential is touched;
         `sac accounts resume NAME` puts it back in one command.
+
+        EXACTLY WHAT A PAUSE STOPS, stated narrowly on purpose. No NEW
+        agent boot picks the account, quota rotation never lands on it,
+        its credential is no longer refreshed or pushed to peers, and
+        both credential timers report it SKIPPED instead of failing.
+
+        WHAT IT DOES NOT STOP: an agent already running on that
+        credential keeps its token until it restarts, a peer keeps
+        serving the copy it already has until that copy expires (hours),
+        and `sac accounts switch` will still put the account on this
+        host's live login if you ask it to by name.
 
         A pause is never discovered and never lifted by any probe.
         `sac accounts probe-entitlement` keeps recording whether the
@@ -188,15 +259,13 @@ def register_pause_commands(group: click.Group) -> None:
                 err=True,
             )
 
-        if not yes and not existing.active:
-            servable = _still_servable(name)
-            if not servable:
-                raise click.ClickException(
-                    f"refusing to pause '{name}': it is the last stored "
-                    "account that currently reads VALID, so pausing it "
-                    "would leave the picker with nothing and fail every "
-                    "agent boot. Pass --yes if that is what you want."
-                )
+        if not yes and not existing.active and _would_strand_the_picker(name):
+            raise click.ClickException(
+                f"refusing to pause '{name}': it is the last stored "
+                "account that currently reads VALID, so pausing it "
+                "would leave the picker with nothing and fail every "
+                "agent boot. Pass --yes if that is what you want."
+            )
 
         record = Pause(
             name=name,
@@ -231,11 +300,26 @@ def register_pause_commands(group: click.Group) -> None:
         minutes on its own).
         """
         from .._creds._account_health import account_health
-        from .._creds._pause import clear_pause, read_pause
+        from .._creds._pause import clear_pause, pause_path, read_pause
 
         account_dir = _resolve_account_dir(name)
         existing = read_pause(name, account_dir)
-        removed = clear_pause(account_dir)
+        # :func:`clear_pause` deliberately propagates every OSError that
+        # is not FileNotFoundError, because a permission-denied unlink
+        # means the pause is STILL THERE and calling that "nothing to
+        # lift" would be the lie in the other direction. That decision
+        # is right and the RENDERING of it was missing: without this,
+        # the one verb whose whole promise is that 「また復活させる」
+        # costs one command ended in a Python stack trace on a
+        # read-only store.
+        try:
+            removed = clear_pause(account_dir)
+        except OSError as exc:
+            raise click.ClickException(
+                f"could not remove {pause_path(account_dir)} ({exc}) — "
+                f"'{name}' is STILL PAUSED. Fix the store's permissions "
+                "and re-run; nothing else was changed."
+            ) from exc
 
         if not removed:
             click.echo(f"{name} was not paused — nothing to lift.")

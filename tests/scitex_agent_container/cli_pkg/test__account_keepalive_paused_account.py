@@ -169,14 +169,114 @@ def result_with_nothing_paused(keepalive_cli, env, two_accounts: Path):
     return _run(keepalive_cli, env)
 
 
+# ---------------------------------------------------------------------------
+# The summary must not borrow the --all guard's premise
+# ---------------------------------------------------------------------------
+#
+# Reviewed 2026-08-26. The all-paused sentence said the accounts were the
+# ones "this host holds refresh material for". That fact is established by
+# ``refresh_holder_accounts()``, which the explicit ``--account NAME`` path
+# never calls — so on that path the run stated something it had not
+# measured. Small, and worth fixing precisely because the sentence's own
+# reasoning is about not sounding like the --all origin guard: it borrowed
+# that guard's premise while trying to avoid its meaning.
+
+
+@pytest.fixture
+def named_account_result(keepalive_cli, env, two_accounts: Path):
+    """``--account BETA`` where BETA is paused — the explicit path."""
+    _write_pause(two_accounts / BETA, BETA, "quota rest")
+    return CliRunner().invoke(
+        keepalive_cli,
+        ["send-credentials", "--account", BETA, "--to", _ABSENT_PEER],
+        env=env,
+    )
+
+
+def test_the_explicit_path_still_exits_zero_when_the_named_account_is_paused(
+    named_account_result,
+):
+    """The requirement does not depend on which form he typed."""
+    # Arrange
+    result = named_account_result
+    # Act
+    exit_code = result.exit_code
+    # Assert
+    assert exit_code == 0, result.output
+
+
+def test_the_explicit_path_says_every_account_you_named(named_account_result):
+    """Wording taken from the call site, which knows which form this was."""
+    # Arrange
+    output = named_account_result.output
+    # Act
+    said = "every account you named" in output
+    # Assert
+    assert said is True, output
+
+
+def test_the_explicit_path_does_not_claim_a_refresh_holder_sweep(
+    named_account_result,
+):
+    """The negative half: it must not state the --all guard's premise."""
+    # Arrange
+    output = named_account_result.output
+    # Act
+    claimed = "holds refresh material for" in output
+    # Assert
+    assert claimed is False, output
+
+
+def test_the_all_path_still_says_holds_refresh_material_for(
+    result_with_everything_paused,
+):
+    """The reversing control: the --all sentence must survive unchanged."""
+    # Arrange
+    output = result_with_everything_paused.output
+    # Act
+    said = "holds refresh material for" in output
+    # Assert
+    assert said is True, output
+
+
 def test_pausing_every_account_exits_zero(result_with_everything_paused):
-    """THE REQUIREMENT. 「その休止の間も失敗しないようにしてほしい」."""
+    """THE REQUIREMENT. 「その休止の間も失敗しないようにしてほしい」.
+
+    WHERE THE 0 COMES FROM, said plainly so the pairing does not imply
+    more than it measures. It is the PARTITION: the paused accounts
+    never enter the push loop, so ``failed`` is never set. Reviewed
+    2026-08-26 by deleting the all-paused early-return block that sits
+    beside this test — this stayed GREEN, and only
+    :func:`test_pausing_every_account_says_that_is_the_intended_state`
+    went red. That block supplies the SENTENCE, not the exit code, and
+    reading this test as its gate would be wrong.
+
+    The two assertions below are what the block's absence would have to
+    survive as well.
+    """
     # Arrange
     result = result_with_everything_paused
     # Act
     exit_code = result.exit_code
     # Assert
     assert exit_code == 0
+
+
+def test_pausing_every_account_reports_no_failure_of_any_kind(
+    result_with_everything_paused,
+):
+    """Exit 0 with a FAILED line in the journal is still a red-looking run.
+
+    The operator reads ``journalctl``, not ``$?``. A future change that
+    added a post-loop "we pushed to nobody" failure would break his
+    requirement while the exit-code test above stayed green.
+    """
+    # Arrange
+    output = result_with_everything_paused.output
+    # Act
+    failures = "FAILED" in output
+    # Assert
+    assert failures is False
 
 
 def test_without_the_pauses_the_same_store_exits_one(result_with_nothing_paused):

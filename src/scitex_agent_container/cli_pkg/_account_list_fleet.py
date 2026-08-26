@@ -129,6 +129,19 @@ def rows_from_stored(stored: list[dict], host: str) -> list:
     account is not this account's usage, however freshly it was fetched, and it
     must not be rendered under the wrong name just because it survived an ssh
     hop.
+
+    ``paused`` IS READ HERE FOR THE SAME REASON THE TABLE EXISTS. This
+    function feeds the DEFAULT ``sac accounts list`` — including this
+    machine's own accounts, which reach it through
+    :func:`._account_list_build.build_stored_json` rather than through
+    ssh. Reviewed 2026-08-26: the first cut of the pause change wired
+    the key into ``build_stored_json`` and never read it back out here,
+    so a paused account still rendered ``VALID +7h59m`` on the one
+    screen the operator actually types, and only ``--refresh`` showed
+    the pause. A pause never expires and nothing nags him about one, so
+    the listing IS the standing reminder; dropping it at this boundary
+    made the reminder not exist. A peer running an older ``sac`` simply
+    omits the key, which the ``.get`` below reads as "not paused".
     """
     from ._account_list_render import AccountRow
 
@@ -143,6 +156,7 @@ def rows_from_stored(stored: list[dict], host: str) -> list:
         state = entry.get("usage_state") or "unknown"
         known = state == "known"
         identity = entry.get("identity") if isinstance(entry.get("identity"), dict) else {}
+        paused = entry.get("paused") if isinstance(entry.get("paused"), dict) else {}
         rows.append(
             AccountRow(
                 host=host,
@@ -161,6 +175,8 @@ def rows_from_stored(stored: list[dict], host: str) -> list:
                 identity_state=str(identity.get("state") or "unverified"),
                 verified_email=_as_str(identity.get("verified_email")),
                 duplicate_of=_as_str(identity.get("duplicate_of")),
+                pause_reason=_as_str(paused.get("reason")) or "",
+                pause_since=_as_float(paused.get("since")),
             )
         )
     return rows

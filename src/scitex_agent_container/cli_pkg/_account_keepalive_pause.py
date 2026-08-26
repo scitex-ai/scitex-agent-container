@@ -63,6 +63,7 @@ from .._creds._pause import Pause, read_pause
 
 __all__ = [
     "partition_paused",
+    "refresh_targets_and_notes",
     "skip_line",
     "skip_record",
     "all_paused_line",
@@ -94,6 +95,67 @@ def partition_paused(
         [name for name, pause in judged if not pause.active],
         [(name, pause) for name, pause in judged if pause.active],
     )
+
+
+def refresh_targets_and_notes(
+    targets: list[str],
+    *,
+    all_accounts: bool,
+    store_dir: Path | None = None,
+    home: Path | None = None,
+    now: float | None = None,
+) -> tuple[list[str], list[str]]:
+    """The same partition, for ``sac accounts refresh``. Returns (targets, lines).
+
+    THERE ARE TWO ACCOUNT TIMERS AND A PAUSE MUST REACH BOTH.
+    ``send-credentials`` DISTRIBUTES a credential; ``refresh`` RENEWS
+    one, on its own timer
+    (``sac accounts refresh --all --include-active --sync-active-login``).
+    Reviewed 2026-08-26: the first cut of the pause change taught the
+    distributor to skip a rested account and left the renewer
+    enumerating straight from ``list_accounts``, so every account the
+    operator had stopped was still refreshed over the network on every
+    pass. Two consequences, and both are his own words:
+
+    * A paused account is by construction one whose token is no longer
+      being kept alive, so within hours it stops being "skipped, still
+      fresh" and starts being ATTEMPTED every pass. Each failure feeds
+      ``alert_failed_refreshes``, and when he has paused EVERYTHING
+      every attempt fails and this command exits 1 on every pass --
+      「休止の間も失敗しないようにしてほしい」, one timer over from the
+      one that was fixed.
+    * Each attempt is a network round-trip against a subscription he
+      asked us to stop touching, which is 「無駄遣いをしないように」
+      whatever the exit code says.
+
+    A half-honoured pause is worse than none, because it teaches him
+    the pause works.
+
+    AN EXPLICITLY NAMED ACCOUNT IS STILL REFRESHED. A pause silences
+    the surfaces that enumerate on their own; it is not a lock against
+    the operator typing the name himself, and refusing there would make
+    an account he is about to resume harder to prepare. It gets a note
+    instead, so the two surfaces never disagree in silence.
+    """
+    if not all_accounts:
+        notes = []
+        for name in targets:
+            pause = read_pause(name, _account_dir(name, store_dir, home))
+            if pause.active:
+                notes.append(
+                    f"note: '{name}' is PAUSED ({pause.reason}) — refreshing "
+                    "it anyway because you named it. `--all` skips paused "
+                    "accounts; naming one does not."
+                )
+        return targets, notes
+    remaining, rested = partition_paused(targets, store_dir=store_dir, home=home)
+    return remaining, [skip_line(name, pause, now=now) for name, pause in rested]
+
+
+def _account_dir(name: str, store_dir: Path | None, home: Path | None) -> Path:
+    from .._state.account_store import _store_path
+
+    return _store_path(store_dir, home if home is not None else Path.home()) / name
 
 
 def skip_line(account: str, pause: Pause, *, now: float | None = None) -> str:
@@ -133,8 +195,8 @@ def skip_record(account: str, pause: Pause) -> dict[str, Any]:
     }
 
 
-def all_paused_line(count: int) -> str:
-    """The summary when EVERY enumerable account is paused.
+def all_paused_line(count: int, *, all_accounts: bool = True) -> str:
+    """The summary when EVERY account this run was going to push is paused.
 
     This case must exit 0, and it must not be confused with the
     ``--all`` guard that refuses when this host holds refresh material
@@ -142,9 +204,23 @@ def all_paused_line(count: int) -> str:
     anybody alive has to say so; this one exits 0 because the empty list
     is exactly what the operator asked for. Same empty list, opposite
     verdicts, so the two sentences must not sound alike either.
+
+    ``all_accounts`` IS NOT COSMETIC. Reviewed 2026-08-26: the single
+    wording said the accounts were ones "this host holds refresh
+    material for", which is the ``--all`` guard's premise and is
+    established by ``refresh_holder_accounts()``. That function is never
+    called on the explicit ``--account NAME`` path, so on that path the
+    sentence stated a fact the run had not measured. The caller knows
+    which form it is; it passes that in rather than letting this module
+    borrow a premise.
     """
+    if all_accounts:
+        return (
+            f"  all {count} account(s) this host holds refresh material for "
+            "are PAUSED — nothing to push, and that is the intended state, "
+            "not a failure."
+        )
     return (
-        f"  all {count} account(s) this host holds refresh material for are "
-        "PAUSED — nothing to push, and that is the intended state, not a "
-        "failure."
+        f"  every account you named ({count}) is PAUSED — nothing to push, "
+        "and that is the intended state, not a failure."
     )
