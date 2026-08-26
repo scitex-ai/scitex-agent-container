@@ -125,6 +125,51 @@ def test_sync_live_exits_nonzero_when_live_absent(sandbox_home):
     assert result.exit_code == 1
 
 
+def test_poll_exits_zero_when_live_absent(sandbox_home):
+    # Arrange — the two tests above pin the LOUD default and must keep
+    # passing; this pins the other half. A scheduled caller has no human to
+    # tell, and on a host nobody logged into today an absent live credential
+    # is the NORMAL resting state, not an incident.
+    #
+    # MEASURED 2026-08-26: without this flag the 2-minute snapshot timer was
+    # armed on five hosts and failed on three of them (absent, expired 7.9d,
+    # expired 4.6d) — 720 failures a day each. A job that is always red can
+    # never report a NEW problem.
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "x@y.com"}})
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["sync-live", "--poll"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_poll_exits_zero_when_live_expired(sandbox_home):
+    # Arrange — an expired live cred under --poll is "nothing to snapshot",
+    # not a failure. The SAFETY behaviour is unchanged: it is still not saved.
+    _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["sync-live", "--poll"])
+    # Assert
+    assert result.exit_code == 0, result.output
+
+
+def test_poll_wording_does_not_call_a_no_op_an_error(sandbox_home):
+    # Arrange — the exit code and the words must agree. A line reading
+    # "Error:" beside exit 0 teaches whoever greps the journal that errors
+    # here are ignorable, which is how a real one later gets skipped.
+    (sandbox_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "x@y.com"}})
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(account, ["sync-live", "--poll"])
+    # Assert
+    assert "Error" not in result.output, result.output
+
+
 def test_sync_live_error_message_points_at_login(sandbox_home):
     # Arrange
     _write_live(sandbox_home, "alpha@example.com", int((time.time() - 10_000) * 1_000))
