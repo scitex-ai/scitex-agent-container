@@ -427,6 +427,14 @@ fi
 # after EVERY test, so loadscope's "same worker per module" buys nothing here —
 # it only serialized. `load` spreads the parametrized cases across ALL workers.
 #
+# -rs: PRINT SKIP REASONS. Without it `-q` prints a bare count, and on
+# 2026-08-26 that made a blind gate look like a healthy one: 308 PostgreSQL
+# tests were skipping on two of three runners for want of a writable database
+# and every one of those runs reported green. Establishing that took
+# reconstructing 392 - 84 = 308 by arithmetic from a 9.9 MB log, because
+# nothing in the output said which tests were skipped or why. A skip that
+# nobody can see is a pass.
+#
 # nice -n 19 ionice -c 3: run at the lowest CPU + idle I/O priority so that if
 # this node is ever shared with interactive/dev work, CI grabs otherwise-idle
 # cores but YIELDS the CPU and disk to any higher-priority process — "all
@@ -434,6 +442,6 @@ fi
 # which execs ionice, which execs python (still PID-traceable, signals/exit
 # code propagate to the runner step).
 exec nice -n 19 ionice -c 3 \
-    python -m pytest tests/ -n "$WORKERS" --dist load -q \
+    python -m pytest tests/ -n "$WORKERS" --dist load -q -rs \
     --cov=src/scitex_agent_container --cov-report=xml --cov-report=term \
     -p no:cacheprovider
