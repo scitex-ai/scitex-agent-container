@@ -158,10 +158,38 @@ CONFIG_SECTION = "fleet_default_env"
 #     home where the socket actually lives.
 #
 # TCP RATHER THAN THE SOCKET, deliberately: this mirrors SCITEX_CARDS_DB,
-# which is the DSN shape already proven fleet-wide in production, and the
-# same ``.pgpass`` line authenticates it — the entry wildcards the DATABASE
-# (``127.0.0.1:55432:*:scitex_cards``), so the credential is not a lucky
-# match. Following the working neighbour beats inventing a second shape.
+# which is the DSN shape already proven fleet-wide in production.
+#
+# CORRECTED 2026-08-28 — THE 08-19 VALUE WAS RIGHT WHEN WRITTEN AND THE WORLD
+# MOVED UNDER IT. It was ``postgresql://scitex_cards@127.0.0.1:55432/scitex``,
+# justified here by a ``.pgpass`` entry wildcarding the database
+# (``127.0.0.1:55432:*:scitex_cards``). BOTH halves of that justification have
+# since expired, and nothing re-checked:
+#
+#   * ``127.0.0.1`` was this host's own PRIMARY on 08-19. The compute hosts are
+#     now STREAMING STANDBYS of nas-03, so the local instance answers
+#     ``pg_is_in_recovery() = t`` and refuses every write with "cannot execute
+#     ... in a read-only transaction". MEASURED on compute-04, 2026-08-28.
+#   * the ``scitex_cards`` pgpass row is GONE — compute-04 holds ZERO entries
+#     for that role, so the credential the comment relied on does not exist.
+#
+# COST: no agent birth was recorded fleet-wide between 2026-08-23 and
+# 2026-08-28. The launches happened; their RECORD failed. That history is not
+# delayed, it is gone.
+#
+# THE CORRECTED VALUE follows the working neighbour EXACTLY rather than
+# approximately — that is the whole lesson. SCITEX_CARDS_DB names the PRIMARY
+# by name and OMITS the user, letting ``PGUSER=ywatanabe__<agent>`` supply the
+# identity that ``pg_hba`` already admits over the overlay
+# (``host scitex +ywatanabe 100.64.0.0/10 scram-sha-256``). The old value
+# diverged on both axes at once — wrong host AND a hardcoded role — which is
+# why cards kept working all week while state writes died beside it.
+#
+# PROVEN END TO END from compute-04 before this edit, as the agent's own role:
+# connect -> current_user=ywatanabe__scitex-agent-container,
+# pg_is_in_recovery()=f (the PRIMARY), CREATE TABLE, INSERT 0 1, readback 1,
+# DROP TABLE. A full write cycle, not a connection test — the failure being
+# fixed is precisely "connects fine, cannot write".
 #
 # HOST-SPECIFIC OVERRIDES ARE THE OPERATOR'S LAYER, not a reason to compute
 # this value: a host whose Postgres is elsewhere sets
@@ -172,7 +200,7 @@ CONFIG_SECTION = "fleet_default_env"
 # These are opaque strings to sac. It never reads, parses or branches on them.
 # --------------------------------------------------------------------------
 FLEET_DEFAULT_ENV: dict[str, str] = {
-    "SCITEX_STORE_DSN": "postgresql://scitex_cards@127.0.0.1:55432/scitex",
+    "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
 }
 
 
