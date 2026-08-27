@@ -429,7 +429,7 @@ def roles(
 
     rows: list[dict] = []
     for yaml_path in spec_paths:
-        # stx-allow: fallback (reason: one unparseable spec must not blank the whole fleet listing; it is reported as an explicitly unreadable row instead of vanishing)
+        # stx-allow: fallback (reason: one unparseable spec must not blank the whole fleet listing; the failure is reported on this command's own stdout as a row with unreadable=true, so a broken spec cannot silently shrink the fleet)
         try:
             cfg = load_config(yaml_path)
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
