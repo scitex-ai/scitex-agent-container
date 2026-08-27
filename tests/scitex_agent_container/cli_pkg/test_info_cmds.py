@@ -38,6 +38,7 @@ from scitex_agent_container.cli_pkg.info_cmds import (
     _tail_one,
     find,
     list_python_apis,
+    roles,
     tail_session,
 )
 
@@ -504,3 +505,158 @@ def test_list_python_apis_double_verbose_renders_multiple_doc_lines():
     result = runner.invoke(list_python_apis, ["-vv", "-d", "1"])
     # Assert -- -vv prints every docstring line, not just the first.
     assert "Only" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `roles` — what every DEFINED agent is FOR
+#
+# The population under test is the specs on disk, deliberately: an earlier
+# reading of this fleet counted RUNNING agents and under-reported by however
+# many happened to be down. These fixtures are real spec dirs, so a listing
+# that silently narrowed its population would fail here.
+
+
+def _write_role_spec(
+    tmp_path: Path, name: str, role: str = "project-maintainer", desc: str = ""
+) -> Path:
+    """Write a v3 spec carrying ``role`` / ``description`` labels."""
+    d = tmp_path / name
+    d.mkdir()
+    spec = d / "spec.yaml"
+    labels = f"    role: '{role}'\n"
+    if desc:
+        labels += f"    description: '{desc}'\n"
+    spec.write_text(
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "metadata:\n"
+            f"  labels:\n{labels}    machine: m1\n"
+            "spec:\n  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/work\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  claude:\n    model: sonnet\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+        )
+    )
+    return spec
+
+
+def test_roles_counts_every_defined_spec(tmp_path):
+    # Arrange
+    for n in ("alpha", "beta", "gamma"):
+        _write_role_spec(tmp_path, n)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    # Assert
+    assert json.loads(result.stdout)["total"] == 3
+
+
+def test_roles_skips_underscore_scaffolding(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha")
+    _write_role_spec(tmp_path, "_template_python_developer")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    names = [a["name"] for a in json.loads(result.stdout)["agents"]]
+    # Assert
+    assert "_template_python_developer" not in names
+
+
+def test_roles_reports_the_declared_role(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha", role="infra-maintainer")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    agents = json.loads(result.stdout)["agents"]
+    # Assert
+    assert agents[0]["role"] == "infra-maintainer"
+
+
+def test_roles_counts_only_specs_that_declare_a_description(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha", desc="does the thing")
+    _write_role_spec(tmp_path, "beta")
+    _write_role_spec(tmp_path, "gamma")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    # Assert
+    assert json.loads(result.stdout)["described"] == 1
+
+
+def test_roles_missing_lists_the_undescribed_specs(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha", desc="does the thing")
+    _write_role_spec(tmp_path, "beta")
+    _write_role_spec(tmp_path, "gamma")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--missing", "--json"])
+    names = sorted(a["name"] for a in json.loads(result.stdout)["agents"])
+    # Assert
+    assert names == ["beta", "gamma"]
+
+
+def test_roles_missing_excludes_the_described_spec(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha", desc="does the thing")
+    _write_role_spec(tmp_path, "beta")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--missing", "--json"])
+    names = [a["name"] for a in json.loads(result.stdout)["agents"]]
+    # Assert
+    assert "alpha" not in names
+
+
+def test_roles_keeps_the_total_honest_while_missing_is_filtered(tmp_path):
+    # Arrange — --missing narrows the ROWS, never the denominator, or the
+    # coverage figure would read 0/2 for a fleet that is half documented.
+    _write_role_spec(tmp_path, "alpha", desc="does the thing")
+    _write_role_spec(tmp_path, "beta")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--missing", "--json"])
+    # Assert
+    assert json.loads(result.stdout)["total"] == 2
+
+
+def test_roles_reports_an_unreadable_spec_rather_than_dropping_it(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha")
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "spec.yaml").write_text("this: [is, not: valid\n  yaml: ::::\n")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    unreadable = [
+        a["name"] for a in json.loads(result.stdout)["agents"] if a["unreadable"]
+    ]
+    # Assert
+    assert unreadable == ["broken"]
+
+
+def test_roles_human_output_marks_an_undeclared_description(tmp_path):
+    # Arrange
+    _write_role_spec(tmp_path, "alpha")
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path)])
+    # Assert
+    assert "undeclared" in result.output
+
+
+def test_roles_empty_dir_exits_zero(tmp_path):
+    # Arrange
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
+    # Assert
+    assert result.exit_code == 0

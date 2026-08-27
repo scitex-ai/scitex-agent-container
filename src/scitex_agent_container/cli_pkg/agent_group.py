@@ -19,6 +19,7 @@ from ._helpers import HelpRecursiveGroup
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
+from .info_cmds import roles as _roles_impl
 from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
@@ -69,7 +70,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
         ("Preflight", ["check"]),
-        ("Discovery", ["find"]),
+        ("Discovery", ["find", "roles"]),
         ("Account", ["accounts"]),
         (
             "Maintenance",
@@ -234,6 +235,7 @@ agent_group.add_command(_auth_status_impl)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))
+agent_group.add_command(_rebind(_roles_impl, "roles"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))

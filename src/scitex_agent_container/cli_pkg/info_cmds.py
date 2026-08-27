@@ -12,6 +12,7 @@ import click
 from rich.table import Table
 
 from ..config import load_config
+from .._reconcile._pass import fleet_agents_dir, fleet_spec_paths
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, agent_name_complete, console
 from .._state._remote_sac_hint import remote_sac_not_found_hint
@@ -369,3 +370,133 @@ def list_python_apis(
             else:
                 for ln in row["Docstring"].split("\n"):
                     click.echo(f"{indent}    {ln}")
+
+
+@click.command()
+@click.option(
+    "--dir",
+    "-d",
+    "search_dir",
+    default=None,
+    help="Directory of YAML agent configs (default: the fleet registry).",
+)
+@click.option(
+    "--missing",
+    "only_missing",
+    is_flag=True,
+    default=False,
+    help="Show only agents with no description — the gap to fill.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output as JSON.",
+)
+@click.pass_context
+def roles(
+    ctx: click.Context, search_dir: str | None, only_missing: bool, as_json: bool
+) -> None:
+    """List what every DEFINED agent is FOR — role and description.
+
+    The population is the agents DEFINED in the fleet registry, not the
+    ones currently RUNNING: a registry of running things cannot answer
+    "what is this fleet made of", and reading one as if it could
+    under-reports by however many agents happen to be down.
+
+    It resolves that registry through :func:`fleet_spec_paths`, the same
+    accessor the reconciler and the auth-heal detector use, because two
+    sweeps of one fleet must never disagree about which agents exist.
+
+    ``role`` is a coarse role-CLASS that most agents share, so the line
+    that actually says what an agent is FOR is ``description``. The
+    footer reports description coverage and ``--missing`` lists exactly
+    the specs that still owe one.
+
+    \b
+    Example:
+      $ sac agents roles
+      $ sac agents roles --missing
+      $ sac agents roles --json
+    """
+    search_path = (
+        fleet_agents_dir()
+        if search_dir is None
+        else Path(search_dir).expanduser().resolve()
+    )
+    spec_paths = fleet_spec_paths(search_path)
+
+    rows: list[dict] = []
+    for yaml_path in spec_paths:
+        # stx-allow: fallback (reason: one unparseable spec must not blank the whole fleet listing; it is reported as an explicitly unreadable row instead of vanishing)
+        try:
+            cfg = load_config(yaml_path)
+        except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+            rows.append(
+                {
+                    "name": yaml_path.parent.name,
+                    "role": "",
+                    "description": "",
+                    "machine": "",
+                    "unreadable": True,
+                    "config": str(yaml_path),
+                }
+            )
+            continue
+        labels = cfg.labels or {}
+        raw_role = labels.get("role", "") or ""
+        role = raw_role.strip() if isinstance(raw_role, str) else str(raw_role)
+        rows.append(
+            {
+                "name": cfg.name,
+                "role": role,
+                "description": (labels.get("description", "") or "").strip(),
+                "machine": labels.get("machine", "") or "",
+                "unreadable": False,
+                "config": str(yaml_path),
+            }
+        )
+
+    total = len(rows)
+    described = sum(1 for r in rows if r["description"])
+    shown = [r for r in rows if not r["description"]] if only_missing else rows
+
+    if _json_flag(ctx, as_json):
+        click.echo(
+            json_mod.dumps(
+                {
+                    "agents_dir": str(search_path),
+                    "total": total,
+                    "described": described,
+                    "agents": shown,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not rows:
+        console.print(f"[dim]No agent specs under {search_path}[/dim]")
+        return
+
+    title = "Agents missing a description" if only_missing else "Agent roles"
+    table = Table(title=f"{title}  ({search_path})")
+    table.add_column("Name", style="bold")
+    table.add_column("Role")
+    if not only_missing:
+        table.add_column("Description")
+    table.add_column("Machine")
+    for r in shown:
+        cells = [r["name"], r["role"] or "[dim]-[/dim]"]
+        if not only_missing:
+            cells.append(r["description"] or "[dim]— undeclared —[/dim]")
+        cells.append(r["machine"])
+        table.add_row(*cells)
+    console.print(table)
+    tail = (
+        ""
+        if described == total
+        else "  —  `sac agents roles --missing` lists the rest"
+    )
+    console.print(f"[dim]{described}/{total} agents declare a description{tail}[/dim]")
