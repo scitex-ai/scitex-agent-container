@@ -357,9 +357,12 @@ def materialize_cold_start(
 def _dir_has_agents_default(p: Path) -> bool:
     """Fallback bulk-dir detector: any ``<child>/spec.yaml`` under ``p``.
 
-    The command injects the production ``_iter_agent_yamls`` (which also
-    accepts the ``<name>/<name>.yaml`` layout); this default keeps the helper
-    usable + unit-testable without importing the command (no import cycle).
+    The command injects the production ``_iter_agent_yamls``, which accepts
+    BOTH ``<name>/spec.yaml`` and ``<name>/<name>.yaml``; this default keeps
+    the helper usable + unit-testable without importing the command (no
+    import cycle). NOTE the two are not equivalent -- this default sees only
+    ``spec.yaml``, so a caller that does NOT inject will not recognise a
+    self-named agents-root.
     """
     try:
         return any((c / "spec.yaml").is_file() for c in p.iterdir() if c.is_dir())
