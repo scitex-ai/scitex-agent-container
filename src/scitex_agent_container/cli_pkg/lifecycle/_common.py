@@ -229,6 +229,22 @@ def _singleton_skip_reason(
     )
 
 
+def _is_self_peer_spec(spec_path: "Path") -> bool:
+    """Reuse the canonical self-peer-marker predicate.
+
+    Imported lazily: the list-view helpers pull in the click surface, and
+    a module-level import here would close a cycle. Tolerant by design --
+    if the predicate cannot be reached, treat the file as a normal spec
+    rather than silently dropping an agent from a start/stop expansion.
+    """
+    # stx-allow: fallback (reason: an unavailable predicate must not drop an agent from a bulk start/stop; the miscount is reported on this command's own stdout as the agent simply appearing, never as a silent omission)
+    try:
+        from .._helpers._agent_list_discover import _is_self_peer_marker
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        return False
+    return bool(_is_self_peer_marker(spec_path))
+
+
 def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
     """Yield ``(name, yaml_path)`` for each agent subdir in ``agents_dir``.
 
@@ -245,11 +261,24 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
             continue
         if d.name in _SKIP_DIR_NAMES:
             continue
-        for ext in (".yaml", ".yml"):
-            candidate = d / f"{d.name}{ext}"
-            if candidate.exists():
-                results.append((d.name, str(candidate)))
+        # ``<name>/spec.yaml`` FIRST: that is what every registry writer
+        # emits, and reading only ``<name>/<name>.yaml`` made this helper
+        # return 0 against a registry holding 122 specs. ``<name>/<name>.yaml``
+        # stays as a fallback because `sac fleet materialize` and
+        # render_contributor_spec still write it -- alias first, remove after
+        # those writers move (see the follow-up card).
+        for candidate in (d / "spec.yaml", d / f"{d.name}.yaml", d / f"{d.name}.yml"):
+            if not candidate.exists():
+                continue
+            # ``agents/self/spec.yaml`` registers the running listen's own
+            # identity and is deliberately NOT a launchable Agent. It was
+            # invisible here only by accident, because this helper could not
+            # see spec.yaml at all; now that it can, skip it explicitly using
+            # the SAME predicate the listen merge and the list view use.
+            if _is_self_peer_spec(candidate):
                 break
+            results.append((d.name, str(candidate)))
+            break
     return results
 
 
