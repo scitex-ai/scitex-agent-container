@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import json as json_mod
+import os
 import sys
 from pathlib import Path
 
@@ -372,6 +373,35 @@ def list_python_apis(
                     click.echo(f"{indent}    {ln}")
 
 
+def _roles_default_dir() -> Path:
+    """Where ``roles`` looks when no ``--dir`` is given.
+
+    :func:`fleet_agents_dir` reads ``SCITEX_AGENT_CONTAINER_AGENTS_DIR`` and
+    otherwise falls back to the user's home. Inside a container that home is
+    ``/home/agent`` -- ephemeral, and it does not hold the fleet registry, so
+    the listing reported 0 agents from exactly the place agents run.
+
+    The launcher does not set that variable, but it DOES inject
+    ``SCITEX_AGENT_CONTAINER_YAML_DIRS`` naming the real registry, and that
+    path is readable from inside a container (measured 2026-08-27 on
+    scitex-compute-04: 149 specs enumerable, via the shared host filesystem).
+    So when the primary variable is unset, fall through to the one the
+    launcher actually provides rather than to a home that cannot answer.
+
+    A missing or non-existent entry is skipped rather than trusted, so a
+    stale variable degrades to the normal resolution instead of pinning the
+    listing to a directory that is not there.
+    """
+    if os.environ.get("SCITEX_AGENT_CONTAINER_AGENTS_DIR"):
+        return fleet_agents_dir()
+    for part in os.environ.get("SCITEX_AGENT_CONTAINER_YAML_DIRS", "").split(":"):
+        entry = part.strip()
+        if entry:
+            candidate = Path(entry).expanduser()
+            if candidate.is_dir():
+                return candidate
+    return fleet_agents_dir()
+
 @click.command()
 @click.option(
     "--dir",
@@ -421,7 +451,7 @@ def roles(
       $ sac agents roles --json
     """
     search_path = (
-        fleet_agents_dir()
+        _roles_default_dir()
         if search_dir is None
         else Path(search_dir).expanduser().resolve()
     )

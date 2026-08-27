@@ -35,6 +35,7 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.info_cmds import (
+    _roles_default_dir,
     _tail_one,
     find,
     list_python_apis,
@@ -660,3 +661,67 @@ def test_roles_empty_dir_exits_zero(tmp_path):
     result = runner.invoke(roles, ["--dir", str(tmp_path), "--json"])
     # Assert
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# `roles` default directory — the container-vs-host resolution
+#
+# fleet_agents_dir() falls back to the user's home, which inside a container is
+# /home/agent and does not hold the fleet registry: the listing reported 0
+# agents from exactly the place agents run. The launcher injects
+# SCITEX_AGENT_CONTAINER_YAML_DIRS naming the real registry, so that is the
+# fallback these tests pin.
+
+
+def test_roles_default_dir_uses_yaml_dirs_when_agents_dir_is_unset(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    os.environ.pop("SCITEX_AGENT_CONTAINER_AGENTS_DIR", None)
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(registry)
+    # Act
+    resolved = _roles_default_dir()
+    # Assert
+    assert resolved == registry
+
+
+def test_roles_default_dir_skips_a_yaml_dirs_entry_that_does_not_exist(
+    tmp_path, env_save_restore
+):
+    # Arrange — a stale first entry must not pin the listing to a missing dir
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    os.environ.pop("SCITEX_AGENT_CONTAINER_AGENTS_DIR", None)
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = (
+        f"{tmp_path / 'gone'}:{registry}"
+    )
+    # Act
+    resolved = _roles_default_dir()
+    # Assert
+    assert resolved == registry
+
+
+def test_roles_default_dir_prefers_the_agents_dir_variable(tmp_path, env_save_restore):
+    # Arrange — the primary variable wins over the launcher's fallback
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    os.environ["SCITEX_AGENT_CONTAINER_AGENTS_DIR"] = str(primary)
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(fallback)
+    # Act
+    resolved = _roles_default_dir()
+    # Assert
+    assert resolved == primary
+
+
+def test_roles_default_dir_ignores_an_empty_yaml_dirs(tmp_path, env_save_restore):
+    # Arrange — an empty value must not resolve to Path('') / the cwd
+    os.environ.pop("SCITEX_AGENT_CONTAINER_AGENTS_DIR", None)
+    os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = ""
+    # Act
+    resolved = _roles_default_dir()
+    # Assert
+    assert resolved != Path("")
