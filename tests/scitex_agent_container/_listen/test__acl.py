@@ -84,7 +84,7 @@ def test_acl_allows_self_send(db_path: Path) -> None:
 
 def test_acl_allows_intra_group_parent_to_child(db_path: Path, pg_schema: str) -> None:
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="root",
@@ -99,8 +99,8 @@ def test_acl_allows_intra_group_parent_to_child(db_path: Path, pg_schema: str) -
 def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path, pg_schema: str) -> None:
     """Handoff §4: 'parent↔child *and* sibling↔sibling, bidirectional'."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="worker-a",
@@ -116,8 +116,8 @@ def test_acl_allows_cross_group_by_default(db_path: Path, pg_schema: str) -> Non
     """Messaging default-allow (operator 2026-07-03): two unrelated
     lineage families, no grant → ALLOW."""
     # Arrange — two unrelated families
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="child-1",
@@ -133,8 +133,8 @@ def test_acl_blocked_sender_is_blocked(db_path: Path, pg_schema: str) -> None:
     """Override preserved: an explicit block still yields a "block"
     decision even under the cross-group default-allow."""
     # Arrange — two unrelated families + an explicit block
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     block_send(sender="child-1", target="child-2")
     # Act
     decision, _reason = check_send_acl(
@@ -150,8 +150,8 @@ def test_acl_blocked_sender_is_blocked(db_path: Path, pg_schema: str) -> None:
 def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: str) -> None:
     """Explicit cross-group grant flips a deny to allow."""
     # Arrange — two unrelated families + grant child-1 → child-2
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     grant_send(sender="child-1", target="child-2", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
@@ -164,14 +164,14 @@ def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: st
     assert decision == "allow"
 
 
-def test_acl_denies_identity_spoof(db_path: Path) -> None:
+def test_acl_denies_identity_spoof(db_path: Path, pg_schema: str) -> None:
     """Handoff §4 acceptance: "identity cannot be spoofed via a
     metadata field". A per-node bearer authenticates one name; if
     ``metadata.from_agent`` claims a different name → 403.
     """
     # Arrange
-    record_lineage(child="alice", parent="root", db_path=db_path)
-    record_lineage(child="bob", parent="root", db_path=db_path)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="bob", parent="root")
     # Act — alice's bearer, bob's claim
     decision, _reason = check_send_acl(
         authenticated_node="alice",
@@ -202,7 +202,7 @@ def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path, pg_schema: st
     (cross-host forwarder). The metadata claim is honoured verbatim.
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act — admin caller (authenticated_node=None) speaks for root
     decision, _reason = check_send_acl(
         authenticated_node=None,
@@ -249,7 +249,7 @@ def test_acl_denies_when_target_missing(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_allows_root_caller(db_path: Path) -> None:
+def test_spawn_allows_root_caller(db_path: Path, pg_schema: str) -> None:
     """A node with no parent in lineage is allowed to spawn."""
     # Arrange
     caller = "root"
@@ -269,17 +269,17 @@ def test_spawn_allows_admin_caller_when_caller_is_none(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_spawn_denies_child_caller(db_path: Path) -> None:
+def test_spawn_denies_child_caller(db_path: Path, pg_schema: str) -> None:
     """A node with a parent (child) is NOT allowed to spawn."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     decision, _reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
     assert decision == "deny"
 
 
-def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
+def test_spawn_deny_reason_explains_root_only_policy(db_path: Path, pg_schema: str) -> None:
     """The 403 body names the groups that WOULD authorise the spawn.
 
     It no longer asserts the caller holds none of them — that claim was
@@ -287,7 +287,7 @@ def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
     the same server's own a2a_peers output (2026-08-10).
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     _decision, reason = check_spawn(caller="worker-a", db_path=db_path)
     # Assert
@@ -345,8 +345,8 @@ def test_http_node_message_send_allows_cross_group_by_default(
     """End-to-end: messaging default-allow — a cross-group sender (two
     unrelated lineage families) now lands (< 400)."""
     # Arrange
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
@@ -365,8 +365,8 @@ def test_http_node_message_send_403_body_carries_per_spec_reason(
     """A per-spec ``inbound.siblings=deny`` override still 403s and the
     body explains the denial (the deny path survives default-allow)."""
     # Arrange — siblings so the per-spec inbound-sibling deny applies.
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     record_comms_policy(name="worker-b", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
@@ -386,8 +386,8 @@ def test_http_node_message_send_allows_intra_group(
 ) -> None:
     """Intra-group send (sibling-to-sibling) lands."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
@@ -405,8 +405,8 @@ def test_http_node_message_send_allows_after_explicit_grant(
 ) -> None:
     """A cross-group grant flips the deny to an allow."""
     # Arrange
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     grant_send(sender="child-1", target="child-2", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
@@ -433,8 +433,8 @@ def test_http_per_node_bearer_allows_matching_from_agent(
     + intra-group target → allow.
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
@@ -455,8 +455,8 @@ def test_http_per_node_bearer_denies_spoofed_from_agent_with_403(
     → 403 identity spoof (the acceptance criterion).
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     mint_node_token(name="worker-b", db_path=db_path)
     app = create_app(token=TOKEN)
@@ -477,8 +477,8 @@ def test_http_per_node_bearer_403_body_explains_spoof(
     """The 403 body identifies the resolved name vs the claimed
     name so the operator can see which identity tried to spoof."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
@@ -500,11 +500,11 @@ def test_http_per_node_bearer_403_body_explains_spoof(
 
 
 def test_http_agents_start_denies_child_caller_with_403(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     """Root-only spawn (current policy): a child caller → 403."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     app = create_app(token=TOKEN)
     body = {"name": "new-agent", "caller": "worker-a"}
     # Act
@@ -519,10 +519,10 @@ def test_http_agents_start_denies_child_caller_with_403(
 
 
 def test_http_agents_start_403_carries_role_policy_text(
-    isolated_listen_env, db_path: Path
+    isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     app = create_app(token=TOKEN)
     body = {"name": "new-agent", "caller": "worker-a"}
     # Act
@@ -576,8 +576,8 @@ def cross_group_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str
     via the surviving deny path: a per-spec ``inbound.siblings=deny`` on
     the target. child-1 and child-2 are siblings under a shared root so
     the sibling relationship applies."""
-    record_lineage(child="child-1", parent="root", db_path=db_path)
-    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_lineage(child="child-1", parent="root")
+    record_lineage(child="child-2", parent="root")
     record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
@@ -665,8 +665,8 @@ def body_leak_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> di
     """Denied send carrying a secret in its body — must not leak. Denial
     is triggered by a per-spec ``inbound.siblings=deny`` (the surviving
     deny path under messaging default-allow)."""
-    record_lineage(child="child-1", parent="root", db_path=db_path)
-    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_lineage(child="child-1", parent="root")
+    record_lineage(child="child-2", parent="root")
     record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
@@ -726,10 +726,10 @@ def fanout_scope_scenario(isolated_listen_env, db_path: Path, pg_schema: str) ->
     untouched. Denial via ``inbound.siblings=deny`` on child-2 (siblings
     child-1/child-2 under a shared root); bystander is unrelated.
     """
-    record_lineage(child="child-1", parent="root", db_path=db_path)
-    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_lineage(child="child-1", parent="root")
+    record_lineage(child="child-2", parent="root")
     record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
-    record_lineage(child="bystander", parent="root-3", db_path=db_path)
+    record_lineage(child="bystander", parent="root-3")
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
         resp = client.post(
@@ -789,8 +789,8 @@ def spoof_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> d
     (worker-b) — else an attacker could forge the receiver's view of
     who attempted to reach them.
     """
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
@@ -850,8 +850,8 @@ def live_broker_event(isolated_listen_env, db_path: Path, pg_schema: str) -> dic
 
     import httpx
 
-    record_lineage(child="child-1", parent="root", db_path=db_path)
-    record_lineage(child="child-2", parent="root", db_path=db_path)
+    record_lineage(child="child-1", parent="root")
+    record_lineage(child="child-2", parent="root")
     record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
     app = create_app(token=TOKEN)
 

@@ -233,7 +233,7 @@ def test_force_removes_persisted_session_id_file(
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
-    registry: Registry,
+    registry: Registry, pg_schema: str,
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path, name="alpha")
@@ -259,7 +259,7 @@ def test_force_leaves_other_runtime_state_alone(
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
-    registry: Registry,
+    registry: Registry, pg_schema: str,
 ) -> None:
     # Arrange: seed session_id plus unrelated runtime files that --force
     # MUST NOT touch (heartbeat.json, stdout.log, quota.json, …).
@@ -295,7 +295,7 @@ def test_no_force_leaves_session_id(
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
-    registry: Registry,
+    registry: Registry, pg_schema: str,
 ) -> None:
     # Arrange: persisted session_id present, agent NOT running so the
     # default (no --force) launch path is exercised end-to-end.
@@ -320,7 +320,7 @@ def test_missing_session_id_file_under_force_is_no_op(
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
-    registry: Registry,
+    registry: Registry, pg_schema: str,
 ) -> None:
     # Arrange: first-ever start — no session_id file on disk.
     spec = _write_spec(tmp_path, name="alpha")

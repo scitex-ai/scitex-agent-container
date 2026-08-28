@@ -52,7 +52,18 @@ def db_path(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_lineage_table_exists(db_path: Path) -> None:
+def test_the_abandoned_lineage_table_is_not_created(db_path: Path) -> None:
+    """The INVERSE of what this test asserted until 2026-08-28.
+
+    It used to assert the ``lineage`` table EXISTS. The edges moved to
+    PostgreSQL, so the assertion had to change direction rather than be
+    deleted: a ``CREATE TABLE`` left behind in ``_SCHEMA_REGISTRY`` is
+    the specific hazard this migration has to avoid. An abandoned table
+    still answers ``SELECT`` — with zero rows — and for lineage zero rows
+    does not read as "no data", it reads as "this agent has no parent",
+    which is the MORE privileged answer. A stale reader must get
+    "no such table".
+    """
     # Arrange
     conn_ctx = state_db.open_db(db_path)
     # Act
@@ -61,7 +72,7 @@ def test_lineage_table_exists(db_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='lineage'"
         ).fetchall()
     # Assert
-    assert len(rows) == 1
+    assert rows == []
 
 
 def test_comms_grants_table_exists(db_path: Path) -> None:
@@ -91,56 +102,41 @@ def test_comms_grants_has_column(db_path: Path, column: str) -> None:
 
 # ---------------------------------------------------------------------------
 # record_lineage — parent → child edges
+#
+# THREE TESTS WERE DELETED HERE ON 2026-08-28, not retargeted, and the
+# reason is worth stating rather than leaving to a blame trawl.
+# ``test_record_lineage_persists_parent_pointer``,
+# ``..._idempotent_no_duplicate_rows`` and
+# ``..._re_parent_keeps_existing_parent`` each ARRANGED through
+# ``record_lineage`` and then ASSERTED by reading the SQLite ``lineage``
+# table directly. After the port the write goes to PostgreSQL and the
+# read went to a table that no longer exists — so a mechanical fix would
+# have had to either resurrect the table or quietly stop measuring.
+#
+# The properties themselves are not lost: all three are measured against
+# the real store in ``test__lineage_store.py``
+# (``test_a_recorded_edge_is_readable``,
+# ``test_recording_the_same_edge_twice_does_not_move_the_timestamp``,
+# ``test_a_second_parent_for_one_child_is_ignored``). The duplicate-row
+# count in particular is near-tautological on the store: ``child_name``
+# IS the identity, so a duplicate is structurally impossible and the
+# assertion would hold even with ``record_lineage`` broken. The timestamp
+# check that replaces it can actually fail.
+#
+# One test that DID belong here is kept: that ``record_lineage`` is
+# importable from ``state_db_nodes``. That re-export is load-bearing —
+# every production caller imports it from this facade, not from
+# ``_lineage``.
 # ---------------------------------------------------------------------------
 
 
-def test_record_lineage_persists_parent_pointer(db_path: Path) -> None:
+def test_record_lineage_is_importable_from_the_nodes_facade() -> None:
     # Arrange
-    record_lineage(child="bob", parent="alice", db_path=db_path)
+    from scitex_agent_container._state import state_db_nodes
     # Act
-    conn_ctx = state_db.open_db(db_path)
-    with conn_ctx as conn:
-        row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name='bob'"
-        ).fetchone()
+    fn = state_db_nodes.record_lineage
     # Assert
-    assert row["parent_name"] == "alice"
-
-
-def test_record_lineage_idempotent_no_duplicate_rows(db_path: Path) -> None:
-    """Re-recording the same edge does not duplicate the row."""
-    # Arrange
-    record_lineage(child="bob", parent="alice", db_path=db_path)
-    record_lineage(child="bob", parent="alice", db_path=db_path)
-    # Act
-    conn_ctx = state_db.open_db(db_path)
-    with conn_ctx as conn:
-        rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE child_name='bob'"
-        ).fetchall()
-    # Assert
-    assert len(rows) == 1
-
-
-def test_record_lineage_re_parent_keeps_existing_parent(db_path: Path) -> None:
-    """A re-parent attempt keeps the original parent (no raise, no switch).
-
-    A restart of an existing agent by a different-lineage caller must not
-    be blocked and must not re-parent — the original parent is kept, so
-    identity drift stays impossible while restarts succeed. (No raise is
-    implicit: a raising record_lineage would error this test.)
-    """
-    # Arrange
-    record_lineage(child="bob", parent="alice", db_path=db_path)
-    # Act — a different parent must NOT raise; it keeps "alice"
-    record_lineage(child="bob", parent="other-root", db_path=db_path)
-    # Assert — original parent kept, not switched to the new caller
-    conn_ctx = state_db.open_db(db_path)
-    with conn_ctx as conn:
-        row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name='bob'"
-        ).fetchone()
-    assert row["parent_name"] == "alice"
+    assert callable(fn)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +144,7 @@ def test_record_lineage_re_parent_keeps_existing_parent(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_derive_group_of_root_with_no_children_is_self_only(db_path: Path) -> None:
+def test_derive_group_of_root_with_no_children_is_self_only(db_path: Path, pg_schema: str) -> None:
     # Arrange
     name = "root"
     # Act
@@ -157,39 +153,39 @@ def test_derive_group_of_root_with_no_children_is_self_only(db_path: Path) -> No
     assert group == {"root"}
 
 
-def test_derive_group_of_parent_includes_direct_children(db_path: Path) -> None:
+def test_derive_group_of_parent_includes_direct_children(db_path: Path, pg_schema: str) -> None:
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     # Act
     group = derive_group(name="root", db_path=db_path)
     # Assert
     assert group == {"root", "worker-a", "worker-b"}
 
 
-def test_derive_group_of_child_includes_parent_and_siblings(db_path: Path) -> None:
+def test_derive_group_of_child_includes_parent_and_siblings(db_path: Path, pg_schema: str) -> None:
     """Sibling sees the same group as the parent does — bidirectional."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_lineage(child="worker-b", parent="root")
     # Act
     group = derive_group(name="worker-a", db_path=db_path)
     # Assert
     assert group == {"root", "worker-a", "worker-b"}
 
 
-def test_derive_group_excludes_cross_group_nodes(db_path: Path) -> None:
+def test_derive_group_excludes_cross_group_nodes(db_path: Path, pg_schema: str) -> None:
     """A different root's children are not in this group."""
     # Arrange — two unrelated families
-    record_lineage(child="child-1", parent="root-1", db_path=db_path)
-    record_lineage(child="child-2", parent="root-2", db_path=db_path)
+    record_lineage(child="child-1", parent="root-1")
+    record_lineage(child="child-2", parent="root-2")
     # Act
     group = derive_group(name="child-1", db_path=db_path)
     # Assert
     assert group == {"root-1", "child-1"}
 
 
-def test_derive_group_of_unknown_node_is_singleton(db_path: Path) -> None:
+def test_derive_group_of_unknown_node_is_singleton(db_path: Path, pg_schema: str) -> None:
     """A fresh, unattached node is its own singleton group."""
     # Arrange
     name = "fresh"
@@ -214,7 +210,7 @@ def test_spawn_allowed_returns_true_for_admin_caller(db_path: Path) -> None:
     assert allowed is True
 
 
-def test_spawn_allowed_returns_true_for_root_node(db_path: Path) -> None:
+def test_spawn_allowed_returns_true_for_root_node(db_path: Path, pg_schema: str) -> None:
     """A node with no parent → root → allowed."""
     # Arrange
     caller = "root"
@@ -224,10 +220,10 @@ def test_spawn_allowed_returns_true_for_root_node(db_path: Path) -> None:
     assert allowed is True
 
 
-def test_spawn_allowed_returns_false_for_child_node(db_path: Path) -> None:
+def test_spawn_allowed_returns_false_for_child_node(db_path: Path, pg_schema: str) -> None:
     """A node with a parent → child → denied under current policy."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
@@ -235,7 +231,7 @@ def test_spawn_allowed_returns_false_for_child_node(db_path: Path) -> None:
 
 
 def test_spawn_allowed_deny_reason_explains_role_policy(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """The reason names the groups that WOULD have authorised the spawn.
 
@@ -245,7 +241,7 @@ def test_spawn_allowed_deny_reason_explains_role_policy(
     the same server's own a2a_peers output (2026-08-10).
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
@@ -253,12 +249,12 @@ def test_spawn_allowed_deny_reason_explains_role_policy(
 
 
 def test_spawn_deny_reason_for_unregistered_caller_says_it_has_no_row(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """No policy row and "registered but ungrouped" both resolve to an
     empty group set, and they are DIFFERENT facts (2026-08-09)."""
     # Arrange — a lineage edge but no node_comms_policy row.
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
     # Assert
@@ -266,11 +262,11 @@ def test_spawn_deny_reason_for_unregistered_caller_says_it_has_no_row(
 
 
 def test_spawn_allowed_returns_true_for_developer_group_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """A developer-group child may spawn even though it has a parent."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     record_comms_policy(name="worker-a", group_name="developer", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
@@ -279,11 +275,11 @@ def test_spawn_allowed_returns_true_for_developer_group_child(
 
 
 def test_spawn_allowed_returns_true_for_researcher_group_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """A researcher-group child may spawn even though it has a parent."""
     # Arrange
-    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_lineage(child="neurovista", parent="scitex-cv")
     record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
@@ -292,7 +288,7 @@ def test_spawn_allowed_returns_true_for_researcher_group_child(
 
 
 def test_spawn_allowed_returns_true_for_privileged_group_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """A privileged-group child may spawn (operator ruling 2026-07-16).
 
@@ -301,7 +297,7 @@ def test_spawn_allowed_returns_true_for_privileged_group_child(
     strongest group was absent from the spawn allowlist.
     """
     # Arrange
-    record_lineage(child="dotfiles", parent="root", db_path=db_path)
+    record_lineage(child="dotfiles", parent="root")
     record_comms_policy(name="dotfiles", group_name="privileged", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="dotfiles", db_path=db_path)
@@ -310,11 +306,11 @@ def test_spawn_allowed_returns_true_for_privileged_group_child(
 
 
 def test_spawn_allowed_returns_false_for_non_dev_research_group_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """A child in an unrelated named group is still denied."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="worker-a", db_path=db_path)
@@ -323,7 +319,7 @@ def test_spawn_allowed_returns_false_for_non_dev_research_group_child(
 
 
 def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """The deny reason reports the group the gate ACTUALLY resolved.
 
@@ -332,7 +328,7 @@ def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
     without guessing (2026-08-10).
     """
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-a", db_path=db_path)
@@ -341,11 +337,11 @@ def test_spawn_allowed_deny_reason_for_non_dev_research_group_child(
 
 
 def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """Per-spec may_spawn=false overrides the developer-group allow."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     record_comms_policy(
         name="worker-a",
         group_name="developer",
@@ -359,11 +355,11 @@ def test_spawn_allowed_may_spawn_false_still_denies_developer_child(
 
 
 def test_spawn_allowed_may_spawn_false_reason_for_developer_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """The deny reason names the per-spec may_spawn=false override."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     record_comms_policy(
         name="worker-a",
         group_name="developer",
@@ -377,11 +373,11 @@ def test_spawn_allowed_may_spawn_false_reason_for_developer_child(
 
 
 def test_spawn_allowed_may_spawn_false_still_denies_researcher_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """Per-spec may_spawn=false overrides the researcher-group allow."""
     # Arrange
-    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_lineage(child="neurovista", parent="scitex-cv")
     record_comms_policy(
         name="neurovista",
         group_name="researcher",
@@ -395,11 +391,11 @@ def test_spawn_allowed_may_spawn_false_still_denies_researcher_child(
 
 
 def test_spawn_allowed_may_spawn_false_reason_for_researcher_child(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """The deny reason names the per-spec may_spawn=false override."""
     # Arrange
-    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_lineage(child="neurovista", parent="scitex-cv")
     record_comms_policy(
         name="neurovista",
         group_name="researcher",
@@ -419,10 +415,10 @@ def test_spawn_allowed_may_spawn_false_reason_for_researcher_child(
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_allowed_allows_developer_group_child(db_path: Path) -> None:
+def test_spawn_allowed_allows_developer_group_child(db_path: Path, pg_schema: str) -> None:
     """A child in the developer group may spawn (group short-circuit)."""
     # Arrange
-    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_lineage(child="worker-dev", parent="root")
     record_comms_policy(name="worker-dev", group_name="developer", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="worker-dev", db_path=db_path)
@@ -430,10 +426,10 @@ def test_spawn_allowed_allows_developer_group_child(db_path: Path) -> None:
     assert allowed is True
 
 
-def test_spawn_allowed_allows_research_group_child(db_path: Path) -> None:
+def test_spawn_allowed_allows_research_group_child(db_path: Path, pg_schema: str) -> None:
     """A child in the researcher group may spawn (the incident's case)."""
     # Arrange
-    record_lineage(child="neurovista", parent="scitex-cv", db_path=db_path)
+    record_lineage(child="neurovista", parent="scitex-cv")
     record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="neurovista", db_path=db_path)
@@ -441,10 +437,10 @@ def test_spawn_allowed_allows_research_group_child(db_path: Path) -> None:
     assert allowed is True
 
 
-def test_spawn_allowed_denies_child_in_neither_group(db_path: Path) -> None:
+def test_spawn_allowed_denies_child_in_neither_group(db_path: Path, pg_schema: str) -> None:
     """A child in NEITHER the developer nor research group stays denied."""
     # Arrange
-    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_lineage(child="worker-gen", parent="root")
     record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
     # Act
     allowed, _reason = spawn_allowed(caller="worker-gen", db_path=db_path)
@@ -452,7 +448,7 @@ def test_spawn_allowed_denies_child_in_neither_group(db_path: Path) -> None:
     assert allowed is False
 
 
-def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
+def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path, pg_schema: str) -> None:
     """The neither-group deny reason states the group-scoped policy.
 
     Spelled ``researcher`` in full. The old text said "research", and a
@@ -461,7 +457,7 @@ def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
     time (2026-08-10).
     """
     # Arrange
-    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_lineage(child="worker-gen", parent="root")
     record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
@@ -470,12 +466,12 @@ def test_spawn_allowed_deny_reason_names_group_policy(db_path: Path) -> None:
 
 
 def test_spawn_deny_reason_points_at_refresh_acl_for_a_stale_row(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """A denial whose group list disagrees with the spec means a STALE
     row; the message must name the command that re-publishes it."""
     # Arrange
-    record_lineage(child="worker-gen", parent="root", db_path=db_path)
+    record_lineage(child="worker-gen", parent="root")
     record_comms_policy(name="worker-gen", group_name="generalist", db_path=db_path)
     # Act
     _allowed, reason = spawn_allowed(caller="worker-gen", db_path=db_path)
@@ -484,11 +480,11 @@ def test_spawn_deny_reason_points_at_refresh_acl_for_a_stale_row(
 
 
 def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """The per-spec may_spawn=false deny survives the group short-circuit."""
     # Arrange
-    record_lineage(child="worker-dev", parent="root", db_path=db_path)
+    record_lineage(child="worker-dev", parent="root")
     record_comms_policy(
         name="worker-dev",
         group_name="developer",

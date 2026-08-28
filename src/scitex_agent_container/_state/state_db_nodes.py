@@ -46,12 +46,19 @@ The N-level structural capability of ``lineage`` is preserved —
 nothing here hard-codes "2" or assumes fixed depth.
 
 All times stored as ``REAL`` unix-seconds (float).
+
+WHERE THE STATE ACTUALLY LIVES (2026-08-28). The ``lineage`` edges moved
+to PostgreSQL and are owned by :mod:`._lineage`; ``record_lineage`` is
+re-exported from here and no longer takes ``db_path``. ``comms_grants``,
+``node_comms_policy``, ``node_tokens``, ``comms_nodes`` and ``instances``
+are still SQLite, which is why ``db_path`` survives on the functions that
+read THEM — :func:`derive_group`, :func:`spawn_allowed` and
+:func:`resolve_node_host`. A parameter is kept exactly as long as it
+names something real.
 """
 
 from __future__ import annotations
 
-import logging
-import time
 from pathlib import Path
 from typing import Any
 
@@ -68,8 +75,6 @@ from .state_db_node_tokens import (
     mint_node_token,
     resolve_node_token,
 )
-
-_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -107,46 +112,20 @@ __all__ = [
 
 # ---------------------------------------------------------------------------
 # lineage — parent → child edges and the group they imply
+#
+# The edges themselves moved to PostgreSQL on 2026-08-28 and now live in a
+# sibling module (:mod:`._lineage`) that owns the whole record set — schema,
+# writer and readers in one place. ``record_lineage`` is re-exported here so
+# the long-standing import path
+# ``from ..._state.state_db_nodes import record_lineage`` keeps working; it
+# no longer takes ``db_path``, because it no longer names a file.
 # ---------------------------------------------------------------------------
 
-
-def record_lineage(
-    *,
-    child: str,
-    parent: str,
-    db_path: Path | None = None,
-) -> None:
-    """Record ``parent`` as ``child``'s parent (keep-first-parent).
-
-    Idempotent; a child's parent is set once and immutable. A DIFFERENT
-    parent KEEPS the existing one (logged, not raised) so a restart by a
-    non-original-parent caller works in-place without re-parenting;
-    identity drift stays impossible. Permission is gated upstream by
-    ``check_spawn``.
-    """
-    if not child or not parent:
-        raise ValueError("record_lineage: child and parent must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (child,)
-        ).fetchone()
-        if existing is not None:
-            if existing["parent_name"] == parent:
-                return  # idempotent no-op
-            _logger.warning(
-                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
-                child,
-                existing["parent_name"],
-                parent,
-            )
-            return
-        conn.execute(
-            "INSERT INTO lineage (child_name, parent_name, created_at) "
-            "VALUES (?, ?, ?)",
-            (child, parent, time.time()),
-        )
+from ._lineage import (  # noqa: E402, F401
+    children_of,
+    parent_of,
+    record_lineage,
+)
 
 
 def derive_group(
@@ -176,41 +155,33 @@ def derive_group(
     sets ``lineage_group = 'solitary'``, the group is forced to
     ``{name}`` and the lineage-table walk is skipped. That isolates a
     capsule from its siblings AND its parent without depending on the
-    lineage table being empty — clew capsule children adopt this so a
+    lineage store being empty — clew capsule children adopt this so a
     sibling capsule can never address them through the group-default
     ACL even though they share a parent edge.
+
+    ``db_path`` STILL NAMES A REAL FILE HERE, unlike in the lineage
+    module: the solitary short-circuit reads ``node_comms_policy``,
+    which is still a SQLite table. The lineage walk below no longer
+    consults it. When ``node_comms_policy`` moves, this parameter goes
+    with it; leaving it in the signature while it is still load-bearing
+    is the honest state, and dropping it early would have silently sent
+    every policy read to the default database.
     """
     if not name:
         raise ValueError("derive_group: name must be non-empty")
     # Phase-3 solitary override — short-circuits to the singleton group
-    # without touching the lineage table.
+    # without touching the lineage store.
     policy = read_comms_policy(name=name, db_path=db_path)
     if policy["lineage_group"] == "solitary":
         return {name}
-    from .state_db import open_db
 
-    with open_db(db_path) as conn:
-        children_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (name,)
-        ).fetchall()
-        if children_rows:
-            group: set[str] = {name}
-            for r in children_rows:
-                group.add(str(r["child_name"]))
-            return group
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (name,)
-        ).fetchone()
-        if parent_row is None:
-            return {name}
-        parent = str(parent_row["parent_name"])
-        sibling_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (parent,)
-        ).fetchall()
-        group = {parent}
-        for r in sibling_rows:
-            group.add(str(r["child_name"]))
-        return group
+    children = children_of(parent=name)
+    if children:
+        return {name} | children
+    parent = parent_of(child=name)
+    if parent is None:
+        return {name}
+    return {parent} | children_of(parent=parent)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +260,14 @@ def spawn_allowed(
     through :func:`apply_may_spawn_gate`, so ``spec.lineage.may_spawn
     = false`` still denies the caller even when its root/dev/research
     status would otherwise allow the spawn.
+
+    TWO DATABASES ARE CONSULTED. The parent lookup goes to the lineage
+    store (PostgreSQL, since 2026-08-28); the group and ``may_spawn``
+    reads still go to ``node_comms_policy`` in SQLite, which is what
+    ``db_path`` still names. Dropping the parameter now would have sent
+    those policy reads to the default database while every caller still
+    believed it was isolating them — a silent change of which host's
+    opinion decides an authority question.
     """
     if caller is None or caller == "":
         # Admin / human operator. Skips the global root-only check;
@@ -307,15 +286,11 @@ def spawn_allowed(
         or is_privileged(name=caller, db_path=db_path)
     ):
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    from .state_db import open_db
 
-    with open_db(db_path) as conn:
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
-        ).fetchone()
-    if parent_row is None:
+    parent = parent_of(child=caller)
+    if parent is None:
         return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    return (False, _spawn_denied_reason(caller, parent_row["parent_name"], db_path))
+    return (False, _spawn_denied_reason(caller, parent, db_path))
 
 
 def _spawn_denied_reason(

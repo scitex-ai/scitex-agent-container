@@ -124,7 +124,7 @@ def check_lineage_acl(
         return ("allow", None)
     from .._state._lineage import descendants_of
 
-    descendants = descendants_of(name=caller, db_path=db_path)
+    descendants = descendants_of(name=caller)
     if target in descendants:
         return ("allow", None)
     # Standard-fleet manage mesh (operator 2026-06-29: "agents manage
@@ -395,7 +395,7 @@ def _phase3_relationship_deny(
     Defaults preserve current behaviour: every comb in the matrix
     starts ``"allow"`` so absence of ``spec.comms`` is a no-op here.
     """
-    rel = sender_target_relationship(sender=sender, target=target, db_path=db_path)
+    rel = sender_target_relationship(sender=sender, target=target)
     if rel in ("parent", "sibling"):
         sender_policy = read_comms_policy(name=sender, db_path=db_path)
         if rel == "parent" and sender_policy["outbound_parent"] == "deny":

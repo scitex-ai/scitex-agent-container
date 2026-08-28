@@ -144,7 +144,7 @@ def _child_body(name: str, caller: str | None, binds: list) -> dict:
 
 
 def test_child_with_work_prefix_bind_is_accepted_after_translate(
-    client, auth_headers, isolated_env, tmp_path
+    client, auth_headers, isolated_env, tmp_path, pg_schema: str
 ):
     # Arrange — parent maps its host $HOME/proj/foo at /work; child
     # asks for /work/data/capsule-X. After translate, the bind is
@@ -170,7 +170,7 @@ def test_child_with_work_prefix_bind_is_accepted_after_translate(
 
 
 def test_translated_bind_is_what_gets_written_to_disk(
-    client, auth_headers, isolated_env, tmp_path
+    client, auth_headers, isolated_env, tmp_path, pg_schema: str
 ):
     # Arrange — same setup as above, but inspect the materialised
     # spec on disk. The spec.yaml at the install root must carry
@@ -229,7 +229,7 @@ def test_no_caller_means_no_translate_so_pr1_still_rejects_work_path(
 
 
 def test_unknown_caller_falls_back_to_pr1_rejection(
-    client, auth_headers, isolated_env, tmp_path
+    client, auth_headers, isolated_env, tmp_path, pg_schema: str
 ):
     # Arrange — caller string doesn't resolve to any registered
     # parent. Translate collapses to caller_unknown; PR-1 catches
@@ -251,7 +251,7 @@ def test_unknown_caller_falls_back_to_pr1_rejection(
 
 
 def test_translate_passthrough_for_non_work_bind_still_caught_by_pr1(
-    client, auth_headers, isolated_env, tmp_path
+    client, auth_headers, isolated_env, tmp_path, pg_schema: str
 ):
     # Arrange — caller IS known but the child requested a bind
     # source the parent doesn't expose (e.g. /scratch/X when the
@@ -278,7 +278,7 @@ def test_translate_passthrough_for_non_work_bind_still_caught_by_pr1(
 
 
 def test_mixed_binds_translate_only_work_prefix_others_pass_through(
-    client, auth_headers, isolated_env, tmp_path
+    client, auth_headers, isolated_env, tmp_path, pg_schema: str
 ):
     # Arrange — child requests two binds: one /work-prefixed
     # (translatable) and one already-host-visible (passes through).

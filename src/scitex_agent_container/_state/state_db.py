@@ -88,10 +88,16 @@ KNOWN_TABLES = (
     "heartbeats",
     "channel_events",
     "node_tokens",
-    "lineage",
     "comms_grants",
     "comms_nodes",
     "node_comms_policy",
+    # ``lineage`` was here until 2026-08-28, and left for exactly the reason
+    # spelled out for ``incarnations`` below. It is worth naming the specific
+    # damage in this case: lineage is what the ACL derives spawn and host_exec
+    # authority from, so a whitelisted-but-empty answer does not merely look
+    # like "no edges", it reads as "this agent is a root" — which grants MORE
+    # authority than the truth, not less.
+    #
     # ``incarnations`` was here until 2026-08-19. It now lives in per-host
     # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
     # through `sac db query`. Removed rather than left behind: a whitelisted

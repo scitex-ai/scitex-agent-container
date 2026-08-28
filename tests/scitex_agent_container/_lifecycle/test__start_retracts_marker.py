@@ -184,7 +184,7 @@ def _seed_marker(runtime_dir: Path) -> None:
 
 
 def test_the_already_running_noop_returns_the_already_running_outcome(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -205,7 +205,7 @@ def test_the_already_running_noop_returns_the_already_running_outcome(
 
 
 def test_the_already_running_noop_retracts_an_existing_marker(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -227,7 +227,7 @@ def test_the_already_running_noop_retracts_an_existing_marker(
 
 
 def test_the_already_running_noop_leaves_the_retracted_copy(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -249,7 +249,7 @@ def test_the_already_running_noop_leaves_the_retracted_copy(
 
 
 def test_the_already_running_noop_with_no_marker_does_not_raise(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — no marker on disk at all; retract_marker_for must be a
     # silent no-op, never an exception that would break a real no-op start.
@@ -278,7 +278,7 @@ def test_the_already_running_noop_with_no_marker_does_not_raise(
 
 
 def test_a_launch_that_merely_returned_keeps_the_marker(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — nothing vouches for liveness (no registry row, no
     # liveness_verifier): resolve_start_verdict yields UNKNOWN, so
@@ -307,7 +307,7 @@ def test_a_launch_that_merely_returned_keeps_the_marker(
 
 
 def test_a_dry_run_on_an_alive_agent_keeps_the_marker(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — ALIVE verdict (registry + running + verifier), but
     # dry_run=True takes the ``elif dry_run: pass`` branch, never the
@@ -337,7 +337,7 @@ def test_a_dry_run_on_an_alive_agent_keeps_the_marker(
 
 
 def test_a_failed_start_keeps_the_marker(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — runtime.start() returns False -> raise_start_failure raises
     # before any retraction could be reached on this path either way.

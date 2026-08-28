@@ -133,9 +133,9 @@ def _set_up_two_groups(db: Path) -> dict[str, str]:
     Mints a per-node bearer for every name (so each node can
     authenticate from its own session). Returns ``{name: token}``.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="beta", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_b", db_path=db)
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="beta", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_b")
     return {
         "host": "smoke-host-token",
         "parent_a": mint_node_token(name="parent_a", db_path=db),
@@ -170,8 +170,8 @@ def _set_up_denied_send(db: Path) -> dict[str, str]:
 
     Mints a per-node bearer for every name. Returns ``{name: token}``.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_a", db_path=db)
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_a")
     record_comms_policy(name="gamma", inbound_siblings="deny", db_path=db)
     return {
         "host": "smoke-host-token",
@@ -188,7 +188,7 @@ def _set_up_four_siblings(db: Path) -> dict[str, str]:
     not conflict with gamma's group-B placement there.
     """
     for child in ("alpha", "beta", "gamma", "zeta"):
-        record_lineage(child=child, parent="parent_a", db_path=db)
+        record_lineage(child=child, parent="parent_a")
     tokens = {"host": "smoke-host-token"}
     for name in ("parent_a", "alpha", "beta", "gamma", "zeta"):
         tokens[name] = mint_node_token(name=name, db_path=db)

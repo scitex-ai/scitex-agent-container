@@ -49,11 +49,6 @@ _SEED = [
         (OLD, 1.0),
     ),
     (
-        "INSERT INTO lineage (child_name, parent_name, created_at) "
-        "VALUES (?, ?, ?)",
-        ("child-a", OLD, 1.0),
-    ),
-    (
         "INSERT INTO turns (turn_id, name, host, status, ts) "
         "VALUES (?, ?, ?, ?, ?)",
         ("t1", OLD, "h", "ok", 1.0),
@@ -150,13 +145,39 @@ def test_rename_moves_the_acl_policy_row(seeded: Path):
     assert _one(seeded, sql, NEW) == 1
 
 
-def test_rename_moves_the_lineage_parent_edge(seeded: Path):
+def test_the_rename_warns_about_the_lineage_edges_it_cannot_move(
+    seeded: Path, pg_schema: str, caplog
+):
+    """The INVERSE of what this test asserted until 2026-08-28.
+
+    It used to seed a ``lineage`` row and assert the rename moved it. The
+    edges are in PostgreSQL now, in a store whose identity is the child
+    name and whose ``parent_name`` is IMMUTABLE — neither of which can
+    express a rename (see ``_state/_lineage``). Rewritten rather than
+    deleted, and rewritten to the property that replaced it: the rename
+    must not fail SILENTLY.
+
+    The warning is asserted on ``rename_rows``, NOT on ``count_rows``.
+    Putting the store read in ``count_rows`` — what ``--dry-run`` prints —
+    would have made the SAFETY CHECK require a reachable PostgreSQL while
+    the operation that actually changes things did not, so a database
+    outage would break the check and leave the rename running.
+
+    A version of this test that merely stopped asserting anything about
+    lineage would have been permanently green while covering nothing,
+    which is the worse outcome of the two.
+    """
     # Arrange
-    sql = "SELECT parent_name FROM lineage WHERE child_name = 'child-a'"
+    import logging
+
+    from scitex_agent_container._state._lineage import record_lineage
+
+    record_lineage(child="child-a", parent=OLD)
     # Act
-    rename_rows(seeded, OLD, NEW)
+    with caplog.at_level(logging.WARNING):
+        rename_rows(seeded, OLD, NEW)
     # Assert
-    assert _one(seeded, sql) == NEW
+    assert "1 lineage edge(s) still name it and were NOT renamed" in caplog.text
 
 
 def test_rename_moves_the_history_rows(seeded: Path):

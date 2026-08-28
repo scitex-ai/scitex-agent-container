@@ -186,7 +186,7 @@ def enforce_spawn_gate(
     # would make every operator-launched agent a child of "").
     if caller:
         try:
-            record_lineage(child=child_name, parent=caller, db_path=db_path)
+            record_lineage(child=child_name, parent=caller)
         except ValueError as exc:
             # record_lineage keeps the existing parent on a re-parent
             # attempt (restart-in-place) rather than raising; this except

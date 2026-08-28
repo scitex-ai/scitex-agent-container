@@ -54,7 +54,9 @@ def db_path(tmp_path: Path):
         "heartbeats",
         "channel_events",
         "node_tokens",
-        "lineage",
+        # "lineage" left this list on 2026-08-28 with the table itself.
+        # export_state dumps SQLite tables; the edges are in PostgreSQL now
+        # and are replicated by scitex_dev.store, not by this exporter.
         "comms_grants",
         "comms_nodes",
     ],

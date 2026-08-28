@@ -159,7 +159,7 @@ spec:
 """
 
 
-def test_sac_agents_start_dry_run_against_real_spec_yaml(tmp_path, env_save_restore):
+def test_sac_agents_start_dry_run_against_real_spec_yaml(tmp_path, env_save_restore, pg_schema: str):
     # Arrange — write a minimal v3 spec and redirect HOME so the
     # dry-run materialises its workspace under tmp_path, not the
     # developer's real ~/.scitex tree.

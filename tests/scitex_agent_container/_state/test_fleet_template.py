@@ -348,7 +348,7 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore):
     return result, out_dir
 
 
-def test_start_params_file_dry_run_exits_zero(cli_dry_run_result):
+def test_start_params_file_dry_run_exits_zero(cli_dry_run_result, pg_schema: str):
     # Arrange
     result, _ = cli_dry_run_result
     # Act

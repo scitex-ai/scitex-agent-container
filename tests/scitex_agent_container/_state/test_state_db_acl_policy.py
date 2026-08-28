@@ -104,42 +104,42 @@ def test_record_comms_policy_rejects_unknown_outbound_value(db_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_sender_target_relationship_sibling(db_path: Path) -> None:
+def test_sender_target_relationship_sibling(db_path: Path, pg_schema: str) -> None:
     """Two children of the same parent classify as siblings."""
     # Arrange
-    record_lineage(child="cap-a", parent="root", db_path=db_path)
-    record_lineage(child="cap-b", parent="root", db_path=db_path)
+    record_lineage(child="cap-a", parent="root")
+    record_lineage(child="cap-b", parent="root")
     # Act
-    rel = sender_target_relationship(sender="cap-a", target="cap-b", db_path=db_path)
+    rel = sender_target_relationship(sender="cap-a", target="cap-b")
     # Assert
     assert rel == "sibling"
 
 
-def test_sender_target_relationship_parent(db_path: Path) -> None:
+def test_sender_target_relationship_parent(db_path: Path, pg_schema: str) -> None:
     """Sender → its parent classifies as 'parent'."""
     # Arrange
-    record_lineage(child="cap-a", parent="root", db_path=db_path)
+    record_lineage(child="cap-a", parent="root")
     # Act
-    rel = sender_target_relationship(sender="cap-a", target="root", db_path=db_path)
+    rel = sender_target_relationship(sender="cap-a", target="root")
     # Assert
     assert rel == "parent"
 
 
-def test_sender_target_relationship_child(db_path: Path) -> None:
+def test_sender_target_relationship_child(db_path: Path, pg_schema: str) -> None:
     """Sender → its direct child classifies as 'child'."""
     # Arrange
-    record_lineage(child="cap-a", parent="root", db_path=db_path)
+    record_lineage(child="cap-a", parent="root")
     # Act
-    rel = sender_target_relationship(sender="root", target="cap-a", db_path=db_path)
+    rel = sender_target_relationship(sender="root", target="cap-a")
     # Assert
     assert rel == "child"
 
 
-def test_sender_target_relationship_other(db_path: Path) -> None:
+def test_sender_target_relationship_other(db_path: Path, pg_schema: str) -> None:
     """Unrelated nodes (no shared parent, no direct edge) → 'other'."""
     # Arrange — no lineage edges.
     # Act
-    rel = sender_target_relationship(sender="cap-a", target="cap-z", db_path=db_path)
+    rel = sender_target_relationship(sender="cap-a", target="cap-z")
     # Assert
     assert rel == "other"
 
@@ -150,15 +150,15 @@ def test_sender_target_relationship_other(db_path: Path) -> None:
 
 
 def test_derive_group_solitary_returns_singleton_despite_siblings(
-    db_path: Path,
+    db_path: Path, pg_schema: str,
 ) -> None:
     """Gap-4: a child whose policy sets ``lineage_group='solitary'`` has
     a singleton group regardless of the lineage table — no transitive
     parent-group inheritance, so a sibling capsule can never address
     it via the group-default ACL."""
     # Arrange
-    record_lineage(child="cap-a", parent="root", db_path=db_path)
-    record_lineage(child="cap-b", parent="root", db_path=db_path)
+    record_lineage(child="cap-a", parent="root")
+    record_lineage(child="cap-b", parent="root")
     record_comms_policy(name="cap-a", lineage_group="solitary", db_path=db_path)
     # Act
     group = derive_group(name="cap-a", db_path=db_path)
@@ -166,12 +166,12 @@ def test_derive_group_solitary_returns_singleton_despite_siblings(
     assert group == {"cap-a"}
 
 
-def test_derive_group_default_includes_siblings(db_path: Path) -> None:
+def test_derive_group_default_includes_siblings(db_path: Path, pg_schema: str) -> None:
     """Default-preservation: with no policy row, derive_group keeps the
     legacy parent + direct-children semantics."""
     # Arrange
-    record_lineage(child="cap-a", parent="root", db_path=db_path)
-    record_lineage(child="cap-b", parent="root", db_path=db_path)
+    record_lineage(child="cap-a", parent="root")
+    record_lineage(child="cap-b", parent="root")
     # Act
     group = derive_group(name="cap-a", db_path=db_path)
     # Assert
@@ -250,7 +250,7 @@ def test_sender_target_relationship_self(db_path: Path) -> None:
     """A node addressing itself classifies as 'self'."""
     # Arrange
     # Act
-    rel = sender_target_relationship(sender="cap-a", target="cap-a", db_path=db_path)
+    rel = sender_target_relationship(sender="cap-a", target="cap-a")
     # Assert
     assert rel == "self"
 
@@ -259,6 +259,6 @@ def test_sender_target_relationship_empty_sender_is_other(db_path: Path) -> None
     """A missing sender/target classifies as 'other' (no edge to read)."""
     # Arrange
     # Act
-    rel = sender_target_relationship(sender="", target="cap-a", db_path=db_path)
+    rel = sender_target_relationship(sender="", target="cap-a")
     # Assert
     assert rel == "other"

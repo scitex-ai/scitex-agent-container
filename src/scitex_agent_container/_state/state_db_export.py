@@ -69,7 +69,10 @@ def _table_filter_clauses(
         "errors": ("WHERE ts >= ?", (since,)),
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
         "node_tokens": ("WHERE created_at >= ?", (since,)),
-        "lineage": ("WHERE created_at >= ?", (since,)),
+        # ``lineage``'s entry lived here until 2026-08-28. The edges moved to
+        # per-host PostgreSQL (:mod:`._lineage`) and left KNOWN_TABLES, so this
+        # mapping could never be selected again — and a WHERE clause naming a
+        # table SQLite no longer has reads as "sac still exports this".
         "comms_grants": ("WHERE created_at >= ?", (since,)),
         # ADR-0014 — anti-entropy filter advances on ``updated_at`` so
         # a tombstoned row (``ended_at`` set) still ships on the next

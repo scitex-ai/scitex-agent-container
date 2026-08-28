@@ -316,8 +316,8 @@ def _push_kind(lead_env, *, kind: str, summary: str, from_agent: str) -> dict:
     port = _free_port()
     _setup_lead_at_port(lead_env, port)
     # Lead must be reachable for ACL — same-group send.
-    record_lineage(child=from_agent, parent="root", db_path=lead_env["db"])
-    record_lineage(child="lead", parent="root", db_path=lead_env["db"])
+    record_lineage(child=from_agent, parent="root")
+    record_lineage(child="lead", parent="root")
 
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     with _run_listen(app, port):
@@ -431,8 +431,8 @@ def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env, pg_sche
     # config.yaml).
     port = _free_port()
     _setup_lead_at_port(lead_env, port)
-    record_lineage(child="alice", parent="root", db_path=lead_env["db"])
-    record_lineage(child="lead", parent="root", db_path=lead_env["db"])
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="lead", parent="root")
     app = create_app(token=TOKEN, local_host="127.0.0.1")
 
     # Act — agent pushes a completion event over the real HTTP stack.

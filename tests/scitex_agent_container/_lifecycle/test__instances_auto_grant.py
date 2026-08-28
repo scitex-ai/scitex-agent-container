@@ -263,7 +263,7 @@ def _fire_monitor_restart_against_foreign_db(
 
 
 def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
-    db_path: Path, tmp_path: Path
+    db_path: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_nodes import list_comms_grants
@@ -278,7 +278,7 @@ def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
 
 
 def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
-    db_path: Path, tmp_path: Path
+    db_path: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_nodes import has_grant

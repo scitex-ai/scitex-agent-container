@@ -334,7 +334,6 @@ def sender_target_relationship(
     *,
     sender: str,
     target: str,
-    db_path: Path | None = None,
 ) -> str:
     """Classify the ``sender → target`` lineage relationship.
 
@@ -348,23 +347,19 @@ def sender_target_relationship(
 
     Used by :func:`scitex_agent_container._listen._acl.check_send_acl`
     to apply the per-spec outbound/inbound policy on the right edge.
-    Pure read of the ``lineage`` table — no policy state consulted.
+    Pure read of the lineage edges — no policy state consulted, which is
+    why ``db_path`` is GONE from this signature while its neighbours in
+    this module keep theirs: those read ``node_comms_policy``, a table
+    that is still SQLite; this one reads only lineage, which is not.
     """
     if not sender or not target:
         return "other"
     if sender == target:
         return "self"
-    from .state_db import open_db
+    from ._lineage import parent_of
 
-    with open_db(db_path) as conn:
-        sender_parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (sender,)
-        ).fetchone()
-        target_parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (target,)
-        ).fetchone()
-    sender_parent = str(sender_parent_row["parent_name"]) if sender_parent_row else None
-    target_parent = str(target_parent_row["parent_name"]) if target_parent_row else None
+    sender_parent = parent_of(child=sender)
+    target_parent = parent_of(child=target)
     if sender_parent == target:
         return "parent"
     if target_parent == sender:

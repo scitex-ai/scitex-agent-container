@@ -4,15 +4,26 @@
 
 The agent name is a foreign key by convention in a dozen tables (there
 are no real FKs on it). A rename that moves the spec dir but leaves
-``comms_nodes.name`` / ``node_comms_policy.name`` / ``lineage`` pointing
-at the old name produces an agent that starts but cannot be addressed:
-the A2A directory still advertises the dead name, and the ACL gate has no
-policy row for the live one.
+``comms_nodes.name`` / ``node_comms_policy.name`` / the lineage edges
+pointing at the old name produces an agent that starts but cannot be
+addressed: the A2A directory still advertises the dead name, and the ACL
+gate has no policy row for the live one.
 
 So: rename EVERY row that keys on the name, including the history
 (``turns`` / ``errors`` / ``heartbeats`` / ``attempts``). A renamed agent
 is the SAME agent — ``sac agents recall <new>`` must still find its past.
 This is the ``git mv`` position: the name changed, history follows.
+
+ONE TABLE IS NO LONGER HERE, AND IS NO LONGER RENAMED. The lineage edges
+moved to PostgreSQL on 2026-08-28 into a store whose record identity is
+the child name and whose ``parent_name`` is IMMUTABLE, and neither of
+those can express a rename: hiding a record does not free its identity,
+and a put cannot move an immutable field. Widening the identity or
+demoting the merge rule would each discard a safety property the schema
+exists to provide, so the rename is NOT silently attempted — it is
+REPORTED, by :func:`_warn_about_stale_lineage_edges`, which names the
+count and which direction the staleness fails in. See
+:mod:`.._state._lineage` for the full statement.
 
 Reversibility: we capture the ``rowid`` of every row we are about to
 touch, BEFORE touching it. The undo is then a rowid-scoped UPDATE back to
@@ -24,11 +35,15 @@ happened to have that name).
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .._state._lineage import lineage_edges as _live_lineage_edges
 from ._rename_spec import sub_path
+
+_logger = logging.getLogger(__name__)
 
 # (table, column) pairs holding an agent NAME verbatim.
 NAME_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -42,8 +57,12 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("channel_events", "target"),
     ("channel_events", "source"),
     ("node_tokens", "name"),
-    ("lineage", "child_name"),
-    ("lineage", "parent_name"),
+    # ``lineage`` left this tuple on 2026-08-28 when its edges moved to
+    # PostgreSQL. Leaving the two entries here would have been worse than
+    # useless: ``_existing_tables`` skips a table that does not exist, so
+    # the rename would report success having moved nothing at all. The
+    # gap is surfaced by ``count_rows`` instead — see the module
+    # docstring for why the store cannot express the rename.
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
     ("comms_nodes", "name"),
@@ -94,6 +113,11 @@ def count_rows(db_path: Path, old: str) -> dict[str, int]:
 
     Read-only — this is what ``--dry-run`` prints. A missing DB file or a
     table that does not exist yet contributes nothing.
+
+    Counts SQLite rows ONLY. The lineage edges a rename cannot move are
+    reported by :func:`rename_rows`, not here — see the note on
+    ``_warn_about_stale_lineage_edges`` for why the warning must not sit
+    on the path that a PostgreSQL outage can break.
     """
     if not Path(db_path).is_file():
         return {}
@@ -127,6 +151,45 @@ def count_rows(db_path: Path, old: str) -> dict[str, int]:
     return counts
 
 
+def _warn_about_stale_lineage_edges(old: str) -> None:
+    """Say out loud which lineage edges this rename is leaving behind.
+
+    NOT PART OF ``count_rows``, and the placement is the decision. Putting
+    it there would have made ``--dry-run`` — the SAFETY CHECK — require a
+    reachable PostgreSQL while ``rename_rows`` — the operation that
+    actually changes things — did not. The check would break first and the
+    risky half would carry on, which is exactly backwards.
+
+    So it lives on the rename itself, and the store read is guarded: an
+    unreachable store logs THAT instead of a count. Neither branch is
+    silent, and neither can stop a rename that does not need PostgreSQL to
+    do its work.
+    """
+    try:
+        edges = [e for e in _live_lineage_edges() if old in (e["child"], e["parent"])]
+    except Exception as exc:  # noqa: BLE001 - any store failure, reported not raised
+        _logger.warning(
+            "rename %r: could not read the lineage store to check for edges this "
+            "rename cannot move (%s). If %r has lineage edges they are now STALE; "
+            "re-record them.",
+            old,
+            exc,
+            old,
+        )
+        return
+    if not edges:
+        return
+    _logger.warning(
+        "rename %r: %d lineage edge(s) still name it and were NOT renamed — the "
+        "store cannot express a rename (child_name is the identity, parent_name "
+        "is IMMUTABLE). A renamed CHILD now reads as a ROOT, which GRANTS spawn "
+        "authority; a renamed PARENT loses manage reach over its children. "
+        "Re-record the edges under the new name.",
+        old,
+        len(edges),
+    )
+
+
 def _has_component(value: object, old: str) -> bool:
     """True when ``value`` is a path with ``old`` as a whole component."""
     return isinstance(value, str) and old in value.split("/")
@@ -146,6 +209,7 @@ def rename_rows(db_path: Path, old: str, new: str) -> DbUndo:
     """
     undo = DbUndo(db_path=Path(db_path), old=old, new=new)
     if not Path(db_path).is_file():
+        _warn_about_stale_lineage_edges(old)
         return undo
 
     conn = sqlite3.connect(str(db_path))
@@ -199,6 +263,7 @@ def rename_rows(db_path: Path, old: str, new: str) -> DbUndo:
         raise
     finally:
         conn.close()
+    _warn_about_stale_lineage_edges(old)
     return undo
 
 

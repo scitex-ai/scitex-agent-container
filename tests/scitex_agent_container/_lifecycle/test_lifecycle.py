@@ -382,7 +382,7 @@ def test_fire_forget_hook_swallows_run_hook_exceptions() -> None:
 
 
 def test_agent_start_happy_path_returns_true(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -402,7 +402,7 @@ def test_agent_start_happy_path_returns_true(
 
 
 def test_agent_start_happy_path_calls_runtime_start_once(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -421,7 +421,7 @@ def test_agent_start_happy_path_calls_runtime_start_once(
 
 
 def test_agent_start_happy_path_registers_agent(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -440,7 +440,7 @@ def test_agent_start_happy_path_registers_agent(
 
 
 def test_agent_start_happy_path_invokes_handover(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -459,7 +459,7 @@ def test_agent_start_happy_path_invokes_handover(
 
 
 def test_agent_start_idempotent_when_already_running(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange: registry knows the agent, runtime reports it running,
     # AND the real-liveness verifier confirms an active instance row.
@@ -496,7 +496,7 @@ def test_agent_start_idempotent_when_already_running(
 
 
 def test_agent_start_force_restarts_when_already_running(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -527,7 +527,7 @@ def test_agent_start_force_restarts_when_already_running(
 
 
 def test_agent_start_launches_when_liveness_verifier_returns_false(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — registry says exists, runtime PID-check says running,
     # but the instances oracle reports NO active row (= stale state).
@@ -666,7 +666,7 @@ def _force_restart_running_agent(
 
 
 def test_agent_start_force_restart_records_single_active_instance_row(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_db: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db import list_active_instances
@@ -679,7 +679,7 @@ def test_agent_start_force_restart_records_single_active_instance_row(
 
 
 def test_agent_start_force_restart_records_non_none_a2a_port(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_db: Path, pg_schema: str
 ) -> None:
     """Regression: before the fix, the ``--force`` ``agent_stop`` released
     the port claim that the line-249 resolve had inserted, so
@@ -697,7 +697,7 @@ def test_agent_start_force_restart_records_non_none_a2a_port(
 
 
 def test_agent_start_force_restart_instances_port_matches_claim(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_db: Path, pg_schema: str
 ) -> None:
     """After a force restart the ``instances`` row a2a_port must equal the
     live ``a2a_ports`` claim — the two tables stay consistent so ``sac
@@ -714,7 +714,7 @@ def test_agent_start_force_restart_instances_port_matches_claim(
 
 
 def test_agent_start_force_clears_stale_registry_entry(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange: registered but runtime says not running → stale entry.
     spec = _write_spec(tmp_path)
@@ -735,7 +735,7 @@ def test_agent_start_force_clears_stale_registry_entry(
 
 
 def test_agent_start_session_override_mutates_claude_session(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -761,7 +761,7 @@ def test_agent_start_session_override_mutates_claude_session(
 
 
 def test_agent_start_continue_override_beats_spec_fresh(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — spec explicitly says fresh; the CLI --continue maps to a
     # session_override="continue" that must win (precedence CLI > spec).
@@ -787,7 +787,7 @@ def test_agent_start_continue_override_beats_spec_fresh(
 
 
 def test_agent_start_fresh_override_beats_spec_continue(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — spec explicitly says continue; the CLI --fresh maps to a
     # session_override="fresh" that must win (precedence CLI > spec).
@@ -813,7 +813,7 @@ def test_agent_start_fresh_override_beats_spec_continue(
 
 
 def test_agent_start_resume_id_override_mutates_resume_id(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -839,7 +839,7 @@ def test_agent_start_resume_id_override_mutates_resume_id(
 
 
 def test_agent_start_runtime_failure_raises_runtime_error(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -878,7 +878,7 @@ def _start_with_failing_runtime(spec: Path, registry: Registry) -> None:
 
 
 def test_agent_start_runtime_failure_persists_diag_file(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange -- a false-negative start whose only evidence must survive
     # past the raised exception (sac-agent-start-false-negative-tui-
@@ -896,7 +896,7 @@ def test_agent_start_runtime_failure_persists_diag_file(
 
 
 def test_agent_start_runtime_failure_diag_names_the_reason(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container.runtimes.tui_session import state_dir_for_config
@@ -911,7 +911,7 @@ def test_agent_start_runtime_failure_diag_names_the_reason(
 
 
 def test_agent_start_dry_run_does_not_register(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -931,7 +931,7 @@ def test_agent_start_dry_run_does_not_register(
 
 
 def test_agent_start_dry_run_passes_dry_run_kwarg_to_runtime(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -951,7 +951,7 @@ def test_agent_start_dry_run_passes_dry_run_kwarg_to_runtime(
 
 
 def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange: a runtime whose ``start`` refuses ``dry_run`` (older runtime).
     spec = _write_spec(tmp_path)
@@ -973,7 +973,7 @@ def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
 
 
 def test_agent_start_hydrate_failure_does_not_block_start(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange: hydrate_from_hub raises but agent_start must still succeed.
     spec = _write_spec(tmp_path)
@@ -993,7 +993,7 @@ def test_agent_start_hydrate_failure_does_not_block_start(
 
 
 def test_agent_start_starts_health_monitor_thread_when_enabled(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange: health.enabled=true in the spec → production must spawn a thread.
     extra = "  health:\n    enabled: true\n    method: sdk-alive\n    interval: 0\n"
@@ -1019,7 +1019,7 @@ def test_agent_start_starts_health_monitor_thread_when_enabled(
 
 
 def test_agent_start_failback_poller_failure_is_swallowed(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -1039,7 +1039,7 @@ def test_agent_start_failback_poller_failure_is_swallowed(
 
 
 def test_agent_start_cli_no_preflight_propagates_to_runtime(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     """WI-6 removed ``RemoteSpec`` and the
     ``cfg.remote.no_preflight`` config-level override. Only the
@@ -1369,7 +1369,7 @@ def test_agent_stop_all_without_force_aborts_on_first_failure(
 
 
 def test_agent_restart_calls_runtime_stop_then_start(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -1389,7 +1389,7 @@ def test_agent_restart_calls_runtime_stop_then_start(
 
 
 def test_agent_restart_clears_dead_session_marker(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — a runtime state dir holding a DEAD resume marker + history
     # (the production shape after a session aged out). PR #190's restart
@@ -1425,7 +1425,7 @@ def test_agent_restart_clears_dead_session_marker(
 
 
 def test_agent_restart_clears_dead_session_history(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — the dead uuid lives in the append-only history that the
     # runner's resume fallback would otherwise walk and re-resume.
@@ -1461,7 +1461,7 @@ def test_agent_restart_clears_dead_session_history(
 
 
 def test_agent_restart_backs_up_dead_session_history(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — clearing the dead history must preserve it as an audit
     # side-file, not silently destroy it.
@@ -1516,7 +1516,7 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
 
 
 def test_agent_restart_no_row_falls_back_to_spec_and_starts(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — NO registry row for "alpha" (ad-hoc / pre-autorecord
     # launch); a resolver returns the real on-disk spec path so restart
@@ -1538,7 +1538,7 @@ def test_agent_restart_no_row_falls_back_to_spec_and_starts(
 
 
 def test_agent_restart_no_row_force_stops_before_start(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — no registry row; a runtime whose stop() raises. The
     # fallback's force=True stop must swallow that and still reach start.
@@ -1560,7 +1560,7 @@ def test_agent_restart_no_row_force_stops_before_start(
 
 
 def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange — no registry row, NO injected resolver: the real default
     # ``resolve_config`` must find the spec under the standard
@@ -1745,7 +1745,7 @@ def _restart_alpha(runtime: _StaggeredRuntime, registry: Registry) -> bool:
 
 
 def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1758,7 +1758,7 @@ def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
 
 
 def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1771,7 +1771,7 @@ def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
 
 
 def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_running(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1786,7 +1786,7 @@ def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_runni
 
 
 def test_agent_restart_polls_is_running_until_false(
-    tmp_path: Path, registry: Registry
+    tmp_path: Path, registry: Registry, pg_schema: str
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(

@@ -68,19 +68,19 @@ def test_self_management_is_allowed(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_direct_child_is_allowed(db_path: Path) -> None:
+def test_direct_child_is_allowed(db_path: Path, pg_schema: str) -> None:
     # Arrange — root → child edge.
-    record_lineage(child="kid", parent="root", db_path=db_path)
+    record_lineage(child="kid", parent="root")
     # Act
     decision, _ = check_lineage_acl(caller="root", target="kid", db_path=db_path)
     # Assert
     assert decision == "allow"
 
 
-def test_transitive_descendant_is_allowed(db_path: Path) -> None:
+def test_transitive_descendant_is_allowed(db_path: Path, pg_schema: str) -> None:
     # Arrange — root → alice → ada (grandchild).
-    record_lineage(child="alice", parent="root", db_path=db_path)
-    record_lineage(child="ada", parent="alice", db_path=db_path)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="ada", parent="alice")
     # Act
     decision, _ = check_lineage_acl(caller="root", target="ada", db_path=db_path)
     # Assert
@@ -92,7 +92,7 @@ def test_transitive_descendant_is_allowed(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_deny_when_caller_has_no_lineage_to_target(db_path: Path) -> None:
+def test_deny_when_caller_has_no_lineage_to_target(db_path: Path, pg_schema: str) -> None:
     # Arrange — alice and bob are unrelated roots.
     # (no lineage records: both are independent root nodes)
     # Act
@@ -101,31 +101,31 @@ def test_deny_when_caller_has_no_lineage_to_target(db_path: Path) -> None:
     assert decision == "deny"
 
 
-def test_deny_for_sibling_target(db_path: Path) -> None:
+def test_deny_for_sibling_target(db_path: Path, pg_schema: str) -> None:
     # Arrange — alice + bob share a parent but are siblings.
     # Lineage gate denies sibling control (only descendants).
-    record_lineage(child="alice", parent="root", db_path=db_path)
-    record_lineage(child="bob", parent="root", db_path=db_path)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="bob", parent="root")
     # Act
     decision, _ = check_lineage_acl(caller="alice", target="bob", db_path=db_path)
     # Assert
     assert decision == "deny"
 
 
-def test_deny_for_ancestor_target(db_path: Path) -> None:
+def test_deny_for_ancestor_target(db_path: Path, pg_schema: str) -> None:
     # Arrange — child cannot operate on its parent (the gate is
     # downward only).
-    record_lineage(child="kid", parent="root", db_path=db_path)
+    record_lineage(child="kid", parent="root")
     # Act
     decision, _ = check_lineage_acl(caller="kid", target="root", db_path=db_path)
     # Assert
     assert decision == "deny"
 
 
-def test_deny_reason_names_caller_and_target(db_path: Path) -> None:
+def test_deny_reason_names_caller_and_target(db_path: Path, pg_schema: str) -> None:
     # Arrange — the deny reason must identify both names so the
     # 403 body lets the operator diagnose without guessing.
-    record_lineage(child="alice", parent="root", db_path=db_path)
+    record_lineage(child="alice", parent="root")
     # Act
     _, reason = check_lineage_acl(caller="alice", target="unrelated", db_path=db_path)
     # Assert
@@ -145,7 +145,7 @@ def test_returns_allow_tuple_with_none_reason(db_path: Path) -> None:
     assert (decision, reason) == ("allow", None)
 
 
-def test_returns_deny_tuple_with_string_reason(db_path: Path) -> None:
+def test_returns_deny_tuple_with_string_reason(db_path: Path, pg_schema: str) -> None:
     # Arrange
     # Act
     decision, reason = check_lineage_acl(caller="alice", target="bob", db_path=db_path)

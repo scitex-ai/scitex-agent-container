@@ -44,7 +44,7 @@ _TOKEN = "test-token-acl-deny-synthetic-notify"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_default = state_db.DEFAULT_DB_PATH
@@ -70,8 +70,8 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # deny path: ``worker-a`` and ``lead`` are siblings under a shared
         # root and ``lead`` carries a per-spec ``inbound.siblings=deny``,
         # so ``worker-a → lead`` is denied.
-        record_lineage(child="worker-a", parent="root", db_path=db)
-        record_lineage(child="lead", parent="root", db_path=db)
+        record_lineage(child="worker-a", parent="root")
+        record_lineage(child="lead", parent="root")
         record_comms_policy(name="lead", inbound_siblings="deny", db_path=db)
         yield db
     finally:

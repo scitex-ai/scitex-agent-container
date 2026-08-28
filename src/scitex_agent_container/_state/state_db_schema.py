@@ -192,10 +192,15 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- bearer is presented, ``metadata.from_agent`` MUST match the bearer's
 -- resolved name — a mismatch is a 403 with an explicit spoof reason.
 --
--- ``lineage`` records parent → child edges produced by
--- ``sac agents start``. A node's *group* (the default-ACL unit) is
--- derived from lineage: parent + parent's direct children. Schema
--- stays N-level capable — see derive_group() for the traversal.
+-- ``lineage`` — parent to child edges produced by ``sac agents start``,
+-- from which a node's *group* (the default-ACL unit) is derived — had
+-- its CREATE TABLE here until 2026-08-28. The edges moved to per-host
+-- PostgreSQL (:mod:`._lineage`) and the DDL was DELETED rather than
+-- left behind, which is the whole point: a table that still exists but
+-- is never written answers every query with zero rows, and for lineage
+-- zero rows does not read as "no data" — it reads as "this agent has no
+-- parent", i.e. a root, which is the MORE privileged answer. A stale
+-- reader must get "no such table", not a confident wrong one.
 --
 -- ``comms_grants`` records explicit cross-group send grants. A row
 -- ``(sender, target)`` permits ``sender → target`` even when the
@@ -210,13 +215,6 @@ CREATE TABLE IF NOT EXISTS node_tokens (
     created_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
-
-CREATE TABLE IF NOT EXISTS lineage (
-    child_name   TEXT PRIMARY KEY,
-    parent_name  TEXT NOT NULL,
-    created_at   REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
 
 CREATE TABLE IF NOT EXISTS comms_grants (
     sender_name  TEXT NOT NULL,

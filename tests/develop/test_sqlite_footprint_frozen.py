@@ -214,6 +214,15 @@ FROZEN_SQLITE_DDL = frozenset(
         # oplog with its actor) but it introduced a lifecycle the SQLite
         # version did not have, and the module documents it.
         "_state/state_db_schema.py",
+        # ``state_db_schema.py`` STAYS, and the lineage move on 2026-08-28 is
+        # the clearest illustration of why this list cannot be read as a
+        # table count. The ``lineage`` CREATE TABLE was DELETED from that
+        # module — the edges are in PostgreSQL now — and the file still
+        # carries the DDL for ``definitions``, ``instances``, ``turns`` and
+        # the rest, so the entry does not move. Both lists are per-MODULE.
+        # A migration that empties a module of DDL shrinks this list; one
+        # that removes a single table from a shared DDL blob does not, and
+        # neither fact is visible from the entry alone.
         # _state/state_db_incarnations.py LEFT THIS SET 2026-08-19 — the
         # SECOND table to move to PostgreSQL, and the first to leave via
         # THIS list rather than FROZEN_SQLITE (it never imported sqlite3;

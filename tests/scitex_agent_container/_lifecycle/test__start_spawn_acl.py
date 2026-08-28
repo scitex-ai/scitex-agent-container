@@ -162,7 +162,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
 
 
 def test_core_start_writes_lineage_row_for_parent_caller(
-    isolated_state, sac_name, tmp_path
+    isolated_state, sac_name, tmp_path, pg_schema: str
 ) -> None:
     # Arrange — a root parent agent spawns a child via core agent_start.
     sac_name("parent-root")
@@ -182,7 +182,7 @@ def test_core_start_writes_lineage_row_for_parent_caller(
 
 
 def test_admin_start_records_no_lineage_edge(
-    isolated_state, sac_name, tmp_path
+    isolated_state, sac_name, tmp_path, pg_schema: str
 ) -> None:
     # Arrange — no SAC_NAME → admin / operator / lead launch.
     sac_name(None)
@@ -207,11 +207,11 @@ def test_admin_start_records_no_lineage_edge(
 
 
 def test_mcp_tool_spawn_is_denied_for_child_caller(
-    isolated_state, sac_name, tmp_path
+    isolated_state, sac_name, tmp_path, pg_schema: str
 ) -> None:
     # Arrange — the MCP tool runs through the real CLI; a child caller
     # ("worker-a", parented to "root") must be rejected by check_spawn.
-    record_lineage(child="worker-a", parent="root", db_path=isolated_state)
+    record_lineage(child="worker-a", parent="root")
     sac_name("worker-a")
     yaml_root = tmp_path / "yaml"
     _write_spec(yaml_root, "denied-child")
@@ -240,11 +240,11 @@ def test_mcp_tool_spawn_is_denied_for_child_caller(
 
 
 def test_mcp_tool_spawn_deny_does_not_launch_child(
-    isolated_state, sac_name, tmp_path
+    isolated_state, sac_name, tmp_path, pg_schema: str
 ) -> None:
     # Arrange — same denied child; assert no live instance row was created
     # (the gate fired BEFORE any runtime/instance bookkeeping).
-    record_lineage(child="worker-b", parent="root", db_path=isolated_state)
+    record_lineage(child="worker-b", parent="root")
     sac_name("worker-b")
     yaml_root = tmp_path / "yaml"
     _write_spec(yaml_root, "never-launched")

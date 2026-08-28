@@ -454,7 +454,7 @@ def _drive_dead_runtime_start_scenario(
 
 
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
-    db_path: Path, tmp_path: Path
+    db_path: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -468,7 +468,7 @@ def test_agent_start_clears_dead_pid_from_active_zombie_rows(
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
-    db_path: Path, tmp_path: Path
+    db_path: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
