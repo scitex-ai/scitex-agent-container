@@ -8,17 +8,21 @@ the prior limited scope had deferred):
   allowed — parent↔child *and* sibling↔sibling, bidirectional.
   Everything cross-group is denied until an explicit grant is added."
 
-* **Authenticated sender identity** — per-node bearer tokens
-  resolved by :class:`NodeAuthMiddleware`. ``check_send_acl``
-  enforces "identity cannot be spoofed via a metadata field": when
-  a per-node bearer is presented, ``params.metadata.from_agent``
-  MUST match the bearer's resolved name; mismatch → 403.
+* **Authenticated sender identity** — REMOVED 2026-08-28. A
+  ``NodeAuthMiddleware`` here resolved per-node bearer tokens out of
+  the ``node_tokens`` table and pinned ``params.metadata.from_agent``
+  against the resolved name. Nothing in ``src/`` ever minted such a
+  token, so the table held 0 rows on every fleet host, no bearer ever
+  resolved, and the anti-spoof branch in ``check_send_acl`` never
+  once fired. Middleware, branch and table are gone together. What
+  gates a send today — and did all along — is the host-wide bearer at
+  the perimeter (:class:`_listen.auth.BearerAuthMiddleware`) plus the
+  NAME-based predicates below.
 
 * Cross-group grants are accepted (see :mod:`_state.state_db_nodes`
-  ``grant_send`` / ``has_grant``); the sender for the grant check
-  is the resolved-from-bearer name when a per-node bearer is
-  presented, else (administrative / host-bearer caller) the
-  ``metadata.from_agent`` claim.
+  ``grant_send`` / ``has_grant``); the sender for the grant check is
+  the ``metadata.from_agent`` claim, honoured verbatim on the
+  administrative / host-bearer path — which is every path.
 
 * "Denial is **explicit**: a denied send returns a clear ``403`` to
   the sender and is logged."
@@ -37,7 +41,6 @@ from pathlib import Path
 from typing import Literal
 
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .._state.state_db_nodes import (
     derive_group,
@@ -45,7 +48,6 @@ from .._state.state_db_nodes import (
     is_developer,
     read_comms_policy,
     resolve_group_name,
-    resolve_node_token,
     same_named_group,
     sender_target_relationship,
     spawn_allowed,
@@ -56,7 +58,6 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "AclDecision",
-    "NodeAuthMiddleware",
     "check_lineage_acl",
     "check_send_acl",
     "check_spawn",
@@ -80,8 +81,19 @@ def check_lineage_acl(
     Policy:
 
       * ``caller is None`` (or empty string) — administrative /
-        operator path (host-wide bearer, not a per-node token).
-        Always allowed. Mirrors the spawn-gate's admin treatment.
+        operator path (the host-wide bearer). Always allowed. Mirrors
+        the spawn-gate's admin treatment. Read that literally when
+        reasoning about the HTTP surfaces: the DELETE and tail
+        handlers derive ``caller`` ONLY from
+        ``request.state.authenticated_node``, which the removed
+        per-node-bearer middleware was the only thing that ever set,
+        so those two routes pass ``None`` here on every request and
+        this gate admits them. It was already so before the removal —
+        the table had no rows — and this docstring now says it out
+        loud instead of implying a second, non-admin caller shape
+        that never arrived. The restart and host_exec handlers do
+        still produce a non-``None`` caller, from the request body's
+        ``caller`` field.
       * ``caller == target`` — self-management. A SAC agent
         managing its OWN runtime (e.g. ``sac agents status`` on
         itself) is always allowed regardless of lineage.
@@ -159,61 +171,8 @@ def check_lineage_acl(
 AclDecision = tuple[Literal["allow", "deny", "block"], str | None]
 
 
-class NodeAuthMiddleware:
-    """Resolve the incoming Bearer token to a node identity, if any.
-
-    Sits **after** the outer
-    :class:`scitex_agent_container._listen.auth.BearerAuthMiddleware`
-    — that middleware enforces *some* valid bearer was presented;
-    this one resolves it to an identity:
-
-    * If the bearer equals the host-wide token, attach
-      ``request.state.authenticated_node = None`` to mark it as the
-      administrative caller (cross-host forwarding path: the
-      caller is a peer sac listen acting on behalf of a remote
-      node; ``metadata.from_agent`` is honoured verbatim).
-    * If the bearer matches a row in ``node_tokens``, attach the
-      resolved node name.
-    * Otherwise leave ``authenticated_node = None``. The outer
-      middleware would already have rejected an unknown bearer, so
-      this branch is defence-in-depth.
-
-    ``db_path`` is exposed so tests can drop in an isolated
-    state.db without touching ``$SCITEX_AGENT_CONTAINER_STATE_DB``.
-    """
-
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        host_bearer: str,
-        db_path: Path | None = None,
-    ) -> None:
-        self.app = app
-        self.host_bearer = host_bearer
-        self.db_path = db_path
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        headers = dict(scope.get("headers") or [])
-        auth = headers.get(b"authorization", b"").decode("ascii", "replace")
-        bearer = ""
-        if auth.startswith("Bearer "):
-            bearer = auth[len("Bearer ") :].strip()
-        scope.setdefault("state", {})
-        if bearer and bearer != self.host_bearer:
-            resolved = resolve_node_token(token=bearer, db_path=self.db_path)
-            scope["state"]["authenticated_node"] = resolved
-        else:
-            scope["state"]["authenticated_node"] = None
-        await self.app(scope, receive, send)
-
-
 def check_send_acl(
     *,
-    authenticated_node: str | None,
     claimed_from_agent: str | None,
     target: str,
     db_path: Path | None = None,
@@ -222,20 +181,25 @@ def check_send_acl(
 
     Inputs:
 
-    * ``authenticated_node`` — resolved from the Bearer token by
-      :class:`NodeAuthMiddleware`. ``None`` means the host-wide
-      bearer was used (administrative / cross-host forwarding) — the
-      caller is trusted to honour ``claimed_from_agent`` verbatim.
     * ``claimed_from_agent`` — what ``params.metadata.from_agent``
-      said. May be missing.
+      said. May be missing. Every caller reaching here holds the
+      host-wide bearer (administrative / cross-host forwarding), so
+      the claim is honoured verbatim — see item 1 below.
     * ``target`` — the ``<name>`` in
       ``POST /agents/<name>/message:send``.
 
-    Decision logic (handoff §4 acceptance):
+    Decision logic:
 
-    1. **Identity cannot be spoofed via a metadata field.** When a
-       per-node bearer is presented, ``claimed_from_agent`` (if
-       present) MUST match ``authenticated_node``; mismatch → deny.
+    1. **There is no per-request identity to pin the claim against.**
+       An ``authenticated_node`` parameter and the anti-spoof branch it
+       fed lived here until 2026-08-28: when a per-node bearer was
+       presented, ``claimed_from_agent`` had to match the name that
+       bearer resolved to. Nothing ever minted a per-node bearer, so
+       that parameter was ``None`` on every real call and the branch
+       never fired; it is deleted rather than kept, because a
+       signature promising spoof-proof identity is a promise this
+       function cannot keep. The host-wide bearer at the perimeter is
+       what authenticates a caller today.
     2. **Messaging is DEFAULT-ALLOW cross-group (operator 2026-07-03).**
        a2a messaging is collaboration, not a security boundary, so any
        working group may address any other. The same-group / mesh / grant
@@ -251,9 +215,8 @@ def check_send_acl(
        and a per-spec ``spec.comms`` parent/siblings=deny
        (:func:`_phase3_relationship_deny` → "deny"). An explicit
        ``grant_send`` remains a no-op-compatible allow.
-    4. The empty-sender case (no authenticated node AND no claimed
-       from_agent) is denied — there is no identity to gate on. Identity
-       spoof + missing target are denied likewise.
+    4. The empty-sender case (no claimed from_agent) is denied — there
+       is no identity to gate on. A missing target is denied likewise.
 
     Returns ``("allow", None)``, ``("deny", reason)``, or ``("block",
     reason)``. The reason is suitable for a 403 body and a host log line.
@@ -261,32 +224,18 @@ def check_send_acl(
     if not target:
         return ("deny", "missing target")
 
-    # Determine the *effective* sender identity for the ACL check.
-    if authenticated_node is not None:
-        # Per-node bearer was presented.
-        if claimed_from_agent is not None and claimed_from_agent != authenticated_node:
-            return (
-                "deny",
-                (
-                    f"identity spoof: bearer authenticates "
-                    f"{authenticated_node!r} but metadata.from_agent "
-                    f"claims {claimed_from_agent!r}"
-                ),
-            )
-        sender = authenticated_node
-    else:
-        # Administrative / cross-host forwarding path. The caller
-        # passed the host-wide bearer; we honour
-        # metadata.from_agent verbatim — but it must be present.
-        if not claimed_from_agent:
-            return (
-                "deny",
-                (
-                    "no authenticated identity and no metadata.from_agent — "
-                    "cannot determine sender for ACL"
-                ),
-            )
-        sender = claimed_from_agent
+    # Administrative / cross-host forwarding path — the only path. The
+    # caller passed the host-wide bearer; we honour metadata.from_agent
+    # verbatim — but it must be present.
+    if not claimed_from_agent:
+        return (
+            "deny",
+            (
+                "no authenticated identity and no metadata.from_agent — "
+                "cannot determine sender for ACL"
+            ),
+        )
+    sender = claimed_from_agent
 
     if sender == target:
         return ("allow", None)

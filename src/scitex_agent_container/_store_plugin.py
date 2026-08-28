@@ -82,8 +82,8 @@ for WRITERS. sac's answer is mixed and worth stating plainly:
   because the per-host identity below is worthless if it does not.
 * ``turns`` / ``errors`` / ``heartbeats`` — YES, each carries a written
   ``host``. All three are refused for other reasons (see NEVER_SYNCED).
-* ``lineage``, ``comms_grants``, ``node_comms_policy``, ``node_tokens``,
-  ``channel_events`` — NO origin column of any kind exists.
+* ``lineage``, ``comms_grants``, ``node_comms_policy``, ``channel_events``
+  — NO origin column of any kind exists.
 * ``comms_nodes.source_host`` — was NULL for every locally registered row
   and set only on the PULL path; deleted in the 2026-08-28 move.
 
@@ -398,10 +398,10 @@ SOURCE_TABLE: dict[str, str] = {
 #: tell those apart, exactly as it does for ``_system_deps``.
 NEVER_SYNCED: dict[str, str] = {
     "node_tokens": (
-        "bearer SECRETS. A token is the authenticated identity the listen "
-        "server resolves Authorization: Bearer against; replicating it "
-        "hands every host the credentials to impersonate every agent on "
-        "every other host, turning one host's compromise into the fleet's"
+        "bearer SECRETS: replicating one hands every host the credentials to "
+        "impersonate every agent on every other host. Table REMOVED 2026-08-28, "
+        "feature never armed (zero minters, 0 rows on every host); refusal KEPT "
+        "-- a name leaving KNOWN_TABLES must not read as the refusal withdrawn"
     ),
     "channel_events": (
         "the autoincrement id IS the SSE cursor a client passes back as "

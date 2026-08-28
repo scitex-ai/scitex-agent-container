@@ -194,9 +194,9 @@ async def _forward_via_ssh_curl(
 
     The remote curl carries the destination's
     ``peer-tokens/<target_host>.token`` bearer, so the destination's
-    :class:`NodeAuthMiddleware` admits the request as an administrative
-    caller (same shape as the HTTP path). Cross-group ACL denials fire
-    at the destination, not here.
+    :class:`.auth.BearerAuthMiddleware` admits the request as an
+    administrative caller (same shape as the HTTP path). Cross-group
+    ACL denials fire at the destination, not here.
 
     The ssh leg runs in a worker thread so the event loop is not
     blocked by ``subprocess.run`` — ``asyncio.to_thread`` keeps the

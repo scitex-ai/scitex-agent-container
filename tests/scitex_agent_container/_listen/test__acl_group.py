@@ -110,7 +110,6 @@ def test_send_allowed_within_same_named_group(db_path: Path, pg_schema: str) -> 
     record_comms_policy(name="bob", group_name="developer")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="bob",
         db_path=db_path,
@@ -128,7 +127,6 @@ def test_send_allowed_cross_group_by_default(db_path: Path, pg_schema: str) -> N
     record_comms_policy(name="carol", group_name="analysts")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
         db_path=db_path,
@@ -146,7 +144,6 @@ def test_send_blocked_sender_still_denied_cross_group(db_path: Path, pg_schema: 
     block_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
         db_path=db_path,
@@ -163,7 +160,6 @@ def test_send_allowed_cross_group_with_explicit_grant(db_path: Path, pg_schema: 
     grant_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
         db_path=db_path,
@@ -180,7 +176,6 @@ def test_ungrouped_pair_allowed_by_default(db_path: Path, pg_schema: str) -> Non
     record_lineage(child="y", parent="root-y", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="x",
         claimed_from_agent="x",
         target="y",
         db_path=db_path,
@@ -202,7 +197,6 @@ def test_send_allowed_developer_to_researcher(db_path: Path, pg_schema: str) -> 
     record_comms_policy(name="res-1", group_name="researcher")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="dev-1",
         claimed_from_agent="dev-1",
         target="res-1",
         db_path=db_path,
@@ -218,7 +212,6 @@ def test_send_allowed_researcher_to_generalist(db_path: Path, pg_schema: str) ->
     record_comms_policy(name="gen-1", group_name="generalist")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="res-1",
         claimed_from_agent="res-1",
         target="gen-1",
         db_path=db_path,
@@ -234,7 +227,6 @@ def test_send_allowed_generalist_to_developer_all_directions(db_path: Path, pg_s
     record_comms_policy(name="dev-1", group_name="developer")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="gen-1",
         claimed_from_agent="gen-1",
         target="dev-1",
         db_path=db_path,
@@ -253,7 +245,6 @@ def test_send_allowed_mesh_group_to_non_mesh_group(db_path: Path, pg_schema: str
     record_comms_policy(name="solver-1", group_name="solver")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="dev-1",
         claimed_from_agent="dev-1",
         target="solver-1",
         db_path=db_path,
@@ -271,7 +262,6 @@ def test_send_allowed_non_mesh_group_to_mesh_group(db_path: Path, pg_schema: str
     record_comms_policy(name="res-1", group_name="researcher")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="solver-1",
         claimed_from_agent="solver-1",
         target="res-1",
         db_path=db_path,

@@ -96,8 +96,21 @@ KNOWN_TABLES = (
     "instance_heartbeats",
     "events",
     "channel_events",
-    "node_tokens",
     "lineage",
+    # ``node_tokens`` left on 2026-08-28 with the per-node bearer feature
+    # it belonged to: ``mint_node_token`` had zero callers outside tests,
+    # so the table was empty on every host and no bearer ever resolved to
+    # a name. Its DDL is gone from :mod:`.state_db_schema`, so keeping the
+    # name here would aim every generic reader -- ``table_counts`` behind
+    # ``sac db show``, ``export_state`` / ``import_state``, and the
+    # ``click.Choice`` for ``sac db query`` -- at a table that no longer
+    # exists. It is also the entry that made ``sac db export`` ship a
+    # column of BEARER SECRETS to any peer that asked, since export takes
+    # whole tables and the MCP ``db_export`` tool cannot name a subset;
+    # dropping the entry closes that by construction rather than by
+    # remembering to filter. ``_store_plugin.NEVER_SYNCED`` deliberately
+    # KEEPS its refusal of this name -- a table leaving this tuple must
+    # not read as the refusal being withdrawn.
     # ``comms_nodes`` left on 2026-08-28 when the ADR-0014 cross-host
     # directory moved to the shared PostgreSQL store
     # (:mod:`.state_db_comms_nodes`). Removed rather than whitelisted for

@@ -172,15 +172,6 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- (handoff §4; lead 2026-05-21 RESTORED the authenticated-identity
 -- criterion the prior limited scope had deferred).
 --
--- ``node_tokens`` is the authenticated-identity primitive. Each node
--- (sac-managed or external) gets a token minted at registration; the
--- listen server resolves an incoming ``Authorization: Bearer <token>``
--- to a node name via :class:`_listen._acl.NodeAuthMiddleware`. The
--- acceptance "identity cannot be spoofed via a metadata field"
--- (handoff §4) is enforced by ``check_send_acl``: when a per-node
--- bearer is presented, ``metadata.from_agent`` MUST match the bearer's
--- resolved name — a mismatch is a 403 with an explicit spoof reason.
---
 -- ``lineage`` records parent → child edges produced by
 -- ``sac agents start``. A node's *group* (the default-ACL unit) is
 -- derived from lineage: parent + parent's direct children. Schema
@@ -193,12 +184,29 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- nothing read or wrote. A CREATE TABLE with no writer leaves an empty
 -- table that answers "no grants" instead of raising, which is the
 -- reading that turns a migration gap into a silent deny.
-CREATE TABLE IF NOT EXISTS node_tokens (
-    name        TEXT PRIMARY KEY,
-    token       TEXT NOT NULL UNIQUE,
-    created_at  REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_node_tokens_token ON node_tokens(token);
+--
+-- ``node_tokens`` (and ``idx_node_tokens_token``) was defined here until
+-- 2026-08-28. It was the WI-2 authenticated-identity primitive: a bearer
+-- token per node, which ``_listen`` resolved back to a name so
+-- ``check_send_acl`` could refuse a ``metadata.from_agent`` that did not
+-- match it. ``mint_node_token`` had ZERO callers outside tests, so the
+-- table held 0 rows on compute-01/-03/-04 and nas-03, every resolve
+-- returned None, and the anti-spoof branch never fired once.
+--
+-- The empty table was not itself unsafe — it answered "no such bearer"
+-- correctly, which is the SAFE answer. The hazard was the DECLARATION:
+-- a schema naming a per-node credential store promises identity that
+-- cannot be forged through a metadata field, and every reader of this
+-- file (and of ``NEVER_SYNCED``, which still refuses the name) inherited
+-- that promise while the serving code could not honour it. Removing the
+-- table is what makes the file agree with the fleet: the host-wide
+-- bearer and the name-based ACL are the gate, and there is no second,
+-- stronger identity waiting behind them.
+--
+-- Removal also closes an export hole by construction: ``export_state``
+-- ships every column of a KNOWN_TABLES member, the ``token`` column
+-- included, and the MCP ``db_export`` tool exposes no ``tables``
+-- parameter with which to hold it back.
 
 CREATE TABLE IF NOT EXISTS lineage (
     child_name   TEXT PRIMARY KEY,

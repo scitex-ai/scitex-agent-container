@@ -56,7 +56,6 @@ def test_outbound_siblings_deny_blocks_sibling_send(db_path: Path, pg_schema: st
     record_comms_policy(name="cap-a", outbound_siblings="deny")
     # Act
     decision, _ = check_send_acl(
-        authenticated_node="cap-a",
         claimed_from_agent="cap-a",
         target="cap-b",
         db_path=db_path,
@@ -72,7 +71,6 @@ def test_outbound_parent_deny_blocks_send_to_parent(db_path: Path, pg_schema: st
     record_comms_policy(name="cap-a", outbound_parent="deny")
     # Act
     decision, _ = check_send_acl(
-        authenticated_node="cap-a",
         claimed_from_agent="cap-a",
         target="root",
         db_path=db_path,
@@ -89,7 +87,6 @@ def test_outbound_default_allows_sibling_send(db_path: Path, pg_schema: str) -> 
     record_lineage(child="cap-b", parent="root", db_path=db_path)
     # Act
     decision, _ = check_send_acl(
-        authenticated_node="cap-a",
         claimed_from_agent="cap-a",
         target="cap-b",
         db_path=db_path,
@@ -112,7 +109,6 @@ def test_inbound_siblings_deny_rejects_sibling_inbound(db_path: Path, pg_schema:
     record_comms_policy(name="cap-b", inbound_siblings="deny")
     # Act
     decision, _ = check_send_acl(
-        authenticated_node="cap-a",
         claimed_from_agent="cap-a",
         target="cap-b",
         db_path=db_path,
@@ -129,7 +125,6 @@ def test_inbound_parent_deny_rejects_send_from_parent(db_path: Path, pg_schema: 
     record_comms_policy(name="cap-a", inbound_parent="deny")
     # Act
     decision, _ = check_send_acl(
-        authenticated_node="root",
         claimed_from_agent="root",
         target="cap-a",
         db_path=db_path,

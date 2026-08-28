@@ -11,8 +11,15 @@ messaging"):
     (lift-able).
 
 The "authenticated sender identity" / "identity cannot be spoofed"
-acceptance criterion is DEFERRED (lead 2026-05-20) to a separate
-follow-on handoff related to sac-accounts.
+acceptance criterion was DEFERRED (lead 2026-05-20), later implemented
+as per-node bearer tokens, and REMOVED on 2026-08-28. A ``node_tokens``
+section at the end of this file covered ``mint_node_token`` /
+``resolve_node_token`` / ``list_node_tokens`` and the table's existence;
+it went with them. Those functions had no callers outside tests, the
+table held 0 rows on every fleet host, and the tests were therefore the
+only thing that ever exercised the round trip they asserted. Identity
+is once more the self-claimed ``metadata.from_agent``, which is what the
+grant tests above already assume.
 
 No mocks (handoff §0): real SQLite under ``tmp_path``.
 """
@@ -26,11 +33,8 @@ import pytest
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
     derive_group,
-    list_node_tokens,
-    mint_node_token,
     record_comms_policy,
     record_lineage,
-    resolve_node_token,
     spawn_allowed,
 )
 
@@ -573,94 +577,3 @@ def test_the_grant_primitives_are_importable_from_state_db_nodes() -> None:
     # Assert
     assert missing == []
 
-
-# ---------------------------------------------------------------------------
-# node_tokens — authenticated identity primitive (handoff §4 acceptance)
-# ---------------------------------------------------------------------------
-
-
-def test_node_tokens_table_exists(db_path: Path) -> None:
-    # Arrange
-    conn_ctx = state_db.open_db(db_path)
-    # Act
-    with conn_ctx as conn:
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='node_tokens'"
-        ).fetchall()
-    # Assert
-    assert len(rows) == 1
-
-
-def test_mint_node_token_returns_non_empty_string(db_path: Path) -> None:
-    # Arrange
-    name = "alice"
-    # Act
-    token = mint_node_token(name=name, db_path=db_path)
-    # Assert
-    assert isinstance(token, str) and len(token) >= 32
-
-
-def test_mint_node_token_is_idempotent_per_name(db_path: Path) -> None:
-    """Re-registration returns the same token, so an active bearer
-    keeps working across a re-register."""
-    # Arrange
-    first = mint_node_token(name="alice", db_path=db_path)
-    # Act
-    second = mint_node_token(name="alice", db_path=db_path)
-    # Assert
-    assert first == second
-
-
-def test_mint_node_token_is_unique_per_name(db_path: Path) -> None:
-    # Arrange
-    a = mint_node_token(name="alice", db_path=db_path)
-    b = mint_node_token(name="bob", db_path=db_path)
-    # Act
-    different = a != b
-    # Assert
-    assert different is True
-
-
-def test_resolve_node_token_returns_minted_identity(db_path: Path) -> None:
-    # Arrange
-    token = mint_node_token(name="alice", db_path=db_path)
-    # Act
-    resolved = resolve_node_token(token=token, db_path=db_path)
-    # Assert
-    assert resolved == "alice"
-
-
-def test_resolve_node_token_returns_none_for_unknown_bearer(
-    db_path: Path,
-) -> None:
-    # Arrange
-    bogus = "no-such-token-1234567890abcdef"
-    # Act
-    resolved = resolve_node_token(token=bogus, db_path=db_path)
-    # Assert
-    assert resolved is None
-
-
-def test_resolve_node_token_returns_none_for_empty_string(
-    db_path: Path,
-) -> None:
-    # Arrange
-    empty = ""
-    # Act
-    resolved = resolve_node_token(token=empty, db_path=db_path)
-    # Assert
-    assert resolved is None
-
-
-def test_list_node_tokens_returns_each_minted_name(db_path: Path) -> None:
-    """The token observability surface returns names (NOT token
-    values — that would defeat the purpose of storing them as
-    secrets)."""
-    # Arrange
-    mint_node_token(name="alice", db_path=db_path)
-    mint_node_token(name="bob", db_path=db_path)
-    # Act
-    rows = list_node_tokens(db_path=db_path)
-    # Assert
-    names = sorted(r["name"] for r in rows)
-    assert names == ["alice", "bob"]

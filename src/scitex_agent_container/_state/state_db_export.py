@@ -76,7 +76,16 @@ def _table_filter_clauses(
         # has reads as "sac still exports this". Note ``instance_heartbeats``
         # above is a DIFFERENT table and has not moved.
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
-        "node_tokens": ("WHERE created_at >= ?", (since,)),
+        # ``node_tokens`` had a ``WHERE created_at >= ?`` entry here until
+        # 2026-08-28. The per-node bearer feature was removed that day --
+        # zero callers, 0 rows on every host, DDL deleted -- so it left
+        # KNOWN_TABLES and this mapping could never be selected again.
+        # Deleting it matters more here than for the neighbours below: the
+        # row this filter selected carried a bearer SECRET in its ``token``
+        # column, and ``export_state`` ships every column of the tables it
+        # is given. A filter naming it would read as "sac still exports
+        # this", which for this one table would have been a description of
+        # a credential leak rather than of a stale sync.
         "lineage": ("WHERE created_at >= ?", (since,)),
         # ``comms_nodes`` had a ``WHERE updated_at >= ?`` entry here until
         # 2026-08-28 — the ADR-0014 anti-entropy filter, written so a

@@ -69,7 +69,13 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     # is the honest edit and why a store call cannot replace them.
     ("channel_events", "target"),
     ("channel_events", "source"),
-    ("node_tokens", "name"),
+    # ("node_tokens", "name") was here until 2026-08-28, when the
+    # never-armed per-node bearer feature and its table were removed. The
+    # pair now names a table ``rename_rows`` cannot reach, and this one
+    # would have been a silent no-op of the harmless kind — the table was
+    # empty on every host, so there was never a row to miss. Removed all
+    # the same: a pair here asserts that renaming an agent must carry its
+    # credential across, and there is no credential.
     ("lineage", "child_name"),
     ("lineage", "parent_name"),
     ("comms_grants", "sender_name"),

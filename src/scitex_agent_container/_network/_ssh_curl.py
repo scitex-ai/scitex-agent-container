@@ -37,8 +37,8 @@ the LOCAL ``ssh`` process and, once dispatched, of the REMOTE shell and
 the kernel restricts to the owning uid. So every cross-host
 ``message:send`` published the destination's ``peer-tokens/<host>.token``
 to every local user on BOTH machines, for the life of the request. That
-token is what makes the destination's ``NodeAuthMiddleware`` admit the
-caller as administrative.
+token is what makes the destination's ``BearerAuthMiddleware`` admit
+the caller as administrative.
 
 The sibling :mod:`.._hostsync._push_tokens_io` already refused to do
 this: :func:`~.._hostsync._push_tokens_io.probe_peer_listen_auth` hands

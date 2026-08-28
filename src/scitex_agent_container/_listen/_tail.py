@@ -113,12 +113,16 @@ async def _stream_tail(
 
 async def agent_tail(request: Request) -> Response:
     name = request.path_params["name"]
-    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` is the
-    # resolved per-node identity from NodeAuthMiddleware; ``None``
-    # is the administrative / host-wide bearer (always allowed by
-    # check_lineage_acl). Gate runs BEFORE the path/file probe so a
-    # denied caller learns nothing about whether the target has a
-    # session.jsonl on disk.
+    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` was the
+    # resolved per-node identity; the middleware that set it was removed
+    # 2026-08-28 (nothing ever minted a per-node bearer, so it was always
+    # ``None`` in any case), and this route reads no other caller shape.
+    # So ``caller`` is ``None`` on every request and check_lineage_acl
+    # admits it as administrative — same as ``agent_delete``, and said
+    # out loud there for the same reason. The gate stays; it is where a
+    # real caller identity would land. It still runs BEFORE the path/file
+    # probe so a denied caller learns nothing about whether the target has
+    # a session.jsonl on disk.
     from ._acl import check_lineage_acl, deny_response
 
     caller = getattr(request.state, "authenticated_node", None)

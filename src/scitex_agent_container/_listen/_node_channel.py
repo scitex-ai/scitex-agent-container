@@ -65,9 +65,9 @@ async def node_message_send(request: Request) -> Response:
     WI-2 ACL gate: every send is checked by
     :func:`_acl.check_send_acl` before publish:
 
-    * **Per-node bearer** pins identity — ``metadata.from_agent``
-      must match the resolved name, else 403 "identity spoof"
-      (handoff §4 acceptance).
+    * **Identity** is the ``metadata.from_agent`` claim. A per-node
+      bearer used to pin it (mismatch → 403 "identity spoof"); that
+      feature was removed 2026-08-28 having never been armed.
     * **Cross-group** is denied by default; intra-group
       (parent↔child and sibling↔sibling) is allowed.
     * **Explicit cross-group grants** (``comms_grants`` table) flip
@@ -78,9 +78,8 @@ async def node_message_send(request: Request) -> Response:
       verbatim (used by WI-4 forwarders authenticating with the
       destination's host bearer from ``peer-tokens/`` registry).
 
-    Bearer auth is enforced by :class:`BearerAuthMiddleware` (outer
-    perimeter) and identity resolution by :class:`NodeAuthMiddleware`
-    (sets ``request.state.authenticated_node``).
+    Bearer auth is enforced by :class:`BearerAuthMiddleware`, which
+    is the whole perimeter: the host-wide token, or 401/403.
     """
     name = request.path_params["name"]
     try:
@@ -177,15 +176,15 @@ async def node_message_send(request: Request) -> Response:
         if isinstance(src, dict):
             sac_meta.update(src)
 
-    # WI-2 ACL check. ``authenticated_node`` is set by
-    # :class:`NodeAuthMiddleware` — ``None`` means the host-wide
-    # bearer was presented (administrative caller). With a per-node
-    # bearer, ``metadata.from_agent`` MUST match the resolved name
-    # so identity cannot be spoofed via a metadata field (handoff
-    # §4 acceptance). See :func:`_acl.check_send_acl`.
-    authenticated_node = getattr(request.state, "authenticated_node", None)
+    # WI-2 ACL check. The sender is ``metadata.from_agent``, taken at
+    # its word: the host-wide bearer is the only credential the
+    # perimeter accepts, so every caller here is the administrative /
+    # cross-host-forwarding one. This read used to consult
+    # ``request.state.authenticated_node`` first (set by a per-node
+    # bearer middleware removed 2026-08-28) — that value was ``None``
+    # on every request ever served, so this is the same behaviour with
+    # the never-taken path gone. See :func:`_acl.check_send_acl`.
     decision, reason = check_send_acl(
-        authenticated_node=authenticated_node,
         claimed_from_agent=sac_meta.get("from_agent"),
         target=name,
     )
@@ -215,7 +214,7 @@ async def node_message_send(request: Request) -> Response:
         # skip publishing in that case (still 403 to the sender).
         if name:
             broker: Broker = request.app.state.inbox
-            sender_id = authenticated_node or sac_meta.get("from_agent")
+            sender_id = sac_meta.get("from_agent")
             notif = mint_deny_notification(
                 target=name,
                 from_agent=sender_id,
