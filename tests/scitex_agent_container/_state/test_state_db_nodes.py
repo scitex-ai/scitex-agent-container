@@ -60,29 +60,17 @@ def test_lineage_table_exists(db_path: Path) -> None:
     assert len(rows) == 1
 
 
-def test_comms_grants_table_exists(db_path: Path) -> None:
-    # Arrange
-    conn_ctx = state_db.open_db(db_path)
-    # Act
-    with conn_ctx as conn:
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='comms_grants'"
-        ).fetchall()
-    # Assert
-    assert len(rows) == 1
-
-
-@pytest.mark.parametrize("column", ["sender_name", "target_name", "created_at", "note"])
-def test_comms_grants_has_column(db_path: Path, column: str) -> None:
-    # Arrange
-    conn_ctx = state_db.open_db(db_path)
-    # Act
-    with conn_ctx as conn:
-        cols = {
-            r[1] for r in conn.execute("PRAGMA table_info(comms_grants)").fetchall()
-        }
-    # Assert
-    assert column in cols
+# ``test_comms_grants_table_exists`` and ``test_comms_grants_has_column``
+# were here until 2026-08-28. They asked ``sqlite_master`` and
+# ``PRAGMA table_info`` whether the SQLite ``comms_grants`` table and its four
+# columns existed -- and this commit deletes that DDL, because every reader
+# had already moved to the shared PostgreSQL store. A DDL-presence test
+# outlives its table by exactly one commit; keeping them would mean either a
+# permanently red suite or restoring a table nothing reads.
+#
+# Nothing is lost. They asserted the SHAPE of storage, never a behaviour:
+# what a grant MEANS is covered by test_state_db_grants.py against the store
+# the code actually uses.
 
 
 # ---------------------------------------------------------------------------

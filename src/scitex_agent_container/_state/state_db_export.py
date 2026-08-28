@@ -74,7 +74,6 @@ def _table_filter_clauses(
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
         "node_tokens": ("WHERE created_at >= ?", (since,)),
         "lineage": ("WHERE created_at >= ?", (since,)),
-        "comms_grants": ("WHERE created_at >= ?", (since,)),
         # ADR-0014 — anti-entropy filter advances on ``updated_at`` so
         # a tombstoned row (``ended_at`` set) still ships on the next
         # pull until both sides converge.

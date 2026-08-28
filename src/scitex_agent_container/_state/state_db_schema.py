@@ -181,13 +181,13 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- derived from lineage: parent + parent's direct children. Schema
 -- stays N-level capable — see derive_group() for the traversal.
 --
--- ``comms_grants`` records explicit cross-group send grants. A row
--- ``(sender, target)`` permits ``sender → target`` even when the
--- two are in different groups. With authenticated identity in force,
--- ``sender`` is the resolved-from-bearer name (administrative caller
--- path: the host-wide bearer honours ``metadata.from_agent`` verbatim
--- — used by cross-host forwarders authenticating with the
--- destination's host bearer pulled from ``peer-tokens/`` registry).
+-- ``comms_grants`` was defined here until 2026-08-28. Its readers had
+-- already moved to the shared PostgreSQL store via
+-- :mod:`.state_db_grants`, which resolves through ``host_store`` and
+-- carries no SQLite path at all, so this DDL was creating a table
+-- nothing read or wrote. A CREATE TABLE with no writer leaves an empty
+-- table that answers "no grants" instead of raising, which is the
+-- reading that turns a migration gap into a silent deny.
 CREATE TABLE IF NOT EXISTS node_tokens (
     name        TEXT PRIMARY KEY,
     token       TEXT NOT NULL UNIQUE,
@@ -201,15 +201,6 @@ CREATE TABLE IF NOT EXISTS lineage (
     created_at   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
-
-CREATE TABLE IF NOT EXISTS comms_grants (
-    sender_name  TEXT NOT NULL,
-    target_name  TEXT NOT NULL,
-    created_at   REAL NOT NULL,
-    note         TEXT,  -- optional audit annotation
-    PRIMARY KEY (sender_name, target_name)
-);
-CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
 
 -- ADR-0014 — symmetric federated comms graph.
 --
