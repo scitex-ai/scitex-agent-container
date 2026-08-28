@@ -97,7 +97,13 @@ def _table_filter_clauses(
         # is given. A filter naming it would read as "sac still exports
         # this", which for this one table would have been a description of
         # a credential leak rather than of a stale sync.
-        "lineage": ("WHERE created_at >= ?", (since,)),
+        # ``lineage`` had a ``WHERE created_at >= ?`` entry here until
+        # 2026-08-28. The spawn DAG moved to the shared PostgreSQL store and
+        # left KNOWN_TABLES, so this mapping could never be selected again.
+        # Deleted rather than kept: on the shared store every host reads and
+        # writes ONE set of edges, so there is no longer a peer to ship them
+        # to -- an incremental filter here would describe a sync that has
+        # nothing left to converge.
         # ``comms_nodes`` had a ``WHERE updated_at >= ?`` entry here until
         # 2026-08-28 — the ADR-0014 anti-entropy filter, written so a
         # tombstoned row still shipped on the next pull until both sides

@@ -1,27 +1,23 @@
-"""``sender → target`` lineage classification — STILL ON SQLITE.
+"""``sender → target`` lineage classification — ON POSTGRESQL.
 
 Extracted from :mod:`.state_db_acl_policy` on 2026-08-28, when the policy
-table moved to PostgreSQL and this function did not.
+table moved to PostgreSQL and this function did not: it reads a DIFFERENT
+table, ``lineage``, which had its own migration ahead of it. That migration
+landed the same day, so the note this module used to carry — "STILL ON
+SQLITE ... it keeps ``db_path``, and keeps reading SQLite, until ``lineage``
+itself moves" — is now discharged rather than merely stale. ``db_path`` is
+gone; there is no file to point it at.
 
-IT DID NOT MOVE BECAUSE IT READS A DIFFERENT TABLE. ``lineage`` is owned
-by :mod:`.state_db_nodes` (``record_lineage`` / ``derive_group``) and has
-its own migration ahead of it. This function only ever lived beside the
-policy code because ``state_db_nodes`` was over the per-file line cap,
-and carrying its storage along as a side effect of the policy move would
-have been a second migration smuggled inside the first.
-
-So it keeps ``db_path``, and keeps reading SQLite, until ``lineage``
-itself moves. Its own file is what makes that visible: a reader looking
-for "what is left on SQLite here" finds a module, not a stray function at
-the bottom of a PostgreSQL one.
+The file stays, and it earns its keep for the reason it was split out in
+the first place: the classification is a distinct question from the policy
+that consumes it. :mod:`.state_db_acl_policy` answers "what is this agent
+allowed to do"; this answers "what IS this agent to that one".
 
 Re-exported from :mod:`.state_db_acl_policy` (and thence from
 :mod:`.state_db_nodes`) so every existing import path keeps working.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 __all__ = ["sender_target_relationship"]
 
@@ -30,37 +26,40 @@ def sender_target_relationship(
     *,
     sender: str,
     target: str,
-    db_path: Path | None = None,
 ) -> str:
     """Classify the ``sender → target`` lineage relationship.
 
     Returns one of:
 
     * ``"self"``    — same node (trivial self-send).
-    * ``"parent"``  — target is sender's parent in the lineage table.
+    * ``"parent"``  — target is sender's parent in the lineage store.
     * ``"child"``   — target is one of sender's direct children.
     * ``"sibling"`` — sender and target share the same parent.
     * ``"other"``   — no lineage path (cross-group or unrelated).
 
     Used by :func:`scitex_agent_container._listen._acl.check_send_acl`
     to apply the per-spec outbound/inbound policy on the right edge.
-    Pure read of the ``lineage`` table — no policy state consulted.
+    Pure read of the lineage store — no policy state consulted.
+
+    TWO POINT READS, NOT A SCAN. Every one of the five answers is decided
+    by the two parents alone: ``target`` being ``sender``'s parent, or
+    ``sender`` being ``target``'s, or the two agreeing. ``child_name`` is
+    the store's identity, so each is an indexed ``get`` — the same two
+    round-trips the SQLite version made, against a table that no longer has
+    to exist on this host to be readable.
+
+    ``"self"`` is answered BEFORE either read, so the commonest trivial
+    case never touches the store at all.
     """
     if not sender or not target:
         return "other"
     if sender == target:
         return "self"
-    from .state_db import open_db
 
-    with open_db(db_path) as conn:
-        sender_parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (sender,)
-        ).fetchone()
-        target_parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (target,)
-        ).fetchone()
-    sender_parent = str(sender_parent_row["parent_name"]) if sender_parent_row else None
-    target_parent = str(target_parent_row["parent_name"]) if target_parent_row else None
+    from .state_db_lineage_store import parent_name_of
+
+    sender_parent = parent_name_of(sender)
+    target_parent = parent_name_of(target)
     if sender_parent == target:
         return "parent"
     if target_parent == sender:
@@ -72,3 +71,5 @@ def sender_target_relationship(
     ):
         return "sibling"
     return "other"
+
+# EOF

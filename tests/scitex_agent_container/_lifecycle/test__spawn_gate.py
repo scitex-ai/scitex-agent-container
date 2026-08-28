@@ -166,7 +166,7 @@ def test_gate_lineage_record_is_idempotent_on_same_parent(pg_schema: str, db_pat
 
 def test_gate_denies_child_caller_under_root_only_policy(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — "worker-a" is a child of "root" → not a root → may not spawn.
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
     sac_name("worker-a")
     # Act
     ctx = pytest.raises(SpawnDeniedError)
@@ -180,7 +180,7 @@ def test_gate_allows_restart_keeps_existing_parent(pg_schema: str, db_path, sac_
     # different-lineage caller must SUCCEED in-place (no re-parent, no
     # SpawnDeniedError) — the 409 the ACL previously raised is now gone,
     # so a developer/research peer can restart a down agent.
-    record_lineage(child="child-f", parent="root-1", db_path=db_path)
+    record_lineage(child="child-f", parent="root-1")
     sac_name("root-2")
     # Act — must not raise; record_lineage keeps the existing parent
     result = enforce_spawn_gate("child-f")

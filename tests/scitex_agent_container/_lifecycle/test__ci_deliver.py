@@ -34,7 +34,7 @@ def _seams(
     seams = dict(
         post=lambda name, text: posts.append(name),
         owner_resolver=lambda repo, **kw: owner,
-        ancestors=lambda *, name, db_path=None: list(ancestors),
+        ancestors=lambda *, name: list(ancestors),
         already_delivered=lambda **kw: already,
         failure_streak=lambda **kw: streak,
         failing_checks=lambda repo, pr: list(checks),
@@ -102,7 +102,7 @@ def test_one_post_failure_does_not_abort_remaining_targets():
     seams = dict(
         post=flaky_post,
         owner_resolver=lambda repo, **kw: "proj-x",
-        ancestors=lambda *, name, db_path=None: ["lead"],
+        ancestors=lambda *, name: ["lead"],
         already_delivered=lambda **kw: False,
         record=lambda **kw: None,
     )
@@ -118,7 +118,7 @@ def test_delivered_message_names_repo_pr_and_conclusion():
     seams = dict(
         post=lambda name, text: captured.append(text),
         owner_resolver=lambda repo, **kw: "proj-x",
-        ancestors=lambda *, name, db_path=None: [],
+        ancestors=lambda *, name: [],
         already_delivered=lambda **kw: False,
         failure_streak=lambda **kw: 0,
         record=lambda **kw: None,
