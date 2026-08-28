@@ -98,8 +98,16 @@ KNOWN_TABLES = (
     "channel_events",
     "node_tokens",
     "lineage",
-    "comms_grants",
     "comms_nodes",
+    # ``comms_grants`` left on 2026-08-28 under the same ruling as
+    # ``incarnations`` below. Its CRUD had already moved to the shared
+    # PostgreSQL store (:mod:`.state_db_grants`, which resolves through
+    # ``host_store``); only the DDL and this whitelist entry were left,
+    # and the entry is what kept the GENERIC readers -- ``table_counts``
+    # behind ``sac db show``, ``export_state``/``import_state``, and the
+    # ``click.Choice`` for ``sac db query`` -- pointed at a SQLite table
+    # nothing writes. The 52 live rows were carried into PostgreSQL
+    # before this landed.
     # ``incarnations`` was here until 2026-08-19. It now lives in per-host
     # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
     # through `sac db query`. Removed rather than left behind: a whitelisted
@@ -213,8 +221,9 @@ def init_schema(db_path: Path | None = None) -> Path:
         # PostgreSQL; each store creates its own schema on first open
         # (``state_db_pending_approval.open_pending_prompt_store`` /
         # ``state_db_blocks.open_blocks_store``), so there is nothing to run
-        # here for either. What is left of the pair in SQLite is
-        # ``comms_grants``, which lives in ``state_db_nodes`` and has not moved.
+        # here for either. ``comms_grants`` was the last of that pair left
+        # in SQLite; it moved to the shared PostgreSQL store and its DDL
+        # was deleted on 2026-08-28, so nothing of the pair remains here.
         # The ``incarnations`` birth-certificate table used to be created
         # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
         # this comment block used to make — "lives in the EXISTING sqlite
