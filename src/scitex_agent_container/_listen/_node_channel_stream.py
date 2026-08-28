@@ -3,8 +3,7 @@
 Serves ``GET /agents/<name>/inbox/stream`` on the ``sac listen`` control
 plane — the host-side twin of the per-agent sidecar's stream in
 :mod:`..a2a._inbox_stream`. Split out of :mod:`._node_channel` (which sat
-over the per-file line cap once the ``asyncio.to_thread`` hops below were
-added) exactly as ``inbox_stream`` was split out of ``a2a/_server.py``: one
+over the per-file line cap once the off-loop hops below were added) exactly as ``inbox_stream`` was split out of ``a2a/_server.py``: one
 cohesive responsibility per file, and the original keeps a re-export so route
 registration in :mod:`.server` and every historical import path are
 unchanged.
@@ -18,12 +17,12 @@ The two SSE streams — this one and ``a2a/_inbox_stream`` — are the SAME
 primitive and must not drift. Both emit a comment frame on connect, replay
 durable ``sac_channel_events`` rows before accepting live events, beat when
 idle, and unsubscribe in a ``finally``. Both now do every database call
-through ``asyncio.to_thread`` for the reason spelled out inline below.
+through ``_lifecycle._off_loop.run_blocking`` — a dedicated thread with a
+hard timeout — for the reason spelled out inline below.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 from starlette.requests import Request
