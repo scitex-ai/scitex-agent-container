@@ -294,11 +294,18 @@ def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
 
 # ``COMMS_NODE_SQL`` was here until 2026-08-28. The ADR-0014 directory moved
 # to PostgreSQL, so SQLite has no ``comms_nodes`` table and the INSERT would
-# raise on every fixture that used it. ``definitions`` is the identity table
-# a rename still carries inside state.db.
-DEFINITION_SQL = (
-    "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
-    "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)"
+# raise on every fixture that used it. ``DEFINITION_SQL`` replaced it for the
+# rest of that day and then went the same way: ``definitions`` was deleted
+# from state.db for having no writer in any code path, ever.
+#
+# ``instances`` is the identity table a rename carries inside state.db now,
+# and it is the one that should have been used all along — it is the only
+# one of the three that a running agent actually WRITES a row to. It also
+# carries the PATH column (``workdir``), so one seeded row now covers both
+# ``NAME_COLUMNS`` and ``PATH_COLUMNS``.
+INSTANCE_SQL = (
+    "INSERT INTO instances (id, name, host, scope, started_at, workdir) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
 )
 CHANNEL_EVENT_SQL = (
     "INSERT INTO channel_events (target, source, kind, content, meta_json, ts) "
@@ -307,28 +314,31 @@ CHANNEL_EVENT_SQL = (
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Identity row (definitions) + history row (channel_events) for ``name``.
+    """Identity row (instances) + history row (channel_events) for ``name``.
 
     Both halves a rename must carry, and both must be columns that are STILL
     in ``_rename_db.NAME_COLUMNS`` AND still real SQLite tables — a seed
     naming a table that has moved would raise, and a seed naming a table
     ``rename_rows`` skips would silently prove nothing.
 
-    Both halves have moved. The identity half was ``comms_nodes.name`` until
-    2026-08-28, when the ADR-0014 directory left SQLite for the shared
-    PostgreSQL store; ``definitions.name`` replaced it. The history half was
-    ``turns`` until the diary trio left the same day, then ``attempts`` for
-    the rest of it, until ``attempts`` was deleted for having zero writers;
-    ``channel_events.target`` replaced that.
+    Both halves have moved, twice. The identity half was ``comms_nodes.name``
+    until 2026-08-28, when the ADR-0014 directory left SQLite for the shared
+    PostgreSQL store; ``definitions.name`` replaced it, and lasted until
+    ``definitions`` was itself deleted later the same day for having no
+    writer. ``instances.name`` is the third and the sturdiest: it is the one
+    identity column in state.db that production code actually INSERTs.
+
+    The history half was ``turns`` until the diary trio left the same day,
+    then ``attempts`` for the rest of it, until ``attempts`` was deleted for
+    having zero writers; ``channel_events.target`` replaced that.
     """
     db_path = make_state_db(layout)
     return seed_db_rows(
         db_path,
         [
             (
-                DEFINITION_SQL,
-                (f"def-{name}", name, f"/root/agents/{name}/spec.yaml", "sha",
-                 "user", "t0"),
+                INSTANCE_SQL,
+                (f"inst-{name}", name, "h", "user", "t0", f"/home/u/proj/{name}"),
             ),
             (CHANNEL_EVENT_SQL, (name, None, "message", "hi", "{}", 1.0)),
         ],

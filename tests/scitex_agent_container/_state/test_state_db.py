@@ -1,7 +1,13 @@
 """Tests for scitex_agent_container._state.state_db (F-CS11).
 
 Covers:
-- init_schema: idempotent creation of all four registry tables + attempts.
+- init_schema: idempotent creation of every table in ``KNOWN_TABLES``.
+  That was "all four registry tables + attempts" until 2026-08-28; by then
+  ``attempts`` had been deleted and ``definitions`` / ``instance_heartbeats``
+  / ``events`` followed it the same day, so the registry is ``instances``
+  alone and the whitelist is three names. The tests below are parametrized
+  over the CONSTANT rather than a literal list, which is why they needed no
+  edit for any of that — the prose is what went stale.
 - table_counts: returns zero counts on a fresh db.
 - import_legacy_registry: lifts JSON shards into ``instances`` rows
   with ``exit_reason='reboot-swept'``; idempotent on re-run; tolerates
@@ -409,7 +415,19 @@ def test_record_instance_start_returned_id_matches_active_instance_row(
     assert list_active_instances()[0]["id"] == iid
 
 
-def test_record_instance_start_writes_a_start_kind_event_row(db_path: Path):
+def test_record_instance_start_stamps_started_at_on_the_instances_row(
+    db_path: Path,
+):
+    """A start is RECORDED — the property, re-pointed at where it lives.
+
+    This asserted ``[e["kind"] for e in events] == ["start"]`` against the
+    ``events`` table until 2026-08-28. That table was deleted for having
+    zero readers, and the deletion argument was precisely that its row
+    carried nothing the ``instances`` row did not already carry in the same
+    transaction: the event's ``ts`` IS ``instances.started_at``. So the
+    assertion moves onto the surviving column rather than leaving with the
+    table — the behaviour is real and still worth a test.
+    """
     # Arrange
     from scitex_agent_container._state.state_db import (
         open_db,
@@ -419,14 +437,11 @@ def test_record_instance_start_writes_a_start_kind_event_row(db_path: Path):
     # Act
     iid = record_instance_start("x", host="h")
     with open_db() as conn:
-        events = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM events WHERE instance_id=?", (iid,)
-            ).fetchall()
-        ]
+        row = dict(
+            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
+        )
     # Assert
-    assert [e["kind"] for e in events] == ["start"]
+    assert row["started_at"]
 
 
 def test_record_instance_stop_clears_the_active_instance_list(db_path: Path):
@@ -476,180 +491,34 @@ def test_record_instance_stop_returns_false_on_second_call_for_idempotency(
     assert second is False
 
 
-def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
-    db_path: Path,
-):
-    # Arrange — pin both beats to one ``ts`` via the now_fn seam so the
-    # same-second collapse is deterministic (not a wall-clock coincidence).
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    fixed_ts = "2026-05-22T00:00:00Z"
-    # Act
-    update_heartbeat(
-        iid, iter=1, input_tokens=10, output_tokens=20, now_fn=lambda: fixed_ts
-    )
-    update_heartbeat(
-        iid, iter=2, input_tokens=30, output_tokens=40, now_fn=lambda: fixed_ts
-    )
-    with open_db() as conn:
-        n = conn.execute(
-            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
-            (iid,),
-        ).fetchone()["n"]
-    # Assert — single row thanks to ON CONFLICT (instance_id, ts@1-sec).
-    assert n == 1
-
-
-def test_update_heartbeat_keeps_two_rows_when_beats_straddle_a_second(
-    db_path: Path,
-):
-    # Arrange — distinct ``ts`` (clock ticked between beats) → no merge.
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    # Act
-    update_heartbeat(iid, iter=1, now_fn=lambda: "2026-05-22T00:00:00Z")
-    update_heartbeat(iid, iter=2, now_fn=lambda: "2026-05-22T00:00:01Z")
-    with open_db() as conn:
-        n = conn.execute(
-            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
-            (iid,),
-        ).fetchone()["n"]
-    # Assert — two rows; "latest" stays unambiguous via the seq PK.
-    assert n == 2
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [("iter", 2), ("input_tokens", 30), ("output_tokens", 40)],
-)
-@pytest.mark.parametrize(
-    "second_ts",
-    ["2026-05-22T00:00:00Z", "2026-05-22T00:00:01Z"],
-    ids=["same-second", "straddle-second"],
-)
-def test_update_heartbeat_latest_row_holds_latest_value(
-    db_path: Path, column: str, expected: int, second_ts: str
-):
-    # Arrange — exercise BOTH the merge path (same ts) and the straddle
-    # path (clock ticked); "latest" must resolve to the iter=2 beat in
-    # either case. ``ts`` is pinned via now_fn so the test is
-    # deterministic instead of racing the wall clock.
-    from scitex_agent_container._state.state_db import (
-        latest_instance_heartbeat,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(
-        iid,
-        iter=1,
-        input_tokens=10,
-        output_tokens=20,
-        now_fn=lambda: "2026-05-22T00:00:00Z",
-    )
-    update_heartbeat(
-        iid,
-        iter=2,
-        input_tokens=30,
-        output_tokens=40,
-        now_fn=lambda: second_ts,
-    )
-    # Act — latest is MAX(seq), not an arbitrary fetchone().
-    hb_row = latest_instance_heartbeat(iid)
-    # Assert
-    assert hb_row[column] == expected
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [
-        ("iter_count", 2),
-        ("input_tokens", 30),
-        ("output_tokens", 40),
-    ],
-)
-def test_update_heartbeat_caches_rolling_value_on_instances_row(
-    db_path: Path, column: str, expected: int
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
-    # Act
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst[column] == expected
-
-
-def test_update_heartbeat_caches_last_heartbeat_at_timestamp_on_instance_row(
-    db_path: Path,
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    # Act
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst["last_heartbeat_at"] is not None
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [
-        ("iter_count", 5),
-        ("input_tokens", 100),
-        ("output_tokens", 200),
-    ],
-)
-def test_update_heartbeat_partial_update_preserves_previous_field_via_coalesce(
-    db_path: Path, column: str, expected: int
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=5, input_tokens=100, output_tokens=200)
-    # Act — second call only updates pane_state; other fields must NOT reset.
-    update_heartbeat(iid, pane_state="alive")
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst[column] == expected
+# ---------------------------------------------------------------------------
+# ``update_heartbeat`` / ``latest_instance_heartbeat`` — SEVEN tests lived
+# here until 2026-08-28, and they were good ones: same-second collapse via
+# the ON CONFLICT upsert, the straddle-a-second path, "latest is MAX(seq)"
+# proved on BOTH of those paths, the rolling cache on the ``instances`` row,
+# and the COALESCE partial update. Every one of them pinned ``ts`` through
+# the ``now_fn`` seam so the result was deterministic rather than a race
+# with the wall clock.
+#
+# They are DELETED, NOT RE-POINTED, because their SUBJECT is gone rather
+# than merely relocated. ``instance_heartbeats`` was removed from state.db
+# together with ``state_db_heartbeats`` — the module that WAS its API — on
+# the measurement that neither ``update_heartbeat`` nor
+# ``latest_instance_heartbeat`` had a single caller anywhere in ``src/``,
+# against 0 rows on every host. There is no surviving table these
+# assertions could be aimed at and no surviving function to call: unlike
+# the ``events`` test above, whose property (a start is recorded) simply
+# moved onto ``instances.started_at``, these describe a determinism
+# contract for a write path that no longer exists.
+#
+# WHAT THE DELETION TAKES WITH IT, so nobody has to rediscover it:
+# ``update_heartbeat`` was also the only writer of
+# ``instances.last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
+# ``output_tokens``, and ``state_db_gc``'s heartbeat-staleness rule reads
+# the first of those. That branch could not fire before this change either
+# — the writer had no callers — so no test here was covering it. Restoring
+# it means deciding who beats, and that is a design change, not a test.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

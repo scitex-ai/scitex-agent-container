@@ -15,33 +15,51 @@ WHAT IS NO LONGER HERE: the diary trio (``turns`` / ``errors`` /
 :mod:`.state_db_diary` owns them end to end — writers, reader, schema.
 Also gone, same day: ``attempts`` and its ``_SCHEMA_ATTEMPTS`` constant —
 see the departure note below the registry block. That one did not move
-anywhere; it simply never had a writer.
+anywhere; it simply never had a writer. Same day again, and for the same
+kind of reason rather than a move: ``definitions``, ``instance_heartbeats``
+and ``events`` — see the three departure notes inside the registry block.
+
+WHAT IS STILL HERE, after all of that: ``instances`` and the WI-1 / WI-2
+pair ``channel_events`` + ``lineage``. Three tables, and every one of them
+has a live writer AND a live reader.
 """
 
 from __future__ import annotations
 
-# Registry tables (F-CS11) — definitions, instances, events.
-# The legacy ``heartbeats`` table (instance_id, ts, ...) is now
-# created under the name ``instance_heartbeats``. Nothing in this file
-# competes for the bare name any more: the diary-style ``heartbeats``
-# left SQLite on 2026-08-28 (see :mod:`.state_db_diary`), so the rename
-# migration in :func:`.state_db_migrations.migrate_legacy_heartbeats`
-# is now the ONLY thing that ever writes that name here.
+# Registry tables (F-CS11) — ``instances``, and nothing else.
+#
+# It was ``definitions``, ``instances``, ``events`` plus the renamed
+# ``instance_heartbeats`` until 2026-08-28. The three departure notes
+# below say what left and why; the short version is that ``instances`` is
+# the only one of the four that both a writer and a reader ever reached.
 _SCHEMA_REGISTRY = """
-CREATE TABLE IF NOT EXISTS definitions (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    yaml_path       TEXT NOT NULL,
-    yaml_sha256     TEXT NOT NULL,
-    scope           TEXT NOT NULL,
-    runtime         TEXT,
-    first_seen_at   TEXT NOT NULL,
-    UNIQUE(yaml_path, yaml_sha256)
-);
+-- ``definitions`` (id / name / yaml_path / yaml_sha256 / scope / runtime /
+-- first_seen_at, UNIQUE(yaml_path, yaml_sha256)) was defined here until
+-- 2026-08-28. It was the content-addressed cache of a spec's YAML, and no
+-- code path has ever INSERTed a row into it: 0 rows on every state.db
+-- measured, and ``_store_plugin.NEVER_SYNCED`` had already written the
+-- finding down — "in KNOWN_TABLES, FK'd from instances.definition_id, and
+-- never INSERTed by any code path".
+--
+-- REMOVED rather than left behind, under the ``attempts`` ruling recorded
+-- below the registry block: a CREATE TABLE with no writer is WORSE than
+-- no table, because the empty table answers every generic reader with a
+-- plausible zero. For this one the plausible zero had a specific reading
+-- available to it — ``sac db show`` printing ``definitions 0`` next to
+-- ``instances 604`` says "no agent specs are registered", which is a
+-- claim about the fleet rather than about the schema.
+--
+-- THE FK IS GONE FROM ``instances`` BELOW, THE COLUMN IS NOT.
+-- ``definition_id`` keeps its data (all of it NULL, measured); only the
+-- ``REFERENCES definitions(id)`` clause is dropped, because
+-- ``state_db._connect`` runs ``PRAGMA foreign_keys = ON`` and a FK naming
+-- a table SQLite no longer has makes every INSERT into ``instances``
+-- raise. Dropping the column is a separate change with a separate
+-- argument, and it is not this one.
 
 CREATE TABLE IF NOT EXISTS instances (
     id                  TEXT PRIMARY KEY,
-    definition_id       TEXT REFERENCES definitions(id),
+    definition_id       TEXT,
     name                TEXT NOT NULL,
     host                TEXT NOT NULL,
     scope               TEXT NOT NULL,
@@ -74,34 +92,54 @@ CREATE INDEX IF NOT EXISTS idx_instances_active
 CREATE INDEX IF NOT EXISTS idx_instances_host
     ON instances(host);
 
--- ``seq`` (AUTOINCREMENT) gives a total insertion order so "latest
--- heartbeat" is MAX(seq) — deterministic regardless of ``ts``
--- (second-resolution) ties. ``UNIQUE(instance_id, ts)`` keeps the
--- same-second collapse via the ON CONFLICT upsert in update_heartbeat.
--- See state_db_heartbeats / state_db_migrations for the full rationale.
-CREATE TABLE IF NOT EXISTS instance_heartbeats (
-    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id     TEXT NOT NULL REFERENCES instances(id),
-    ts              TEXT NOT NULL,
-    iter            INTEGER,
-    input_tokens    INTEGER,
-    output_tokens   INTEGER,
-    pane_state      TEXT,
-    UNIQUE (instance_id, ts)
-);
+-- ``instance_heartbeats`` (seq AUTOINCREMENT / instance_id REFERENCES
+-- instances(id) / ts / iter / input_tokens / output_tokens / pane_state)
+-- was defined here until 2026-08-28, with a long note about ``seq`` being
+-- what makes "latest heartbeat" MAX(seq) rather than an arbitrary tie on a
+-- second-resolution ``ts``. That determinism argument was correct and it
+-- was never once exercised: its writer ``update_heartbeat`` and its reader
+-- ``latest_instance_heartbeat`` had ZERO callers anywhere in ``src/`` —
+-- tests only — and the table held 0 rows on compute-01, compute-03,
+-- compute-04 and nas-03. :mod:`.state_db_heartbeats` is deleted with it.
+--
+-- REMOVED rather than left behind, under the ``attempts`` ruling below,
+-- and it had to go BEFORE ``definitions`` could: its FK named
+-- ``instances(id)``, so it was a child row a reader could believe in.
+--
+-- WHAT THIS TAKES WITH IT, said out loud rather than discovered later:
+-- ``update_heartbeat`` was ALSO the only writer of
+-- ``instances.last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
+-- ``output_tokens``. Those four columns had no live writer before this
+-- change either — the function had no callers — so nothing that worked
+-- stops working. But ``state_db_gc``'s heartbeat-staleness rule reads
+-- ``last_heartbeat_at``, and with no writer it is a branch that cannot
+-- fire. That is a pre-existing fact this change makes visible; repairing
+-- it means deciding who beats, which is not a schema edit.
 
-CREATE TABLE IF NOT EXISTS events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts              TEXT NOT NULL,
-    instance_id     TEXT,
-    definition_id   TEXT,
-    kind            TEXT NOT NULL,
-    actor           TEXT,
-    payload_json    TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_instance
-    ON events(instance_id, ts);
+-- ``events`` (id AUTOINCREMENT / ts / instance_id / definition_id / kind /
+-- actor / payload_json, plus idx_events_instance) was defined here until
+-- 2026-08-28. Unlike the two above it was not empty — 1181 rows on the
+-- host state.db, 140 in a container shard — and it left anyway, because
+-- it has ZERO READERS. No ``SELECT ... FROM events`` exists in ``src/``;
+-- only the generic KNOWN_TABLES consumers reached it.
+--
+-- Its two writers were both in :mod:`.state_db_instances`
+-- (``record_instance_start`` / ``record_instance_stop``) and they wrote
+-- ``kind='start'`` / ``'stop'`` as SQL LITERALS with ``actor='sac'``, so
+-- the kind set could not widen from a caller. Every fact they recorded is
+-- written to the ``instances`` row in the SAME transaction: ``started_at``,
+-- ``ended_at``, and ``payload_json``'s only content ``exit_reason``.
+--
+-- And it was already not a faithful log, which is the reading that decides
+-- it. ``state_db_gc`` closes stale instances with a bare UPDATE and writes
+-- no event, so every GC-reaped death was ALREADY missing from this table.
+-- A lifecycle log that silently omits one class of death is worse than no
+-- log: an absence in it reads as "that did not happen".
+--
+-- Deleting this DDL drops NO existing rows. ``CREATE TABLE IF NOT EXISTS``
+-- simply stops being issued, so the 1181 rows on an old state.db stay
+-- exactly where they are, queryable with ``sqlite3`` by anyone who wants
+-- the history. What stops is sac claiming to maintain it.
 """
 
 # ``attempts`` (and its two indexes) was defined here as

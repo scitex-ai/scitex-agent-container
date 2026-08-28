@@ -8,11 +8,15 @@ from ._helpers import invoke_cli_json, invoke_cli_text
 
 
 def db_show() -> dict[str, Any]:
-    """Print high-level state-db row counts (definitions, instances,
-    heartbeats, events, channel_events). Mirrors ``sac db show --json``.
+    """Print high-level state-db row counts (instances, channel_events,
+    lineage). Mirrors ``sac db show --json``.
 
-    ``attempts`` was listed here until 2026-08-28, when it left
-    :data:`KNOWN_TABLES`; the counts follow that tuple."""
+    The counts follow :data:`KNOWN_TABLES`, and that tuple is what this
+    docstring must track — it enumerated ``definitions, instances,
+    heartbeats, events, channel_events`` and had been stale for a while by
+    2026-08-28 (``heartbeats`` moved to PostgreSQL, ``attempts`` was
+    deleted, then ``definitions`` / ``instance_heartbeats`` / ``events``
+    went the same day). Three names is the whole list now."""
     return invoke_cli_json(["db", "show", "--json"])
 
 

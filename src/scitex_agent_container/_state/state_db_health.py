@@ -51,7 +51,16 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: Tables whose presence means "this is our state store". Deliberately a
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
-CORE_TABLES = ("instances", "definitions")
+#:
+#: It was ``("instances", "definitions")`` until 2026-08-28, when
+#: ``definitions`` left SQLite for having no writer. ``channel_events``
+#: replaces it rather than leaving a one-element core, and it is the right
+#: second name for the job this constant does: the predicate is ANY, so the
+#: core should hold the tables an initialised store reliably HAS, and a
+#: store that has served one channel message has this one. A core of two is
+#: also what keeps the ``schemaless`` verdict meaningful — a real state.db
+#: that happened to predate one of them still classifies as ours.
+CORE_TABLES = ("instances", "channel_events")
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"

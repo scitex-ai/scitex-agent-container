@@ -20,14 +20,13 @@ Family-tree columns (sac-agent-spawn design, Rule B/D):
     edge the family-tree DAG is reconstructed from.
 
 Following the sibling-module convention (``state_db_diary``,
-``state_db_heartbeats``), :func:`state_db.open_db` and the id/clock
+``state_db_export``), :func:`state_db.open_db` and the id/clock
 helpers are imported lazily inside each function so :mod:`state_db`
 can re-export from here without a circular import at module load.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from .state_db_hostname import resolve_host as _resolve_host
@@ -51,8 +50,12 @@ def record_instance_start(
 ) -> str:
     """Insert an ``instances`` row for a freshly-started agent.
 
-    Returns the new ``instance_id`` (uuid7). Also appends a
-    ``kind='start'`` row to ``events``.
+    Returns the new ``instance_id`` (uuid7). It also appended a
+    ``kind='start'`` row to ``events`` until 2026-08-28; that table left
+    SQLite because nothing ever read it, and the only fact the row carried
+    — the start timestamp — is written to ``instances.started_at`` in this
+    same transaction. See the ``events`` departure note in
+    :mod:`.state_db_schema`.
 
     The family-tree columns make every start — local OR cross-host
     dispatch — record its bound port, host, lineage and locality as an
@@ -94,11 +97,6 @@ def record_instance_start(
                 spawned_by,
             ),
         )
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor) "
-            "VALUES (?, ?, 'start', 'sac')",
-            (started_at, instance_id),
-        )
     return instance_id
 
 
@@ -111,6 +109,13 @@ def record_instance_stop(
     """Mark an instance as ended. Returns True iff a row was updated.
 
     Idempotent: stopping an already-stopped row is a no-op.
+
+    It also appended a ``kind='stop'`` row to ``events`` until 2026-08-28,
+    carrying ``payload_json={"exit_reason": ...}``. Both of that row's
+    facts are set on the ``instances`` row by the UPDATE directly above,
+    in the same transaction — and the event was never a complete record of
+    a death anyway, because :mod:`.state_db_gc` reaps stale instances with
+    a bare UPDATE and wrote no event at all.
     """
     from .state_db import now_iso, open_db
 
@@ -123,11 +128,6 @@ def record_instance_stop(
         )
         if cur.rowcount == 0:
             return False
-        conn.execute(
-            "INSERT INTO events (ts, instance_id, kind, actor, payload_json) "
-            "VALUES (?, ?, 'stop', 'sac', ?)",
-            (ended_at, instance_id, json.dumps({"exit_reason": exit_reason})),
-        )
     return True
 
 
