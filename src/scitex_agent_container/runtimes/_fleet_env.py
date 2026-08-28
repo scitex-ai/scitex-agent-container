@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 logger = logging.getLogger(__name__)
 
@@ -378,9 +378,58 @@ def fleet_env_flags(
     ]
 
 
+def apply_fleet_defaults_to_process(
+    environ: "MutableMapping[str, str] | None" = None,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, str]:
+    """Give sac's OWN process the fleet defaults its containers get.
+
+    Everything above renders the defaults into an agent's ``apptainer --env``
+    flags and stops there. But the host-side ``sac`` process opens the SAME
+    stores the containers do — ``persist_acl_policy`` on every start,
+    instances, dispatches, the diary — and it received none of them. On a
+    shell with no ``SCITEX_STORE_DSN``, ``scitex_dev.store.host_store()`` fell
+    through to its UNIX-socket fallback, ``pg_hba`` asked the socket for a
+    password, and ``.pgpass`` — keyed by ``127.0.0.1`` / ``localhost`` /
+    ``scitex-primary``, never by a socket directory — had nothing to offer:
+
+        Cannot connect to Postgres store 'node_comms_policy' ...
+        socket "~/.scitex/pg/run/.s.PGSQL.55432" failed:
+        fe_sendauth: no password supplied
+
+    MEASURED on compute-04, 2026-08-28, on ``sac agents restart``. A
+    ``.pgpass`` row for the socket directory is the WRONG fix: that socket is
+    the local cluster, which is now a streaming STANDBY
+    (``pg_is_in_recovery() = t``), so the row would only trade a loud connect
+    refusal for a quiet read-only write failure. The right store is the one
+    :data:`FLEET_DEFAULT_ENV` already names — the gap was that only the
+    containers were told.
+
+    Same precedence as everything else in this module: a key already present
+    in ``environ`` wins, untouched — a default exists in order to be
+    overridden, and an operator who exported ``SCITEX_STORE_DSN`` in their
+    shell has overridden it. ``environ`` defaults to ``os.environ`` and is an
+    injection seam for tests. Returns the keys it actually set.
+    """
+    import os
+
+    target = os.environ if environ is None else environ
+    injected: dict[str, str] = {}
+    for key, val in declared_fleet_defaults(config_path).items():
+        if key in target:
+            continue
+        target[key] = val
+        injected[key] = val
+    if injected:
+        logger.debug("fleet_env: process env gained %s", sorted(injected))
+    return injected
+
+
 __all__ = [
     "CONFIG_SECTION",
     "FLEET_DEFAULT_ENV",
+    "apply_fleet_defaults_to_process",
     "declared_fleet_defaults",
     "effective_env",
     "fleet_env_flags",

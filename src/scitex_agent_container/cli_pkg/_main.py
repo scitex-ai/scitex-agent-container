@@ -432,6 +432,16 @@ def cli_entry_point() -> None:
 
     warn_once()
 
+    # The fleet defaults this process hands to every container, applied to
+    # ITSELF — sac opens the same Postgres stores its agents do, and until
+    # 2026-08-28 it was the one process in the fleet launching without
+    # ``SCITEX_STORE_DSN``. A variable exported in the operator's shell still
+    # wins; see ``apply_fleet_defaults_to_process`` for the failure this
+    # closes.
+    from ..runtimes._fleet_env import apply_fleet_defaults_to_process
+
+    apply_fleet_defaults_to_process()
+
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing
     # ``host_group`` (state.host_config + subprocess + the full click

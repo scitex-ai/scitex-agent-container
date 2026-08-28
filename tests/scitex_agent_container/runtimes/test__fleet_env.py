@@ -23,6 +23,7 @@ import pytest
 from scitex_agent_container.runtimes._fleet_env import (
     CONFIG_SECTION,
     FLEET_DEFAULT_ENV,
+    apply_fleet_defaults_to_process,
     declared_fleet_defaults,
     effective_env,
     fleet_env_flags,
@@ -164,6 +165,148 @@ def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
     without_injection = _resolved_store_locator(None)
     # Assert
     assert without_injection != with_injection
+
+
+# ----------------------------------------------------------------------
+# The defaults reach sac's OWN process, not only its containers.
+#
+# The gap behind ``fe_sendauth: no password supplied`` on 2026-08-28:
+# ``sac agents restart`` on compute-04 opened ``node_comms_policy`` with NO
+# ``SCITEX_STORE_DSN`` in its own environment — the defaults were only ever
+# rendered into ``apptainer --env`` flags — so scitex-dev's resolver fell
+# through to the local UNIX socket, a streaming standby whose password no
+# ``.pgpass`` row could supply. A real mapping stands in for ``os.environ``
+# below (the seam exists so these tests do not touch the process they run
+# in); the last two go through the real ``os.environ`` with save/restore,
+# the repo idiom (see ``_resolved_store_locator``).
+# ----------------------------------------------------------------------
+
+
+def _bare_process_env(tmp_path: Path) -> dict[str, str]:
+    """A process env that says nothing about the store, defaults applied."""
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    return environ
+
+
+def test_the_sac_process_receives_the_store_dsn_it_hands_to_containers(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ["SCITEX_STORE_DSN"] == FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"]
+
+
+def test_applying_defaults_reports_exactly_the_keys_it_injected(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    injected = apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert injected == FLEET_DEFAULT_ENV
+
+
+def test_applying_defaults_leaves_unrelated_process_keys_alone(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    # Act
+    environ = _bare_process_env(tmp_path)
+    # Assert
+    assert environ["PATH"] == "/usr/bin"
+
+
+def test_an_operator_exported_store_dsn_beats_the_fleet_default(
+    tmp_path: Path,
+) -> None:
+    """Same rule as ``spec.env`` over the fleet layer — a default exists in
+    order to be overridden. A host whose Postgres lives elsewhere exports its
+    own DSN, and sac must not silently redirect that host's writes to
+    ``scitex-primary``.
+    """
+    # Arrange
+    environ = {"SCITEX_STORE_DSN": "postgresql://elsewhere:5432/mine"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ["SCITEX_STORE_DSN"] == "postgresql://elsewhere:5432/mine"
+
+
+def test_the_config_yaml_layer_reaches_the_process_beside_a_kept_override(
+    tmp_path: Path,
+) -> None:
+    """Precedence proven against the FULL declared set, not just sac's
+    constant: the operator's config.yaml key is added, the exported DSN is
+    kept, and the return value names only what was actually injected.
+    """
+    # Arrange
+    cfg = _write_config_yaml(tmp_path / "config.yaml", {"OPERATOR_KEY": "from-yaml"})
+    environ = {"SCITEX_STORE_DSN": "postgresql://elsewhere:5432/mine"}
+    # Act
+    injected = apply_fleet_defaults_to_process(environ, config_path=cfg)
+    # Assert
+    assert injected == {"OPERATOR_KEY": "from-yaml"}
+
+
+def _with_store_dsn_unset(fn):
+    """Run ``fn`` with ``SCITEX_STORE_DSN`` absent from the REAL os.environ."""
+    import os
+
+    key = "SCITEX_STORE_DSN"
+    saved = os.environ.get(key)
+    try:
+        os.environ.pop(key, None)
+        return fn(key)
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
+def test_the_default_form_writes_to_the_live_process_environment() -> None:
+    """No ``environ`` argument — the way ``cli_entry_point`` calls it."""
+    import os
+
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+
+    def act(key: str) -> str:
+        apply_fleet_defaults_to_process(config_path=absent)
+        return os.environ[key]
+
+    # Act
+    seen = _with_store_dsn_unset(act)
+    # Assert
+    assert seen == FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"]
+
+
+def test_a_second_application_finds_the_key_present_and_injects_nothing() -> None:
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+
+    def act(_key: str) -> dict[str, str]:
+        apply_fleet_defaults_to_process(config_path=absent)
+        return apply_fleet_defaults_to_process(config_path=absent)
+
+    # Act
+    second = _with_store_dsn_unset(act)
+    # Assert
+    assert second == {}
+
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:
