@@ -44,11 +44,10 @@ _SEED = [
     # An ``INSERT INTO comms_nodes`` row was here until 2026-08-28. The
     # ADR-0014 directory moved to PostgreSQL, so SQLite has no such table and
     # the seed would raise on every test in this file.
-    (
-        "INSERT INTO lineage (child_name, parent_name, created_at) "
-        "VALUES (?, ?, ?)",
-        ("child-a", OLD, 1.0),
-    ),
+    # An ``INSERT INTO lineage`` row was here until 2026-08-28. The spawn
+    # DAG moved to PostgreSQL, so SQLite has no such table and the seed
+    # would raise on every test in this file — the same reason the
+    # ``comms_nodes`` seed above went.
     # The history half. It was ``INSERT INTO turns`` until 2026-08-28, when
     # the diary trio left SQLite for per-host PostgreSQL; then ``INSERT INTO
     # attempts`` for the rest of that day, until ``attempts`` was deleted for
@@ -168,13 +167,21 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 # as its own ``acl-policy`` step, with its inverse on the undo stack.
 
 
-def test_rename_moves_the_lineage_parent_edge(seeded: Path):
-    # Arrange
-    sql = "SELECT parent_name FROM lineage WHERE child_name = 'child-a'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == NEW
+# ``test_rename_moves_the_lineage_parent_edge`` was here until 2026-08-28.
+# ``rename_rows`` no longer touches lineage at all: the spawn DAG moved to
+# the shared PostgreSQL store, and the two ``NAME_COLUMNS`` pairs that drove
+# this assertion were removed with it.
+#
+# The behaviour did NOT simply move to another file unchanged, and that is
+# worth stating here rather than leaving a reader to discover it. The
+# replacement, ``state_db_lineage_rename.rename_lineage`` (covered by
+# ``_state/test_state_db_lineage_rename.py``, and run by ``_rename.apply_plan``
+# as its own ``lineage`` step with an inverse on the undo stack), can move an
+# agent's OWN edge but REFUSES to rename an agent that has children:
+# ``parent_name`` is IMMUTABLE in the store, so the edges asserted on here —
+# ``child-a``'s pointer at the renamed agent — are precisely the ones that
+# cannot be re-pointed. This test asserted a capability the new storage does
+# not have, so porting it would have meant asserting something false.
 
 
 def test_rename_moves_the_history_rows(seeded: Path):

@@ -92,7 +92,6 @@ def deliver_verdict(
     record: Any = None,
     failure_streak: Any = None,
     failing_checks: Any = None,
-    db_path: Any = None,
     agents_dir: Any = None,
     pr_body: str | None = None,
 ) -> dict:
@@ -138,9 +137,10 @@ def deliver_verdict(
 
         failure_streak = failures_since_last_success
 
-    # No `db_path`: the delivered-set moved to PostgreSQL via
-    # scitex_dev.store, which resolves its own target. `db_path` still
-    # reaches `ancestors` below, whose lineage table is still SQLite.
+    # No `db_path` anywhere in this function any more. The delivered-set
+    # moved to PostgreSQL first; `lineage` followed on 2026-08-28, so the
+    # `ancestors` walk below resolves its own target too and the parameter
+    # that used to reach it is gone rather than left inert.
     if already_delivered(
         repo=repo, pr=pr, head_sha=head_sha, conclusion=conclusion
     ):
@@ -167,7 +167,7 @@ def deliver_verdict(
     if not owner:
         return {"delivered": [], "skipped": True, "reason": "no-owner"}
 
-    targets = [owner, *ancestors(name=owner, db_path=db_path)]
+    targets = [owner, *ancestors(name=owner)]
     if escalating:
         # One extra gh call, on the rare escalation tick only — never on the
         # hot path. Fail-soft: an unnamed escalation still beats no escalation.

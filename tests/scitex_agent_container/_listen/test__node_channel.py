@@ -29,7 +29,7 @@ TOKEN = "test-kind-pin-token"
 
 
 @pytest.fixture
-def kind_env(tmp_path: Path):
+def kind_env(pg_schema: str, tmp_path: Path):
     """Isolated state.db so ``channel_events`` reads back our send."""
     saved_home = os.environ.get("HOME")
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
@@ -50,8 +50,8 @@ def kind_env(tmp_path: Path):
     state_db.init_schema(db)
 
     # Same-group ACL — alice (sender) and lead (target) both rooted.
-    record_lineage(child="alice", parent="root", db_path=db)
-    record_lineage(child="lead", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="lead", parent="root")
 
     try:
         yield {"db": db, "tmp_path": tmp_path}
