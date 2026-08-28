@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`sac agents resume-rate-limited` — the third agent-liveness enforcer, and
+  the shape the other two divide the fleet around without covering.** A
+  provider rate wall leaves the tmux session ALIVE, so `fleet-reconcile` hands
+  off (correctly — there is no corpse), and the banner is not an auth banner,
+  so the auth healer's matcher excludes it (also correctly, and it says why:
+  *a restart does not fix a rate wall*). Two right answers, and the agent
+  stays stopped. On 2026-08-28 a session limit stopped a set of agents at
+  ~17:25 UTC, the limit lifted at 19:10 UTC, and nothing resumed until the
+  operator asked at 20:56 UTC — 1h46m a human had to catch. The new verb reads
+  the reset time out of the provider's OWN banner, HOLDS while the wall stands
+  (so it structurally cannot spend a token against a live limit), and then
+  CONTINUES the agent through the verified delivery path rather than
+  restarting it, because the session and its whole context survived the wall.
+  A wall whose reset it cannot parse is held and REPORTED, never guessed at.
+  Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
+
+### Fixed
+- **`sac.fleet-reconcile`'s liveness was being read from the wrong
+  instrument.** Hosts still carry ORPHAN per-leaf `<job>.timer` /
+  `<job>.service` units from the retired lowering model, and on
+  scitex-compute-04 `fleet-reconcile.timer` reported `active` + `enabled`
+  with `SubState=elapsed` and a last trigger of 2026-08-19 — nine days
+  silent — WHILE the ecosystem supervisor's `PeriodicRunner` was running the
+  same job every five minutes and had logged 3,764 executions of it. Reading
+  `systemctl --user list-timers` therefore yields a confidently wrong answer,
+  and re-arming an orphan puts a SECOND scheduler on a job that already has
+  one. `_jobs/_specs_liveness` now says where these jobs actually run
+  (`~/.scitex/dev/runtime/periodic-executions.jsonl`), why the orphans are
+  dead, and that they want removing rather than reviving.
+
 ## [0.27.0] - 2026-08-26
 
 **A job that has nothing to do is not a job that failed.** The theme of this

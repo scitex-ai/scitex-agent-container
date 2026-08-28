@@ -137,6 +137,23 @@ from ._agents_restart_login_expired import (  # noqa: E402
 )
 
 _register_restart_login_expired(agent_group)
+# `resume-rate-limited` — the THIRD enforcer, and the shape the other two
+# divide the fleet around without covering. `reconcile` owns corpses;
+# `restart-login-expired` owns auth wedges; a provider rate wall is neither.
+# The tmux session is alive (so reconcile hands off) and the banner is not an
+# auth banner (so the auth matcher excludes it, saying "a restart does not fix
+# a rate wall" — correct, and the corollary is that it does not need fixing,
+# it needs waiting out). INCIDENT 2026-08-28: a session limit stopped agents
+# at ~17:25 UTC, the limit lifted at 19:10 UTC, and nothing resumed until the
+# operator asked at 20:56 UTC. This verb reads the reset the provider itself
+# printed, HOLDS until it passes — so it structurally cannot hammer a live
+# limit — and then CONTINUES the agent through the verified delivery path
+# rather than restarting it, because the context survived the wall.
+from ._agents_resume_rate_limited import (  # noqa: E402
+    register as _register_resume_rate_limited,
+)
+
+_register_resume_rate_limited(agent_group)
 # `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
 # pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
 # is the last thing an agent RENDERED, not proof it is broken now, so an agent

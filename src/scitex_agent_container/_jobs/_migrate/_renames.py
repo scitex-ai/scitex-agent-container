@@ -141,6 +141,13 @@ BORN_CANONICAL: frozenset[str] = frozenset(
         # is VERIFIED firing on all seven hosts; retiring the hand-written
         # unit is a separate, deliberate step on the migration card.
         "scitex-agent-container-accounts-snapshot-live",
+        # Added 2026-08-28, after the incident that showed nothing owned the
+        # rate-wall shape. Born canonical in the strongest sense available:
+        # no host carries a legacy unit for it because no host has ever
+        # carried ANY unit for it — there was no predecessor doing this job,
+        # which is precisely why a rate-limited fleet stayed stopped for
+        # 1h46m. Nothing for a migration to displace.
+        "scitex-agent-container-resume-rate-limited-agents",
     }
 )
 
