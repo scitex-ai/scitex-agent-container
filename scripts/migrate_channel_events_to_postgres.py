@@ -52,15 +52,50 @@ unreachable through ``id > cursor`` forever.
 
 So the order is: **stop ``sac listen``, run this, start ``sac listen``** —
 and the script REFUSES rather than trusting anyone to remember. See
-:func:`_refusals` for the discriminator (a stored row whose ``ts`` postdates
-the whole import cannot belong to an older residency) and for the exact
-message it prints. The dry run performs the same check, so the refusal
-surfaces before the cutover window rather than inside it.
+:func:`_channel_import_guard.refusals` for the discriminator and for the
+exact message it prints.
+The dry run performs the same check, so the refusal surfaces before the
+cutover window rather than inside it.
+
+RESIDENCIES CAN OVERLAP, AND THE FIRST DISCRIMINATOR COULD NOT SEE IT
+=====================================================================
+That refusal originally keyed on TIME alone: a stored row postdating the whole
+import "cannot belong to an older residency". True only for SEQUENTIAL
+relocation. compute-04 and compute-03 served the SAME targets over INTERLEAVED
+date ranges, so once compute-04's history was imported, compute-03's import
+was refused by 145 + 2 + 5 rows of which ZERO had been written after the
+cutover — and stopping ``sac listen``, which is what the message told the
+operator to do, could not clear it, because the rows were already in the
+table. The predicate was unsatisfiable.
+
+Time cannot answer "imported, or written live?"; the answer has to be
+RECORDED. Each import now claims the id window it landed in, in
+``sac_channel_import`` (see :mod:`_channel_import_provenance`), and the ts test
+is applied only to rows NO IMPORT CLAIMS. A store whose history predates that
+ledger is backfilled by RE-RUNNING this script against the earlier host's
+``state.db`` — a no-op for the rows, which records the window it recognises.
+
+THE TABLES ARE CREATED BY WHOEVER RUNS THIS, AND THAT CAUSED AN OUTAGE
+======================================================================
+Run as ``ywatanabe__cli`` on 2026-08-28, this script left both tables owned by
+that leaf role. Every agent connects as ``ywatanabe__<agent>`` and reaches
+``init_channel_schema``, whose ``CREATE INDEX IF NOT EXISTS`` needs OWNERSHIP
+of the table; the fleet's channel began failing with ``must be owner of table
+sac_channel_events`` three minutes later and stayed down for six. The
+post-migration verification reported success throughout, because it ran as the
+writer.
+
+Ownership is therefore settled BEFORE any rows move (:mod:`_pg_table_owner`):
+the intended owner is DERIVED from the rest of the schema, drifted tables are
+handed back to it, and the outcome is verified by asking the catalog about
+OTHER roles by name. If that cannot be made true, the migration REFUSES —
+failing here is far better than a channel outage three minutes later.
 
 RE-RUNNING IS SAFE
 ==================
 The insert is ``ON CONFLICT (target, id) DO NOTHING`` inside ONE
-transaction, and the offset decision (see :func:`_offset_for`) probes
+transaction, and the offset decision (see
+:func:`_channel_import_guard.offset_for`) probes
 whether the rows already in PostgreSQL are THIS host's before it shifts
 anything. A second run of the same host therefore moves nothing and shifts
 nothing — INCLUDING a host whose ids were shifted by an earlier residency,
@@ -86,13 +121,25 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from _migrate_lib import SqliteSource, add_common_arguments, default_db_path  # noqa: E402
+import _channel_import_guard as guard  # noqa: E402
+import _channel_import_provenance as prov  # noqa: E402
+import _pg_table_owner as owners  # noqa: E402
+from _migrate_lib import (  # noqa: E402
+    SqliteSource,
+    add_common_arguments,
+    default_db_path,
+)
 
 TABLE = "channel_events"
+
+#: Every table this script may CREATE, and therefore every table whose owner
+#: it is responsible for. The ledger is in here too: a future run by a
+#: different role would hit ``must be owner`` on it just as readily.
+MANAGED = ("sac_channel_events", "sac_channel_cursor", prov.LEDGER_TABLE)
 
 SOURCE = SqliteSource(
     table=TABLE,
@@ -111,85 +158,6 @@ SOURCE = SqliteSource(
     # offset probe below deterministic.
     order_by="target ASC, id ASC",
 )
-
-
-def _group_by_target(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[dict]]:
-    grouped: dict[str, list[dict]] = {}
-    for row in rows:
-        grouped.setdefault(str(row["target"]), []).append(dict(row))
-    for entries in grouped.values():
-        entries.sort(key=lambda r: int(r["id"]))
-    return grouped
-
-
-def _offset_for(conn: Any, *, target: str, entries: list[dict]) -> tuple[int, bool]:
-    """``(offset, already_imported)`` for this host's rows on this target.
-
-    THE PROBE IS BY CONTENT, NOT BY POSITION, and that is a correction. The
-    first version asked "is the row sitting at the source's own top id
-    mine?" — a question that is only valid when the previous run applied
-    offset 0. For a RELOCATED target the previous run shifted this host's
-    rows above an earlier residency, so the probe landed on the EARLIER
-    host's row, saw a mismatch, and concluded "not mine". It then returned
-    the (now higher) ``pg_max``, so ``ON CONFLICT (target, id) DO NOTHING``
-    had no id to conflict on and the whole history was inserted AGAIN at
-    fresh ids — one extra copy per invocation, with the verification below
-    unable to see it because it windows on the shifted range it just wrote.
-
-    Asking WHERE THIS ENVELOPE ALREADY SITS answers the same question
-    without assuming the answer. A match yields the offset the previous run
-    used, so the re-import conflicts on every id and moves nothing.
-
-    The candidate is confirmed against the source's FIRST row as well as its
-    last: ``meta_json`` is not unique by construction (the at-least-once
-    retry path can duplicate an envelope), so a lookalike top row alone must
-    not be allowed to imply an offset for the whole run.
-
-    ``already_imported`` distinguishes "we have been here before" from "these
-    ids belong to somebody else", which is what :func:`_refusals` needs to
-    tell a relocation apart from a daemon that has moved on.
-    """
-    pg_max = int(
-        conn.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM sac_channel_events WHERE target = %s",
-            (target,),
-        ).fetchone()[0]
-    )
-    if pg_max == 0:
-        return 0, False
-
-    first, top = entries[0], entries[-1]
-    landed_at = [
-        int(r[0])
-        for r in conn.execute(
-            "SELECT id FROM sac_channel_events "
-            "WHERE target = %s AND meta_json = %s ORDER BY id",
-            (target, top["meta_json"]),
-        ).fetchall()
-    ]
-    for landed in landed_at:
-        offset = landed - int(top["id"])
-        if offset < 0:
-            continue
-        anchor = conn.execute(
-            "SELECT meta_json FROM sac_channel_events WHERE target = %s AND id = %s",
-            (target, int(first["id"]) + offset),
-        ).fetchone()
-        if anchor is not None and anchor[0] == first["meta_json"]:
-            return offset, True
-    return pg_max, False
-
-
-def _newer_rows_than_source(conn: Any, *, target: str, entries: list[dict]) -> int:
-    """How many rows this target already holds that POSTDATE the import."""
-    newest = max(float(row["ts"]) for row in entries)
-    return int(
-        conn.execute(
-            "SELECT COUNT(*) FROM sac_channel_events "
-            "WHERE target = %s AND ts > %s",
-            (target, newest),
-        ).fetchone()[0]
-    )
 
 
 def _insert(conn: Any, *, entries: list[dict], offset: int) -> None:
@@ -262,83 +230,62 @@ def _pg_facts(conn: Any, *, target: str, lo: int, hi: int) -> tuple[int, int, in
     return int(row[0]), int(row[1]), int(row[2]), int(row[3])
 
 
-def _dry_run_refusals(grouped: dict[str, list[dict]]) -> list[str]:
-    """:func:`_refusals` for the dry run — READ-ONLY, and never fatal.
+def _settle_ownership(conn: Any, *, owner_override: str | None) -> list[str]:
+    """Put the tables in hands the FLEET can use, before a single row moves.
 
-    IT MUST NOT RUN THE DDL. ``new_channel_connection`` applies the schema on
-    open, so reaching for it here would make the dry run CREATE the two
-    tables — a write, in the mode whose entire contract is that it writes
-    nothing. It connects raw instead and treats an absent table as "nothing
-    to refuse", which is exactly true: a store with no rows cannot have moved
-    on past this import.
+    The steps are ordered by what each one needs from the one before, and the
+    two GATES come first so a refusal never leaves anything behind:
 
-    A store that cannot be opened is SAID OUT LOUD and skipped rather than
-    reported as "nothing refused" — the reading that would make a clean dry
-    run mean nothing. Same shape as ``_migrate_lib._preview_collisions``.
+    1. derive the intended owner from the rest of the schema;
+    2. refuse if this session could not hand a table to it — creating tables
+       it cannot give away is how the 2026-08-28 outage started;
+    3. refuse if the roles that use the rest of the store could not act as
+       that owner. NO DDL HAS RUN YET at this point, deliberately: the
+       post-condition check needs the tables to exist, so relying on it alone
+       would mean creating the tables in order to discover that nobody can use
+       them, and the refusal would leave the hazard it refused;
+    4. hand back any table that has ALREADY drifted — the state every host
+       left by the previous version of this script is in. Before the DDL,
+       because ``CREATE INDEX IF NOT EXISTS`` on a table you do not own raises
+       rather than being a no-op;
+    5. apply the DDL, hand over what it created, and re-ask (3)'s question of
+       the real tables.
+
+    Returns problems; an empty list means the tables are usable. Reowning IS a
+    write, so it is reported separately from the all-or-nothing row import and
+    the refusal wording says which of the two it is talking about.
     """
-    try:
-        import psycopg
+    from scitex_agent_container._state.state_db_channel_store import (
+        init_channel_schema,
+    )
 
-        from scitex_agent_container._state.state_db_channel_store import (
-            _resolve_target,
-        )
+    owner, why = owners.resolve_intended_owner(
+        conn, managed=MANAGED, override=owner_override
+    )
+    print(f"owner:  {owner} ({why})")
+    unreachable = owners.owner_is_reachable(conn, owner=owner)
+    if unreachable:
+        return [unreachable]
+    trouble, note = owners.owner_inheritance_problems(
+        conn, managed=MANAGED, owner=owner
+    )
+    print(f"  {note}")
+    if trouble:
+        return trouble
 
-        conn = psycopg.connect(str(_resolve_target().dsn), autocommit=True)
-    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
-        print(f"  (ordering check SKIPPED — cannot open the store: {exc!r})")
-        return []
-    try:
-        exists = conn.execute(
-            "SELECT to_regclass('sac_channel_events') IS NOT NULL"
-        ).fetchone()[0]
-        if not exists:
-            return []
-        return _refusals(conn, grouped)
-    finally:
-        conn.close()
+    for phase in ("before the DDL", "after the DDL"):
+        repaired, trouble = owners.ensure_owner(conn, managed=MANAGED, owner=owner)
+        for line in repaired:
+            print(f"  REOWNED {line} ({phase})")
+        if trouble:
+            return trouble
+        if phase == "before the DDL":
+            init_channel_schema(conn)
+            prov.ensure_ledger(conn)
 
-
-def _refusals(conn: Any, grouped: dict[str, list[dict]]) -> list[str]:
-    """Targets this migration MUST NOT touch, with the remedy named.
-
-    THE ORDERING THIS ENFORCES: run the one-shot BEFORE the new code starts
-    serving, per target. ``init_channel_schema`` creates the tables lazily on
-    first connect, so the ordinary deploy sequence — restart ``sac listen``
-    with the new code, then run this — has the daemon minting ids from 1 for
-    any target that receives a message in the gap. Those rows are genuinely
-    new, but to an id-shifting importer they are indistinguishable from an
-    earlier host's residency, and shifting the migrated history ABOVE them
-    produces exactly the failure this design exists to prevent: every
-    SQLite-era ``Last-Event-ID`` resolves to a DIFFERENT event, and the
-    post-cutover rows sit BELOW every live cursor, unreachable through
-    ``id > cursor`` forever.
-
-    So the script REFUSES rather than guessing. The discriminator is time: a
-    row already in the store whose ``ts`` postdates everything we are about
-    to import cannot be part of an OLDER residency, and is therefore the
-    daemon having moved on. A genuine relocation imported
-    oldest-residency-first never trips this, because the earlier host's rows
-    are older than the later host's by construction.
-
-    A target we have ALREADY imported is exempt: its own rows are trivially
-    not newer than themselves, and a re-run must stay a no-op.
-    """
-    refused: list[str] = []
-    for target in sorted(grouped):
-        entries = grouped[target]
-        _, already = _offset_for(conn, target=target, entries=entries)
-        if already:
-            continue
-        newer = _newer_rows_than_source(conn, target=target, entries=entries)
-        if newer:
-            refused.append(
-                f"{target}: the store already holds {newer} row(s) NEWER than "
-                f"anything in this state.db — the daemon has served this "
-                f"target since the cutover. Importing now would shift this "
-                f"history above them and strand both. STOP `sac listen` on "
-                f"every host serving {target!r}, re-run this, then start it."
-            )
-    return refused
+    trouble, note = owners.consumer_access_problems(conn, managed=MANAGED)
+    print(f"  {note}")
+    return trouble
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -351,6 +298,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
     )
+    parser.add_argument(
+        "--accept-imported-history",
+        action="append",
+        default=[],
+        metavar="TARGET",
+        help=(
+            "assert that the unattributed rows sitting above TARGET are "
+            "another host's imported history whose state.db is gone. NAMED "
+            "PER TARGET and repeatable; there is deliberately no --force, "
+            "because a blanket bypass restores the corruption the guard "
+            "exists to prevent"
+        ),
+    )
+    parser.add_argument(
+        "--table-owner",
+        metavar="ROLE",
+        help=(
+            "the role the created tables must end up owned by. Derived from "
+            "the rest of the schema when omitted; see _pg_table_owner"
+        ),
+    )
     args = parser.parse_args(argv)
 
     db_path = args.db_path or default_db_path()
@@ -358,8 +326,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"mode:   {'COMMIT' if args.commit else 'DRY RUN'}")
 
     rows = SOURCE.read(db_path)
-    grouped = _group_by_target(rows)
+    grouped = guard.group_by_target(rows)
     print(f"{TABLE}: {len(rows)} row(s) across {len(grouped)} target(s)")
+
+    # A waiver aimed at a target this state.db does not contain waives
+    # NOTHING, and would read exactly like one that worked. Refuse the typo.
+    accepted = frozenset(args.accept_imported_history)
+    unknown = sorted(accepted - set(grouped))
+    if unknown:
+        parser.error(
+            f"--accept-imported-history names {unknown} , which "
+            f"{'is' if len(unknown) == 1 else 'are'} not in {db_path}. "
+            f"Targets in this file: {sorted(grouped)}"
+        )
 
     if not args.commit:
         for target in sorted(grouped):
@@ -375,7 +354,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # cannot be opened is reported as unchecked rather than as clean —
         # the same shape ``_migrate_lib._preview_collisions`` uses, and for
         # the same reason.
-        blocked = _dry_run_refusals(grouped)
+        blocked, waived = guard.dry_run_refusals(grouped, accepted=accepted)
+        for line in waived:
+            print(f"  ACCEPTED {line}")
         if blocked:
             for line in blocked:
                 print(f"  REFUSED {line}")
@@ -394,16 +375,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Imported here, not at module scope, so a dry run still answers "what
     # would move?" on a host where the write path's dependencies are absent.
+    import psycopg
+
     from scitex_agent_container._state.state_db_channel_store import (
+        _resolve_target,
         channel_store_locator,
-        new_channel_connection,
     )
 
     print(f"target: {channel_store_locator()}")
-    conn = new_channel_connection()
+    # RAW, not ``new_channel_connection`` — that helper applies the DDL on
+    # open, and the DDL is exactly what must wait until ownership is settled.
+    conn = psycopg.connect(str(_resolve_target().dsn), autocommit=True)
     problems: list[str] = []
     try:
-        blocked = _refusals(conn, grouped)
+        unusable = _settle_ownership(conn, owner_override=args.table_owner)
+        if unusable:
+            for line in unusable:
+                print(f"  REFUSED {line}")
+            print("REFUSED — no rows were written. SQLite left untouched.")
+            return 1
+
+        blocked, waived = guard.refusals(conn, grouped, accepted=accepted)
+        for line in waived:
+            print(f"  ACCEPTED {line}")
         if blocked:
             for line in blocked:
                 print(f"  REFUSED {line}")
@@ -412,14 +406,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         offsets: dict[str, int] = {}
         # ONE transaction for the whole import: a partial import would make
-        # the re-run probe in ``_offset_for`` ambiguous, and an ambiguous
-        # probe is how a re-run duplicates a target's whole history.
+        # the re-run probe in ``offset_for`` ambiguous, and an ambiguous probe
+        # is how a re-run duplicates a target's whole history. The provenance
+        # row lands inside it too, so a window is never claimed for rows that
+        # did not land.
         with conn.transaction():
             for target in sorted(grouped):
                 entries = grouped[target]
-                offset, _already = _offset_for(conn, target=target, entries=entries)
+                offset, _already = guard.offset_for(
+                    conn, target=target, entries=entries
+                )
                 offsets[target] = offset
                 _insert(conn, entries=entries, offset=offset)
+                count, lo, hi, _ = _sqlite_facts(entries)
+                prov.record_import(
+                    conn,
+                    target=target,
+                    lo_id=lo + offset,
+                    hi_id=hi + offset,
+                    source_path=str(db_path),
+                    row_count=count,
+                    offset_applied=offset,
+                )
                 top = _seed_cursor(conn, target=target)
                 note = "" if offset == 0 else f"  OFFSET +{offset} (relocated target)"
                 print(f"  {target}: {len(entries)} row(s), cursor -> {top}{note}")
