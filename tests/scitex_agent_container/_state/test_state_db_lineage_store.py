@@ -139,16 +139,31 @@ def test_the_first_parent_is_what_the_store_still_holds(contradicted_edge) -> No
 
 @pytest.fixture
 def reparent_attempt(pg_schema: str, caplog: pytest.LogCaptureFixture):
-    """A re-parent attempt through the production writer. Yields the log."""
+    """A re-parent attempt through the production writer.
+
+    Yields the WARNING messages it emitted, SNAPSHOT HERE rather than the
+    ``caplog`` object itself, and that detail is the whole fixture.
+    ``caplog.records`` is PHASE-SCOPED: the plugin resets its capture
+    handler between setup / call / teardown, so a record emitted inside a
+    FIXTURE is filed under "setup" and ``caplog.records`` reads EMPTY from
+    the test body.
+
+    Measured, because the first version of this file got it wrong and CI
+    caught it: yielding ``caplog`` made the assertion below fail on an
+    empty list while pytest's own report printed the record under
+    "Captured log setup" three lines further down. The reparent had been
+    refused correctly the whole time — the test was reading the wrong
+    phase, not observing a missing log.
+    """
     record_lineage(child="kid", parent="original")
     with caplog.at_level(logging.WARNING):
         record_lineage(child="kid", parent="usurper")
-    yield caplog
+    yield [record.getMessage() for record in caplog.records]
 
 
 def test_a_reparent_attempt_keeps_the_original_parent(reparent_attempt) -> None:
     # Arrange
-    _caplog = reparent_attempt
+    _messages = reparent_attempt
     # Act
     parent = parent_name_of("kid")
     # Assert
@@ -158,11 +173,11 @@ def test_a_reparent_attempt_keeps_the_original_parent(reparent_attempt) -> None:
 def test_a_reparent_attempt_is_logged_rather_than_raised(reparent_attempt) -> None:
     """Logged, not raised — the restart-in-place contract from WI-2."""
     # Arrange
-    caplog = reparent_attempt
+    messages = reparent_attempt
     # Act
-    messages = [record.getMessage() for record in caplog.records]
+    logged = [message for message in messages if "keeps parent" in message]
     # Assert
-    assert any("keeps parent" in message for message in messages)
+    assert logged != []
 
 
 def test_recording_the_same_parent_twice_is_a_no_op(pg_schema: str) -> None:
