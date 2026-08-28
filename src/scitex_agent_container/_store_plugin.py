@@ -417,11 +417,16 @@ NEVER_SYNCED: dict[str, str] = {
         "NOT arrive, which is invisible by construction"
     ),
     "instance_heartbeats": (
-        "the per-sample heartbeat STREAM, thousands of rows per agent per "
-        "day, whose fleet-relevant content is one number: the latest. That "
-        "number is carried as sac_instances.last_heartbeat_at under "
-        "MergeRule.MAX, so syncing the stream would move the same fact at "
-        "thousands of times the cost"
+        "the per-sample heartbeat STREAM, whose fleet-relevant content is "
+        "one number: the latest. That number is carried as "
+        "sac_instances.last_heartbeat_at under MergeRule.MAX, so syncing "
+        "the stream would move the same fact at many times the cost. The "
+        "original wording said 'thousands of rows per agent per day'; it "
+        "was never thousands and never one — since 2026-08-28 it is not a "
+        "SQLite table either. It left KNOWN_TABLES with its writer and "
+        "reader, both of which had zero callers in src/, and it held 0 "
+        "rows on every host measured. None of that withdraws the refusal: "
+        "if a heartbeat stream is ever written again it must not sync"
     ),
     "attempts": (
         "a legacy actions.db carry-over with ZERO writers anywhere in src/ "
@@ -430,16 +435,24 @@ NEVER_SYNCED: dict[str, str] = {
         "and its DDL was deleted, which does not change the ruling"
     ),
     "definitions": (
-        "same: in KNOWN_TABLES, FK'd from instances.definition_id, and "
-        "never INSERTed by any code path. Sync it only once something "
-        "writes it; a spec is a promise and its truth is the YAML on disk"
+        "same: never INSERTed by any code path. This entry used to open "
+        "'in KNOWN_TABLES, FK'd from instances.definition_id' — since "
+        "2026-08-28 it is neither: the table was deleted on exactly the "
+        "evidence recorded here, and instances.definition_id keeps its "
+        "(all-NULL) column without the REFERENCES clause. The ruling is "
+        "unchanged, which is why the entry stays: sync it only once "
+        "something writes it; a spec is a promise and its truth is the "
+        "YAML on disk"
     ),
     "events": (
         "per-host lifecycle log carrying only kind='start'/'stop', both of "
         "which are already the started_at/ended_at columns of the "
         "sac_instances row it points at. Its autoincrement id would also "
         "collide across hosts, so it costs a key rewrite to move a fact "
-        "that is already replicated"
+        "that is already replicated. Since 2026-08-28 it is not a SQLite "
+        "table either — deleted for having zero readers, on the same "
+        "already-replicated argument this refusal rests on — and the rows "
+        "it left on existing databases must still not sync"
     ),
     "turns": (
         "the agent conversation diary — prompt_text and response_text, i.e. "
@@ -462,13 +475,17 @@ NEVER_SYNCED: dict[str, str] = {
         "the fleet-relevant content is the latest sample, carried as "
         "sac_instances.last_heartbeat_at"
     ),
-    # The three entries above — and ``attempts`` — no longer appear in
-    # KNOWN_TABLES: the diary left SQLite on 2026-08-28 and ``attempts``
-    # left the same day. They STAY here for the reason
+    # MOST OF THIS DICT NO LONGER APPEARS IN KNOWN_TABLES, and that is fine.
+    # The diary trio left SQLite on 2026-08-28; ``attempts``, ``node_tokens``,
+    # ``definitions``, ``instance_heartbeats`` and ``events`` were deleted
+    # over the same few days. Every one of them STAYS here for the reason
     # acl_deny_notify_log stays: the completeness gate only checks that every
     # KNOWN_TABLES name is decided, so a table leaving that tuple must not be
-    # read as the refusal being withdrawn. A store that moved backend still
-    # must not replicate, and deleting the reason would lose why.
+    # read as the refusal being withdrawn. A store that moved backend — or a
+    # table that was deleted outright — still must not replicate, and
+    # deleting the reason would lose why. The tense of each entry is updated
+    # instead, so a reader can tell "refused, and no longer exists" from
+    # "refused, and live".
 }
 
 

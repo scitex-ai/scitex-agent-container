@@ -18,17 +18,19 @@ Wire format::
     "since": "<iso>" | null,
     "host": "<canonical>",   # the host that produced the dump
     "tables": {
-      "definitions": [ {row}, ... ],
-      "instances":   [ {row}, ... ],
+      "instances":      [ {row}, ... ],
+      "channel_events": [ {row}, ... ],
       ...
     }
   }
 
 Filtering: each table picks a sensible "advance" column and emits
 only rows where that column >= since (or all rows when since is None).
-instances and definitions emit when *either* their start/seen
-timestamp OR end timestamp is >= since — an aggregator needs both
-halves of the lifecycle.
+``instances`` emits when *either* its start timestamp OR its end
+timestamp is >= since — an aggregator needs both halves of the
+lifecycle. (``definitions`` shared that two-sided rule until 2026-08-28,
+when it left :data:`KNOWN_TABLES` alongside ``instance_heartbeats`` and
+``events``; see the map below.)
 """
 
 from __future__ import annotations
@@ -56,13 +58,19 @@ def _table_filter_clauses(
     if since is None:
         return {t: ("", ()) for t in known_tables}
     explicit = {
-        "definitions": ("WHERE first_seen_at >= ?", (since,)),
         "instances": (
             "WHERE started_at >= ? OR ended_at >= ?",
             (since, since),
         ),
-        "instance_heartbeats": ("WHERE ts >= ?", (since,)),
-        "events": ("WHERE ts >= ?", (since,)),
+        # ``definitions`` had a ``WHERE first_seen_at >= ?`` entry here, and
+        # ``instance_heartbeats`` and ``events`` a ``WHERE ts >= ?`` each,
+        # until 2026-08-28. All three left KNOWN_TABLES that day, so none of
+        # the three mappings could ever be selected again — and a WHERE
+        # clause naming a table SQLite no longer has reads as "sac still
+        # exports this", which for ``events`` in particular would be the
+        # wrong promise twice over: the rows still sit on old databases, and
+        # this filter is exactly what would have kept shipping them to a
+        # peer as though something on the far side read them.
         # ``attempts`` had a ``WHERE ts >= ?`` entry here until 2026-08-28.
         # It left KNOWN_TABLES that day -- zero writers, DDL deleted -- so
         # this mapping could never be selected again, and a WHERE clause
@@ -73,8 +81,11 @@ def _table_filter_clauses(
         # per-host PostgreSQL and left KNOWN_TABLES together, so — exactly as
         # for acl_deny_notify_log below — these mappings could never be
         # selected again, and a WHERE clause naming a table SQLite no longer
-        # has reads as "sac still exports this". Note ``instance_heartbeats``
-        # above is a DIFFERENT table and has not moved.
+        # has reads as "sac still exports this". This note used to add "note
+        # ``instance_heartbeats`` above is a DIFFERENT table and has not
+        # moved"; it is a different table and it has now gone too, though
+        # not to PostgreSQL — it was deleted for having neither a caller nor
+        # a row. See the note above.
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
         # ``node_tokens`` had a ``WHERE created_at >= ?`` entry here until
         # 2026-08-28. The per-node bearer feature was removed that day --
@@ -128,7 +139,9 @@ def export_state(
 
     ``attempts`` was named here alongside them until 2026-08-28, when it
     left :data:`KNOWN_TABLES`; this dump follows that tuple, so it no
-    longer ships an empty ``attempts`` array.
+    longer ships an empty ``attempts`` array. ``definitions``,
+    ``instance_heartbeats`` and ``events`` left the same tuple the same
+    day and are gone from the dump for the same mechanical reason.
 
     Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).

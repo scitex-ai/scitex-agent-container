@@ -1,12 +1,19 @@
 """SQLite-backed state for scitex-agent-container (F-CS11).
 
 Replaces the per-agent JSON files under
-``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
-holding tables in two groups:
+``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``.
 
-  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
-  * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
-    ``heartbeats`` time series, tied to an ``instances.id``).
+WHAT IT HOLDS TODAY IS THREE TABLES: ``instances`` (the F-CS11 registry)
+plus ``channel_events`` and ``lineage`` (WI-1 durability and the WI-2
+spawn DAG). :data:`KNOWN_TABLES` is the list, and it is the list every
+generic reader walks.
+
+The F-CS11 registry was ``definitions`` / ``instances`` / ``events``, with
+``instance_heartbeats`` (the legacy ``heartbeats`` time series, tied to an
+``instances.id``) added in phase 2. Three of those four left on
+2026-08-28: ``definitions`` and ``instance_heartbeats`` had no writer at
+all, and ``events`` had no reader. :mod:`state_db_schema` carries a
+departure note for each.
 
 The single-file layout makes backup/sync trivial (one ``cp``). It also
 kept the legacy ``actions.db`` table (``attempts``) co-located so queries
@@ -30,10 +37,12 @@ removal named on 2026-08-19. So the names are removed rather than left
 whitelisted, and asking for one now fails loudly instead of answering
 zero. :mod:`state_db_diary` owns the trio end to end.
 
-NOTE: The original F-CS11 ``heartbeats`` table is renamed to
-``instance_heartbeats`` on first open (idempotent migration in
-``init_schema``). That migration STAYS: it is what an old state.db
-still needs, and nothing creates the bare name here any more.
+NOTE: this docstring used to promise that the rename of the original
+F-CS11 ``heartbeats`` table to ``instance_heartbeats`` "STAYS: it is what
+an old state.db still needs". It does not stay. ``instance_heartbeats``
+itself left on 2026-08-28, so the migration's only effect on an old DB
+would have been to re-create, under a name this schema no longer defines,
+a table whose writer and reader are both deleted.
 
 Large helper groups live in sibling modules, all re-exported from THIS
 module so ``from ...state_db import X`` imports keep working:
@@ -42,9 +51,6 @@ module so ``from ...state_db import X`` imports keep working:
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
     latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
-  * :mod:`state_db_heartbeats` — update_heartbeat / latest_instance_heartbeat.
-    ``instance_heartbeats``, which is a different table from the diary's
-    ``heartbeats`` and has NOT moved.
   * :mod:`state_db_migrations` — idempotent schema migrations.
 """
 
@@ -66,9 +72,7 @@ from typing import Iterator
 from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 from .state_db_migrations import (
-    migrate_instance_heartbeats_add_seq,
     migrate_instances_add_family_tree_cols,
-    migrate_legacy_heartbeats,
 )
 from .state_db_schema import (
     _SCHEMA_CHANNEL_AND_ACL,
@@ -91,12 +95,28 @@ DEFAULT_DB_PATH = Path(
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
-    "definitions",
     "instances",
-    "instance_heartbeats",
-    "events",
     "channel_events",
     "lineage",
+    # ``definitions``, ``instance_heartbeats`` and ``events`` left on
+    # 2026-08-28, in one change, taking this tuple from six names to three.
+    # Their DDL is gone from :mod:`.state_db_schema`, where each carries its
+    # own departure note; what the three share is that EVERY reader of them
+    # was generic — :func:`table_counts` behind ``sac db show``,
+    # ``export_state`` / ``import_state``, and the ``click.Choice`` for
+    # ``sac db query`` — i.e. every reader reached them through THIS tuple
+    # and none of them through a name. That is what made the entries
+    # load-bearing and what makes removing them the whole edit.
+    #
+    # They are not the same kind of dead, and the notes in the schema say
+    # which is which: ``definitions`` and ``instance_heartbeats`` had no
+    # writer (0 rows on every host measured), while ``events`` had two
+    # writers and 1181 rows and no READER at all. A name left here would
+    # therefore have failed differently in each case — a plausible zero for
+    # the first two, and for ``events`` a table sac exports and counts and
+    # lets an operator query while nothing in ``src/`` consults it. Both
+    # readings are the success-shaped answer this tuple has been shedding
+    # names to avoid all month.
     # ``node_tokens`` left on 2026-08-28 with the per-node bearer feature
     # it belonged to: ``mint_node_token`` had zero callers outside tests,
     # so the table was empty on every host and no bearer ever resolved to
@@ -225,8 +245,15 @@ def init_schema(db_path: Path | None = None) -> Path:
     """
     path = Path(db_path) if db_path else DEFAULT_DB_PATH
     with _connect(path) as conn:
-        migrate_legacy_heartbeats(conn)
-        migrate_instance_heartbeats_add_seq(conn)
+        # ``migrate_legacy_heartbeats`` and
+        # ``migrate_instance_heartbeats_add_seq`` ran here until 2026-08-28.
+        # ``instance_heartbeats`` left SQLite that day (zero callers on both
+        # its writer and its reader, zero rows on every host), and both
+        # migrations existed only to shepherd an old DB INTO that table —
+        # one renaming the legacy ``heartbeats`` onto the name, the other
+        # rebuilding it for a ``seq`` PK. Kept, they would have gone on
+        # re-creating a table this schema no longer defines, on exactly the
+        # old databases least able to explain where it came from.
         conn.executescript(_SCHEMA_REGISTRY)
         # ``executescript`` above creates ``instances`` fresh on a new
         # DB (with the family-tree columns) but is a no-op on an
@@ -321,10 +348,14 @@ from .state_db_gc import (  # noqa: E402,F401
     _proc_btime,
     gc_dead_instances,
 )
-from .state_db_heartbeats import (  # noqa: E402,F401
-    latest_instance_heartbeat,
-    update_heartbeat,
-)
+# ``latest_instance_heartbeat`` and ``update_heartbeat`` were re-exported
+# here from :mod:`state_db_heartbeats` until 2026-08-28. Neither had a
+# single caller in ``src/`` — the re-export lines themselves were two of
+# the three references the package held — so the module went with its
+# table. See the ``instance_heartbeats`` departure note in
+# :mod:`state_db_schema`, which also names what the deletion takes with
+# it: ``instances.last_heartbeat_at`` and the three token/iter counters
+# lose their only (already-uncalled) writer.
 from .state_db_instances import (  # noqa: E402,F401
     last_known_instance,
     list_active_instances,

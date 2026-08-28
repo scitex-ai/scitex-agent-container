@@ -29,11 +29,13 @@ NEW = "scitex-cards"
 
 # The rows a real agent leaves across the identity AND history tables.
 _SEED = [
-    (
-        "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
-        "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
-        ("d1", OLD, f"/root/agents/{OLD}/spec.yaml", "sha", "user", "t0"),
-    ),
+    # An ``INSERT INTO definitions`` row was here until 2026-08-28, and the
+    # identity + spec-path assertions below were aimed at it. That table was
+    # deleted from state.db for having no writer in any code path, ever, so
+    # the seed would raise. The ``instances`` row below already carries both
+    # halves it stood for — ``name`` is a ``NAME_COLUMNS`` pair and
+    # ``workdir`` is the surviving ``PATH_COLUMNS`` pair — and it is the row
+    # a real agent actually leaves behind.
     (
         "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
         "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -88,9 +90,10 @@ def _one(db: Path, sql: str, *args):
 
 
 def test_count_rows_counts_the_identity_row(seeded: Path):
-    # Arrange — ``comms_nodes.name`` was the key here until 2026-08-28;
-    # ``definitions.name`` is the identity column still in SQLite.
-    key = "definitions.name"
+    # Arrange — ``comms_nodes.name`` was the key here until 2026-08-28, then
+    # ``definitions.name`` for the rest of that day; both tables left SQLite.
+    # ``instances.name`` is the identity column production code writes.
+    key = "instances.name"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -107,9 +110,11 @@ def test_count_rows_counts_the_history_row(seeded: Path):
     assert counts[key] == 1
 
 
-def test_count_rows_counts_the_spec_path_column(seeded: Path):
-    # Arrange
-    key = "definitions.yaml_path"
+def test_count_rows_counts_the_path_column(seeded: Path):
+    # Arrange — ``definitions.yaml_path`` until 2026-08-28; that table left
+    # SQLite, and ``instances.workdir`` is the only ``PATH_COLUMNS`` pair
+    # remaining, so it is what --dry-run can still report a count for.
+    key = "instances.workdir"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -181,13 +186,20 @@ def test_rename_moves_the_history_rows(seeded: Path):
     assert _one(seeded, sql, NEW) == 1
 
 
-def test_rename_rewrites_the_spec_path_component(seeded: Path):
-    # Arrange
-    sql = "SELECT yaml_path FROM definitions WHERE id = 'd1'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == f"/root/agents/{NEW}/spec.yaml"
+# ``test_rename_rewrites_the_spec_path_component`` was here until
+# 2026-08-28. It asserted ``rename_rows`` rewrites the ``<name>`` component
+# of ``definitions.yaml_path``, and that table left SQLite the same day for
+# having no writer in any code path.
+#
+# DELETED RATHER THAN RE-POINTED, and this one is the opposite case from the
+# two departures above: not because the property died, but because
+# re-pointing it would have produced a byte-for-byte duplicate of
+# ``test_rename_rewrites_the_instance_workdir_component`` immediately below.
+# ``instances.workdir`` is the ONLY ``PATH_COLUMNS`` pair left, so the
+# property "a rename rewrites the agent-name component of a stored path" now
+# has exactly one place to be measured, and it is measured there. Two
+# identical tests would not double the coverage; they would only make the
+# next person wonder which one is the real one.
 
 
 def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
@@ -201,7 +213,7 @@ def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
 
 def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM instances WHERE name = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -225,7 +237,7 @@ def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
 def test_undo_restores_the_identity_row(seeded: Path):
     # Arrange
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM instances WHERE name = ?"
     # Act
     undo_rename_rows(undo)
     # Assert
@@ -233,13 +245,15 @@ def test_undo_restores_the_identity_row(seeded: Path):
 
 
 def test_undo_restores_the_rewritten_path(seeded: Path):
-    # Arrange
+    # Arrange — ``definitions.yaml_path`` until 2026-08-28; re-pointed at the
+    # surviving PATH column rather than deleted, because the property (an
+    # undo puts a rewritten path back) is real and nothing else covers it.
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT yaml_path FROM definitions WHERE id = 'd1'"
+    sql = "SELECT workdir FROM instances WHERE id = 'i1'"
     # Act
     undo_rename_rows(undo)
     # Assert
-    assert _one(seeded, sql) == f"/root/agents/{OLD}/spec.yaml"
+    assert _one(seeded, sql) == f"/home/u/proj/{OLD}"
 
 
 def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path):
