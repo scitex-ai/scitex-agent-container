@@ -77,7 +77,7 @@ def unblock_and_clear_pending(
     from .state_db_nodes import grant_send
     from .state_db_pending_approval import clear_pending_prompt
 
-    grant_send(sender=sender, target=target, db_path=db_path, note=note)
+    grant_send(sender=sender, target=target, note=note)
     unblocked = unblock_send(sender=sender, target=target)
     cleared = clear_pending_prompt(sender=sender, target=target)
     return {
