@@ -7,22 +7,31 @@ recording what happened is secondary and must not be able to take it down.
 
 WHO ACTUALLY READS THIS, stated because the constitution requires it
 --------------------------------------------------------------------
-Honestly: **the event log has no production reader today.** Measured
-2026-08-28 — ``_events.read_events`` has zero non-test callers in this
-repository. So the log is a durable record, not a signal, and this enforcer
-does NOT rely on it to reach a human.
+Two sinks, and the honest ranking between them matters.
 
-The signal that does reach one is the EXIT CODE, and it is why
-:meth:`.._ratelimit._pass.PassOutcome.exit_code` is written the way it is. A
-non-zero exit fails the ``systemd --user`` unit, and a failed unit is visible
-in ``systemctl --user list-units --failed``, in the journal, and to the
-ecosystem supervisor that owns the host. That is the reader of record.
+**The reader of record is the EXIT CODE**, because this job runs under the
+ecosystem supervisor's ``PeriodicRunner``, which writes one record per start
+AND per finish — carrying ``exit_code`` and ``ok`` — to
+``~/.scitex/dev/runtime/periodic-executions.jsonl``. That log is the
+supervisor's product rather than a side effect (its own module says so), and
+it is the file an operator greps to answer "did this run, and what happened".
+It is also the only place that records a run which never STARTED, which is
+the failure with no other witness. So the exit code is not shouted into a
+void: it is persisted per run, per host, by the scheduler itself.
 
-It is also why ``WAITING`` exits ZERO. A wall that has not lifted is the
-normal state during a rate limit and can persist for hours; failing the unit
-for it would leave the only real signal permanently on, and a permanently
-failing unit is one nobody looks at — which would put this job back in the
-same class as the log it cannot rely on.
+**The event log written here is the weaker sink, and it must be said
+plainly: it has no production reader today.** Measured 2026-08-28 —
+``_events.read_events`` has zero non-test callers in this repository. The
+per-agent records below are a durable, structured history for whoever
+eventually reads them; they are NOT how a failure reaches a human today. An
+enforcer that relied on them alone would be a check whose failure nothing
+reads.
+
+That ranking is why ``WAITING`` exits ZERO. A wall that has not lifted is the
+normal state during a rate limit and can persist for hours; a non-zero exit
+there would stamp ``ok: false`` on the execution log every five minutes for
+the whole window, and a signal that is always on is one its reader learns to
+skip — which would demote the strong sink to the weak one.
 
 WHICH VERDICTS GET A PER-AGENT RECORD
 -------------------------------------

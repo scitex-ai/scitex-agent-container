@@ -19,60 +19,42 @@ one is also the proof that the division was previously INCOMPLETE — two
 enforcers that hand off to each other look exhaustive right up until an agent
 lands between them.
 
-A KNOWN DEFECT IN HOW THESE ARE SCHEDULED, which is NOT fixed here
-------------------------------------------------------------------
-A systemd timer rendered from ``OnBootSec`` + ``OnUnitActiveSec`` alone —
-which is what :func:`scitex_dev.jobs._systemd.build_timer_unit` emits for
-every one of these — dies PERMANENTLY if the timer unit is started later
-than ``OnBootSec`` after boot. Both monotonic elapse points are then already
-in the past, systemd marks the unit ``elapsed``, and it never re-arms.
-``Persistent=true`` cannot save it: systemd documents that setting as
-applying ONLY to ``OnCalendar=`` timers.
+WHERE THESE ACTUALLY RUN, because the obvious instrument gives a WRONG answer
+----------------------------------------------------------------------------
+``kind="timer"`` no longer means a per-leaf ``systemd --user`` timer, and it
+no longer means a crontab line either. Both lowerings are RETIRED. Every
+periodic JobSpec is executed in-process by the ecosystem supervisor's
+``PeriodicRunner`` (:mod:`scitex_dev._supervisor._periodic`), which owns the
+clock and writes one record per start, finish and skip to
+``~/.scitex/dev/runtime/periodic-executions.jsonl``.
 
-MEASURED on scitex-compute-04, 2026-08-28, on ``fleet-reconcile.timer``::
+THAT LOG IS THE INSTRUMENT. ``systemctl --user list-timers`` is NOT, and
+reading it produces a confidently wrong answer: hosts still carry ORPHAN
+``<job>.timer`` / ``<job>.service`` units from the retired model, and those
+orphans report their own long-dead state. Measured 2026-08-28 on
+scitex-compute-04, ``fleet-reconcile.timer`` read ``ActiveState=active``,
+``UnitFileState=enabled``, ``SubState=elapsed``, ``LastTriggerUSec=Wed
+2026-08-19 17:51:10 UTC`` — nine days silent — WHILE the supervisor was
+running the same job every five minutes and had logged 3,764 executions of
+it. An investigation that stopped at ``list-timers`` would have concluded the
+fleet's liveness enforcement had been dead for over a week. It was not.
 
-    TimersMonotonic={ OnUnitActiveUSec=5min ; next_elapse=0 }
-    TimersMonotonic={ OnBootUSec=5min ; next_elapse=0 }
-    NextElapseUSecMonotonic=infinity
-    LastTriggerUSec=Wed 2026-08-19 17:51:10 UTC
-    ActiveState=active   SubState=elapsed   UnitFileState=enabled
+(The orphans are dead for a real reason, and it is worth knowing so nobody
+"fixes" one by re-arming it: a timer rendered from ``OnBootSec`` +
+``OnUnitActiveSec`` alone never re-arms if the unit is started later than
+``OnBootSec`` after boot, and ``Persistent=true`` does not help because
+systemd applies it only to ``OnCalendar=`` timers. Re-arming an orphan does
+not repair anything — it puts a SECOND scheduler on a job the supervisor
+already runs, with independent debounce state. That is the double-supervisor
+hazard, and it was created and reverted while writing this file. The orphans
+want removing, not reviving: ``dev-timer-monotonic-dead-end-20260828``.)
 
-Boot was 2026-08-27 08:15:24 UTC and the timer unit became active
-2026-08-28 03:17:08 — nineteen hours later. It had not fired in NINE DAYS
-while reporting ``active`` and ``enabled``.
-``restart-login-expired-agents.timer`` was in the same state, last triggered
-2026-08-20 03:36:01 UTC.
-
-The control that isolates the cause is ``accounts-keepalive.timer`` on the
-SAME host with the SAME monotonic-only shape, still firing every minute —
-because it happened to have been active continuously since boot. The
-discriminating variable is WHEN the unit started relative to boot.
-
-WHY THE OBVIOUS FIX IS NOT APPLIED HERE. Adding ``on_calendar`` would give
-these timers a schedule that always has a next elapse, and it was tried. It
-BREAKS sac's strict cron lowering: ``_up_timer_losses`` treats ANY
-``on_calendar`` as a lossy field, unconditionally, on the grounds that a
-crontab line carries no timezone. That reasoning is right for a
-zone-bearing calendar and wrong for a zone-free interval like
-``*-*-* *:0/5:00``, which lowers to ``*/5 * * * *`` exactly — but the guard
-does not distinguish them, and sac's own ``test_no_job_degrades_when_lowered
-_onto_cron`` correctly fails. Cron lowering is the real deployment path for
-a host without ``systemd --user`` (scitex-nas-03 is one), so it is not
-something to weaken from this side.
-
-The fix belongs in ``scitex_dev.jobs._systemd.build_timer_unit``: emit
-``OnActiveSec=`` beside ``OnUnitActiveSec=``. ``OnActiveSec`` is relative to
-the TIMER's own activation, so a unit started at any point after boot always
-has a base for its first fire, and the ``OnUnitActiveSec`` chain sustains
-itself from there. It names no timezone and adds no cron loss. Tracked as
-``dev-timer-monotonic-dead-end-20260828``.
-
-UNTIL THAT LANDS, arming is an operational step with a REQUIRED check: after
-enabling a timer, trigger its service ONCE (``systemctl --user start
-<name>.service``) so ``OnUnitActiveSec`` has a base for this boot, then
-confirm the timer reads ``SubState=waiting`` with a real ``NextElapse``.
-``enabled`` and ``active`` are BOTH true of a timer that will never fire
-again, so neither is the check.
+WHICH CADENCE FIELD IS LIVE. ``PeriodicRunner`` reads
+``on_unit_active_sec`` first and falls back to ``schedule`` (the cron
+expression); it never reads ``on_calendar``. So both fields below are
+load-bearing and ``on_calendar`` would be silently ignored — quite apart
+from breaking sac's strict cron-lowering guard, which is where an attempt to
+add one was caught.
 """
 
 from __future__ import annotations

@@ -24,18 +24,18 @@ versioning follows [SemVer](https://semver.org/).
   Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
 
 ### Fixed
-- **Two liveness enforcers had silently stopped firing, and `enabled` +
-  `active` were both still true.** On scitex-compute-04
-  `fleet-reconcile.timer` last triggered 2026-08-19 17:51 UTC and
-  `restart-login-expired-agents.timer` 2026-08-20 03:36 UTC, both sitting in
-  systemd's `elapsed` sub-state with `NextElapseUSecMonotonic=infinity`. A
-  timer rendered from `OnBootSec` + `OnUnitActiveSec` alone never re-arms if
-  the unit is started later than `OnBootSec` after boot, and `Persistent=true`
-  does not help because systemd applies it only to `OnCalendar=` timers. Both
-  are re-armed on that host and the defect, its control, and the repair (which
-  belongs in `scitex_dev.jobs._systemd.build_timer_unit`, not here — an
-  `on_calendar` breaks sac's lossless cron lowering) are documented in
-  `_jobs/_specs_liveness`.
+- **`sac.fleet-reconcile`'s liveness was being read from the wrong
+  instrument.** Hosts still carry ORPHAN per-leaf `<job>.timer` /
+  `<job>.service` units from the retired lowering model, and on
+  scitex-compute-04 `fleet-reconcile.timer` reported `active` + `enabled`
+  with `SubState=elapsed` and a last trigger of 2026-08-19 — nine days
+  silent — WHILE the ecosystem supervisor's `PeriodicRunner` was running the
+  same job every five minutes and had logged 3,764 executions of it. Reading
+  `systemctl --user list-timers` therefore yields a confidently wrong answer,
+  and re-arming an orphan puts a SECOND scheduler on a job that already has
+  one. `_jobs/_specs_liveness` now says where these jobs actually run
+  (`~/.scitex/dev/runtime/periodic-executions.jsonl`), why the orphans are
+  dead, and that they want removing rather than reviving.
 
 ## [0.27.0] - 2026-08-26
 

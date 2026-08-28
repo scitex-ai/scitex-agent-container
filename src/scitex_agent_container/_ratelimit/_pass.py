@@ -126,6 +126,13 @@ class PassOutcome:
         wall and cannot say when it lifts, or we could not look at all, or we
         cannot read our own memory of what we already did. Each needs a human,
         and none may be logged as a healthy tick.
+
+        The code is not shouted into a void: the ecosystem supervisor's
+        ``PeriodicRunner`` persists it per run as ``exit_code`` / ``ok`` in
+        ``~/.scitex/dev/runtime/periodic-executions.jsonl``, alongside a
+        record for a run it could not START at all. See :mod:`._alarm` for
+        why that log, and not this package's own event log, is the reader of
+        record.
         """
         if self.of(Verdict.UNREADABLE, Verdict.RESET_UNKNOWN, Verdict.BUDGET_UNKNOWN):
             return 2
@@ -264,7 +271,7 @@ def resume_pass(
     # sibling ``fleet-reconcile`` cannot afford the same assumption, which is
     # why it carries a blackout breaker and this does not.
     sessions_readable = True
-    # stx-allow: fallback (reason: a raising pane capture must become the rule's UNREADABLE verdict for every agent, never an empty fleet that reads as "nobody is walled". The refusal is NOT swallowed: each agent gets an UNREADABLE AgentReport in this pass's `reports`, which reaches the `sac agents resume-rate-limited` stdout line from cli_pkg/_agents_resume_rate_limited.py:_print_report (the systemd journal for a timer-driven run), the pass-record `counts` in runtime_root()/sac-events.jsonl via ._alarm.record_pass_completed, and exit code 2 from PassOutcome.exit_code, which fails the systemd unit)
+    # stx-allow: fallback (reason: a raising pane capture must become the rule's UNREADABLE verdict for every agent, never an empty fleet that reads as "nobody is walled". The refusal is NOT swallowed: each agent gets an UNREADABLE AgentReport in this pass's `reports`, which reaches the `sac agents resume-rate-limited` stdout line from cli_pkg/_agents_resume_rate_limited.py:_print_report (the systemd journal for a timer-driven run), the pass-record `counts` in runtime_root()/sac-events.jsonl via ._alarm.record_pass_completed, and exit code 2 from PassOutcome.exit_code, which the ecosystem supervisor's PeriodicRunner persists as `exit_code`/`ok` in ~/.scitex/dev/runtime/periodic-executions.jsonl)
     try:
         captures = (capture_fn or (lambda: _real_captures(interval)))()
     except Exception as exc:
@@ -277,7 +284,7 @@ def resume_pass(
 
     reports: list[AgentReport] = []
     for spec in fleet_spec_paths(specs_dir):
-        # stx-allow: fallback (reason: one malformed or foreign spec.yaml must not abort the fleet sweep, mirroring `sac agents reconcile`. The failure is NOT swallowed: it becomes an UNREADABLE AgentReport in this pass's `reports`, which reaches three named sinks — the `sac agents resume-rate-limited` stdout line rendered by cli_pkg/_agents_resume_rate_limited.py:_print_report (the systemd journal, for the timer-driven run), the pass-record `counts` written to runtime_root()/sac-events.jsonl by ._alarm.record_pass_completed, and exit code 2 via PassOutcome.exit_code, which fails the systemd unit)
+        # stx-allow: fallback (reason: one malformed or foreign spec.yaml must not abort the fleet sweep, mirroring `sac agents reconcile`. The failure is NOT swallowed: it becomes an UNREADABLE AgentReport in this pass's `reports`, which reaches three named sinks — the `sac agents resume-rate-limited` stdout line rendered by cli_pkg/_agents_resume_rate_limited.py:_print_report (the systemd journal, for the timer-driven run), the pass-record `counts` written to runtime_root()/sac-events.jsonl by ._alarm.record_pass_completed, and exit code 2 via PassOutcome.exit_code, which the ecosystem supervisor's PeriodicRunner persists as `exit_code`/`ok` in ~/.scitex/dev/runtime/periodic-executions.jsonl)
         try:
             config = load_config(spec)
         except Exception as exc:
