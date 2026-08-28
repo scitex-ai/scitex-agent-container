@@ -317,8 +317,19 @@ COMMS_GRANTS = Schema.build(
 # the loaded spec. Its content is DERIVED from the spec, so the newest
 # write is genuinely the best answer and LAST_WRITER_WINS is honest here —
 # unlike on a heartbeat, where the newest DELIVERY is not the newest FACT.
-# ``updated_at`` is MAX rather than LWW so the row's own clock cannot be
-# walked backwards by a late-arriving stale replica.
+# ``updated_at`` is LAST_WRITER_WINS too, matching the live store. It was
+# MAX here, to stop a late-arriving stale replica walking the row's clock
+# backwards -- but HLC ordering already delivers that for every other
+# field, and MAX bought it by resolving this one field on a DIFFERENT
+# ordering than the rest of the record. ``_merge.py`` decides
+# LAST_WRITER_WINS on ``incoming_stamp > current_stamp`` (the HLC) and MAX
+# on ``incoming > current`` (the value), and those disagree whenever a
+# node's HLC wall has been pulled forward by a peer's message while its own
+# ``time.time()`` -- which is what ``updated_at`` holds -- has not. MAX then
+# keeps the LOSING write's larger timestamp and the record advertises itself
+# as fresher than the write that supplied its data: a stale ACL reading as
+# current. See ``state_db_acl_policy_store`` for the same argument at the
+# point the value is actually written.
 NODE_COMMS_POLICY = Schema.build(
     "sac_node_comms_policy",
     {
@@ -336,7 +347,7 @@ NODE_COMMS_POLICY = Schema.build(
         # through it.
         "group_name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "group_names": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
-        "updated_at": _data(FieldKind.REAL, MergeRule.MAX, required=True),
+        "updated_at": _data(FieldKind.REAL, MergeRule.LAST_WRITER_WINS, required=True),
     },
 )
 
