@@ -108,6 +108,41 @@ def test_reclaim_after_release_returns_port_distinct_from_other_agent(
     assert re_port != beta_port
 
 
+def test_a_released_port_is_reclaimable_by_a_different_agent(
+    pg_schema: str,
+) -> None:
+    """claim -> release -> claim-by-someone-else MUST succeed.
+
+    "A released port must stay re-claimable" is the migration's own title
+    requirement, and SOMEONE ELSE is the half a same-agent round trip does
+    not cover: the release leaves a tombstone whose ``claimed_by`` still
+    names the first holder, so the takeover has to overwrite it. This is
+    the test that rules out ``MergeRule.IMMUTABLE`` on ``claimed_by`` —
+    under it the takeover put is silently kept-as-first and this goes red
+    (measured; see ``port_allocator_store``'s docstring).
+    """
+    # Arrange — alpha owns the ONLY slot, then releases it as agent_stop does.
+    pa.claim_port("alpha", range_=(26000, 26000))
+    pa.release_port("alpha")
+    # Act — a DIFFERENT agent claims into the same single-wide range.
+    port = pa.claim_port("beta", range_=(26000, 26000))
+    # Assert
+    assert port == 26000
+
+
+def test_a_port_reclaimed_by_a_different_agent_names_the_new_holder(
+    pg_schema: str,
+) -> None:
+    # Arrange — same round trip as above.
+    pa.claim_port("alpha", range_=(26000, 26000))
+    pa.release_port("alpha")
+    pa.claim_port("beta", range_=(26000, 26000))
+    # Act — the ledger as every reader (CLI, listen registry) sees it.
+    holders = {c["port"]: c["name"] for c in pa.list_claims()}
+    # Assert — the tombstone's old name did not survive the takeover.
+    assert holders == {26000: "beta"}
+
+
 def test_claim_port_raises_runtime_error_when_range_exhausted(
     pg_schema: str,
 ) -> None:
@@ -315,6 +350,37 @@ def test_list_claims_returns_rows_whose_names_match_claimed_agents(
     names = {r["name"] for r in pa.list_claims()}
     # Assert
     assert names == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# the per-process Store cache
+# ---------------------------------------------------------------------------
+
+
+def test_port_store_returns_the_same_cached_handle_within_a_process(
+    pg_schema: str,
+) -> None:
+    # Arrange — first call populates the per-process cache (card
+    # sqlite-out-per-call-connect-cost-20260828: Store.__init__ pays a
+    # psycopg connect, so the agent-start path must not construct per call).
+    first = pa.port_store()
+    # Act
+    second = pa.port_store()
+    # Assert — IDENTITY, not equality: the connect was paid once.
+    assert second is first
+
+
+def test_reset_store_cache_hands_out_a_fresh_handle(pg_schema: str) -> None:
+    # Arrange
+    from scitex_agent_container._state.port_allocator_store import (
+        _reset_store_cache,
+    )
+
+    first = pa.port_store()
+    # Act — the plain reset tests use instead of monkeypatching the cache.
+    _reset_store_cache()
+    # Assert
+    assert pa.port_store() is not first
 
 
 # ---------------------------------------------------------------------------

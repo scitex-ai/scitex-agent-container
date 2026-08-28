@@ -124,8 +124,20 @@ def _duplicate_ports(rows: list[dict]) -> list[int]:
 
 
 def _migrate(rows: list[dict], commit: bool) -> tuple[int, int, int]:
-    """Returns ``(written, already_present, undated)``."""
-    from scitex_dev.store import NEW_RECORD, RevisionMismatchError
+    """Returns ``(written, already_present, undated)``.
+
+    The store field is ``claimed_by`` (the claim protocol settled on PR
+    #1243's review), while the SQLite column stays ``name``; the rename
+    happens here so a claim written by this script is indistinguishable
+    from one written by ``claim_port``.
+
+    A record that is PRESENT but carries no ``claimed_by`` is REPAIRED
+    rather than skipped: PR #1243's own end-to-end exercise wrote rows
+    under the pre-review field name (``name``), and the additive column
+    migration leaves ``claimed_by`` NULL on those — a port that reads as
+    held by nobody nameable. Re-putting the SQLite values fills it in.
+    """
+    from scitex_dev.store import ANY_REVISION, NEW_RECORD, RevisionMismatchError
 
     undated = sum(1 for row in rows if _epoch(row["claimed_at"]) is None)
     if not commit:
@@ -136,19 +148,22 @@ def _migrate(rows: list[dict], commit: bool) -> tuple[int, int, int]:
     try:
         for row in rows:
             key = {"port": int(row["port"])}
-            if store.get(key, include_hidden=True) is not None:
-                present += 1
-                continue
             claimed_at = _epoch(row["claimed_at"])
+            values = {
+                "port": int(row["port"]),
+                "claimed_by": str(row["name"]),
+                "claimed_at": 0.0 if claimed_at is None else claimed_at,
+            }
+            current = store.get(key, include_hidden=True)
+            if current is not None:
+                if current.values.get("claimed_by") is None:
+                    store.put(values, expected_revision=ANY_REVISION)
+                    written += 1
+                else:
+                    present += 1
+                continue
             try:
-                store.put(
-                    {
-                        "port": int(row["port"]),
-                        "name": str(row["name"]),
-                        "claimed_at": 0.0 if claimed_at is None else claimed_at,
-                    },
-                    expected_revision=NEW_RECORD,
-                )
+                store.put(values, expected_revision=NEW_RECORD)
                 written += 1
             except RevisionMismatchError:
                 # Another writer got there between the read and the put. Not

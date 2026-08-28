@@ -13,104 +13,86 @@ The operator's 2026-08-19 order was to eradicate SQLite and move to
 PostgreSQL: "fail fast, fail loud, no fallbacks". ``a2a_ports`` moves the way
 ``verdict_delivered``, ``incarnations``, ``pending_prompts``,
 ``inbound_dispatches`` and ``comms_grants`` moved before it — by ADOPTING
-:mod:`scitex_dev.store`, the fleet's own store primitive, rather than by sac
-growing a private psycopg layer.
+:mod:`scitex_dev.store`, the fleet's own store primitive. There is nothing to
+fall back TO: a host whose PostgreSQL is unreachable raises
+``StoreTargetError`` naming the DSN it could not reach, which is the honest
+outcome — a port claim nobody else can read is worse than a launch that
+refuses. ``db_path`` IS GONE from every public function; test isolation comes
+from the shared ``pg_schema`` fixture pointing ``SCITEX_STORE_DSN`` at a
+throwaway schema, which exercises the real resolver.
 
-That primitive already implements the operator's rule, in its own words at
-``resolve_target``: "exactly two steps (``SCITEX_STORE_DSN`` or the per-host
-Postgres) and deliberately NO SQLite fallback: a host whose Postgres is down
-must fail loudly rather than start writing to a private local file that
-shares nothing." So there is nothing here to fall back TO — a host whose
-PostgreSQL is unreachable raises ``StoreTargetError`` naming the DSN it could
-not reach, which is the honest outcome: a port claim nobody else can read is
-worse than a launch that refuses.
-
-``db_path`` IS GONE from every public function. It named a SQLite file; there
-is no file. Test isolation comes from pointing ``SCITEX_STORE_DSN`` at a
-throwaway schema — the shared ``pg_schema`` fixture — which is a better
-isolation than a temp path was, because it exercises the real resolver.
-
-THE IDENTITY IS THE PORT, AND THAT IS THE WHOLE DESIGN
-======================================================
-The obvious port of this ledger keys the store on ``name``, because
-``get_port`` and ``release_port`` both look up by agent. That is wrong in a
-way tests would not catch.
-
-The invariant this ledger exists to hold is ``UNIQUE(port)`` — a DIFFERENT
-column from the lookup key. Keyed on ``name``, two agents claiming port 19000
-are two DIFFERENT records and the store accepts both: mutual exclusion on the
-port silently gone, while every unit test still passes. That is the exact
-collision the SQLite version was rewritten to stop — the v0.21.19 release died
-on ``sqlite3.IntegrityError: UNIQUE constraint failed: a2a_ports.port``,
-reproduced deterministically at 16 threads as 6 raw driver escapes.
-
-So ``port`` is the sole IDENTITY field and the store's own identity
-uniqueness carries the invariant STRUCTURALLY: one record per port, by
-construction, with no secondary constraint to remember.
-
-WHAT THE INVERSION GIVES AWAY, MEASURED RATHER THAN ASSUMED
-===========================================================
-``name`` was the SQLite PRIMARY KEY, so one agent could not hold two ports.
-That constraint was doing real work and it was not free: the loser of a
-same-agent race got ``no free a2a port in range [...]`` rather than a port —
-the v0.21.18 symptom. Keying on ``port`` removes it and nothing replaces it,
-so IN PRINCIPLE two concurrent auto-claims for ONE agent could each win a
-DIFFERENT port and both return happily. That would be worse than the old
-error, because it raises nothing: ``get_port`` would answer with whichever
-record it met first while the other port stayed claimed forever.
-
-IT DID NOT REPRODUCE. Measured 2026-08-28 through the public surface against a
-real PostgreSQL 18 — 15 runs at 2, 4, 8, 16 and 32 threads, all released
-together on a barrier — and every run ended with EXACTLY ONE claim and zero
-errors. The store serialises ``Store.__init__`` for one schema behind its own
-advisory lock (scitex-dev 0.56.6), so the racers queue at construction and
-every thread after the first finds the claim in ``claim_port``'s idempotent
-fast path.
-
-NO SETTLEMENT LOGIC IS SHIPPED FOR IT, deliberately. A fix for a defect that
-cannot be demonstrated arrives with a test that cannot fail, and a green test
-proving nothing is worse than no test. This paragraph exists so a future
-reader who DOES see one agent holding two ports knows the question was asked,
-what was measured, and where to look: the fast path in ``claim_port`` and the
-store's schema lock are what hold it today, and neither is a guarantee.
-
-THE PRICE IS STATED RATHER THAN HIDDEN: "which port does this agent hold?"
-inverts from a keyed lookup into a scan. The store exposes
-``get``/``put``/``rows``, not SQL, so :func:`live_claims` reads the whole
-ledger and the caller filters in Python. The ledger is bounded by the
-configured range — 1,000 records at the default ``(19000, 19999)``, and in
-practice the fleet's largest host holds tens — so this is comfortable, but it
-is O(n) per call and a range widened to six figures would want an indexed
-query instead. Recorded so a future reader finds a decision, not a surprise.
+THE IDENTITY IS THE PORT — AND WHY THAT ALONE PROTECTS NOTHING
+==============================================================
+``port`` is the sole IDENTITY field: the invariant this ledger exists to hold
+is ``UNIQUE(port)``, and keyed on ``name`` two agents claiming one port would
+simply be two records (the v0.21.19 collision, back through a different
+door). But identity does NOT make the claim exclusive by construction, and
+PR #1243's review measured why: ``record_key()`` joins identity values into
+``_record``, the rows-table PRIMARY KEY — and the rows write is a per-field
+UPSERT (``_apply._apply_upsert``), so that PK never raises. Two processes
+racing ``NEW_RECORD`` on one port can both pass ``check_revision`` (a
+Python-side compare under a ``threading.RLock`` no other process sees) and
+the second write MERGES silently. ``RevisionMismatchError`` catches only the
+sequential loser. The store is convergent, not exclusive — so exclusion has
+to come from the CLAIM PROTOCOL in :func:`try_claim`, whose read-back makes
+the concurrent loser learn it lost. See that function for the contract.
 
 A RELEASED PORT IS A TOMBSTONE, AND THAT IS THE TRAP
 ====================================================
 ``Store.hide`` is the only removal this store offers; there is no delete. So
-``release_port`` HIDES the claim, and a hidden record still OCCUPIES the store
-identity. The two doors then disagree, which
+``release_port`` HIDES the claim, and a hidden record still OCCUPIES the
+store identity. The two doors then disagree, which
 ``tests/.../test_port_allocator_pin_reclaim.py`` measured before this
 migration was written:
 
   * ``get(key)`` answers ``None``            -> the record reads as ABSENT
   * ``put(key, NEW_RECORD)`` raises          -> the identity is TAKEN
 
-Handled naively that is fleet-down, not merely a wrong answer. An operator who
-writes ``spec.a2a.port: 19100`` has stated a contract, and every ordinary
-restart runs ``agent_stop`` (``release_port``) then ``agent_start``
-(``claim_port(explicit=19100, explicit_is_pin=True)``). If the second claim
-consults a hidden-INCLUSIVE holder scan and rejects the tombstone with a guard
-shaped "holder is not None and not hidden", the operator is told the port is
-``already claimed by 'alpha'`` — BY ALPHA ITSELF — and a pinned agent never
-comes back.
+Handled naively that is fleet-down, not merely a wrong answer: every ordinary
+restart of a pinned agent runs ``release_port`` then ``claim_port`` on the
+SAME port, and a guard that rejects the tombstone tells the operator the port
+is ``already claimed by 'alpha'`` — by alpha itself. A HIDDEN ROW THEREFORE
+MEANS THE PORT IS FREE, and :func:`try_claim` takes it over with a
+revision-guarded ``unhide`` followed by a fresh ``put`` and the same
+read-back every claim path ends with.
 
-:func:`try_claim` therefore uses the three-valued ``Store.is_hidden``
-distinction the store provides for exactly this: a tombstone is UNHIDDEN and
-overwritten, because that is what releasing a port and claiming it again
-means. ``state_db_grants.grant_send`` does the same thing for the same reason.
+WHY ``claimed_by`` IS NOT ``MergeRule.IMMUTABLE`` (measured, 2026-08-28)
+========================================================================
+The claim protocol settled on PR #1243 (comment 5451759350) specified
+``claimed_by`` as IMMUTABLE so a differing concurrent value is REPORTED as a
+``MergeConflict`` instead of quietly picked. Measured at scitex-dev 0.56.8
+source, IMMUTABLE does more than that: ``_merge.merge_field`` keeps the
+first-stamped value on EVERY later differing write — it never consults the
+stamps, so "concurrent" and "sequential" are not distinguished ("First value
+wins forever", ``_policy.MergeRule``). Under IMMUTABLE a released port could
+never be re-claimed by a DIFFERENT agent: the takeover ``put`` would be
+rejected by the merge (verified against a real store: read-back still names
+the first claimant, with the conflict only reported in
+``PutResult.conflicts`` — nothing raises), so every port ever claimed would
+be burned to its first claimant forever. That violates the one invariant
+this module must not lose — a released port MUST stay re-claimable, by
+anyone. LAST_WRITER_WINS is therefore correct for a LEASE: the newest claim
+is the live one, and the loudness IMMUTABLE was meant to buy comes from the
+mandatory read-back instead, which works under any merge rule.
+
+THE STORE HANDLE IS CACHED PER PROCESS (card
+sqlite-out-per-call-connect-cost-20260828)
+============================================
+``Store.__init__`` pays a psycopg connect (measured 10.7 ms — 159x the old
+SQLite open) plus a schema advisory lock and two catalogue probes on EVERY
+construction, and port allocation sits on the agent-start path. So the
+module holds ONE Store per (resolved target, pid) behind a lock —
+:func:`port_store` — instead of constructing per call. The key includes the
+resolved TARGET so a test repointing ``SCITEX_STORE_DSN`` (the ``pg_schema``
+fixture does, per test) gets a fresh handle without any hook, and the pid so
+a forked child (the concurrency tests use ``multiprocessing``) never reuses
+— or worse, closes — the parent's connection through an inherited fd.
+:func:`_reset_store_cache` is the explicit reset for tests; no monkeypatch.
 """
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -133,6 +115,7 @@ __all__ = [
     "init_port_schema",
     "live_claims",
     "open_port_store",
+    "port_store",
     "port_store_target",
     "try_claim",
 ]
@@ -145,20 +128,22 @@ def _schema() -> Any:
     SQLite version was equally lazy about ``state_db``, for the same reason
     (import cost off the hot path).
 
-    ``port`` is the sole IDENTITY and IMMUTABLE, which the store enforces on
-    identities: changing one does not update the record, it names a different
-    record. That is exactly right here — a claim on a different port IS a
-    different claim.
+    ``port`` is the sole IDENTITY (the store requires IMMUTABLE on
+    identities): a claim on a different port IS a different record.
 
-    ``name`` and ``claimed_at`` are LAST_WRITER_WINS rather than IMMUTABLE. A
-    port is a REUSABLE resource: the whole point of ``release_port`` is that
-    the next claimant writes its own name over the record the previous holder
-    left. IMMUTABLE is right for an append-only fact (a delivered verdict, a
-    granted permission) and wrong for a lease.
+    ``claimed_by`` and ``claimed_at`` are LAST_WRITER_WINS, NOT the
+    IMMUTABLE the settled protocol named — the module docstring carries the
+    measured reason. A port is a REUSABLE resource: the whole point of
+    ``release_port`` is that the next claimant writes its own name over the
+    record the previous holder left, and IMMUTABLE keeps the FIRST value
+    forever (sequential writes included), which would burn every released
+    port to its first claimant. The loud-lost-race property lives in
+    :func:`try_claim`'s mandatory read-back instead.
 
     ``claimed_at`` is epoch REAL, not the ISO text the SQLite column held.
     Every migrated timestamp column across ``_state`` is REAL, and the only
-    consumer is ``sac ports --json``, which passes the value straight through.
+    consumer is ``sac ports --json``, which passes the value straight
+    through.
     """
     from scitex_dev.store import FieldKind, FieldPolicy, FieldRole, MergeRule, Schema
 
@@ -185,8 +170,9 @@ def _schema() -> Any:
         fields={
             "port": ident(FieldKind.INTEGER),
             # Indexed because every lookup in this ledger goes through it —
-            # see the module docstring on why the access pattern inverts.
-            "name": lease(FieldKind.TEXT, indexed=True),
+            # "which port does this agent hold" inverts into a scan when the
+            # identity is the port.
+            "claimed_by": lease(FieldKind.TEXT, indexed=True),
             "claimed_at": lease(FieldKind.REAL),
         },
     )
@@ -200,11 +186,13 @@ def port_store_target() -> Any:
 
 
 def open_port_store() -> "Store":
-    """Open the claim ledger. RAISES if PostgreSQL is unreachable.
+    """Open a FRESH claim-ledger handle. RAISES if PostgreSQL is unreachable.
 
-    The caller owns closing it. Every public function opens and closes one per
-    call, mirroring the old ``with open_db(...)`` shape — this runs on the
-    launch and stop paths and on ``sac agents list``, never in a request loop.
+    The caller owns closing it. This is the constructor for callers that
+    need a handle of their own (the migration script closes one around its
+    batch); the allocator's own functions go through the per-process cache
+    in :func:`port_store` instead, so the agent-start path does not pay the
+    connect per call.
 
     MULTI_WRITER, for the reason ``state_db_grants`` gives about its own
     store: a claim has no single stable owner. It is written by the host that
@@ -225,24 +213,78 @@ def open_port_store() -> "Store":
     )
 
 
+#: ``(StoreTarget, pid, Store)`` — see the module docstring's cache
+#: section. Guarded by ``_STORE_LOCK``; reset with :func:`_reset_store_cache`.
+_STORE_CACHE: "tuple[Any, int, Store] | None" = None
+_STORE_LOCK = threading.Lock()
+
+
+def port_store() -> "Store":
+    """The per-process cached claim ledger. Do NOT close the result.
+
+    Keyed by the RESOLVED target and the pid (module docstring says why:
+    per-call construction costs a 10.7 ms psycopg connect on the agent-start
+    path — card sqlite-out-per-call-connect-cost-20260828 — while the
+    ``pg_schema`` fixture and forked test processes both invalidate a naive
+    singleton). ``Store`` serialises its own operations internally, so one
+    shared handle per process is safe for concurrent threads.
+
+    The key is the ``StoreTarget`` VALUE, not ``str(locator)`` — measured:
+    the locator's string form is a redacted description that drops the
+    DSN's query, so two ``pg_schema`` DSNs differing only in
+    ``?options=-csearch_path`` stringify identically and a string-keyed
+    cache would hand the second test the first test's dropped schema.
+    ``StoreTarget`` is a frozen dataclass whose equality carries the full
+    DSN, so it is the honest key.
+    """
+    global _STORE_CACHE
+    import os
+
+    target = port_store_target()
+    pid = os.getpid()
+    with _STORE_LOCK:
+        if _STORE_CACHE is not None:
+            cached_key, cached_pid, cached = _STORE_CACHE
+            if cached_key == target and cached_pid == pid:
+                return cached
+            # A fork inherited the parent's connection through the same fd:
+            # closing it HERE would send a termination on the parent's
+            # socket. Only the same process that opened a handle may close
+            # it; a stale-target handle in the same process is closed so the
+            # fd does not leak per test.
+            if cached_pid == pid:
+                cached.close()
+        fresh = open_port_store()
+        _STORE_CACHE = (target, pid, fresh)
+        return fresh
+
+
+def _reset_store_cache() -> None:
+    """Drop (and close) the cached handle. For tests — plain call, no patching."""
+    global _STORE_CACHE
+    import os
+
+    with _STORE_LOCK:
+        if _STORE_CACHE is not None and _STORE_CACHE[1] == os.getpid():
+            _STORE_CACHE[2].close()
+        _STORE_CACHE = None
+
+
 def init_port_schema() -> str:
     """Create the claim tables if missing. Idempotent.
 
-    Returns the resolved store LOCATOR as a string — the PostgreSQL equivalent
-    of the ``Path`` the SQLite schema helper worked against, and useful in
-    exactly the same way: it names WHERE the claims actually went, so an
-    operator can check rather than assume.
+    Returns the resolved store LOCATOR as a string — the PostgreSQL
+    equivalent of the ``Path`` the SQLite schema helper worked against, and
+    useful in exactly the same way: it names WHERE the claims actually went,
+    so an operator can check rather than assume.
     """
-    store = open_port_store()
-    try:
-        return str(port_store_target().locator)
-    finally:
-        store.close()
+    port_store()  # Store.__init__ creates the tables when absent.
+    return str(port_store_target().locator)
 
 
 def claim_values(port: int, agent_name: str, claimed_at: float) -> dict[str, Any]:
     """The full record a claim writes. One place, so the shape cannot drift."""
-    return {"port": int(port), "name": agent_name, "claimed_at": claimed_at}
+    return {"port": int(port), "claimed_by": agent_name, "claimed_at": claimed_at}
 
 
 def live_claims(store: "Store") -> dict[int, str]:
@@ -252,7 +294,9 @@ def live_claims(store: "Store") -> dict[int, str]:
     released-claim filter — spelled out because that exclusion is
     load-bearing here rather than incidental.
     """
-    return {int(row.values["port"]): str(row.values["name"]) for row in store.rows()}
+    return {
+        int(row.values["port"]): str(row.values["claimed_by"]) for row in store.rows()
+    }
 
 
 def holder_of(store: "Store", port: int) -> str | None:
@@ -261,7 +305,24 @@ def holder_of(store: "Store", port: int) -> str | None:
     A hidden (released) claim reads as free, which is what "released" means.
     """
     row = store.get({"port": int(port)})
-    return None if row is None else str(row.values["name"])
+    return None if row is None else str(row.values["claimed_by"])
+
+
+def _claim_confirmed(store: "Store", port: int, agent_name: str) -> bool:
+    """MANDATORY read-back: did OUR claim actually land?
+
+    NOT optional, and not belt-and-braces — under merge semantics a ``put``
+    that "succeeded" proves nothing. Rows writes are per-field UPSERTs, so a
+    concurrent same-port claim never trips the PK and never raises: the
+    losing write simply merges (or is overwritten by the later
+    materialisation), with at most a ``MergeConflict`` REPORTED in
+    ``PutResult.conflicts``. The only way the concurrent loser LEARNS it
+    lost is to read the record back from the store both writers converge on
+    and check whose name stands. A claim path that skips this hands two
+    agents the same port and tells neither.
+    """
+    row = store.get({"port": int(port)})
+    return row is not None and str(row.values["claimed_by"]) == agent_name
 
 
 def try_claim(store: "Store", *, port: int, agent_name: str, now: float) -> bool:
@@ -271,32 +332,22 @@ def try_claim(store: "Store", *, port: int, agent_name: str, now: float) -> bool
     ``ON CONFLICT DO NOTHING`` treated it — so a lost race is reported as
     ``False`` and the caller moves to the next candidate.
 
-    ATOMIC CLAIM-OR-LOSE, PRESERVED. The SQLite version's hard-won idiom is
-    ``INSERT ... ON CONFLICT DO NOTHING`` followed by a read-back: ONE
-    statement decides the race. Its predecessor — ``SELECT`` for a clash then
-    a bare ``INSERT`` — was a TOCTOU, and WHICH error a caller got was decided
-    by thread timing, which is why the failure moved between releases and read
-    as a flake. ``put(..., expected_revision=NEW_RECORD)`` is the same
-    contract for a port nobody has ever claimed: the store's guard states it
-    directly ("the record must NOT exist" / "if a create was intended, the id
-    is taken"), so either our record lands or it does not, with no window.
+    THE CLAIM PROTOCOL (PR #1243, comment 5451759350), three steps:
 
-    THE ORDER OF THE TWO READS IS LOAD-BEARING for the TOMBSTONE path. The
-    revision is read FIRST, before the row we decide on. That token is the
-    compare-and-swap, and capturing it before any observation we act on is
-    what makes every interleaving safe:
-
-      * a competitor that takes the port BEFORE our ``revision`` call — our
-        ``get`` sees a live record and we return ``False``;
-      * a competitor that takes it BETWEEN the two reads — same, ``get`` sees
-        it live;
-      * a competitor that takes it AFTER our ``get`` — they moved the record,
-        so our revision token is stale and ``unhide`` refuses.
-
-    Read the row first and that last case inverts: our stale-but-newer token
-    would match, our write would land on top of theirs, and BOTH callers would
-    be told they hold the port. That is precisely the outcome the SQLite
-    version's single-statement insert existed to prevent.
+      1. ``put(..., expected_revision=NEW_RECORD)`` — the SEQUENTIAL loser
+         is caught here as ``RevisionMismatchError`` (the record already
+         exists) and answers ``False`` without a second look.
+      2. A hidden record is a RELEASED port: take it over with ``unhide``
+         guarded by the revision read BEFORE the row it decides on (the
+         order is load-bearing — a competitor that moves the record after
+         our reads leaves us a stale token and ``unhide`` refuses), then a
+         fresh ``put``.
+      3. EVERY winning path ends in :func:`_claim_confirmed` — the
+         mandatory read-back. Step 1 succeeding proves nothing for the
+         CONCURRENT case: two ``NEW_RECORD`` puts racing through the
+         revision check (it is a Python-side compare, per process) both
+         "succeed" and merge silently. The read-back is where the loser
+         finds out, deterministically, from the shared store.
 
     ``Store.revision`` is the accessor, NOT ``Row.seq``: those are different
     columns (``_revision`` and ``_seq``), and only the former is what
@@ -325,7 +376,7 @@ def try_claim(store: "Store", *, port: int, agent_name: str, now: float) -> bool
             store.put(claim_values(port, agent_name, now), expected_revision=NEW_RECORD)
         except RevisionMismatchError:
             return False
-        return True
+        return _claim_confirmed(store, port, agent_name)
 
     if current.hidden is not True:
         return False
@@ -335,4 +386,4 @@ def try_claim(store: "Store", *, port: int, agent_name: str, now: float) -> bool
     except (RecordNotFoundError, RevisionMismatchError):
         return False
     store.put(claim_values(port, agent_name, now), expected_revision=ANY_REVISION)
-    return True
+    return _claim_confirmed(store, port, agent_name)

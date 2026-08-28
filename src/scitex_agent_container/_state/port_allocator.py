@@ -60,6 +60,7 @@ from .port_allocator_store import (
     init_port_schema,
     live_claims,
     open_port_store,
+    port_store,
     port_store_target,
     try_claim,
 )
@@ -79,6 +80,7 @@ __all__ = [
     "init_port_schema",
     "list_claims",
     "open_port_store",
+    "port_store",
     "port_store_target",
     "release_port",
 ]
@@ -124,16 +126,14 @@ def get_port(agent_name: str) -> int | None:
 
     A scan by design — the store identity is the port, so the agent is data.
     See :mod:`.port_allocator_store` for the cost, which is stated there
-    rather than hidden.
+    rather than hidden. The handle is the per-process cached one (card
+    sqlite-out-per-call-connect-cost-20260828): never closed here.
     """
-    store = open_port_store()
-    try:
-        for port, holder in live_claims(store).items():
-            if holder == agent_name:
-                return port
-        return None
-    finally:
-        store.close()
+    store = port_store()
+    for port, holder in live_claims(store).items():
+        if holder == agent_name:
+            return port
+    return None
 
 
 def claim_port(
@@ -183,60 +183,57 @@ def claim_port(
     lo, hi = _resolve_range(range_)
     now = time.time()
 
-    store = open_port_store()
-    try:
-        # ONE read serves the fast path AND the auto scan below. Re-reading
-        # per candidate would turn a crowded range into a thousand round trips
-        # against PostgreSQL, where SQLite paid only a local file write.
-        held = live_claims(store)
+    store = port_store()
+    # ONE read serves the fast path AND the auto scan below. Re-reading
+    # per candidate would turn a crowded range into a thousand round trips
+    # against PostgreSQL, where SQLite paid only a local file write.
+    held = live_claims(store)
 
-        # Idempotent fast path: same agent -> return the existing claim.
-        existing = next((p for p, n in held.items() if n == agent_name), None)
-        if existing is not None:
-            if explicit is None or int(explicit) == existing:
-                return existing
-            # The operator changed the pin between starts. Release the old
-            # claim so the new one can be attempted below.
-            store.hide({"port": existing}, expected_revision=ANY_REVISION, actor=_ACTOR)
-            held.pop(existing, None)
+    # Idempotent fast path: same agent -> return the existing claim.
+    existing = next((p for p, n in held.items() if n == agent_name), None)
+    if existing is not None:
+        if explicit is None or int(explicit) == existing:
+            return existing
+        # The operator changed the pin between starts. Release the old
+        # claim so the new one can be attempted below.
+        store.hide({"port": existing}, expected_revision=ANY_REVISION, actor=_ACTOR)
+        held.pop(existing, None)
 
-        if explicit is not None:
-            want = int(explicit)
-            if try_claim(store, port=want, agent_name=agent_name, now=now):
-                return want
+    if explicit is not None:
+        want = int(explicit)
+        if try_claim(store, port=want, agent_name=agent_name, now=now):
+            return want
 
-            holder = holder_of(store, want)
-            if holder == agent_name:
-                # We raced OURSELVES (two starts of one agent), which honours
-                # claim_port's documented idempotency rather than failing a
-                # legitimate re-entry.
-                return want
+        holder = holder_of(store, want)
+        if holder == agent_name:
+            # We raced OURSELVES (two starts of one agent), which honours
+            # claim_port's documented idempotency rather than failing a
+            # legitimate re-entry.
+            return want
 
-            if explicit_is_pin:
-                # An OPERATOR PIN held by someone else is a real
-                # misconfiguration. Handing back a different port would
-                # silently break the contract the pin exists to state, so
-                # fail loud.
-                owner = holder if holder is not None else "another agent"
-                raise RuntimeError(
-                    f"a2a port {want} already claimed by "
-                    f"{owner!r}; cannot pin for {agent_name!r}"
-                )
-            # Not a pin — just the port we happened to hold before this
-            # restart, taken while we were down. A fresh port is the correct
-            # answer; a dead agent is not. Fall through to the auto scan.
+        if explicit_is_pin:
+            # An OPERATOR PIN held by someone else is a real
+            # misconfiguration. Handing back a different port would
+            # silently break the contract the pin exists to state, so
+            # fail loud.
+            owner = holder if holder is not None else "another agent"
+            raise RuntimeError(
+                f"a2a port {want} already claimed by "
+                f"{owner!r}; cannot pin for {agent_name!r}"
+            )
+        # Not a pin — just the port we happened to hold before this
+        # restart, taken while we were down. A fresh port is the correct
+        # answer; a dead agent is not. Fall through to the auto scan.
 
-        for candidate in range(lo, hi + 1):
-            if candidate in held:
-                continue
-            if try_claim(store, port=candidate, agent_name=agent_name, now=now):
-                return candidate
-        raise RuntimeError(
-            f"no free a2a port in range [{lo}, {hi}] (all claimed); "
-            "extend a2a.port_range in ~/.scitex/agent-container/config.yaml"
-        )
-    finally:
-        store.close()
+    for candidate in range(lo, hi + 1):
+        if candidate in held:
+            continue
+        if try_claim(store, port=candidate, agent_name=agent_name, now=now):
+            return candidate
+    raise RuntimeError(
+        f"no free a2a port in range [{lo}, {hi}] (all claimed); "
+        "extend a2a.port_range in ~/.scitex/agent-container/config.yaml"
+    )
 
 
 def release_port(agent_name: str) -> bool:
@@ -252,15 +249,12 @@ def release_port(agent_name: str) -> bool:
     """
     from scitex_dev.store import ANY_REVISION
 
-    store = open_port_store()
-    try:
-        for port, holder in live_claims(store).items():
-            if holder == agent_name:
-                store.hide({"port": port}, expected_revision=ANY_REVISION, actor=_ACTOR)
-                return True
-        return False
-    finally:
-        store.close()
+    store = port_store()
+    for port, holder in live_claims(store).items():
+        if holder == agent_name:
+            store.hide({"port": port}, expected_revision=ANY_REVISION, actor=_ACTOR)
+            return True
+    return False
 
 
 def list_claims() -> list[dict]:
@@ -269,17 +263,18 @@ def list_claims() -> list[dict]:
     Used by ``sac agents list``, ``sac ports`` and the listen registry.
     Sorted EXPLICITLY: ``rows()`` returns no order at all, so the SQLite
     ``ORDER BY port`` has to be re-stated here rather than inherited.
+
+    The dict key stays ``"name"`` — the shape every CLI/listen consumer
+    renders — even though the store field is ``claimed_by`` (the protocol's
+    vocabulary): the mapping is this module's job, not each caller's.
     """
-    store = open_port_store()
-    try:
-        claims = [
-            {
-                "name": str(row.values["name"]),
-                "port": int(row.values["port"]),
-                "claimed_at": row.values["claimed_at"],
-            }
-            for row in store.rows()
-        ]
-    finally:
-        store.close()
+    store = port_store()
+    claims = [
+        {
+            "name": str(row.values["claimed_by"]),
+            "port": int(row.values["port"]),
+            "claimed_at": row.values["claimed_at"],
+        }
+        for row in store.rows()
+    ]
     return sorted(claims, key=lambda claim: claim["port"])
