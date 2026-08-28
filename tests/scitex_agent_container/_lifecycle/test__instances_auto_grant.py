@@ -72,7 +72,7 @@ class _RuntimeStub:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_grants_self_to_lead(
+def test_record_local_instance_grants_self_to_lead(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -91,7 +91,7 @@ def test_record_local_instance_grants_self_to_lead(
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_grant_to_lead_is_idempotent(
+def test_record_local_instance_grant_to_lead_is_idempotent(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange — two successive starts simulate a crash-recover loop.
@@ -119,7 +119,7 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(
+def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -262,7 +262,7 @@ def _fire_monitor_restart_against_foreign_db(
     return foreign
 
 
-def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
+def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -274,10 +274,10 @@ def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
     # Assert — the unrelated store MUST be untouched. Pre-fix it held
     # ("pinned-1" -> "lead"): exactly the stray target='lead' row that made
     # cli_pkg/test_a2a_group.py's grants tests red in full-suite runs.
-    assert list_comms_grants(db_path=foreign) == []
+    assert list_comms_grants() == []
 
 
-def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
+def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -287,4 +287,4 @@ def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
     # Act — same drive, asserting the other half of the contract.
     _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
     # Assert — pinning must not LOSE the write, only aim it correctly.
-    assert has_grant(sender=name, target="lead", db_path=db_path) is True
+    assert has_grant(sender=name, target="lead") is True

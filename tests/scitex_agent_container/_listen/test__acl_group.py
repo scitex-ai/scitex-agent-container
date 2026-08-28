@@ -161,7 +161,7 @@ def test_send_allowed_cross_group_with_explicit_grant(db_path: Path, pg_schema: 
     # Arrange
     record_comms_policy(name="alice", group_name="developer", db_path=db_path)
     record_comms_policy(name="carol", group_name="analysts", db_path=db_path)
-    grant_send(sender="alice", target="carol", db_path=db_path)
+    grant_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="alice",

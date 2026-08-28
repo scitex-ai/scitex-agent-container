@@ -152,7 +152,7 @@ def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: st
     # Arrange — two unrelated families + grant child-1 → child-2
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
-    grant_send(sender="child-1", target="child-2", db_path=db_path)
+    grant_send(sender="child-1", target="child-2")
     # Act
     decision, _reason = check_send_acl(
         authenticated_node="child-1",
@@ -407,7 +407,7 @@ def test_http_node_message_send_allows_after_explicit_grant(
     # Arrange
     record_lineage(child="child-1", parent="root-1", db_path=db_path)
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
-    grant_send(sender="child-1", target="child-2", db_path=db_path)
+    grant_send(sender="child-1", target="child-2")
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:

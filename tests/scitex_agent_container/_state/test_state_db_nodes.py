@@ -506,94 +506,93 @@ def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
 # ---------------------------------------------------------------------------
 
 
-def test_has_grant_returns_false_when_no_grant(db_path: Path) -> None:
+def test_has_grant_returns_false_when_no_grant(pg_schema: str, db_path: Path) -> None:
     # Arrange
     # (no grant)
     # Act
-    granted = has_grant(sender="alice", target="bob", db_path=db_path)
+    granted = has_grant(sender="alice", target="bob")
     # Assert
     assert granted is False
 
 
-def test_grant_send_makes_has_grant_true(db_path: Path) -> None:
+def test_grant_send_makes_has_grant_true(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(sender="alice", target="bob")
     # Act
-    granted = has_grant(sender="alice", target="bob", db_path=db_path)
+    granted = has_grant(sender="alice", target="bob")
     # Assert
     assert granted is True
 
 
-def test_grant_send_is_directional(db_path: Path) -> None:
+def test_grant_send_is_directional(pg_schema: str, db_path: Path) -> None:
     """A grant alice→bob does NOT imply bob→alice."""
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(sender="alice", target="bob")
     # Act
-    reverse_granted = has_grant(sender="bob", target="alice", db_path=db_path)
+    reverse_granted = has_grant(sender="bob", target="alice")
     # Assert
     assert reverse_granted is False
 
 
-def test_grant_send_records_caller_supplied_audit_note(db_path: Path) -> None:
+def test_grant_send_records_caller_supplied_audit_note(pg_schema: str, db_path: Path) -> None:
     """An operator-supplied ``note`` round-trips into ``comms_grants``
     so the audit trail records *why* the grant was authorised."""
     # Arrange
     grant_send(
         sender="alice",
         target="bob",
-        db_path=db_path,
         note="handoff-2026-05-21",
     )
     # Act
-    rows = list_comms_grants(db_path=db_path)
+    rows = list_comms_grants()
     # Assert
     assert rows and rows[0]["note"] == "handoff-2026-05-21"
 
 
-def test_grant_send_idempotent_no_duplicate_rows(db_path: Path) -> None:
+def test_grant_send_idempotent_no_duplicate_rows(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
-    grant_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(sender="alice", target="bob")
+    grant_send(sender="alice", target="bob")
     # Act
-    rows = list_comms_grants(db_path=db_path)
+    rows = list_comms_grants()
     # Assert
     assert len(rows) == 1
 
 
-def test_revoke_send_removes_existing_grant(db_path: Path) -> None:
+def test_revoke_send_removes_existing_grant(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(sender="alice", target="bob")
     # Act
-    removed = revoke_send(sender="alice", target="bob", db_path=db_path)
+    removed = revoke_send(sender="alice", target="bob")
     # Assert
     assert removed is True
 
 
-def test_revoke_send_makes_has_grant_false(db_path: Path) -> None:
+def test_revoke_send_makes_has_grant_false(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
-    revoke_send(sender="alice", target="bob", db_path=db_path)
+    grant_send(sender="alice", target="bob")
+    revoke_send(sender="alice", target="bob")
     # Act
-    granted = has_grant(sender="alice", target="bob", db_path=db_path)
+    granted = has_grant(sender="alice", target="bob")
     # Assert
     assert granted is False
 
 
-def test_revoke_send_returns_false_when_no_grant_exists(db_path: Path) -> None:
+def test_revoke_send_returns_false_when_no_grant_exists(pg_schema: str, db_path: Path) -> None:
     # Arrange
     # (no grant)
     # Act
-    removed = revoke_send(sender="alice", target="bob", db_path=db_path)
+    removed = revoke_send(sender="alice", target="bob")
     # Assert
     assert removed is False
 
 
-def test_list_comms_grants_returns_each_grant_pair(db_path: Path) -> None:
+def test_list_comms_grants_returns_each_grant_pair(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    grant_send(sender="alice", target="bob", db_path=db_path)
-    grant_send(sender="root-1", target="child-2", db_path=db_path)
+    grant_send(sender="alice", target="bob")
+    grant_send(sender="root-1", target="child-2")
     # Act
-    rows = list_comms_grants(db_path=db_path)
+    rows = list_comms_grants()
     # Assert
     pairs = sorted((r["sender"], r["target"]) for r in rows)
     assert pairs == [("alice", "bob"), ("root-1", "child-2")]
@@ -639,7 +638,7 @@ def _insert_grant_at(
         )
 
 
-def test_list_comms_grants_keeps_insertion_order_when_timestamps_tie(
+def test_list_comms_grants_keeps_insertion_order_when_timestamps_tie(pg_schema: str, 
     db_path: Path,
 ) -> None:
     # Arrange — same created_at, inserted in NON-alphabetical order. The old
@@ -647,12 +646,12 @@ def test_list_comms_grants_keeps_insertion_order_when_timestamps_tie(
     _insert_grant_at(db_path, "zeta", "lead", 100.0)
     _insert_grant_at(db_path, "alpha", "lead", 100.0)
     # Act
-    rows = list_comms_grants(db_path=db_path)
+    rows = list_comms_grants()
     # Assert
     assert [r["sender"] for r in rows] == ["zeta", "alpha"]
 
 
-def test_list_comms_grants_keeps_insertion_order_when_peer_clock_is_behind(
+def test_list_comms_grants_keeps_insertion_order_when_peer_clock_is_behind(pg_schema: str, 
     db_path: Path,
 ) -> None:
     # Arrange — a peer row imported LATER but stamped EARLIER (clock skew).
@@ -660,7 +659,7 @@ def test_list_comms_grants_keeps_insertion_order_when_peer_clock_is_behind(
     _insert_grant_at(db_path, "local-first", "lead", 200.0)
     _insert_grant_at(db_path, "peer-imported-later", "lead", 100.0)
     # Act
-    rows = list_comms_grants(db_path=db_path)
+    rows = list_comms_grants()
     # Assert
     assert [r["sender"] for r in rows] == ["local-first", "peer-imported-later"]
 

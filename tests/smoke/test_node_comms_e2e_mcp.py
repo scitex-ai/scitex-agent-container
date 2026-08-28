@@ -211,11 +211,11 @@ def test_a2a_send_tool_denied_surfaces_403_with_reason(comms_env):
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_tool_cross_group_after_grant_delivers(comms_env):
+def test_a2a_send_tool_cross_group_after_grant_delivers(pg_schema: str, comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
-    grant_send(sender="alpha", target="gamma", db_path=db, note="mcp-smoke grant")
+    grant_send(sender="alpha", target="gamma", note="mcp-smoke grant")
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
     base = f"http://127.0.0.1:{port}"

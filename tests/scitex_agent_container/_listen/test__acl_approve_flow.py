@@ -191,7 +191,7 @@ def test_unblock_writes_comms_grants_row(isolated_state: Path, pg_schema: str) -
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
 def test_unblock_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -> None:
@@ -321,7 +321,7 @@ def test_cli_unblock_writes_comms_grants(isolated_state: Path, pg_schema: str) -
     # Act
     CliRunner().invoke(a2a, ["unblock", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
 def test_cli_block_writes_comms_blocks(isolated_state: Path, pg_schema: str) -> None:
@@ -342,4 +342,4 @@ def test_cli_grant_alias_still_unblocks(isolated_state: Path, pg_schema: str) ->
     # Act
     CliRunner().invoke(a2a, ["grant", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
