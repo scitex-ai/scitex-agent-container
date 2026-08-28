@@ -17,6 +17,8 @@ card responsibility that stays in ``server.py``.
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from typing import Any
@@ -118,14 +120,25 @@ async def node_message_send(request: Request) -> Response:
     local_host = getattr(request.app.state, "local_host", None) or _resolve_local_host(
         None
     )
-    if not is_local_node(name=name, local_host=local_host):
+    # OFF THE EVENT LOOP. Both resolvers are BLOCKING and, since the
+    # comms_nodes directory moved to PostgreSQL on 2026-08-28, both can reach
+    # the network: they fall through from the local SQLite ``instances``
+    # lookup to a shared-store read. Called inline, a primary that swallows
+    # SYN would stall THIS whole daemon — every request it is serving, not
+    # just this one — for as long as the connect takes. The store's DSN now
+    # carries an explicit ``connect_timeout`` (see
+    # ``state_db_comms_nodes_store``), which bounds that to seconds; the
+    # thread hop is what keeps even those seconds off the loop.
+    if not await asyncio.to_thread(
+        is_local_node, name=name, local_host=local_host
+    ):
         # ADDRESSABILITY, not locality. `is_local_node` above answers "which
         # host", for which a live instances row suffices with or without a
         # port; this asks "where do I POST", for which it does not. They used
         # to be one call, so a live row with a NULL port was handed back as
         # the answer and 502'd here — without ever consulting comms_nodes,
         # which may hold a working address for the same name.
-        target_info = resolve_forward_target(name=name)
+        target_info = await asyncio.to_thread(resolve_forward_target, name=name)
         if target_info is None:
             return JSONResponse(
                 {

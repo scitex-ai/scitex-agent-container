@@ -116,9 +116,10 @@ invalidation, and what happens when the connection dies.
 
 from __future__ import annotations
 
+import os
 import socket
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scitex_dev.store import Row, Store, StoreTarget
@@ -126,12 +127,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ACTOR",
     "COMMS_NODES_STORE",
+    "CONNECT_TIMEOUT_ENV",
     "comms_node_as_dict",
     "comms_nodes_schema",
     "hlc_seconds",
     "new_comms_nodes_store",
     "open_comms_nodes_store",
     "reset_comms_nodes_store",
+    "run_with_reconnect",
 ]
 
 #: Logical store name. Renders as four physical tables
@@ -139,6 +142,123 @@ __all__ = [
 COMMS_NODES_STORE = "comms_nodes"
 
 ACTOR = "scitex-agent-container"
+
+#: Operator override for the libpq connect timeout, in seconds.
+CONNECT_TIMEOUT_ENV = "SAC_COMMS_NODES_CONNECT_TIMEOUT_S"
+
+#: Seconds libpq may spend establishing a connection before giving up.
+#:
+#: NOT optional, and not a tuning knob. This store is read on the a2a
+#: ROUTING path -- ``_listen/_node_channel.node_message_send`` is an ``async
+#: def`` that calls ``is_local_node`` synchronously -- so a connect with
+#: libpq's default (wait forever) turns a BLACKHOLED primary into a stalled
+#: event loop: not a slow reply, no reply at all, for every request the
+#: daemon is serving. A dead-but-reachable host RSTs immediately and was
+#: never the danger; a host that swallows SYN is, and that is the ordinary
+#: shape of a machine losing power or a firewall rule landing.
+#:
+#: 5s matches the ceiling the deleted ``registry sync`` used for the same
+#: judgement (``_PEER_SSH_CONNECT_TIMEOUT_S``): long enough that a loaded
+#: healthy primary is not declared down, short enough that a request fails
+#: rather than hangs.
+DEFAULT_CONNECT_TIMEOUT_S = 5
+
+
+def _connect_timeout_s() -> int:
+    """The configured connect timeout. Bad values fall back, loudly-ish."""
+    raw = os.environ.get(CONNECT_TIMEOUT_ENV, "")
+    if not raw.strip():
+        return DEFAULT_CONNECT_TIMEOUT_S
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_CONNECT_TIMEOUT_S
+    # 0 means "wait forever" to libpq, which is the behaviour this constant
+    # exists to prevent; treat it as unset rather than honouring it.
+    return parsed if parsed > 0 else DEFAULT_CONNECT_TIMEOUT_S
+
+
+def _with_connect_timeout(target: Any) -> Any:
+    """Return ``target`` with a bounded ``connect_timeout`` in its DSN.
+
+    ``scitex_dev``'s Postgres dialect calls ``psycopg.connect(target.dsn)``
+    with no timeout argument, so the bound has to travel IN the DSN. libpq
+    reads ``connect_timeout`` from the URI query string, which is the form
+    both resolutions produce (the ``SCITEX_STORE_DSN`` override and the
+    per-host socket DSN).
+
+    An explicit ``connect_timeout`` already in the DSN is left ALONE: the
+    operator who wrote it outranks this default.
+
+    Non-Postgres targets pass through untouched.
+    """
+    from scitex_dev.store import Backend, StoreTarget
+
+    if target.backend is not Backend.POSTGRES:
+        return target
+    dsn = str(target.dsn)
+    if "connect_timeout" in dsn:
+        return target
+    separator = "&" if "?" in dsn else "?"
+    return StoreTarget.postgres(
+        f"{dsn}{separator}connect_timeout={_connect_timeout_s()}",
+        pkg=target.pkg,
+        name=target.name,
+    )
+
+
+def _is_connection_lost(exc: BaseException) -> bool:
+    """Is ``exc`` a DEAD CONNECTION rather than a rejected operation?
+
+    The distinction decides whether retrying can possibly help. A
+    ``RevisionMismatchError`` or a ``CommsNodeConflictError`` is a verdict
+    about the DATA and means the same thing on a fresh connection, so
+    retrying it would only hide it. ``psycopg.OperationalError`` /
+    ``InterfaceError`` mean the socket is gone, and every future call on
+    that handle raises the same thing forever -- psycopg3 never reconnects,
+    and neither does ``Store``.
+    """
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover - the Postgres path needs psycopg
+        return False
+    return isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError))
+
+
+def run_with_reconnect(operation: "Callable[[Store], Any]") -> Any:
+    """Run ``operation`` against the shared handle; reopen ONCE if it died.
+
+    WHY THIS EXISTS, MEASURED
+    =========================
+    The cache is keyed on the resolved target, which self-heals a changed
+    DSN and a failed CONNECT -- neither of those leaves a handle behind. It
+    does NOT heal the case that actually happens: the connection dying
+    UNDER a cached handle. Verified against the live primary by killing the
+    backend with ``pg_terminate_backend``: the cached handle then raised
+    ``OperationalError: the connection is closed`` on every subsequent call,
+    forever, while a fresh connection proved the server healthy. In the
+    long-lived listen daemon that is one PostgreSQL restart permanently
+    breaking a2a routing until every daemon is restarted by hand.
+
+    RETRY ONCE, NOT IN A LOOP. A second failure is a real outage and must
+    reach the caller, who is already best-effort everywhere this matters.
+
+    THE HONEST CAVEAT: a retry re-runs the operation. For the dominant case
+    -- the connection died while IDLE and the first statement after it fails
+    having done nothing -- that is exactly right. If instead the server
+    committed a write and died before acknowledging it, the retry re-applies
+    it: harmless for the ``ANY_REVISION`` upserts and for hide/unhide, which
+    are idempotent, and loud rather than silent for a ``NEW_RECORD`` insert,
+    which comes back as ``RevisionMismatchError`` instead of a wrong answer.
+    Choosing that over a permanently dead handle is the trade this makes.
+    """
+    try:
+        return operation(open_comms_nodes_store())
+    except Exception as exc:
+        if not _is_connection_lost(exc):
+            raise
+        reset_comms_nodes_store()
+        return operation(open_comms_nodes_store())
 
 
 def comms_nodes_schema() -> Any:
@@ -221,7 +341,9 @@ def new_comms_nodes_store() -> "Store":
 
     schema = comms_nodes_schema()
     return Store(
-        host_store(pkg="scitex_agent_container", name=schema.name),
+        _with_connect_timeout(
+            host_store(pkg="scitex_agent_container", name=schema.name)
+        ),
         schema,
         node=socket.gethostname(),
         # SINGLE_WRITER as declared — see the module docstring for what that
@@ -281,7 +403,9 @@ def open_comms_nodes_store() -> "Store":
 
     from scitex_dev.store import host_store
 
-    target = host_store(pkg="scitex_agent_container", name=COMMS_NODES_STORE)
+    target = _with_connect_timeout(
+        host_store(pkg="scitex_agent_container", name=COMMS_NODES_STORE)
+    )
     with _HANDLE_LOCK:
         if _HANDLE is not None and _HANDLE_TARGET == target:
             return _HANDLE

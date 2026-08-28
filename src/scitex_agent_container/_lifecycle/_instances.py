@@ -20,10 +20,13 @@ without rescanning by name+host.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _spawned_by() -> str:
@@ -243,7 +246,10 @@ def record_local_instance(
     # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
-            from .._state.state_db_nodes import register_comms_node
+            from .._state.state_db_nodes import (
+                CommsNodeConflictError,
+                register_comms_node,
+            )
 
             register_comms_node(
                 name=config.name,
@@ -260,10 +266,36 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
-                db_path=db_path,
             )
-        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
-            pass
+        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            logger.warning(
+                "comms_nodes registration REFUSED for %r: %s. The agent IS "
+                "running; peers cannot resolve it by name until the "
+                "collision is resolved (`sac registry register --name %s "
+                "--host %s --a2a-port %d` once the other claimant is gone).",
+                config.name,
+                exc,
+                config.name,
+                host,
+                int(a2a_port),
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            # NOT a bare pass. It was one until 2026-08-28, and it swallowed a
+            # TypeError from a stale ``db_path=`` kwarg on EVERY spec-driven
+            # start — invisibly, because the stop-side unregister still
+            # worked, so a restart moved an agent from visible to permanently
+            # withdrawn in the directory with nothing logged anywhere. A
+            # swallow that cannot be seen is indistinguishable from a call
+            # that never ran.
+            logger.error(
+                "comms_nodes registration FAILED for %r at %s:%d (%r). The "
+                "agent IS running but peers cannot resolve it by name; "
+                "`sac registry register` is the manual repair.",
+                config.name,
+                host,
+                int(a2a_port),
+                exc,
+            )
 
     # OP-PRIO-1 (split from #343) — refresh the ACL grant ``<self> →
     # lead`` on EVERY successful start. Without this, a previous

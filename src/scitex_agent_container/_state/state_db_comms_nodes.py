@@ -34,6 +34,7 @@ from .state_db_comms_nodes_store import (
     new_comms_nodes_store,
     open_comms_nodes_store,
     reset_comms_nodes_store,
+    run_with_reconnect,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -51,6 +52,7 @@ __all__ = [
     "register_comms_node",
     "rename_comms_node",
     "reset_comms_nodes_store",
+    "run_with_reconnect",
     "resolve_comms_node_host",
     "unregister_comms_node",
 ]
@@ -193,12 +195,42 @@ def register_comms_node(
             f"register_comms_node: a2a_port must be a positive int, got {a2a_port!r}"
         )
 
+    def _write(store: "Store") -> None:
+        _register_on(
+            store,
+            name=name,
+            host=host,
+            a2a_port=a2a_port,
+            source_host=source_host,
+            kind=kind,
+            source_path=source_path,
+            replace=replace,
+        )
+
+    # The SHARED handle — never closed here, and reopened once if the
+    # connection died under it. See ``state_db_comms_nodes_store`` for both.
+    run_with_reconnect(_write)
+
+
+def _register_on(
+    store: "Store",
+    *,
+    name: str,
+    host: str,
+    a2a_port: int,
+    source_host: str | None,
+    kind: RegisterCommsNodeKind,
+    source_path: str | None,
+    replace: bool,
+) -> None:
+    """The upsert itself, against an already-open ``store``.
+
+    Split out so :func:`run_with_reconnect` can re-run the WHOLE operation
+    on a fresh handle: the read and the write have to happen on the same
+    connection, so retrying half of it would be worse than not retrying.
+    """
     from scitex_dev.store import ANY_REVISION, NEW_RECORD
 
-    # The SHARED handle — never closed here. See
-    # ``state_db_comms_nodes_store.open_comms_nodes_store`` for the measured
-    # reason this table does not open one connection per call.
-    store = open_comms_nodes_store()
     key = {"name": name}
     # include_hidden: a withdrawn record still occupies the identity, so a
     # plain read would say "absent" and the NEW_RECORD insert below would
@@ -325,13 +357,15 @@ def unregister_comms_node(*, name: str) -> bool:
 
     from scitex_dev.store import ANY_REVISION
 
-    store = open_comms_nodes_store()
-    key = {"name": name}
-    if store.get(key) is None:
-        # Absent, or already hidden — either way nothing was live.
-        return False
-    store.hide(key, expected_revision=ANY_REVISION, actor=ACTOR)
-    return True
+    def _withdraw(store: "Store") -> bool:
+        key = {"name": name}
+        if store.get(key) is None:
+            # Absent, or already hidden — either way nothing was live.
+            return False
+        store.hide(key, expected_revision=ANY_REVISION, actor=ACTOR)
+        return True
+
+    return bool(run_with_reconnect(_withdraw))
 
 
 def rename_comms_node(*, old: str, new: str) -> bool:
@@ -365,21 +399,54 @@ def rename_comms_node(*, old: str, new: str) -> bool:
 
     from scitex_dev.store import ANY_REVISION
 
-    store = open_comms_nodes_store()
-    row = store.get({"name": old})
-    if row is None:
-        return False
-    moved = {
-        "name": new,
-        "host": str(row.values["host"]),
-        "a2a_port": int(row.values["a2a_port"]),
-        "registered_at": float(row.values["registered_at"]),
-    }
-    if store.is_hidden({"name": new}):
-        store.unhide({"name": new}, expected_revision=ANY_REVISION, actor=ACTOR)
-    store.put(moved, expected_revision=ANY_REVISION)
-    store.hide({"name": old}, expected_revision=ANY_REVISION, actor=ACTOR)
-    return True
+    def _move(store: "Store") -> bool:
+        row = store.get({"name": old})
+        if row is None:
+            return False
+
+        # REFUSE a live occupant, loudly. The SQLite path did this for us:
+        # ``name`` was the PRIMARY KEY, so ``rename_rows``' UPDATE hit a
+        # UNIQUE constraint and ``_rename_db`` turned the IntegrityError into
+        # ``DbRenameError("state.db already holds rows for <new>")``. The
+        # store has no such constraint — a put on an occupied identity is an
+        # ordinary upsert — so without this check a rename onto a name
+        # another LIVE agent already answers to would silently repoint that
+        # agent's routing entry at this one. Two agents, one directory entry,
+        # no error: the renamed agent works and the victim becomes
+        # unreachable, which is the failure this table exists to prevent.
+        occupant = store.get({"name": new})
+        if occupant is not None:
+            raise CommsNodeConflictError(
+                f"comms_nodes rename refused: {new!r} is already registered "
+                f"at host={str(occupant.values['host'])!r} "
+                f"port={int(occupant.values['a2a_port'])} "
+                f"(origin={str(occupant.origin)!r}), so renaming {old!r} onto "
+                f"it would silently take over that agent's routing entry and "
+                f"leave it unreachable. Unregister or rename the existing "
+                f"{new!r} first."
+            )
+
+        moved = {
+            "name": new,
+            "host": str(row.values["host"]),
+            "a2a_port": int(row.values["a2a_port"]),
+            "registered_at": float(row.values["registered_at"]),
+        }
+        # A WITHDRAWN record under ``new`` is taken over rather than refused,
+        # and that is a deliberate difference from the SQLite path, which
+        # refused this too (a tombstone still occupied the PK). It has to be:
+        # renaming back — ``old`` -> ``new`` -> ``old`` — leaves ``old``
+        # withdrawn by the first move, so refusing here would make the
+        # documented inverse impossible. A withdrawn entry is a record of a
+        # past placement, not a live claim, exactly as in
+        # :func:`register_comms_node`.
+        if store.is_hidden({"name": new}):
+            store.unhide({"name": new}, expected_revision=ANY_REVISION, actor=ACTOR)
+        store.put(moved, expected_revision=ANY_REVISION)
+        store.hide({"name": old}, expected_revision=ANY_REVISION, actor=ACTOR)
+        return True
+
+    return bool(run_with_reconnect(_move))
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +464,7 @@ def lookup_comms_node(*, name: str) -> dict[str, Any] | None:
     """
     if not name:
         return None
-    row = open_comms_nodes_store().get({"name": name})
+    row = run_with_reconnect(lambda store: store.get({"name": name}))
     return None if row is None else comms_node_as_dict(row)
 
 
@@ -429,5 +496,7 @@ def list_comms_nodes(*, include_ended: bool = False) -> list[dict[str, Any]]:
     grants listing orders by the HLC instead; there a record's position in
     the audit trail IS the information, and here it is not.)
     """
-    rows = open_comms_nodes_store().rows(include_hidden=include_ended)
+    rows = run_with_reconnect(
+        lambda store: store.rows(include_hidden=include_ended)
+    )
     return sorted((comms_node_as_dict(row) for row in rows), key=lambda r: r["name"])

@@ -164,11 +164,16 @@ class MigrationReport:
     written: int = 0
     already_present: int = 0
     hidden: int = 0
+    repaired_hidden: int = 0
     failed: list[tuple[Mapping[str, Any], BaseException]] = field(default_factory=list)
+    #: ``(row, description)`` for every source row the store already holds
+    #: under the same identity but with DIFFERENT values. Never resolved
+    #: silently — see :func:`migrate_rows`.
+    collisions: list[tuple[Mapping[str, Any], str]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.failed
+        return not self.failed and not self.collisions
 
 
 def migrate_rows(
@@ -178,6 +183,7 @@ def migrate_rows(
     to_record: Callable[[Mapping[str, Any]], Mapping[str, Any]],
     key_of: Callable[[Mapping[str, Any]], Mapping[str, Any]],
     should_hide: Callable[[Mapping[str, Any]], bool] | None = None,
+    collides_with: Callable[[Any, Mapping[str, Any]], "str | None"] | None = None,
     actor: str | None = None,
 ) -> MigrationReport:
     """Put every row into the store. Already-present records are LEFT ALONE.
@@ -192,6 +198,24 @@ def migrate_rows(
     "never existed" and "existed and stopped". The record is written first
     and hidden second, so its values and its history survive.
 
+    A RE-RUN REPAIRS A HALF-DONE HIDE, and it has to. The write above is two
+    ops, and only the first is protected by ``NEW_RECORD``: if the ``put``
+    lands and the ``hide`` then fails (connection dropped, server restarted),
+    the record exists and is LIVE. Without the repair below, the re-run this
+    library advertises as safe would see "already present" and leave it that
+    way permanently — a withdrawn node resurrected in the directory, which
+    for a routing table means peers dialling an address nothing answers.
+    "Idempotent" has to mean CONVERGES, not "does nothing the second time".
+
+    ``collides_with`` decides whether an already-present record AGREES with
+    the source row. Returning a description marks a COLLISION, which is
+    never resolved silently and never counted as success. This matters for
+    any table whose per-host copies were allowed to diverge: with several
+    hosts migrating their own file into one shared store, "skip what is
+    already there" quietly resolves every disagreement in favour of
+    whichever host ran first, which is an arbitrary winner chosen by run
+    order and invisible in the output.
+
     One row's failure never aborts the pass. A migration that stops at the
     first bad row strands every row after it, and the operator finds out by
     counting.
@@ -204,13 +228,27 @@ def migrate_rows(
         for row in rows:
             record = to_record(row)
             key = key_of(record)
+            wants_hidden = should_hide is not None and should_hide(row)
             try:
-                if store.get(key, include_hidden=True) is not None:
+                existing = store.get(key, include_hidden=True)
+                if existing is not None:
+                    description = (
+                        collides_with(existing, row)
+                        if collides_with is not None
+                        else None
+                    )
+                    if description is not None:
+                        report.collisions.append((row, description))
+                        continue
                     report.already_present += 1
+                    # Converge a half-done hide from an earlier pass.
+                    if wants_hidden and not existing.hidden:
+                        store.hide(key, expected_revision=ANY_REVISION, actor=actor)
+                        report.repaired_hidden += 1
                     continue
                 store.put(record, expected_revision=NEW_RECORD)
                 report.written += 1
-                if should_hide is not None and should_hide(row):
+                if wants_hidden:
                     store.hide(key, expected_revision=ANY_REVISION, actor=actor)
                     report.hidden += 1
             except RevisionMismatchError:
@@ -249,6 +287,45 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     return parser
 
 
+def _preview_collisions(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    open_store: Callable[[], Any],
+    to_record: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    key_of: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    collides_with: Callable[[Any, Mapping[str, Any]], "str | None"],
+    log: Callable[[str], None],
+) -> int:
+    """Report, without writing, which source rows disagree with the store.
+
+    Returns the number found. A store that cannot be opened is NOT an error
+    here: a dry run's job is to answer "what would move?", and it must keep
+    answering that on a host where scitex-dev is absent or PostgreSQL is
+    down. The inability to check is said out loud rather than reported as
+    "no collisions", which is the reading that would make a green dry run
+    mean nothing.
+    """
+    try:
+        store = open_store()
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        log(f"  (collision check SKIPPED — cannot open the store: {exc!r})")
+        return 0
+    found = 0
+    try:
+        for row in rows:
+            key = key_of(to_record(row))
+            existing = store.get(key, include_hidden=True)
+            if existing is None:
+                continue
+            description = collides_with(existing, row)
+            if description is not None:
+                found += 1
+                log(f"  COLLISION {key}: {description}")
+    finally:
+        store.close()
+    return found
+
+
 def run_migration(
     *,
     argv: Sequence[str] | None,
@@ -261,6 +338,7 @@ def run_migration(
     verify: Callable[[], int],
     describe_row: Callable[[Mapping[str, Any]], str],
     should_hide: Callable[[Mapping[str, Any]], bool] | None = None,
+    collides_with: Callable[[Any, Mapping[str, Any]], "str | None"] | None = None,
     actor: str | None = None,
     log: Callable[[str], None] = print,
 ) -> int:
@@ -287,6 +365,28 @@ def run_migration(
     if not args.commit:
         for row in rows:
             log(f"  {describe_row(row)}")
+        # A dry run that cannot see collisions is not a preview of the
+        # commit, and this is the one thing an operator most needs to know
+        # BEFORE writing: which names the shared store already holds with
+        # different values. Reading the store here is safe — it opens the
+        # target read-only in effect (get, never put) — and it is skipped
+        # entirely when scitex-dev is absent, which is the other thing a dry
+        # run has to survive.
+        if collides_with is not None:
+            found = _preview_collisions(
+                rows,
+                open_store=open_store,
+                to_record=to_record,
+                key_of=key_of,
+                collides_with=collides_with,
+                log=log,
+            )
+            if found:
+                log(
+                    f"\nDRY RUN — {len(rows)} row(s) read, {found} COLLISION(S) "
+                    f"above must be resolved before --commit will succeed."
+                )
+                return 1
         log(f"\nDRY RUN — {len(rows)} row(s) would move. Re-run with --commit.")
         return 0
 
@@ -296,6 +396,7 @@ def run_migration(
         to_record=to_record,
         key_of=key_of,
         should_hide=should_hide,
+        collides_with=collides_with,
         actor=actor,
     )
     log(
@@ -303,8 +404,15 @@ def run_migration(
         f"({report.hidden} of them carried across as WITHDRAWN), "
         f"{report.already_present} already present and left untouched"
     )
+    if report.repaired_hidden:
+        log(
+            f"  {report.repaired_hidden} already-present record(s) were LIVE "
+            f"but should be withdrawn — re-hidden (a half-done pass repaired)"
+        )
     for row, exc in report.failed:
         log(f"  FAILED {describe_row(row)}: {exc!r}")
+    for row, description in report.collisions:
+        log(f"  COLLISION {describe_row(row)}: {description}")
 
     present = verify()
     log(f"  verify: {present} record(s) visible through the production reader")

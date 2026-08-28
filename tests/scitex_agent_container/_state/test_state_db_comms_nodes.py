@@ -64,6 +64,13 @@ from scitex_agent_container._state.state_db_nodes import (
 #: OTHER than this.
 THIS_NODE = socket.gethostname()
 
+#: A source host that CANNOT be this one, derived rather than written down.
+#: A literal here can COINCIDE with the runner's own hostname, and a control
+#: that can equal the thing it controls against is not a control — see the
+#: sibling tombstone file, where the literal "scitex-compute-04" made the
+#: cross-host test pass on one runner and fail on another, same commit.
+FOREIGN_HOST = f"not-{THIS_NODE}"
+
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
@@ -308,7 +315,10 @@ def test_another_host_claiming_the_name_raises(pg_schema: str) -> None:
     # ADR-0014 name-uniqueness collision, and it always raises.
     with pytest.raises(CommsNodeConflictError):
         register_comms_node(
-            name="lead", host="spartan", a2a_port=8642, source_host="spartan"
+            name="lead",
+            host=FOREIGN_HOST,
+            a2a_port=8642,
+            source_host=FOREIGN_HOST,
         )
 
 
@@ -443,6 +453,61 @@ def test_rename_carries_registered_at_forward(pg_schema: str) -> None:
     rename_comms_node(old="old", new="new")
     # Assert
     assert lookup_comms_node(name="new")["registered_at"] == before
+
+
+def test_rename_refuses_to_overwrite_a_live_occupant(pg_schema: str) -> None:
+    # Arrange — two DIFFERENT agents, both live. The SQLite path refused this
+    # via the ``name`` PRIMARY KEY (IntegrityError -> DbRenameError); the
+    # store has no such constraint, so the refusal has to be explicit.
+    register_comms_node(name="old", host="mba", a2a_port=8642)
+    register_comms_node(name="taken", host="other-host", a2a_port=9100)
+    # Act
+    # Assert — silently repointing "taken" at old's address would leave the
+    # real "taken" agent unreachable, with nothing logged anywhere.
+    with pytest.raises(CommsNodeConflictError):
+        rename_comms_node(old="old", new="taken")
+
+
+def test_a_refused_rename_leaves_the_occupant_untouched(pg_schema: str) -> None:
+    # Arrange
+    register_comms_node(name="old", host="mba", a2a_port=8642)
+    register_comms_node(name="taken", host="other-host", a2a_port=9100)
+    raised: BaseException | None = None
+    # Act
+    try:
+        rename_comms_node(old="old", new="taken")
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the assert is that the victim's routing entry survived.)
+        raised = exc
+    info = lookup_comms_node(name="taken")
+    # Assert
+    assert raised is not None and info["a2a_port"] == 9100
+
+
+def test_a_refused_rename_leaves_the_source_live(pg_schema: str) -> None:
+    # Arrange — the refusal must not half-apply: withdrawing ``old`` before
+    # discovering the collision would strand the agent being renamed.
+    register_comms_node(name="old", host="mba", a2a_port=8642)
+    register_comms_node(name="taken", host="other-host", a2a_port=9100)
+    raised: BaseException | None = None
+    # Act
+    try:
+        rename_comms_node(old="old", new="taken")
+    except CommsNodeConflictError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert; the assert is that the source survived.)
+        raised = exc
+    # Assert
+    assert raised is not None and lookup_comms_node(name="old") is not None
+
+
+def test_rename_takes_over_a_withdrawn_target_name(pg_schema: str) -> None:
+    # Arrange — renaming BACK is the documented inverse, and it necessarily
+    # targets a name the forward rename withdrew. Refusing here would make
+    # the inverse impossible; a withdrawn entry is not a live claim.
+    register_comms_node(name="old", host="mba", a2a_port=8642)
+    rename_comms_node(old="old", new="new")
+    # Act
+    rename_comms_node(old="new", new="old")
+    # Assert
+    assert lookup_comms_node(name="old")["a2a_port"] == 8642
 
 
 def test_rename_reports_false_when_nothing_lives_under_the_old_name(

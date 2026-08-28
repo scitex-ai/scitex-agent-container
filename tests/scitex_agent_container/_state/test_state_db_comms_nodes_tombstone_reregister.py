@@ -31,6 +31,8 @@ Separate file because ``test_state_db_comms_nodes.py`` is already near the
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 from scitex_agent_container._state.state_db_nodes import (
@@ -39,6 +41,23 @@ from scitex_agent_container._state.state_db_nodes import (
     register_comms_node,
     unregister_comms_node,
 )
+
+
+#: A source host that CANNOT be this one, derived rather than written down.
+#:
+#: It was the literal "scitex-compute-04" until 2026-08-28, and that made
+#: this control silently self-defeating on exactly one runner: ``Store.node``
+#: is ``socket.gethostname()``, so on the box actually NAMED
+#: scitex-compute-04 the "other host" in the test IS this host, the origin
+#: check compares equal, and the guard correctly declines to report a
+#: cross-host conflict. The test then failed for a reason that had nothing
+#: to do with the code under test — measured: py3.11 landed on that runner
+#: and failed, py3.13 landed elsewhere and passed, same commit.
+#:
+#: A control whose value can COINCIDE with the thing it is controlling
+#: against is not a control. Deriving it from this host's own name makes the
+#: difference true by construction on every runner, forever.
+FOREIGN_HOST = f"not-{socket.gethostname()}"
 
 
 def _stopped_agent(*, port: int = 19033) -> None:
@@ -101,9 +120,9 @@ def test_a_cross_host_claim_over_a_withdrawn_entry_still_refuses(
     def _claim_from_another_host() -> None:
         register_comms_node(
             name="business",
-            host="scitex-compute-04",
+            host=FOREIGN_HOST,
             a2a_port=19012,
-            source_host="scitex-compute-04",
+            source_host=FOREIGN_HOST,
         )
 
     # Assert — another host claiming the name is an ADR-0014 uniqueness
