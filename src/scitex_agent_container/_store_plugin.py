@@ -404,10 +404,16 @@ NEVER_SYNCED: dict[str, str] = {
         "-- a name leaving KNOWN_TABLES must not read as the refusal withdrawn"
     ),
     "channel_events": (
-        "the autoincrement id IS the SSE cursor a client passes back as "
-        "Last-Event-ID. Interleaving another host's numbering silently "
-        "changes what 'resume from N' means, so a reconnecting client "
-        "skips or replays frames with no error anywhere"
+        "not a Store schema; one shared database, nothing to converge. Since "
+        "2026-08-28 the channel history is two PLAIN PostgreSQL tables -- "
+        "sac_channel_events / sac_channel_cursor -- that every host reads and "
+        "writes directly (docs/adr/0023), so there is no per-host copy for an "
+        "anti-entropy layer to reconcile. The REFUSAL IS KEPT, not withdrawn: "
+        "the id is a per-target cursor a client passes back as Last-Event-ID, "
+        "and interleaving another host's numbering silently changes what "
+        "'resume from N' means -- a reconnecting client skips or replays "
+        "frames with no error anywhere. That ruling is what makes a single "
+        "shared table the right shape rather than a replicated one"
     ),
     "acl_deny_notify_log": (
         "a per-host rate-limit ledger (last_notified_at) — since 2026-08-20 a "

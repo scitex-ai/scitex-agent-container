@@ -18,11 +18,12 @@ The places (:class:`._rename_plan.Layout` owns the paths):
   6. state.db rows     16 name columns + 2 path columns (``_rename_db``)
   7. ACL policy        the PostgreSQL ``node_comms_policy`` record
   8. comms directory   the PostgreSQL ADR-0014 ``comms_nodes`` record
-  9. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
+  9. channel history   the PostgreSQL ``sac_channel_events`` rows
+ 10. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
 
-Steps 7 and 8 are separate steps rather than more ``NAME_COLUMNS`` pairs
-because both tables left SQLite on 2026-08-28 and ``rename_rows`` SKIPS a
-table it cannot find — so a pair left behind would have made each a silent
+Steps 7, 8 and 9 are separate steps rather than more ``NAME_COLUMNS`` pairs
+because all three tables left SQLite on 2026-08-28 and ``rename_rows`` SKIPS
+a table it cannot find — so a pair left behind would have made each a silent
 no-op that still reported success.
 
 ATOMICITY
@@ -46,6 +47,11 @@ from pathlib import Path
 from typing import Callable
 
 from .._state.state_db_acl_policy import rename_comms_policy
+from .._state.state_db_channel import (
+    ChannelRename,
+    rename_channel_events,
+    undo_rename_channel_events,
+)
 from .._state.state_db_comms_nodes import rename_comms_node
 from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
 from ._rename_cards import migrate_cards, undo_migrate_cards
@@ -71,6 +77,7 @@ STEP_REGISTRY = "registry"
 STEP_STATE_DB = "state-db"
 STEP_ACL = "acl-policy"
 STEP_DIRECTORY = "comms-directory"
+STEP_CHANNEL = "channel-history"
 STEP_CARDS = "cards"
 STEP_VERIFY = "verify"
 
@@ -83,6 +90,7 @@ STEPS: tuple[str, ...] = (
     STEP_STATE_DB,
     STEP_ACL,
     STEP_DIRECTORY,
+    STEP_CHANNEL,
     STEP_CARDS,
     STEP_VERIFY,
 )
@@ -185,12 +193,38 @@ def apply_plan(
         if rename_comms_node(old=old, new=new):
             undo.append((STEP_DIRECTORY, _undo_comms_node(old, new)))
 
-        # 9. The board. LAST — see the module docstring.
+        # 9. The channel history — PostgreSQL since 2026-08-28, so its own
+        # step for the same reason steps 7 and 8 are ones.
+        #
+        # It used to ride along in step 6 as the ``channel_events.target``
+        # and ``channel_events.source`` pairs in ``NAME_COLUMNS``. Leaving
+        # them there after the move would have been the HISTORY version of
+        # the ACL and routing bugs above, and the quietest of the three:
+        # ``rename_rows`` skips tables absent from ``sqlite_master``, so the
+        # rename reports success while every message the agent ever sent or
+        # received stays filed under the old name. Nobody greps a history
+        # they have been told moved.
+        #
+        # UNLIKE steps 7 and 8 this is an in-place UPDATE, not a copy +
+        # retire: ``target`` is half of a composite key, not the record
+        # identity, so the rows keep their ids (and a live consumer's
+        # ``Last-Event-ID`` keeps resolving) unless the destination name
+        # already owns rows. The inverse is id-scoped rather than the same
+        # verb reversed — see ``undo_rename_channel_events`` for why winding
+        # the id counter back is the one thing it must not do.
+        _step(STEP_CHANNEL)
+        channel_undo: ChannelRename | None = rename_channel_events(old=old, new=new)
+        if channel_undo is not None:
+            undo.append(
+                (STEP_CHANNEL, _undo_channel_history(channel_undo)),
+            )
+
+        # 10. The board. LAST — see the module docstring.
         _step(STEP_CARDS)
         if plan.cards_enabled:
             _migrate_cards_step(old, new, store, by, undo)
 
-        # 10. Postcondition. "I ran the steps" is not the same claim as "the
+        # 11. Postcondition. "I ran the steps" is not the same claim as "the
         # world is now correct", and this verb exists because the second one
         # is what an operator actually needs. Anything still standing under
         # the old name means a step silently did not take — roll back rather
@@ -324,6 +358,22 @@ def _undo_comms_node(old: str, new: str) -> Callable[[], None]:
     return _undo
 
 
+def _undo_channel_history(undo: ChannelRename) -> Callable[[], None]:
+    """The inverse of step 9 — id-scoped, not the same verb reversed.
+
+    ``rename_channel_events(old=new, new=old)`` would look symmetric and be
+    wrong: it would also drag rows that legitimately held ``new`` BEFORE the
+    rename (the leftovers of a previously deleted agent by that name) over to
+    ``old``. The recorded ids are what make the undo exact, the same property
+    ``_rename_db``'s rowid capture buys for the SQLite half.
+    """
+
+    def _undo() -> None:
+        undo_rename_channel_events(undo)
+
+    return _undo
+
+
 def _rewrite_spec_file(
     spec_path: Path,
     old: str,
@@ -422,6 +472,7 @@ __all__ = [
     "STEPS",
     "STEP_ACL",
     "STEP_CARDS",
+    "STEP_CHANNEL",
     "STEP_OVERLAY_DIR",
     "STEP_REGISTRY",
     "STEP_RUNTIME_DIR",

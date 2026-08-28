@@ -9,10 +9,14 @@ from ._helpers import invoke_cli_json, invoke_cli_text
 
 def db_show() -> dict[str, Any]:
     """Print high-level state-db row counts (definitions, instances,
-    heartbeats, events, channel_events). Mirrors ``sac db show --json``.
+    heartbeats, events, lineage). Mirrors ``sac db show --json``.
 
-    ``attempts`` was listed here until 2026-08-28, when it left
-    :data:`KNOWN_TABLES`; the counts follow that tuple."""
+    ``attempts`` and then ``channel_events`` were listed here until
+    2026-08-28, when each left :data:`KNOWN_TABLES`; the counts follow that
+    tuple. ``channel_events`` did not vanish — it is now
+    ``sac_channel_events`` in the shared PostgreSQL (ADR-0023) and this
+    SQLite-shaped verb cannot see it, which is exactly why the name was
+    removed rather than left to answer zero."""
     return invoke_cli_json(["db", "show", "--json"])
 
 

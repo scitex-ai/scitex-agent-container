@@ -841,24 +841,36 @@ def test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_eve
 # ---------------------------------------------------------------------------
 
 
+_CHANNEL_COLUMNS = ("id", "target", "source", "kind", "content", "meta_json", "ts")
+
+
 def _read_channel_events_for_target(db, target: str) -> list[dict]:
-    """Read every ``channel_events`` row for ``target`` as plain dicts.
+    """Read every ``sac_channel_events`` row for ``target`` as plain dicts.
+
+    ``db`` is the SQLite state.db and is now UNUSED — kept in the signature
+    because the caller passes it alongside its other reads and dropping it
+    would make this the one helper with a different shape. The rows moved to
+    the shared PostgreSQL on 2026-08-28 (ADR-0023).
 
     Extracted from the fixture so the fixture has no resource-acquiring
     keyword (``connect(...)`` / ``open(...)``) — keeps the audit's
     "fixture must yield, not return" pattern matcher quiet while the
-    underlying connection is already closed by the ``with`` block.
+    underlying connection is already closed here.
     """
-    import sqlite3
+    from scitex_agent_container._state.state_db_channel_store import (
+        new_channel_connection,
+    )
 
-    with sqlite3.connect(db) as conn:
-        conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            "SELECT id, target, source, kind, content, meta_json, ts "
-            "FROM channel_events WHERE target = ? ORDER BY id",
+    conn = new_channel_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_CHANNEL_COLUMNS)} FROM sac_channel_events "  # noqa: S608
+            "WHERE target = %s ORDER BY id",
             (target,),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_CHANNEL_COLUMNS, row)) for row in rows]
 
 
 @pytest.fixture

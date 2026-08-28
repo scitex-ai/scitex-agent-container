@@ -549,7 +549,7 @@ def _denied_attempt_rows(target: str, db_path: Path) -> list[dict]:
     runs on a fresh subscriber, so what this returns is exactly what a
     receiver coming online sees after the denial.
     """
-    rows = list_undelivered(target=target, db_path=db_path)
+    rows = list_undelivered(target=target)
     return [r for r in rows if (r["event"] or {}).get("kind") == "denied_attempt"]
 
 

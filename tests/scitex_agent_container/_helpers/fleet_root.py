@@ -300,29 +300,39 @@ DEFINITION_SQL = (
     "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
     "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)"
 )
-CHANNEL_EVENT_SQL = (
-    "INSERT INTO channel_events (target, source, kind, content, meta_json, ts) "
-    "VALUES (?, ?, ?, ?, ?, ?)"
-)
+# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28. ``channel_events`` — the
+# LAST SQLite table sac owned — moved to the shared PostgreSQL as
+# ``sac_channel_events`` (ADR-0023), so the INSERT would raise on every
+# fixture that used it. The history half is now seeded through the real
+# ``persist_event`` writer below, which is a better seed anyway: it exercises
+# the production allocation rather than hand-writing a row.
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Identity row (definitions) + history row (channel_events) for ``name``.
+    """Identity row (SQLite) + history row (PostgreSQL) for ``name``.
 
-    Both halves a rename must carry, and both must be columns that are STILL
-    in ``_rename_db.NAME_COLUMNS`` AND still real SQLite tables — a seed
-    naming a table that has moved would raise, and a seed naming a table
-    ``rename_rows`` skips would silently prove nothing.
+    Both halves a rename must carry — and they no longer live in the same
+    database, which is the point. The identity half is still a
+    ``_rename_db.NAME_COLUMNS`` pair in ``state.db``; the history half is
+    carried by ``state_db_channel.rename_channel_events`` as its own step in
+    ``_rename.apply_plan``. A seed that named only one of them would silently
+    stop proving the other.
 
-    Both halves have moved. The identity half was ``comms_nodes.name`` until
-    2026-08-28, when the ADR-0014 directory left SQLite for the shared
+    Both halves have moved before. The identity half was ``comms_nodes.name``
+    until 2026-08-28, when the ADR-0014 directory left SQLite for the shared
     PostgreSQL store; ``definitions.name`` replaced it. The history half was
     ``turns`` until the diary trio left the same day, then ``attempts`` for
-    the rest of it, until ``attempts`` was deleted for having zero writers;
-    ``channel_events.target`` replaced that.
+    part of it (deleted, zero writers), then ``channel_events.target`` — and
+    that table has now left SQLite too.
+
+    CALLERS MUST TAKE ``pg_schema``: the history half writes to a real
+    PostgreSQL schema, so a caller without that fixture resolves the
+    deliberately-unreachable DSN and fails.
     """
+    from scitex_agent_container._state.state_db_channel import persist_event
+
     db_path = make_state_db(layout)
-    return seed_db_rows(
+    seeded = seed_db_rows(
         db_path,
         [
             (
@@ -330,9 +340,10 @@ def seed_identity_and_history(layout: Layout, name: str) -> Path:
                 (f"def-{name}", name, f"/root/agents/{name}/spec.yaml", "sha",
                  "user", "t0"),
             ),
-            (CHANNEL_EVENT_SQL, (name, None, "message", "hi", "{}", 1.0)),
         ],
     )
+    persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
+    return seeded
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:

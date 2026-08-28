@@ -92,20 +92,34 @@ def _read(path: Path) -> str | None:
 
 
 def _db_names(db_path: Path) -> list[str]:
-    """The identity + history names state.db holds.
+    """The identity + history names the rename must have carried.
 
-    ``SELECT name FROM comms_nodes`` was the identity half until 2026-08-28;
-    the ADR-0014 directory moved to PostgreSQL, so ``definitions.name`` — a
-    ``NAME_COLUMNS`` pair that is still a real SQLite table — takes its
-    place. The directory half of a rename is asserted where it now lives,
-    in ``_state/test_state_db_comms_nodes.py``.
+    THE TWO HALVES NO LONGER SHARE A DATABASE, and reading both here is what
+    keeps that from going unnoticed. ``SELECT name FROM comms_nodes`` was the
+    identity half until 2026-08-28, when the ADR-0014 directory moved to
+    PostgreSQL and ``definitions.name`` — a ``NAME_COLUMNS`` pair still in
+    SQLite — took its place. The history half left the same day:
+    ``channel_events`` became ``sac_channel_events`` in the shared PostgreSQL
+    (ADR-0023) and is carried by ``rename_channel_events`` as its own step,
+    so it is read through that store's own reader rather than by SQL here.
+
+    The directory half of a rename is asserted where it now lives, in
+    ``_state/test_state_db_comms_nodes.py``.
     """
+    from scitex_agent_container._state.state_db_channel_store import (
+        new_channel_connection,
+    )
+
     conn = sqlite3.connect(str(db_path))
     try:
         defs = conn.execute("SELECT name FROM definitions").fetchall()
-        past = conn.execute("SELECT target FROM channel_events").fetchall()
     finally:
         conn.close()
+    pg = new_channel_connection()
+    try:
+        past = pg.execute("SELECT target FROM sac_channel_events").fetchall()
+    finally:
+        pg.close()
     return sorted([r[0] for r in defs] + [t[0] for t in past])
 
 
@@ -143,9 +157,16 @@ def _plan(world: World) -> object:
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> World:
-    """An isolated fleet: agent on disk, rows in state.db. No board — see the
-    module docstring."""
+def world(tmp_path: Path, pg_schema: str) -> World:
+    """An isolated fleet: agent on disk, rows in BOTH stores. No board — see
+    the module docstring.
+
+    ``pg_schema`` is declared HERE, not left to the individual tests, because
+    ``seed_identity_and_history`` writes the history half to PostgreSQL: a
+    fixture that seeds before the schema exists would resolve the
+    deliberately-unreachable DSN, and depending on it is what pins the
+    ordering rather than hoping for it.
+    """
     layout = make_fleet(tmp_path / "fleet", OLD)
     seed_identity_and_history(layout, OLD)
     built = World(layout=layout)

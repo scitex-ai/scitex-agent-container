@@ -12,8 +12,8 @@ The two streams are the SAME primitive and must not drift. Both:
 
   * emit one comment frame on connect so a client can detect "subscribed"
     without waiting for traffic;
-  * replay durable ``channel_events`` rows before accepting live events, so an
-    event published while nobody was subscribed is delivered on connect;
+  * replay durable ``sac_channel_events`` rows before accepting live events,
+    so an event published while nobody was subscribed is delivered on connect;
   * BEAT when idle (see below);
   * unsubscribe in a ``finally`` so the broker's subscriber count is honest.
 
@@ -35,6 +35,7 @@ SERVER side.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -70,8 +71,10 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
             handoff acceptance "an event POSTed with no subscriber is delivered
             on connect").
 
-      * Each replay frame stamps the SQLite row id onto the SSE ``id:`` line so
-        the client can echo it back as ``Last-Event-ID`` after a reconnect.
+      * Each replay frame stamps the row id onto the SSE ``id:`` line so the
+        client can echo it back as ``Last-Event-ID`` after a reconnect. The id
+        is PER-TARGET since the 2026-08-28 move to PostgreSQL (ADR-0023),
+        which is why every ``mark_delivered`` below passes ``target=name``.
 
       * After yielding a replay frame the row is marked ``delivered_at`` so a
         subsequent fresh-subscriber connect does not re-yield it.
@@ -110,13 +113,26 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
             # before any real event arrives.
             yield b": sac-channel ready\n\n"
 
-            # Replay missed events from state.db. Mark each row delivered as
-            # soon as we ship its SSE frame so a second fresh subscriber does
-            # not re-receive it.
+            # Replay missed events from PostgreSQL. Mark each row delivered
+            # as soon as we ship its SSE frame so a second fresh subscriber
+            # does not re-receive it.
+            #
+            # OFF THE EVENT LOOP, all four calls in this generator. These
+            # were safe as sync calls while ``channel_events`` was a local
+            # SQLite file; since 2026-08-28 each is a NETWORK round trip, so
+            # a blackholed primary would stall the WHOLE daemon — every
+            # request it is serving, not just this stream — for as long as
+            # the connect takes. Same fix, same reasoning, as the
+            # ``is_local_node`` hop in ``_listen/_node_channel`` (which
+            # measured this exact hazard first); the store's DSN carries an
+            # explicit ``connect_timeout`` that bounds it to seconds, and
+            # the thread hop keeps even those seconds off the loop.
             if last_event_id is not None:
-                replay = list_since_id(target=name, since_id=last_event_id)
+                replay = await asyncio.to_thread(
+                    list_since_id, target=name, since_id=last_event_id
+                )
             else:
-                replay = list_undelivered(target=name)
+                replay = await asyncio.to_thread(list_undelivered, target=name)
             for entry in replay:
                 if await request.is_disconnected():
                     return
@@ -130,7 +146,9 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
                 yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                     "utf-8"
                 )
-                mark_delivered([row_id])
+                # ``target=`` is REQUIRED: ids are per-target since the move
+                # to PostgreSQL, so id-only would mark another agent's row.
+                await asyncio.to_thread(mark_delivered, [row_id], target=name)
 
             beat_s = keepalive_interval_s()
             while True:
@@ -158,7 +176,9 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
                     yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                         "utf-8"
                     )
-                    mark_delivered([int(row_id)])
+                    await asyncio.to_thread(
+                        mark_delivered, [int(row_id)], target=name
+                    )
                 else:
                     # No row id means the event was injected by a path that did
                     # NOT persist (lifecycle fan-out, ACL-reject notice, …).

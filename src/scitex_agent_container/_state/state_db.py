@@ -71,7 +71,7 @@ from .state_db_migrations import (
     migrate_legacy_heartbeats,
 )
 from .state_db_schema import (
-    _SCHEMA_CHANNEL_AND_ACL,
+    _SCHEMA_ACL,
     _SCHEMA_REGISTRY,
 )
 
@@ -95,8 +95,21 @@ KNOWN_TABLES = (
     "instances",
     "instance_heartbeats",
     "events",
-    "channel_events",
     "lineage",
+    # ``channel_events`` left on 2026-08-28 -- the LAST SQLite table sac
+    # owned. It is now ``sac_channel_events`` / ``sac_channel_cursor`` in the
+    # shared PostgreSQL (:mod:`.state_db_channel_store`). Removed rather than
+    # whitelisted for the usual reason -- a name with no table answers every
+    # generic reader (``table_counts`` behind ``sac db show``, ``export_state``
+    # / ``import_state``, the ``click.Choice`` for ``sac db query``) with a
+    # plausible ZERO -- and for one specific to this table: zero channel
+    # events reads as "this agent has no waiting messages", which is exactly
+    # what an undelivered inbox looks like when it is fine. It is also the
+    # entry that made ``sac db export`` ship every agent's full MESSAGE
+    # CONTENT to any peer that asked, since export takes whole tables and the
+    # MCP ``db_export`` tool cannot name a subset. ``_store_plugin.NEVER_SYNCED``
+    # deliberately KEEPS its refusal of this name -- a table leaving this
+    # tuple must not read as the refusal being withdrawn.
     # ``node_tokens`` left on 2026-08-28 with the per-node bearer feature
     # it belonged to: ``mint_node_token`` had zero callers outside tests,
     # so the table was empty on every host and no bearer ever resolved to
@@ -240,7 +253,14 @@ def init_schema(db_path: Path | None = None) -> Path:
         # table had zero writers, so issuing its DDL only produced an empty
         # table that answered readers with a plausible zero. Existing rows
         # are untouched — we stop issuing the CREATE, we do not DROP.
-        conn.executescript(_SCHEMA_CHANNEL_AND_ACL)
+        # ``_SCHEMA_CHANNEL_AND_ACL`` became ``_SCHEMA_ACL`` on 2026-08-28
+        # when ``channel_events`` -- the LAST SQLite table sac owned -- moved
+        # to the shared PostgreSQL as ``sac_channel_events`` /
+        # ``sac_channel_cursor`` (:mod:`.state_db_channel_store`). Same
+        # ruling as the diary and ``attempts``: we stop issuing the CREATE,
+        # we do not DROP, so an old state.db keeps its rows until
+        # ``scripts/migrate_channel_events_to_postgres.py`` carries them over.
+        conn.executescript(_SCHEMA_ACL)
         # ``turns`` / ``errors`` / ``heartbeats`` were created by the
         # constant above (then called ``_SCHEMA_DIARY``) until 2026-08-28.
         # All three moved to per-host PostgreSQL; each diary store creates

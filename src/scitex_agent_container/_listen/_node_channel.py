@@ -24,18 +24,11 @@ import logging
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import JSONResponse, Response
 
-from .._state.state_db_channel import (
-    list_since_id,
-    list_undelivered,
-    mark_delivered,
-    persist_event,
-)
+from .._state.state_db_channel import persist_event
 from ..a2a._delivery_report import report_zero_delivery
 from ..a2a._inbox_bus import (
-    KEEPALIVE,
-    keepalive_interval_s,
     mint_acl_deny_synthetic_notification,
     mint_deny_notification,
     mint_event,
@@ -46,8 +39,14 @@ from ._acl_approve_prompt import (
     _mint_approval_prompt,
 )
 from ._node_channel_forwarders import _forward_to_remote
+from ._node_channel_stream import node_inbox_stream
 from ._nodes import Broker, NodeRegistry
 
+# ``node_inbox_stream`` now LIVES in ``._node_channel_stream`` and is
+# re-exported here, not defined here: route registration in ``server.py`` and
+# the historical ``from ..._listen._node_channel import node_inbox_stream``
+# test imports must keep resolving. Pure extraction, no behaviour change —
+# see that module's docstring for the split.
 __all__ = ["_forward_to_remote", "node_message_send", "node_inbox_stream"]
 
 log = logging.getLogger(__name__)
@@ -220,7 +219,9 @@ async def node_message_send(request: Request) -> Response:
                 from_agent=sender_id,
                 reason=reason or "ACL deny",
             )
-            row_id = persist_event(target=name, event=notif)
+            row_id = await asyncio.to_thread(
+                persist_event, target=name, event=notif
+            )
             notif["_row_id"] = row_id
             report_zero_delivery(
                 log,
@@ -254,7 +255,9 @@ async def node_message_send(request: Request) -> Response:
                         sender=sender_id,
                         reason=reason or "ACL deny",
                     )
-                    synth_row_id = persist_event(target=name, event=synth)
+                    synth_row_id = await asyncio.to_thread(
+                        persist_event, target=name, event=synth
+                    )
                     synth["_row_id"] = synth_row_id
                     report_zero_delivery(
                         log,
@@ -284,7 +287,9 @@ async def node_message_send(request: Request) -> Response:
                 first_pending = record_pending_prompt(sender=sender_id, target=name)
                 if first_pending:
                     prompt = _mint_approval_prompt(target=name, sender=sender_id)
-                    prompt_row_id = persist_event(target=name, event=prompt)
+                    prompt_row_id = await asyncio.to_thread(
+                        persist_event, target=name, event=prompt
+                    )
                     prompt["_row_id"] = prompt_row_id
                     report_zero_delivery(
                         log,
@@ -356,7 +361,10 @@ async def node_message_send(request: Request) -> Response:
     # envelope on the deny branch above so the receiver still learns
     # of the attempt; only attempt metadata is published — never the
     # message body.)
-    row_id = persist_event(target=name, event=event)
+    # OFF THE EVENT LOOP, same reason as the ``is_local_node`` hop above:
+    # ``persist_event`` is a PostgreSQL round trip since 2026-08-28, and a
+    # blackholed primary would otherwise stall the whole daemon here.
+    row_id = await asyncio.to_thread(persist_event, target=name, event=event)
     event["_row_id"] = row_id
 
     delivered = await broker.publish(name, event)
@@ -366,145 +374,4 @@ async def node_message_send(request: Request) -> Response:
             "to_agent": name,
             "delivered_subscriber_count": delivered,
         }
-    )
-
-
-async def node_inbox_stream(request: Request) -> Response:
-    """``GET /agents/<name>/inbox/stream`` — SSE: one frame per event
-    published to ``<name>`` on this sac listen.
-
-    Consumed by ``sac mcp channel --name <name>`` inside an external
-    node's Claude session (or a sac-managed agent's container). The
-    frame shape is identical to ``a2a/_server.py``'s stream so the
-    same client adapter works for both kinds of node.
-
-    Implicitly registers ``<name>`` as an external node on first
-    connect.
-
-    WI-1 finish-work (Q5 — handoff §4 durability acceptance applied
-    to the ``sac listen`` surface, mirroring ``a2a/_server.py``):
-
-      * On connect, replay missed events from the persistent
-        ``channel_events`` table BEFORE accepting any new live event.
-        Replay source:
-
-          - if the client passed ``Last-Event-ID``, replay every row
-            with ``id > Last-Event-ID``;
-          - otherwise replay every undelivered row (fresh-subscriber
-            case — handoff acceptance "an event POSTed with no
-            subscriber is delivered on connect").
-
-      * Each replay frame stamps the SQLite row id onto the SSE
-        ``id:`` line so the client can echo it back as
-        ``Last-Event-ID`` after a reconnect.
-
-      * After yielding a replay frame the row is marked
-        ``delivered_at`` so a subsequent fresh-subscriber connect
-        does not re-yield it.
-
-      * A malformed ``Last-Event-ID`` header is a loud 400 — a
-        corrupt cursor would silently disable replay if tolerated
-        (handoff §0).
-    """
-    name = request.path_params["name"]
-    base_url = str(request.base_url).rstrip("/")
-    nodes: NodeRegistry = request.app.state.nodes
-    broker: Broker = request.app.state.inbox
-    nodes.register(name, base_url)
-
-    last_event_id_raw = request.headers.get("last-event-id")
-    last_event_id: int | None = None
-    if last_event_id_raw is not None:
-        try:
-            last_event_id = int(last_event_id_raw)
-        except ValueError:
-            return JSONResponse(
-                {
-                    "error": (
-                        "Last-Event-ID header must be an integer; got "
-                        f"{last_event_id_raw!r}"
-                    )
-                },
-                status_code=400,
-            )
-
-    queue = await broker.subscribe(name)
-
-    async def stream():
-        try:
-            # Comment-only frame so HTTP clients see the connection
-            # open immediately (and tests can race-free detect "I'm
-            # subscribed" before publishing).
-            yield b": sac-channel ready\n\n"
-
-            # WI-1 replay: yield every missed durable row first, then
-            # accept live events from the broker.
-            if last_event_id is not None:
-                replay = list_since_id(target=name, since_id=last_event_id)
-            else:
-                replay = list_undelivered(target=name)
-            for entry in replay:
-                if await request.is_disconnected():
-                    return
-                row_id = entry["id"]
-                event = entry["event"]
-                # Strip the internal ``_row_id`` if a previous publish
-                # path stored it inside ``meta_json``; the SSE ``id:``
-                # line is the authoritative cursor.
-                event.pop("_row_id", None)
-                data = json.dumps(event, ensure_ascii=False)
-                yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
-                    "utf-8"
-                )
-                mark_delivered([row_id])
-
-            beat_s = keepalive_interval_s()
-            while True:
-                if await request.is_disconnected():
-                    return
-                # ``get_or_close`` races ``queue.get()`` against the
-                # broker's shutdown Event so a graceful ``sac listen``
-                # SIGTERM cancels this in-flight stream promptly instead
-                # of parking here until restart --force SIGKILLs at 10 s
-                # (card sac-listen-sigterm-sse-shutdown-hang). ``None``
-                # means "broker closing" — return so the StreamingResponse
-                # completes and the daemon exits cleanly.
-                event = await broker.get_or_close(queue, keepalive_after=beat_s)
-                if event is None:
-                    return
-                if event is KEEPALIVE:
-                    # Idle stream — beat. A comment frame is a no-op as CONTENT
-                    # to any SSE client (the adapter skips lines starting with
-                    # ':'), but it is not a no-op as SIGNAL: it gives the client
-                    # bytes, which is the ONLY way a bounded read deadline can
-                    # tell "quiet" from "silently dead" and re-dial instead of
-                    # parking forever on a socket nobody will ever speak on
-                    # again. Without it, a listen that vanishes without closing
-                    # deafens this agent until someone restarts it.
-                    yield b": keepalive\n\n"
-                    continue
-                # The publish path stamps the persisted row id onto
-                # the envelope as ``_row_id`` (see
-                # :func:`node_message_send`). We surface it as the SSE
-                # ``id:`` line and mark the row delivered.
-                row_id = event.pop("_row_id", None)
-                data = json.dumps(event, ensure_ascii=False)
-                if row_id is not None:
-                    yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
-                        "utf-8"
-                    )
-                    mark_delivered([int(row_id)])
-                else:
-                    # No row id means the event was injected by a
-                    # path that did NOT persist (future lifecycle
-                    # fan-out, ACL-reject notice, …). Deliver it but
-                    # skip the marker.
-                    yield f"event: message\ndata: {data}\n\n".encode("utf-8")
-        finally:
-            await broker.unsubscribe(name, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

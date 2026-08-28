@@ -284,6 +284,39 @@ FROZEN_SQLITE_DDL = frozenset(
 # `CREATE TABLE` / `CREATE TABLE IF NOT EXISTS`, any case, any indentation.
 _DEFINES_A_TABLE = re.compile(r"\bCREATE\s+TABLE\b", re.I)
 
+#: Modules whose ``CREATE TABLE`` DDL is aimed at POSTGRESQL, not SQLite.
+#:
+#: This scan reads source as TEXT, so ``CREATE TABLE`` alone cannot say which
+#: engine a statement targets — and since 2026-08-28 that distinction exists:
+#: ``_state/state_db_channel_store.py`` carries two ``CREATE TABLE``
+#: statements that are PostgreSQL (ADR-0023, the last table to leave SQLite).
+#: Freezing it into ``FROZEN_SQLITE_DDL`` would put a lie in a list whose
+#: entire value is being an accurate inventory of SQLite, and the staleness
+#: gate would never take it back off: that gate only drops entries which stop
+#: carrying DDL at all.
+#:
+#: AN EXPLICIT LIST RATHER THAN A DERIVED RULE, and that is a correction. The
+#: first version discriminated by searching each file for ``host_store`` —
+#: the resolver that has no SQLite fallback, so a module using it cannot be
+#: issuing SQLite DDL. It matched ``_state/state_db_schema.py``, which is the
+#: SQLite definer this whole file exists to police: that module's PROSE
+#: mentions ``host_store`` twice while explaining where the moved tables
+#: went. A comment describing PostgreSQL is PostgreSQL to a regex. The
+#: negative control below is what caught it, and it is kept because the next
+#: clever rule will fail the same way.
+#:
+#: THIS LIST MAY GROW — the opposite asymmetry from ``FROZEN_SQLITE_DDL``,
+#: because more PostgreSQL is the direction of travel. What an addition must
+#: carry is a REASON a human checked, that the DDL really is PostgreSQL.
+POSTGRES_DDL = frozenset(
+    {
+        # ADR-0023: sac_channel_events + sac_channel_cursor, plain PostgreSQL
+        # tables in the database ``host_store`` resolves to. Deliberately NOT
+        # scitex_dev.store records — three measured disqualifiers in the ADR.
+        "_state/state_db_channel_store.py",
+    }
+)
+
 
 def _modules_defining_tables() -> set[str]:
     """Every module under src/ carrying CREATE TABLE DDL, as relative paths.
@@ -297,6 +330,15 @@ def _modules_defining_tables() -> set[str]:
         if _DEFINES_A_TABLE.search(path.read_text(encoding="utf-8", errors="replace")):
             found.add(path.relative_to(SRC).as_posix())
     return found
+
+
+def _modules_defining_postgres_tables() -> set[str]:
+    """The declared PostgreSQL definers that STILL carry DDL.
+
+    Intersected with the scan rather than returned raw, so an entry that
+    stops defining a table cannot go on excusing the file it names.
+    """
+    return POSTGRES_DDL & _modules_defining_tables()
 
 
 def _modules_importing_sqlite() -> set[str]:
@@ -390,7 +432,7 @@ def test_no_module_defines_a_new_sqlite_table() -> None:
     this gate, `state_db_<newthing>.py` grows SQLite back on a green build.
     """
     # Arrange
-    frozen = FROZEN_SQLITE_DDL | FROZEN_SQLITE
+    frozen = FROZEN_SQLITE_DDL | FROZEN_SQLITE | _modules_defining_postgres_tables()
     # Act
     new = sorted(_modules_defining_tables() - frozen)
     # Assert
@@ -400,6 +442,49 @@ def test_no_module_defines_a_new_sqlite_table() -> None:
         "a new SQLite table is a decision to raise, not a line to add to "
         "FROZEN_SQLITE_DDL."
     )
+
+
+def test_the_postgres_exemption_finds_something() -> None:
+    """POSITIVE CONTROL — an empty exemption set would make the gate vacuous
+    in the OTHER direction, and a broken regex is exactly how that happens.
+
+    Distinct from the control above: that one proves the DDL scan sees
+    anything at all; this one proves the discriminator that EXCUSES a module
+    still matches something. Both are needed, because a gate can fail by
+    finding nothing and by excusing everything.
+    """
+    # Arrange
+    scanned_root = SRC
+    # Act
+    found = _modules_defining_postgres_tables()
+    # Assert
+    assert found, (
+        f"no declared PostgreSQL definer still carries DDL under {scanned_root} — "
+        "either POSTGRES_DDL went stale or the scan broke"
+    )
+
+
+def test_the_postgres_exemption_does_not_excuse_the_sqlite_schema() -> None:
+    """NEGATIVE CONTROL — the exemption must not swallow the real definer.
+
+    ``_state/state_db_schema.py`` owns the remaining SQLite tables. If it ever
+    landed in the exemption set, the gate above would go green while SQLite
+    DDL grew freely, which is the precise failure this whole file exists to
+    prevent. An exemption that can excuse the thing being policed is not an
+    exemption, it is a hole.
+
+    NOT HYPOTHETICAL: the first version of the exemption derived membership by
+    searching each file for ``host_store``, and it DID match this module —
+    whose prose mentions the resolver twice while explaining where the moved
+    tables went. This assertion is what reported it, which is why the
+    exemption is now an explicit list.
+    """
+    # Arrange
+    the_sqlite_definer = "_state/state_db_schema.py"
+    # Act
+    exempt = _modules_defining_postgres_tables()
+    # Assert
+    assert the_sqlite_definer not in exempt
 
 
 def test_the_ddl_freeze_list_has_no_stale_entries() -> None:

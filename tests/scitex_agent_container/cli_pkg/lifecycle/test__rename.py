@@ -46,8 +46,13 @@ def board(tmp_path: Path):
 
 
 @pytest.fixture
-def fleet(sac_root: Path) -> Layout:
-    """A real agent on disk, with rows in state.db. No board."""
+def fleet(sac_root: Path, pg_schema: str) -> Layout:
+    """A real agent on disk, with rows in BOTH stores. No board.
+
+    ``pg_schema`` joined on 2026-08-28: ``seed_identity_and_history`` writes
+    the history half to the shared PostgreSQL now (ADR-0023), so the schema
+    has to exist before the seed runs.
+    """
     layout = make_fleet(sac_root, OLD)
     seed_identity_and_history(layout, OLD)
     return layout
