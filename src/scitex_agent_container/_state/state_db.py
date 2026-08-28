@@ -98,7 +98,15 @@ KNOWN_TABLES = (
     "channel_events",
     "node_tokens",
     "lineage",
-    "comms_nodes",
+    # ``comms_nodes`` left on 2026-08-28 when the ADR-0014 cross-host
+    # directory moved to the shared PostgreSQL store
+    # (:mod:`.state_db_comms_nodes`). Removed rather than whitelisted for
+    # the usual reason — a name with no table answers every generic reader
+    # with a plausible zero — and for one that is specific to this table:
+    # `sac db export --tables comms_nodes` was the transport `sac registry
+    # sync` ran over ssh, so leaving the name here would have kept an
+    # anti-entropy sweep shipping empty payloads between hosts and
+    # reporting `inserted=0` as success. The store IS the sync now.
     # ``attempts`` left on 2026-08-28 under the same ruling, for the
     # simplest possible version of the reason: it never had a writer. Its
     # DDL is gone from :mod:`.state_db_schema`, so keeping the name here

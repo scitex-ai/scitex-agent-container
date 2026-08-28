@@ -86,22 +86,19 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         await persist_self_peers_on_listen_startup()
         tasks: list = []
 
-        # Best-effort ``comms_nodes`` peer-sync — launched HERE (after the
-        # bind, off the event loop) rather than synchronously before
-        # ``uvicorn.run``. The pre-bind synchronous sync was the live
-        # silent-bind-hang vector (INCIDENT 2026-06-26): one powered-off
-        # static peer made its un-timed ssh call hang, blocking boot before
-        # 7878 ever bound, with no error logged. As a backgrounded task that
-        # dispatches the blocking ssh sweep via ``asyncio.to_thread`` and
-        # bounds it, it can never block the bind. Honour
-        # SAC_LISTEN_STARTUP_SYNC_DISABLED=1 to skip launching (test
-        # harnesses / single-host installs that opt out at the env level).
-        if os.environ.get("SAC_LISTEN_STARTUP_SYNC_DISABLED", "") != "1":
-            from .._listen._startup_peer_sync import sync_peers_on_listen_startup
-
-            sync_task = asyncio.create_task(sync_peers_on_listen_startup())
-            app.state.startup_peer_sync_task = sync_task
-            tasks.append(sync_task)
+        # A post-bind ``comms_nodes`` peer-sync task was launched HERE until
+        # 2026-08-28 (and, before PR #469, run synchronously PRE-bind, which
+        # was the live silent-bind-hang vector of INCIDENT 2026-06-26: one
+        # powered-off static peer made its un-timed ssh call hang, so 7878
+        # never bound and the fleet lost agent-to-agent comms).
+        #
+        # It is GONE, not merely moved again: the ADR-0014 directory is now
+        # the shared PostgreSQL store, so every host already reads the same
+        # peer view and there is nothing to fetch at boot. ``sac registry
+        # sync`` — the verb this task drove — was deleted in the same change.
+        # ``SAC_LISTEN_STARTUP_SYNC_DISABLED`` is consequently read by
+        # nothing; it is not honoured here because there is no longer
+        # anything for it to disable.
 
         # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
         # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.

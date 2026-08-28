@@ -71,12 +71,8 @@ def _seed_active_instance(
     return record_instance_start(name, host=host, db_path=db_path)
 
 
-def _seed_comms_node(
-    name: str, *, host: str = "h", port: int = 9999, db_path: Path | None = None
-) -> None:
-    register_comms_node(
-        name=name, host=host, a2a_port=port, source_host=None, db_path=db_path
-    )
+def _seed_comms_node(name: str, *, host: str = "h", port: int = 9999) -> None:
+    register_comms_node(name=name, host=host, a2a_port=port, source_host=None)
 
 
 def _run_forget(*argv: str) -> object:
@@ -103,12 +99,14 @@ def test_forget_tombstones_stale_instances_row(isolated_state: Path) -> None:
     assert "ghost-agent" not in active
 
 
-def test_forget_clears_comms_nodes_pin(isolated_state: Path) -> None:
+def test_forget_clears_comms_nodes_pin(
+    isolated_state: Path, pg_schema: str
+) -> None:
     # Arrange — federated routing still pins ghost-agent at a dead
     # host. Without this, future a2a sends silently fan out to the
     # dead host even after the instance row is gone.
     _seed_active_instance("ghost-agent", db_path=isolated_state)
-    _seed_comms_node("ghost-agent", db_path=isolated_state)
+    _seed_comms_node("ghost-agent")
     from scitex_agent_container._state.state_db_nodes import (
         resolve_node_host,
     )

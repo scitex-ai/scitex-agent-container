@@ -39,11 +39,9 @@ _SEED = [
         "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
     ),
-    (
-        "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?)",
-        (OLD, "h", 9001, 1.0, 1.0),
-    ),
+    # An ``INSERT INTO comms_nodes`` row was here until 2026-08-28. The
+    # ADR-0014 directory moved to PostgreSQL, so SQLite has no such table and
+    # the seed would raise on every test in this file.
     (
         "INSERT INTO lineage (child_name, parent_name, created_at) "
         "VALUES (?, ?, ?)",
@@ -90,8 +88,9 @@ def _one(db: Path, sql: str, *args):
 
 
 def test_count_rows_counts_the_identity_row(seeded: Path):
-    # Arrange
-    key = "comms_nodes.name"
+    # Arrange — ``comms_nodes.name`` was the key here until 2026-08-28;
+    # ``definitions.name`` is the identity column still in SQLite.
+    key = "definitions.name"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -132,14 +131,20 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_rename_moves_the_comms_node_row(seeded: Path):
-    """Miss this and the A2A directory still advertises the dead name."""
-    # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, NEW) == 1
+# ``test_rename_moves_the_comms_node_row`` was here until 2026-08-28, under
+# the docstring "Miss this and the A2A directory still advertises the dead
+# name." That sentence is still true and the test could no longer prove it:
+# the directory moved to PostgreSQL, SQLite has no ``comms_nodes``, and
+# ``rename_rows`` SKIPS tables absent from sqlite_master — so the test would
+# have passed forever while reaching nothing. Same ruling, and the same
+# hazard, as the ACL-policy test noted below: a green test whose name claims
+# a property it can no longer reach is worse than a red one.
+#
+# DELETED, NOT EDITED UNTIL IT PASSED. The property is measured where it now
+# lives — ``_state/test_state_db_comms_nodes.py::test_rename_moves_the_
+# routing_tuple_onto_the_new_name`` and ``::test_rename_withdraws_the_old_
+# name`` — and ``_rename.apply_plan`` runs the move as its own
+# ``comms-directory`` step with its inverse on the undo stack.
 
 
 # ``test_rename_moves_the_acl_policy_row`` was here until 2026-08-28. It
@@ -196,7 +201,7 @@ def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
 
 def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -220,7 +225,7 @@ def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
 def test_undo_restores_the_identity_row(seeded: Path):
     # Arrange
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
     # Act
     undo_rename_rows(undo)
     # Assert

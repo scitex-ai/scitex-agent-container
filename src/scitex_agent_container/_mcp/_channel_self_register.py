@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
@@ -84,13 +83,13 @@ def parse_listen_port(listen_url: str) -> int | None:
     return int(port)
 
 
-def register_self_node(
-    *,
-    name: str,
-    listen_url: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Best-effort UPSERT this channel's ``comms_nodes`` row.
+def register_self_node(*, name: str, listen_url: str) -> bool:
+    """Best-effort UPSERT this channel's ``comms_nodes`` entry.
+
+    ``db_path`` is GONE from this signature (2026-08-28). It existed only to
+    thread a SQLite file into ``register_comms_node``, and the ADR-0014
+    directory is now the shared PostgreSQL store; there is no file to point
+    at. Test isolation comes from ``SCITEX_STORE_DSN``.
 
     ``name`` is the channel's ``--name`` (``"lead"`` for the lead,
     arbitrary string for any other ``sac mcp channel`` node). The
@@ -136,7 +135,6 @@ def register_self_node(
                 host=host,
                 a2a_port=port,
                 source_host=None,  # locally-registered
-                db_path=db_path,
                 # PR L1 (operator directive 12847) — discriminator
                 # for the loud-collision error message. The channel
                 # is a self-peer registration source by definition.
@@ -169,7 +167,6 @@ async def refresh_node(
     name: str,
     listen_url: str,
     interval_s: float = DEFAULT_REFRESH_INTERVAL_S,
-    db_path: Path | None = None,
 ) -> None:
     """Periodically re-UPSERT to keep ``updated_at`` fresh.
 
@@ -189,7 +186,7 @@ async def refresh_node(
     ("oh, we started the loop but forgot the initial register").
     """
     while True:
-        register_self_node(name=name, listen_url=listen_url, db_path=db_path)
+        register_self_node(name=name, listen_url=listen_url)
         await asyncio.sleep(interval_s)
 
 
