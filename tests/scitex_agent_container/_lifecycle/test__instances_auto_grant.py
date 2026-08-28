@@ -110,6 +110,13 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
     implementation genuinely can break.
     """
     # Arrange — two successive starts simulate a crash-recover loop.
+    #
+    # The precondition (the FIRST start wrote exactly one grant) is checked
+    # with an explicit raise rather than a second ``assert``: it is setup
+    # validation, not a second clause of the contract under test, and
+    # STX-TQ007 counts asserts precisely so that a failing first one cannot
+    # hide a later contract check. Keeping it as a raise says which of the
+    # two it is.
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state.state_db_nodes import list_comms_grants
 
@@ -120,7 +127,11 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
         r for r in list_comms_grants()
         if (r["sender"], r["target"]) == ("grant-2", "lead")
     ]
-    assert len(first) == 1, "arrange failed: the first start wrote no grant"
+    if len(first) != 1:
+        raise RuntimeError(
+            "arrange failed: the first start wrote "
+            f"{len(first)} grant row(s), expected exactly 1"
+        )
     stamped = first[0]["created_at"]
     # Act
     record_local_instance(cfg, rt)
