@@ -123,7 +123,7 @@ def test_resolve_a2a_port_falls_back_to_instance_when_allocator_empty(
 ) -> None:
     # Arrange — no port_allocator claim; an instance row holds the port.
     _instances.record_instance_start(
-        name="beta", host="other-host", a2a_port=31337, db_path=isolated_state_db
+        name="beta", host="other-host", a2a_port=31337
     )
     # Act
     result = _re.resolve_a2a_port("beta")
@@ -155,7 +155,6 @@ def test_resolve_a2a_host_returns_instance_host_when_set(
         name="gamma",
         host="other-host",
         a2a_port=40404,
-        db_path=isolated_state_db,
     )
     # Act
     result = _re.resolve_a2a_host("gamma")
