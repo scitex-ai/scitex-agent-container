@@ -1,16 +1,78 @@
-"""The two AGENT-LIVENESS enforcers, which only make sense side by side.
+"""The three AGENT-LIVENESS enforcers, which only make sense side by side.
 
 Split out of :mod:`._jobs_plugin` (at the per-file cap). They are one concern
-divided in two, and each one's scope is defined by what the other handles:
+divided three ways, and each one's scope is defined by what the others handle:
 
 * ``fleet-reconcile`` restarts CORPSES — no tmux session, so no context to lose.
 * ``restart-login-expired-agents`` restarts the LIVE-BUT-WEDGED half — tmux is
   up and the pane is frozen behind an auth banner — which fleet-reconcile
   deliberately will not touch.
+* ``resume-rate-limited-agents`` RESUMES the LIVE-BUT-PAUSED half — tmux is up
+  and the pane is frozen behind a provider rate wall — which the other two
+  BOTH decline, each for a good reason, which is how the gap stayed invisible
+  until it cost 1h46m of fleet downtime on 2026-08-28.
 
-Keeping them in one file is what makes either readable: they share a rate-limit
-vocabulary, run on the same beat by design, and a reader checking "who covers a
-wedged agent?" must see both answers at once.
+Keeping them in one file is what makes any of them readable: they share a
+rate-limit vocabulary, run on the same beat by design, and a reader checking
+"who covers a stopped agent?" must see all three answers at once. The third
+one is also the proof that the division was previously INCOMPLETE — two
+enforcers that hand off to each other look exhaustive right up until an agent
+lands between them.
+
+A KNOWN DEFECT IN HOW THESE ARE SCHEDULED, which is NOT fixed here
+------------------------------------------------------------------
+A systemd timer rendered from ``OnBootSec`` + ``OnUnitActiveSec`` alone —
+which is what :func:`scitex_dev.jobs._systemd.build_timer_unit` emits for
+every one of these — dies PERMANENTLY if the timer unit is started later
+than ``OnBootSec`` after boot. Both monotonic elapse points are then already
+in the past, systemd marks the unit ``elapsed``, and it never re-arms.
+``Persistent=true`` cannot save it: systemd documents that setting as
+applying ONLY to ``OnCalendar=`` timers.
+
+MEASURED on scitex-compute-04, 2026-08-28, on ``fleet-reconcile.timer``::
+
+    TimersMonotonic={ OnUnitActiveUSec=5min ; next_elapse=0 }
+    TimersMonotonic={ OnBootUSec=5min ; next_elapse=0 }
+    NextElapseUSecMonotonic=infinity
+    LastTriggerUSec=Wed 2026-08-19 17:51:10 UTC
+    ActiveState=active   SubState=elapsed   UnitFileState=enabled
+
+Boot was 2026-08-27 08:15:24 UTC and the timer unit became active
+2026-08-28 03:17:08 — nineteen hours later. It had not fired in NINE DAYS
+while reporting ``active`` and ``enabled``.
+``restart-login-expired-agents.timer`` was in the same state, last triggered
+2026-08-20 03:36:01 UTC.
+
+The control that isolates the cause is ``accounts-keepalive.timer`` on the
+SAME host with the SAME monotonic-only shape, still firing every minute —
+because it happened to have been active continuously since boot. The
+discriminating variable is WHEN the unit started relative to boot.
+
+WHY THE OBVIOUS FIX IS NOT APPLIED HERE. Adding ``on_calendar`` would give
+these timers a schedule that always has a next elapse, and it was tried. It
+BREAKS sac's strict cron lowering: ``_up_timer_losses`` treats ANY
+``on_calendar`` as a lossy field, unconditionally, on the grounds that a
+crontab line carries no timezone. That reasoning is right for a
+zone-bearing calendar and wrong for a zone-free interval like
+``*-*-* *:0/5:00``, which lowers to ``*/5 * * * *`` exactly — but the guard
+does not distinguish them, and sac's own ``test_no_job_degrades_when_lowered
+_onto_cron`` correctly fails. Cron lowering is the real deployment path for
+a host without ``systemd --user`` (scitex-nas-03 is one), so it is not
+something to weaken from this side.
+
+The fix belongs in ``scitex_dev.jobs._systemd.build_timer_unit``: emit
+``OnActiveSec=`` beside ``OnUnitActiveSec=``. ``OnActiveSec`` is relative to
+the TIMER's own activation, so a unit started at any point after boot always
+has a base for its first fire, and the ``OnUnitActiveSec`` chain sustains
+itself from there. It names no timezone and adds no cron loss. Tracked as
+``dev-timer-monotonic-dead-end-20260828``.
+
+UNTIL THAT LANDS, arming is an operational step with a REQUIRED check: after
+enabling a timer, trigger its service ONCE (``systemctl --user start
+<name>.service``) so ``OnUnitActiveSec`` has a base for this boot, then
+confirm the timer reads ``SubState=waiting`` with a real ``NextElapse``.
+``enabled`` and ``active`` are BOTH true of a timer that will never fire
+again, so neither is the check.
 """
 
 from __future__ import annotations
@@ -126,6 +188,47 @@ def liveness_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # same beat rather than harmonising into one; it is the window a
             # wedged agent stays wedged. A no-op pass is one `tmux list-sessions`
             # plus two pane captures ~4s apart.
+            on_boot_sec="5min",
+            on_unit_active_sec="5min",
+        ),
+        JobSpec(
+            name="scitex-agent-container-resume-rate-limited-agents",
+            schedule="*/5 * * * *",  # every 5min (cron form; timer cadence below)
+            # SELF-BOUNDING (600s), and DELIBERATELY larger than its siblings'
+            # 300s. Their remedy is a restart; this one's is a VERIFIED
+            # delivery, which waits for the agent to be idle, submits, and then
+            # proves the payload left the compose box — tens of seconds per
+            # agent by design, because an unverified nudge is the failure this
+            # remedy exists to avoid. A pass killed at this timeout is SAFE:
+            # the resume history is persisted per resume, not at the end, so
+            # the next tick still honours the debounce for anything already
+            # woken.
+            command=(
+                f"/usr/bin/timeout 600 {sac} agents resume-rate-limited --apply"
+            ),
+            description=(
+                "Resumes LIVE agents parked behind a provider rate wall whose "
+                "published reset has PASSED — the shape the other two liveness "
+                "enforcers divide the fleet around without covering. "
+                "fleet-reconcile sees a live tmux session and correctly hands "
+                "off; the auth healer's matcher excludes 429 by design ('a "
+                "restart does not fix a rate wall'). INCIDENT 2026-08-28: a "
+                "session limit stopped agents at ~17:25 UTC, lifted at 19:10 "
+                "UTC, and NOTHING resumed until the operator asked at 20:56 "
+                "UTC. It CONTINUES the agent (verified delivery, proven to "
+                "leave the compose box) and never restarts one — the session, "
+                "context and conversation all survived the wall, and a restart "
+                "would destroy what makes resuming worth doing. It reads the "
+                "reset time from the provider's own banner and HOLDS until it "
+                "passes, so it cannot spend a token against a limit that is "
+                "still standing; a wall whose reset it cannot READ is held and "
+                "reported, never guessed at. Rate-limited per agent (30min "
+                "debounce, <=2/agent/hour) and per pass, on its OWN ledger so "
+                "the three enforcers' debounces cannot consume each other's. "
+                "An agent it cannot wake is RECORDED as degraded, not nudged "
+                "forever."
+            ),
+            kind="timer",
             on_boot_sec="5min",
             on_unit_active_sec="5min",
         ),

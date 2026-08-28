@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`sac agents resume-rate-limited` — the third agent-liveness enforcer, and
+  the shape the other two divide the fleet around without covering.** A
+  provider rate wall leaves the tmux session ALIVE, so `fleet-reconcile` hands
+  off (correctly — there is no corpse), and the banner is not an auth banner,
+  so the auth healer's matcher excludes it (also correctly, and it says why:
+  *a restart does not fix a rate wall*). Two right answers, and the agent
+  stays stopped. On 2026-08-28 a session limit stopped a set of agents at
+  ~17:25 UTC, the limit lifted at 19:10 UTC, and nothing resumed until the
+  operator asked at 20:56 UTC — 1h46m a human had to catch. The new verb reads
+  the reset time out of the provider's OWN banner, HOLDS while the wall stands
+  (so it structurally cannot spend a token against a live limit), and then
+  CONTINUES the agent through the verified delivery path rather than
+  restarting it, because the session and its whole context survived the wall.
+  A wall whose reset it cannot parse is held and REPORTED, never guessed at.
+  Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
+
+### Fixed
+- **Two liveness enforcers had silently stopped firing, and `enabled` +
+  `active` were both still true.** On scitex-compute-04
+  `fleet-reconcile.timer` last triggered 2026-08-19 17:51 UTC and
+  `restart-login-expired-agents.timer` 2026-08-20 03:36 UTC, both sitting in
+  systemd's `elapsed` sub-state with `NextElapseUSecMonotonic=infinity`. A
+  timer rendered from `OnBootSec` + `OnUnitActiveSec` alone never re-arms if
+  the unit is started later than `OnBootSec` after boot, and `Persistent=true`
+  does not help because systemd applies it only to `OnCalendar=` timers. Both
+  are re-armed on that host and the defect, its control, and the repair (which
+  belongs in `scitex_dev.jobs._systemd.build_timer_unit`, not here — an
+  `on_calendar` breaks sac's lossless cron lowering) are documented in
+  `_jobs/_specs_liveness`.
+
 ## [0.27.0] - 2026-08-26
 
 **A job that has nothing to do is not a job that failed.** The theme of this
