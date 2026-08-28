@@ -171,10 +171,23 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
         "scitex_agent_container/_mcp/_channel_post_deliver.py:120",
         "scitex_agent_container/_mcp/_channel_post_deliver.py:99",
-        "scitex_agent_container/_mcp/_channel_reaction_ack.py:107",
-        "scitex_agent_container/_mcp/channel.py:329",
-        "scitex_agent_container/_network/_peer_dispatch.py:46",
-        "scitex_agent_container/_network/_peer_dispatch.py:59",
+        # THESE FOUR MOVED, they did not change. The dispatch-ledger port to
+        # PostgreSQL (2026-08-28) added prose above each of them, so the
+        # coordinates shifted 107->115, 329->331, 46->62 and 59->79. The
+        # `stx-allow` reasons themselves are byte-for-byte the ones frozen
+        # before, and no new unnamed claim was introduced.
+        #
+        # RE-PINNED RATHER THAN CLOSED, deliberately. Closing one means
+        # writing a path into the comment, and this file's own docstring says
+        # a plausible path that nothing writes to is WORSE than the honest
+        # unnamed claim, because it buys a green check. These four log through
+        # `logging.getLogger(__name__)`; where that lands for a container
+        # agent is a survey nobody has done, so naming it here would be a
+        # guess wearing a receipt.
+        "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
+        "scitex_agent_container/_mcp/channel.py:331",
+        "scitex_agent_container/_network/_peer_dispatch.py:62",
+        "scitex_agent_container/_network/_peer_dispatch.py:79",
         "scitex_agent_container/_network/probe.py:457",
         "scitex_agent_container/_reconcile/_budget.py:164",
         "scitex_agent_container/_reconcile/_pass.py:370",

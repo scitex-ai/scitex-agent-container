@@ -68,13 +68,20 @@ def register_tools(
     ) -> str:
         """Mint + record an outbound dispatch row; return its dispatch_id.
 
-        Ledger writes are observability — a state.db hiccup must not break
-        the actual a2a send, so failures log loudly (never silent) and the
-        send proceeds with a freshly-minted id that simply has no row.
+        Ledger writes are observability — a store hiccup must not break the
+        actual a2a send, so failures log loudly (never silent) and the send
+        proceeds with a freshly-minted id that simply has no row.
+
+        ``agent`` is the OWNING agent (this container). Since the ledger moved
+        to the fleet-wide PostgreSQL store it is what keeps a later
+        ``list_dispatches(agent=...)`` from answering with the whole fleet;
+        ``from_agent`` happens to be the same name here, but it is a different
+        question and cannot stand in for it.
         """
         did = new_dispatch_id()
         try:
             record_dispatch(
+                agent=agent_name,
                 from_agent=agent_name,
                 to_agent=to_agent,
                 text=content,
@@ -86,8 +93,10 @@ def register_tools(
         return did
 
     def _ledger_update(dispatch_id: str, status: str) -> None:
+        # Same owner _ledger_record stamped, so the keyed update addresses the
+        # row it wrote rather than scanning the fleet-wide ledger for it.
         try:
-            update_dispatch_status(dispatch_id, status)
+            update_dispatch_status(dispatch_id, status, agent=agent_name)
         except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a status-update failure must not break the a2a send — logged loudly, never silent)
             log.warning("dispatch-ledger status update (a2a_send) failed: %s", exc)
 

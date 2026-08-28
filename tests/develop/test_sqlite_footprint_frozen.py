@@ -145,7 +145,21 @@ FROZEN_SQLITE = frozenset(
         # precise failure the "no stale entries" test exists to catch, so it
         # would have failed loudly rather than rotted. Expect more of these as
         # the migration lands; take both removals.
-        "_state/dispatch_ledger.py",
+        #
+        # _state/dispatch_ledger.py LEFT THIS SET 2026-08-28, and its obstacle
+        # was not a verb or an endpoint but a QUESTION THE TABLE COULD NOT
+        # ANSWER: whose dispatch is this. state.db was PER-AGENT, so the shard
+        # did the scoping and no column had to; SCITEX_STORE_DSN is FLEET-WIDE,
+        # so a naive port collapsed 130+ shards into one table where
+        # list_dispatches() answered for the whole fleet and
+        # list_unreacted_dispatches() reported everyone else's comm-misses as
+        # yours. Nothing would have raised. from_agent could not stand in for
+        # the owner — it names the SENDER of one message and is explicitly
+        # nullable — so the port added `agent` to the store IDENTITY, the shape
+        # inbound_ledger had already needed one table earlier. Its four readers
+        # (_network/_peer_dispatch, _mcp/_channel_tools, _mcp/
+        # _channel_reaction_ack and _mcp/channel) moved in the SAME PR: a
+        # half-moved table is a split brain that also raises nothing.
         # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
         # missing endpoint but an AUTOINCREMENT id that looked public: returned
