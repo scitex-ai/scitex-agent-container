@@ -216,15 +216,35 @@ From: ./sac-base.sif
         # ``scitex_dev.system_deps`` entry-point is discoverable for the
         # federated install in section 3.
         # Floors verified against live PyPI on 2026-07-13; scitex-dev
-        # re-verified 2026-08-25 (0.56.6 is published and unyanked, and is
+        # re-verified 2026-08-28 (0.56.8 is published and unyanked, and is
         # the NEWEST release — this floor sits exactly AT the ceiling, so a
-        # yank of 0.56.6 would brick every bake until it is lowered).
+        # yank of 0.56.8 would brick every bake until it is lowered).
+#
+# 0.56.7 raised the floor for the store-ownership fix (scitex-dev#755):
+# opening a store demanded the right to CREATE it, because PostgreSQL
+# checks table ownership BEFORE IF NOT EXISTS short-circuits. Without
+# this floor the baked image cannot write the fleet's shared stores as a
+# non-owning role, which is half of the 08-23 state-write outage.
+#
+# 0.56.8 is the floor because 0.56.7 ALONE IS NOT ENOUGH (scitex-dev#758).
+# The probe 0.56.7 added to skip that DDL asked the catalogue without a
+# schema filter — `information_schema.columns` and `pg_indexes` both span
+# every schema the role can see — so a store's tables present in ANOTHER
+# schema read as PRESENT here, `create_sql` was skipped, and the first read
+# failed against tables that were never created:
+#
+#     psycopg.errors.UndefinedTable:
+#         relation "comms_blocks_rows" does not exist
+#
+# Both queries are now scoped to `current_schema()`. Pinning 0.56.7 here
+# would bake an image that cannot open a store in a fresh schema at all,
+# which is why this floor moves rather than staying where #755 left it.
         # A floor ABOVE the
         # newest published version makes the build UNSATISFIABLE (uv/pip
         # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
         # this recipe once already. Never raise a floor without checking that
         # the version exists.
-        #   scitex-dev    >=0.56.6 — keystone aggregator (list/install/check-superset)
+        #   scitex-dev    >=0.56.8 — keystone aggregator (list/install/check-superset)
         #   scitex-writer >=2.29.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio  >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv     >=0.2.0  — opencv-python-headless; provider declares []
@@ -272,7 +292,7 @@ From: ./sac-base.sif
         # ALREADY satisfied by the inherited base venv, so without it the
         # providers freeze at base's build and a routine rebake is a no-op.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-dev>=0.56.6" \
+            "scitex-dev>=0.56.8" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -341,7 +361,7 @@ From: ./sac-base.sif
         # already satisfies never re-resolves, so without it these providers
         # freeze at base's build and the routine rebake ships stale.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-dev>=0.56.6" \
+            "scitex-dev>=0.56.8" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
