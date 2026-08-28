@@ -171,7 +171,19 @@ FROZEN_SQLITE = frozenset(
         # not survive a store boundary and this fleet has already paid for that
         # once. The atomic BEGIN IMMEDIATE claim became an optimistic loop on
         # Row.seq, preserving "two concurrent Stop hooks never double-report".
-        "_state/port_allocator.py",
+        # _state/port_allocator.py LEFT THIS SET 2026-08-28 — the a2a port
+        # claim ledger, moved to per-host PostgreSQL via scitex_dev.store. It
+        # is the first table whose move had to survive a HAZARD IN THE MAPPING
+        # rather than only a missing verb: the store reads with
+        # include_hidden=True on the write path, so the hide() that replaces
+        # DELETE leaves a TOMBSTONE still occupying the identity. A naive
+        # "holder is not None and not hidden" guard then refuses the SAME
+        # agent's re-claim of its own PINNED port — and a pinned agent
+        # restarts through exactly claim -> release -> re-claim, so that is
+        # every pinned agent on the fleet one restart from staying down.
+        # test_port_allocator_pin_reclaim.py measured the hazard BEFORE the
+        # move and named the fix (unhide); port_allocator_store.try_claim is
+        # where it lives.
         "_state/state_db.py",
         "_state/state_db_health.py",
         "_state/state_db_heartbeats.py",

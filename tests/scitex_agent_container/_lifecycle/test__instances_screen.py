@@ -113,7 +113,7 @@ def _row_for(name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_persists_runtime_session_name(db_path, tmp_path) -> None:
+def test_record_local_instance_persists_runtime_session_name(pg_schema, db_path, tmp_path) -> None:
     # Arrange — the runtime reports the session it just launched into.
     from scitex_agent_container._lifecycle._instances import record_local_instance
 
@@ -125,6 +125,7 @@ def test_record_local_instance_persists_runtime_session_name(db_path, tmp_path) 
 
 
 def test_record_local_instance_leaves_screen_null_for_legacy_runtime(
+    pg_schema: str,
     db_path, tmp_path
 ) -> None:
     # Arrange — a runtime without the seam must not fabricate a session name.
@@ -137,7 +138,7 @@ def test_record_local_instance_leaves_screen_null_for_legacy_runtime(
     assert _row_for("screen-legacy")["screen"] is None
 
 
-def test_restart_and_record_refreshes_the_session_name(db_path, tmp_path) -> None:
+def test_restart_and_record_refreshes_the_session_name(pg_schema, db_path, tmp_path) -> None:
     # Arrange — the supervisor restarts the agent into a NEW tmux session; a
     # STALE session name is worse than none, because the verifier would then
     # compare a live session against a name that no longer refers to it.

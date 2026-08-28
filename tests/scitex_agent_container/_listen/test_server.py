@@ -252,7 +252,7 @@ class TestListAgents:
         assert body["agents"][0]["name"] == "alpha"
 
     def test_registered_agent_row_carries_a2a_port_when_allocator_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: when port_allocator has a claim, the row carries it.
         from scitex_agent_container._state import port_allocator as _pa
@@ -264,7 +264,7 @@ class TestListAgents:
         _state_db.DEFAULT_DB_PATH = db
         try:
             _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22000, 22001), db_path=db)
+            _pa.claim_port("alpha", range_=(22000, 22001))
             r = _reg.Registry()
             r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
             # Act
@@ -276,7 +276,7 @@ class TestListAgents:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
 
     def test_registered_agent_row_carries_turn_url_when_allocator_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: turn_url ships alongside a2a_port for the
         # nudge→turn dispatcher.
@@ -289,7 +289,7 @@ class TestListAgents:
         _state_db.DEFAULT_DB_PATH = db
         try:
             _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22100, 22101), db_path=db)
+            _pa.claim_port("alpha", range_=(22100, 22101))
             r = _reg.Registry()
             r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
             # Act
@@ -406,7 +406,7 @@ class TestAgentStatus:
         assert "turn_url" in body
 
     def test_known_agent_status_carries_resolved_turn_url_when_port_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: when port_allocator has a claim, status surfaces
         # the derived turn_url so scitex-todo's resolver can dispatch.
@@ -420,7 +420,7 @@ class TestAgentStatus:
         try:
             _state_db.init_schema(db)
             _write_spec(isolated_env, "beta")
-            _pa.claim_port("beta", range_=(23000, 23001), db_path=db)
+            _pa.claim_port("beta", range_=(23000, 23001))
             # Act
             body = client.get("/agents/beta/status", headers=auth_headers).json()
             # Assert
@@ -475,7 +475,7 @@ class TestAgentSendValidation:
         assert resp.status_code == 404
 
     def test_prompt_without_session_id_returns_409(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange
         _write_spec(isolated_env, "gamma")
