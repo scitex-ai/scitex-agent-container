@@ -65,6 +65,16 @@ def descendants_of(
     as a parent) — same shape as a leaf node, so callers don't
     need to disambiguate.
 
+    ONE BEHAVIOUR CHANGED IN THE CYCLE CASE, stated rather than left to
+    be discovered. The SQLite version guarded only on the ``seen`` set, so
+    given the edges ``a → b`` and ``b → a`` it returned ``{b, a}`` —
+    including ``a`` itself, which contradicts the "does NOT include
+    ``name``" promise three paragraphs up. The ``child == name`` guard
+    below makes the code keep that promise. Nothing downstream shifts:
+    :func:`~.._listen._acl.check_lineage_acl` answers ``caller == target``
+    before it ever walks, so self was never reachable through this set,
+    and a cycle is a malformed edge set in the first place.
+
     Args:
         name: the agent whose descendants we want.
         max_depth: BFS depth ceiling. Default 64 (= safety bound,
