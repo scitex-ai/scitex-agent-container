@@ -149,7 +149,22 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
-        "scitex_agent_container/_lifecycle/_instances.py:263",
+        # MOVED 263 -> 265, it did not change. The comms_nodes port to
+        # PostgreSQL (2026-08-28) expanded the comment block above the
+        # paired-write try, so the coordinate shifted; the `stx-allow`
+        # reason itself is byte-for-byte the one frozen before, and no new
+        # unnamed claim was introduced.
+        #
+        # RE-PINNED RATHER THAN CLOSED, deliberately — the site is a bare
+        # `except Exception: pass`, so there is no sink to name: the reason's
+        # "surfaces here as a logged collision" has no referent at THIS call
+        # site (every OTHER register_comms_node caller does log the
+        # conflict). Appending a plausible path without adding the write
+        # would be exactly the named-but-false claim the module docstring
+        # calls worse than an unnamed one. Closing it honestly means adding
+        # the log line first — a behaviour change that belongs in its own
+        # diff, not in a storage migration.
+        "scitex_agent_container/_lifecycle/_instances.py:265",
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
