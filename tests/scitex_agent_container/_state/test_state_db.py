@@ -33,7 +33,7 @@ from scitex_agent_container._state.state_db import (
 
 
 @pytest.fixture
-def db_path(tmp_path: Path):
+def db_path(tmp_path: Path, pg_schema: str):
     """Isolated state.db location, exported via env so the CLI picks it up.
 
     PA-306: explicit env save/restore (no monkeypatch fixture).

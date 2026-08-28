@@ -232,7 +232,7 @@ def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
     try:
         from .._state.state_db import list_active_instances
 
-        rows = list_active_instances(db_path=db_path)
+        rows = list_active_instances()
     except Exception as exc:  # stx-allow: fallback (registry unreadable → UNKNOWN, never "dead")
         logger.warning(
             "liveness_tick: instances registry unavailable (%s) — owner "

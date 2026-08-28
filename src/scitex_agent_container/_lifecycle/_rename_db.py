@@ -59,8 +59,19 @@ from ._rename_spec import sub_path
 # (table, column) pairs holding an agent NAME verbatim.
 NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("definitions", "name"),
-    ("instances", "name"),
-    ("instances", "spawned_by"),
+    # ("instances", "name") and ("instances", "spawned_by") were here until
+    # 2026-08-28. The table moved to the shared PostgreSQL store, and leaving
+    # the pairs would have been WORSE than a crash for the same reason the
+    # ACL and directory pairs below were: ``rename_rows`` SKIPS a table
+    # absent from ``sqlite_master``, so the rename would have reported
+    # success while every record kept the OLD name. ``list_active_instances``
+    # is the oracle behind ``sac agents list``, the start preflight, the
+    # stale-lease sweep, the reconciler and the restart verifier — so a
+    # renamed agent would start under the new name while all five kept
+    # answering about the old one, and the preflight, seeing no live record
+    # for the new name, would happily start a SECOND copy. The move is done
+    # by ``state_db_instances_rename.rename_instance_rows``, called as its
+    # own step in :mod:`._rename` with its own key-scoped inverse.
     # ("attempts", "agent") was here until 2026-08-28 — the table itself is
     # gone (zero writers), so the pair named something this code cannot
     # reach. Same ruling as the trio below; see the module docstring.
@@ -104,7 +115,10 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
 # component (``…/agents/<name>/spec.yaml``, ``…/proj/<name>``).
 PATH_COLUMNS: tuple[tuple[str, str], ...] = (
     ("definitions", "yaml_path"),
-    ("instances", "workdir"),
+    # ("instances", "workdir") left on 2026-08-28 with the two NAME_COLUMNS
+    # pairs above — same table, same move, same silent-no-op hazard. It is
+    # rewritten component-wise by ``rename_instance_rows``, which uses the
+    # SAME :func:`._rename_spec.sub_path` this loop does.
 )
 
 

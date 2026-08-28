@@ -381,7 +381,7 @@ def reconcile_pass(
         if policy in MANAGED_POLICIES:
             from .._state.state_db_instances import last_known_instance
 
-            row = last_known_instance(name, db_path=db_path)
+            row = last_known_instance(name)
 
         decision = decide(
             name=name,

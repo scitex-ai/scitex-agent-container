@@ -106,7 +106,7 @@ def _identity_of(agent: str, session: str) -> SessionObservation:
 
 
 @pytest.fixture
-def db_path(tmp_path: Path):
+def db_path(tmp_path: Path, pg_schema: str):
     """Isolated state.db location, exported via env (explicit save/restore)."""
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"

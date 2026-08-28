@@ -20,7 +20,8 @@ anywhere; it simply never had a writer.
 
 from __future__ import annotations
 
-# Registry tables (F-CS11) — definitions, instances, events.
+# Registry tables (F-CS11) — definitions and events. ``instances`` was
+# the third until 2026-08-28; see the departure note below.
 # The legacy ``heartbeats`` table (instance_id, ts, ...) is now
 # created under the name ``instance_heartbeats``. Nothing in this file
 # competes for the bare name any more: the diary-style ``heartbeats``
@@ -39,40 +40,23 @@ CREATE TABLE IF NOT EXISTS definitions (
     UNIQUE(yaml_path, yaml_sha256)
 );
 
-CREATE TABLE IF NOT EXISTS instances (
-    id                  TEXT PRIMARY KEY,
-    definition_id       TEXT REFERENCES definitions(id),
-    name                TEXT NOT NULL,
-    host                TEXT NOT NULL,
-    scope               TEXT NOT NULL,
-    pid                 INTEGER,
-    ppid                INTEGER,
-    screen              TEXT,
-    workdir             TEXT,
-    a2a_port            INTEGER,
-    started_at          TEXT NOT NULL,
-    last_heartbeat_at   TEXT,
-    ended_at            TEXT,
-    exit_reason         TEXT,
-    iter_count          INTEGER DEFAULT 0,
-    input_tokens        INTEGER DEFAULT 0,
-    output_tokens       INTEGER DEFAULT 0,
-    -- Family-tree / cross-host columns (sac-agent-spawn design, Rule
-    -- B/D). ``bound_port`` mirrors ``a2a_port`` for new readers (both
-    -- written together so legacy ``a2a_port`` callers keep working);
-    -- ``remote`` is 1 for a cross-host-dispatched agent; ``spawned_by``
-    -- is the launching identity ("cli"/parent-agent-name) — the lineage
-    -- edge the spawn DAG is reconstructed from.
-    bound_port          INTEGER,
-    remote              INTEGER DEFAULT 0,
-    spawned_by          TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_instances_active
-    ON instances(name, host, scope) WHERE ended_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_instances_host
-    ON instances(host);
+-- ``instances`` and its two indexes were defined here until
+-- 2026-08-28, when the table — the largest left in this file, 603 rows
+-- on compute-04 across nine caller modules — moved to the SHARED
+-- PostgreSQL store (:mod:`.state_db_instances`). Three of its columns
+-- did NOT move and are named here rather than quietly dropped, because
+-- each is a real (accepted) loss rather than a rename:
+--   ``definition_id``  a FK to ``definitions``, a table nothing has ever
+--                      INSERTed into. NULL on every row ever written.
+--   ``scope``          written as the literal 'global' by both writers
+--                      and read by nobody; it existed only inside
+--                      idx_instances_active(name, host, scope).
+--   ``ppid``           a parameter with no call site. NULL on every row.
+-- ``bound_port`` also did not move as a separate field: it and
+-- ``a2a_port`` always carried ONE value written twice, and the split is
+-- what let two routing readers answer "where do I send this" differently
+-- from the same row. The store keeps one port and mirrors both KEYS back
+-- out, so the readers cannot diverge again.
 
 -- ``seq`` (AUTOINCREMENT) gives a total insertion order so "latest
 -- heartbeat" is MAX(seq) — deterministic regardless of ``ts``
@@ -81,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_instances_host
 -- See state_db_heartbeats / state_db_migrations for the full rationale.
 CREATE TABLE IF NOT EXISTS instance_heartbeats (
     seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id     TEXT NOT NULL REFERENCES instances(id),
+    instance_id     TEXT NOT NULL,
     ts              TEXT NOT NULL,
     iter            INTEGER,
     input_tokens    INTEGER,

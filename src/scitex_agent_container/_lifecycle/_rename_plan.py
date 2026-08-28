@@ -143,7 +143,7 @@ def _open_instance_pid(db_path: Path, name: str) -> int | None:
     from .._state.state_db_instances import list_active_instances
 
     try:
-        rows = list_active_instances(db_path=db_path)
+        rows = list_active_instances()
     except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
         return None
     for row in rows:

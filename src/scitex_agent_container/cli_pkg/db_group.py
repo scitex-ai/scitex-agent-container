@@ -42,7 +42,7 @@ def db_group() -> None:
     \b
     Examples:
       $ sac db show
-      $ sac db query --table=instances --limit=20
+      $ sac db query --table=events --limit=20
       $ sac db migrate
     """
 
@@ -136,7 +136,7 @@ def db_query(
 
     \b
     Example:
-      $ sac db query --table=instances --limit=20
+      $ sac db query --table=events --limit=20
       $ sac db query --table=instance_heartbeats --where="iter > 100" --json
     """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
@@ -145,7 +145,11 @@ def db_query(
     # Order by a sensible default per table; no-op for tables without
     # a recognisable timestamp column.
     order_by = {
-        "instances": "started_at DESC",
+        # ``instances`` had a ``started_at DESC`` entry here until
+        # 2026-08-28. It left KNOWN_TABLES when the table moved to the
+        # shared PostgreSQL store, so ``--table`` can no longer name it and
+        # this key could only ever be dead. ``sac agents list`` is the verb
+        # that answers the question this one used to.
         "definitions": "first_seen_at DESC",
         "instance_heartbeats": "ts DESC",
         "events": "ts DESC",
@@ -396,7 +400,7 @@ def db_export(
     Example:
       $ sac db export
       $ sac db export --since 2026-05-01T00:00:00Z --output dump.json
-      $ sac db export --tables instances,lineage
+      $ sac db export --tables events,lineage
       $ sac db export --dry-run
     """
     del yes  # reserved

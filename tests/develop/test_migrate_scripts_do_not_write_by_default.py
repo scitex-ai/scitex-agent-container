@@ -267,3 +267,120 @@ def test_node_comms_policy_commit_does_reach_for_the_store(tmp_path, capsys):
     run = _run_node_comms_policy(target, capsys, ["--commit"])
     # Assert
     assert run.error is not None
+
+
+# ---------------------------------------------------------------------------
+# instances — the largest table, and the one whose verify could not be default
+#
+# ``_migrate_lib``'s ``run_migration`` compares the source row count against
+# whatever ``verify()`` returns, and every earlier consumer let that be a
+# GLOBAL count of the store. For ``instances`` that comparison cannot hold:
+# the store is SHARED, so once compute-04 has migrated, spartan's run reads
+# its own 200 rows and sees 800 in the store. A check whose verdict depends
+# on run order is not a check, so this script's ``_verify`` counts the source
+# ids it actually carried. These tests pin the same two directions as their
+# neighbours — a bare run must not reach the store, and ``--commit`` must.
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_with_one_instance(tmp_path) -> Path:
+    """One row, with every column the ALTER-TABLE history produced.
+
+    The row is ENDED deliberately: the migration must carry those, and a
+    fixture holding only live rows would let a filtered source pass.
+    """
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """CREATE TABLE instances (
+               id TEXT PRIMARY KEY, definition_id TEXT, name TEXT NOT NULL,
+               host TEXT NOT NULL, scope TEXT NOT NULL, pid INTEGER,
+               ppid INTEGER, screen TEXT, workdir TEXT, a2a_port INTEGER,
+               started_at TEXT NOT NULL, last_heartbeat_at TEXT,
+               ended_at TEXT, exit_reason TEXT, iter_count INTEGER,
+               input_tokens INTEGER, output_tokens INTEGER,
+               bound_port INTEGER, remote INTEGER DEFAULT 0,
+               spawned_by TEXT)"""
+    )
+    conn.execute(
+        "INSERT INTO instances VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("inst-1", None, "agent-x", "test-host", "global", 4321, None,
+         "sac-agent-x", "/home/u/proj/agent-x", 8001,
+         "2026-08-24T00:00:00Z", None, "2026-08-25T00:00:00Z", "stopped",
+         0, 0, 0, 8001, 0, "cli"),
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _run_instances(tmp_path, capsys, extra: list[str]) -> Run:
+    db = _sqlite_with_one_instance(tmp_path)
+    module = _load("migrate_instances_to_postgres.py")
+    argv = ["migrate", "--db-path", str(db), *extra]
+    rc: int | None = None
+    err: BaseException | None = None
+    with _dead_store_and_argv(argv):
+        try:
+            rc = module.main()
+        except BaseException as exc:
+            err = exc
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
+
+
+def test_instances_bare_invocation_succeeds(tmp_path, capsys):
+    """A dry run is a success, not an error."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert run.rc == 0
+
+
+def test_instances_bare_invocation_announces_a_dry_run(tmp_path, capsys):
+    """It must SAY it wrote nothing, so a reader is not left guessing."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert "DRY RUN" in run.out
+
+
+def test_instances_bare_invocation_lists_the_ended_row(tmp_path, capsys):
+    """ENDED rows MOVE.
+
+    ``last_known_instance``, ``_restart_verify`` and ``_reconcile/_rule`` all
+    read one as evidence, and a missing record is a DIFFERENT verdict
+    (NEVER_STARTED) rather than merely less detail. A source query that
+    filtered them out would still print a plausible dry run.
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert "ENDED" in run.out
+
+
+def test_instances_bare_invocation_never_reaches_the_store(tmp_path, capsys):
+    """The dead DSN is the detector: a writer could not have stayed silent."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert run.error is None
+
+
+def test_instances_commit_does_reach_for_the_store(tmp_path, capsys):
+    """NEGATIVE CONTROL — without it the tests above still pass on a script
+    that can never write anything, which is exactly how the diary migration
+    shipped unable to carry a single row."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, ["--commit"])
+    # Assert
+    assert run.error is not None

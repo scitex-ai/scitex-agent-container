@@ -74,15 +74,18 @@ def test_export_state_no_tables_filter_includes_table(
 def test_export_state_tables_filter_emits_the_named_tables_rows(
     db_path: Path,
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    # Arrange — the second table is now ``events`` rather than ``instances``:
+    # that one left KNOWN_TABLES on 2026-08-28 when it moved to the shared
+    # store, so it can no longer stand in for "a table the filter excludes".
+    from scitex_agent_container._state.state_db import export_state, open_db
     from scitex_agent_container._state.state_db_nodes import record_lineage
 
     record_lineage(child="child-a", parent="parent-a", db_path=db_path)
-    record_instance_start("agent-a", host="h1")
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO events (ts, kind, actor) VALUES (?, 'start', 'sac')",
+            ("2026-08-28T00:00:00Z",),
+        )
     # Act
     payload = export_state(tables=["lineage"])
     # Assert
@@ -93,18 +96,19 @@ def test_export_state_tables_filter_excludes_unlisted_tables(
     db_path: Path,
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state, open_db
     from scitex_agent_container._state.state_db_nodes import record_lineage
 
     record_lineage(child="child-a", parent="parent-a", db_path=db_path)
-    record_instance_start("agent-a", host="h1")
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO events (ts, kind, actor) VALUES (?, 'start', 'sac')",
+            ("2026-08-28T00:00:00Z",),
+        )
     # Act
     payload = export_state(tables=["lineage"])
     # Assert
-    assert payload["tables"]["instances"] == []
+    assert payload["tables"]["events"] == []
 
 
 def test_export_state_rejects_comms_nodes_now_that_it_moved(
@@ -117,6 +121,20 @@ def test_export_state_rejects_comms_nodes_now_that_it_moved(
     # Assert — an empty array would read as "the directory is empty".
     with pytest.raises(ValueError, match="unknown table"):
         export_state(tables=["comms_nodes"])
+
+
+def test_export_state_rejects_instances_now_that_it_moved(
+    db_path: Path,
+) -> None:
+    # Arrange — the same ruling, and the widest blast radius of any table to
+    # leave: an empty array here would read as "no agent has ever run on this
+    # host", which is the first question an operator asks this export.
+    from scitex_agent_container._state.state_db import export_state
+
+    # Act
+    # Assert
+    with pytest.raises(ValueError, match="unknown table"):
+        export_state(tables=["instances"])
 
 
 def test_export_state_tables_filter_unknown_table_raises(

@@ -53,7 +53,7 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_discover import (
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (explicit save/restore).
 
     ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a

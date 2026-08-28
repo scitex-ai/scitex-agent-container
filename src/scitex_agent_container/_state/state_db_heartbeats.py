@@ -52,6 +52,7 @@ def update_heartbeat(
     straddle-a-second path.
     """
     from .state_db import now_iso, open_db
+    from .state_db_instances import record_instance_activity
 
     ts = (now_fn or now_iso)()
     with open_db(db_path) as conn:
@@ -69,17 +70,22 @@ def update_heartbeat(
             """,
             (instance_id, ts, iter, input_tokens, output_tokens, pane_state),
         )
-        conn.execute(
-            """
-            UPDATE instances
-               SET last_heartbeat_at = ?,
-                   iter_count    = COALESCE(?, iter_count),
-                   input_tokens  = COALESCE(?, input_tokens),
-                   output_tokens = COALESCE(?, output_tokens)
-             WHERE id = ?
-            """,
-            (ts, iter, input_tokens, output_tokens, instance_id),
-        )
+    # The rolling cache on ``instances`` is a SEPARATE STORE since
+    # 2026-08-28 — that table moved to PostgreSQL, so this half can no
+    # longer ride inside the SQLite transaction above. It is written
+    # AFTER the append and outside the ``with``, which is the honest
+    # ordering: the per-sample row is the record, the cache is a
+    # denormalised copy of its latest value, and a cache write that fails
+    # must not lose the sample. ``COALESCE`` became ``MergeRule.MAX``,
+    # which keeps "a NULL leaves the old value alone" and adds a
+    # high-water mark a late-arriving beat cannot rewind.
+    record_instance_activity(
+        instance_id,
+        ts=ts,
+        iter=iter,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
 
 
 def latest_instance_heartbeat(

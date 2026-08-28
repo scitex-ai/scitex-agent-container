@@ -46,7 +46,7 @@ from scitex_agent_container._state.state_db_nodes import (
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Real isolated state.db; env + module constants saved/restored."""
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")

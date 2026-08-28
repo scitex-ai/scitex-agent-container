@@ -187,16 +187,16 @@ def record_local_instance(
     host = _resolve_host(None)
     # End stale active rows for this name+host (e.g. a previous crash
     # that never reached agent_stop) so the unique index stays clear.
-    for row in list_active_instances(host=host, db_path=db_path):
+    for row in list_active_instances(host=host):
         if row.get("name") == config.name:
-            record_instance_stop(
-                str(row["id"]), exit_reason="superseded", db_path=db_path
-            )
+            record_instance_stop(str(row["id"]), exit_reason="superseded")
 
-    # NO ``db_path``: the a2a claim ledger moved to per-host PostgreSQL
-    # (``_state/port_allocator_store``), so there is no file to point at. The
-    # pinning above still matters for the SQLite ``instances`` writes, which is
-    # why ``db_path`` survives on this side of the same line.
+    # NO ``db_path`` anywhere on this path any more. The a2a claim ledger
+    # moved to per-host PostgreSQL (``_state/port_allocator_store``) on
+    # 2026-08-20 and ``instances`` moved to the SHARED store on 2026-08-28,
+    # so the parameter this function still accepts no longer selects
+    # anything either side of this line — it survives only for the
+    # registry/spec paths its callers thread it through.
     a2a_port = get_port(config.name)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
@@ -237,7 +237,6 @@ def record_local_instance(
         remote=False,
         spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
-        db_path=db_path,
     )
 
     # ADR-0014 — paired comms_nodes write so cross-host peers can resolve

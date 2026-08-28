@@ -1221,7 +1221,7 @@ def runtime_root(_isolate_runtime_root):
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path):
+def isolated_state_db(tmp_path, pg_schema: str):
     """Pin the ``instances`` registry at a real, EMPTY, per-test state.db.
 
     The postcondition now reads a SECOND witness — ``instances.screen``, the

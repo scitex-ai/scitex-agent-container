@@ -39,57 +39,47 @@ two questions get two functions instead.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 __all__ = ["resolve_forward_target"]
 
 
-def resolve_forward_target(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> dict[str, Any] | None:
+def resolve_forward_target(*, name: str) -> dict[str, Any] | None:
     """Return ``{host, a2a_port}`` usable for forwarding, else ``None``.
 
-    Resolution order matches :func:`..state_db_nodes.resolve_node_host` —
-    the live ``instances`` row first, then the ADR-0014 ``comms_nodes``
-    federated graph — with one difference that is the entire point: a row
+    Resolution order matches :func:`.state_db_nodes.resolve_node_host` —
+    the live ``instances`` record first, then the ADR-0014 ``comms_nodes``
+    federated graph — with one difference that is the entire point: a record
     that cannot supply a PORT does not end the search here.
-
-    ``a2a_port`` is preferred and ``bound_port`` is the fallback, matching
-    ``_send_resolve``; the writers populate both from one value, so a row
-    carrying only the latter is still a usable address.
 
     ``None`` means no source could supply an address. The caller must
     treat that as "cannot forward", never as "not registered" — the name
     may be perfectly well known and simply unreachable.
+
+    ``db_path`` IS GONE. Both halves of this resolver now read PostgreSQL:
+    ``comms_nodes`` moved on 2026-08-28 and ``instances`` moved the same day,
+    so there is no SQLite file left for the parameter to name. The
+    ``a2a_port``/``bound_port`` preference this docstring used to describe is
+    likewise gone, and for a better reason than tidiness: the store keeps ONE
+    port field. The two columns always held one value, and the split is what
+    produced the very defect this module was written to fix — the same record
+    answering "where do I send this" two different ways depending on which
+    reader asked. :func:`.state_db_instances_store.instance_as_dict` still
+    emits both KEYS, mirrored, so this code and ``_send_resolve`` cannot
+    disagree again.
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import live_instance_for_name
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port, bound_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    row = live_instance_for_name(name)
     if row is not None:
-        port = row["a2a_port"]
+        port = row.get("a2a_port")
         if port is None:
-            port = row["bound_port"]
+            port = row.get("bound_port")
         if port is not None:
             return {"host": str(row["host"]), "a2a_port": int(port)}
-        # A live row recording no port is not an ADDRESS. Fall through
-        # rather than hand back a target the caller can only 502 on.
-    # No ``db_path``: since 2026-08-28 the directory is the shared PostgreSQL
-    # store, not a table in this file. ``db_path`` still selects the SQLite
-    # ``instances`` lookup above, which has not moved.
+        # A live record with no port is not an ADDRESS. Fall through rather
+        # than hand back a target the caller can only 502 on.
     return resolve_comms_node_host(name=name)

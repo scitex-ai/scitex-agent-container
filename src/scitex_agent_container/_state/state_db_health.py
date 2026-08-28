@@ -51,7 +51,13 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: Tables whose presence means "this is our state store". Deliberately a
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
-CORE_TABLES = ("instances", "definitions")
+#:
+#: ``instances`` was the first member until 2026-08-28, when it moved to the
+#: shared PostgreSQL store. It had to leave: this probe reads
+#: ``sqlite_master``, so a name that SQLite no longer creates would make
+#: every healthy state.db report ``schemaless`` — the probe's own
+#: "this is not our database" verdict, produced by our own migration.
+CORE_TABLES = ("definitions", "events")
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"

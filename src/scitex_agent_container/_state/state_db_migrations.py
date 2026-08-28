@@ -104,39 +104,14 @@ def migrate_instance_heartbeats_add_seq(conn: sqlite3.Connection) -> None:
     )
 
 
-def migrate_instances_add_family_tree_cols(conn: sqlite3.Connection) -> None:
-    """ADD the sac-agent-spawn family-tree columns to ``instances``.
-
-    New columns (see :mod:`state_db` DDL + :mod:`state_db_instances`):
-
-      * ``bound_port`` INTEGER — the actual bound a2a port.
-      * ``remote``     INTEGER DEFAULT 0 — 1 for a cross-host agent.
-      * ``spawned_by`` TEXT — launching identity (lineage edge).
-
-    A fresh DB gets these from the ``CREATE TABLE`` DDL; this migration
-    is for an EXISTING ``instances`` table created before the columns
-    existed. ``ALTER TABLE ... ADD COLUMN`` is cheap and SQLite-native.
-
-    Detection: ``instances`` exists AND is missing one of the three
-    columns. Per-column guarded so a partially-migrated DB completes.
-    Idempotent: a no-op once all three columns are present (or the
-    table is absent).
-    """
-    existing = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "instances" not in existing:
-        return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(instances)").fetchall()}
-    if "bound_port" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN bound_port INTEGER")
-    if "remote" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN remote INTEGER DEFAULT 0")
-    if "spawned_by" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN spawned_by TEXT")
+# ``migrate_instances_add_family_tree_cols`` lived here until 2026-08-28.
+# It ALTERed ``instances`` to add ``bound_port`` / ``remote`` /
+# ``spawned_by``, and that table moved to the shared PostgreSQL store in
+# the same change — so it was already written to return early when the
+# table is absent, and would have run as a permanent no-op for the rest of
+# time. Deleted with the DDL rather than left to be read as a live schema
+# step. (``bound_port`` did not even survive the move as a field: it and
+# ``a2a_port`` always held one value, and the store keeps one.)
 
 
 # ``migrate_node_comms_policy_add_group_name`` and

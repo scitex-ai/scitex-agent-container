@@ -4,7 +4,9 @@ Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
 holding tables in two groups:
 
-  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
+  * F-CS11 registry — ``definitions``, ``events``. (``instances`` was
+    the third; it moved to the shared PostgreSQL store on 2026-08-28 —
+    see :mod:`state_db_instances`.)
   * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
     ``heartbeats`` time series, tied to an ``instances.id``).
 
@@ -67,7 +69,6 @@ from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
-    migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
 )
 from .state_db_schema import (
@@ -92,7 +93,17 @@ DEFAULT_DB_PATH = Path(
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
     "definitions",
-    "instances",
+    # ``instances`` left on 2026-08-28 — the LARGEST table in this file (603
+    # rows on compute-04, nine caller modules), moved to the shared
+    # PostgreSQL store (:mod:`.state_db_instances`). Removed rather than
+    # whitelisted for the reason every neighbour below was, and this one has
+    # the widest blast radius: every reader of this tuple is GENERIC —
+    # ``table_counts`` behind ``sac db show``, ``export_state`` /
+    # ``import_state``, and the ``click.Choice`` for ``sac db query`` — so a
+    # name left here would make ``sac db show`` print ``instances 0`` while
+    # PostgreSQL holds the fleet's whole lifecycle history. A plausible zero
+    # about the table an operator reaches for FIRST when asking what is
+    # running is the worst version of this failure, not the mildest.
     "instance_heartbeats",
     "events",
     "channel_events",
@@ -228,10 +239,11 @@ def init_schema(db_path: Path | None = None) -> Path:
         migrate_legacy_heartbeats(conn)
         migrate_instance_heartbeats_add_seq(conn)
         conn.executescript(_SCHEMA_REGISTRY)
-        # ``executescript`` above creates ``instances`` fresh on a new
-        # DB (with the family-tree columns) but is a no-op on an
-        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
-        migrate_instances_add_family_tree_cols(conn)
+        # ``migrate_instances_add_family_tree_cols`` ran here until
+        # 2026-08-28. ``instances`` moved to PostgreSQL, so the migration
+        # returns early on every host forever — a schema step that can never
+        # fire is not a safety net, it is a claim that one still happens.
+        # Deleted with the DDL.
         # The two ``node_comms_policy`` ADD COLUMN migrations ran here
         # until 2026-08-28. The table moved to PostgreSQL, so both would
         # now be permanent no-ops against a table SQLite no longer has —
