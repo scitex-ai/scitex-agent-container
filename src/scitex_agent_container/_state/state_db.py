@@ -61,7 +61,22 @@ module so ``from ...state_db import X`` imports keep working:
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
     latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
-  * :mod:`state_db_migrations` — idempotent schema migrations.
+  * :mod:`state_db_migrations` was here until 2026-08-28 — idempotent
+    ``ALTER TABLE`` steps run on every ``init_schema``. It is DELETED, with
+    its last function: ``migrate_instances_add_family_tree_cols`` ALTERed
+    ``instances`` to add ``bound_port``/``remote``/``spawned_by``, and that
+    table moved to the shared PostgreSQL store. Its two predecessors went
+    earlier the same day with ``instance_heartbeats`` and
+    ``node_comms_policy``.
+
+    The module was kept for one commit as departure notes with no code, and
+    that is the shape this package deletes rather than preserves: it had no
+    importer, and its ``import sqlite3`` survived only to satisfy the SQLite
+    freeze list. WHAT THE NOTES SAID, kept because one of them is a real
+    ruling: the two heartbeat migrations could still FIRE on an old enough
+    database, re-creating a table the schema had just declared it does not
+    maintain — a migration whose success restores something the schema
+    deleted is not a safety net. The others were permanent no-ops.
 """
 
 from __future__ import annotations
@@ -81,12 +96,8 @@ from typing import Iterator
 # re-export here so those import sites keep resolving.
 from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
-# :mod:`state_db_migrations` is imported nowhere here any more. Both
-# migrations it used to export ran against tables that left SQLite on
-# 2026-08-28 — ``migrate_legacy_heartbeats`` /
-# ``migrate_instance_heartbeats_add_seq`` with ``instance_heartbeats``, and
-# ``migrate_instances_add_family_tree_cols`` when ``instances`` moved to the
-# shared store. The module keeps the record of what they did.
+# There is no ``state_db_migrations`` import here any more, because there is
+# no such module — see the docstring above for what it did and why it went.
 from .state_db_schema import (
     _SCHEMA_CHANNEL_AND_ACL,
     _SCHEMA_REGISTRY,

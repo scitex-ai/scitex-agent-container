@@ -52,7 +52,6 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from .state_db_acl_policy import (

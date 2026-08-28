@@ -199,7 +199,14 @@ FROZEN_SQLITE = frozenset(
         # deleted module cannot import sqlite3, so leaving the entry would
         # fail `test_the_frozen_list_has_no_stale_entries` — the footprint
         # shrinking is not allowed to go unrecorded.
-        "_state/state_db_migrations.py",
+        # _state/state_db_migrations.py LEFT THIS SET 2026-08-28 — and
+        # it left by DELETION rather than by porting. Its last function
+        # ALTERed ``instances``, which moved to the shared PostgreSQL
+        # store; what remained was departure notes with no code and no
+        # importer, whose ``import sqlite3`` existed only to keep this
+        # entry honest. A module kept alive by the freeze list is the
+        # freeze list holding the footprint UP, which is the opposite
+        # of a ratchet.
         # _state/state_db_relocation.py LEFT THIS SET 2026-08-28 — the
         # relocation TRIO (agent_residency, relocation_leases,
         # relocation_journal) moved to PostgreSQL together, in one change, and

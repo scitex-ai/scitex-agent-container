@@ -800,9 +800,6 @@ def test_export_state_filters_out_instance_rows_older_than_since_cutoff(
     db_path: Path,
 ):
     # Arrange — bracket the cutoff with sleeps so the second boundary is clean.
-    import datetime as _dt
-    import time as _time
-
     # Arrange — ``channel_events`` is the seeded table now. ``instances``
     # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
     # export/import walk that tuple — so the row a payload carries has to

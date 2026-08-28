@@ -138,13 +138,22 @@ def test_known_tables_no_longer_offers_instances() -> None:
 def test_the_legacy_family_tree_migration_is_gone() -> None:
     # Arrange — it ALTERed a table that no longer exists, so it could only
     # ever return early. A migration that can never fire is not a safety net;
-    # it is a claim that a schema step still happens.
-    import scitex_agent_container._state.state_db_migrations as migrations
+    # it is a claim that a schema step still happens. It was the LAST
+    # function in ``state_db_migrations``, so the whole module went with it
+    # rather than surviving as departure notes with no code — which is why
+    # this asserts the import fails rather than that an attribute is absent.
+    import importlib
 
+    gone = False
     # Act
-    present = hasattr(migrations, "migrate_instances_add_family_tree_cols")
+    try:
+        importlib.import_module(
+            "scitex_agent_container._state.state_db_migrations"
+        )
+    except ModuleNotFoundError:
+        gone = True
     # Assert
-    assert present is False
+    assert gone is True
 
 
 # ---------------------------------------------------------------------------
