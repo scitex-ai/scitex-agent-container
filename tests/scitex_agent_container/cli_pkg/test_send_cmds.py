@@ -31,6 +31,20 @@ from scitex_agent_container.cli_pkg.send_cmds import send
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 # The generic ``_swap(name, fn)`` module-namespace helper lived here and is
 # gone with its last caller: every remaining swap targets a specific
 # collaborator (``os.kill``, ``post_turn_to_url``) and says so in its name.

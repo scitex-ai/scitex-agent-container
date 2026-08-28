@@ -44,9 +44,9 @@ from scitex_agent_container._state.state_db_gc import (
 )
 from scitex_agent_container._state.state_db_hostname import resolve_host
 from scitex_agent_container._state.state_db_instances import (
+    last_known_instance,
     list_active_instances,
     read_instance,
-    record_instance_activity,
     record_instance_start,
 )
 
@@ -57,6 +57,35 @@ def _local() -> str:
 
 def _foreign() -> str:
     return f"not-{_local()}"
+
+
+def _beat(instance_id: str, ts: str) -> None:
+    """Write ``last_heartbeat_at`` on an existing record.
+
+    There is NO production writer for this field any more: its only one was
+    ``update_heartbeat``, deleted on 2026-08-28 with the
+    ``instance_heartbeats`` table that had no caller in ``src/`` and 0 rows
+    on every host. The field stays declared because rows MIGRATED out of
+    SQLite carry real values and this GC branch reads them — so the branch
+    is still live against real data, and testing it means putting that data
+    there the way the migration does: a partial ``Store.put`` through the
+    production schema.
+    """
+    from scitex_dev.store import ANY_REVISION
+
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
+    )
+
+    host = read_instance(instance_id)["host"]
+    run_with_reconnect(
+        lambda store: store.put(
+            {"id": instance_id, "host": host, "last_heartbeat_at": ts},
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
+        )
+    )
 
 
 def _stale_ts() -> str:
@@ -71,7 +100,7 @@ def _stale_ts() -> str:
 def test_a_stale_local_record_is_swept(pg_schema: str) -> None:
     # Arrange — the branch working as intended on its own host.
     instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
-    record_instance_activity(instance_id, ts=_stale_ts())
+    _beat(instance_id, _stale_ts())
     # Act
     counters = gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -81,7 +110,7 @@ def test_a_stale_local_record_is_swept(pg_schema: str) -> None:
 def test_a_stale_local_record_is_marked_gc_stale(pg_schema: str) -> None:
     # Arrange
     instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
-    record_instance_activity(instance_id, ts=_stale_ts())
+    _beat(instance_id, _stale_ts())
     # Act
     gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -94,7 +123,7 @@ def test_a_stale_record_on_another_host_is_not_swept(pg_schema: str) -> None:
     # the peer wrote it about ITSELF. Sweeping it tombstones a live agent on
     # a machine this sweep has never looked at.
     instance_id = record_instance_start("beta", host=_foreign(), pid=os.getpid())
-    record_instance_activity(instance_id, ts=_stale_ts())
+    _beat(instance_id, _stale_ts())
     # Act
     gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -106,7 +135,7 @@ def test_a_stale_record_on_another_host_is_not_counted(pg_schema: str) -> None:
     # 1 while writing 0 (or the reverse) is the "success value that is also
     # the didn't-happen value" this module's docstring is about.
     instance_id = record_instance_start("beta", host=_foreign(), pid=os.getpid())
-    record_instance_activity(instance_id, ts=_stale_ts())
+    _beat(instance_id, _stale_ts())
     # Act
     counters = gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -118,7 +147,7 @@ def test_a_stale_remote_record_on_this_host_is_not_swept(pg_schema: str) -> None
     # naming a peer; we have no local liveness signal for those agents, so
     # ``sac agents list`` ssh-probes the peer rather than tombstoning here.
     instance_id = record_instance_start("beta", host=_local(), remote=True)
-    record_instance_activity(instance_id, ts=_stale_ts())
+    _beat(instance_id, _stale_ts())
     # Act
     gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -129,7 +158,7 @@ def test_a_fresh_local_record_is_not_swept(pg_schema: str) -> None:
     # Arrange — the negative control: the branch must not sweep on the mere
     # presence of a heartbeat.
     instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
-    record_instance_activity(instance_id, ts="2999-01-01T00:00:00Z")
+    _beat(instance_id, "2999-01-01T00:00:00Z")
     # Act
     gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -153,7 +182,7 @@ def test_a_malformed_heartbeat_is_tolerated_rather_than_swept(
 ) -> None:
     # Arrange — an unparseable stamp is not evidence of death.
     instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
-    record_instance_activity(instance_id, ts="not-a-timestamp")
+    _beat(instance_id, "not-a-timestamp")
     # Act
     gc_dead_instances(heartbeat_stale_seconds=60)
     # Assert
@@ -353,10 +382,4 @@ def test_a_swept_record_is_still_readable_as_evidence(pg_schema: str) -> None:
     # Act
     gc_dead_instances()
     # Assert
-    assert last_known("alpha") is not None
-
-
-def last_known(name: str):
-    from scitex_agent_container._state.state_db_instances import last_known_instance
-
-    return last_known_instance(name)
+    assert last_known_instance("alpha") is not None

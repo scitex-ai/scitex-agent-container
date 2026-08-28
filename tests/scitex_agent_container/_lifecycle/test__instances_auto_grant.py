@@ -30,6 +30,20 @@ import pytest
 from scitex_agent_container.config import AgentConfig
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
@@ -290,7 +304,7 @@ def _fire_monitor_restart_against_foreign_db(
     # An unrelated LATER test isolates itself: the process-global moves.
     from scitex_agent_container._state.state_db_instances import list_active_instances
 
-    before = {r["id"] for r in list_active_instances(db_path=db_path)}
+    before = {r["id"] for r in list_active_instances()}
 
     foreign = tmp_path / "foreign" / "state.db"
     state_db.init_schema(foreign)
@@ -334,8 +348,8 @@ def test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db(
     # row. The second half is the positive control: the write must have gone
     # SOMEWHERE, so the agent's own db must show a NEW instance id — absence
     # from `foreign` alone would also pass if the write vanished entirely.
-    stray = [r for r in list_active_instances(db_path=foreign) if r["name"] == name]
-    after = {r["id"] for r in list_active_instances(db_path=db_path)}
+    stray = [r for r in list_active_instances() if r["name"] == name]
+    after = {r["id"] for r in list_active_instances()}
     assert (stray, after != before) == ([], True)
 
 

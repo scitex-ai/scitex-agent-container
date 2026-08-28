@@ -186,7 +186,19 @@ FROZEN_SQLITE = frozenset(
         # where it lives.
         "_state/state_db.py",
         "_state/state_db_health.py",
-        "_state/state_db_heartbeats.py",
+        # _state/state_db_heartbeats.py LEFT THIS SET 2026-08-28, and it is
+        # the first entry to leave by DELETION rather than by a port: its
+        # table ``instance_heartbeats`` was removed from state.db, and the
+        # module was the table's entire API — ``update_heartbeat`` (write)
+        # and ``latest_instance_heartbeat`` (read), neither with a single
+        # caller in src/, against 0 rows on every host measured. Nothing
+        # moved to PostgreSQL because there was nothing to move.
+        #
+        # THE STALENESS GATE IS WHAT MAKES THIS EDIT MANDATORY rather than
+        # optional, and that is the asymmetry this file was written for: a
+        # deleted module cannot import sqlite3, so leaving the entry would
+        # fail `test_the_frozen_list_has_no_stale_entries` — the footprint
+        # shrinking is not allowed to go unrecorded.
         "_state/state_db_migrations.py",
         # _state/state_db_relocation.py LEFT THIS SET 2026-08-28 — the
         # relocation TRIO (agent_residency, relocation_leases,

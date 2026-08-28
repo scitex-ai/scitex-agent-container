@@ -418,13 +418,14 @@ SOURCE_TABLE: dict[str, str] = {
 
 
 # The fourth category — state that must NOT replicate — lives in
-# :mod:`._store_plugin_refusals` and is re-exported below, so
+# :mod:`._state._store_refusals` and is re-exported below, so
 # ``from ._store_plugin import NEVER_SYNCED`` keeps working. It moved out
-# under the per-file line cap when ``sac_instances`` went live; the seam is
-# the one this module already draws between "what sac's rows mean" and "what
-# is deliberately not on the sync path".
-from ._store_plugin_refusals import NEVER_SYNCED  # noqa: E402
-
+# under the per-file line cap when ``sac_instances`` went live (this file was
+# already 529 lines against a 512 cap before that); the seam is the one this
+# module already draws between "what sac's rows mean" and "what is
+# deliberately not on the sync path", and it sits under ``_state`` because
+# the package root is capped at 15 flat modules and was exactly at it.
+from ._state._store_refusals import NEVER_SYNCED  # noqa: E402
 
 def provide() -> list:
     """sac's store plugins, for ``scitex_dev.store.discover_store_plugins``.

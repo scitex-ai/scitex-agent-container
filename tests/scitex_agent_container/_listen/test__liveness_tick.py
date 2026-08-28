@@ -40,6 +40,20 @@ from scitex_agent_container._listen._liveness_tick import (
 # the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
 from scitex_agent_container._listen import _liveness_tick_resolve as mod
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 NOW = 2_000_000.0
 STALE_S = 900.0
 
@@ -343,7 +357,7 @@ class TestRegistryAvailability:
         # Arrange — EXACTLY what the live fleet writes: an active instances row
         # with pid=NULL. The read succeeds; it simply proves nothing.
         db = tmp_path / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         # Act
         pids = mod._live_agent_pids(db_path=db)
         # Assert
@@ -394,7 +408,7 @@ class TestResolveLiveness:
         # Arrange — the fleet's real shape: a pid-less active row + a fresh
         # heartbeat. The heartbeat is the proof of life the registry lost.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )
@@ -432,7 +446,7 @@ class TestResolveLiveness:
         # pseudo-owners on the real board ("operator", "lead"), which are not
         # sac-managed processes at all and must never be called dead.
         db = home_at_tmp / "state.db"
-        record_instance_start("someone-else", db_path=db)
+        record_instance_start("someone-else")
         # Act
         out = mod.resolve_liveness(["operator"], db_path=db)
         # Assert
@@ -445,7 +459,7 @@ class TestResolveLiveness:
         # mtime. That is a channel that would have shown life and does not, so
         # the owner stays KNOWN and real death is still detectable.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )

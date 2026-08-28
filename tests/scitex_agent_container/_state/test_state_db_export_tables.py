@@ -4,7 +4,9 @@ The filter was added for ``sac registry sync``, which shipped only the
 ``comms_nodes`` delta. Both are gone as of 2026-08-28 — the directory moved
 to the shared PostgreSQL store, so there is no slice to ship and no verb to
 ship it. The filter itself stays useful for any subset of the tables that
-remain, and these tests now exercise it with ``lineage`` / ``instances``.
+remain, and these tests now exercise it with ``lineage`` /
+``channel_events`` — ``instances`` left that tuple on 2026-08-28 for the
+shared PostgreSQL store, so naming it is a REFUSAL rather than an export.
 
 ``comms_nodes`` is asserted here in ONE direction only: that asking for it
 now FAILS. A filter that still accepted the name would emit an empty array
@@ -74,17 +76,18 @@ def test_export_state_no_tables_filter_includes_table(
 def test_export_state_tables_filter_emits_the_named_tables_rows(
     db_path: Path,
 ) -> None:
-    # Arrange — the second table is now ``events`` rather than ``instances``:
-    # that one left KNOWN_TABLES on 2026-08-28 when it moved to the shared
-    # store, so it can no longer stand in for "a table the filter excludes".
+    # Arrange — the second table is now ``channel_events`` rather than
+    # ``instances``: that one left KNOWN_TABLES on 2026-08-28 when it moved
+    # to the shared store, so it can no longer stand in for "a table the
+    # filter excludes".
     from scitex_agent_container._state.state_db import export_state, open_db
     from scitex_agent_container._state.state_db_nodes import record_lineage
 
     record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     with open_db(db_path) as conn:
         conn.execute(
-            "INSERT INTO events (ts, kind, actor) VALUES (?, 'start', 'sac')",
-            ("2026-08-28T00:00:00Z",),
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('agent-a', 'message', '{}', 1756339200.0)"
         )
     # Act
     payload = export_state(tables=["lineage"])
@@ -102,13 +105,13 @@ def test_export_state_tables_filter_excludes_unlisted_tables(
     record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     with open_db(db_path) as conn:
         conn.execute(
-            "INSERT INTO events (ts, kind, actor) VALUES (?, 'start', 'sac')",
-            ("2026-08-28T00:00:00Z",),
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('agent-a', 'message', '{}', 1756339200.0)"
         )
     # Act
     payload = export_state(tables=["lineage"])
     # Assert
-    assert payload["tables"]["events"] == []
+    assert payload["tables"]["channel_events"] == []
 
 
 def test_export_state_rejects_comms_nodes_now_that_it_moved(
@@ -210,29 +213,48 @@ def test_db_export_tables_flag_unknown_name_names_offender_in_output(
 def test_db_export_tables_flag_csv_includes_lineage(
     db_path: Path,
 ) -> None:
-    # Arrange
+    # Arrange — the CSV pair is ``lineage,channel_events`` now. It was
+    # ``lineage,instances`` until 2026-08-28; ``instances`` moved to the
+    # shared store and left KNOWN_TABLES, so naming it makes the whole flag
+    # a BadParameter rather than exporting one fewer table.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
+    result = runner.invoke(db_export, ["--tables", "lineage,channel_events"])
     payload = json.loads(result.stdout)
     # Assert
     assert "lineage" in payload["tables"]
 
 
-def test_db_export_tables_flag_csv_includes_instances(
+def test_db_export_tables_flag_csv_includes_the_second_name(
     db_path: Path,
 ) -> None:
-    # Arrange
+    # Arrange — a CSV of two must carry BOTH; a flag that silently exported
+    # only the first would pass the test above on its own.
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "lineage,channel_events"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert "channel_events" in payload["tables"]
+
+
+def test_db_export_tables_flag_rejects_instances_now_that_it_moved(
+    db_path: Path,
+) -> None:
+    # Arrange — the widest-blast-radius refusal of the set: an empty
+    # ``instances`` array in an export reads as "no agent has ever run on
+    # this host" while PostgreSQL holds the fleet's whole lifecycle history.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "lineage,instances"])
-    payload = json.loads(result.stdout)
     # Assert
-    assert "instances" in payload["tables"]
+    assert result.exit_code != 0
 
 
 def test_db_export_tables_flag_rejects_comms_nodes(

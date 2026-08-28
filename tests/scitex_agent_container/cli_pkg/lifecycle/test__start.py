@@ -331,7 +331,9 @@ def _record_live_singleton(
 
 
 class TestSingletonHostSkip:
-    def test_single_target_singleton_skip_exits_clean(self, tmp_path, env_save_restore):
+    def test_single_target_singleton_skip_exits_clean(
+        self, pg_schema: str, tmp_path, env_save_restore
+    ):
         # Arrange — live row on the bound host preserves the legitimate
         # skip path (without it, the liveness gate would release the
         # binding and fall through to a local start).
@@ -349,7 +351,7 @@ class TestSingletonHostSkip:
         assert result.exit_code == 0
 
     def test_single_target_singleton_skip_explains_host_mismatch(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
@@ -366,7 +368,7 @@ class TestSingletonHostSkip:
         assert "Skipping 'mini'" in result.output
 
     def test_single_target_singleton_skip_emits_json_status(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
@@ -450,7 +452,9 @@ class TestSingletonHostSkip:
 
 
 class TestResumeAndForeground:
-    def test_resume_without_session_is_accepted(self, tmp_path, env_save_restore):
+    def test_resume_without_session_is_accepted(
+        self, pg_schema: str, tmp_path, env_save_restore
+    ):
         # Arrange — --resume without --session must default session_mode to
         # "resume" rather than rejecting the invocation.
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
@@ -467,7 +471,7 @@ class TestResumeAndForeground:
         assert result.exit_code == 0
 
     def test_resume_with_matching_session_resume_is_accepted(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
@@ -486,7 +490,7 @@ class TestResumeAndForeground:
         assert result.exit_code == 0
 
     def test_foreground_with_multiple_targets_takes_multiplex_branch(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange — two singleton-skipped targets so multi_foreground is True
         # (disables per-runtime attach) but `not dry_run` blocks the actual
@@ -655,7 +659,7 @@ class TestDispatchBranch:
         assert "NotImplementedError" not in result.output
 
     def test_singleton_skip_still_fires_when_spec_host_is_unknown(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange — spec.host is NOT in the peer registry AND NOT the
         # current host. Resolver returns None ("caller decides"), the

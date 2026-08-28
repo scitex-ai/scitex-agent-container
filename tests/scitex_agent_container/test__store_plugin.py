@@ -89,7 +89,7 @@ def test_host_is_part_of_the_instance_identity():
     assert "host" in identity
 
 
-def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path):
+def test_the_field_the_per_host_identity_depends_on_is_actually_written(pg_schema):
     """A column declared in a schema and never populated is inert.
 
     This fleet found four such things in one night — scitex_dev.store with
@@ -105,16 +105,20 @@ def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path
     no host argument, so it also proves the DEFAULT populates it — a value
     that only appears when a caller remembers to pass it is not an origin.
     """
-    # Arrange
+    # Arrange — read back through the PRODUCTION reader now that the table
+    # lives in the shared store: ``export_state`` no longer carries
+    # ``instances`` (it left KNOWN_TABLES on 2026-08-28), and asking it would
+    # have raised rather than answered. The test's claim is unchanged, and it
+    # is still the writer that is exercised, with NO host argument, so the
+    # DEFAULT is what has to populate the identity field.
     from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container._state.state_db_export import export_state
+    from scitex_agent_container._state.state_db_instances import read_instance
 
-    db = tmp_path / "state.db"
-    record_instance_start("agent-under-test", db_path=db)
+    instance_id = record_instance_start("agent-under-test")
     # Act
-    rows = export_state(db_path=db)["tables"]["instances"]
+    row = read_instance(instance_id)
     # Assert
-    assert (rows[0]["host"] or "").strip() != ""
+    assert (row["host"] or "").strip() != ""
 
 
 def test_a_stale_replica_cannot_roll_a_heartbeat_backwards():

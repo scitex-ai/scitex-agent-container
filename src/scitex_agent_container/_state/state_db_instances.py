@@ -77,7 +77,6 @@ __all__ = [
     "list_active_instances",
     "live_instance_for_name",
     "read_instance",
-    "record_instance_activity",
     "record_instance_start",
     "record_instance_stop",
     "scan_instances",
@@ -166,44 +165,7 @@ def record_instance_start(
     run_with_reconnect(
         lambda store: store.put(values, expected_revision=NEW_RECORD, actor=ACTOR)
     )
-    _append_event(instance_id, kind="start", ts=started_at)
     return instance_id
-
-
-def _append_event(
-    instance_id: str,
-    *,
-    kind: str,
-    ts: str,
-    payload_json: str | None = None,
-) -> None:
-    """Append the paired ``events`` row. Best-effort, and SEPARATE now.
-
-    ``events`` is still a SQLite table, so this write can no longer ride
-    inside the same transaction as the lifecycle row — it is its own
-    statement against its own database, issued after the store write
-    succeeded. Ordering that way is the honest choice: the store record IS
-    the lifecycle, and the event log is a derived per-host trail, so an
-    event with no record would be the worse inconsistency of the two.
-
-    It is best-effort for the same reason: a state.db that cannot be opened
-    (read-only bind, absent runtime dir) must not turn a successful start
-    into a failed one. The log is per-host and carries only kind='start' /
-    'stop', both of which are already the ``started_at``/``ended_at`` of the
-    record it points at — which is exactly why
-    ``_store_plugin_refusals.NEVER_SYNCED`` refuses to replicate it.
-    """
-    from .state_db import open_db
-
-    try:
-        with open_db() as conn:
-            conn.execute(
-                "INSERT INTO events (ts, instance_id, kind, actor, payload_json) "
-                "VALUES (?, ?, ?, 'sac', ?)",
-                (ts, instance_id, kind, payload_json),
-            )
-    except Exception:  # stx-allow: fallback (reason: the derived per-host event log must never fail a lifecycle write that already succeeded in the store)
-        pass
 
 
 def end_instance(instance_id: str, *, exit_reason: str, ended_at: str) -> bool:
@@ -255,64 +217,32 @@ def record_instance_stop(instance_id: str, *, exit_reason: str = "stopped") -> b
     ``False``, exactly as the SQLite ``rowcount == 0`` meant. Stopping an
     id the store has never seen is the same ``False`` and writes nothing.
 
-    The paired ``events`` row is appended only when this call actually ended
-    the record, matching the SQLite version — there the INSERT sat after the
-    ``rowcount == 0`` early return, so a no-op stop logged nothing.
+    It appended a ``kind='stop'`` row to ``events`` until 2026-08-28. That
+    table left SQLite the same day for having no reader at all, and every
+    fact the row carried — the stop timestamp and ``exit_reason`` — is
+    written to the record here.
     """
-    import json
-
     from .state_db import now_iso
 
-    ended_at = now_iso()
-    if not end_instance(instance_id, exit_reason=exit_reason, ended_at=ended_at):
-        return False
-    _append_event(
-        instance_id,
-        kind="stop",
-        ts=ended_at,
-        payload_json=json.dumps({"exit_reason": exit_reason}),
-    )
-    return True
+    return end_instance(instance_id, exit_reason=exit_reason, ended_at=now_iso())
 
 
-def record_instance_activity(
-    instance_id: str,
-    *,
-    ts: str,
-    iter: int | None = None,
-    input_tokens: int | None = None,
-    output_tokens: int | None = None,
-) -> bool:
-    """Bump the rolling activity cache on one record. ``True`` iff it exists.
-
-    The successor to the ``UPDATE instances SET last_heartbeat_at = ?,
-    iter_count = COALESCE(...)`` half of ``update_heartbeat``. ``COALESCE``
-    becomes ``MergeRule.MAX``, which is the same "a NULL leaves the old value
-    alone" behaviour plus a high-water mark: a heartbeat that arrives LATE
-    can no longer rewind a live agent's counters.
-
-    Returns ``False`` for an unknown id rather than inserting — the same
-    refusal :func:`end_instance` makes, for the same reason.
-    """
-    from scitex_dev.store import ANY_REVISION
-
-    def _touch(store: "Store") -> bool:
-        row = find_by_id(store, instance_id)
-        if row is None:
-            return False
-        key = instance_key(row.values)
-        values = strip_unset(
-            {
-                "last_heartbeat_at": ts,
-                "iter_count": iter,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-            }
-        )
-        store.put({**key, **values}, expected_revision=ANY_REVISION, actor=ACTOR)
-        return True
-
-    return bool(run_with_reconnect(_touch))
+# ``record_instance_activity`` lived here between the store port and the
+# merge of the three-dead-tables change, as the successor to
+# ``update_heartbeat``'s ``UPDATE instances SET last_heartbeat_at = ?,
+# iter_count = COALESCE(...)`` half. That function is GONE — its table
+# ``instance_heartbeats`` had no caller in ``src/`` and 0 rows on every
+# host — so the successor would have been a public writer nobody calls,
+# which is precisely what this package deletes rather than keeps.
+#
+# THE FIELDS STAY DECLARED, and that is not a contradiction.
+# ``last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
+# ``output_tokens`` hold REAL VALUES on rows migrated out of SQLite, and
+# ``state_db_gc``'s staleness branch reads the first of them. With no
+# writer that branch can only ever fire on migrated history — a
+# pre-existing fact the ``instance_heartbeats`` departure note records, and
+# one this move makes visible rather than causes. Repairing it means
+# deciding who beats, which is not a storage migration.
 
 
 def read_instance(instance_id: str) -> dict | None:

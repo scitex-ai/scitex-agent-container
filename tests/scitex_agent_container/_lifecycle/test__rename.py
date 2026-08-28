@@ -95,18 +95,22 @@ def _db_names(db_path: Path) -> list[str]:
     """The identity + history names state.db holds.
 
     ``SELECT name FROM comms_nodes`` was the identity half until 2026-08-28;
-    the ADR-0014 directory moved to PostgreSQL, so ``definitions.name`` — a
-    ``NAME_COLUMNS`` pair that is still a real SQLite table — takes its
-    place. The directory half of a rename is asserted where it now lives,
-    in ``_state/test_state_db_comms_nodes.py``.
+    the ADR-0014 directory moved to PostgreSQL and ``definitions.name`` took
+    its place, then ``instances.name`` when ``definitions`` was deleted for
+    having no writer. ``instances`` moved to the shared store hours later, so
+    ``lineage.child_name`` is the identity half now — the last
+    ``NAME_COLUMNS`` pair whose table is still in state.db. The halves that
+    left are asserted where they now live:
+    ``_state/test_state_db_comms_nodes.py`` for the directory and
+    ``_state/test_state_db_instances_rename.py`` for the lifecycle records.
     """
     conn = sqlite3.connect(str(db_path))
     try:
-        defs = conn.execute("SELECT name FROM definitions").fetchall()
+        ident = conn.execute("SELECT child_name FROM lineage").fetchall()
         past = conn.execute("SELECT target FROM channel_events").fetchall()
     finally:
         conn.close()
-    return sorted([r[0] for r in defs] + [t[0] for t in past])
+    return sorted([r[0] for r in ident] + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):
@@ -285,10 +289,14 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
 
 
 def test_the_plan_counts_the_state_db_rows(world: World):
-    # Arrange — ``comms_nodes.name`` until 2026-08-28; that table moved to
-    # PostgreSQL and left ``NAME_COLUMNS``, so the dry-run count no longer
-    # names it.
-    key = "definitions.name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
+    # then ``definitions.name`` (deleted: no writer), then
+    # ``instances.name`` (moved to the shared store the same day). All three
+    # left ``NAME_COLUMNS``, so the dry-run count names none of them;
+    # ``lineage.child_name`` is what it counts now. The instances counts have
+    # their own reader — ``count_instance_rename_rows`` — and are covered in
+    # ``_state/test_state_db_instances_rename.py``.
+    key = "lineage.child_name"
     # Act
     plan = _plan(world)
     # Assert

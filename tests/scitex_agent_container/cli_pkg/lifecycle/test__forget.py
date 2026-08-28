@@ -40,6 +40,20 @@ from scitex_agent_container._state.state_db_nodes import (
     register_comms_node,
 )
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -68,7 +82,7 @@ def _seed_active_instance(
     name: str, *, host: str = "h", db_path: Path | None = None
 ) -> str:
     """Insert one active ``instances`` row for ``name`` and return its id."""
-    return record_instance_start(name, host=host, db_path=db_path)
+    return record_instance_start(name, host=host)
 
 
 def _seed_comms_node(name: str, *, host: str = "h", port: int = 9999) -> None:
@@ -95,7 +109,7 @@ def test_forget_tombstones_stale_instances_row(isolated_state: Path) -> None:
     # Act
     _run_forget("ghost-agent", "--force")
     # Assert — no active rows remain for ghost-agent.
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "ghost-agent" not in active
 
 
@@ -114,7 +128,7 @@ def test_forget_clears_comms_nodes_pin(
     # Act
     _run_forget("ghost-agent", "--force")
     # Assert — the comms_nodes routing tuple is gone.
-    assert resolve_node_host(name="ghost-agent", db_path=isolated_state) is None
+    assert resolve_node_host(name="ghost-agent") is None
 
 
 def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
@@ -126,7 +140,7 @@ def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
 
     # Act
     _run_forget("ghost-agent", "--force")
-    row = last_known_instance("ghost-agent", db_path=isolated_state)
+    row = last_known_instance("ghost-agent")
     # Assert
     assert row is not None and row["exit_reason"] == "operator-forget"
 
@@ -179,7 +193,7 @@ def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
     # Act
     _run_forget("live-but-dead", "--force")
     # Assert
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "live-but-dead" not in active
 
 

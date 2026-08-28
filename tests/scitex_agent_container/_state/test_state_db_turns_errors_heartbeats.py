@@ -112,9 +112,9 @@ def sqlite_table_names(db_path: Path) -> set[str]:
 
     init_schema()
     names = _table_names(db_path)
-    if "instances" not in names:
+    if "channel_events" not in names:
         raise RuntimeError(
-            f"init_schema() left no `instances` table in {db_path}; the schema "
+            f"init_schema() left no `channel_events` table in {db_path}; the schema "
             "never ran, so an absent diary table would prove nothing."
         )
     return names
@@ -124,16 +124,18 @@ def sqlite_table_names(db_path: Path) -> set[str]:
 def known_tables() -> set[str]:
     """``KNOWN_TABLES`` as a set, with the same control applied to it.
 
-    ``instances`` must be in there for this to be the whitelist the tests below
-    mean to inspect; an empty or wrong tuple would otherwise make every
-    "not whitelisted" assertion pass on its own.
+    ``channel_events`` must be in there for this to be the whitelist the tests
+    below mean to inspect; an empty or wrong tuple would otherwise make every
+    "not whitelisted" assertion pass on its own. The canary was ``instances``
+    until 2026-08-28, when that name left the tuple for the shared PostgreSQL
+    store — a control that has itself become false is worse than no control.
     """
     from scitex_agent_container._state.state_db import KNOWN_TABLES
 
     known = set(KNOWN_TABLES)
-    if "instances" not in known:
+    if "channel_events" not in known:
         raise RuntimeError(
-            "KNOWN_TABLES does not contain `instances`; it is not the "
+            "KNOWN_TABLES does not contain `channel_events`; it is not the "
             "whitelist these tests mean to inspect."
         )
     return known

@@ -42,7 +42,6 @@ from scitex_agent_container._state.state_db_instances import (
     list_active_instances,
     live_instance_for_name,
     read_instance,
-    record_instance_activity,
     record_instance_start,
     record_instance_stop,
 )
@@ -391,10 +390,16 @@ def test_an_unrelated_later_write_does_not_freeze_ended_at(pg_schema: str) -> No
     # Arrange — THE hazard this port had to measure. An IMMUTABLE field is
     # frozen by its first STAMPED value and writing None counts as a stamp,
     # so any payload carrying ``ended_at=None`` would make every later
-    # tombstone a silently rejected MergeConflict. Every write path strips
-    # unset fields; this is the pin.
+    # tombstone a silently rejected MergeConflict — no exception, just a
+    # record that can never be ended. The rename step is a real production
+    # write that touches the record between start and stop; every write path
+    # strips unset fields, and this is the pin.
+    from scitex_agent_container._state.state_db_instances_rename import (
+        rename_instance_rows,
+    )
+
     instance_id = record_instance_start("alpha", host="host-a")
-    record_instance_activity(instance_id, ts="2026-01-01T00:00:00Z")
+    rename_instance_rows(old="alpha", new="alpha-renamed")
     # Act
     ended = record_instance_stop(instance_id)
     # Assert
@@ -605,23 +610,38 @@ def test_live_instance_for_name_ignores_an_ended_record(pg_schema: str) -> None:
     assert row is None
 
 
-def test_record_instance_activity_refuses_an_unknown_id(pg_schema: str) -> None:
-    # Arrange — the same refusal ``end_instance`` makes, for the same reason.
-    # Act
-    touched = record_instance_activity("no-such-id", ts="2026-01-01T00:00:00Z")
-    # Assert
-    assert touched is False
-
-
-def test_record_instance_activity_never_rewinds_the_heartbeat(
-    pg_schema: str,
-) -> None:
-    # Arrange — MergeRule.MAX replaced COALESCE, and the difference is the
-    # high-water mark: a sample that arrives LATE must not resurrect or
-    # rewind a live agent.
+def test_a_late_heartbeat_cannot_rewind_the_recorded_one(pg_schema: str) -> None:
+    # Arrange — ``last_heartbeat_at`` is MergeRule.MAX, a high-water mark: a
+    # sample that arrives LATE must not rewind (or resurrect) an agent.
+    #
+    # There is NO production writer for this field today — its only one was
+    # ``update_heartbeat``, deleted on 2026-08-28 with the
+    # ``instance_heartbeats`` table that had no caller and 0 rows on every
+    # host. The field is still carried because rows MIGRATED out of SQLite
+    # hold real values and ``state_db_gc``'s staleness branch reads them, so
+    # the merge rule is what decides what a replica or a re-run does with
+    # those values. Written the way the migration writes them.
     instance_id = record_instance_start("alpha", host="host-a")
-    record_instance_activity(instance_id, ts="2026-01-02T00:00:00Z")
+    _stamp_heartbeat(instance_id, "host-a", "2026-01-02T00:00:00Z")
     # Act
-    record_instance_activity(instance_id, ts="2026-01-01T00:00:00Z")
+    _stamp_heartbeat(instance_id, "host-a", "2026-01-01T00:00:00Z")
     # Assert
     assert read_instance(instance_id)["last_heartbeat_at"] == "2026-01-02T00:00:00Z"
+
+
+def _stamp_heartbeat(instance_id: str, host: str, ts: str) -> None:
+    """Partial ``Store.put`` of ``last_heartbeat_at``, as the migration does."""
+    from scitex_dev.store import ANY_REVISION
+
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
+    )
+
+    run_with_reconnect(
+        lambda store: store.put(
+            {"id": instance_id, "host": host, "last_heartbeat_at": ts},
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
+        )
+    )

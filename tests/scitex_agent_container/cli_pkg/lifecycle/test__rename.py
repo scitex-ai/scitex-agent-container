@@ -101,10 +101,14 @@ def test_dry_run_reports_the_board_identity_change(dry_run):
 
 
 def test_dry_run_reports_the_state_db_rows(dry_run):
-    # Arrange — ``comms_nodes.name`` until 2026-08-28; that table moved to
-    # PostgreSQL and left ``NAME_COLUMNS``, so it is no longer among the
-    # state.db counts the dry run prints.
-    needle = "definitions.name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
+    # then ``definitions.name`` (deleted: no writer), then ``instances.name``
+    # (moved to the shared store the same day). None of the three is among
+    # the state.db counts the dry run prints any more; ``lineage.child_name``
+    # is. The instances counts have their own reader —
+    # ``state_db_instances_rename.count_instance_rename_rows`` — and are
+    # covered in ``_state/test_state_db_instances_rename.py``.
+    needle = "lineage.child_name"
     # Act
     output = dry_run.output
     # Assert

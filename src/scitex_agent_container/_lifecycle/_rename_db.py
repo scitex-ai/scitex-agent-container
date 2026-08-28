@@ -58,20 +58,25 @@ from ._rename_spec import sub_path
 
 # (table, column) pairs holding an agent NAME verbatim.
 NAME_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("definitions", "name"),
-    # ("instances", "name") and ("instances", "spawned_by") were here until
-    # 2026-08-28. The table moved to the shared PostgreSQL store, and leaving
-    # the pairs would have been WORSE than a crash for the same reason the
-    # ACL and directory pairs below were: ``rename_rows`` SKIPS a table
-    # absent from ``sqlite_master``, so the rename would have reported
-    # success while every record kept the OLD name. ``list_active_instances``
-    # is the oracle behind ``sac agents list``, the start preflight, the
-    # stale-lease sweep, the reconciler and the restart verifier — so a
-    # renamed agent would start under the new name while all five kept
-    # answering about the old one, and the preflight, seeing no live record
-    # for the new name, would happily start a SECOND copy. The move is done
-    # by ``state_db_instances_rename.rename_instance_rows``, called as its
-    # own step in :mod:`._rename` with its own key-scoped inverse.
+    # ("definitions", "name") was here until 2026-08-28, when the table was
+    # deleted for having no writer at any point in its life (0 rows on every
+    # state.db measured). It is the mildest version of the ``comms_nodes``
+    # hazard below — ``rename_rows`` skips tables absent from
+    # ``sqlite_master``, so the pair would have become a silent no-op, but a
+    # no-op over a table that has never held a row misses nothing. Removed
+    # regardless: a pair here ASSERTS that a rename must carry an agent's
+    # spec cache across, and there is no spec cache.
+    # ("instances", "name") and ("instances", "spawned_by") left the SAME
+    # day, and they are the OPPOSITE case — the table moved to the shared
+    # PostgreSQL store with 603 live rows on compute-04, so the silent no-op
+    # would have missed all of them. ``list_active_instances`` is the oracle
+    # behind ``sac agents list``, the start preflight, the stale-lease sweep,
+    # the reconciler and the restart verifier, so a renamed agent would have
+    # started under the new name while all five kept answering about the old
+    # one — and the preflight, seeing no live record for the new name, would
+    # happily start a SECOND copy. The move is done by
+    # ``state_db_instances_rename.rename_instance_rows``, called as its own
+    # step in :mod:`._rename` with its own key-scoped inverse.
     # ("attempts", "agent") was here until 2026-08-28 — the table itself is
     # gone (zero writers), so the pair named something this code cannot
     # reach. Same ruling as the trio below; see the module docstring.
@@ -114,11 +119,19 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
 # (table, column) pairs holding a PATH that embeds the agent name as a
 # component (``…/agents/<name>/spec.yaml``, ``…/proj/<name>``).
 PATH_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("definitions", "yaml_path"),
-    # ("instances", "workdir") left on 2026-08-28 with the two NAME_COLUMNS
-    # pairs above — same table, same move, same silent-no-op hazard. It is
+    # ("definitions", "yaml_path") was here until 2026-08-28 — same table,
+    # same ruling as the ``NAME_COLUMNS`` entry above.
+    # ("instances", "workdir") left the same day with its two NAME_COLUMNS
+    # siblings: same table, same move, same silent-no-op hazard. It is
     # rewritten component-wise by ``rename_instance_rows``, which uses the
-    # SAME :func:`._rename_spec.sub_path` this loop does.
+    # SAME :func:`._rename_spec.sub_path` this loop does — so the two halves
+    # of a rename cannot disagree about what a path component is.
+    #
+    # PATH_COLUMNS IS NOW EMPTY, and that is the honest state rather than a
+    # gap: the only two paths a rename ever rewrote inside state.db were a
+    # spec cache that never had a row and a workdir that now lives in the
+    # store. The authoritative spec path is the file on disk, which
+    # :mod:`._rename` moves as its own step.
 )
 
 

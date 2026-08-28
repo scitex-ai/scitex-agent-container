@@ -34,7 +34,16 @@ from scitex_agent_container.cli_pkg.lifecycle._delete import delete
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path):
+def _isolate_home(tmp_path, pg_schema: str):
+    """Sandbox ``$HOME`` — and, since 2026-08-28, the ``instances`` store.
+
+    ``sac agents delete`` reads ``list_active_instances`` on every path,
+    including the dry run, so every test in this file now touches the shared
+    PostgreSQL store. ``pg_schema`` is requested here rather than on each
+    test because the dependency is the VERB's, not any one case's — and
+    because an autouse fixture is what keeps a new test in this file from
+    silently writing into whatever store the process happens to resolve.
+    """
     saved = os.environ.get("HOME")
     os.environ["HOME"] = str(tmp_path)
     try:
@@ -436,7 +445,7 @@ def test_missing_spec_yaml_still_exits_with_zero_status_code(tmp_path):
 
 
 @pytest.fixture
-def cross_host_delete_env(tmp_path):
+def cross_host_delete_env(tmp_path, pg_schema: str):
     """State.db redirect + peer config + ssh shim for cross-host delete."""
     import importlib
     import json

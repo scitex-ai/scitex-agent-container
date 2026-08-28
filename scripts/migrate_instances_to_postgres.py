@@ -89,6 +89,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# ...and this script's OWN directory, which a direct ``python scripts/x.py``
+# supplies for free and an ``importlib.util.spec_from_file_location`` load
+# does not. The develop-tier test that pins "a bare invocation writes
+# nothing" loads these scripts the second way, so without this line the
+# guard cannot even import the thing it is guarding.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _migrate_lib import SqliteSource, run_migration  # noqa: E402
 

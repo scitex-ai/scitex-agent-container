@@ -52,12 +52,19 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
 #:
-#: ``instances`` was the first member until 2026-08-28, when it moved to the
-#: shared PostgreSQL store. It had to leave: this probe reads
-#: ``sqlite_master``, so a name that SQLite no longer creates would make
-#: every healthy state.db report ``schemaless`` — the probe's own
-#: "this is not our database" verdict, produced by our own migration.
-CORE_TABLES = ("definitions", "events")
+#: It was ``("instances", "definitions")`` until 2026-08-28. BOTH left SQLite
+#: that day — ``definitions`` for having no writer, ``instances`` for the
+#: shared PostgreSQL store — and each had to go for the same reason: this
+#: probe reads ``sqlite_master``, so a name SQLite no longer creates would
+#: make every healthy state.db report ``schemaless``, the probe's own "this
+#: is not our database" verdict produced by our own migration.
+#:
+#: ``channel_events`` and ``lineage`` are what remains, and they are the
+#: right pair for the job this constant does: the predicate is ANY, so the
+#: core should hold tables an initialised store reliably HAS. A core of two
+#: is also what keeps the ``schemaless`` verdict meaningful — a real state.db
+#: that happened to predate one of them still classifies as ours.
+CORE_TABLES = ("channel_events", "lineage")
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"

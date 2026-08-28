@@ -53,6 +53,20 @@ from scitex_agent_container._state.state_db import (
     record_instance_start,
 )
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 PINNED_ACTIVITY_TS = 1_750_000_000
 LIVE_AGENT = "scitex-hpc"
 LIVE_PORT = 19019
@@ -212,12 +226,12 @@ async def test_dropped_tick_leaves_the_live_instance_row_active(tmp_path: Path):
     # agent (the scitex-hpc shape: tmux alive, a2a port listening).
     db_path = tmp_path / "state.db"
     state_dir = _seeded_live_agent(tmp_path)
-    record_instance_start(LIVE_AGENT, pid=4242, a2a_port=LIVE_PORT, db_path=db_path)
+    record_instance_start(LIVE_AGENT, pid=4242, a2a_port=LIVE_PORT)
     # Act — a tick that wedges and gets ABANDONED.
     task = _start_loop(state_dir, _wedged_probe, budget=TICK_BUDGET_S)
     await _drive(task)
     still_active = [
-        r for r in list_active_instances(db_path=db_path) if r.get("name") == LIVE_AGENT
+        r for r in list_active_instances() if r.get("name") == LIVE_AGENT
     ]
     # Assert — the row agent_send resolves from is STILL ACTIVE (not ended, not
     # swept, not "stopped"). A dropped tick cannot kill a live agent.
