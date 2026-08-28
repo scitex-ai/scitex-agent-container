@@ -60,7 +60,7 @@ def test_sac_declares_the_store_dsn_and_nothing_else() -> None:
     defaults = declared_fleet_defaults(absent)
     # Assert
     assert defaults == {
-        "SCITEX_STORE_DSN": "postgresql://scitex_cards@127.0.0.1:55432/scitex",
+        "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     }
 
 
