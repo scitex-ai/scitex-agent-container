@@ -46,7 +46,7 @@ _TOKEN = "test-token-approve-flow"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_default = state_db.DEFAULT_DB_PATH
@@ -67,7 +67,7 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # still-meaningful behaviour this file covers is the BLOCK /
         # UNBLOCK decision primitives + CLI, plus the pending-prompt clear
         # (pending seeded directly via ``record_pending_prompt``).
-        record_lineage(child="worker-a", parent="root", db_path=db)
+        record_lineage(child="worker-a", parent="root")
         yield db
     finally:
         state_db.DEFAULT_DB_PATH = saved_default

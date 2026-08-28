@@ -77,11 +77,10 @@ measurement. ``psycopg.connect`` costs 10.707 ms against SQLite's 0.067 ms
 message and read once per SSE connect, so a per-call connect is not a cost it
 can pay either.
 
-The one place this module IMPROVES on the copied caveat is the retry: every
-operation here is a single ``with conn.transaction()`` block, so a connection
-that dies mid-operation rolls the whole thing back and the retry cannot
-double-apply an insert. ``comms_nodes`` had to accept that risk; this one does
-not have it.
+THE RETRY IS AT-LEAST-ONCE, NOT EXACTLY-ONCE — see
+:func:`run_with_reconnect`. An earlier version of this paragraph claimed the
+opposite; it was wrong, and wrong in the direction that matters, so the real
+guarantee is stated in both places rather than only in the function.
 """
 
 from __future__ import annotations
@@ -319,18 +318,57 @@ def run_with_reconnect(operation: "Callable[[psycopg.Connection], Any]") -> Any:
     permanently breaking every agent's channel until the daemon is restarted
     by hand.
 
+    THIS PATH IS AT-LEAST-ONCE, AND CALLERS MUST TOLERATE A DUPLICATE.
+    ======================================================================
+    An earlier version of this docstring claimed there was "no double-apply
+    risk", reasoning that a retried allocation "would mint a fresh id rather
+    than colliding". That argument is INVERTED: minting a fresh id is not
+    what prevents the duplicate, it is exactly what lets the duplicate past
+    ``PRIMARY KEY (target, id)``. The claim is withdrawn.
+
+    The shape that actually occurs:
+
+    1. ``persist_event`` runs; the transaction COMMITS on the server.
+    2. The socket dies before the acknowledgement reaches us.
+    3. psycopg raises ``OperationalError``; :func:`_is_connection_lost` says
+       True; this function re-runs ``operation`` on a fresh connection.
+    4. The allocation mints ``N+1`` — which collides with nothing — and a
+       SECOND row lands carrying the SAME envelope.
+    5. Both rows have ``delivered_at IS NULL``, so the next subscriber
+       replays the message TWICE, under two different SSE ids.
+
+    Most operations here are naturally idempotent and unaffected: the two
+    reads return the same rows, and ``mark_delivered``'s
+    ``AND delivered_at IS NULL`` makes a re-run a no-op. ``persist_event``
+    is the one that can duplicate, and ``rename_channel_events`` is
+    protected by its own transaction being all-or-nothing on a single
+    connection.
+
+    WHAT A CONSUMER MUST DO: de-duplicate on the envelope's ``msg_id``,
+    which :func:`a2a._inbox_bus.mint_event` stamps as a uuid4 on every event
+    that reaches this table through a production writer. Two rows from this
+    race are byte-identical in ``meta_json`` and therefore carry the same
+    ``msg_id`` under two distinct SSE ids. The SSE cursor is NOT a dedupe
+    key and never was — it is a resume position.
+
+    WHY THE RETRY STAYS ANYWAY. The alternative is the measured failure it
+    was added for: psycopg3 never reconnects, so one PostgreSQL restart
+    permanently breaks every agent's channel in a daemon that lives for
+    weeks. A rare duplicated frame is strictly better than a channel that is
+    dead until someone restarts the daemon by hand, and the duplicate is
+    detectable by the receiver while the dead channel is not.
+
+    MAKING IT EXACTLY-ONCE, if that is ever wanted: add a ``msg_id TEXT``
+    column with a partial unique index on ``(target, msg_id) WHERE msg_id IS
+    NOT NULL`` and insert ``ON CONFLICT DO NOTHING``, then return the
+    existing row's id. The cost is a schema column, a matching change to
+    ``scripts/migrate_channel_events_to_postgres.py``, and a decision about
+    envelopes that carry no ``msg_id`` (the rename/test paths construct
+    some) — which is why it is proposed here rather than smuggled into the
+    migration that had to move the table.
+
     RETRY ONCE, NOT IN A LOOP. A second failure is a real outage and must
     reach the caller.
-
-    NO DOUBLE-APPLY RISK HERE, unlike the module this was copied from. Every
-    caller wraps its statements in ``with conn.transaction()``, so a server
-    that dies mid-operation leaves nothing committed and the retry starts
-    from a clean slate. The one shape that could double-apply — a commit the
-    server completed but never acknowledged — cannot arise for the allocate
-    -then-insert path, because the retry re-runs the ALLOCATION too and would
-    mint a fresh id rather than colliding. That costs one skipped id, and
-    gaps are explicitly allowed (readers use ``id > cursor``, never
-    ``id = cursor + 1``).
     """
     with _OP_LOCK:
         try:

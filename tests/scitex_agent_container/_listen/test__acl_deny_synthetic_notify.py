@@ -79,8 +79,8 @@ def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
         # deny path: ``worker-a`` and ``lead`` are siblings under a shared
         # root and ``lead`` carries a per-spec ``inbound.siblings=deny``,
         # so ``worker-a → lead`` is denied.
-        record_lineage(child="worker-a", parent="root", db_path=db)
-        record_lineage(child="lead", parent="root", db_path=db)
+        record_lineage(child="worker-a", parent="root")
+        record_lineage(child="lead", parent="root")
         record_comms_policy(name="lead", inbound_siblings="deny")
         yield db
     finally:

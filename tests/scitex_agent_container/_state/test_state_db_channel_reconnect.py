@@ -45,6 +45,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -232,3 +234,44 @@ def test_fresh_subscriber_receives_events_published_while_absent(
             replayed = _read_frames(opened, want=3)
     # Assert
     assert [event["content"] for _, event in replayed] == ["m1", "m2", "m3"]
+
+
+def test_two_concurrent_subscribers_both_get_an_id_line(pg_schema: str) -> None:
+    """A second live subscriber must receive the SSE ``id:`` line too.
+
+    ``Broker.publish`` fans the SAME dict out to every subscriber queue. The
+    handlers used to ``event.pop("_row_id")``, so whichever generator ran
+    first REMOVED the id from the object the other was about to read: the
+    second subscriber emitted a frame with no ``id:`` line and never marked
+    the row delivered. That leaves the row undelivered, so the next fresh
+    subscriber replays a message that was in fact delivered — a duplicate,
+    not a loss, and invisible without two live subscribers to compare.
+
+    Asserting on BOTH ids is the point: a test with one subscriber cannot
+    distinguish the fixed code from the broken code.
+    """
+    # Arrange
+    with _client() as client:
+        first_frames: list = []
+        second_frames: list = []
+
+        def read_into(sink: list) -> None:
+            with client.stream("GET", f"/agents/{AGENT}/inbox/stream") as opened:
+                sink.extend(_read_frames(opened, want=1))
+
+        readers = [
+            threading.Thread(target=read_into, args=(first_frames,)),
+            threading.Thread(target=read_into, args=(second_frames,)),
+        ]
+        for t in readers:
+            t.start()
+        # Both streams must be subscribed before the publish, or the late one
+        # reads the row from the durable replay and the race never happens.
+        time.sleep(1.0)
+        # Act
+        _post(client, "shared")
+        for t in readers:
+            t.join(timeout=20)
+    # Assert — same event, same id, delivered to both.
+    assert [f[0][0] for f in (first_frames, second_frames)] == [1, 1]
+

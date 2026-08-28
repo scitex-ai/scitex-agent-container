@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 
+
 import json
 import logging
 from typing import Any
@@ -26,6 +27,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from .._lifecycle._off_loop import run_blocking
 from .._state.state_db_channel import persist_event
 from ..a2a._delivery_report import report_zero_delivery
 from ..a2a._inbox_bus import (
@@ -219,7 +221,7 @@ async def node_message_send(request: Request) -> Response:
                 from_agent=sender_id,
                 reason=reason or "ACL deny",
             )
-            row_id = await asyncio.to_thread(
+            row_id = await run_blocking(
                 persist_event, target=name, event=notif
             )
             notif["_row_id"] = row_id
@@ -255,7 +257,7 @@ async def node_message_send(request: Request) -> Response:
                         sender=sender_id,
                         reason=reason or "ACL deny",
                     )
-                    synth_row_id = await asyncio.to_thread(
+                    synth_row_id = await run_blocking(
                         persist_event, target=name, event=synth
                     )
                     synth["_row_id"] = synth_row_id
@@ -287,7 +289,7 @@ async def node_message_send(request: Request) -> Response:
                 first_pending = record_pending_prompt(sender=sender_id, target=name)
                 if first_pending:
                     prompt = _mint_approval_prompt(target=name, sender=sender_id)
-                    prompt_row_id = await asyncio.to_thread(
+                    prompt_row_id = await run_blocking(
                         persist_event, target=name, event=prompt
                     )
                     prompt["_row_id"] = prompt_row_id
@@ -364,7 +366,7 @@ async def node_message_send(request: Request) -> Response:
     # OFF THE EVENT LOOP, same reason as the ``is_local_node`` hop above:
     # ``persist_event`` is a PostgreSQL round trip since 2026-08-28, and a
     # blackholed primary would otherwise stall the whole daemon here.
-    row_id = await asyncio.to_thread(persist_event, target=name, event=event)
+    row_id = await run_blocking(persist_event, target=name, event=event)
     event["_row_id"] = row_id
 
     delivered = await broker.publish(name, event)

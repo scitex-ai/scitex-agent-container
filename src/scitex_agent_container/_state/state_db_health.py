@@ -52,15 +52,37 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
 #:
+#: IT IS ONE NAME NOW, AND THAT IS A LOSS RATHER THAN A SIMPLIFICATION.
+#:
 #: It was ``("instances", "definitions")`` until 2026-08-28, when
 #: ``definitions`` left SQLite for having no writer. ``channel_events``
-#: replaces it rather than leaving a one-element core, and it is the right
-#: second name for the job this constant does: the predicate is ANY, so the
-#: core should hold the tables an initialised store reliably HAS, and a
-#: store that has served one channel message has this one. A core of two is
-#: also what keeps the ``schemaless`` verdict meaningful — a real state.db
-#: that happened to predate one of them still classifies as ours.
-CORE_TABLES = ("instances", "channel_events")
+#: replaced it *specifically* to avoid a one-element core: the predicate is
+#: ANY, so the core should hold the tables an initialised store reliably
+#: HAS, and a core of two is what keeps the ``schemaless`` verdict
+#: meaningful — a real state.db that happened to predate one of them still
+#: classifies as ours.
+#:
+#: That second name is gone anyway. ``channel_events`` left SQLite later the
+#: same day (ADR-0023: it is ``sac_channel_events`` in the shared
+#: PostgreSQL), so NO store initialised after that change can ever hold it,
+#: and ``lineage`` — the only other candidate — left in the same window.
+#: ``instances`` is the last table ``init_schema`` still creates, so the
+#: core is one name whether or not that is desirable.
+#:
+#: WHAT THIS COSTS, stated rather than discovered later. There is no false
+#: alarm: ``any()`` over one name is still true for every initialised store,
+#: so nothing that used to classify as ours stops doing so. What is lost is
+#: the REDUNDANCY: a store that somehow carried ``instances`` under a
+#: different schema, or a future change that renames or moves it, now flips
+#: the whole verdict to ``schemaless`` with nothing to cross-check against.
+#: The constant is left honest at one name rather than padded with a table
+#: that does not exist — a core naming a table nothing creates would send an
+#: operator looking for it (see :meth:`StoreState.describe`), which is worse
+#: than a small core.
+#:
+#: Adding a name back is a real option the moment ``init_schema`` creates a
+#: second table; until then this is the truthful list.
+CORE_TABLES = ("instances",)
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"

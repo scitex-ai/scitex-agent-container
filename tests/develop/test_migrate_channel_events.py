@@ -304,3 +304,159 @@ def test_a_second_host_is_offset_above_the_first(
         "SELECT id FROM sac_channel_events WHERE target = %s ORDER BY id",
         ("lead",),
     ) == [(1,), (2,), (3,)]
+
+
+def _relocated_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """An earlier residency (2 rows) and a later one (1 row) for ``lead``."""
+    first = _legacy_db(tmp_path / "host-a", _seed_rows())
+    other = _legacy_db(
+        tmp_path / "host-b",
+        [
+            (
+                "lead",
+                "bob",
+                "message",
+                "elsewhere",
+                json.dumps({"msg_id": "z"}, ensure_ascii=False),
+                4.0,
+                None,
+            )
+        ],
+    )
+    return first, other
+
+
+def test_a_second_run_of_a_relocated_host_moves_nothing(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """Re-running a host whose ids were SHIFTED must not duplicate its history.
+
+    THE RE-RUN PROBE USED TO BE POSITIONAL AND THEREFORE WRONG HERE. It asked
+    "is the row at the source's own top id mine?", which is only a valid
+    question when the previous run applied offset 0. For a relocated target
+    the previous run shifted this host's rows above the earlier residency, so
+    the probe landed on the EARLIER host's row, saw a mismatch, and concluded
+    "not mine" — re-importing the whole history at fresh ids, which
+    ``ON CONFLICT (target, id) DO NOTHING`` cannot stop because the ids are
+    new. Every further re-run added another copy.
+
+    Worse, ``--commit``'s verification could not see it: it windows on
+    ``[min+offset, max+offset]``, which for the duplicate is exactly the one
+    row just written, so it counted 1 of 1 and printed "MATCHES SQLite".
+    """
+    # Arrange
+    first, other = _relocated_pair(tmp_path)
+    _run(first, "--commit")
+    _run(other, "--commit")
+    # Act — the SAME later host again
+    _run(other, "--commit")
+    # Assert
+    assert _query(
+        "SELECT id FROM sac_channel_events WHERE target = %s ORDER BY id",
+        ("lead",),
+    ) == [(1,), (2,), (3,)]
+
+
+def test_a_third_run_of_a_relocated_host_still_moves_nothing(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """Idempotence must CONVERGE, not merely be true once.
+
+    The broken probe grew the table by one row per invocation, so a test that
+    ran the migration twice and stopped could not distinguish "stable" from
+    "growing". This one runs it a third time.
+    """
+    # Arrange
+    first, other = _relocated_pair(tmp_path)
+    _run(first, "--commit")
+    _run(other, "--commit")
+    _run(other, "--commit")
+    # Act
+    _run(other, "--commit")
+    # Assert
+    assert _query(
+        "SELECT COUNT(*) FROM sac_channel_events WHERE target = %s", ("lead",)
+    ) == [(3,)]
+
+
+# ---------------------------------------------------------------------------
+# The ordering guard — run the one-shot BEFORE the new code serves.
+# ---------------------------------------------------------------------------
+
+
+def _daemon_has_served(target: str, *, ts: float) -> None:
+    """Simulate the deploy gap: the live daemon mints an id for ``target``.
+
+    The REAL writer, not a hand-written row — this is what actually happens
+    when ``sac listen`` comes up on the new code before the migration runs.
+    """
+    from scitex_agent_container._state.state_db_channel import persist_event
+
+    persist_event(target=target, event={"msg_id": "post-cutover", "ts": ts})
+
+
+def test_a_target_the_daemon_already_served_is_refused(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """Post-cutover rows must stop the import, not be shifted around.
+
+    Without this the migrated history is placed ABOVE the daemon's new rows,
+    which strands both halves: every SQLite-era ``Last-Event-ID`` resolves to
+    a different event, and the new rows sit below every live cursor,
+    unreachable through ``id > cursor`` forever.
+    """
+    # Arrange — the daemon serves ``lead`` before the one-shot runs.
+    db = _legacy_db(tmp_path, _seed_rows())
+    _daemon_has_served("lead", ts=99.0)
+    # Act
+    rc = _run(db, "--commit")
+    # Assert
+    assert rc == 1
+
+
+def test_a_refused_run_writes_nothing_at_all(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """The refusal is BEFORE the insert — not a partial import plus a moan."""
+    # Arrange
+    db = _legacy_db(tmp_path, _seed_rows())
+    _daemon_has_served("lead", ts=99.0)
+    # Act
+    _run(db, "--commit")
+    # Assert — only the daemon's own row is there; nothing was shifted in.
+    assert _query(
+        "SELECT COUNT(*) FROM sac_channel_events WHERE target = %s", ("lead",)
+    ) == [(1,)]
+
+
+def test_the_dry_run_surfaces_the_refusal_too(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """An operator must learn this BEFORE the cutover window, not inside it."""
+    # Arrange
+    db = _legacy_db(tmp_path, _seed_rows())
+    _daemon_has_served("lead", ts=99.0)
+    # Act
+    rc = _run(db)
+    # Assert
+    assert rc == 1
+
+
+def test_a_relocated_target_is_not_mistaken_for_a_live_daemon(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """NEGATIVE CONTROL — the guard must not refuse a genuine relocation.
+
+    A guard that refused everything would pass the three tests above and make
+    the migration unusable. Oldest-residency-first means the earlier host's
+    rows are OLDER than the later host's, so the ts discriminator leaves them
+    alone.
+    """
+    # Arrange
+    first, other = _relocated_pair(tmp_path)
+    _run(first, "--commit")
+    # Act
+    rc = _run(other, "--commit")
+    # Assert
+    assert rc == 0
+

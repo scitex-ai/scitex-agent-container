@@ -37,7 +37,6 @@ forwarder's side — see :mod:`_listen.peer_tokens`).
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Literal
 
 from starlette.responses import JSONResponse
@@ -69,7 +68,6 @@ def check_lineage_acl(
     *,
     caller: str | None,
     target: str,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Decide whether ``caller`` may operate on ``target`` via lineage.
 
@@ -120,8 +118,13 @@ def check_lineage_acl(
     suitable for inclusion in :func:`deny_response` (which now
     wraps it with ``kind="acl_deny"`` per the 5-kind contract).
 
-    ``db_path`` is exposed so tests can isolate from the global
-    state.db.
+    ``db_path`` is GONE (2026-08-28). It was "exposed so tests can
+    isolate from the global state.db", and after the ``lineage`` move
+    there is no state.db behind this gate to isolate from: the descendant
+    walk reads the shared PostgreSQL store, which isolates via
+    ``SCITEX_STORE_DSN`` (the ``pg_schema`` fixture). A parameter that
+    still promised SQLite isolation would promise something no lookup
+    under it can deliver.
     """
     if caller is None or caller == "":
         return ("allow", None)
@@ -136,7 +139,7 @@ def check_lineage_acl(
         return ("allow", None)
     from .._state._lineage import descendants_of
 
-    descendants = descendants_of(name=caller, db_path=db_path)
+    descendants = descendants_of(name=caller)
     if target in descendants:
         return ("allow", None)
     # Standard-fleet manage mesh (operator 2026-06-29: "agents manage
@@ -175,7 +178,6 @@ def check_send_acl(
     *,
     claimed_from_agent: str | None,
     target: str,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Decide whether a ``message:send`` should be admitted.
 
@@ -259,13 +261,11 @@ def check_send_acl(
     # BEFORE the group check so a sibling-deny on either side fires even
     # when sender and target share a group. Default policies (everything
     # ``allow``) leave the legacy group ACL semantics untouched.
-    phase3_decision = _phase3_relationship_deny(
-        sender=sender, target=target, db_path=db_path
-    )
+    phase3_decision = _phase3_relationship_deny(sender=sender, target=target)
     if phase3_decision is not None:
         return phase3_decision
 
-    sender_group = derive_group(name=sender, db_path=db_path)
+    sender_group = derive_group(name=sender)
     if target in sender_group:
         return ("allow", None)
 
@@ -295,9 +295,12 @@ def check_send_acl(
     ):
         return ("allow", None)
 
-    # db_path is gone from the grants primitives — that store is on
-    # PostgreSQL now and isolates via SCITEX_STORE_DSN. The other
-    # lookups in this function still take it, so the parameter stays.
+    # Every lookup this function makes is now a PostgreSQL store read
+    # isolating via SCITEX_STORE_DSN — the grants primitives since their
+    # own move, and the lineage ones since 2026-08-28. The sentence that
+    # stood here ("the other lookups in this function still take it, so
+    # the parameter stays") was the last thing keeping ``db_path`` alive;
+    # with it false, the parameter went too.
     if has_grant(sender=sender, target=target):
         return ("allow", None)
 
@@ -318,7 +321,6 @@ def _phase3_relationship_deny(
     *,
     sender: str,
     target: str,
-    db_path: Path | None,
 ) -> AclDecision | None:
     """Per-spec ACL deny based on the sender↔target lineage relationship.
 
@@ -347,7 +349,7 @@ def _phase3_relationship_deny(
     Defaults preserve current behaviour: every comb in the matrix
     starts ``"allow"`` so absence of ``spec.comms`` is a no-op here.
     """
-    rel = sender_target_relationship(sender=sender, target=target, db_path=db_path)
+    rel = sender_target_relationship(sender=sender, target=target)
     if rel in ("parent", "sibling"):
         sender_policy = read_comms_policy(name=sender)
         if rel == "parent" and sender_policy["outbound_parent"] == "deny":
@@ -394,7 +396,6 @@ def _phase3_relationship_deny(
 def check_spawn(
     *,
     caller: str | None,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Wrap :func:`spawn_allowed` in the same allow/deny tuple shape
     as :func:`check_send_acl` so the listen-server handler can branch
@@ -427,7 +428,7 @@ def check_spawn(
     """
     if caller and is_developer(name=caller):
         return ("allow", None)
-    allowed, reason = spawn_allowed(caller=caller, db_path=db_path)
+    allowed, reason = spawn_allowed(caller=caller)
     if allowed:
         return ("allow", None)
     return ("deny", reason)

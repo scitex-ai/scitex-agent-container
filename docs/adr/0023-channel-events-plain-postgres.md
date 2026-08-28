@@ -171,10 +171,51 @@ reads regardless of `delivered_at`. Identity is `(target, id)`.
 Per-target ids **do not collide across hosts**: a cross-host send is
 forwarded to the destination host BEFORE it is persisted, so a given target's
 rows only ever exist on one host. `new_id == old_id` for every
-non-relocated target, and a live consumer holding a `Last-Event-ID` resumes
-exactly. Import is `ON CONFLICT (target, id) DO NOTHING` so a re-run is
-idempotent; for any target present on more than one host, the oldest
-residency imports first and the later host's ids are offset above the
+non-relocated target. Import is `ON CONFLICT (target, id) DO NOTHING` so a
+re-run is idempotent; for any target present on more than one host, the
+oldest residency imports first and the later host's ids are offset above the
 earlier maximum. `sac_channel_cursor.next_id` is seeded to `MAX(id)` per
 target after import. Verification compares count, `min(id)`, `max(id)` and
 undelivered count per target against the SQLite source.
+
+### 7.1 The cursor promise holds only if the migration runs FIRST
+
+"A live consumer holding a `Last-Event-ID` resumes exactly" is **conditional,
+and the condition is an ordering**: the one-shot must run before the new code
+serves that target.
+
+`init_channel_schema` creates the tables lazily on first connect, so the
+obvious deploy sequence — restart `sac listen` on the new code, then run the
+migration — lets the daemon mint ids from 1 for any target that receives a
+message in the gap. Those rows are genuinely new, but an id-shifting importer
+cannot tell them from an earlier host's residency, and shifting the migrated
+history above them strands both halves: every SQLite-era `Last-Event-ID`
+resolves to a *different* event, and the post-cutover rows sit *below* every
+live cursor, unreachable through `id > cursor` forever.
+
+**The order is: stop `sac listen` → run the migration → start `sac listen`.**
+
+The script does not rely on anyone remembering. It **refuses**, per target,
+when the store already holds a row whose `ts` postdates everything in the
+import — a row that cannot belong to an older residency and is therefore the
+daemon having moved on. The message names the remedy. The dry run performs
+the same check, so the refusal surfaces before the cutover window rather than
+inside it. A genuine oldest-residency-first relocation never trips it, and a
+negative control pins that.
+
+### 7.2 Re-run idempotence is by CONTENT, not by position
+
+The first version of the re-run probe asked "is the row at the source's own
+top id mine?". That is only a valid question when the previous run applied
+offset 0. For a **relocated** target the previous run shifted this host's rows
+above the earlier residency, so the probe landed on the earlier host's row,
+concluded "not mine", and re-imported the entire history at fresh ids — which
+`ON CONFLICT (target, id)` cannot stop, because the ids are new. One extra
+copy per invocation, while the verification printed `MATCHES SQLite` because
+it windows on the shifted range it had just written.
+
+The probe now asks **where this envelope already sits**, confirmed against the
+source's first row as well as its last (`meta_json` is not unique — the
+at-least-once retry path in §5.3 can duplicate an envelope). Two tests pin it,
+including a third invocation, because a bug that adds one copy per run is
+invisible to a test that only runs twice.

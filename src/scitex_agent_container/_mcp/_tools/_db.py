@@ -8,21 +8,24 @@ from ._helpers import invoke_cli_json, invoke_cli_text
 
 
 def db_show() -> dict[str, Any]:
-    """Print high-level state-db row counts (instances, lineage). Mirrors
+    """Print high-level state-db row counts (instances). Mirrors
     ``sac db show --json``.
 
     The counts follow :data:`KNOWN_TABLES`, and that tuple is what this
     docstring must track — it enumerated ``definitions, instances,
     heartbeats, events, channel_events`` and had been stale for a while by
     2026-08-28 (``heartbeats`` moved to PostgreSQL, ``attempts`` was
-    deleted, then ``definitions`` / ``instance_heartbeats`` / ``events`` and
-    ``channel_events`` all went the same day). Two names is the whole list
-    now.
+    deleted, then ``definitions`` / ``instance_heartbeats`` / ``events``,
+    ``lineage`` and ``channel_events`` all went the same day). ONE name is
+    the whole list now.
 
-    ``channel_events`` did not VANISH the way the others did — it is
-    ``sac_channel_events`` in the shared PostgreSQL (ADR-0023), and this
-    SQLite-shaped verb cannot see it, which is exactly why the name was
-    removed rather than left here to answer zero."""
+    ``lineage`` and ``channel_events`` did not VANISH the way the others
+    did — the spawn DAG moved to the shared PostgreSQL store and the
+    channel history became ``sac_channel_events`` (ADR-0023). This
+    SQLite-shaped verb cannot see either, which is exactly why both names
+    were removed rather than left here to answer zero: a count reported for
+    a table sac no longer keeps here is the wrong-answer-that-looks-right
+    the tuple has been shedding names to avoid."""
     return invoke_cli_json(["db", "show", "--json"])
 
 

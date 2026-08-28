@@ -186,6 +186,10 @@ COMMS_NODES = Schema.build(
 # ---------------------------------------------------------------------------
 # HISTORY — append-only; merging must never lose a branch.
 # ---------------------------------------------------------------------------
+# The spawn DAG. LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
+# field by ``_state.state_db_lineage_store``; what follows describes a
+# schema the fleet is running, not one it is planning.
+#
 # One record per CHILD (a child has exactly one parent, ever), so distinct
 # edges are distinct records and a union can drop none of them. The
 # load-bearing choice is IMMUTABLE on ``parent_name``: if two hosts claim
@@ -195,10 +199,24 @@ COMMS_NODES = Schema.build(
 # ACL derives group membership from it (check_lineage_acl), so a silent
 # rewrite is a silent privilege change.
 #
+# THE CONTRADICTION WAS MEASURED BEFORE THE CUTOVER, and it was real: the
+# fleet's four state.db files held 23 edges between them and one child
+# disagreed — ``scitex-cards`` recorded ``proj-scitex-hub`` as its parent
+# on scitex-compute-03 and ``scitex-agent-container`` on scitex-compute-04.
+# The migration refuses to pick a winner (it reports and exits non-zero);
+# this rule is what keeps a later write from picking one silently.
+#
 # MULTI_WRITER, not SINGLE_WRITER: a cross-host spawn is brokered, so the
 # edge can legitimately be written by either end, and a second writer must
 # get the loud MergeConflict rather than an ownership rejection that says
 # nothing about WHY the two disagree.
+#
+# IMMUTABLE KEEPS THE FIRST VALUE AND DOES NOT RAISE. The rejected value
+# comes back in ``PutResult.conflicts``, so ``record_lineage`` INSPECTS the
+# result rather than waiting for an exception that never arrives. The same
+# property is why an edge can never be re-pointed once written, which is
+# what makes ``rename_lineage`` refuse to rename an agent that has
+# children instead of pretending it moved their edges.
 LINEAGE = Schema.build(
     "sac_lineage",
     {
@@ -371,6 +389,9 @@ CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
         Truth.FLEET,
         WriterPolicy.MULTI_WRITER,
     ),
+    # LIVE since 2026-08-28. HISTORY + MULTI_WRITER both survived the
+    # move unchanged: the edges are append-only, and a brokered spawn is
+    # legitimately written by either end.
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
     "sac_incarnations": (INCARNATIONS, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),

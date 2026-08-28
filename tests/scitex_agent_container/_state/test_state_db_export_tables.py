@@ -4,12 +4,28 @@ The filter was added for ``sac registry sync``, which shipped only the
 ``comms_nodes`` delta. Both are gone as of 2026-08-28 — the directory moved
 to the shared PostgreSQL store, so there is no slice to ship and no verb to
 ship it. The filter itself stays useful for any subset of the tables that
-remain, and these tests now exercise it with ``lineage`` / ``instances``.
+remain, and these tests now exercise it with ``instances`` — THE ONLY ONE
+LEFT, as of ``channel_events`` moving to the shared PostgreSQL (ADR-0023).
 
-``comms_nodes`` is asserted here in ONE direction only: that asking for it
-now FAILS. A filter that still accepted the name would emit an empty array
-and read as "sac exports the directory, and it is empty" — the
-success-shaped answer this whole migration exists to remove.
+They exercised it with ``lineage`` until 2026-08-28, then ``channel_events``
+/ ``instances`` for the rest of that day. The subject of these tests is the
+FILTER, not any particular table, so they are repointed rather than deleted.
+
+ONE CASUALTY OF THE ONE-TABLE WHITELIST, named rather than quietly dropped:
+``test_export_state_tables_filter_excludes_unlisted_tables`` asserted that a
+table NOT named in the filter comes back empty. With a single name in
+``KNOWN_TABLES`` there is no second table to leave out, so that direction is
+no longer expressible. It is replaced by the refusal assertion below rather
+than deleted silently, and it should come back the moment a second table
+exists.
+
+``comms_nodes``, ``lineage`` and now ``channel_events`` are each asserted
+here in ONE direction only: that asking for them FAILS. A filter that still accepted the name
+would emit an empty array and read as "sac exports this, and it is empty" —
+the success-shaped answer this whole migration exists to remove. For
+``lineage`` that reading would be the worst of the three, because an empty
+edge set does not mean "no data", it means "every agent is a root", and a
+root may spawn.
 """
 
 from __future__ import annotations
@@ -79,32 +95,31 @@ def test_export_state_tables_filter_emits_the_named_tables_rows(
         export_state,
         record_instance_start,
     )
-    from scitex_agent_container._state.state_db_nodes import record_lineage
 
-    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     record_instance_start("agent-a", host="h1")
     # Act
-    payload = export_state(tables=["lineage"])
+    payload = export_state(tables=["instances"])
     # Assert
-    assert len(payload["tables"]["lineage"]) == 1
+    assert len(payload["tables"]["instances"]) == 1
 
 
-def test_export_state_tables_filter_excludes_unlisted_tables(
+def test_export_state_rejects_channel_events_now_that_it_moved(
     db_path: Path,
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    """Replaces the excludes-unlisted-tables case — see the module docstring.
 
-    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
-    record_instance_start("agent-a", host="h1")
+    An empty array here would read as "this agent has no waiting messages",
+    which is exactly what a healthy undelivered inbox looks like. The channel
+    history is ``sac_channel_events`` in the shared PostgreSQL now and this
+    SQLite exporter cannot see it, so the name must fail rather than answer.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import export_state
+
     # Act
-    payload = export_state(tables=["lineage"])
     # Assert
-    assert payload["tables"]["instances"] == []
+    with pytest.raises(ValueError, match="unknown table"):
+        export_state(tables=["channel_events"])
 
 
 def test_export_state_rejects_comms_nodes_now_that_it_moved(
@@ -138,29 +153,29 @@ def test_export_state_tables_filter_unknown_table_raises(
 
 def test_db_export_tables_flag_exits_zero(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
+    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "lineage"])
+    result = runner.invoke(db_export, ["--tables", "instances"])
     # Assert
     assert result.exit_code == 0, result.output
 
 
 def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
+    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "lineage"])
+    result = runner.invoke(db_export, ["--tables", "instances"])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["lineage"]) == 1
+    assert len(payload["tables"]["instances"]) == 1
 
 
 def test_db_export_tables_flag_unknown_name_exits_two(
@@ -189,18 +204,54 @@ def test_db_export_tables_flag_unknown_name_names_offender_in_output(
     assert "not_a_real_table" in result.output
 
 
-def test_db_export_tables_flag_csv_includes_lineage(
+def test_db_export_tables_flag_rejects_channel_events(
     db_path: Path,
 ) -> None:
+    """The CLI twin of the ``export_state`` refusal above.
+
+    It must fail at PARSE time rather than emit an empty array: this flag is
+    what a peer would call, and "channel_events: []" reads as a delivered
+    inbox.
+    """
     # Arrange
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
-    payload = json.loads(result.stdout)
+    result = runner.invoke(db_export, ["--tables", "channel_events,instances"])
     # Assert
-    assert "lineage" in payload["tables"]
+    assert result.exit_code == 2
+
+
+def test_db_export_tables_flag_rejects_lineage(
+    db_path: Path,
+) -> None:
+    """The spawn DAG left KNOWN_TABLES on 2026-08-28.
+
+    It must fail at PARSE time rather than emit an empty array. An empty
+    ``lineage`` does not read as "no data" to anything downstream — it
+    reads as "every agent is a root", and a root may spawn.
+    """
+    # Arrange
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "lineage"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_export_state_rejects_lineage_now_that_it_moved(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import export_state
+
+    # Act
+    # Assert — see the CLI twin above for why an empty array is worse.
+    with pytest.raises(ValueError, match="unknown table"):
+        export_state(tables=["lineage"])
 
 
 def test_db_export_tables_flag_csv_includes_instances(
@@ -211,7 +262,7 @@ def test_db_export_tables_flag_csv_includes_instances(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
+    result = runner.invoke(db_export, ["--tables", "instances"])
     payload = json.loads(result.stdout)
     # Assert
     assert "instances" in payload["tables"]

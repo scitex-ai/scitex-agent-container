@@ -169,7 +169,7 @@ def test_gate_denies_caller_with_no_lineage_edge(pg_schema: str, db_path: Path):
     caller = "alice"
     # Act
     decision, _reason = check_lineage_acl(
-        caller=caller, target="unrelated-target", db_path=db_path
+        caller=caller, target="unrelated-target"
     )
     # Assert
     assert decision == "deny"
@@ -180,7 +180,7 @@ def test_gate_deny_reason_names_the_target(pg_schema: str, db_path: Path):
     caller = "alice"
     # Act
     _decision, reason = check_lineage_acl(
-        caller=caller, target="unrelated-target-4", db_path=db_path
+        caller=caller, target="unrelated-target-4"
     )
     # Assert
     assert reason is not None and "unrelated-target-4" in reason
@@ -191,7 +191,7 @@ def test_gate_allows_caller_targeting_self(pg_schema: str, db_path: Path):
     caller = "alice"
     # Act
     decision, _reason = check_lineage_acl(
-        caller=caller, target="alice", db_path=db_path
+        caller=caller, target="alice"
     )
     # Assert
     assert decision == "allow"
@@ -199,9 +199,9 @@ def test_gate_allows_caller_targeting_self(pg_schema: str, db_path: Path):
 
 def test_gate_allows_caller_targeting_direct_child(pg_schema: str, db_path: Path):
     # Arrange — alice has child ``kid`` via the lineage table.
-    record_lineage(child="kid", parent="alice", db_path=db_path)
+    record_lineage(child="kid", parent="alice")
     # Act
-    decision, _reason = check_lineage_acl(caller="alice", target="kid", db_path=db_path)
+    decision, _reason = check_lineage_acl(caller="alice", target="kid")
     # Assert
     assert decision == "allow"
 
@@ -210,10 +210,10 @@ def test_gate_allows_caller_targeting_transitive_descendant(
     pg_schema: str, db_path: Path
 ):
     # Arrange — root → alice → ada (grandchild).
-    record_lineage(child="alice", parent="root", db_path=db_path)
-    record_lineage(child="ada", parent="alice", db_path=db_path)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="ada", parent="alice")
     # Act
-    decision, _reason = check_lineage_acl(caller="root", target="ada", db_path=db_path)
+    decision, _reason = check_lineage_acl(caller="root", target="ada")
     # Assert
     assert decision == "allow"
 
@@ -225,7 +225,7 @@ def test_gate_allows_the_administrative_caller(pg_schema: str, db_path: Path):
     caller = None
     # Act
     decision, _reason = check_lineage_acl(
-        caller=caller, target="unrelated-target", db_path=db_path
+        caller=caller, target="unrelated-target"
     )
     # Assert
     assert decision == "allow"

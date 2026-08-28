@@ -40,13 +40,35 @@ above the earlier host's maximum — which shifts that host's ids, so
 whose consumers are least likely to still be holding a cursor. The offset
 is printed per target; there is no silent renumbering.
 
+RUN THIS BEFORE THE NEW CODE SERVES — THE SCRIPT ENFORCES IT
+============================================================
+``init_channel_schema`` creates the tables lazily on first connect, so the
+ordinary deploy sequence (restart ``sac listen`` on the new code, then run
+the one-shot) lets the daemon mint ids from 1 for any target that receives a
+message in the gap. Shifting the migrated history above those rows strands
+BOTH halves: every SQLite-era ``Last-Event-ID`` would resolve to a different
+event, and the post-cutover rows would sit below every live cursor,
+unreachable through ``id > cursor`` forever.
+
+So the order is: **stop ``sac listen``, run this, start ``sac listen``** —
+and the script REFUSES rather than trusting anyone to remember. See
+:func:`_refusals` for the discriminator (a stored row whose ``ts`` postdates
+the whole import cannot belong to an older residency) and for the exact
+message it prints. The dry run performs the same check, so the refusal
+surfaces before the cutover window rather than inside it.
+
 RE-RUNNING IS SAFE
 ==================
 The insert is ``ON CONFLICT (target, id) DO NOTHING`` inside ONE
 transaction, and the offset decision (see :func:`_offset_for`) probes
 whether the rows already in PostgreSQL are THIS host's before it shifts
 anything. A second run of the same host therefore moves nothing and shifts
-nothing.
+nothing — INCLUDING a host whose ids were shifted by an earlier residency,
+which the first version of that probe got wrong: it asked its question
+positionally, so a relocated host re-imported its entire history on every
+invocation while the verification printed "MATCHES SQLite". The probe is by
+CONTENT now, and ``test_a_second_run_of_a_relocated_host_moves_nothing`` /
+``test_a_third_run_of_a_relocated_host_still_moves_nothing`` pin it.
 
 DELIVERED ROWS COME TOO
 =======================
@@ -100,20 +122,32 @@ def _group_by_target(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[dict]]
     return grouped
 
 
-def _offset_for(conn: Any, *, target: str, entries: list[dict]) -> int:
-    """How far THIS host's ids must shift to clear what PostgreSQL holds.
+def _offset_for(conn: Any, *, target: str, entries: list[dict]) -> tuple[int, bool]:
+    """``(offset, already_imported)`` for this host's rows on this target.
 
-    Zero in two distinct cases, and telling them apart is what makes a
-    re-run safe:
+    THE PROBE IS BY CONTENT, NOT BY POSITION, and that is a correction. The
+    first version asked "is the row sitting at the source's own top id
+    mine?" — a question that is only valid when the previous run applied
+    offset 0. For a RELOCATED target the previous run shifted this host's
+    rows above an earlier residency, so the probe landed on the EARLIER
+    host's row, saw a mismatch, and concluded "not mine". It then returned
+    the (now higher) ``pg_max``, so ``ON CONFLICT (target, id) DO NOTHING``
+    had no id to conflict on and the whole history was inserted AGAIN at
+    fresh ids — one extra copy per invocation, with the verification below
+    unable to see it because it windows on the shifted range it just wrote.
 
-    * the target has no rows yet — nothing to clear;
-    * the rows already there are OURS (a previous run of this same host),
-      identified by probing the source's HIGHEST id and comparing
-      ``meta_json`` byte for byte. The whole import is one transaction, so a
-      partial import cannot exist and that single probe is conclusive.
+    Asking WHERE THIS ENVELOPE ALREADY SITS answers the same question
+    without assuming the answer. A match yields the offset the previous run
+    used, so the re-import conflicts on every id and moves nothing.
 
-    Otherwise the rows belong to an EARLIER host's residency of this target,
-    and ours go above them.
+    The candidate is confirmed against the source's FIRST row as well as its
+    last: ``meta_json`` is not unique by construction (the at-least-once
+    retry path can duplicate an envelope), so a lookalike top row alone must
+    not be allowed to imply an offset for the whole run.
+
+    ``already_imported`` distinguishes "we have been here before" from "these
+    ids belong to somebody else", which is what :func:`_refusals` needs to
+    tell a relocation apart from a daemon that has moved on.
     """
     pg_max = int(
         conn.execute(
@@ -122,15 +156,40 @@ def _offset_for(conn: Any, *, target: str, entries: list[dict]) -> int:
         ).fetchone()[0]
     )
     if pg_max == 0:
-        return 0
-    top = entries[-1]
-    probe = conn.execute(
-        "SELECT meta_json FROM sac_channel_events WHERE target = %s AND id = %s",
-        (target, int(top["id"])),
-    ).fetchone()
-    if probe is not None and probe[0] == top["meta_json"]:
-        return 0
-    return pg_max
+        return 0, False
+
+    first, top = entries[0], entries[-1]
+    landed_at = [
+        int(r[0])
+        for r in conn.execute(
+            "SELECT id FROM sac_channel_events "
+            "WHERE target = %s AND meta_json = %s ORDER BY id",
+            (target, top["meta_json"]),
+        ).fetchall()
+    ]
+    for landed in landed_at:
+        offset = landed - int(top["id"])
+        if offset < 0:
+            continue
+        anchor = conn.execute(
+            "SELECT meta_json FROM sac_channel_events WHERE target = %s AND id = %s",
+            (target, int(first["id"]) + offset),
+        ).fetchone()
+        if anchor is not None and anchor[0] == first["meta_json"]:
+            return offset, True
+    return pg_max, False
+
+
+def _newer_rows_than_source(conn: Any, *, target: str, entries: list[dict]) -> int:
+    """How many rows this target already holds that POSTDATE the import."""
+    newest = max(float(row["ts"]) for row in entries)
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM sac_channel_events "
+            "WHERE target = %s AND ts > %s",
+            (target, newest),
+        ).fetchone()[0]
+    )
 
 
 def _insert(conn: Any, *, entries: list[dict], offset: int) -> None:
@@ -203,6 +262,85 @@ def _pg_facts(conn: Any, *, target: str, lo: int, hi: int) -> tuple[int, int, in
     return int(row[0]), int(row[1]), int(row[2]), int(row[3])
 
 
+def _dry_run_refusals(grouped: dict[str, list[dict]]) -> list[str]:
+    """:func:`_refusals` for the dry run — READ-ONLY, and never fatal.
+
+    IT MUST NOT RUN THE DDL. ``new_channel_connection`` applies the schema on
+    open, so reaching for it here would make the dry run CREATE the two
+    tables — a write, in the mode whose entire contract is that it writes
+    nothing. It connects raw instead and treats an absent table as "nothing
+    to refuse", which is exactly true: a store with no rows cannot have moved
+    on past this import.
+
+    A store that cannot be opened is SAID OUT LOUD and skipped rather than
+    reported as "nothing refused" — the reading that would make a clean dry
+    run mean nothing. Same shape as ``_migrate_lib._preview_collisions``.
+    """
+    try:
+        import psycopg
+
+        from scitex_agent_container._state.state_db_channel_store import (
+            _resolve_target,
+        )
+
+        conn = psycopg.connect(str(_resolve_target().dsn), autocommit=True)
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        print(f"  (ordering check SKIPPED — cannot open the store: {exc!r})")
+        return []
+    try:
+        exists = conn.execute(
+            "SELECT to_regclass('sac_channel_events') IS NOT NULL"
+        ).fetchone()[0]
+        if not exists:
+            return []
+        return _refusals(conn, grouped)
+    finally:
+        conn.close()
+
+
+def _refusals(conn: Any, grouped: dict[str, list[dict]]) -> list[str]:
+    """Targets this migration MUST NOT touch, with the remedy named.
+
+    THE ORDERING THIS ENFORCES: run the one-shot BEFORE the new code starts
+    serving, per target. ``init_channel_schema`` creates the tables lazily on
+    first connect, so the ordinary deploy sequence — restart ``sac listen``
+    with the new code, then run this — has the daemon minting ids from 1 for
+    any target that receives a message in the gap. Those rows are genuinely
+    new, but to an id-shifting importer they are indistinguishable from an
+    earlier host's residency, and shifting the migrated history ABOVE them
+    produces exactly the failure this design exists to prevent: every
+    SQLite-era ``Last-Event-ID`` resolves to a DIFFERENT event, and the
+    post-cutover rows sit BELOW every live cursor, unreachable through
+    ``id > cursor`` forever.
+
+    So the script REFUSES rather than guessing. The discriminator is time: a
+    row already in the store whose ``ts`` postdates everything we are about
+    to import cannot be part of an OLDER residency, and is therefore the
+    daemon having moved on. A genuine relocation imported
+    oldest-residency-first never trips this, because the earlier host's rows
+    are older than the later host's by construction.
+
+    A target we have ALREADY imported is exempt: its own rows are trivially
+    not newer than themselves, and a re-run must stay a no-op.
+    """
+    refused: list[str] = []
+    for target in sorted(grouped):
+        entries = grouped[target]
+        _, already = _offset_for(conn, target=target, entries=entries)
+        if already:
+            continue
+        newer = _newer_rows_than_source(conn, target=target, entries=entries)
+        if newer:
+            refused.append(
+                f"{target}: the store already holds {newer} row(s) NEWER than "
+                f"anything in this state.db — the daemon has served this "
+                f"target since the cutover. Importing now would shift this "
+                f"history above them and strand both. STOP `sac listen` on "
+                f"every host serving {target!r}, re-run this, then start it."
+            )
+    return refused
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = add_common_arguments(
         argparse.ArgumentParser(
@@ -230,10 +368,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"  {target}: {count} row(s), ids {lo}..{hi}, "
                 f"{undelivered} undelivered"
             )
+        # The refusal check runs HERE TOO, best-effort. A dry run whose only
+        # job is "what would move?" is not a preview of the commit if the
+        # commit can refuse; and this is the one refusal an operator most
+        # needs to see BEFORE a cutover window, not during it. A store that
+        # cannot be opened is reported as unchecked rather than as clean —
+        # the same shape ``_migrate_lib._preview_collisions`` uses, and for
+        # the same reason.
+        blocked = _dry_run_refusals(grouped)
+        if blocked:
+            for line in blocked:
+                print(f"  REFUSED {line}")
+            print(
+                f"\nDRY RUN — {len(rows)} row(s) read, {len(blocked)} target(s) "
+                "REFUSED above. --commit would refuse them too."
+            )
+            return 1
         print(
             f"\nDRY RUN — {len(rows)} row(s) would move, ids preserved. "
-            "Re-run with --commit. Import the OLDEST-RESIDENCY host FIRST "
-            "for any target that has moved between hosts."
+            "Re-run with --commit. Run this BEFORE starting `sac listen` on "
+            "the new code, and import the OLDEST-RESIDENCY host FIRST for any "
+            "target that has moved between hosts."
         )
         return 0
 
@@ -248,6 +403,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     conn = new_channel_connection()
     problems: list[str] = []
     try:
+        blocked = _refusals(conn, grouped)
+        if blocked:
+            for line in blocked:
+                print(f"  REFUSED {line}")
+            print("REFUSED — nothing was written. SQLite left untouched.")
+            return 1
+
         offsets: dict[str, int] = {}
         # ONE transaction for the whole import: a partial import would make
         # the re-run probe in ``_offset_for`` ambiguous, and an ambiguous
@@ -255,7 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         with conn.transaction():
             for target in sorted(grouped):
                 entries = grouped[target]
-                offset = _offset_for(conn, target=target, entries=entries)
+                offset, _already = _offset_for(conn, target=target, entries=entries)
                 offsets[target] = offset
                 _insert(conn, entries=entries, offset=offset)
                 top = _seed_cursor(conn, target=target)

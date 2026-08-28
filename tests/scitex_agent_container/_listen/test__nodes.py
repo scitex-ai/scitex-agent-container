@@ -62,7 +62,7 @@ TOKEN = "test-token-wi3"
 
 
 @pytest.fixture
-def isolated_env(tmp_path: Path):
+def isolated_env(pg_schema: str, tmp_path: Path):
     saved_home = os.environ.get("HOME")
     saved_reg_env = os.environ.get("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
@@ -87,8 +87,8 @@ def isolated_env(tmp_path: Path):
     # common root so they share a group. Without this the new
     # ACL gate would deny ``permitted-peer → external-bob`` as
     # cross-group (each unattached node is its own singleton).
-    record_lineage(child="permitted-peer", parent="root", db_path=db_path)
-    record_lineage(child="external-bob", parent="root", db_path=db_path)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="external-bob", parent="root")
 
     try:
         yield tmp_path

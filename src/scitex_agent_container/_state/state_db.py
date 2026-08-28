@@ -3,10 +3,15 @@
 Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``.
 
-WHAT IT HOLDS TODAY IS THREE TABLES: ``instances`` (the F-CS11 registry)
-plus ``channel_events`` and ``lineage`` (WI-1 durability and the WI-2
-spawn DAG). :data:`KNOWN_TABLES` is the list, and it is the list every
-generic reader walks.
+WHAT IT HOLDS TODAY IS TWO TABLES: ``instances`` (the F-CS11 registry)
+plus ``channel_events`` (WI-1 durability). :data:`KNOWN_TABLES` is the
+list, and it is the list every generic reader walks.
+
+The WI-2 spawn DAG, ``lineage``, was the third until 2026-08-28. It moved
+to the shared PostgreSQL store (:mod:`.state_db_lineage_store`), which is
+the one departure from this file where an empty leftover would have been
+worse than a crash: every reader treats "no row for this child" as ROOT,
+and a root MAY SPAWN. See the departure note in :mod:`.state_db_schema`.
 
 The F-CS11 registry was ``definitions`` / ``instances`` / ``events``, with
 ``instance_heartbeats`` (the legacy ``heartbeats`` time series, tied to an
@@ -96,7 +101,6 @@ DEFAULT_DB_PATH = Path(
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
     "instances",
-    "lineage",
     # ``channel_events`` left on 2026-08-28 -- the LAST SQLite table sac
     # owned. It is now ``sac_channel_events`` / ``sac_channel_cursor`` in the
     # shared PostgreSQL (:mod:`.state_db_channel_store`). Removed rather than
@@ -111,6 +115,24 @@ KNOWN_TABLES = (
     # MCP ``db_export`` tool cannot name a subset. ``_store_plugin.NEVER_SYNCED``
     # deliberately KEEPS its refusal of this name -- a table leaving this
     # tuple must not read as the refusal being withdrawn.
+    #
+    #
+    # ``lineage`` left on 2026-08-28, when the spawn DAG moved to the
+    # shared PostgreSQL store (:mod:`.state_db_lineage_store`). Its DDL is
+    # gone from :mod:`.state_db_schema`, which carries the departure note,
+    # and its ``export_state`` filter is gone from
+    # :mod:`.state_db_export` -- so keeping the name here would aim every
+    # generic reader (``table_counts`` behind ``sac db show``,
+    # ``export_state`` / ``import_state``, and the ``click.Choice`` for
+    # ``sac db query``) at a table that no longer exists.
+    #
+    # The empty-is-dangerous argument this tuple has been shedding names
+    # over is at its sharpest here, and it is worth naming once: an empty
+    # ``lineage`` does not read as "wrong database", it reads as "every
+    # agent is a ROOT" -- and a root may spawn. ``sac db show`` answering
+    # ``lineage 0`` while the store holds the fleet's 23 edges would be a
+    # wrong answer that looks like a right one about the table the whole
+    # ACL is derived from.
     #
     # ``definitions``, ``instance_heartbeats`` and ``events`` left on
     # 2026-08-28, in one change, taking this tuple from six names to three.

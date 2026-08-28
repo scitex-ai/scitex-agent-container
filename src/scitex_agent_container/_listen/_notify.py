@@ -58,7 +58,6 @@ failure → ``500`` with the reason. No silent drops.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
@@ -66,6 +65,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from .._lifecycle._off_loop import run_blocking
 from .._state.state_db_channel import persist_event
 from ..a2a._inbox_bus import Broker, mint_event
 
@@ -130,7 +130,7 @@ async def publish_to_agent(
     # daemon, where a blocking network call blocks EVERY request the
     # daemon is serving. Same fix as the SSE generators and the
     # ``is_local_node`` hop in ``_node_channel``.
-    row_id = await asyncio.to_thread(persist_event, target=agent, event=event)
+    row_id = await run_blocking(persist_event, target=agent, event=event)
     event["_row_id"] = row_id
     delivered = await broker.publish(agent, event)
     return {"msg_id": event["msg_id"], "delivered_subscriber_count": delivered}

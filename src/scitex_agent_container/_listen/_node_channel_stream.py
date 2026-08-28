@@ -29,6 +29,7 @@ import json
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+from .._lifecycle._off_loop import run_blocking
 from .._state.state_db_channel import (
     list_since_id,
     list_undelivered,
@@ -117,19 +118,27 @@ async def node_inbox_stream(request: Request) -> Response:
             # They were safe as sync calls while ``channel_events`` was a
             # local SQLite file; since 2026-08-28 each is a NETWORK round
             # trip, so a blackholed primary would stall THIS WHOLE DAEMON —
-            # every request it is serving, not just this stream — for as
-            # long as the connect takes. That is the same hazard
-            # ``node_message_send``'s ``is_local_node`` hop was added for
-            # when ``comms_nodes`` moved, and the same fix: the store's DSN
-            # carries an explicit ``connect_timeout`` that bounds it to
-            # seconds, and the thread hop keeps even those seconds off the
-            # loop.
+            # every request it is serving, not just this stream.
+            # BOUNDED — and ``asyncio.to_thread`` was NOT, which an earlier
+            # version of this comment got wrong. It justified the hop with the
+            # store's ``connect_timeout``; libpq's connect_timeout bounds
+            # CONNECTION ESTABLISHMENT ONLY. A primary that accepts TCP and
+            # then stops answering blocks forever, holding the module-wide
+            # ``_OP_LOCK``, while every other channel call queues behind it in
+            # the event loop's SHARED default executor — min(32, cpu+4)
+            # threads, 6-8 on a small runner. ``_lifecycle._off_loop`` was
+            # written for exactly that failure and measured it: unbounded
+            # ``to_thread`` callers "queue behind the wedged threads and hang
+            # FOREVER". ``run_blocking`` uses a dedicated thread plus a hard
+            # ``asyncio.wait_for``, so a wedged call raises here — the stream
+            # dies and the client re-dials — instead of taking the daemon
+            # with it.
             if last_event_id is not None:
-                replay = await asyncio.to_thread(
+                replay = await run_blocking(
                     list_since_id, target=name, since_id=last_event_id
                 )
             else:
-                replay = await asyncio.to_thread(list_undelivered, target=name)
+                replay = await run_blocking(list_undelivered, target=name)
             for entry in replay:
                 if await request.is_disconnected():
                     return
@@ -143,7 +152,7 @@ async def node_inbox_stream(request: Request) -> Response:
                 yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                     "utf-8"
                 )
-                await asyncio.to_thread(mark_delivered, [row_id], target=name)
+                await run_blocking(mark_delivered, [row_id], target=name)
 
             beat_s = keepalive_interval_s()
             while True:
@@ -174,13 +183,23 @@ async def node_inbox_stream(request: Request) -> Response:
                 # the envelope as ``_row_id`` (see
                 # :func:`._node_channel.node_message_send`). We surface it
                 # as the SSE ``id:`` line and mark the row delivered.
-                row_id = event.pop("_row_id", None)
-                data = json.dumps(event, ensure_ascii=False)
+                # READ, DO NOT POP. ``Broker.publish`` fans the SAME dict
+                # out to every subscriber queue, so popping here mutates the
+                # object the OTHER subscribers are about to read: the second
+                # one finds no ``_row_id``, emits a frame with no ``id:``
+                # line, and never marks the row delivered. The key is
+                # excluded at serialize time instead, which leaves the
+                # envelope every subscriber sees identical.
+                row_id = event.get("_row_id")
+                data = json.dumps(
+                    {k: v for k, v in event.items() if k != "_row_id"},
+                    ensure_ascii=False,
+                )
                 if row_id is not None:
                     yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
                         "utf-8"
                     )
-                    await asyncio.to_thread(
+                    await run_blocking(
                         mark_delivered, [int(row_id)], target=name
                     )
                 else:
