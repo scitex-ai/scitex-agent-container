@@ -74,7 +74,8 @@ PHASE_READINESS: tuple[tuple[str, str, str], ...] = (
     (
         "done",
         "_relocate_effects.finish: both hosts are observed for exactly ONE live "
-        "instance, then residency is written to _state.state_db_relocation and the "
+        "instance, then residency is written to the agent_residency store in "
+        "PostgreSQL (_state.relocation_pg, NOT state.db) and the "
         "source's transcript MOVED ASIDE — all gated on the two confirmations being "
         "recorded True",
         "—",

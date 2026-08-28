@@ -28,9 +28,13 @@ Three primitives, each operating on the ``channel_events`` table in
     ids. Idempotent (we only update rows where
     ``delivered_at IS NULL``); subsequent calls are no-ops.
 
-All times stored as ``REAL`` unix-seconds (float). Matches the diary
-tables (turns / errors / heartbeats) so cross-table time-window
-queries work without format conversion.
+All times stored as ``REAL`` unix-seconds (float). This module owns
+``channel_events`` and nothing else — it does NOT read the diary trio
+(turns / errors / heartbeats), which named this format when it lived in
+the same SQLite file. Since 2026-08-28 the diary is per-host PostgreSQL,
+so a single cross-table time-window query over both is no longer
+possible; the shared wire format is kept anyway, because comparing two
+timestamps across the two stores should not need a conversion.
 """
 
 from __future__ import annotations

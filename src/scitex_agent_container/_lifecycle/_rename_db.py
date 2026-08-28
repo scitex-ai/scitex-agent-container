@@ -9,10 +9,29 @@ at the old name produces an agent that starts but cannot be addressed:
 the A2A directory still advertises the dead name, and the ACL gate has no
 policy row for the live one.
 
-So: rename EVERY row that keys on the name, including the history
-(``turns`` / ``errors`` / ``heartbeats`` / ``attempts``). A renamed agent
-is the SAME agent — ``sac agents recall <new>`` must still find its past.
-This is the ``git mv`` position: the name changed, history follows.
+So: rename EVERY row in state.db that keys on the name, including the
+history (``attempts``, ``channel_events``). A renamed agent is the SAME
+agent — its past must still be findable under the new name. This is the
+``git mv`` position: the name changed, history follows.
+
+WHAT THIS NO LONGER COVERS, STATED RATHER THAN LEFT AS A DEAD ENTRY
+===================================================================
+``turns`` / ``errors`` / ``heartbeats`` were in :data:`NAME_COLUMNS`
+until 2026-08-28. They are no longer SQLite tables — the diary moved to
+per-host PostgreSQL (:mod:`.._state.state_db_diary`) — and the loops
+below skip a table that does not exist, so those three entries could
+only ever match zero rows. They are REMOVED rather than left as
+reassuring decoration: a list naming a table this code cannot reach
+reads as coverage that is not there.
+
+The diary history therefore does NOT follow a rename today, and it
+cannot be made to follow one by adding a store call here. ``name`` is an
+IDENTITY field of the heartbeats store (changing it names a different
+record, not the same one renamed) and an ``IMMUTABLE`` data field of the
+turns and errors stores, so the store REFUSES the write by design. Making
+diary history follow a rename means hiding each record and re-writing it
+under a new identity — a decision about append-only history, not a line
+of config, and deliberately not smuggled into this migration.
 
 Reversibility: we capture the ``rowid`` of every row we are about to
 touch, BEFORE touching it. The undo is then a rowid-scoped UPDATE back to
@@ -36,9 +55,9 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("instances", "name"),
     ("instances", "spawned_by"),
     ("attempts", "agent"),
-    ("turns", "name"),
-    ("errors", "name"),
-    ("heartbeats", "name"),
+    # ("turns", "name") / ("errors", "name") / ("heartbeats", "name") were
+    # here until 2026-08-28 — see the module docstring for why removing them
+    # is the honest edit and why a store call cannot replace them.
     ("channel_events", "target"),
     ("channel_events", "source"),
     ("node_tokens", "name"),
@@ -47,7 +66,14 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
     ("comms_nodes", "name"),
-    ("node_comms_policy", "name"),
+    # ("node_comms_policy", "name") was here until 2026-08-28. That table
+    # moved to PostgreSQL, and leaving the pair would have been WORSE than
+    # a crash: ``rename_rows`` skips tables absent from sqlite_master, so
+    # the rename would have reported success while the policy stayed under
+    # the OLD name. The renamed agent then resolves to NO named group and
+    # every authority gate denies it. The move is done by
+    # ``state_db_acl_policy.rename_comms_policy``, called as its own step
+    # in :mod:`._rename` with its own inverse on the undo stack.
 )
 
 # (table, column) pairs holding a PATH that embeds the agent name as a

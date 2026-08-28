@@ -53,40 +53,40 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_read_comms_policy_group_name_defaults_empty(db_path: Path) -> None:
+def test_read_comms_policy_group_name_defaults_empty(pg_schema: str, db_path: Path) -> None:
     """A node with no policy row reports the ungrouped default."""
     # Arrange — no record_comms_policy call.
     # Act
-    policy = read_comms_policy(name="never-recorded", db_path=db_path)
+    policy = read_comms_policy(name="never-recorded")
     # Assert
     assert policy["group_name"] == ""
 
 
-def test_record_comms_policy_persists_group_name(db_path: Path) -> None:
+def test_record_comms_policy_persists_group_name(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
-    policy = read_comms_policy(name="alice", db_path=db_path)
+    policy = read_comms_policy(name="alice")
     # Assert
     assert policy["group_name"] == "developer"
 
 
-def test_record_comms_policy_group_name_is_trimmed(db_path: Path) -> None:
+def test_record_comms_policy_group_name_is_trimmed(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="  analysts  ", db_path=db_path)
+    record_comms_policy(name="alice", group_name="  analysts  ")
     # Act
-    policy = read_comms_policy(name="alice", db_path=db_path)
+    policy = read_comms_policy(name="alice")
     # Assert
     assert policy["group_name"] == "analysts"
 
 
-def test_record_comms_policy_group_name_upsert_refreshes(db_path: Path) -> None:
+def test_record_comms_policy_group_name_upsert_refreshes(pg_schema: str, db_path: Path) -> None:
     """A re-record (e.g. a restart after a spec edit) updates the group."""
     # Arrange
-    record_comms_policy(name="alice", group_name="analysts", db_path=db_path)
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="analysts")
+    record_comms_policy(name="alice", group_name="developer")
     # Act
-    policy = read_comms_policy(name="alice", db_path=db_path)
+    policy = read_comms_policy(name="alice")
     # Assert
     assert policy["group_name"] == "developer"
 
@@ -98,7 +98,7 @@ def test_record_comms_policy_rejects_non_str_group_name(db_path: Path) -> None:
     raises = pytest.raises(ValueError)
     # Assert
     with raises:
-        record_comms_policy(name="alice", group_name=bad_group, db_path=db_path)
+        record_comms_policy(name="alice", group_name=bad_group)
 
 
 # ---------------------------------------------------------------------------
@@ -106,19 +106,19 @@ def test_record_comms_policy_rejects_non_str_group_name(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_group_name_returns_persisted_group(db_path: Path) -> None:
+def test_resolve_group_name_returns_persisted_group(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
-    group = resolve_group_name(name="alice", db_path=db_path)
+    group = resolve_group_name(name="alice")
     # Assert
     assert group == "developer"
 
 
-def test_resolve_group_name_unknown_node_is_empty(db_path: Path) -> None:
+def test_resolve_group_name_unknown_node_is_empty(pg_schema: str, db_path: Path) -> None:
     # Arrange — no row.
     # Act
-    group = resolve_group_name(name="ghost", db_path=db_path)
+    group = resolve_group_name(name="ghost")
     # Assert
     assert group == ""
 
@@ -128,33 +128,33 @@ def test_resolve_group_name_unknown_node_is_empty(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_same_named_group_true_for_equal_nonempty(db_path: Path) -> None:
+def test_same_named_group_true_for_equal_nonempty(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="bob", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="bob", group_name="developer")
     # Act
-    result = same_named_group(sender="alice", target="bob", db_path=db_path)
+    result = same_named_group(sender="alice", target="bob")
     # Assert
     assert result is True
 
 
-def test_same_named_group_false_for_different_groups(db_path: Path) -> None:
+def test_same_named_group_false_for_different_groups(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="bob", group_name="analysts", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="bob", group_name="analysts")
     # Act
-    result = same_named_group(sender="alice", target="bob", db_path=db_path)
+    result = same_named_group(sender="alice", target="bob")
     # Assert
     assert result is False
 
 
-def test_same_named_group_false_when_both_ungrouped(db_path: Path) -> None:
+def test_same_named_group_false_when_both_ungrouped(pg_schema: str, db_path: Path) -> None:
     """Two ungrouped agents must NOT match — absence is a no-op."""
     # Arrange — neither has a group_name.
-    record_comms_policy(name="alice", db_path=db_path)
-    record_comms_policy(name="bob", db_path=db_path)
+    record_comms_policy(name="alice")
+    record_comms_policy(name="bob")
     # Act
-    result = same_named_group(sender="alice", target="bob", db_path=db_path)
+    result = same_named_group(sender="alice", target="bob")
     # Assert
     assert result is False
 
@@ -164,19 +164,19 @@ def test_same_named_group_false_when_both_ungrouped(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_is_developer_true_for_developer_group_member(db_path: Path) -> None:
+def test_is_developer_true_for_developer_group_member(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
-    result = is_developer(name="alice", db_path=db_path)
+    result = is_developer(name="alice")
     # Assert
     assert result is True
 
 
-def test_is_developer_false_for_other_group_member(db_path: Path) -> None:
+def test_is_developer_false_for_other_group_member(pg_schema: str, db_path: Path) -> None:
     # Arrange
-    record_comms_policy(name="alice", group_name="analysts", db_path=db_path)
+    record_comms_policy(name="alice", group_name="analysts")
     # Act
-    result = is_developer(name="alice", db_path=db_path)
+    result = is_developer(name="alice")
     # Assert
     assert result is False

@@ -329,6 +329,12 @@ NODE_COMMS_POLICY = Schema.build(
         "inbound_parent": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "lineage_group": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "may_spawn": _data(FieldKind.BOOL, MergeRule.LAST_WRITER_WINS, required=True),
+        # BOTH group projections. They are written together by
+        # ``record_comms_policy`` from one ``metadata.labels``, and
+        # declaring only ``group_names`` here let the primary drift out
+        # of the replication contract while the mesh still resolved
+        # through it.
+        "group_name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "group_names": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "updated_at": _data(FieldKind.REAL, MergeRule.MAX, required=True),
     },
@@ -339,10 +345,18 @@ NODE_COMMS_POLICY = Schema.build(
 CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
     "sac_comms_nodes": (COMMS_NODES, Truth.FLEET, WriterPolicy.SINGLE_WRITER),
     "sac_comms_grants": (COMMS_GRANTS, Truth.FLEET, WriterPolicy.MULTI_WRITER),
+    # MULTI_WRITER since 2026-08-28, when the table moved to PostgreSQL
+    # and this declaration stopped being a plan and started describing a
+    # live store. SINGLE_WRITER modelled the record as owned by the host
+    # running the agent, which it is not: ``sac agents refresh-acl``
+    # re-publishes the whole fleet from wherever the operator is, agents
+    # relocate between hosts, and ``import_state`` bulk-imports peer rows.
+    # A refused ACL write is a STALE ACL row, and a stale ACL row denies
+    # an agent its groups or leaves it holding groups its spec dropped.
     "sac_node_comms_policy": (
         NODE_COMMS_POLICY,
         Truth.FLEET,
-        WriterPolicy.SINGLE_WRITER,
+        WriterPolicy.MULTI_WRITER,
     ),
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
@@ -415,24 +429,31 @@ NEVER_SYNCED: dict[str, str] = {
     ),
     "turns": (
         "the agent conversation diary — prompt_text and response_text, i.e. "
-        "the full content of what agents were asked and answered. It has NO "
-        "primary key at all, so today's importer duplicates every row on "
-        "every re-import. High-volume per-host diagnostics whose content is "
-        "the most sensitive thing in the DB: it should not leave its host "
-        "as a side effect of a directory sync"
+        "the full content of what agents were asked and answered. Since "
+        "2026-08-28 a per-host PostgreSQL store rather than a SQLite table, "
+        "which does not change the ruling: high-volume per-host diagnostics "
+        "whose content is the most sensitive thing sac records, and it "
+        "should not leave its host as a side effect of a directory sync"
     ),
     "errors": (
-        "per-host error journal keyed by an autoincrement error_id. Useful "
-        "to READ across hosts, but that is a query concern; replicating it "
-        "puts an unbounded diagnostic stream on the sync path and its ids "
-        "collide between hosts"
+        "per-host error journal, since 2026-08-28 a per-host PostgreSQL "
+        "store rather than a SQLite table. Useful to READ across hosts, but "
+        "that is a query concern; replicating it puts an unbounded "
+        "diagnostic stream on the sync path"
     ),
     "heartbeats": (
         "the diary-style heartbeat stream (name, host, pid, state, ts), "
-        "append-only with an autoincrement id and no uniqueness. Same "
-        "argument as instance_heartbeats: the fleet-relevant content is the "
-        "latest sample, carried as sac_instances.last_heartbeat_at"
+        "append-only, and since 2026-08-28 a per-host PostgreSQL store "
+        "rather than a SQLite table. Same argument as instance_heartbeats: "
+        "the fleet-relevant content is the latest sample, carried as "
+        "sac_instances.last_heartbeat_at"
     ),
+    # The three entries above no longer appear in KNOWN_TABLES — the diary
+    # left SQLite on 2026-08-28. They STAY here for the reason
+    # acl_deny_notify_log stays: the completeness gate only checks that every
+    # KNOWN_TABLES name is decided, so a table leaving that tuple must not be
+    # read as the refusal being withdrawn. A store that moved backend still
+    # must not replicate, and deleting the reason would lose why.
 }
 
 

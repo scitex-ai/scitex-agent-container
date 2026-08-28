@@ -353,7 +353,7 @@ class TestReportedOncePerStart:
     report. Before the move this same start produced two."""
 
     def test_start_reports_undeclared_layers_exactly_once(
-        self, pg_schema, tmp_path, isolated_home, caplog
+        self, pg_schema: str, tmp_path, isolated_home, caplog
     ):
         # Arrange
         spec = _write_undeclared_spec(tmp_path)
@@ -372,7 +372,7 @@ class TestReportedOncePerStart:
         assert len(hits) == 1
 
     def test_start_still_reaches_the_runtime_while_not_enforcing(
-        self, pg_schema, tmp_path, isolated_home
+        self, pg_schema: str, tmp_path, isolated_home
     ):
         # Arrange
         spec = _write_undeclared_spec(tmp_path)

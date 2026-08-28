@@ -145,7 +145,21 @@ FROZEN_SQLITE = frozenset(
         # precise failure the "no stale entries" test exists to catch, so it
         # would have failed loudly rather than rotted. Expect more of these as
         # the migration lands; take both removals.
-        "_state/dispatch_ledger.py",
+        #
+        # _state/dispatch_ledger.py LEFT THIS SET 2026-08-28, and its obstacle
+        # was not a verb or an endpoint but a QUESTION THE TABLE COULD NOT
+        # ANSWER: whose dispatch is this. state.db was PER-AGENT, so the shard
+        # did the scoping and no column had to; SCITEX_STORE_DSN is FLEET-WIDE,
+        # so a naive port collapsed 130+ shards into one table where
+        # list_dispatches() answered for the whole fleet and
+        # list_unreacted_dispatches() reported everyone else's comm-misses as
+        # yours. Nothing would have raised. from_agent could not stand in for
+        # the owner — it names the SENDER of one message and is explicitly
+        # nullable — so the port added `agent` to the store IDENTITY, the shape
+        # inbound_ledger had already needed one table earlier. Its four readers
+        # (_network/_peer_dispatch, _mcp/_channel_tools, _mcp/
+        # _channel_reaction_ack and _mcp/channel) moved in the SAME PR: a
+        # half-moved table is a split brain that also raises nothing.
         # _state/inbound_ledger.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL. Its obstacle was neither a missing verb nor a
         # missing endpoint but an AUTOINCREMENT id that looked public: returned
@@ -174,7 +188,29 @@ FROZEN_SQLITE = frozenset(
         "_state/state_db_health.py",
         "_state/state_db_heartbeats.py",
         "_state/state_db_migrations.py",
-        "_state/state_db_relocation.py",
+        # _state/state_db_relocation.py LEFT THIS SET 2026-08-28 — the
+        # relocation TRIO (agent_residency, relocation_leases,
+        # relocation_journal) moved to PostgreSQL together, in one change, and
+        # the module itself was DELETED rather than emptied: its three tables
+        # now live in _state/relocation_pg.py via scitex_dev.store.
+        #
+        # ALL THREE OR NONE, and the reason is worth keeping because it is not
+        # obvious from the tables alone. They shared this one module, so a
+        # lease-only cutover would have left the fence being written to
+        # PostgreSQL and read from SQLite — a handover that lands at fence 1
+        # instead of 3 — while a residency-only one would have forked residency
+        # from the journal that records the move which set it. Either half is a
+        # split brain that raises nothing: some readers see a record, others do
+        # not.
+        #
+        # It also carried TWO PIECES OF PROSE that became false at the cutover
+        # and that no import check can see: cli_pkg/_relocate_readiness.py named
+        # this module as where residency is written, and
+        # _lifecycle/_relocate_checks_late.py told an operator to read the
+        # relocation_leases row — at check_lease_holdable, the gate that stands
+        # between one live agent and two. `sqlite3 state.db` still answers that
+        # question, from the row this cutover left behind. Both now name the
+        # store.
         # _state/state_db_verdict_dedup.py LEFT THIS SET 2026-08-19 — the
         # first table to move to PostgreSQL, by adopting
         # scitex_dev.store rather than by sac growing its own psycopg
@@ -210,7 +246,17 @@ FROZEN_SQLITE_DDL = frozenset(
         # `test_the_ddl_freeze_list_has_no_stale_entries` reported. A ratchet
         # that only checks one direction would have gone green on a half-done
         # migration.
-        "_state/state_db_acl_policy.py",
+        #
+        # _state/state_db_acl_policy.py LEFT THIS SET 2026-08-28 — the Phase-3
+        # per-spec ACL table, and the first move where a lost write is a
+        # PRIVILEGE change rather than a lost observation: read_comms_policy
+        # answers a missing record with all-allow defaults, so an unreachable
+        # store that returned empty instead of raising would read as
+        # PERMISSION. It is also the first to leave this set on the strength
+        # of its DOCSTRING: the module never executed DDL, it quoted the
+        # CREATE TABLE in its prose, and this scan reads file text — so the
+        # entry went stale the moment the prose was rewritten, exactly as the
+        # two-directional rule intends.
         # _state/state_db_blocks.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL, and the first where the migration's own
         # PREDICTION was wrong in the safe direction. It was scoped as "a

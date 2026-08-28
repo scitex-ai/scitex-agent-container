@@ -95,10 +95,10 @@ def _db_names(db_path: Path) -> list[str]:
     conn = sqlite3.connect(str(db_path))
     try:
         nodes = conn.execute("SELECT name FROM comms_nodes").fetchall()
-        turns = conn.execute("SELECT name FROM turns").fetchall()
+        past = conn.execute("SELECT agent FROM attempts").fetchall()
     finally:
         conn.close()
-    return sorted([r[0] for r in nodes] + [t[0] for t in turns])
+    return sorted([r[0] for r in nodes] + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):
@@ -320,7 +320,7 @@ def test_no_cards_mode_warns_that_the_cards_will_be_orphaned(world: World):
 # ---------------------------------------------------------------------------
 
 
-def test_rename_moves_the_spec_dir(renamed: World):
+def test_rename_moves_the_spec_dir(pg_schema: str, renamed: World):
     # Arrange
     spec = renamed.layout.spec_file(NEW)
     # Act
@@ -329,7 +329,7 @@ def test_rename_moves_the_spec_dir(renamed: World):
     assert exists
 
 
-def test_rename_removes_the_old_spec_dir(renamed: World):
+def test_rename_removes_the_old_spec_dir(pg_schema: str, renamed: World):
     # Arrange
     old_dir = renamed.layout.spec_dir(OLD)
     # Act
@@ -338,7 +338,7 @@ def test_rename_removes_the_old_spec_dir(renamed: World):
     assert not exists
 
 
-def test_rename_rewrites_the_board_identity_in_the_spec(renamed: World):
+def test_rename_rewrites_the_board_identity_in_the_spec(pg_schema: str, renamed: World):
     # Arrange
     expected = f"SCITEX_TODO_AGENT_ID={NEW}"
     # Act
@@ -347,7 +347,7 @@ def test_rename_rewrites_the_board_identity_in_the_spec(renamed: World):
     assert expected in text
 
 
-def test_rename_rewrites_the_state_db_path_in_the_spec(renamed: World):
+def test_rename_rewrites_the_state_db_path_in_the_spec(pg_schema: str, renamed: World):
     # Arrange
     expected = f"SCITEX_AGENT_CONTAINER_STATE_DB=/state/{NEW}/state.db"
     # Act
@@ -356,7 +356,7 @@ def test_rename_rewrites_the_state_db_path_in_the_spec(renamed: World):
     assert expected in text
 
 
-def test_rename_moves_the_overlay_dir_with_its_contents(renamed: World):
+def test_rename_moves_the_overlay_dir_with_its_contents(pg_schema: str, renamed: World):
     # Arrange
     marker = renamed.layout.overlay_dir(NEW) / "upper" / "home" / "agent" / "marker"
     # Act
@@ -365,7 +365,7 @@ def test_rename_moves_the_overlay_dir_with_its_contents(renamed: World):
     assert content == OLD  # the file MOVED; its bytes are untouched
 
 
-def test_rename_moves_the_runtime_dir(renamed: World):
+def test_rename_moves_the_runtime_dir(pg_schema: str, renamed: World):
     # Arrange
     session = renamed.layout.runtime_dir(NEW) / "session.jsonl"
     # Act
@@ -374,7 +374,7 @@ def test_rename_moves_the_runtime_dir(renamed: World):
     assert exists
 
 
-def test_rename_repoints_the_registry_entry_name(renamed: World):
+def test_rename_repoints_the_registry_entry_name(pg_schema: str, renamed: World):
     # Arrange
     path = renamed.layout.registry_json(NEW)
     # Act
@@ -383,7 +383,7 @@ def test_rename_repoints_the_registry_entry_name(renamed: World):
     assert entry["name"] == NEW
 
 
-def test_rename_repoints_the_registry_config_path(renamed: World):
+def test_rename_repoints_the_registry_config_path(pg_schema: str, renamed: World):
     # Arrange
     expected = str(renamed.layout.spec_file(NEW))
     # Act
@@ -392,7 +392,7 @@ def test_rename_repoints_the_registry_config_path(renamed: World):
     assert entry["config"] == expected
 
 
-def test_rename_moves_the_state_db_rows(renamed: World):
+def test_rename_moves_the_state_db_rows(pg_schema: str, renamed: World):
     # Arrange
     expected = [NEW, NEW]
     # Act
@@ -401,7 +401,7 @@ def test_rename_moves_the_state_db_rows(renamed: World):
     assert names == expected
 
 
-def test_rename_keeps_the_operators_spec_comments(renamed: World):
+def test_rename_keeps_the_operators_spec_comments(pg_schema: str, renamed: World):
     # Arrange
     marker = "# This comment block is LOAD-BEARING"
     # Act
@@ -410,7 +410,7 @@ def test_rename_keeps_the_operators_spec_comments(renamed: World):
     assert marker in text
 
 
-def test_a_renamed_agent_can_be_renamed_back(world: World):
+def test_a_renamed_agent_can_be_renamed_back(pg_schema: str, world: World):
     """The rename is not a one-way door."""
     # Arrange
     agent_rename(OLD, NEW, layout=world.layout, cards=False)

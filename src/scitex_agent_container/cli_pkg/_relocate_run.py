@@ -8,8 +8,9 @@ says whether that phase SUCCEEDED, FAILED or COULD NOT BE MEASURED.
 RESUME IS THE DEFAULT, NOT A FLAG. A relocation touches two hosts and will
 eventually be interrupted; :mod:`.._lifecycle._relocate_phases` was built around
 that, and the journal it produces is now persisted
-(:mod:`.._state.state_db_relocation`). So a second invocation LOADS the stored
-journal and continues from where the first stopped, rather than starting over —
+(:mod:`.._state.relocation_pg`, per-host PostgreSQL since 2026-08-28). So a
+second invocation LOADS the stored journal and continues from where the first
+stopped, rather than starting over —
 and because :func:`advance` treats "advance to the phase you are already in" as a
 no-op that succeeds, a coordinator that did the work and died before journalling
 re-runs harmlessly.
@@ -40,7 +41,7 @@ from .._lifecycle._relocate_execute import (
     execute,
 )
 from .._lifecycle._relocate_phases import begin
-from .._state.state_db_relocation import load_journal, save_journal
+from .._state.relocation_pg import load_journal, save_journal
 from ._helpers import console
 
 __all__ = ["EXIT_INCOMPLETE", "EXIT_UNMEASURED", "run_relocation"]

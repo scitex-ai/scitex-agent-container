@@ -220,8 +220,8 @@ def _residency_history(name: str):
     what lets a legacy spec ``host:`` seed it once.
     """
     from .._lifecycle._residency import Residency
+    from .._state.relocation_pg import read_residency_history
     from .._state.state_db_instances import list_active_instances
-    from .._state.state_db_relocation import read_residency_history
 
     stays = read_residency_history(name)
     if stays:

@@ -172,7 +172,7 @@ def _set_up_denied_send(db: Path) -> dict[str, str]:
     """
     record_lineage(child="alpha", parent="parent_a", db_path=db)
     record_lineage(child="gamma", parent="parent_a", db_path=db)
-    record_comms_policy(name="gamma", inbound_siblings="deny", db_path=db)
+    record_comms_policy(name="gamma", inbound_siblings="deny")
     return {
         "host": "smoke-host-token",
         "parent_a": mint_node_token(name="parent_a", db_path=db),

@@ -1420,7 +1420,8 @@ def test_agent_restart_calls_runtime_stop_then_start(
 
 
 def test_agent_restart_clears_dead_session_marker(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — a runtime state dir holding a DEAD resume marker + history
     # (the production shape after a session aged out). PR #190's restart
@@ -1456,7 +1457,8 @@ def test_agent_restart_clears_dead_session_marker(
 
 
 def test_agent_restart_clears_dead_session_history(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — the dead uuid lives in the append-only history that the
     # runner's resume fallback would otherwise walk and re-resume.
@@ -1492,7 +1494,8 @@ def test_agent_restart_clears_dead_session_history(
 
 
 def test_agent_restart_backs_up_dead_session_history(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — clearing the dead history must preserve it as an audit
     # side-file, not silently destroy it.
@@ -1547,7 +1550,8 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
 
 
 def test_agent_restart_no_row_falls_back_to_spec_and_starts(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — NO registry row for "alpha" (ad-hoc / pre-autorecord
     # launch); a resolver returns the real on-disk spec path so restart
@@ -1569,7 +1573,8 @@ def test_agent_restart_no_row_falls_back_to_spec_and_starts(
 
 
 def test_agent_restart_no_row_force_stops_before_start(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — no registry row; a runtime whose stop() raises. The
     # fallback's force=True stop must swallow that and still reach start.
@@ -1591,7 +1596,8 @@ def test_agent_restart_no_row_force_stops_before_start(
 
 
 def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — no registry row, NO injected resolver: the real default
     # ``resolve_config`` must find the spec under the standard
@@ -1776,7 +1782,8 @@ def _restart_alpha(runtime: _StaggeredRuntime, registry: Registry) -> bool:
 
 
 def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1789,7 +1796,8 @@ def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
 
 
 def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1802,7 +1810,8 @@ def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
 
 
 def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_running(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(
@@ -1817,7 +1826,8 @@ def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_runni
 
 
 def test_agent_restart_polls_is_running_until_false(
-    tmp_path: Path, registry: Registry, pg_schema: str
+    pg_schema: str,
+    tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
     runtime = _build_staggered_setup(

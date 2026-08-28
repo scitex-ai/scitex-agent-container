@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from scitex_agent_container._state.state_db import KNOWN_TABLES
+
 
 @pytest.fixture
 def db_path(tmp_path: Path):
@@ -41,24 +43,14 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "table",
-    [
-        "definitions",
-        "instances",
-        "instance_heartbeats",
-        "events",
-        "attempts",
-        "turns",
-        "errors",
-        "heartbeats",
-        "channel_events",
-        "node_tokens",
-        "lineage",
-        "comms_grants",
-        "comms_nodes",
-    ],
-)
+# Parametrized over KNOWN_TABLES ITSELF, not over a copy of it. This was a
+# hand-written literal list until 2026-08-28, and by then it had drifted: it
+# still named ``turns`` / ``errors`` / ``heartbeats`` after the diary moved to
+# PostgreSQL and those names left KNOWN_TABLES, so the test failed asserting
+# the export SHOULD contain tables sac no longer has. A literal copy of a
+# constant is a second source of truth that nothing keeps honest; reading the
+# constant means this test tracks the whitelist for free, in both directions.
+@pytest.mark.parametrize("table", sorted(KNOWN_TABLES))
 def test_export_state_no_tables_filter_includes_table(
     db_path: Path, table: str
 ) -> None:

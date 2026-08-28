@@ -85,7 +85,7 @@ def _host_headers() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_restart_unrelated_caller_returns_403(client, isolated_env):
+def test_restart_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
     # Arrange — alice has no lineage edge and no group mesh to the target.
     headers = _node_headers("alice")
     # Act
@@ -94,7 +94,7 @@ def test_restart_unrelated_caller_returns_403(client, isolated_env):
     assert response.status_code == 403
 
 
-def test_restart_unrelated_caller_body_has_kind_acl_deny(client, isolated_env):
+def test_restart_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
     # Arrange
     headers = _node_headers("alice")
     # Act
@@ -124,7 +124,7 @@ def test_restart_with_host_bearer_does_not_403(client, isolated_env):
 # ---------------------------------------------------------------------------
 
 
-def test_restart_researcher_to_developer_not_403(client, isolated_env):
+def test_restart_researcher_to_developer_not_403(pg_schema: str, client, isolated_env):
     # Arrange — neurovista (researcher) restarts scitex-todo (developer):
     # the manage mesh allows it with no lineage edge. The target has no
     # row so the bare-host shell fails, but NOT via a 403 ACL deny.
@@ -329,7 +329,7 @@ def test_admin_restart_caller_none_does_not_self_schedule(client, isolated_env):
     assert recorder.calls == [] and "self_restart" not in body
 
 
-def test_node_caller_restarting_peer_does_not_self_schedule(client, isolated_env):
+def test_node_caller_restarting_peer_does_not_self_schedule(pg_schema: str, client, isolated_env):
     # Arrange — neurovista restarts scitex-todo (mesh-allowed, caller != name):
     # the self-restart branch must be skipped, sync path taken.
     record_comms_policy(name="neurovista", group_name="researcher")

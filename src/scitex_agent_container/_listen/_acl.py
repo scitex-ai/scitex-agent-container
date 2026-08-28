@@ -120,7 +120,7 @@ def check_lineage_acl(
     # delete / status / tail), not just its lineage descendants. Checked
     # before the descendant walk so developer-group CRUD never depends on
     # a lineage edge to the target.
-    if is_developer(name=caller, db_path=db_path):
+    if is_developer(name=caller):
         return ("allow", None)
     from .._state._lineage import descendants_of
 
@@ -138,8 +138,8 @@ def check_lineage_acl(
     # is NOT meshed and stays unmanageable cross-group, preserving the
     # solid isolation scientific rigor requires.
     if groups_mesh(
-        resolve_group_name(name=caller, db_path=db_path),
-        resolve_group_name(name=target, db_path=db_path),
+        resolve_group_name(name=caller),
+        resolve_group_name(name=target),
     ):
         return ("allow", None)
     return (
@@ -328,7 +328,7 @@ def check_send_acl(
     # address every other ``developer``-group agent with no per-pair
     # grant. Additive: an ungrouped fleet shares no named group and
     # falls through to the explicit-grant check below, unchanged.
-    if same_named_group(sender=sender, target=target, db_path=db_path):
+    if same_named_group(sender=sender, target=target):
         return ("allow", None)
 
     # Cross-group mesh (operator 2026-06-27): the three STANDARD fleet
@@ -341,8 +341,8 @@ def check_send_acl(
     # NOT meshed and falls through to the grant check below, preserving
     # the solid isolation scientific rigor requires.
     if groups_mesh(
-        resolve_group_name(name=sender, db_path=db_path),
-        resolve_group_name(name=target, db_path=db_path),
+        resolve_group_name(name=sender),
+        resolve_group_name(name=target),
     ):
         return ("allow", None)
 
@@ -400,7 +400,7 @@ def _phase3_relationship_deny(
     """
     rel = sender_target_relationship(sender=sender, target=target, db_path=db_path)
     if rel in ("parent", "sibling"):
-        sender_policy = read_comms_policy(name=sender, db_path=db_path)
+        sender_policy = read_comms_policy(name=sender)
         if rel == "parent" and sender_policy["outbound_parent"] == "deny":
             return (
                 "deny",
@@ -420,7 +420,7 @@ def _phase3_relationship_deny(
                 ),
             )
     if rel in ("child", "sibling"):
-        target_policy = read_comms_policy(name=target, db_path=db_path)
+        target_policy = read_comms_policy(name=target)
         if rel == "child" and target_policy["inbound_parent"] == "deny":
             return (
                 "deny",
@@ -476,7 +476,7 @@ def check_spawn(
     named-group set, never primary-group equality — see
     :mod:`..._state.state_db_groups` (incident 2026-08-10, grant).
     """
-    if caller and is_developer(name=caller, db_path=db_path):
+    if caller and is_developer(name=caller):
         return ("allow", None)
     allowed, reason = spawn_allowed(caller=caller, db_path=db_path)
     if allowed:

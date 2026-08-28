@@ -18,7 +18,7 @@ import click
 from click.testing import CliRunner
 
 from scitex_agent_container._lifecycle._residency import current_host
-from scitex_agent_container._state.state_db_relocation import record_residency
+from scitex_agent_container._state.relocation_pg import record_residency
 from scitex_agent_container.cli_pkg._relocate_cmd import (
     _residency_history,
     EXIT_REFUSED,
@@ -375,7 +375,7 @@ def test_the_notice_says_nothing_is_ever_deleted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_residency_table_answers_where_the_agent_runs() -> None:
+def test_the_residency_table_answers_where_the_agent_runs(pg_schema: str) -> None:
     # Arrange: a relocation's DONE phase wrote this stay.
     record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
     # Act
@@ -384,7 +384,7 @@ def test_the_residency_table_answers_where_the_agent_runs() -> None:
     assert current_host(history) == "ywata-note-win"
 
 
-def test_a_closed_stay_is_carried_too() -> None:
+def test_a_closed_stay_is_carried_too(pg_schema: str) -> None:
     # Arrange: two moves, so the history is more than "where is it now".
     record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
     record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
@@ -394,7 +394,7 @@ def test_a_closed_stay_is_carried_too() -> None:
     assert len(history) == 2
 
 
-def test_the_latest_stay_is_the_open_one() -> None:
+def test_the_latest_stay_is_the_open_one(pg_schema: str) -> None:
     # Arrange
     record_residency(agent="canary", host="scitex-compute-04", now=1_786_400_000.0)
     record_residency(agent="canary", host="ywata-note-win", now=1_786_490_272.0)
@@ -404,9 +404,11 @@ def test_the_latest_stay_is_the_open_one() -> None:
     assert current_host(history) == "ywata-note-win"
 
 
-def test_an_agent_the_table_never_heard_of_yields_no_history() -> None:
-    # Arrange: genuinely "the db knows nothing", which is what lets a legacy
-    # spec host: seed it ONCE. An invented answer here would defeat that.
+def test_an_agent_the_table_never_heard_of_yields_no_history(pg_schema: str) -> None:
+    # Arrange: genuinely "the store knows nothing", which is what lets a legacy
+    # spec host: seed it ONCE. An invented answer here would defeat that. It
+    # needs a REAL empty store — under the autouse isolation the read raises
+    # instead of answering "nothing", which is a different fact entirely.
     # Act
     history = _residency_history("never-relocated")
     # Assert
