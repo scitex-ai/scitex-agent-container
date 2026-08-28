@@ -62,11 +62,15 @@ def _table_filter_clauses(
             (since, since),
         ),
         "instance_heartbeats": ("WHERE ts >= ?", (since,)),
-        "heartbeats": ("WHERE ts >= ?", (since,)),
         "events": ("WHERE ts >= ?", (since,)),
         "attempts": ("WHERE ts >= ?", (since,)),
-        "turns": ("WHERE ts >= ?", (since,)),
-        "errors": ("WHERE ts >= ?", (since,)),
+        # ``turns``, ``errors`` and the diary-style ``heartbeats`` each had a
+        # ``WHERE ts >= ?`` entry here until 2026-08-28. All three moved to
+        # per-host PostgreSQL and left KNOWN_TABLES together, so — exactly as
+        # for acl_deny_notify_log below — these mappings could never be
+        # selected again, and a WHERE clause naming a table SQLite no longer
+        # has reads as "sac still exports this". Note ``instance_heartbeats``
+        # above is a DIFFERENT table and has not moved.
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
         "node_tokens": ("WHERE created_at >= ?", (since,)),
         "lineage": ("WHERE created_at >= ?", (since,)),

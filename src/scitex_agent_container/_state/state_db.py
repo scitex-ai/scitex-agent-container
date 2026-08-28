@@ -1,25 +1,37 @@
-"""SQLite-backed state for scitex-agent-container (F-CS11 + diary tables).
+"""SQLite-backed state for scitex-agent-container (F-CS11).
 
 Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
-holding tables in three groups:
+holding tables in two groups:
 
   * F-CS11 registry — ``definitions``, ``instances``, ``events``.
   * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
     ``heartbeats`` time series, tied to an ``instances.id``).
-  * Diary (2026-05-17) — ``turns``, ``errors``, ``heartbeats``. Each
-    agent writes here continuously, like a journal; the lead reads
-    + filters when it wants cross-host visibility. ``heartbeats``
-    promotes the per-agent ``heartbeat.json`` file into a queryable
-    table keyed by ``(name, host, pid, state, ts)``.
 
 The single-file layout makes backup/sync trivial (one ``cp``) and
 keeps the existing ``actions.db`` table (``attempts``) co-located so
 queries can join across action history and instance lifecycle.
 
+THE DIARY GROUP IS GONE FROM SQLite (2026-08-28)
+================================================
+``turns`` / ``errors`` / ``heartbeats`` were a third group here: each
+agent appended rows like a journal and the lead read them back. The
+WRITERS moved to per-host PostgreSQL first; this module was the residue
+— the DDL that kept creating the three empty tables, and the
+``KNOWN_TABLES`` entries that kept ``sac db show`` and ``sac db query``
+reading them.
+
+Empty is the dangerous shape. ``sac db show`` reporting ``turns 0``
+while PostgreSQL holds the rows is not a missing feature, it is a WRONG
+ANSWER that looks like a right one — the failure the ``incarnations``
+removal named on 2026-08-19. So the names are removed rather than left
+whitelisted, and asking for one now fails loudly instead of answering
+zero. :mod:`state_db_diary` owns the trio end to end.
+
 NOTE: The original F-CS11 ``heartbeats`` table is renamed to
 ``instance_heartbeats`` on first open (idempotent migration in
-``init_schema``) so the diary-style ``heartbeats`` can own the name.
+``init_schema``). That migration STAYS: it is what an old state.db
+still needs, and nothing creates the bare name here any more.
 
 Large helper groups live in sibling modules, all re-exported from THIS
 module so ``from ...state_db import X`` imports keep working:
@@ -27,8 +39,10 @@ module so ``from ...state_db import X`` imports keep working:
   * :mod:`state_db_export` — export_state / import_state / import_legacy_registry.
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
-    latest_heartbeats_per_name.
+    latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
   * :mod:`state_db_heartbeats` — update_heartbeat / latest_instance_heartbeat.
+    ``instance_heartbeats``, which is a different table from the diary's
+    ``heartbeats`` and has NOT moved.
   * :mod:`state_db_migrations` — idempotent schema migrations.
 """
 
@@ -58,7 +72,7 @@ from .state_db_migrations import (
 )
 from .state_db_schema import (
     _SCHEMA_ATTEMPTS,
-    _SCHEMA_DIARY,
+    _SCHEMA_CHANNEL_AND_ACL,
     _SCHEMA_REGISTRY,
 )
 
@@ -83,9 +97,6 @@ KNOWN_TABLES = (
     "instance_heartbeats",
     "events",
     "attempts",
-    "turns",
-    "errors",
-    "heartbeats",
     "channel_events",
     "node_tokens",
     "lineage",
@@ -98,6 +109,15 @@ KNOWN_TABLES = (
     # name with no table returns an EMPTY result, and an empty result reads
     # as "this agent has no incarnations" when the truth is "you are asking
     # the wrong database". An unknown-table error is the honest answer.
+    #
+    # ``turns``, ``errors`` and ``heartbeats`` left on 2026-08-28 under the
+    # SAME ruling, and the three go together because they share
+    # :mod:`.state_db_diary` and the loops below. Every reader of this tuple
+    # is generic — :func:`table_counts`, ``export_state``, ``import_state``,
+    # and the ``--table`` choice list — so one name left behind here would
+    # have kept `sac db show` printing ``turns 0`` while the rows sat in
+    # PostgreSQL, and a half-migrated trio is a split brain that raises
+    # nothing: some readers see a row, others do not.
 )
 
 
@@ -189,7 +209,12 @@ def init_schema(db_path: Path | None = None) -> Path:
         # whose spec lists several groups was reduced to its FIRST one).
         migrate_node_comms_policy_add_group_names(conn)
         conn.executescript(_SCHEMA_ATTEMPTS)
-        conn.executescript(_SCHEMA_DIARY)
+        conn.executescript(_SCHEMA_CHANNEL_AND_ACL)
+        # ``turns`` / ``errors`` / ``heartbeats`` were created by the
+        # constant above (then called ``_SCHEMA_DIARY``) until 2026-08-28.
+        # All three moved to per-host PostgreSQL; each diary store creates
+        # its own schema on first open (``state_db_diary._open``), so there
+        # is nothing to run here for them.
         # Task #27's two ACL tables were both created here until 2026-08-20.
         # ``pending_prompts`` and ``comms_blocks`` have BOTH moved to per-host
         # PostgreSQL; each store creates its own schema on first open

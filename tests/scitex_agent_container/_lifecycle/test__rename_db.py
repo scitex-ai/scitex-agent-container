@@ -53,10 +53,15 @@ _SEED = [
         "VALUES (?, ?, ?)",
         ("child-a", OLD, 1.0),
     ),
+    # The history half. This was an ``INSERT INTO turns`` until 2026-08-28,
+    # when the diary trio left SQLite for per-host PostgreSQL and stopped
+    # being a table this rename can reach. ``attempts.agent`` is the history
+    # column still in ``_rename_db.NAME_COLUMNS``, so it is what the
+    # history-follows-the-agent tests below now exercise.
     (
-        "INSERT INTO turns (turn_id, name, host, status, ts) "
+        "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) "
         "VALUES (?, ?, ?, ?, ?)",
-        ("t1", OLD, "h", "ok", 1.0),
+        ("t1", OLD, "run", "ok", 0.5),
     ),
 ]
 
@@ -99,7 +104,7 @@ def test_count_rows_counts_the_identity_row(seeded: Path):
 def test_count_rows_counts_the_history_row(seeded: Path):
     """History follows the agent: a renamed agent is the SAME agent."""
     # Arrange
-    key = "turns.name"
+    key = "attempts.agent"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -161,7 +166,7 @@ def test_rename_moves_the_lineage_parent_edge(seeded: Path):
 
 def test_rename_moves_the_history_rows(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM turns WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM attempts WHERE agent = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -240,13 +245,13 @@ def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path
     conn = sqlite3.connect(str(seeded))
     with conn:
         conn.execute(
-            "INSERT INTO turns (turn_id, name, host, status, ts) "
+            "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("t-stranger", NEW, "h", "ok", 0.5),
+            ("t-stranger", NEW, "stranger", "ok", 0.5),
         )
     conn.close()
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT name FROM turns WHERE turn_id = 't-stranger'"
+    sql = "SELECT agent FROM attempts WHERE action = 'stranger'"
     # Act
     undo_rename_rows(undo)
     # Assert

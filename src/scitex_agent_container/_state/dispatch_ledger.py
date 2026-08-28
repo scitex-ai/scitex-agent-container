@@ -11,8 +11,9 @@ A ``dispatch_id`` is orthogonal to the other ids already in the system:
   * the a2a ``conversation_id`` correlates many messages in one
     conversation,
   * the a2a ``message_id`` identifies one message,
-  * the receiver-side ``turn_id`` (``state_db.turns``) tracks the
-    ``/v1/turn`` state machine.
+  * the receiver-side ``turn_id`` (the diary's ``turns`` store — on
+    per-host PostgreSQL since 2026-08-28, NOT in this database) tracks
+    the ``/v1/turn`` state machine.
 
 The ledger row is the identity of one outbound *send action*. One
 conversation produces many dispatches. The optional ``conversation_id``

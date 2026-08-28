@@ -296,21 +296,21 @@ COMMS_NODE_SQL = (
     "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
     "VALUES (?, ?, ?, ?, ?)"
 )
-TURN_SQL = "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
+ATTEMPT_SQL = "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) VALUES (?, ?, ?, ?, ?)"
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Give ``name`` one identity row (comms_nodes) and one history row (turns).
+    """One identity row (comms_nodes) + one history row (attempts) for ``name``.
 
-    The two halves the rename must both carry: the live A2A directory entry,
-    and the agent's past.
+    Both halves a rename must carry. ``attempts`` replaced ``turns`` here on
+    2026-08-28, when the diary trio left SQLite for per-host PostgreSQL.
     """
     db_path = make_state_db(layout)
     return seed_db_rows(
         db_path,
         [
             (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
-            (TURN_SQL, ("t1", name, "h", "ok", 1.0)),
+            (ATTEMPT_SQL, ("t1", name, "run", "ok", 0.5)),
         ],
     )
 
