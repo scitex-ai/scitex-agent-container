@@ -518,6 +518,7 @@ def test_agent_send_not_running_diagnosis_reports_stopped(state_db_env):
 
 
 def test_agent_send_diagnosis_reports_busy_heartbeat_state(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange
@@ -542,6 +543,7 @@ def test_agent_send_diagnosis_reports_busy_heartbeat_state(
 
 
 def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange — real listener so the port is reachable and the heartbeat
@@ -568,6 +570,7 @@ def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
 
 
 def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange — real listener (port reachable) but heartbeat far older
