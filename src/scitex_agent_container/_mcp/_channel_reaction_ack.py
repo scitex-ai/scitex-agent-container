@@ -71,7 +71,7 @@ def is_reaction_event(event: dict[str, Any]) -> bool:
     return event.get("kind") == "reaction"
 
 
-def absorb_reaction_ack(event: dict[str, Any]) -> bool:
+def absorb_reaction_ack(event: dict[str, Any], *, agent: str | None = None) -> bool:
     """Update the dispatch ledger if ``event`` carries a structural reaction.
 
     The sender-side companion to :func:`post_reaction_ack`: when a
@@ -80,6 +80,14 @@ def absorb_reaction_ack(event: dict[str, Any]) -> bool:
     Mark the matching dispatch row ``STATUS_REACTED`` so the operator
     (and the ``sac a2a comm-miss`` surface) can see the receipt
     landed.
+
+    ``agent`` is THIS agent — the owner of the row being marked, and half of
+    its identity since the ledger moved to the fleet-wide PostgreSQL store
+    (2026-08-28). Passing it makes the update a keyed write. It is a fast path
+    and not a filter: this adapter's name comes from ``--name`` or the
+    discovered self spec while the peer client stamps ``SAC_NAME``, so the two
+    can legitimately disagree, and the ledger falls back to resolving the
+    unique ``dispatch_id`` rather than losing the receipt.
 
     Returns ``True`` iff a ledger row was updated. Best-effort: a
     write failure is logged but never re-raised — losing
@@ -103,7 +111,7 @@ def absorb_reaction_ack(event: dict[str, Any]) -> bool:
         log.warning("sac channel: dispatch_ledger import failed: %s", exc)
         return False
     try:
-        return mark_dispatch_reacted(did)
+        return mark_dispatch_reacted(did, agent=agent)
     except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a write failure must not break the SSE consumer — logged loudly, never silent)
         log.warning(
             "sac channel: mark_dispatch_reacted(%r) failed: %s",
