@@ -39,6 +39,7 @@ from scitex_agent_container._state import state_db
 from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
 from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
+from tests.scitex_agent_container._helpers.ports import reserved_port
 
 TOKEN = "test-token-abc123"
 
@@ -829,9 +830,36 @@ def cross_host_env(tmp_path: Path):
 
 
 def _free_port() -> int:
+    """DEPRECATED — bind, read, CLOSE, return an int. The port is free before
+    the caller binds it, and this suite runs under xdist.
+
+    Kept only for the sites not yet migrated. It reddened develop on
+    2026-08-23 (py3.12, ``[Errno 98]`` on a port this file had just handed to
+    uvicorn) and, per ``_helpers/ports.py``, on 2026-08-12 against py3.11 —
+    the leg differs because the loser of the race does. Prefer the
+    ``reserved_ports`` fixture below, which hands over a HELD socket.
+    """
     with contextlib.closing(socket.socket()) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture
+def reserved_ports():
+    """Two loopback ports HELD as open sockets until the servers take them.
+
+    The cross-host tests need two ports and must know both numbers BEFORE
+    either server starts — one goes into the ``instances`` row so the resolver
+    routes to it, both go into URLs. That is exactly the window the old
+    bind-close-return-an-int idiom leaves open, and a sibling xdist worker
+    running the same idiom is the realistic thief.
+
+    Holding them as sockets and handing the socket (not the number) to
+    ``run_loopback`` closes the window entirely: uvicorn takes the fd, so the
+    port is never unowned between reservation and bind.
+    """
+    with reserved_port() as sock_a, reserved_port() as sock_b:
+        yield sock_a, sock_b
 
 
 # Ceiling for the REAL cross-host I/O below (loopback HTTP + the SSE roundtrip
@@ -850,7 +878,7 @@ LOOPBACK_IO_TIMEOUT_S = 30.0
 
 
 @contextlib.contextmanager
-def _run_loopback(app, port: int):
+def _run_loopback(app, port: int | None = None, *, sock=None):
     """Spin up uvicorn on a loopback port. The app's
     ``local_host`` identity is configured at ``create_app`` time
     (see :func:`scitex_agent_container._listen.server.create_app`).
@@ -858,8 +886,13 @@ def _run_loopback(app, port: int):
     Startup wait lives in the shared helper — the hand-rolled 5s ceiling this
     used to carry raced the listen lifespan (measured 7.49s under load) and
     turned the py3.11 leg red. See ``_helpers/loopback_server.py``.
+
+    PASS ``sock`` (from the ``reserved_ports`` fixture) RATHER THAN ``port``.
+    A number means the port was already released and can be taken before
+    uvicorn binds it; a socket is handed to uvicorn as an fd and is never
+    unowned. The int form stays for the sites not yet migrated.
     """
-    with run_loopback(app, port) as p:
+    with run_loopback(app, port, sock=sock) as p:
         yield p
 
 
@@ -1183,16 +1216,21 @@ def cross_host_ssh_env(cross_host_env, ssh_http_shim, env_save_restore):
     )
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_path))
     ssh_http_shim.install()
-    host_a_port = _free_port()
-    host_b_port = _free_port()
-    yield {
-        "db": cross_host_env["db"],
-        "tmp": tmp,
-        "host_a_port": host_a_port,
-        "host_b_port": host_b_port,
-        "shim": ssh_http_shim,
-        "token": SHARED_TOKEN,
-    }
+    # HELD, not released. The numbers still go into URLs and the instances
+    # row, but the sockets are what reach uvicorn — so neither port is ever
+    # unowned between here and the bind. This fixture's port pair is the one
+    # that reddened develop on 2026-08-23.
+    with reserved_port() as sock_a, reserved_port() as sock_b:
+        yield {
+            "db": cross_host_env["db"],
+            "tmp": tmp,
+            "host_a_port": int(sock_a.getsockname()[1]),
+            "host_b_port": int(sock_b.getsockname()[1]),
+            "sock_a": sock_a,
+            "sock_b": sock_b,
+            "shim": ssh_http_shim,
+            "token": SHARED_TOKEN,
+        }
 
 
 def _drive_ssh_cross_host_send(
@@ -1212,6 +1250,8 @@ def _drive_ssh_cross_host_send(
     db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
+    sock_a = cross_host_ssh_env["sock_a"]
+    sock_b = cross_host_ssh_env["sock_b"]
 
     state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
     with state_db.open_db(db) as conn:
@@ -1224,7 +1264,7 @@ def _drive_ssh_cross_host_send(
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
     async def driver() -> dict:
-        with _run_loopback(app_a, host_a_port):
+        with _run_loopback(app_a, sock=sock_a):
             ready = asyncio.Event()
             captured: dict = {}
 
@@ -1248,7 +1288,7 @@ def _drive_ssh_cross_host_send(
             sub = asyncio.create_task(consume())
             try:
                 await asyncio.wait_for(ready.wait(), timeout=LOOPBACK_IO_TIMEOUT_S)
-                with _run_loopback(app_b, host_b_port):
+                with _run_loopback(app_b, sock=sock_b):
                     async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                         resp = await ac.post(
                             f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
@@ -1354,6 +1394,8 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
+    sock_a = cross_host_ssh_env["sock_a"]
+    sock_b = cross_host_ssh_env["sock_b"]
     record_lineage(child="alice", parent="root", db_path=db)
     record_lineage(child="outsider", parent="root", db_path=db)
     state_db_nodes_grant.record_comms_policy(
@@ -1369,7 +1411,7 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
     async def driver() -> int:
-        with _run_loopback(app_a, host_a_port), _run_loopback(app_b, host_b_port):
+        with _run_loopback(app_a, sock=sock_a), _run_loopback(app_b, sock=sock_b):
             async with httpx.AsyncClient(timeout=LOOPBACK_IO_TIMEOUT_S) as ac:
                 resp = await ac.post(
                     f"http://127.0.0.1:{host_b_port}/agents/alice/message:send",
