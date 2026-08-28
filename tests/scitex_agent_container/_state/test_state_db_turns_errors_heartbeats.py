@@ -24,6 +24,12 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.state_db_diary import (
+    ERRORS_STORE,
+    HEARTBEATS_STORE,
+    TURNS_STORE,
+)
+
 
 @pytest.fixture
 def db_path(tmp_path: Path):
@@ -76,9 +82,38 @@ def test_migration_creates_diary_table(db_path: Path, table: str):
 # ---------------------------------------------------------------------------
 
 
+def _diary_rows(store_name: str) -> list[dict]:
+    """Every visible row of one diary store, read through the module's opener.
+
+    The tests below used to read back with ``open_db()`` and a raw
+    ``SELECT * FROM turns``. That named a SQLite table, and once the diary
+    moved to PostgreSQL the writes landed in one place and the assertions
+    looked in another — so the round-trip tests failed with a bare
+    ``TypeError: 'NoneType' object is not iterable`` on ``fetchone()``,
+    which says nothing about what actually broke.
+
+    Reading through ``state_db_diary._open`` keeps the reader and the writer
+    on the SAME store by construction. A private name is used deliberately:
+    the diary exposes no public reader, and inventing one HERE would make the
+    test assert against a path production never takes.
+    """
+    from scitex_agent_container._state import state_db_diary as diary
+
+    schema = {
+        diary.TURNS_STORE: diary._turns_schema,
+        diary.ERRORS_STORE: diary._errors_schema,
+        diary.HEARTBEATS_STORE: diary._heartbeats_schema,
+    }[store_name]()
+    store = diary._open(schema)
+    try:
+        return [dict(row.values) for row in store.rows() if not row.hidden]
+    finally:
+        store.close()
+
+
 def test_insert_turn_round_trips_status_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_turn
+    from scitex_agent_container._state.state_db import record_turn
 
     # Act
     record_turn(
@@ -89,34 +124,31 @@ def test_insert_turn_round_trips_status_field(db_path: Path, pg_schema: str):
         prompt_text="hi",
         ts=1700000000.0,
     )
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM turns").fetchone())
+    rows = _diary_rows(TURNS_STORE)
     # Assert
-    assert row["status"] == "queued"
+    assert [r["status"] for r in rows] == ["queued"]
 
 
 def test_insert_error_round_trips_cause_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_error
+    from scitex_agent_container._state.state_db import record_error
 
     # Act
     record_error(name="alice", host="h", cause="sdk-crash", detail="boom")
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM errors").fetchone())
+    rows = _diary_rows(ERRORS_STORE)
     # Assert
-    assert row["cause"] == "sdk-crash"
+    assert [r["cause"] for r in rows] == ["sdk-crash"]
 
 
 def test_insert_heartbeat_round_trips_state_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_heartbeat
+    from scitex_agent_container._state.state_db import record_heartbeat
 
     # Act
     record_heartbeat(name="alice", host="h", pid=4242, state="idle")
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM heartbeats").fetchone())
+    rows = _diary_rows(HEARTBEATS_STORE)
     # Assert
-    assert row["state"] == "idle"
+    assert [r["state"] for r in rows] == ["idle"]
 
 
 # ---------------------------------------------------------------------------
@@ -127,40 +159,26 @@ def test_insert_heartbeat_round_trips_state_field(db_path: Path, pg_schema: str)
 
 def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_turn
+    from scitex_agent_container._state.state_db import record_turn
 
     record_turn(turn_id="t1", name="alice", host="h", status="queued")
     record_turn(turn_id="t2", name="bob", host="h", status="queued")
     record_turn(turn_id="t3", name="alice", host="h", status="responded")
     # Act
-    with open_db() as conn:
-        rows = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM turns WHERE name=? ORDER BY ts ASC",
-                ("alice",),
-            ).fetchall()
-        ]
+    rows = [r for r in _diary_rows(TURNS_STORE) if r["name"] == "alice"]
     # Assert
     assert {r["turn_id"] for r in rows} == {"t1", "t3"}
 
 
 def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_error
+    from scitex_agent_container._state.state_db import record_error
 
     record_error(name="alice", host="h", cause="auth", detail="x")
     record_error(name="alice", host="h", cause="network", detail="y")
     record_error(name="bob", host="h", cause="auth", detail="z")
     # Act
-    with open_db() as conn:
-        rows = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM errors WHERE cause=? ORDER BY error_id ASC",
-                ("auth",),
-            ).fetchall()
-        ]
+    rows = [r for r in _diary_rows(ERRORS_STORE) if r["cause"] == "auth"]
     # Assert
     assert {r["name"] for r in rows} == {"alice", "bob"}
 

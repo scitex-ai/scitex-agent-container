@@ -171,15 +171,19 @@ def _warn_messages_for_two_kinds(caplog) -> list[str]:
 
 
 def test_heartbeat_kind_warns_on_its_own_first_failure(caplog) -> None:
-    # Arrange / Act
-    messages = _warn_messages_for_two_kinds(caplog)
+    # Arrange
+    writer_and_log = caplog
+    # Act
+    messages = _warn_messages_for_two_kinds(writer_and_log)
     # Assert
     assert any("diary heartbeat write failed" in m for m in messages)
 
 
 def test_error_kind_warns_on_its_own_first_failure(caplog) -> None:
-    # Arrange / Act
-    messages = _warn_messages_for_two_kinds(caplog)
+    # Arrange
+    writer_and_log = caplog
+    # Act
+    messages = _warn_messages_for_two_kinds(writer_and_log)
     # Assert
     assert any("diary error write failed" in m for m in messages)
 
