@@ -50,12 +50,26 @@ def _claim_in_race_range(agent_name: str) -> int:
 
 
 def test_init_reports_where_the_state_went(pg_schema: str) -> None:
-    # Arrange
-    expected_fragment = "55432"
+    # Arrange — the property is that the ledger reports a POSTGRESQL endpoint,
+    # not which port that endpoint happens to sit on.
+    #
+    # This asserted ``"55432" in locator`` — the fleet's per-host PostgreSQL
+    # port. That is a fact about the machines the fleet runs on, not about this
+    # code, and CI starts its own PostgreSQL on an ephemeral port, so it failed
+    # there with:
+    #
+    #     assert '55432' in 'postgres[host=127.0.0.1 db=postgres port=53177]'
+    #
+    # Both strings describe a perfectly correct ledger. Pinning the port tests
+    # the ENVIRONMENT, passes only where one particular deployment is running,
+    # and has to be re-edited every time the fixture moves. The prefix is what
+    # actually distinguishes the migrated ledger from the SQLite path it
+    # replaced, which is the thing this module exists to hold in place.
+    expected_prefix = "postgres["
     # Act
     locator = init_port_schema()
     # Assert
-    assert expected_fragment in locator
+    assert locator.startswith(expected_prefix)
 
 
 # ----------------------------------------------------------------------
