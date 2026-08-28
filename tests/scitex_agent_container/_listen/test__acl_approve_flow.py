@@ -281,7 +281,7 @@ def test_blocked_send_emits_no_receiver_push(isolated_state: Path, pg_schema: st
             json=_send_payload("worker-a"),
             headers={"authorization": f"Bearer {_TOKEN}"},
         )
-    rows = list_undelivered(target="lead", db_path=isolated_state)
+    rows = list_undelivered(target="lead")
     # Assert — no rows landed for the lead from this blocked send.
     assert rows == []
 

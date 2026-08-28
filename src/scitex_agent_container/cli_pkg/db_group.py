@@ -139,7 +139,15 @@ def db_query(
     \b
     Example:
       $ sac db query --table=instances --limit=20
-      $ sac db query --table=channel_events --where="delivered_at IS NULL" --json
+      $ sac db query --table=instances --where="ended_at IS NULL" --json
+
+    \b
+    The second example named ``--table=channel_events`` until 2026-08-28.
+    ``--table`` is a ``click.Choice(KNOWN_TABLES)``, so the documented
+    command did not merely return nothing — it FAILED to parse, which is a
+    worse kind of stale help. The channel history is ``sac_channel_events``
+    in the shared PostgreSQL now (ADR-0023) and this SQLite-only verb cannot
+    read it at all.
     """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
     if where:

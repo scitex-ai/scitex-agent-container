@@ -19,7 +19,6 @@ Wire format::
     "host": "<canonical>",   # the host that produced the dump
     "tables": {
       "instances":      [ {row}, ... ],
-      "channel_events": [ {row}, ... ],
       ...
     }
   }

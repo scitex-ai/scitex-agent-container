@@ -48,16 +48,27 @@ _SEED = [
     # DAG moved to PostgreSQL, so SQLite has no such table and the seed
     # would raise on every test in this file — the same reason the
     # ``comms_nodes`` seed above went.
-    # The history half. It was ``INSERT INTO turns`` until 2026-08-28, when
-    # the diary trio left SQLite for per-host PostgreSQL; then ``INSERT INTO
-    # attempts`` for the rest of that day, until ``attempts`` was deleted for
-    # having zero writers. ``channel_events.target`` is the history column
-    # still in ``_rename_db.NAME_COLUMNS`` AND still a real SQLite table, so
-    # it is what the history-follows-the-agent tests below now exercise.
+    #
+    # THE HISTORY HALF IS NOW ``instances.spawned_by``, and this is its
+    # FIFTH table. ``turns`` until 2026-08-28 (the diary trio left for
+    # per-host PostgreSQL), then ``attempts`` for part of that day (deleted,
+    # zero writers), then ``channel_events`` (the LAST SQLite table sac
+    # owned, now ``sac_channel_events`` in the shared PostgreSQL, ADR-0023),
+    # then ``lineage`` — which left the same day this did.
+    #
+    # ``spawned_by`` is what remains, and it is the only second name column
+    # in ``_rename_db.NAME_COLUMNS`` still backed by a real SQLite table. It
+    # is a genuine one: a spawned agent's row names its parent, so a rename
+    # that missed it would leave a child pointing at an agent that no longer
+    # exists. The moved histories still follow a rename, each through its own
+    # step in ``_rename.apply_plan`` — the channel via
+    # ``state_db_channel.rename_channel_events``
+    # (``_state/test_state_db_channel_rename.py``) and the DAG via
+    # ``state_db_lineage_rename.rename_lineage``.
     (
-        "INSERT INTO channel_events (target, source, kind, content, "
-        "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-        (OLD, None, "message", "hi", "{}", 1.0),
+        "INSERT INTO instances (id, name, host, scope, started_at, spawned_by) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("i2", "child-a", "h", "user", "t0", OLD),
     ),
 ]
 
@@ -102,7 +113,7 @@ def test_count_rows_counts_the_identity_row(seeded: Path):
 def test_count_rows_counts_the_history_row(seeded: Path):
     """History follows the agent: a renamed agent is the SAME agent."""
     # Arrange
-    key = "channel_events.target"
+    key = "instances.spawned_by"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -186,7 +197,7 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 
 def test_rename_moves_the_history_rows(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM channel_events WHERE target = ?"
+    sql = "SELECT COUNT(*) FROM instances WHERE spawned_by = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -270,17 +281,22 @@ def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path
     history behind. Renaming ``scitex-todo`` -> ``scitex-cards`` and then
     rolling back must NOT drag that stranger's row along.
     """
-    # Arrange
+    # Arrange — ``instances.spawned_by`` rather than a ``lineage`` edge: the
+    # trap needs a row that ALREADY holds the new name, and ``lineage``
+    # declares ``child_name`` UNIQUE, so seeding one there makes the rename
+    # itself fail on the constraint instead of reaching the undo this test is
+    # about. ``spawned_by`` carries an agent name with no uniqueness on it,
+    # which is exactly the shape a stranger row has in the wild.
     conn = sqlite3.connect(str(seeded))
     with conn:
         conn.execute(
-            "INSERT INTO channel_events (target, source, kind, content, "
-            "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-            (NEW, None, "stranger", "hi", "{}", 2.0),
+            "INSERT INTO instances (id, name, host, scope, started_at, "
+            "spawned_by) VALUES (?, ?, ?, ?, ?, ?)",
+            ("i-stranger", "bystander", "h", "user", "t0", NEW),
         )
     conn.close()
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT target FROM channel_events WHERE kind = 'stranger'"
+    sql = "SELECT spawned_by FROM instances WHERE id = 'i-stranger'"
     # Act
     undo_rename_rows(undo)
     # Assert
