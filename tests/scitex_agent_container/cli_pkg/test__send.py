@@ -836,6 +836,13 @@ def test_agent_send_nonblocking_not_running_still_errors(state_db_env):
 # These tests seed ONLY a real ``a2a_ports`` claim (no instances row)
 # to reproduce the split-brain, and a REAL bound listener so the
 # reachability gate sees a live sidecar — no mocks.
+#
+# They take ``pg_schema`` on top of ``state_db_env`` because the claim ledger
+# moved to PostgreSQL on 2026-08-28. It is requested on these three tests
+# rather than folded into ``state_db_env``, which the rest of this module
+# shares: those tests never touch the allocator, and making the whole module
+# depend on a database would skip all of agent_send's coverage on a host that
+# has none.
 # ---------------------------------------------------------------------------
 
 
@@ -847,7 +854,7 @@ def _seed_port_claim(name: str, port: int) -> None:
 
 
 def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only a durable allocator claim on a
     # REAL bound port (the post-restart split-brain state).
@@ -861,7 +868,7 @@ def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
 
 
 def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only an allocator claim. The blocking
     # POST must target the CLAIMED port's loopback /v1/turn.
@@ -880,7 +887,7 @@ def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
 
 
 def test_agent_send_allocator_claim_diagnosis_reports_running(
-    state_db_env, fresh_lead_creds_path, dead_port
+    state_db_env, fresh_lead_creds_path, dead_port, pg_schema
 ):
     # Arrange — only an allocator claim (no row) on a port nothing is
     # listening on, so the dispatch fails its reachability gate and we

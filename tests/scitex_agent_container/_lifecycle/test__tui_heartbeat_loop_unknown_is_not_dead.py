@@ -225,16 +225,19 @@ async def test_dropped_tick_leaves_the_live_instance_row_active(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_dropped_tick_leaves_the_durable_a2a_port_claim_intact(tmp_path: Path):
+async def test_dropped_tick_leaves_the_durable_a2a_port_claim_intact(
+    tmp_path: Path, pg_schema: str
+):
     # Arrange — a REAL durable port claim (the fallback agent_send uses when the
     # instances row is missing/null-port). It reported a2a_port=null in the
-    # incident; a dropped tick must never be the reason.
-    db_path = tmp_path / "state.db"
+    # incident; a dropped tick must never be the reason. The claim lives in
+    # PostgreSQL since 2026-08-28, so ``pg_schema`` isolates it where a
+    # ``tmp_path`` state.db used to.
     state_dir = _seeded_live_agent(tmp_path)
-    port_allocator.claim_port(LIVE_AGENT, explicit=LIVE_PORT, db_path=db_path)
+    port_allocator.claim_port(LIVE_AGENT, explicit=LIVE_PORT)
     # Act — a tick that wedges and gets ABANDONED.
     task = _start_loop(state_dir, _wedged_probe, budget=TICK_BUDGET_S)
     await _drive(task)
-    resolved = port_allocator.get_port(LIVE_AGENT, db_path=db_path)
+    resolved = port_allocator.get_port(LIVE_AGENT)
     # Assert — the live agent's endpoint is still resolvable.
     assert resolved == LIVE_PORT

@@ -182,6 +182,7 @@ def _write_spec(tmp_path: Path, workdir: Path, name: str = "alpha") -> Path:
 
 
 def test_agent_stop_leaves_head_unmoved_on_dirty_topic_branch_worktree(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """Stopping an agent whose workdir is dirty must create NO commit.
@@ -207,6 +208,7 @@ def test_agent_stop_leaves_head_unmoved_on_dirty_topic_branch_worktree(
 
 
 def test_agent_stop_leaves_dirty_worktree_still_dirty(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """The uncommitted change survives the stop AS uncommitted work.
@@ -233,6 +235,7 @@ def test_agent_stop_leaves_dirty_worktree_still_dirty(
 
 
 def test_agent_stop_creates_no_rescue_branch_for_dirty_worktree(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """No ``rescue/`` side-branch is created either — the whole mechanism is gone."""
@@ -258,6 +261,7 @@ def test_agent_stop_creates_no_rescue_branch_for_dirty_worktree(
 
 
 def test_agent_stop_still_stops_the_runtime_with_a_dirty_worktree(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """CONTROL: without this, "no commit" could pass by breaking stop entirely."""
@@ -278,6 +282,7 @@ def test_agent_stop_still_stops_the_runtime_with_a_dirty_worktree(
 
 
 def test_agent_stop_returns_true_with_a_dirty_worktree(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """CONTROL: the stop reports success; a dirty tree is not an error condition."""

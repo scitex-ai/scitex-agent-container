@@ -11,8 +11,9 @@ fields on every row:
 Sourcing chain — the single source of truth for "where does an agent
 listen" is, in order:
 
-1. ``_state.port_allocator.get_port(name)`` — the ``a2a_ports`` table
-   in ``state.db`` (always populated on local agent_start).
+1. ``_state.port_allocator.get_port(name)`` — the ``a2a_ports`` claim
+   ledger, per-host PostgreSQL since 2026-08-28 (always populated on
+   local agent_start).
 2. ``_lookup_instance_endpoint(name)`` from ``_network._peer_resolve``
    — the ``instances`` table (cross-host rows written by the dispatcher
    with ``remote=True``; the local port allocator never sees them).

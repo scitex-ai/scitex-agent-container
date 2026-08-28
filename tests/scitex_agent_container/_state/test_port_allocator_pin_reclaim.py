@@ -18,18 +18,24 @@ file of its own rather than a line in the allocator's own test module.
 
 HONEST STATUS OF EACH TEST HERE — READ THIS BEFORE TRUSTING A GREEN RUN
 ======================================================================
-NONE of these tests is red today, and that is a finding, not an omission.
+THE TABLE HAS NOW MOVED (2026-08-28). When this file was written
+``_state/port_allocator.py`` still owned a SQLite table and ``release_port``
+still issued ``DELETE FROM a2a_ports``, which freed the row outright — so the
+round trip below passed for a reason that disappeared the moment the table
+moved. It moved; the round trip still passes, and it now passes for the
+reason this file demanded: ``port_allocator_store.try_claim`` UNHIDES the
+tombstone instead of reading it as held.
 
-``a2a_ports`` has NOT been migrated. ``_state/port_allocator.py`` still owns
-a SQLite table and ``release_port`` still issues ``DELETE FROM a2a_ports``,
-which frees the row outright — so the round trip in
-``test_a_pinned_port_is_reclaimed_by_the_same_agent_after_release`` PASSES,
-and it passes for a reason that disappears the moment the table moves.
+What that changes here is ONLY the plumbing. The round-trip test used to
+thread a ``tmp_path`` SQLite file through ``db_path``; ``db_path`` is gone
+from the allocator's signatures because it named a file that no longer
+exists, so the test now takes ``pg_schema`` like the three below it. The
+ARRANGE, the ACT and the single assertion are untouched — the invariant is
+the same invariant, measured through the same public surface.
 
-The defect this file exists for is therefore NOT in
-``_state/port_allocator.py``. It is a hazard in the MAPPING, and it lives in
-``scitex_dev.store``. Three tests below record it directly, so that a
-migration author finds it in this repo's own suite instead of in an outage.
+The hazard this file exists for was never in ``_state/port_allocator.py``. It
+is a hazard in the MAPPING, and it lives in ``scitex_dev.store``. Three tests
+below record it directly, so that it stays measured rather than remembered.
 
 THE HAZARD, MEASURED
 ====================
@@ -73,13 +79,14 @@ tombstone occupies the identity, ``put(NEW_RECORD)`` only when genuinely
 absent. ``state_db_pending_approval.py`` and ``state_db_blocks.py`` use the
 three-valued ``is_hidden`` for the same distinction.
 
-WHY THERE IS NO RED TEST HERE, STATED PLAINLY
-=============================================
+WHY THERE WAS NO RED TEST HERE, STATED PLAINLY
+==============================================
 Only two things would have made one, and both were rejected:
 
-  * MIGRATING the table, which this work is explicitly forbidden to do. A
-    half-migrated ``a2a_ports`` is a split brain that raises nothing: some
-    readers see a row and others do not.
+  * MIGRATING the table, which the work that wrote this file was explicitly
+    forbidden to do. A half-migrated ``a2a_ports`` is a split brain that
+    raises nothing: some readers see a row and others do not. (The migration
+    landed later, as one PR moving every reader together.)
   * ASSERTING that ``put(..., NEW_RECORD)`` should succeed after a ``hide``.
     That is not a defect in ``scitex_dev.store``; it is its documented
     design ("'Hidden' and 'absent' remain distinguishable — a caller that
@@ -107,20 +114,21 @@ the dialect production uses.
 
 The cost is stated rather than hidden: ``pg_schema`` SKIPS wherever there is
 no writable PostgreSQL, and per the operator's 2026-08-26 ruling every fleet
-host's loopback is now a READ-ONLY REPLICA of the one primary. So the three
-store tests skip on this host and on today's runners, and only start
-executing when CI provisions its own database. A skip is not a pass; that is
-the whole reason this paragraph exists instead of a green tick.
+host's loopback is now a READ-ONLY REPLICA of the one primary. So EVERY test
+in this file — the round trip included, now that the allocator has no SQLite
+path left to fall back on — skips on a host with no writable database, and
+only executes where one is provisioned. A skip is not a pass; that is the
+whole reason this paragraph exists instead of a green tick. Point
+``SAC_TEST_PG_DSN`` at a throwaway cluster to make them run, which also
+turns an unusable target from a skip into a hard failure.
 
 NO MOCKS, NO MONKEYPATCH (PA-306 / STX-NM002). The allocator is exercised
-through its real public surface with a real per-test SQLite path; the store
-is the real store, isolated by the fixture pointing the REAL resolver at a
-throwaway schema.
+through its real public surface; the store is the real store, isolated by the
+fixture pointing the REAL resolver at a throwaway schema.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
@@ -137,12 +145,6 @@ AGENT = "alpha"
 #: Write attribution for the store-level probes, matching what every migrated
 #: module in ``_state`` uses.
 _ACTOR = "scitex-agent-container"
-
-
-@pytest.fixture
-def db(tmp_path: Path) -> Path:
-    """A per-test ``state.db`` path; the allocator creates its schema on demand."""
-    return tmp_path / "state.db"
 
 
 def _probe_schema() -> Any:
@@ -242,15 +244,18 @@ def _claim_then_release(store: Any) -> None:
 
 
 def test_a_pinned_port_is_reclaimed_by_the_same_agent_after_release(
-    db: Path,
+    pg_schema: str,
 ) -> None:
-    """The restart round trip. PASSES today, on SQLite, via ``DELETE``.
+    """The restart round trip, through the allocator's real public surface.
 
-    This is the test that goes RED the day ``a2a_ports`` is ported with
-    ``release_port`` mapped onto ``hide`` and ``claim_port``'s ``INSERT``
-    mapped onto ``put(..., NEW_RECORD)``. It is deliberately written against
-    the allocator's PUBLIC surface and not against the backend, so it keeps
-    testing the same thing after the move.
+    Written against the PUBLIC surface and not against the backend precisely
+    so it would keep testing the same thing across the move — which is what
+    happened. Before the migration it passed because SQLite's ``DELETE``
+    freed the row; it now passes because ``port_allocator_store.try_claim``
+    UNHIDES the tombstone that ``hide`` leaves behind. Map ``release_port``
+    onto ``hide`` and ``claim_port``'s insert onto a bare
+    ``put(..., NEW_RECORD)`` and this goes red, with the operator told the
+    port is claimed by the very agent asking for it.
     """
     # Arrange — an operator pin, honoured, then released as ``agent_stop`` does.
     first = pa.claim_port(
@@ -258,11 +263,10 @@ def test_a_pinned_port_is_reclaimed_by_the_same_agent_after_release(
         range_=(PINNED_PORT, PINNED_PORT + 9),
         explicit=PINNED_PORT,
         explicit_is_pin=True,
-        db_path=db,
     )
     if first != PINNED_PORT:
         raise RuntimeError(f"arrange failed: the pin was not honoured, got {first}")
-    if not pa.release_port(AGENT, db_path=db):
+    if not pa.release_port(AGENT):
         raise RuntimeError("arrange failed: release_port dropped no claim")
     # Act — the SAME agent re-claims the SAME pinned port, as every restart does.
     reclaimed = pa.claim_port(
@@ -270,7 +274,6 @@ def test_a_pinned_port_is_reclaimed_by_the_same_agent_after_release(
         range_=(PINNED_PORT, PINNED_PORT + 9),
         explicit=PINNED_PORT,
         explicit_is_pin=True,
-        db_path=db,
     )
     # Assert
     assert reclaimed == PINNED_PORT

@@ -1126,7 +1126,7 @@ def test_agent_stop_unknown_agent_with_force_returns_true(
     assert ok is True
 
 
-def test_agent_stop_happy_path_returns_true(tmp_path: Path, registry: Registry) -> None:
+def test_agent_stop_happy_path_returns_true(pg_schema: str, tmp_path: Path, registry: Registry) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
@@ -1143,6 +1143,7 @@ def test_agent_stop_happy_path_returns_true(tmp_path: Path, registry: Registry) 
 
 
 def test_agent_stop_happy_path_calls_runtime_stop(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1161,6 +1162,7 @@ def test_agent_stop_happy_path_calls_runtime_stop(
 
 
 def test_agent_stop_happy_path_removes_registry_entry(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1214,6 +1216,7 @@ def _stop_with_prune(
 
 
 def test_agent_stop_prune_removes_ephemeral_runtime_dir(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, env_save_restore
 ) -> None:
     # Arrange
@@ -1233,6 +1236,7 @@ def test_agent_stop_prune_removes_ephemeral_runtime_dir(
 
 
 def test_agent_stop_prune_keeps_persistent_runtime_dir(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, env_save_restore
 ) -> None:
     # Arrange — persistent (always) agent must NEVER be pruned, even when
@@ -1290,6 +1294,7 @@ def test_agent_stop_yaml_gone_without_force_raises(
 
 
 def test_agent_stop_runtime_stop_failure_with_force_removes_entry(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1899,7 +1904,7 @@ def _restart_alpha_with_short_wait(
 
 
 def test_agent_restart_raises_when_previous_runtime_will_not_exit(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
@@ -1913,7 +1918,7 @@ def test_agent_restart_raises_when_previous_runtime_will_not_exit(
 
 
 def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
@@ -1929,7 +1934,7 @@ def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
 
 
 def test_agent_restart_warns_about_still_running_previous_runtime(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError

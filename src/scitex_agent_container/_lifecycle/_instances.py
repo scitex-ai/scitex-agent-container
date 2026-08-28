@@ -190,7 +190,11 @@ def record_local_instance(
                 str(row["id"]), exit_reason="superseded", db_path=db_path
             )
 
-    a2a_port = get_port(config.name, db_path=db_path)
+    # NO ``db_path``: the a2a claim ledger moved to per-host PostgreSQL
+    # (``_state/port_allocator_store``), so there is no file to point at. The
+    # pinning above still matters for the SQLite ``instances`` writes, which is
+    # why ``db_path`` survives on this side of the same line.
+    a2a_port = get_port(config.name)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )

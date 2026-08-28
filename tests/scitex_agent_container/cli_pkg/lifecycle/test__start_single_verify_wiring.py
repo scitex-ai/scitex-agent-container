@@ -69,7 +69,7 @@ def broker_env() -> Iterator[Any]:
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Real isolated state.db + runtime dir + HOME (mirrors the sibling
     ``test__start_single_assume_yes`` fixture)."""
     db = tmp_path / "state.db"

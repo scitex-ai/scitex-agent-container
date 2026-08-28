@@ -815,7 +815,7 @@ def _run_start_no_redispatch_json(
 
 class TestStartNoRedispatchJsonA2aPort:
     def test_start_no_redispatch_json_includes_resolved_a2a_port(
-        self, tmp_path, env_save_restore
+        self, tmp_path, env_save_restore, pg_schema
     ):
         """``port: auto`` spec → JSON ``a2a_port`` is an int (resolved by allocator)."""
         # Arrange — redirect HOME + state.db so the allocator + spec dir
@@ -845,7 +845,7 @@ class TestStartNoRedispatchJsonA2aPort:
             importlib.reload(_pa)
 
     def test_start_no_redispatch_json_includes_a2a_port_when_explicit_int(
-        self, tmp_path, env_save_restore
+        self, tmp_path, env_save_restore, pg_schema
     ):
         """``port: 19_500`` spec → JSON ``a2a_port`` is exactly that int."""
         # Arrange
