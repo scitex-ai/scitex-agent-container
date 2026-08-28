@@ -90,7 +90,7 @@ def test_an_unreadable_store_says_why() -> None:
 
 def test_the_default_reader_reaches_the_real_store_and_can_fail_loudly() -> None:
     # Arrange — NO injected loader, so this drives the path the preflight
-    # actually uses: the default reader, which since 2026-08-28 opens the
+    # that the preflight uses: the default reader, which since 2026-08-28 opens
     # PostgreSQL lease store. ``tests/_store_isolation.py`` points
     # SCITEX_STORE_DSN at 127.0.0.1:1, so the read fails — and what must NOT
     # happen is that the failure becomes ``lease=None``, which bootstraps a
@@ -109,7 +109,7 @@ def test_the_default_reader_reaches_the_real_store_and_can_fail_loudly() -> None
     # "something, somewhere, raised".
     #
     # It is a ``raise`` and not a second assert because STX-TQ007 allows one
-    # assert per test, and because an arrange that fails is an ERROR, not a
+    # one assertion per test, and because a failed arrange is an ERROR, not a
     # test failure — the distinction is the whole point of putting it here.
     from scitex_agent_container._state import relocation_pg
 
