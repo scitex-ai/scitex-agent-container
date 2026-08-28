@@ -43,6 +43,7 @@ from ._harness_types import (
     is_known_harness,
     list_harnesses,
 )
+from ._reserved_names import reserved_spec_path_errors
 from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
@@ -193,6 +194,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
     if not isinstance(raw, dict):
         return [f"Config file is not a YAML mapping: {path}"]
+
+    # dir-as-SSoT: the agent name is the spec's parent directory, so a
+    # reserved name (the host-process role slot) is refused by PATH here —
+    # this runs under check, list-discovery, AND every load_config/start.
+    errors.extend(reserved_spec_path_errors(path))
 
     # Unknown top-level keys
     unknown_top = set(raw.keys()) - _KNOWN_TOP_LEVEL_KEYS
