@@ -1,19 +1,38 @@
 """Wired tests for PR-3 lineage-scoped ACL on DELETE + tail.
 
-The new ACL surface plumbing in :mod:`._listen.server.agent_delete`
-and :mod:`._listen._tail.agent_tail` runs through the real Starlette
-``TestClient`` + a per-node bearer token mapping, so:
+The ACL surface plumbing in :mod:`._listen._agent_delete` and
+:mod:`._listen._tail.agent_tail` runs through the real Starlette
+``TestClient``, so:
 
-  * a non-host-bearer caller with no lineage edge to ``<name>`` lands
-    on 403 + ``kind="acl_deny"`` + the structured deny body;
   * a host-bearer caller (admin) keeps the previous behaviour
     (200 / 404 / 410) — no regression on the operator path;
-  * a per-node bearer for a caller WITH a lineage edge to ``<name>``
-    also passes (descendant control allowed).
+  * a bearer that is not the host token never reaches the gate at all —
+    the perimeter 403s it first;
+  * the gate's own decisions (deny for an unrelated caller, allow for
+    self and for a descendant) are asserted directly against
+    :func:`check_lineage_acl`, with the deny body shape asserted against
+    :func:`deny_response`.
 
-No mocks (PA-306); AAA + one assert (PA-307). The node tokens
-table is seeded via :func:`mint_node_token` (the real persistence
-path the listen server reads at request time).
+WHY THE DENY CASES ARE NOT DRIVEN OVER HTTP HERE (changed 2026-08-28).
+They used to be: ``_node_headers`` minted a per-node bearer with
+``mint_node_token`` and the server resolved it back to a caller name, so
+``client.delete("/agents/unrelated-target")`` produced a NON-admin caller
+and a 403. That feature is gone — nothing in ``src/`` ever minted a
+token, ``node_tokens`` held 0 rows on every fleet host, and the resolver
+middleware could only ever tag ``authenticated_node = None``.
+
+The consequence is worth stating rather than hiding, because deleting
+the feature is what made it legible: ``agent_delete`` and ``agent_tail``
+read their caller ONLY from ``request.state.authenticated_node`` — no
+body, no query parameter — so over HTTP the caller is ``None`` on every
+request and the lineage gate admits it as administrative. That was
+equally true before this file changed; the minted bearer was a fixture
+that existed nowhere but here, and it made these routes look gated
+against a caller shape production has never produced. The gate logic is
+still real and still worth covering, so it is covered where it can be
+exercised honestly: at the function.
+
+No mocks (PA-306); AAA + one assert (PA-307).
 """
 
 from __future__ import annotations
@@ -24,13 +43,12 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from scitex_agent_container._listen._acl import check_lineage_acl, deny_response
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_nodes import (
-    mint_node_token,
-    record_lineage,
-)
+from scitex_agent_container._state import state_db
+from scitex_agent_container._state.state_db_nodes import record_lineage
 
-HOST_TOKEN = "test-host-bearer"
+HOST_TOKEN = "host-token-lineage-acl"
 
 
 @pytest.fixture
@@ -59,18 +77,18 @@ def isolated_env(tmp_path: Path, env_save_restore):
 
 
 @pytest.fixture
+def db_path(isolated_env) -> Path:
+    """The state.db ``isolated_env`` pointed the env at, schema applied."""
+    db = isolated_env / "state.db"
+    state_db.init_schema(db)
+    return db
+
+
+@pytest.fixture
 def client(isolated_env):
     app = create_app(token=HOST_TOKEN)
     with TestClient(app) as c:
         yield c
-
-
-def _node_headers(name: str) -> dict[str, str]:
-    """Mint a per-node bearer for ``name`` and return the matching
-    Authorization header. Uses real persistence — the listen app
-    resolves the bearer back to ``name`` via NodeAuthMiddleware."""
-    token = mint_node_token(name=name)
-    return {"authorization": f"Bearer {token}"}
 
 
 def _host_headers() -> dict[str, str]:
@@ -78,7 +96,7 @@ def _host_headers() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# DELETE — admin path (host bearer) is always allowed
+# HTTP — the host bearer is the admin path and is never ACL-denied
 # ---------------------------------------------------------------------------
 
 
@@ -92,82 +110,6 @@ def test_delete_with_host_bearer_does_not_403(client, isolated_env):
     assert response.status_code != 403
 
 
-# ---------------------------------------------------------------------------
-# DELETE — non-host bearer w/ no lineage → 403 acl_deny
-# ---------------------------------------------------------------------------
-
-
-def test_delete_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
-    # Arrange — alice is a known node with no lineage edge to
-    # ``unrelated-target``.
-    headers = _node_headers("alice")
-    # Act
-    response = client.delete("/agents/unrelated-target", headers=headers)
-    # Assert
-    assert response.status_code == 403
-
-
-def test_delete_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
-    # Arrange
-    headers = _node_headers("alice")
-    # Act
-    response = client.delete("/agents/unrelated-target-2", headers=headers)
-    body = json.loads(response.content)
-    # Assert
-    assert body["kind"] == "acl_deny"
-
-
-def test_delete_unrelated_caller_body_has_error_acl_deny(pg_schema: str, client, isolated_env):
-    # Arrange
-    headers = _node_headers("alice")
-    # Act
-    response = client.delete("/agents/unrelated-target-3", headers=headers)
-    body = json.loads(response.content)
-    # Assert
-    assert body["error"] == "ACL deny"
-
-
-def test_delete_unrelated_caller_body_has_reason_naming_target(pg_schema: str, client, isolated_env):
-    # Arrange — the deny reason must name the target for diagnosability.
-    headers = _node_headers("alice")
-    # Act
-    response = client.delete("/agents/unrelated-target-4", headers=headers)
-    body = json.loads(response.content)
-    # Assert
-    assert "unrelated-target-4" in body["reason"]
-
-
-# ---------------------------------------------------------------------------
-# DELETE — caller managing self / descendant → ACL allows
-# ---------------------------------------------------------------------------
-
-
-def test_delete_caller_can_target_self(client, isolated_env):
-    # Arrange — self-management is always allowed by the lineage
-    # gate. The target ``alice`` itself has no pid file so we
-    # still get 404 from absence, but NOT 403 from ACL.
-    headers = _node_headers("alice")
-    # Act
-    response = client.delete("/agents/alice", headers=headers)
-    # Assert
-    assert response.status_code != 403
-
-
-def test_delete_caller_can_target_direct_child(pg_schema: str, client, isolated_env):
-    # Arrange — alice has child ``kid`` via the lineage table.
-    headers = _node_headers("alice")
-    record_lineage(child="kid", parent="alice")
-    # Act
-    response = client.delete("/agents/kid", headers=headers)
-    # Assert
-    assert response.status_code != 403
-
-
-# ---------------------------------------------------------------------------
-# tail — admin path
-# ---------------------------------------------------------------------------
-
-
 def test_tail_with_host_bearer_does_not_403(client, isolated_env):
     # Arrange — admin path; ACL allows. Target has no session.jsonl
     # so tail returns 404 without follow, but NOT 403.
@@ -178,49 +120,154 @@ def test_tail_with_host_bearer_does_not_403(client, isolated_env):
 
 
 # ---------------------------------------------------------------------------
-# tail — non-host bearer w/ no lineage → 403 acl_deny
+# HTTP — a non-host bearer is stopped at the PERIMETER, before the gate
 # ---------------------------------------------------------------------------
 
 
-def test_tail_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
+def test_delete_with_non_host_bearer_is_refused_by_the_perimeter(
+    client, isolated_env
+):
+    # Arrange — the only bearer the daemon admits is the host token.
+    headers = {"authorization": "Bearer some-other-bearer"}
+    # Act
+    response = client.delete("/agents/unrelated-target", headers=headers)
+    # Assert
+    assert response.status_code == 403
+
+
+def test_delete_non_host_bearer_403_is_an_auth_refusal_not_an_acl_deny(
+    client, isolated_env
+):
+    """The two 403s are different operator actions, so the bodies differ:
+    the perimeter says the bearer is invalid; the gate says ACL deny."""
     # Arrange
-    headers = _node_headers("alice")
+    headers = {"authorization": "Bearer some-other-bearer"}
+    # Act
+    response = client.delete("/agents/unrelated-target", headers=headers)
+    body = json.loads(response.content)
+    # Assert
+    assert body == {"error": "invalid bearer token"}
+
+
+def test_tail_with_non_host_bearer_is_refused_by_the_perimeter(client, isolated_env):
+    # Arrange
+    headers = {"authorization": "Bearer some-other-bearer"}
     # Act
     response = client.get("/agents/unrelated-target/tail", headers=headers)
     # Assert
     assert response.status_code == 403
 
 
-def test_tail_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
-    # Arrange
-    headers = _node_headers("alice")
+# ---------------------------------------------------------------------------
+# check_lineage_acl — the gate's decisions, asserted where a non-admin
+# caller can still be constructed
+# ---------------------------------------------------------------------------
+
+
+def test_gate_denies_caller_with_no_lineage_edge(pg_schema: str, db_path: Path):
+    # Arrange — alice has no lineage edge to ``unrelated-target``.
+    caller = "alice"
     # Act
-    response = client.get("/agents/unrelated-target-2/tail", headers=headers)
-    body = json.loads(response.content)
+    decision, _reason = check_lineage_acl(
+        caller=caller, target="unrelated-target", db_path=db_path
+    )
+    # Assert
+    assert decision == "deny"
+
+
+def test_gate_deny_reason_names_the_target(pg_schema: str, db_path: Path):
+    # Arrange — the deny reason must name the target for diagnosability.
+    caller = "alice"
+    # Act
+    _decision, reason = check_lineage_acl(
+        caller=caller, target="unrelated-target-4", db_path=db_path
+    )
+    # Assert
+    assert reason is not None and "unrelated-target-4" in reason
+
+
+def test_gate_allows_caller_targeting_self(pg_schema: str, db_path: Path):
+    # Arrange — self-management is always allowed.
+    caller = "alice"
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller=caller, target="alice", db_path=db_path
+    )
+    # Assert
+    assert decision == "allow"
+
+
+def test_gate_allows_caller_targeting_direct_child(pg_schema: str, db_path: Path):
+    # Arrange — alice has child ``kid`` via the lineage table.
+    record_lineage(child="kid", parent="alice", db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(caller="alice", target="kid", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_gate_allows_caller_targeting_transitive_descendant(
+    pg_schema: str, db_path: Path
+):
+    # Arrange — root → alice → ada (grandchild).
+    record_lineage(child="alice", parent="root", db_path=db_path)
+    record_lineage(child="ada", parent="alice", db_path=db_path)
+    # Act
+    decision, _reason = check_lineage_acl(caller="root", target="ada", db_path=db_path)
+    # Assert
+    assert decision == "allow"
+
+
+def test_gate_allows_the_administrative_caller(pg_schema: str, db_path: Path):
+    """``caller=None`` — what BOTH HTTP routes above actually pass, on
+    every request, now that no per-node identity can be established."""
+    # Arrange
+    caller = None
+    # Act
+    decision, _reason = check_lineage_acl(
+        caller=caller, target="unrelated-target", db_path=db_path
+    )
+    # Assert
+    assert decision == "allow"
+
+
+# ---------------------------------------------------------------------------
+# deny_response — the wire shape a gate deny produces (5-kind contract)
+# ---------------------------------------------------------------------------
+
+
+def test_deny_response_body_has_kind_acl_deny():
+    # Arrange
+    response = deny_response("lineage ACL deny: caller 'alice' ...")
+    # Act
+    body = json.loads(response.body)
     # Assert
     assert body["kind"] == "acl_deny"
 
 
-# ---------------------------------------------------------------------------
-# tail — caller managing self / descendant → ACL allows
-# ---------------------------------------------------------------------------
-
-
-def test_tail_caller_can_target_self(client, isolated_env):
+def test_deny_response_body_has_error_acl_deny():
     # Arrange
-    headers = _node_headers("alice")
+    response = deny_response("lineage ACL deny: caller 'alice' ...")
     # Act
-    response = client.get("/agents/alice/tail", headers=headers)
+    body = json.loads(response.body)
     # Assert
-    assert response.status_code != 403
+    assert body["error"] == "ACL deny"
 
 
-def test_tail_caller_can_target_descendant(pg_schema: str, client, isolated_env):
-    # Arrange — root → alice → ada (grandchild).
-    headers = _node_headers("root")
-    record_lineage(child="alice", parent="root")
-    record_lineage(child="ada", parent="alice")
+def test_deny_response_body_carries_the_reason_verbatim():
+    # Arrange
+    reason = "lineage ACL deny: caller 'alice' has no edge to 'unrelated-target-4'"
+    response = deny_response(reason)
     # Act
-    response = client.get("/agents/ada/tail", headers=headers)
+    body = json.loads(response.body)
     # Assert
-    assert response.status_code != 403
+    assert body["reason"] == reason
+
+
+def test_deny_response_status_is_403():
+    # Arrange
+    response = deny_response("lineage ACL deny: caller 'alice' ...")
+    # Act
+    status = response.status_code
+    # Assert
+    assert status == 403

@@ -8,12 +8,14 @@ in-container image builds (``sac image build``), cron/systemd apply
 otherwise require the operator's shell.
 
 FLOW:
-1. Bearer-authed by the outer middleware; the inner identity resolver has
-   already populated ``request.state.authenticated_node`` (per-node bearer) or
-   left it None (host-wide bearer / admin path).
-2. Caller identity: prefer the authenticated node; fall back to an optional
-   body ``caller`` claim (host-wide bearer path only — same caveat as the
-   ``agents_start``/``agent_restart`` handlers).
+1. Bearer-authed by the outer middleware. An inner identity resolver used to
+   populate ``request.state.authenticated_node`` from a per-node bearer; it
+   was removed 2026-08-28 (nothing ever minted one), so that attribute is
+   absent and reads ``None`` — the host-wide bearer / admin path.
+2. Caller identity: prefer the authenticated node — which no longer arrives —
+   so in practice the optional body ``caller`` claim, self-asserted (same
+   caveat as the ``agents_start``/``agent_restart`` handlers). NOTE this is
+   what the GROUP GATE below is applied to.
 3. GROUP GATE: resolve the caller's group via
    ``resolve_group_name`` and refuse with 403 unless it is one of
    ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator

@@ -248,8 +248,12 @@ def test_each_child_is_its_own_record_so_no_branch_can_collide():
 
 
 def test_bearer_tokens_are_never_replicated():
-    # Arrange: node_tokens is the authenticated-identity primitive. Copying
-    # it to every host turns one host's compromise into the fleet's.
+    # Arrange: node_tokens WAS the authenticated-identity primitive; copying
+    # it to every host would turn one host's compromise into the fleet's. The
+    # table was removed 2026-08-28 (never armed) and left KNOWN_TABLES; this
+    # assertion is kept deliberately, because a name leaving KNOWN_TABLES must
+    # not read as the refusal being withdrawn, and NEVER_SYNCED is where a
+    # future per-node credential store would arrive.
     # Act
     refused = "node_tokens" in NEVER_SYNCED
     # Assert

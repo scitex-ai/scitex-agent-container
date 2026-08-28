@@ -134,9 +134,12 @@ change how a running agent was started.
 
 ### STATE → PostgreSQL, single-writer per row
 
-`instances`, `comms_nodes`, `lineage`, `a2a_ports`, `node_tokens`
-(secret — §7), `inbound_dispatches`, `pending_prompts`,
-`acl_deny_notify_log`, `agent_residency`, `relocation_leases`.
+`instances`, `comms_nodes`, `lineage`, `a2a_ports`,
+`inbound_dispatches`, `pending_prompts`, `acl_deny_notify_log`,
+`agent_residency`, `relocation_leases`.
+
+`node_tokens` was listed here as state (secret — §7) until 2026-08-28,
+when it was DELETED rather than migrated. See open question 8.
 
 Almost all of these are **facts about a host, authored by that host**.
 That is what makes them safely syncable (§5).
@@ -439,9 +442,31 @@ spec path is exercised through the real
    "→ **under Git**" remains a separate step for both.
 7. **`comms_grants` / `comms_blocks` / `definitions`** are classified as
    configuration but still live in SQLite.
-8. **`node_tokens` is a secret** and must never follow
+8. ~~**`node_tokens` is a secret** and must never follow
    `node_comms_policy` into git; its migration needs a credential story
-   first.
+   first.~~ **RESOLVED 2026-08-28 — the credential story is that there
+   was no credential.** The table was measured before deciding: 0 rows
+   on compute-01, compute-03, compute-04 and nas-03 (`runtime/state.db`,
+   2026-08-28 11:40Z), and `mint_node_token` had ZERO callers outside
+   the test suite. So `resolve_node_token` always returned `None`,
+   `request.state.authenticated_node` was always `None`, and the
+   per-node anti-spoofing branch in `check_send_acl` had never fired.
+   The feature was never armed; it was removed rather than migrated,
+   along with the table, the DDL, the middleware and the `KNOWN_TABLES`
+   entry. What gates a send is the host-wide bearer plus the name-based
+   ACL, which is what gated it all along.
+
+   Removal also closed an export hole by construction: `export_state`
+   ships every column of a `KNOWN_TABLES` member — `token` included —
+   and the MCP `db_export` tool takes no `tables` argument with which
+   to withhold one. The table's absence is now the guarantee that used
+   to depend on nobody calling export.
+
+   `_store_plugin.NEVER_SYNCED` deliberately KEEPS its refusal of the
+   name: a table leaving `KNOWN_TABLES` must not read as the refusal
+   being withdrawn, and that entry is where a future per-node
+   credential store would arrive. If one is ever built, this open
+   question re-opens with it.
 9. **`~/.scitex/agent-container/runtime/state.db` on ywata-note-win is
    untouched**, deliberately: nine remaining relocations read it.
 10. **Six of the eight named consumers are unsurveyed.**

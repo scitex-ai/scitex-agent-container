@@ -9,11 +9,14 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2):
   ``sac agents start`` is rejected.
 
 The "identity cannot be spoofed via a metadata field" acceptance
-criterion is DEFERRED (lead 2026-05-20) to a separate follow-on
-handoff. Until then, the ACL gates on the self-claimed
-``metadata.from_agent`` field and every cross-group grant carries
-the audit caveat "trusts metadata.from_agent until per-node creds
-land".
+criterion was DEFERRED (lead 2026-05-20), later implemented against a
+per-node ``node_tokens`` bearer, and REMOVED on 2026-08-28 because
+nothing ever minted such a bearer — 0 rows on every fleet host, so the
+anti-spoof branch never once fired. The ACL therefore gates on the
+self-claimed ``metadata.from_agent`` field, exactly as it did during
+the deferral, and every cross-group grant carries that same audit
+caveat. The tests below assert what actually gates: the host-wide
+bearer at the perimeter, and the name-based ACL behind it.
 
 Mirrors ``src/scitex_agent_container/_listen/_acl.py``. No mocks
 (handoff §0): real SQLite, real Starlette app.
@@ -36,7 +39,6 @@ from scitex_agent_container._state.state_db_blocks import block_send
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
     grant_send,
-    mint_node_token,
     record_comms_policy,
     record_lineage,
 )
@@ -73,7 +75,6 @@ def test_acl_allows_self_send(db_path: Path) -> None:
     sender = "alice"
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node=sender,
         claimed_from_agent=sender,
         target="alice",
         db_path=db_path,
@@ -87,7 +88,6 @@ def test_acl_allows_intra_group_parent_to_child(db_path: Path, pg_schema: str) -
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="root",
         claimed_from_agent="root",
         target="worker-a",
         db_path=db_path,
@@ -103,7 +103,6 @@ def test_acl_allows_intra_group_sibling_to_sibling(db_path: Path, pg_schema: str
     record_lineage(child="worker-b", parent="root", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="worker-a",
         claimed_from_agent="worker-a",
         target="worker-b",
         db_path=db_path,
@@ -120,7 +119,6 @@ def test_acl_allows_cross_group_by_default(db_path: Path, pg_schema: str) -> Non
     record_lineage(child="child-2", parent="root-2", db_path=db_path)
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="child-1",
         claimed_from_agent="child-1",
         target="child-2",
         db_path=db_path,
@@ -138,7 +136,6 @@ def test_acl_blocked_sender_is_blocked(db_path: Path, pg_schema: str) -> None:
     block_send(sender="child-1", target="child-2")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="child-1",
         claimed_from_agent="child-1",
         target="child-2",
         db_path=db_path,
@@ -155,7 +152,6 @@ def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: st
     grant_send(sender="child-1", target="child-2")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="child-1",
         claimed_from_agent="child-1",
         target="child-2",
         db_path=db_path,
@@ -164,37 +160,19 @@ def test_acl_allows_cross_group_with_explicit_grant(db_path: Path, pg_schema: st
     assert decision == "allow"
 
 
-def test_acl_denies_identity_spoof(db_path: Path) -> None:
-    """Handoff §4 acceptance: "identity cannot be spoofed via a
-    metadata field". A per-node bearer authenticates one name; if
-    ``metadata.from_agent`` claims a different name → 403.
-    """
-    # Arrange
-    record_lineage(child="alice", parent="root", db_path=db_path)
-    record_lineage(child="bob", parent="root", db_path=db_path)
-    # Act — alice's bearer, bob's claim
-    decision, _reason = check_send_acl(
-        authenticated_node="alice",
-        claimed_from_agent="bob",
-        target="alice",
-        db_path=db_path,
-    )
-    # Assert
-    assert decision == "deny"
-
-
-def test_acl_spoof_deny_reason_names_both_identities(db_path: Path) -> None:
-    """The 403 body explains *which* identity claimed to be whom."""
-    # Arrange
-    # Act
-    _decision, reason = check_send_acl(
-        authenticated_node="alice",
-        claimed_from_agent="bob",
-        target="alice",
-        db_path=db_path,
-    )
-    # Assert
-    assert reason is not None and "alice" in reason and "bob" in reason
+# ``test_acl_denies_identity_spoof`` and
+# ``test_acl_spoof_deny_reason_names_both_identities`` stood here until
+# 2026-08-28. Both drove ``check_send_acl(authenticated_node="alice",
+# claimed_from_agent="bob")`` — a per-node bearer resolving to one name
+# while the metadata claimed another — and asserted the deny. That
+# parameter and the branch it fed are gone: nothing in ``src/`` ever
+# minted a per-node bearer, so ``authenticated_node`` was ``None`` on
+# every real call and the branch these two covered never executed
+# outside this file. They are deleted rather than re-pointed because
+# there is no longer a second identity to contradict the claim with;
+# re-pointing them would have meant asserting a deny the code cannot
+# produce. Every assertion below about ``claimed_from_agent`` covers
+# LIVE behaviour and is kept.
 
 
 def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path, pg_schema: str) -> None:
@@ -203,9 +181,8 @@ def test_acl_admin_caller_honors_claimed_from_agent(db_path: Path, pg_schema: st
     """
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
-    # Act — admin caller (authenticated_node=None) speaks for root
+    # Act — the admin caller (host-wide bearer) speaks for root
     decision, _reason = check_send_acl(
-        authenticated_node=None,
         claimed_from_agent="root",
         target="worker-a",
         db_path=db_path,
@@ -221,7 +198,6 @@ def test_acl_denies_when_no_identity_at_all(db_path: Path) -> None:
     # Arrange
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node=None,
         claimed_from_agent=None,
         target="anyone",
         db_path=db_path,
@@ -235,7 +211,6 @@ def test_acl_denies_when_target_missing(db_path: Path) -> None:
     sender = "alice"
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node=sender,
         claimed_from_agent=sender,
         target="",
         db_path=db_path,
@@ -421,77 +396,93 @@ def test_http_node_message_send_allows_after_explicit_grant(
 
 
 # ---------------------------------------------------------------------------
-# HTTP-level: per-node bearer enforces "identity cannot be spoofed via a
-# metadata field" (handoff §4 acceptance).
+# HTTP-level: the bearer perimeter that actually exists.
+#
+# Three tests here minted a per-node bearer with ``mint_node_token`` and
+# asserted the "identity cannot be spoofed via a metadata field"
+# acceptance: worker-a's bearer + ``metadata.from_agent=worker-b`` → 403.
+# The feature was removed 2026-08-28 — nothing in ``src/`` ever minted a
+# token, so ``node_tokens`` was empty on every host and no request the
+# fleet ever served took that path. The three are replaced by the ones
+# below, which pin what the perimeter really does with a bearer: the
+# host-wide token is admitted, anything else is 403, absence is 401.
 # ---------------------------------------------------------------------------
 
 
-def test_http_per_node_bearer_allows_matching_from_agent(
+def test_http_host_bearer_with_from_agent_lands(
     isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
-    """Per-node bearer for worker-a + ``metadata.from_agent=worker-a``
-    + intra-group target → allow.
-    """
+    """The host-wide bearer + ``metadata.from_agent=worker-a`` is the
+    only authenticated shape there is, and it lands."""
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_lineage(child="worker-b", parent="root", db_path=db_path)
-    worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
         r = client.post(
             "/agents/worker-b/message:send",
             json=_payload("worker-a"),
-            headers={"authorization": f"Bearer {worker_a_token}"},
+            headers={"authorization": f"Bearer {TOKEN}"},
         )
     # Assert
     assert r.status_code < 400, r.text
 
 
-def test_http_per_node_bearer_denies_spoofed_from_agent_with_403(
+def test_http_unknown_bearer_is_rejected_with_403(
     isolated_listen_env, db_path: Path, pg_schema: str
 ) -> None:
-    """Per-node bearer for worker-a + ``metadata.from_agent=worker-b``
-    → 403 identity spoof (the acceptance criterion).
-    """
+    """A bearer that is not the host token is refused. This is the
+    verdict a minted per-node token USED to escape; with the table gone
+    there is no second bearer that can be admitted."""
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_lineage(child="worker-b", parent="root", db_path=db_path)
-    worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
-    mint_node_token(name="worker-b", db_path=db_path)
-    app = create_app(token=TOKEN)
-    # Act — worker-a's bearer, but claim to be worker-b
-    with TestClient(app) as client:
-        r = client.post(
-            "/agents/worker-b/message:send",
-            json=_payload("worker-b"),
-            headers={"authorization": f"Bearer {worker_a_token}"},
-        )
-    # Assert
-    assert r.status_code == 403, r.text
-
-
-def test_http_per_node_bearer_403_body_explains_spoof(
-    isolated_listen_env, db_path: Path, pg_schema: str
-) -> None:
-    """The 403 body identifies the resolved name vs the claimed
-    name so the operator can see which identity tried to spoof."""
-    # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
-    worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
         r = client.post(
             "/agents/worker-b/message:send",
-            json=_payload("worker-b"),
-            headers={"authorization": f"Bearer {worker_a_token}"},
+            json=_payload("worker-a"),
+            headers={"authorization": "Bearer not-the-host-token"},
         )
-    body = r.json()
     # Assert
-    reason = body.get("reason", "")
-    assert "spoof" in reason and "worker-a" in reason and "worker-b" in reason
+    assert r.status_code == 403, r.text
+
+
+def test_http_unknown_bearer_403_body_names_the_bearer_as_the_cause(
+    isolated_listen_env, db_path: Path, pg_schema: str
+) -> None:
+    """The 403 must say the BEARER was invalid, not that the ACL denied
+    — the two are different operator actions."""
+    # Arrange
+    app = create_app(token=TOKEN)
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/worker-b/message:send",
+            json=_payload("worker-a"),
+            headers={"authorization": "Bearer not-the-host-token"},
+        )
+    # Assert
+    assert r.json().get("error") == "invalid bearer token"
+
+
+def test_http_missing_bearer_is_rejected_with_401(
+    isolated_listen_env, db_path: Path, pg_schema: str
+) -> None:
+    """No Authorization header at all → 401, distinct from the 403 a
+    wrong bearer earns."""
+    # Arrange
+    app = create_app(token=TOKEN)
+    # Act
+    with TestClient(app) as client:
+        r = client.post(
+            "/agents/worker-b/message:send",
+            json=_payload("worker-a"),
+        )
+    # Assert
+    assert r.status_code == 401, r.text
 
 
 # ---------------------------------------------------------------------------
@@ -781,59 +772,24 @@ def test_fanout_scope_scenario_empty_name_inbox_is_empty(
 
 
 # --- Spoof deny records the AUTHENTICATED identity ------------------------
-
-
-@pytest.fixture
-def spoof_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> dict:
-    """Per-node bearer for worker-a claims to be worker-b. ACL denies
-    as spoof; the notification on worker-b's inbox must name the
-    AUTHENTICATED identity (worker-a), not the spoofed claim
-    (worker-b) — else an attacker could forge the receiver's view of
-    who attempted to reach them.
-    """
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_lineage(child="worker-b", parent="root", db_path=db_path)
-    worker_a_token = mint_node_token(name="worker-a", db_path=db_path)
-    app = create_app(token=TOKEN)
-    with TestClient(app) as client:
-        resp = client.post(
-            "/agents/worker-b/message:send",
-            json=_payload("worker-b"),
-            headers={"authorization": f"Bearer {worker_a_token}"},
-        )
-    notifs = _denied_attempt_rows(target="worker-b", db_path=db_path)
-    return {"resp": resp, "notifs": notifs}
-
-
-def test_spoof_deny_returns_403(spoof_deny_scenario, pg_schema: str) -> None:
-    # Arrange
-    resp = spoof_deny_scenario["resp"]
-    # Act
-    status = resp.status_code
-    # Assert
-    assert status == 403
-
-
-def test_spoof_deny_notification_names_authenticated_identity(
-    spoof_deny_scenario, pg_schema: str,
-) -> None:
-    # Arrange
-    event = spoof_deny_scenario["notifs"][0]["event"]
-    # Act
-    sender = event["from_agent"]
-    # Assert
-    assert sender == "worker-a"
-
-
-def test_spoof_deny_notification_reason_mentions_spoof(
-    spoof_deny_scenario, pg_schema: str,
-) -> None:
-    # Arrange
-    event = spoof_deny_scenario["notifs"][0]["event"]
-    # Act
-    reason = event.get("extra", {}).get("deny_reason", "")
-    # Assert
-    assert "spoof" in reason
+#
+# A ``spoof_deny_scenario`` fixture and three tests stood here until
+# 2026-08-28. They minted worker-a's per-node bearer, sent with
+# ``metadata.from_agent="worker-b"``, and asserted the 403 plus a
+# denied-attempt notification naming the AUTHENTICATED identity
+# (worker-a) rather than the spoofed claim — the point being that a
+# receiver's view of who tried to reach them could not be forged.
+#
+# The per-node bearer is gone (never minted in ``src/``; 0 rows on every
+# fleet host), so ``check_send_acl`` has no second identity to compare
+# the claim against and cannot return this deny. Deleted rather than
+# re-pointed: the guarantee they asserted was never in force in
+# production, where ``authenticated_node`` was always ``None`` and the
+# denied-attempt notification therefore already carried the CLAIM. The
+# receiver-side notification machinery itself stays fully covered — by
+# ``cross_group_deny_scenario`` and ``body_leak_scenario`` above and the
+# live-broker fixture below, all of which reach it through the per-spec
+# relationship deny, which is a deny the code can actually produce.
 
 
 # --- Live broker subscriber (fast path) -----------------------------------

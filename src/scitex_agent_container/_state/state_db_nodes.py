@@ -4,23 +4,25 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
 2026-05-21 directive (RESTORED the authenticated-identity criterion
 the prior limited scope had deferred):
 
-  * **Authenticated identity** — per-node bearer tokens minted at
-    registration (:func:`mint_node_token`). The listen server resolves
-    an incoming ``Authorization: Bearer <token>`` to a node name
-    (:func:`resolve_node_token`). With this in place,
-    ``check_send_acl`` enforces "identity cannot be spoofed via a
-    metadata field" — when a per-node bearer is presented,
-    ``params.metadata.from_agent`` MUST match the bearer's resolved
-    name; mismatch → 403.
+  * **Authenticated identity** — ``mint_node_token`` /
+    ``resolve_node_token`` / ``list_node_tokens`` were re-exported here
+    (from ``state_db_node_tokens``) until 2026-08-28, when the per-node
+    bearer feature was removed: it had ZERO production callers, so the
+    ``node_tokens`` table held 0 rows on every host and no bearer ever
+    resolved to a name. The identity that actually gates today is the
+    HOST-WIDE bearer plus the name-based ACL below. Names removed rather
+    than left re-exported, for this module's usual reason: an importable
+    ``mint_node_token`` promises a credential a caller could authenticate
+    with, and nothing on the serving side would ever accept it.
 
   * **Group-based default ACL** — intra-group bidirectional,
     cross-group denied. Group is *derived from lineage*; see
     :func:`derive_group`.
 
-  * **Cross-group grants** — accepted, keyed on the *resolved*
-    sender identity (per-node bearer authenticates the sender; the
-    host-wide bearer is the administrative / cross-host-forwarder
-    path, which honours ``metadata.from_agent`` verbatim). See
+  * **Cross-group grants** — accepted, keyed on the sender identity
+    the caller claims in ``metadata.from_agent`` (the host-wide bearer
+    is the only bearer there is; it is the administrative /
+    cross-host-forwarder path and honours the claim verbatim). See
     :func:`grant_send`.
 
   * **Spawn permission** — a node with no parent may call
@@ -63,12 +65,6 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
-from .state_db_node_tokens import (
-    list_node_tokens,
-    mint_node_token,
-    resolve_node_token,
-)
-
 _logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -86,9 +82,7 @@ __all__ = [
     "is_researcher",
     "list_comms_grants",
     "list_comms_nodes",
-    "list_node_tokens",
     "lookup_comms_node",
-    "mint_node_token",
     "read_comms_policy",
     "record_comms_policy",
     "record_lineage",
@@ -97,7 +91,6 @@ __all__ = [
     "resolve_group_name",
     "resolve_group_names",
     "resolve_node_host",
-    "resolve_node_token",
     "revoke_send",
     "same_named_group",
     "sender_target_relationship",

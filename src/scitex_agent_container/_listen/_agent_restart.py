@@ -11,9 +11,9 @@ where the registry row, the agent's runtime dir, and that node's
 
 Shape mirrors ``agents_start`` exactly:
 
-  * resolve the caller identity from ``request.state.authenticated_node``
-    (the per-node bearer resolved by :class:`._acl.NodeAuthMiddleware`)
-    with a body-``caller`` fallback for the host-bearer / admin path,
+  * resolve the caller identity from the body's ``caller`` field (the
+    ``request.state.authenticated_node`` branch below outlived the
+    per-node bearer feature removed 2026-08-28 and no longer fires),
   * run :func:`._acl.check_lineage_acl` (the MANAGE gate — self /
     lineage-descendant / developer-group / standard-fleet mesh) BEFORE
     any runtime work; deny → 403 with the ACL reason verbatim,
@@ -147,15 +147,18 @@ async def agent_restart(request: Request) -> JSONResponse:
 
     Identity + ACL (mirrors ``agents_start`` / ``agent_delete``):
 
-      * ``request.state.authenticated_node`` is the resolved per-node
-        identity from :class:`._acl.NodeAuthMiddleware`; ``None`` is
-        the host-wide bearer (administrative / operator path — always
-        allowed by :func:`check_lineage_acl`).
-      * When the host-wide bearer is used, an optional body ``caller``
-        field carries the requesting node's name (same self-claimed
-        caveat as ``agents_start``'s ``caller``) so the manage gate can
-        still apply the standard-fleet mesh for an admin-forwarded
-        request. A per-node bearer always wins over the body claim.
+      * ``request.state.authenticated_node`` WAS the resolved per-node
+        identity. Nothing has set it since the per-node bearer feature
+        was removed 2026-08-28 (nothing ever minted one), so it reads
+        ``None`` on every request — the host-wide bearer / operator
+        path, always allowed by :func:`check_lineage_acl`.
+      * The optional body ``caller`` field is therefore the ONLY caller
+        identity this route sees. It carries the requesting node's name
+        (same self-claimed caveat as ``agents_start``'s ``caller``) so
+        the manage gate can apply the standard-fleet mesh for an
+        admin-forwarded request. The precedence below is kept as-is: a
+        resolved identity would still win over the body claim, and this
+        is where one would arrive.
       * :func:`check_lineage_acl` is the MANAGE gate: self /
         lineage-descendant / developer-group / standard-fleet mesh.
         Deny → 403 + ``{"error","kind":"acl_deny","reason"}``.
@@ -188,10 +191,11 @@ async def agent_restart(request: Request) -> JSONResponse:
         )
 
     # Resolve the effective caller for the MANAGE gate. A per-node bearer
-    # (authenticated_node) is the authoritative, unspoofable identity; the
-    # body ``caller`` claim is only consulted on the host-wide bearer path
-    # (authenticated_node is None) so an administrative forwarder can name
-    # the on-behalf-of node for the standard-fleet mesh.
+    # (authenticated_node) would be the authoritative, unspoofable
+    # identity, and would still win here — but nothing sets it since the
+    # never-armed per-node bearer feature was removed 2026-08-28, so in
+    # practice the body ``caller`` claim is what the gate sees, letting an
+    # administrative forwarder name the on-behalf-of node for the mesh.
     authenticated = getattr(request.state, "authenticated_node", None)
     caller = authenticated if authenticated is not None else claimed_caller
 

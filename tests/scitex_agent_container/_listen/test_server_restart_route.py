@@ -13,8 +13,18 @@ exactly like :mod:`test_server_lineage_acl` does for DELETE / tail:
 These assert the gate is wired on the new route; the host-shell leg
 (``sac agents restart``) is exercised separately by the CLI tests.
 
-No mocks (PA-306); AAA + one assert (PA-307). Node tokens seeded via
-:func:`mint_node_token` (the real persistence path the server reads).
+The caller identity is the request body's ``caller`` field. It used to be
+a per-node bearer minted with ``mint_node_token``, which the server
+resolved back to a name; that feature was removed 2026-08-28 having
+never been armed (nothing in ``src/`` minted one, so ``node_tokens``
+held 0 rows on every fleet host). Unlike DELETE and tail — see
+``test_server_lineage_acl.py`` — this route ALSO reads a body ``caller``
+claim, so the gate is still reachable over HTTP and these tests still
+drive it end-to-end; only the way the caller is named has changed. The
+decisions asserted are byte-identical: the resolved-bearer path and the
+body-claim path fed the same ``check_lineage_acl(caller=...)``.
+
+No mocks (PA-306); AAA + one assert (PA-307).
 """
 
 from __future__ import annotations
@@ -31,10 +41,7 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen import _agent_restart as restart_handler_mod
 from scitex_agent_container._listen._agent_restart import _build_detached_restart_argv
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_nodes import (
-    mint_node_token,
-    record_comms_policy,
-)
+from scitex_agent_container._state.state_db_nodes import record_comms_policy
 
 HOST_TOKEN = "test-host-bearer"
 
@@ -71,13 +78,17 @@ def client(isolated_env):
         yield c
 
 
-def _node_headers(name: str) -> dict[str, str]:
-    token = mint_node_token(name=name)
-    return {"authorization": f"Bearer {token}"}
-
-
 def _host_headers() -> dict[str, str]:
     return {"authorization": f"Bearer {HOST_TOKEN}"}
+
+
+def _as_node(name: str) -> dict:
+    """The body that names ``name`` as the requesting node.
+
+    Replaces ``_node_headers``, which minted a per-node bearer for the
+    server to resolve. Both feed the same ``check_lineage_acl(caller=)``.
+    """
+    return {"caller": name}
 
 
 # ---------------------------------------------------------------------------
@@ -87,18 +98,24 @@ def _host_headers() -> dict[str, str]:
 
 def test_restart_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
     # Arrange — alice has no lineage edge and no group mesh to the target.
-    headers = _node_headers("alice")
     # Act
-    response = client.post("/agents/unrelated-target/restart", headers=headers)
+    response = client.post(
+        "/agents/unrelated-target/restart",
+        headers=_host_headers(),
+        json=_as_node("alice"),
+    )
     # Assert
     assert response.status_code == 403
 
 
 def test_restart_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
     # Arrange
-    headers = _node_headers("alice")
     # Act
-    response = client.post("/agents/unrelated-target-2/restart", headers=headers)
+    response = client.post(
+        "/agents/unrelated-target-2/restart",
+        headers=_host_headers(),
+        json=_as_node("alice"),
+    )
     body = json.loads(response.content)
     # Assert
     assert body["kind"] == "acl_deny"
@@ -130,9 +147,12 @@ def test_restart_researcher_to_developer_not_403(pg_schema: str, client, isolate
     # row so the bare-host shell fails, but NOT via a 403 ACL deny.
     record_comms_policy(name="neurovista", group_name="researcher")
     record_comms_policy(name="scitex-todo", group_name="developer")
-    headers = _node_headers("neurovista")
     # Act
-    response = client.post("/agents/scitex-todo/restart", headers=headers)
+    response = client.post(
+        "/agents/scitex-todo/restart",
+        headers=_host_headers(),
+        json=_as_node("neurovista"),
+    )
     # Assert
     assert response.status_code != 403
 
@@ -248,10 +268,12 @@ def test_self_restart_returns_202(client, isolated_env):
     # Arrange — alice restarts alice (caller == target). Swap sac_binary (so
     # the test is hermetic w.r.t. the install layout) + the spawn seam.
     recorder = _SpawnRecorder()
-    headers = _node_headers("alice")
+    headers = _host_headers()
     # Act
     with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
-        response = client.post("/agents/alice/restart", headers=headers)
+        response = client.post(
+            "/agents/alice/restart", headers=headers, json=_as_node("alice")
+        )
     # Assert — clean 202, NOT the confusing 502 the sync path produced.
     assert response.status_code == 202
 
@@ -259,10 +281,12 @@ def test_self_restart_returns_202(client, isolated_env):
 def test_self_restart_body_marks_scheduled(client, isolated_env):
     # Arrange
     recorder = _SpawnRecorder()
-    headers = _node_headers("alice")
+    headers = _host_headers()
     # Act
     with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
-        response = client.post("/agents/alice/restart", headers=headers)
+        response = client.post(
+            "/agents/alice/restart", headers=headers, json=_as_node("alice")
+        )
     body = json.loads(response.content)
     # Assert
     assert body["self_restart"] == "scheduled"
@@ -271,10 +295,10 @@ def test_self_restart_body_marks_scheduled(client, isolated_env):
 def test_self_restart_spawns_detached_setsid_bounce(client, isolated_env):
     # Arrange
     recorder = _SpawnRecorder()
-    headers = _node_headers("alice")
+    headers = _host_headers()
     # Act
     with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
-        client.post("/agents/alice/restart", headers=headers)
+        client.post("/agents/alice/restart", headers=headers, json=_as_node("alice"))
     argv = recorder.calls[0][0]
     # Assert — a detached (setsid) forced bounce naming the agent was spawned.
     assert argv[0] == "setsid" and "agents start alice --force --json" in argv[-1]
@@ -283,10 +307,14 @@ def test_self_restart_spawns_detached_setsid_bounce(client, isolated_env):
 def test_self_restart_fresh_bounce_carries_fresh_flag(client, isolated_env):
     # Arrange — fresh=true self-restart → detached bounce carries --fresh.
     recorder = _SpawnRecorder()
-    headers = _node_headers("alice")
+    headers = _host_headers()
     # Act
     with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
-        client.post("/agents/alice/restart", headers=headers, json={"fresh": True})
+        client.post(
+            "/agents/alice/restart",
+            headers=headers,
+            json={**_as_node("alice"), "fresh": True},
+        )
     # Assert
     assert "agents start alice --force --fresh --json" in recorder.calls[0][0][-1]
 
@@ -295,14 +323,14 @@ def test_self_restart_bounce_env_strips_apptainer_marker(client, isolated_env):
     # Arrange — the detached bounce must inherit the in-SIF-stripped env so it
     # never re-brokers back into a container (same recursion guard as sync).
     recorder = _SpawnRecorder()
-    headers = _node_headers("alice")
+    headers = _host_headers()
     os.environ["APPTAINER_CONTAINER"] = "/some/parent.sif"
     try:
         # Act
         with _swap("sac_binary", lambda: "/fake/sac"), _swap(
             "_spawn_detached", recorder
         ):
-            client.post("/agents/alice/restart", headers=headers)
+            client.post("/agents/alice/restart", headers=headers, json=_as_node("alice"))
     finally:
         os.environ.pop("APPTAINER_CONTAINER", None)
     # Assert
@@ -335,9 +363,12 @@ def test_node_caller_restarting_peer_does_not_self_schedule(pg_schema: str, clie
     record_comms_policy(name="neurovista", group_name="researcher")
     record_comms_policy(name="scitex-todo", group_name="developer")
     recorder = _SpawnRecorder()
-    headers = _node_headers("neurovista")
     # Act
     with _swap("_spawn_detached", recorder):
-        response = client.post("/agents/scitex-todo/restart", headers=headers)
+        response = client.post(
+            "/agents/scitex-todo/restart",
+            headers=_host_headers(),
+            json=_as_node("neurovista"),
+        )
     # Assert — an allowed cross-agent restart never self-schedules.
     assert recorder.calls == [] and response.status_code != 403

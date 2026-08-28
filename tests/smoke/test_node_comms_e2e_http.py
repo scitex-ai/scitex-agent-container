@@ -22,8 +22,9 @@ AAA-marked cases — one behaviour each (TQ):
   receiver's inbox (comms item D — body never leaks).
 * (c) Cross-group grant unblocks (a) — alpha → gamma after
   ``grant_send`` succeeds.
-* (d) Identity-spoof rejection — alpha's bearer with
-  ``metadata.from_agent="beta"`` → 403 "identity spoof".
+* (d) Bearer-perimeter rejection — a bearer that is not the host
+  token → 403 "invalid bearer token", before the ACL runs. (Was an
+  identity-spoof case until 2026-08-28; see that section.)
 * (e) Sibling fan-out — parent + four children (alpha, beta,
   gamma, zeta); every sibling→sibling pair allowed by default.
 * (f) Replay-on-reconnect — emit with no subscriber, reconnect,
@@ -369,29 +370,38 @@ def test_cross_group_send_after_grant_delivers_to_recipient(pg_schema: str, comm
 
 
 # ---------------------------------------------------------------------------
-# Case (d) — identity spoof: alpha's bearer claims to be beta
+# Case (d) — the bearer perimeter (was: identity spoof)
+#
+# This case drove alpha's PER-NODE bearer with
+# ``metadata.from_agent="beta"`` and asserted a 403 "identity spoof".
+# The per-node bearer feature was removed 2026-08-28 — nothing in
+# ``src/`` ever minted one, so ``node_tokens`` was empty on every fleet
+# host and this smoke layer was the only place such a bearer existed.
+# With it gone there is no second identity to contradict the claim, so
+# the case now pins the refusal that IS in force: a bearer other than
+# the host token never reaches the ACL at all.
 # ---------------------------------------------------------------------------
 
 
-def test_identity_spoof_via_metadata_returns_403_identity_spoof(comms_env):
+def test_unknown_bearer_is_refused_before_the_acl(comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
-    # Act — alpha's bearer, but ``metadata.from_agent`` claims "beta".
-    # Target "beta" is alpha's true sibling so a *non-spoof* send would
-    # otherwise be allowed; this isolates the spoof gate.
+    # Act — a bearer the daemon was not built with. Target "beta" is
+    # alpha's true sibling, so the ACL would allow this send; the only
+    # thing that can refuse it is the perimeter.
     with _run_loopback(app, port):
         with httpx.Client(timeout=5.0) as c:
             resp = c.post(
                 f"http://127.0.0.1:{port}/agents/beta/message:send",
-                json=_send_payload("not really beta", from_agent="beta"),
-                headers=_bearer(tokens["alpha"]),
+                json=_send_payload("not really beta", from_agent="alpha"),
+                headers=_bearer("not-the-host-token"),
             )
     # Assert
     body = resp.json()
-    assert resp.status_code == 403 and "identity spoof" in (body.get("reason") or ""), (
+    assert resp.status_code == 403 and body.get("error") == "invalid bearer token", (
         f"unexpected response: status={resp.status_code} body={body!r}"
     )
 

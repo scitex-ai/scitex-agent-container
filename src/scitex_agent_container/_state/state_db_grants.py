@@ -10,10 +10,11 @@ per-file line cap. The four primitives below are re-exported from
 
 A grant is a directed ``sender → target`` record permitting
 ``sender → target`` even when the two are in different groups. The
-sender identity is authenticated by
-:class:`scitex_agent_container._listen._acl.NodeAuthMiddleware`
-resolving the bearer; the optional ``note`` is a free-form audit
-annotation.
+sender identity is the ``metadata.from_agent`` claim, taken at its word
+by :func:`scitex_agent_container._listen._acl.check_send_acl` — a
+per-node bearer was supposed to pin it, but that feature was removed
+2026-08-28 having never been armed. The optional ``note`` is a
+free-form audit annotation.
 
 ON POSTGRESQL SINCE 2026-08-28 (the operator's SQLite-eradication
 order). The store resolves through ``scitex_dev.store.host_store``:
