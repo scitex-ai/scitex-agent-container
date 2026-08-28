@@ -26,15 +26,11 @@ import pytest
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
     derive_group,
-    grant_send,
-    has_grant,
-    list_comms_grants,
     list_node_tokens,
     mint_node_token,
     record_comms_policy,
     record_lineage,
     resolve_node_token,
-    revoke_send,
     spawn_allowed,
 )
 
@@ -503,165 +499,41 @@ def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
 
 # ---------------------------------------------------------------------------
 # grant_send / has_grant / revoke_send — cross-group ACL grants
-# ---------------------------------------------------------------------------
-
-
-def test_has_grant_returns_false_when_no_grant(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    # (no grant)
-    # Act
-    granted = has_grant(sender="alice", target="bob")
-    # Assert
-    assert granted is False
-
-
-def test_grant_send_makes_has_grant_true(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    # Act
-    granted = has_grant(sender="alice", target="bob")
-    # Assert
-    assert granted is True
-
-
-def test_grant_send_is_directional(pg_schema: str, db_path: Path) -> None:
-    """A grant alice→bob does NOT imply bob→alice."""
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    # Act
-    reverse_granted = has_grant(sender="bob", target="alice")
-    # Assert
-    assert reverse_granted is False
-
-
-def test_grant_send_records_caller_supplied_audit_note(pg_schema: str, db_path: Path) -> None:
-    """An operator-supplied ``note`` round-trips into ``comms_grants``
-    so the audit trail records *why* the grant was authorised."""
-    # Arrange
-    grant_send(
-        sender="alice",
-        target="bob",
-        note="handoff-2026-05-21",
-    )
-    # Act
-    rows = list_comms_grants()
-    # Assert
-    assert rows and rows[0]["note"] == "handoff-2026-05-21"
-
-
-def test_grant_send_idempotent_no_duplicate_rows(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    grant_send(sender="alice", target="bob")
-    # Act
-    rows = list_comms_grants()
-    # Assert
-    assert len(rows) == 1
-
-
-def test_revoke_send_removes_existing_grant(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    # Act
-    removed = revoke_send(sender="alice", target="bob")
-    # Assert
-    assert removed is True
-
-
-def test_revoke_send_makes_has_grant_false(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    revoke_send(sender="alice", target="bob")
-    # Act
-    granted = has_grant(sender="alice", target="bob")
-    # Assert
-    assert granted is False
-
-
-def test_revoke_send_returns_false_when_no_grant_exists(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    # (no grant)
-    # Act
-    removed = revoke_send(sender="alice", target="bob")
-    # Assert
-    assert removed is False
-
-
-def test_list_comms_grants_returns_each_grant_pair(pg_schema: str, db_path: Path) -> None:
-    # Arrange
-    grant_send(sender="alice", target="bob")
-    grant_send(sender="root-1", target="child-2")
-    # Act
-    rows = list_comms_grants()
-    # Assert
-    pairs = sorted((r["sender"], r["target"]) for r in rows)
-    assert pairs == [("alice", "bob"), ("root-1", "child-2")]
-
-
-# ---------------------------------------------------------------------------
-# ORDERING CONTRACT (2026-07-14) — ``list_comms_grants`` documents INSERTION
-# order and both callers rely on it (``sac a2a grants`` says "rows are
-# emitted in insertion order"); nothing wants alphabetical. It used to sort
-# by ``ORDER BY created_at ASC, sender_name ASC, target_name ASC``, which
-# only APPROXIMATES insertion order and lies whenever the wall-clock
-# ``created_at`` ties (-> falls through to the ALPHABETICAL tiebreak) or
-# skews (-> a peer row sorts ahead of a locally-earlier one).
 #
-# Neither case is theoretical: ``import_state`` bulk-imports peer rows
-# carrying the PEER's ``created_at`` verbatim, and peer clocks drift. The
-# rows below are written through the real ``open_db`` connection with
-# explicit timestamps -- exactly the shape ``import_state`` produces. Real
-# SQLite, real rows, no mocks.
+# THE BEHAVIOUR TESTS MOVED, they were not dropped. comms_grants is on
+# PostgreSQL now, and every grant test that used to live here is asserted
+# store-natively in test_state_db_grants.py: has_grant false when none /
+# grant makes it true / directional / note round-trip / idempotent / revoke
+# removes, denies and returns False / the listing pairs. Keeping copies here
+# meant every future grants change had to be edited in two places, and the
+# copies here were the weaker pair — their arrange step wrote through
+# ``state_db.open_db``, i.e. into the abandoned SQLite table, which is why
+# they read back empty rather than failing loudly.
 #
-# The pre-existing insertion-order test could not catch this: it inserted
-# "first-sender" then "second-sender", which are in the SAME order
-# alphabetically as by insertion, so it passed under both implementations.
+# WHAT STAYS IS THE ONE THING THIS FILE UNIQUELY COVERS: the four primitives
+# are RE-EXPORTED from state_db_nodes, and production imports them from HERE
+# (cli_pkg/a2a_group.py, _lifecycle/_instances.py, _listen/_acl.py). Deleting
+# the whole block would silently drop that coverage, and a broken re-export
+# would surface as an ImportError in production rather than in this suite.
 # ---------------------------------------------------------------------------
 
 
-def _insert_grant_at(
-    db_path: Path, sender: str, target: str, created_at: float
-) -> None:
-    """Write one ``comms_grants`` row with an EXPLICIT ``created_at``.
+def test_the_grant_primitives_are_importable_from_state_db_nodes() -> None:
+    """The re-export is load-bearing: production imports them from here.
 
-    ``grant_send`` stamps ``time.time()`` internally, so a tie / skew can't
-    be expressed through it. This is the same INSERT ``import_state`` uses
-    when it replays a peer's rows.
+    Deliberately NOT a behaviour test — those live in test_state_db_grants.py.
+    This asserts only the import surface that state_db_grants.py's own
+    docstring promises to keep stable.
     """
-    from scitex_agent_container._state.state_db import open_db
-
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO comms_grants "
-            "(sender_name, target_name, created_at, note) VALUES (?, ?, ?, ?)",
-            (sender, target, created_at, None),
-        )
-
-
-def test_list_comms_grants_keeps_insertion_order_when_timestamps_tie(pg_schema: str, 
-    db_path: Path,
-) -> None:
-    # Arrange — same created_at, inserted in NON-alphabetical order. The old
-    # clause fell through to `sender_name ASC` and returned "alpha" first.
-    _insert_grant_at(db_path, "zeta", "lead", 100.0)
-    _insert_grant_at(db_path, "alpha", "lead", 100.0)
+    # Arrange
+    from scitex_agent_container._state import state_db_nodes
     # Act
-    rows = list_comms_grants()
+    missing = [
+        n for n in ("grant_send", "revoke_send", "has_grant", "list_comms_grants")
+        if not callable(getattr(state_db_nodes, n, None))
+    ]
     # Assert
-    assert [r["sender"] for r in rows] == ["zeta", "alpha"]
-
-
-def test_list_comms_grants_keeps_insertion_order_when_peer_clock_is_behind(pg_schema: str, 
-    db_path: Path,
-) -> None:
-    # Arrange — a peer row imported LATER but stamped EARLIER (clock skew).
-    # The old clause sorted by created_at and put the peer's row first.
-    _insert_grant_at(db_path, "local-first", "lead", 200.0)
-    _insert_grant_at(db_path, "peer-imported-later", "lead", 100.0)
-    # Act
-    rows = list_comms_grants()
-    # Assert
-    assert [r["sender"] for r in rows] == ["local-first", "peer-imported-later"]
+    assert missing == []
 
 
 # ---------------------------------------------------------------------------

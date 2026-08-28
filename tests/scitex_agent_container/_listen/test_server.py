@@ -1316,17 +1316,21 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     grant is redundant — cross-group already allows — but the grant path
     still works and the message must arrive at the receiver's inbox.)
     """
-    # Arrange — sender lives under a SEPARATE root from alice; the grant
-    # on the receiver's db (same db here; the fixture's tmp HOME pins both
-    # apps to it) is written on the destination side, and the message
-    # must arrive at the receiver's inbox across the transport.
+    # Arrange — sender lives under a SEPARATE root from alice. The grant is
+    # written on the destination side and the message must arrive at the
+    # receiver's inbox across the transport. The two apps agree about the
+    # grant because they share one in-process SCITEX_STORE_DSN, NOT because
+    # the fixture's tmp HOME pins them to a file: comms_grants is PostgreSQL
+    # now. record_lineage below still takes db_path — lineage is still SQLite.
     db = cross_host_ssh_env["db"]
     record_lineage(child="alice", parent="root-a", db_path=db)
     record_lineage(child="outsider", parent="root-b", db_path=db)
+    # db_path is gone from the grants primitives — that store is on
+    # PostgreSQL and isolates via SCITEX_STORE_DSN (the pg_schema fixture).
+    # record_lineage above KEEPS its db_path: that module is still on SQLite.
     state_db_nodes_grant.grant_send(
         sender="outsider",
         target="alice",
-        db_path=db,
         note="ADR-0015 stage2 e2e test grant",
     )
     # Act

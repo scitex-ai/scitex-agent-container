@@ -211,3 +211,39 @@ def test_listing_order_is_insertion_order_not_created_at(pg_schema: str) -> None
     # Assert — created_at ordering would put the imported row FIRST, which
     # is precisely how a foreign grant used to hide in this listing.
     assert order == [("local", "first"), ("imported", "second")]
+
+def test_listing_order_ignores_created_at_even_when_two_rows_share_one(
+    pg_schema: str,
+) -> None:
+    # Arrange — the SQLite predecessor of this test was called
+    # "..._keeps_insertion_order_when_timestamps_tie", and under the old
+    # clause `ORDER BY created_at ASC, sender_name ASC` an exact tie WAS a
+    # distinct hazard: it fell through to the ALPHABETICAL tiebreak, so two
+    # rows sharing a timestamp came back sorted by sender. Under
+    # _hlc_sort_key created_at is not in the sort key at all, so a "tie"
+    # names no special case — which is why the name changed with the test.
+    # Written in reverse-alphabetical order so alphabetical sorting FAILS.
+    from scitex_dev.store import NEW_RECORD
+
+    from scitex_agent_container._state.state_db_grants import _open
+
+    store = _open()
+    try:
+        for sender in ("zeta", "alpha"):
+            store.put(
+                {
+                    "sender_name": sender,
+                    "target_name": "lead",
+                    "created_at": 100.0,  # identical, on purpose
+                    "note": "shared timestamp",
+                },
+                expected_revision=NEW_RECORD,
+            )
+    finally:
+        store.close()
+    # Act
+    order = [r["sender"] for r in list_comms_grants()]
+    # Assert — insertion order, not the alphabetical order the old clause
+    # would have fallen through to.
+    assert order == ["zeta", "alpha"]
+
