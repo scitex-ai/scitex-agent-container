@@ -307,7 +307,7 @@ def test_dry_run_moves_no_card(fleet: Layout, board: Path):
     assert len(_owned(OLD, board)) == 3
 
 
-def test_rename_migrates_every_card(fleet: Layout, board: Path):
+def test_rename_migrates_every_card(pg_schema: str, fleet: Layout, board: Path):
     # Arrange
     _seed(board, 3)
     # Act
