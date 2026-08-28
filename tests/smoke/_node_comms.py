@@ -153,9 +153,9 @@ def _set_up_two_groups(db: Path) -> dict[str, str]:
 
     Returns ``{name: bearer}`` — see :func:`_host_bearers`.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="beta", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_b", db_path=db)
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="beta", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_b")
     return _host_bearers("parent_a", "alpha", "beta", "parent_b", "gamma")
 
 
@@ -183,8 +183,8 @@ def _set_up_denied_send(db: Path) -> dict[str, str]:
 
     Returns ``{name: bearer}`` — see :func:`_host_bearers`.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_a", db_path=db)
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_a")
     record_comms_policy(name="gamma", inbound_siblings="deny")
     return _host_bearers("parent_a", "alpha", "gamma")
 
@@ -196,7 +196,7 @@ def _set_up_four_siblings(db: Path) -> dict[str, str]:
     not conflict with gamma's group-B placement there.
     """
     for child in ("alpha", "beta", "gamma", "zeta"):
-        record_lineage(child=child, parent="parent_a", db_path=db)
+        record_lineage(child=child, parent="parent_a")
     return _host_bearers("parent_a", "alpha", "beta", "gamma", "zeta")
 
 

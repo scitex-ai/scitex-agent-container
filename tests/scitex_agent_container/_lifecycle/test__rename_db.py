@@ -29,37 +29,26 @@ NEW = "scitex-cards"
 
 # The rows a real agent leaves across the identity AND history tables.
 _SEED = [
-    # An ``INSERT INTO definitions`` row was here until 2026-08-28, and an
-    # ``INSERT INTO instances`` row replaced it for part of that day. Both
-    # tables have since left state.db — ``definitions`` deleted for having no
-    # writer in any code path, ``instances`` moved to the shared PostgreSQL
-    # store — so either seed would now raise.
+    # The identity half. It has moved FIVE times in one day, and every move
+    # was a table LEAVING SQLite: ``comms_nodes.name`` (to PostgreSQL),
+    # ``definitions.name`` (deleted — no writer), ``instances.name`` (to the
+    # shared store), ``lineage.child_name`` (to the shared store). What is
+    # left is ``channel_events``, the only table ``init_schema`` still
+    # creates — so the identity and history halves, two different tables all
+    # month, are now its two COLUMNS.
     #
-    # THE PATH HALF LEFT WITH ``instances``, and it did not move to another
-    # SQLite column because there is none: ``instances.workdir`` was the last
-    # entry in ``_rename_db.PATH_COLUMNS``, which is now EMPTY. The property
-    # "a rename rewrites the agent-name component of a stored path" is
-    # measured against the store that holds it, in
-    # ``_state/test_state_db_instances_rename.py``.
-    #
-    # An ``INSERT INTO comms_nodes`` row was here too. The ADR-0014 directory
-    # moved to PostgreSQL, so SQLite has no such table and the seed would
-    # raise on every test in this file.
-    (
-        "INSERT INTO lineage (child_name, parent_name, created_at) "
-        "VALUES (?, ?, ?)",
-        ("child-a", OLD, 1.0),
-    ),
-    # The history half. It was ``INSERT INTO turns`` until 2026-08-28, when
-    # the diary trio left SQLite for per-host PostgreSQL; then ``INSERT INTO
-    # attempts`` for the rest of that day, until ``attempts`` was deleted for
-    # having zero writers. ``channel_events.target`` is the history column
-    # still in ``_rename_db.NAME_COLUMNS`` AND still a real SQLite table, so
-    # it is what the history-follows-the-agent tests below now exercise.
+    # ``source`` is the identity half (a message this agent SENT) and
+    # ``target`` is the history half (one addressed TO it). Seeding both is
+    # what keeps the rename's two-column coverage instead of collapsing it.
     (
         "INSERT INTO channel_events (target, source, kind, content, "
         "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-        (OLD, None, "message", "hi", "{}", 1.0),
+        ("lead", OLD, "message", "sent", "{}", 1.0),
+    ),
+    (
+        "INSERT INTO channel_events (target, source, kind, content, "
+        "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
+        (OLD, None, "message", "hi", "{}", 2.0),
     ),
 ]
 
@@ -91,10 +80,11 @@ def _one(db: Path, sql: str, *args):
 
 
 def test_count_rows_counts_the_identity_row(seeded: Path):
-    # Arrange — ``comms_nodes.name`` was the key here until 2026-08-28, then
-    # ``definitions.name``, then ``instances.name``. All three left SQLite
-    # that day; ``lineage.parent_name`` is the identity column that remains.
-    key = "lineage.parent_name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28, then
+    # ``definitions.name``, then ``instances.name``, then
+    # ``lineage.child_name``. All four left SQLite that day;
+    # ``channel_events.source`` is the identity column that remains.
+    key = "channel_events.source"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -118,10 +108,9 @@ def test_count_rows_reports_no_path_column_because_there_is_none(
 
     It held ``definitions.yaml_path`` and then ``instances.workdir``; both
     tables left SQLite on 2026-08-28. A count that still named one would be
-    the reassuring decoration this module's docstring keeps warning about.
-    The path rewrite is real and lives in the store — see
-    ``_state/test_state_db_instances_rename.py::
-    test_the_rename_rewrites_the_workdir_component``.
+    the reassuring decoration this module keeps warning about. The path
+    rewrite is real and lives in the store — see
+    ``_state/test_state_db_instances_rename.py``.
     """
     # Arrange
     from scitex_agent_container._lifecycle._rename_db import PATH_COLUMNS
@@ -179,13 +168,30 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 # as its own ``acl-policy`` step, with its inverse on the undo stack.
 
 
-def test_rename_moves_the_lineage_parent_edge(seeded: Path):
-    # Arrange
-    sql = "SELECT parent_name FROM lineage WHERE child_name = 'child-a'"
+# ``test_rename_moves_the_lineage_parent_edge`` was here until 2026-08-28.
+# ``rename_rows`` no longer touches lineage at all: the spawn DAG moved to
+# the shared PostgreSQL store, and the two ``NAME_COLUMNS`` pairs that drove
+# this assertion were removed with it.
+#
+# The behaviour did NOT simply move to another file unchanged, and that is
+# worth stating here rather than leaving a reader to discover it. The
+# replacement, ``state_db_lineage_rename.rename_lineage`` (covered by
+# ``_state/test_state_db_lineage_rename.py``, and run by ``_rename.apply_plan``
+# as its own ``lineage`` step with an inverse on the undo stack), can move an
+# agent's OWN edge but REFUSES to rename an agent that has children:
+# ``parent_name`` is IMMUTABLE in the store, so the edges asserted on here —
+# ``child-a``'s pointer at the renamed agent — are precisely the ones that
+# cannot be re-pointed. This test asserted a capability the new storage does
+# not have, so porting it would have meant asserting something false.
+
+
+def test_rename_moves_the_identity_rows(seeded: Path):
+    # Arrange — the ``source`` half: messages this agent SENT must follow it.
+    sql = "SELECT COUNT(*) FROM channel_events WHERE source = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
-    assert _one(seeded, sql) == NEW
+    assert _one(seeded, sql, NEW) == 1
 
 
 def test_rename_moves_the_history_rows(seeded: Path):
@@ -214,24 +220,22 @@ def test_rename_moves_the_history_rows(seeded: Path):
 
 
 # ``test_rename_rewrites_the_instance_workdir_component`` was here until
-# 2026-08-28, and it was the LAST path test in this file: its predecessor
+# 2026-08-28, and it was the LAST path test in this file — its predecessor
 # ``definitions.yaml_path`` had been deleted earlier the same day as a
-# duplicate of it. ``instances`` then moved to the shared PostgreSQL store,
-# taking ``PATH_COLUMNS``' last entry with it.
+# duplicate of it. ``instances`` then moved to the shared store, taking
+# ``PATH_COLUMNS``' last entry with it.
 #
-# DELETED, NOT EDITED UNTIL IT PASSED. ``rename_rows`` SKIPS tables absent
-# from sqlite_master, so a re-pointed version would have passed forever while
-# reaching nothing. The property is measured where it now lives —
+# DELETED, NOT EDITED UNTIL IT PASSED, for the reason above: ``rename_rows``
+# skips an absent table. The property is measured in
 # ``_state/test_state_db_instances_rename.py::
-# test_the_rename_rewrites_the_workdir_component``, plus its
-# leaves-a-containing-component-alone sibling — and ``_rename.apply_plan``
-# runs the move as its own ``instances`` step with a key-scoped inverse on
-# the undo stack.
+# test_the_rename_rewrites_the_workdir_component`` and its
+# leaves-a-containing-component-alone sibling, and ``_rename.apply_plan``
+# runs the move as its own ``instances`` step with a key-scoped inverse.
 
 
 def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM lineage WHERE parent_name = ?"
+    sql = "SELECT COUNT(*) FROM channel_events WHERE source = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -255,7 +259,7 @@ def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
 def test_undo_restores_the_identity_row(seeded: Path):
     # Arrange
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT COUNT(*) FROM lineage WHERE parent_name = ?"
+    sql = "SELECT COUNT(*) FROM channel_events WHERE source = ?"
     # Act
     undo_rename_rows(undo)
     # Assert

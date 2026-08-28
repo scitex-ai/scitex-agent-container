@@ -3,9 +3,18 @@
 Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``.
 
-WHAT IT HOLDS TODAY IS TWO TABLES: ``channel_events`` and ``lineage``
-(WI-1 durability and the WI-2 spawn DAG). :data:`KNOWN_TABLES` is the list,
-and it is the list every generic reader walks.
+WHAT IT HOLDS TODAY IS ONE TABLE: ``channel_events`` (WI-1 durability).
+:data:`KNOWN_TABLES` is the list, and it is the list every generic reader
+walks — a list of one.
+
+The WI-2 spawn DAG, ``lineage``, and the F-CS11 registry's ``instances``
+were the other two until 2026-08-28. Both moved to the shared PostgreSQL
+store (:mod:`.state_db_lineage_store` and :mod:`.state_db_instances`), and
+for each an empty leftover would have been worse than a crash: every
+reader treats "no ``lineage`` row for this child" as ROOT, and a root MAY
+SPAWN; every reader treats an empty ``instances`` as "nothing is running",
+which is what decides whether to start a SECOND copy of a live agent. See
+the departure notes in :mod:`.state_db_schema`.
 
 The F-CS11 registry was ``definitions`` / ``instances`` / ``events``, with
 ``instance_heartbeats`` (the legacy ``heartbeats`` time series, tied to an
@@ -109,7 +118,22 @@ KNOWN_TABLES = (
     # asking what is running. ``sac agents list`` is the verb that answers
     # that question now.
     "channel_events",
-    "lineage",
+    # ``lineage`` left on 2026-08-28, when the spawn DAG moved to the
+    # shared PostgreSQL store (:mod:`.state_db_lineage_store`). Its DDL is
+    # gone from :mod:`.state_db_schema`, which carries the departure note,
+    # and its ``export_state`` filter is gone from
+    # :mod:`.state_db_export` -- so keeping the name here would aim every
+    # generic reader (``table_counts`` behind ``sac db show``,
+    # ``export_state`` / ``import_state``, and the ``click.Choice`` for
+    # ``sac db query``) at a table that no longer exists.
+    #
+    # The empty-is-dangerous argument this tuple has been shedding names
+    # over is at its sharpest here, and it is worth naming once: an empty
+    # ``lineage`` does not read as "wrong database", it reads as "every
+    # agent is a ROOT" -- and a root may spawn. ``sac db show`` answering
+    # ``lineage 0`` while the store holds the fleet's 23 edges would be a
+    # wrong answer that looks like a right one about the table the whole
+    # ACL is derived from.
     # ``definitions``, ``instance_heartbeats`` and ``events`` left on
     # 2026-08-28, in one change, taking this tuple from six names to three.
     # Their DDL is gone from :mod:`.state_db_schema`, where each carries its

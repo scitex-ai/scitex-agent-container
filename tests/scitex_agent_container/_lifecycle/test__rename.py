@@ -96,18 +96,22 @@ def _db_names(db_path: Path) -> list[str]:
 
     ``SELECT name FROM comms_nodes`` was the identity half until 2026-08-28;
     the ADR-0014 directory moved to PostgreSQL and ``definitions.name`` took
-    its place, then ``instances.name`` when ``definitions`` was deleted for
-    having no writer. ``instances`` moved to the shared store hours later, so
-    ``lineage.child_name`` is the identity half now — the last
-    ``NAME_COLUMNS`` pair whose table is still in state.db. The halves that
-    left are asserted where they now live:
+    its place, until ``definitions`` was itself deleted later the same day
+    for having no writer in any code path. ``instances.name`` followed on
+    2026-08-28 too, so ``channel_events`` is the last table left and the two
+    halves are now its two COLUMNS: ``source`` for identity, ``target`` for
+    history. The halves that left are asserted where they now live —
     ``_state/test_state_db_comms_nodes.py`` for the directory and
     ``_state/test_state_db_instances_rename.py`` for the lifecycle records.
     """
     conn = sqlite3.connect(str(db_path))
     try:
-        ident = conn.execute("SELECT child_name FROM lineage").fetchall()
-        past = conn.execute("SELECT target FROM channel_events").fetchall()
+        ident = conn.execute(
+            "SELECT source FROM channel_events WHERE source IS NOT NULL"
+        ).fetchall()
+        past = conn.execute(
+            "SELECT target FROM channel_events WHERE target != 'lead'"
+        ).fetchall()
     finally:
         conn.close()
     return sorted([r[0] for r in ident] + [t[0] for t in past])
@@ -290,13 +294,13 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
 
 def test_the_plan_counts_the_state_db_rows(world: World):
     # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
-    # then ``definitions.name`` (deleted: no writer), then
-    # ``instances.name`` (moved to the shared store the same day). All three
-    # left ``NAME_COLUMNS``, so the dry-run count names none of them;
-    # ``lineage.child_name`` is what it counts now. The instances counts have
-    # their own reader — ``count_instance_rename_rows`` — and are covered in
-    # ``_state/test_state_db_instances_rename.py``.
-    key = "lineage.child_name"
+    # then ``definitions.name`` for the rest of that day (deleted: no
+    # writer), then ``instances.name`` and ``lineage.child_name`` (both to
+    # the shared store). All four left ``NAME_COLUMNS``, so the dry-run
+    # count names none of them; ``channel_events.source`` is what it counts
+    # now. The instances counts have their own reader,
+    # ``count_instance_rename_rows``.
+    key = "channel_events.source"
     # Act
     plan = _plan(world)
     # Assert

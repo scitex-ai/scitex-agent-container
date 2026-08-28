@@ -7,8 +7,8 @@ are no real FKs on it). A rename that moves the spec dir but leaves
 ``comms_nodes.name`` / ``node_comms_policy.name`` / ``lineage`` pointing
 at the old name produces an agent that starts but cannot be addressed:
 the A2A directory still advertises the dead name, and the ACL gate has no
-policy row for the live one. Two of those three now live in PostgreSQL and
-are renamed by :mod:`._rename` as their own steps — see below.
+policy row for the live one. All three now live in PostgreSQL and are
+renamed by :mod:`._rename` as their own steps — see below.
 
 So: rename EVERY row in state.db that keys on the name, including the
 history (``channel_events``). A renamed agent is the SAME agent — its
@@ -92,8 +92,24 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     # empty on every host, so there was never a row to miss. Removed all
     # the same: a pair here asserts that renaming an agent must carry its
     # credential across, and there is no credential.
-    ("lineage", "child_name"),
-    ("lineage", "parent_name"),
+    # ("lineage", "child_name") / ("lineage", "parent_name") were here
+    # until 2026-08-28. The spawn DAG moved to PostgreSQL, and leaving the
+    # pairs would have been the PRIVILEGE version of the two cases below:
+    # ``rename_rows`` skips tables absent from sqlite_master, so the rename
+    # would have reported success while the edge stayed under the OLD name
+    # — and an agent with no lineage edge is a ROOT, which MAY SPAWN. The
+    # renamed agent, and every agent it had spawned, would have silently
+    # gained spawn authority as a side effect of a rename.
+    #
+    # The move is done by ``state_db_lineage_rename.rename_lineage``,
+    # called as its own step in :mod:`._rename` with its own inverse on the
+    # undo stack. That verb carries a restriction these pairs did not: it
+    # can move an agent's OWN edge (``child_name`` is the store identity,
+    # so a rename is a copy + retire) but NOT the edges that name it as a
+    # PARENT, because ``parent_name`` is IMMUTABLE and the first value is
+    # kept forever. It refuses the rename rather than leaving or hiding
+    # those edges — both of which would grant the spawn authority described
+    # above. See that module for why refusing is the least-bad answer.
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
     # ("comms_nodes", "name") was here until 2026-08-28. The ADR-0014

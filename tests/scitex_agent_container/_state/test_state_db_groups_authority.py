@@ -120,9 +120,9 @@ def test_grant_child_with_developer_in_its_groups_passes_check_spawn(
     spawn while its registry row listed developer."""
     # Arrange
     _record_grant_like("grant", GRANT_GROUPS, db_path)
-    record_lineage(child="grant", parent="scitex-agent-container", db_path=db_path)
+    record_lineage(child="grant", parent="scitex-agent-container")
     # Act
-    decision, _reason = check_spawn(caller="grant", db_path=db_path)
+    decision, _reason = check_spawn(caller="grant")
     # Assert
     assert decision == "allow"
 
@@ -134,9 +134,9 @@ def test_child_with_only_researcher_in_its_groups_passes_check_spawn(
     """The researcher half of the operator's ruling, on the same footing."""
     # Arrange
     _record_grant_like("nv", ["generalist", "researcher"], db_path)
-    record_lineage(child="nv", parent="lead", db_path=db_path)
+    record_lineage(child="nv", parent="lead")
     # Act
-    decision, _reason = check_spawn(caller="nv", db_path=db_path)
+    decision, _reason = check_spawn(caller="nv")
     # Assert
     assert decision == "allow"
 
@@ -147,9 +147,9 @@ def test_child_with_only_privileged_in_its_groups_passes_check_spawn(
 ) -> None:
     # Arrange
     _record_grant_like("dotfiles", ["generalist", "privileged"], db_path)
-    record_lineage(child="dotfiles", parent="lead", db_path=db_path)
+    record_lineage(child="dotfiles", parent="lead")
     # Act
-    decision, _reason = check_spawn(caller="dotfiles", db_path=db_path)
+    decision, _reason = check_spawn(caller="dotfiles")
     # Assert
     assert decision == "allow"
 
@@ -163,9 +163,9 @@ def test_child_with_only_privileged_in_its_groups_passes_check_spawn(
 def test_child_in_no_authorising_group_is_still_denied(pg_schema: str, db_path: Path) -> None:
     # Arrange
     _record_grant_like("worker", ["generalist", "active"], db_path)
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    decision, _reason = check_spawn(caller="worker", db_path=db_path)
+    decision, _reason = check_spawn(caller="worker")
     # Assert
     assert decision == "deny"
 
@@ -173,9 +173,9 @@ def test_child_in_no_authorising_group_is_still_denied(pg_schema: str, db_path: 
 def test_ungrouped_child_is_still_denied(pg_schema: str, db_path: Path) -> None:
     # Arrange
     record_comms_policy(name="worker")
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    decision, _reason = check_spawn(caller="worker", db_path=db_path)
+    decision, _reason = check_spawn(caller="worker")
     # Assert
     assert decision == "deny"
 
@@ -185,9 +185,9 @@ def test_isolated_solver_group_gets_no_spawn_authority(pg_schema: str, db_path: 
     set-valued read."""
     # Arrange
     _record_grant_like("solver", ["solver", "capsule"], db_path)
-    record_lineage(child="solver", parent="clew", db_path=db_path)
+    record_lineage(child="solver", parent="clew")
     # Act
-    decision, _reason = check_spawn(caller="solver", db_path=db_path)
+    decision, _reason = check_spawn(caller="solver")
     # Assert
     assert decision == "deny"
 
@@ -237,9 +237,9 @@ def test_legacy_row_without_a_set_still_resolves_to_its_primary(
 def test_legacy_developer_row_still_passes_check_spawn(pg_schema: str, db_path: Path) -> None:
     # Arrange
     record_comms_policy(name="legacy", group_name="developer")
-    record_lineage(child="legacy", parent="lead", db_path=db_path)
+    record_lineage(child="legacy", parent="lead")
     # Act
-    decision, _reason = check_spawn(caller="legacy", db_path=db_path)
+    decision, _reason = check_spawn(caller="legacy")
     # Assert
     assert decision == "allow"
 
@@ -310,9 +310,9 @@ def test_a_bare_string_group_names_is_rejected(db_path: Path) -> None:
 def test_denial_names_the_groups_the_gate_actually_resolved(pg_schema: str, db_path: Path) -> None:
     # Arrange
     _record_grant_like("worker", ["generalist", "active"], db_path)
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    _decision, reason = spawn_allowed(caller="worker", db_path=db_path)
+    _decision, reason = spawn_allowed(caller="worker")
     # Assert
     assert "'active', 'generalist'" in reason
 
@@ -325,9 +325,9 @@ def test_denial_no_longer_claims_the_caller_holds_none_of_the_groups(
     a2a_peers output; it must not come back."""
     # Arrange
     _record_grant_like("worker", ["generalist"], db_path)
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    _decision, reason = spawn_allowed(caller="worker", db_path=db_path)
+    _decision, reason = spawn_allowed(caller="worker")
     # Assert
     assert "is in none of the" not in reason
 
@@ -337,9 +337,9 @@ def test_denial_spells_researcher_in_full(pg_schema: str, db_path: Path) -> None
     hypothesis about a string mismatch. Name the real group."""
     # Arrange
     _record_grant_like("worker", ["generalist"], db_path)
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    _decision, reason = spawn_allowed(caller="worker", db_path=db_path)
+    _decision, reason = spawn_allowed(caller="worker")
     # Assert
     assert "researcher" in reason
 
@@ -350,9 +350,9 @@ def test_denial_points_at_refresh_acl_when_the_row_may_be_stale(
 ) -> None:
     # Arrange
     _record_grant_like("worker", ["generalist"], db_path)
-    record_lineage(child="worker", parent="lead", db_path=db_path)
+    record_lineage(child="worker", parent="lead")
     # Act
-    _decision, reason = spawn_allowed(caller="worker", db_path=db_path)
+    _decision, reason = spawn_allowed(caller="worker")
     # Assert
     assert "refresh-acl" in reason
 
@@ -364,8 +364,8 @@ def test_denial_distinguishes_an_absent_row_from_an_ungrouped_agent(
     """The 2026-08-09 host_exec lesson, applied to the spawn gate: both
     produce an empty group set and they are different facts."""
     # Arrange — a lineage edge but NO policy row for the caller.
-    record_lineage(child="stranger", parent="lead", db_path=db_path)
+    record_lineage(child="stranger", parent="lead")
     # Act
-    _decision, reason = spawn_allowed(caller="stranger", db_path=db_path)
+    _decision, reason = spawn_allowed(caller="stranger")
     # Assert
     assert "NO node_comms_policy row" in reason

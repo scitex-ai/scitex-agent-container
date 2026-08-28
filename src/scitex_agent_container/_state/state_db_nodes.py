@@ -52,8 +52,6 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
-import logging
-import time
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +63,6 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
-_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -104,107 +101,19 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def record_lineage(
-    *,
-    child: str,
-    parent: str,
-    db_path: Path | None = None,
-) -> None:
-    """Record ``parent`` as ``child``'s parent (keep-first-parent).
-
-    Idempotent; a child's parent is set once and immutable. A DIFFERENT
-    parent KEEPS the existing one (logged, not raised) so a restart by a
-    non-original-parent caller works in-place without re-parenting;
-    identity drift stays impossible. Permission is gated upstream by
-    ``check_spawn``.
-    """
-    if not child or not parent:
-        raise ValueError("record_lineage: child and parent must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (child,)
-        ).fetchone()
-        if existing is not None:
-            if existing["parent_name"] == parent:
-                return  # idempotent no-op
-            _logger.warning(
-                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
-                child,
-                existing["parent_name"],
-                parent,
-            )
-            return
-        conn.execute(
-            "INSERT INTO lineage (child_name, parent_name, created_at) "
-            "VALUES (?, ?, ?)",
-            (child, parent, time.time()),
-        )
-
-
-def derive_group(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> set[str]:
-    """Return the set of nodes inside ``name``'s default-ACL group.
-
-    A *group* is a parent together with its direct children
-    (handoff §2). Concretely:
-
-    * If ``name`` is a parent (any rows in ``lineage`` with
-      ``parent_name = name``): group = {name} ∪ {its direct children}.
-    * If ``name`` is a child (row in ``lineage`` with
-      ``child_name = name``): group = {its parent} ∪ {parent's other
-      children}.
-    * If ``name`` has no edges at all: group = {name} (singleton —
-      a fresh registration starts unattached).
-
-    The derivation is intentionally local — it never walks the full
-    lineage tree. That keeps the default-ACL semantics simple and
-    matches handoff §2: "the group is the unit of default ACL" (one
-    parent + its direct children, not the entire ancestry).
-
-    Phase-3 (ADR-0010 Step 2): if ``name``'s ``node_comms_policy`` row
-    sets ``lineage_group = 'solitary'``, the group is forced to
-    ``{name}`` and the lineage-table walk is skipped. That isolates a
-    capsule from its siblings AND its parent without depending on the
-    lineage table being empty — clew capsule children adopt this so a
-    sibling capsule can never address them through the group-default
-    ACL even though they share a parent edge.
-    """
-    if not name:
-        raise ValueError("derive_group: name must be non-empty")
-    # Phase-3 solitary override — short-circuits to the singleton group
-    # without touching the lineage table.
-    policy = read_comms_policy(name=name)
-    if policy["lineage_group"] == "solitary":
-        return {name}
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        children_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (name,)
-        ).fetchall()
-        if children_rows:
-            group: set[str] = {name}
-            for r in children_rows:
-                group.add(str(r["child_name"]))
-            return group
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (name,)
-        ).fetchone()
-        if parent_row is None:
-            return {name}
-        parent = str(parent_row["parent_name"])
-        sibling_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (parent,)
-        ).fetchall()
-        group = {parent}
-        for r in sibling_rows:
-            group.add(str(r["child_name"]))
-        return group
+# ``record_lineage`` (the WRITER) and ``derive_group`` (the reader that
+# turns edges into the default-ACL unit) moved into
+# :mod:`.state_db_lineage_group` on 2026-08-28, when ``lineage`` left
+# SQLite. The store-shaped writer — a get, a conditional unhide, a put
+# whose ``PutResult.conflicts`` must be inspected because IMMUTABLE keeps
+# the first value WITHOUT raising — does not fit under this module's line
+# cap beside everything else it carries. Same split, same reason, as
+# :mod:`.state_db_lineage_rel`. Re-exported here so every existing
+# ``from ..._state.state_db_nodes import record_lineage`` keeps resolving.
+from .state_db_lineage_group import (  # noqa: E402
+    derive_group,
+    record_lineage,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +158,11 @@ from .state_db_groups import (  # noqa: E402
 def spawn_allowed(
     *,
     caller: str | None,
-    db_path: Path | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether ``caller`` is allowed to call ``sac agents start``.
+
+    ``db_path`` is GONE (2026-08-28): the parent lookup this makes is a
+    read of the shared PostgreSQL lineage store, not of a SQLite file.
 
     Current policy (handoff §4 / WI-2, relaxed per operator ruling
     2026-07-05): a *root* node (no parent) is allowed to spawn.
@@ -301,15 +212,14 @@ def spawn_allowed(
         or is_privileged(name=caller)
     ):
         return apply_may_spawn_gate(caller=caller, base=(True, None))
-    from .state_db import open_db
+    # One indexed point read: ``child_name`` is the store's identity, so
+    # "who is my parent" is a ``get``, not a scan.
+    from .state_db_lineage_store import parent_name_of
 
-    with open_db(db_path) as conn:
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
-        ).fetchone()
-    if parent_row is None:
+    parent = parent_name_of(caller)
+    if parent is None:
         return apply_may_spawn_gate(caller=caller, base=(True, None))
-    return (False, _spawn_denied_reason(caller, parent_row["parent_name"]))
+    return (False, _spawn_denied_reason(caller, parent))
 
 
 def _spawn_denied_reason(caller: str, parent: str) -> str:

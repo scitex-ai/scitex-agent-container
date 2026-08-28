@@ -159,16 +159,12 @@ def _swept_rows() -> list[dict]:
     but cannot serve counts as absent here, which a raw SELECT could not
     catch.
     """
-    from scitex_agent_container._state.state_db_instances import (
-        last_known_instance,
-        scan_instances,
-    )
+    from scitex_agent_container._state.state_db_instances import scan_instances
     from scitex_agent_container._state.state_db_instances_store import (
         instance_as_dict,
         run_with_reconnect,
     )
 
-    del last_known_instance  # documented above; the scan is the reader here
     return [instance_as_dict(r) for r in run_with_reconnect(scan_instances)]
 
 
@@ -338,7 +334,7 @@ def test_db_query_via_cli_refuses_instances_rather_than_answering_empty(
 def test_the_swept_row_is_readable_through_the_production_reader(
     db_path: Path, tmp_path: Path
 ):
-    """The other half of the CLI test above: the ROW is still there.
+    """The other half of the refusal above: the ROW is still there.
 
     Refusing ``--table instances`` would be worthless if the data had gone
     with the table. It has not — ``import_legacy_registry`` writes it into
@@ -776,52 +772,65 @@ def test_export_state_payload_tables_key_covers_all_known_tables(db_path: Path):
     assert set(payload["tables"]) == set(KNOWN_TABLES)
 
 
-def test_export_state_payload_table_contains_the_recorded_row(
+def test_export_state_payload_instances_table_contains_recorded_row_name(
     db_path: Path,
 ):
-    # Arrange — ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_lineage(child="polish-clew", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('polish-clew', 'message', '{}', 1.0)"
+        )
     # Act
     payload = export_state(host="src-host")
     # Assert
-    assert [r["child_name"] for r in payload["tables"]["lineage"]] == ["polish-clew"]
+    assert [r["target"] for r in payload["tables"]["channel_events"]] == [
+        "polish-clew"
+    ]
 
 
-def test_export_state_filters_out_rows_older_than_the_since_cutoff(
+def test_export_state_filters_out_instance_rows_older_than_since_cutoff(
     db_path: Path,
 ):
     # Arrange — bracket the cutoff with sleeps so the second boundary is clean.
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
+    import datetime as _dt
     import time as _time
 
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
+    # the wire format, not which table fills it.
+    #
+    # ``channel_events.ts`` is a REAL (unix seconds), not the ISO-8601
+    # text ``instances.started_at`` was — so the cutoff is a NUMBER
+    # here. An ISO string against a REAL column matches nothing in
+    # SQLite, which would have made this pass for "the filter excluded
+    # everything" rather than for "it excluded the old row".
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    # ``lineage.created_at`` is a REAL (unix seconds), not the ISO-8601 text
-    # ``instances.started_at`` was — so the cutoff is a NUMBER here. An ISO
-    # string compared against a REAL column in SQLite matches nothing, which
-    # would have made this test pass for "the filter excluded everything"
-    # rather than for "the filter excluded the old row".
-    record_lineage(child="old", parent="lead", db_path=db_path)
-    _time.sleep(0.05)
-    cut = str(_time.time())
-    _time.sleep(0.05)
-    record_lineage(child="new", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('old', 'message', '{}', 1.0)"
+        )
+    cut = "2.0"
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('new', 'message', '{}', 3.0)"
+        )
     # Act
     payload = export_state(since=cut, host="h")
     # Assert
-    assert [r["child_name"] for r in payload["tables"]["lineage"]] == ["new"]
+    assert [r["target"] for r in payload["tables"]["channel_events"]] == ["new"]
 
 
 @pytest.fixture
@@ -866,73 +875,93 @@ def switch_to_sink_db(tmp_path: Path):
             importlib.reload(mod)
 
 
-def test_import_state_into_fresh_db_inserts_each_source_row(
+def test_import_state_into_fresh_db_inserts_each_source_instance_row(
     db_path: Path, switch_to_sink_db
 ):
     # Arrange — write 2 rows on the source db and snapshot them.
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_lineage(child="a", parent="lead", db_path=db_path)
-    record_lineage(child="b", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('a', 'message', '{}', 1.0)"
+        )
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('b', 'message', '{}', 2.0)"
+        )
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
     # Act — import into the fresh sink (different env path).
     inserted = sink_mod.import_state(payload)
     # Assert
-    assert inserted["lineage"] == 2
+    assert inserted["channel_events"] == 2
 
 
 def test_import_state_replayed_on_same_payload_inserts_zero_rows(
     db_path: Path, switch_to_sink_db
 ):
     # Arrange
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_lineage(child="a", parent="lead", db_path=db_path)
-    record_lineage(child="b", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('a', 'message', '{}', 1.0)"
+        )
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('b', 'message', '{}', 2.0)"
+        )
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
     sink_mod.import_state(payload)
     # Act
     inserted_again = sink_mod.import_state(payload)
     # Assert
-    assert inserted_again["lineage"] == 0
+    assert inserted_again["channel_events"] == 0
 
 
 def test_import_state_round_trip_lands_exactly_the_source_rows_on_sink(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_lineage(child="a", parent="lead", db_path=db_path)
-    record_lineage(child="b", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('a', 'message', '{}', 1.0)"
+        )
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('b', 'message', '{}', 2.0)"
+        )
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
     # Act
     sink_mod.import_state(payload)
     with sink_mod.open_db() as conn:
         rows = sorted(
-            r["child_name"]
-            for r in conn.execute("SELECT child_name FROM lineage").fetchall()
+            r["target"]
+            for r in conn.execute("SELECT target FROM channel_events").fetchall()
         )
     # Assert
     assert rows == ["a", "b"]
@@ -953,30 +982,37 @@ def test_import_state_rejects_payload_with_unknown_schema_version(db_path: Path)
 def test_db_export_via_cli_emits_json_with_the_recorded_row_for_host(
     db_path: Path,
 ):
-    # Arrange
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import open_db
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_lineage(child="x", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('x', 'message', '{}', 1.0)"
+        )
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["lineage"]) == 1
+    assert len(payload["tables"]["channel_events"]) == 1
 
 
 def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import open_db
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_lineage(child="x", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('x', 'message', '{}', 1.0)"
+        )
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
@@ -985,19 +1021,22 @@ def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
     assert payload["host"] == "h"
 
 
-def test_db_import_via_cli_reads_stdin_and_inserts_one_row(
+def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
     db_path: Path, switch_to_sink_db
 ):
     # Arrange — snapshot source, point CLI at the fresh sink db.
-    # ``lineage`` is the seeded table now. ``instances`` left
-    # KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has
-    # to come from a table SQLite still has. The property under test is
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
     # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state
-    from scitex_agent_container._state.state_db_nodes import record_lineage
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_lineage(child="x", parent="lead", db_path=db_path)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('x', 'message', '{}', 1.0)"
+        )
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import
@@ -1007,19 +1046,25 @@ def test_db_import_via_cli_reads_stdin_and_inserts_one_row(
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
     body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["lineage"] == 1
+    assert body["inserted"]["channel_events"] == 1
 
 
 def test_db_import_via_cli_echoes_payload_host_back_in_json_body(
     db_path: Path, switch_to_sink_db
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    # Arrange — ``channel_events`` is the seeded table now. ``instances``
+    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
+    # export/import walk that tuple — so the row a payload carries has to
+    # come from the one table SQLite still has. The property under test is
+    # the wire format, not which table fills it.
+    from scitex_agent_container._state.state_db import export_state, open_db
 
-    record_instance_start("x", host="h")
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO channel_events (target, kind, meta_json, ts) "
+            "VALUES ('x', 'message', '{}', 1.0)"
+        )
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import

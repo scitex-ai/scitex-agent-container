@@ -47,6 +47,7 @@ from typing import Callable
 
 from .._state.state_db_acl_policy import rename_comms_policy
 from .._state.state_db_comms_nodes import rename_comms_node
+from .._state.state_db_lineage_rename import rename_lineage
 from .._state.state_db_instances_rename import (
     InstancesRenameUndo,
     rename_instance_rows,
@@ -77,6 +78,7 @@ STEP_STATE_DB = "state-db"
 STEP_INSTANCES = "instances"
 STEP_ACL = "acl-policy"
 STEP_DIRECTORY = "comms-directory"
+STEP_LINEAGE = "lineage"
 STEP_CARDS = "cards"
 STEP_VERIFY = "verify"
 
@@ -90,6 +92,7 @@ STEPS: tuple[str, ...] = (
     STEP_INSTANCES,
     STEP_ACL,
     STEP_DIRECTORY,
+    STEP_LINEAGE,
     STEP_CARDS,
     STEP_VERIFY,
 )
@@ -217,7 +220,31 @@ def apply_plan(
         if rename_comms_node(old=old, new=new):
             undo.append((STEP_DIRECTORY, _undo_comms_node(old, new)))
 
-        # 9. The board. LAST — see the module docstring.
+        # 9. The spawn DAG — PostgreSQL since 2026-08-28, so its own step
+        # for the same reason steps 7 and 8 are.
+        #
+        # It used to ride along in step 6 as the ``lineage.child_name`` and
+        # ``lineage.parent_name`` pairs in ``NAME_COLUMNS``, and leaving
+        # them there would have been the PRIVILEGE version of the two bugs
+        # above: ``rename_rows`` skips a table absent from
+        # ``sqlite_master``, so the rename reports success while the edge
+        # stays under the old name — and an agent with no edge is a ROOT,
+        # which may spawn.
+        #
+        # THIS STEP CAN REFUSE, and unlike its two neighbours that refusal
+        # is expected rather than exceptional. ``parent_name`` is IMMUTABLE
+        # in the store, so an edge naming ``old`` as a PARENT cannot be
+        # re-pointed at all; :func:`rename_lineage` raises rather than
+        # leaving or hiding it (both of which grant spawn authority), and
+        # the raise propagates into the unwind below. Renaming an agent
+        # that has spawned children is therefore refused outright — see
+        # :mod:`..._state.state_db_lineage_rename` for why that is the
+        # least-bad of the three available answers.
+        _step(STEP_LINEAGE)
+        if rename_lineage(old=old, new=new):
+            undo.append((STEP_LINEAGE, _undo_lineage(old, new)))
+
+        # 10. The board. LAST — see the module docstring.
         _step(STEP_CARDS)
         if plan.cards_enabled:
             _migrate_cards_step(old, new, store, by, undo)
@@ -337,6 +364,20 @@ def _undo_acl_policy(old: str, new: str) -> Callable[[], None]:
 
     def _undo() -> None:
         rename_comms_policy(old=new, new=old)
+
+    return _undo
+
+
+def _undo_lineage(old: str, new: str) -> Callable[[], None]:
+    """Move the lineage edge back. The same verb, arguments swapped.
+
+    Cannot itself hit the parent-side refusal: this only runs when the
+    forward call SUCCEEDED, which means nothing named ``old`` as a parent,
+    and the forward call did not create such an edge.
+    """
+
+    def _undo() -> None:
+        rename_lineage(old=new, new=old)
 
     return _undo
 

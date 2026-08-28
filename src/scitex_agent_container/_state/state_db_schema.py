@@ -19,9 +19,11 @@ anywhere; it simply never had a writer. Same day again, and for the same
 kind of reason rather than a move: ``definitions``, ``instance_heartbeats``
 and ``events`` — see the three departure notes inside the registry block.
 
-WHAT IS STILL HERE, after all of that: ``instances`` and the WI-1 / WI-2
-pair ``channel_events`` + ``lineage``. Three tables, and every one of them
-has a live writer AND a live reader.
+WHAT IS STILL HERE, after all of that: ``instances`` and the WI-1
+durability table ``channel_events``. The WI-2 spawn DAG ``lineage`` was
+the third until 2026-08-28, when it left for the shared PostgreSQL store
+— see its departure note below. Two tables, and each of them has a live
+writer AND a live reader.
 """
 
 from __future__ import annotations
@@ -222,12 +224,25 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- included, and the MCP ``db_export`` tool exposes no ``tables``
 -- parameter with which to hold it back.
 
-CREATE TABLE IF NOT EXISTS lineage (
-    child_name   TEXT PRIMARY KEY,
-    parent_name  TEXT NOT NULL,
-    created_at   REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
+-- ``lineage`` (and ``idx_lineage_parent``) was defined here until
+-- 2026-08-28. The spawn DAG moved to PostgreSQL via scitex_dev.store; its
+-- schema is created on first open by
+-- ``state_db_lineage_store.open_lineage_store``, so there is nothing to
+-- create here.
+--
+-- REMOVED rather than left behind, and of the five tables that have left
+-- this file this is the one where an empty leftover would have been
+-- ACTIVELY DANGEROUS rather than merely wrong. Every reader of these edges
+-- treats "no row for this child" as ROOT — and a root MAY SPAWN
+-- (``spawn_allowed``). A CREATE TABLE with no writer therefore would not
+-- have degraded the ACL, it would have INVERTED it: an empty table hands
+-- every agent in the fleet the spawn authority the gate exists to
+-- withhold, silently, with nothing logged and nothing 403ing. The same
+-- emptiness also collapses ``derive_group`` to a singleton (isolating
+-- agents that should mesh) and ``descendants_of`` to nothing (so
+-- ``check_lineage_acl`` denies a parent authority over its own child).
+-- No table at all is the honest answer: the reader raises rather than
+-- answering "no parent" from the wrong database.
 
 -- The ADR-0014 comms graph ``comms_nodes`` (and its ``host`` index) was
 -- defined here until 2026-08-28. It moved to PostgreSQL via

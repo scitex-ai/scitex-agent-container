@@ -52,19 +52,22 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
 #:
-#: It was ``("instances", "definitions")`` until 2026-08-28. BOTH left SQLite
-#: that day — ``definitions`` for having no writer, ``instances`` for the
-#: shared PostgreSQL store — and each had to go for the same reason: this
-#: probe reads ``sqlite_master``, so a name SQLite no longer creates would
-#: make every healthy state.db report ``schemaless``, the probe's own "this
-#: is not our database" verdict produced by our own migration.
+#: It was ``("instances", "definitions")`` until 2026-08-28, and every other
+#: member it has ever had left SQLite that same day — ``definitions`` for
+#: having no writer, ``lineage`` and ``instances`` for the shared PostgreSQL
+#: store. Each had to go for the same reason: this probe reads
+#: ``sqlite_master``, so a name SQLite no longer creates would make every
+#: healthy state.db report ``schemaless`` — the probe's own "this is not our
+#: database" verdict, produced by our own migration.
 #:
-#: ``channel_events`` and ``lineage`` are what remains, and they are the
-#: right pair for the job this constant does: the predicate is ANY, so the
-#: core should hold tables an initialised store reliably HAS. A core of two
-#: is also what keeps the ``schemaless`` verdict meaningful — a real state.db
-#: that happened to predate one of them still classifies as ours.
-CORE_TABLES = ("channel_events", "lineage")
+#: THE CORE IS DOWN TO ONE, and the previous note argued against exactly
+#: that ("``channel_events`` replaces it rather than leaving a one-element
+#: core"). That argument was about CHOOSING to shrink; this is not a choice.
+#: ``channel_events`` is the only table ``init_schema`` still creates, so a
+#: second name would have to be one SQLite no longer has — which is the
+#: failure the paragraph above describes, not a hedge against it. The
+#: predicate stays ANY so the shape survives the next table arriving.
+CORE_TABLES = ("channel_events",)
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"
