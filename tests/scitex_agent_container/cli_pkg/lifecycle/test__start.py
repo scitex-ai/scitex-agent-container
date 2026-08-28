@@ -1036,7 +1036,7 @@ class TestGroupOption:
         # Assert
         assert "nonexistent-group" in result.output
 
-    def test_matching_group_reaches_singleton_skip(self, tmp_path, env_save_restore):
+    def test_matching_group_reaches_singleton_skip(self, pg_schema: str, tmp_path, env_save_restore):
         # Arrange — group-resolved agent is a singleton pinned to a host
         # with a live registry row, so the run short-circuits cleanly
         # (no real apptainer needed) at the SAME skip gate the plain
@@ -1058,7 +1058,7 @@ class TestGroupOption:
         assert result.exit_code == 0
 
     def test_matching_group_skip_message_names_resolved_agent(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange
         env_save_restore.set("SCITEX_AGENT_CONTAINER_HOSTNAME", "this-host")
@@ -1077,7 +1077,7 @@ class TestGroupOption:
         # Assert
         assert "Skipping 'mini'" in result.output
 
-    def test_explicit_target_plus_group_both_queued(self, tmp_path, env_save_restore):
+    def test_explicit_target_plus_group_both_queued(self, pg_schema: str, tmp_path, env_save_restore):
         # Arrange — one explicit-by-path target, one group-resolved target;
         # a genuine TWO-name invocation routes to the serialized multi-start
         # queue (_start_parallel.py), which dispatches each target as its

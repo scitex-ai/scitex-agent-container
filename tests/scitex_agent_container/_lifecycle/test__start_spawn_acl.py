@@ -162,6 +162,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
 
 
 def test_core_start_writes_lineage_row_for_parent_caller(
+    pg_schema: str,
     isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — a root parent agent spawns a child via core agent_start.
@@ -182,6 +183,7 @@ def test_core_start_writes_lineage_row_for_parent_caller(
 
 
 def test_admin_start_records_no_lineage_edge(
+    pg_schema: str,
     isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — no SAC_NAME → admin / operator / lead launch.

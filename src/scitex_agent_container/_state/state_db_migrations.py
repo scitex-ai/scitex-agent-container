@@ -15,12 +15,6 @@ every :func:`state_db.init_schema`.
   * :func:`migrate_instances_add_family_tree_cols` — ADD COLUMN the
     sac-agent-spawn family-tree columns (``bound_port``, ``remote``,
     ``spawned_by``) onto a pre-existing ``instances`` table.
-  * :func:`migrate_node_comms_policy_add_group_name` — ADD COLUMN the
-    ``group_name`` column (group-based ACL, operator 2026-06-25) onto a
-    pre-existing ``node_comms_policy`` table.
-  * :func:`migrate_node_comms_policy_add_group_names` — ADD COLUMN the
-    MULTI-value ``group_names`` column (authority-is-membership,
-    incident 2026-08-10) onto a pre-existing ``node_comms_policy``.
 """
 
 from __future__ import annotations
@@ -145,77 +139,11 @@ def migrate_instances_add_family_tree_cols(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE instances ADD COLUMN spawned_by TEXT")
 
 
-def migrate_node_comms_policy_add_group_name(conn: sqlite3.Connection) -> None:
-    """ADD the ``group_name`` column to ``node_comms_policy``.
-
-    Group-based ACL (operator 2026-06-25): the per-agent NAMED group,
-    resolved at ``agent_start`` from ``metadata.labels.group`` (else
-    role-derived). A fresh DB gets the column from the ``CREATE TABLE``
-    DDL in :mod:`state_db`; this migration is for an EXISTING
-    ``node_comms_policy`` table created before the column existed.
-
-    ``ALTER TABLE ... ADD COLUMN`` with a ``DEFAULT ''`` backfills every
-    pre-existing row to "ungrouped", which is byte-equivalent to the
-    pre-group-name behaviour (the ACL same-group allow requires a
-    NON-EMPTY match).
-
-    Detection: ``node_comms_policy`` exists AND lacks ``group_name``.
-    Idempotent: a no-op once the column is present (or the table is
-    absent).
-    """
-    existing = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "node_comms_policy" not in existing:
-        return
-    cols = {
-        r[1] for r in conn.execute("PRAGMA table_info(node_comms_policy)").fetchall()
-    }
-    if "group_name" in cols:
-        return
-    conn.execute(
-        "ALTER TABLE node_comms_policy ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"
-    )
-
-
-def migrate_node_comms_policy_add_group_names(conn: sqlite3.Connection) -> None:
-    """ADD the MULTI-value ``group_names`` column to ``node_comms_policy``.
-
-    Authority-is-membership (incident 2026-08-10): ``group_name`` holds
-    only the FIRST group a spec's ``metadata.labels.groups`` list names,
-    so an agent authored as ``groups: [generalist, developer]`` was not a
-    developer to any ACL gate. ``group_names`` holds the WHOLE set
-    (comma-separated, sorted, written from the same labels), and the
-    authority predicates read it.
-
-    ``ALTER TABLE ... ADD COLUMN`` with ``DEFAULT ''`` leaves every
-    pre-existing row with an empty set. That is deliberately NOT a
-    regression: :func:`.state_db_groups.resolve_group_names` unions the
-    set with ``group_name``, so an un-refreshed row still resolves to
-    ``{primary}`` — exactly the pre-migration behaviour. Running
-    ``sac agents refresh-acl`` (or restarting the agent) re-publishes the
-    full set from the on-disk spec.
-
-    Detection: ``node_comms_policy`` exists AND lacks ``group_names``.
-    Idempotent: a no-op once the column is present (or the table is
-    absent).
-    """
-    existing = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "node_comms_policy" not in existing:
-        return
-    cols = {
-        r[1] for r in conn.execute("PRAGMA table_info(node_comms_policy)").fetchall()
-    }
-    if "group_names" in cols:
-        return
-    conn.execute(
-        "ALTER TABLE node_comms_policy ADD COLUMN group_names TEXT NOT NULL DEFAULT ''"
-    )
+# ``migrate_node_comms_policy_add_group_name`` and
+# ``migrate_node_comms_policy_add_group_names`` lived here until
+# 2026-08-28. Both ALTERed ``node_comms_policy``, which moved to
+# PostgreSQL in the same commit — so both were already written to
+# return early when the table is absent, and would have run as
+# permanent no-ops for the rest of time. A migration that can never
+# fire is not a safety net; it is a claim that a schema step still
+# happens. Deleted with the DDL rather than left to be read as live.

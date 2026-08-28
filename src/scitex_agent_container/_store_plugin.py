@@ -329,6 +329,12 @@ NODE_COMMS_POLICY = Schema.build(
         "inbound_parent": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "lineage_group": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "may_spawn": _data(FieldKind.BOOL, MergeRule.LAST_WRITER_WINS, required=True),
+        # BOTH group projections. They are written together by
+        # ``record_comms_policy`` from one ``metadata.labels``, and
+        # declaring only ``group_names`` here let the primary drift out
+        # of the replication contract while the mesh still resolved
+        # through it.
+        "group_name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "group_names": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "updated_at": _data(FieldKind.REAL, MergeRule.MAX, required=True),
     },
@@ -339,10 +345,18 @@ NODE_COMMS_POLICY = Schema.build(
 CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
     "sac_comms_nodes": (COMMS_NODES, Truth.FLEET, WriterPolicy.SINGLE_WRITER),
     "sac_comms_grants": (COMMS_GRANTS, Truth.FLEET, WriterPolicy.MULTI_WRITER),
+    # MULTI_WRITER since 2026-08-28, when the table moved to PostgreSQL
+    # and this declaration stopped being a plan and started describing a
+    # live store. SINGLE_WRITER modelled the record as owned by the host
+    # running the agent, which it is not: ``sac agents refresh-acl``
+    # re-publishes the whole fleet from wherever the operator is, agents
+    # relocate between hosts, and ``import_state`` bulk-imports peer rows.
+    # A refused ACL write is a STALE ACL row, and a stale ACL row denies
+    # an agent its groups or leaves it holding groups its spec dropped.
     "sac_node_comms_policy": (
         NODE_COMMS_POLICY,
         Truth.FLEET,
-        WriterPolicy.SINGLE_WRITER,
+        WriterPolicy.MULTI_WRITER,
     ),
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),

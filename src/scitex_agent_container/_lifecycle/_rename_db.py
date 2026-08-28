@@ -66,7 +66,14 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
     ("comms_nodes", "name"),
-    ("node_comms_policy", "name"),
+    # ("node_comms_policy", "name") was here until 2026-08-28. That table
+    # moved to PostgreSQL, and leaving the pair would have been WORSE than
+    # a crash: ``rename_rows`` skips tables absent from sqlite_master, so
+    # the rename would have reported success while the policy stayed under
+    # the OLD name. The renamed agent then resolves to NO named group and
+    # every authority gate denies it. The move is done by
+    # ``state_db_acl_policy.rename_comms_policy``, called as its own step
+    # in :mod:`._rename` with its own inverse on the undo stack.
 )
 
 # (table, column) pairs holding a PATH that embeds the agent name as a

@@ -304,6 +304,7 @@ def _fire_monitor_restart_against_foreign_db(
 
 
 def test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db(
+    pg_schema: str,
     db_path: Path, tmp_path: Path
 ) -> None:
     """The 2026-07-14 regression, measured where it is still measurable.

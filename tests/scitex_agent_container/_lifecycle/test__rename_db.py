@@ -45,10 +45,6 @@ _SEED = [
         (OLD, "h", 9001, 1.0, 1.0),
     ),
     (
-        "INSERT INTO node_comms_policy (name, updated_at) VALUES (?, ?)",
-        (OLD, 1.0),
-    ),
-    (
         "INSERT INTO lineage (child_name, parent_name, created_at) "
         "VALUES (?, ?, ?)",
         ("child-a", OLD, 1.0),
@@ -145,14 +141,20 @@ def test_rename_moves_the_comms_node_row(seeded: Path):
     assert _one(seeded, sql, NEW) == 1
 
 
-def test_rename_moves_the_acl_policy_row(seeded: Path):
-    """Miss this and the ACL gate has no policy for the live name."""
-    # Arrange
-    sql = "SELECT COUNT(*) FROM node_comms_policy WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, NEW) == 1
+# ``test_rename_moves_the_acl_policy_row`` was here until 2026-08-28. It
+# asserted that ``rename_rows`` UPDATEs ``node_comms_policy.name``, and the
+# migration of that table to PostgreSQL killed the premise outright: SQLite
+# no longer has the table, and ``rename_rows`` SKIPS tables absent from
+# sqlite_master. Left in place it would have passed forever while reaching
+# nothing — a green test whose name claims a property it can no longer test,
+# which is worse than a red one because nothing forces anyone to look.
+#
+# DELETED, NOT EDITED UNTIL IT PASSED. The property it named is real and
+# still holds; it is measured where it now lives —
+# ``_state/test_state_db_acl_policy.py::test_rename_carries_the_policy_to_
+# the_new_name`` and ``::test_rename_retires_the_old_name``, against the
+# store that actually holds the row. ``_rename.apply_plan`` runs that move
+# as its own ``acl-policy`` step, with its inverse on the undo stack.
 
 
 def test_rename_moves_the_lineage_parent_edge(seeded: Path):

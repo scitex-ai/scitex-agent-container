@@ -117,7 +117,7 @@ def test_gate_allows_admin_caller_when_sac_name_unset(db_path, sac_name) -> None
     assert caller is None
 
 
-def test_gate_allows_root_caller_to_spawn(db_path, sac_name) -> None:
+def test_gate_allows_root_caller_to_spawn(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — "root" has no parent in lineage → root → allowed.
     sac_name("root")
     # Act
@@ -131,7 +131,7 @@ def test_gate_allows_root_caller_to_spawn(db_path, sac_name) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gate_records_lineage_edge_for_root_caller(db_path, sac_name) -> None:
+def test_gate_records_lineage_edge_for_root_caller(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — a root caller spawning a child writes the lineage edge.
     sac_name("root")
     # Act
@@ -140,7 +140,7 @@ def test_gate_records_lineage_edge_for_root_caller(db_path, sac_name) -> None:
     assert "root" in derive_group(name="child-c")
 
 
-def test_gate_does_not_record_lineage_for_admin_caller(db_path, sac_name) -> None:
+def test_gate_does_not_record_lineage_for_admin_caller(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — admin spawn (no SAC_NAME) must leave the child unattached.
     sac_name(None)
     # Act
@@ -149,7 +149,7 @@ def test_gate_does_not_record_lineage_for_admin_caller(db_path, sac_name) -> Non
     assert derive_group(name="child-d") == {"child-d"}
 
 
-def test_gate_lineage_record_is_idempotent_on_same_parent(db_path, sac_name) -> None:
+def test_gate_lineage_record_is_idempotent_on_same_parent(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — root spawns the same child twice (e.g. a --force restart).
     sac_name("root")
     enforce_spawn_gate("child-e")
@@ -164,7 +164,7 @@ def test_gate_lineage_record_is_idempotent_on_same_parent(db_path, sac_name) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_gate_denies_child_caller_under_root_only_policy(db_path, sac_name) -> None:
+def test_gate_denies_child_caller_under_root_only_policy(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — "worker-a" is a child of "root" → not a root → may not spawn.
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     sac_name("worker-a")
@@ -175,7 +175,7 @@ def test_gate_denies_child_caller_under_root_only_policy(db_path, sac_name) -> N
         enforce_spawn_gate("grandchild")
 
 
-def test_gate_allows_restart_keeps_existing_parent(db_path, sac_name) -> None:
+def test_gate_allows_restart_keeps_existing_parent(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — child-f already parented to "root-1"; a restart by a
     # different-lineage caller must SUCCEED in-place (no re-parent, no
     # SpawnDeniedError) — the 409 the ACL previously raised is now gone,
@@ -193,7 +193,7 @@ def test_gate_allows_restart_keeps_existing_parent(db_path, sac_name) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_caller_arg_overrides_sac_name_env(db_path, sac_name) -> None:
+def test_explicit_caller_arg_overrides_sac_name_env(pg_schema: str, db_path, sac_name) -> None:
     # Arrange — env says "env-parent" but the explicit arg wins.
     sac_name("env-parent")
     # Act

@@ -125,7 +125,6 @@ def relocate_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="developer",
         group_names=frozenset({"developer", "infra"}),
-        db_path=host_db,
     )
     return RelocateCase(name=name, host_db=host_db, container_db=container_db)
 
@@ -135,20 +134,20 @@ def relocate_case(spec_root, tmp_path) -> RelocateCase:
 # ---------------------------------------------------------------------------
 
 
-def test_host_store_holds_the_policy_row(relocate_case):
+def test_host_store_holds_the_policy_row(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    policy = read_comms_policy(name=case.name, db_path=case.host_db)
+    policy = read_comms_policy(name=case.name)
     # Assert
     assert policy["group_name"] == "developer"
 
 
-def test_container_store_holds_no_policy_row(relocate_case):
+def test_container_store_holds_no_policy_row(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    policy = read_comms_policy(name=case.name, db_path=case.container_db)
+    policy = read_comms_policy(name=case.name)
     # Assert
     assert policy["group_name"] == ""
 
@@ -158,41 +157,41 @@ def test_container_store_holds_no_policy_row(relocate_case):
 # ---------------------------------------------------------------------------
 
 
-def test_group_set_is_identical_from_container_and_host(relocate_case):
+def test_group_set_is_identical_from_container_and_host(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    from_host = resolve_group_names(name=case.name, db_path=case.host_db)
-    from_container = resolve_group_names(name=case.name, db_path=case.container_db)
+    from_host = resolve_group_names(name=case.name)
+    from_container = resolve_group_names(name=case.name)
     # Assert
     assert from_host == from_container
 
 
-def test_group_set_from_the_container_is_the_spec_answer(relocate_case):
+def test_group_set_from_the_container_is_the_spec_answer(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    from_container = resolve_group_names(name=case.name, db_path=case.container_db)
+    from_container = resolve_group_names(name=case.name)
     # Assert
     assert from_container == frozenset({"developer", "infra"})
 
 
-def test_primary_group_is_identical_from_container_and_host(relocate_case):
+def test_primary_group_is_identical_from_container_and_host(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    from_host = resolve_group_name(name=case.name, db_path=case.host_db)
-    from_container = resolve_group_name(name=case.name, db_path=case.container_db)
+    from_host = resolve_group_name(name=case.name)
+    from_container = resolve_group_name(name=case.name)
     # Assert
     assert from_host == from_container
 
 
-def test_developer_authority_holds_from_the_container_store(relocate_case):
+def test_developer_authority_holds_from_the_container_store(pg_schema: str, relocate_case):
     """The gate itself agrees — this is what the 403 actually turned on."""
     # Arrange
     case = relocate_case
     # Act
-    allowed = is_developer(name=case.name, db_path=case.container_db)
+    allowed = is_developer(name=case.name)
     # Assert
     assert allowed is True
 
@@ -351,35 +350,34 @@ def stale_row_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="developer",
         group_names=frozenset({"developer"}),
-        db_path=db,
     )
     return RelocateCase(name=name, host_db=db, container_db=db)
 
 
-def test_stale_row_still_records_the_revoked_group(stale_row_case):
+def test_stale_row_still_records_the_revoked_group(pg_schema: str, stale_row_case):
     # Arrange
     case = stale_row_case
     # Act
-    policy = read_comms_policy(name=case.name, db_path=case.host_db)
+    policy = read_comms_policy(name=case.name)
     # Assert
     assert policy["group_name"] == "developer"
 
 
-def test_spec_revocation_beats_the_stale_row(stale_row_case):
+def test_spec_revocation_beats_the_stale_row(pg_schema: str, stale_row_case):
     """Deleting a group from the spec actually revokes it."""
     # Arrange
     case = stale_row_case
     # Act
-    groups = resolve_group_names(name=case.name, db_path=case.host_db)
+    groups = resolve_group_names(name=case.name)
     # Assert
     assert groups == frozenset({"generalist"})
 
 
-def test_revoked_developer_authority_is_actually_denied(stale_row_case):
+def test_revoked_developer_authority_is_actually_denied(pg_schema: str, stale_row_case):
     # Arrange
     case = stale_row_case
     # Act
-    allowed = is_developer(name=case.name, db_path=case.host_db)
+    allowed = is_developer(name=case.name)
     # Assert
     assert allowed is False
 
@@ -399,12 +397,11 @@ def foreign_node_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="researcher",
         group_names=frozenset({"researcher"}),
-        db_path=db,
     )
     return RelocateCase(name=name, host_db=db, container_db=db)
 
 
-def test_foreign_node_has_no_visible_spec(foreign_node_case):
+def test_foreign_node_has_no_visible_spec(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
@@ -413,19 +410,19 @@ def test_foreign_node_has_no_visible_spec(foreign_node_case):
     assert groups is None
 
 
-def test_foreign_node_falls_back_to_its_policy_row(foreign_node_case):
+def test_foreign_node_falls_back_to_its_policy_row(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
-    groups = resolve_group_names(name=case.name, db_path=case.host_db)
+    groups = resolve_group_names(name=case.name)
     # Assert
     assert groups == frozenset({"researcher"})
 
 
-def test_foreign_node_primary_group_falls_back_to_its_row(foreign_node_case):
+def test_foreign_node_primary_group_falls_back_to_its_row(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
-    primary = resolve_group_name(name=case.name, db_path=case.host_db)
+    primary = resolve_group_name(name=case.name)
     # Assert
     assert primary == "researcher"

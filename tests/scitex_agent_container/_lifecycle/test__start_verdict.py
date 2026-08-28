@@ -202,7 +202,7 @@ def test_legacy_verifier_missing_registry_row_is_unknown(tmp_path, registry):
 # --------------------------------------------------------------------------
 
 
-def test_an_unknown_agent_is_started_rather_than_no_opped(tmp_path, registry):
+def test_an_unknown_agent_is_started_rather_than_no_opped(pg_schema: str, tmp_path, registry):
     """THE unfalsifiable-row regression.
 
     The agent looks running to every proxy (registry row present, runtime says
@@ -230,7 +230,7 @@ def test_an_unknown_agent_is_started_rather_than_no_opped(tmp_path, registry):
     assert len(runtime.start_calls) == 1
 
 
-def test_an_unknown_agent_is_started_without_force(tmp_path, registry):
+def test_an_unknown_agent_is_started_without_force(pg_schema: str, tmp_path, registry):
     """And it does so WITHOUT --force — i.e. without stopping anything."""
     # Arrange
     spec = _write_spec(tmp_path)
@@ -253,7 +253,7 @@ def test_an_unknown_agent_is_started_without_force(tmp_path, registry):
     assert runtime.stop_calls == []
 
 
-def test_a_dead_agent_is_started(tmp_path, registry):
+def test_a_dead_agent_is_started(pg_schema: str, tmp_path, registry):
     # Arrange
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
@@ -279,7 +279,7 @@ def test_a_dead_agent_is_started(tmp_path, registry):
 # --------------------------------------------------------------------------
 
 
-def test_an_alive_agent_still_no_ops(tmp_path, registry):
+def test_an_alive_agent_still_no_ops(pg_schema: str, tmp_path, registry):
     """Positive evidence of life still pins the no-op — we did not just delete it."""
     # Arrange
     spec = _write_spec(tmp_path)
@@ -309,7 +309,7 @@ def test_an_alive_agent_still_no_ops(tmp_path, registry):
     assert runtime.start_calls == []
 
 
-def test_an_alive_agent_no_op_returns_success(tmp_path, registry):
+def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry):
     # Arrange
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
@@ -347,6 +347,7 @@ def test_an_alive_agent_no_op_returns_success(tmp_path, registry):
 
 
 def test_an_alive_no_op_announces_agent_and_session_loudly(
+    pg_schema: str,
     tmp_path, registry, caplog
 ):
     """The no-op branch must EMIT what it found — never exit 0 in silence.

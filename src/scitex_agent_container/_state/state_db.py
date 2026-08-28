@@ -67,8 +67,6 @@ from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
     migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
-    migrate_node_comms_policy_add_group_name,
-    migrate_node_comms_policy_add_group_names,
 )
 from .state_db_schema import (
     _SCHEMA_ATTEMPTS,
@@ -102,7 +100,6 @@ KNOWN_TABLES = (
     "lineage",
     "comms_grants",
     "comms_nodes",
-    "node_comms_policy",
     # ``incarnations`` was here until 2026-08-19. It now lives in per-host
     # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
     # through `sac db query`. Removed rather than left behind: a whitelisted
@@ -200,14 +197,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         # DB (with the family-tree columns) but is a no-op on an
         # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
         migrate_instances_add_family_tree_cols(conn)
-        # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
-        # column on a pre-existing ``node_comms_policy`` (operator
-        # 2026-06-25). No-op on a fresh DB (DDL already has the column).
-        migrate_node_comms_policy_add_group_name(conn)
-        # Same idempotent ADD COLUMN for the MULTI-value ``group_names``
-        # column the authority gates read (incident 2026-08-10 — an agent
-        # whose spec lists several groups was reduced to its FIRST one).
-        migrate_node_comms_policy_add_group_names(conn)
+        # The two ``node_comms_policy`` ADD COLUMN migrations ran here
+        # until 2026-08-28. The table moved to PostgreSQL, so both would
+        # now be permanent no-ops against a table SQLite no longer has —
+        # dead code claiming a live purpose. Removed with the DDL.
         conn.executescript(_SCHEMA_ATTEMPTS)
         conn.executescript(_SCHEMA_CHANNEL_AND_ACL)
         # ``turns`` / ``errors`` / ``heartbeats`` were created by the

@@ -38,6 +38,7 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
+from .._state.state_db_acl_policy import rename_comms_policy
 from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
 from ._rename_cards import migrate_cards, undo_migrate_cards
 from ._rename_db import DbUndo, count_rows, rename_rows, undo_rename_rows
@@ -60,6 +61,7 @@ STEP_OVERLAY_DIR = "overlay-dir"
 STEP_RUNTIME_DIR = "runtime-dir"
 STEP_REGISTRY = "registry"
 STEP_STATE_DB = "state-db"
+STEP_ACL = "acl-policy"
 STEP_CARDS = "cards"
 STEP_VERIFY = "verify"
 
@@ -70,6 +72,7 @@ STEPS: tuple[str, ...] = (
     STEP_RUNTIME_DIR,
     STEP_REGISTRY,
     STEP_STATE_DB,
+    STEP_ACL,
     STEP_CARDS,
     STEP_VERIFY,
 )
@@ -136,12 +139,31 @@ def apply_plan(
         db_undo: DbUndo = rename_rows(layout.state_db, old, new)
         undo.append((STEP_STATE_DB, lambda: undo_rename_rows(db_undo)))
 
-        # 7. The board. LAST — see the module docstring.
+        # 7. The ACL policy record — PostgreSQL, so its own step.
+        #
+        # It used to ride along in step 6: ``node_comms_policy.name`` was one
+        # more (table, column) pair in ``NAME_COLUMNS``. The table moved to
+        # PostgreSQL on 2026-08-28 and ``rename_rows`` skips tables absent
+        # from ``sqlite_master``, so leaving it there would have made this a
+        # SILENT no-op — the rename reporting success while the policy stayed
+        # under the old name. The renamed agent then resolves to NO named
+        # group and every authority gate denies it.
+        #
+        # ``name`` is the record IDENTITY in the store, so this is a copy +
+        # retire rather than an update; the inverse is the same verb with the
+        # arguments swapped. It raises rather than degrades when PostgreSQL
+        # is unreachable: half a rename is recoverable, an agent running
+        # under a name no gate has a policy for is not.
+        _step(STEP_ACL)
+        if rename_comms_policy(old=old, new=new):
+            undo.append((STEP_ACL, _undo_acl_policy(old, new)))
+
+        # 8. The board. LAST — see the module docstring.
         _step(STEP_CARDS)
         if plan.cards_enabled:
             _migrate_cards_step(old, new, store, by, undo)
 
-        # 8. Postcondition. "I ran the steps" is not the same claim as "the
+        # 9. Postcondition. "I ran the steps" is not the same claim as "the
         # world is now correct", and this verb exists because the second one
         # is what an operator actually needs. Anything still standing under
         # the old name means a step silently did not take — roll back rather
@@ -246,6 +268,20 @@ def _undo_move(move: Move) -> Callable[[], None]:
     return lambda: _move(Move(move.dst, move.src))
 
 
+def _undo_acl_policy(old: str, new: str) -> Callable[[], None]:
+    """Put the policy record back under ``old``.
+
+    The same verb with the arguments swapped — it copies the values back and
+    retires the name the forward step created, so an unwound rename leaves
+    exactly one live policy, under the name the agent actually has.
+    """
+
+    def _undo() -> None:
+        rename_comms_policy(old=new, new=old)
+
+    return _undo
+
+
 def _rewrite_spec_file(
     spec_path: Path,
     old: str,
@@ -342,6 +378,7 @@ def _rollback_message(
 
 __all__ = [
     "STEPS",
+    "STEP_ACL",
     "STEP_CARDS",
     "STEP_OVERLAY_DIR",
     "STEP_REGISTRY",
