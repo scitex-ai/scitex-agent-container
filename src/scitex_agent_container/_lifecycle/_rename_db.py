@@ -7,15 +7,22 @@ are no real FKs on it). A rename that moves the spec dir but leaves
 ``comms_nodes.name`` / ``node_comms_policy.name`` / ``lineage`` pointing
 at the old name produces an agent that starts but cannot be addressed:
 the A2A directory still advertises the dead name, and the ACL gate has no
-policy row for the live one.
+policy row for the live one. Two of those three now live in PostgreSQL and
+are renamed by :mod:`._rename` as their own steps — see below.
 
 So: rename EVERY row in state.db that keys on the name, including the
-history (``attempts``, ``channel_events``). A renamed agent is the SAME
-agent — its past must still be findable under the new name. This is the
-``git mv`` position: the name changed, history follows.
+history (``channel_events``). A renamed agent is the SAME agent — its
+past must still be findable under the new name. This is the ``git mv``
+position: the name changed, history follows.
 
 WHAT THIS NO LONGER COVERS, STATED RATHER THAN LEFT AS A DEAD ENTRY
 ===================================================================
+``attempts`` was in :data:`NAME_COLUMNS` until 2026-08-28. It is no
+longer a SQLite table at all — it had zero writers, so its DDL was
+deleted rather than migrated — and the loops below skip a table that does
+not exist, so the entry could only ever match zero rows. Same ruling as
+the trio below: removed, not left as reassuring decoration.
+
 ``turns`` / ``errors`` / ``heartbeats`` were in :data:`NAME_COLUMNS`
 until 2026-08-28. They are no longer SQLite tables — the diary moved to
 per-host PostgreSQL (:mod:`.._state.state_db_diary`) — and the loops
@@ -54,7 +61,9 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("definitions", "name"),
     ("instances", "name"),
     ("instances", "spawned_by"),
-    ("attempts", "agent"),
+    # ("attempts", "agent") was here until 2026-08-28 — the table itself is
+    # gone (zero writers), so the pair named something this code cannot
+    # reach. Same ruling as the trio below; see the module docstring.
     # ("turns", "name") / ("errors", "name") / ("heartbeats", "name") were
     # here until 2026-08-28 — see the module docstring for why removing them
     # is the honest edit and why a store call cannot replace them.
@@ -65,7 +74,16 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("lineage", "parent_name"),
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
-    ("comms_nodes", "name"),
+    # ("comms_nodes", "name") was here until 2026-08-28. The ADR-0014
+    # cross-host directory moved to PostgreSQL, and leaving the pair would
+    # have been WORSE than a crash for exactly the reason the ACL pair below
+    # was: ``rename_rows`` skips tables absent from ``sqlite_master``, so the
+    # rename would have reported success while the A2A directory kept
+    # advertising the OLD name. Peers then resolve a name the agent no longer
+    # answers to and the renamed agent is unreachable — the routing half of
+    # the same silent no-op. The move is done by
+    # ``state_db_comms_nodes.rename_comms_node``, called as its own step in
+    # :mod:`._rename` with its own inverse on the undo stack.
     # ("node_comms_policy", "name") was here until 2026-08-28. That table
     # moved to PostgreSQL, and leaving the pair would have been WORSE than
     # a crash: ``rename_rows`` skips tables absent from sqlite_master, so

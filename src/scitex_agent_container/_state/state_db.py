@@ -8,9 +8,11 @@ holding tables in two groups:
   * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
     ``heartbeats`` time series, tied to an ``instances.id``).
 
-The single-file layout makes backup/sync trivial (one ``cp``) and
-keeps the existing ``actions.db`` table (``attempts``) co-located so
-queries can join across action history and instance lifecycle.
+The single-file layout makes backup/sync trivial (one ``cp``). It also
+kept the legacy ``actions.db`` table (``attempts``) co-located so queries
+could join action history against instance lifecycle; that table left on
+2026-08-28 — it never had a writer, so the join it promised had nothing
+on one side. See :mod:`state_db_schema` for the departure note.
 
 THE DIARY GROUP IS GONE FROM SQLite (2026-08-28)
 ================================================
@@ -69,7 +71,6 @@ from .state_db_migrations import (
     migrate_legacy_heartbeats,
 )
 from .state_db_schema import (
-    _SCHEMA_ATTEMPTS,
     _SCHEMA_CHANNEL_AND_ACL,
     _SCHEMA_REGISTRY,
 )
@@ -94,12 +95,33 @@ KNOWN_TABLES = (
     "instances",
     "instance_heartbeats",
     "events",
-    "attempts",
     "channel_events",
     "node_tokens",
     "lineage",
-    "comms_grants",
-    "comms_nodes",
+    # ``comms_nodes`` left on 2026-08-28 when the ADR-0014 cross-host
+    # directory moved to the shared PostgreSQL store
+    # (:mod:`.state_db_comms_nodes`). Removed rather than whitelisted for
+    # the usual reason — a name with no table answers every generic reader
+    # with a plausible zero — and for one that is specific to this table:
+    # `sac db export --tables comms_nodes` was the transport `sac registry
+    # sync` ran over ssh, so leaving the name here would have kept an
+    # anti-entropy sweep shipping empty payloads between hosts and
+    # reporting `inserted=0` as success. The store IS the sync now.
+    # ``attempts`` left on 2026-08-28 under the same ruling, for the
+    # simplest possible version of the reason: it never had a writer. Its
+    # DDL is gone from :mod:`.state_db_schema`, so keeping the name here
+    # would point every generic reader -- ``table_counts`` behind ``sac db
+    # show``, ``export_state``/``import_state``, and the ``click.Choice``
+    # for ``sac db query`` -- at a table that no longer exists.
+    # ``comms_grants`` left on 2026-08-28 under the same ruling as
+    # ``incarnations`` below. Its CRUD had already moved to the shared
+    # PostgreSQL store (:mod:`.state_db_grants`, which resolves through
+    # ``host_store``); only the DDL and this whitelist entry were left,
+    # and the entry is what kept the GENERIC readers -- ``table_counts``
+    # behind ``sac db show``, ``export_state``/``import_state``, and the
+    # ``click.Choice`` for ``sac db query`` -- pointed at a SQLite table
+    # nothing writes. The 52 live rows were carried into PostgreSQL
+    # before this landed.
     # ``incarnations`` was here until 2026-08-19. It now lives in per-host
     # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
     # through `sac db query`. Removed rather than left behind: a whitelisted
@@ -201,7 +223,10 @@ def init_schema(db_path: Path | None = None) -> Path:
         # until 2026-08-28. The table moved to PostgreSQL, so both would
         # now be permanent no-ops against a table SQLite no longer has —
         # dead code claiming a live purpose. Removed with the DDL.
-        conn.executescript(_SCHEMA_ATTEMPTS)
+        # ``_SCHEMA_ATTEMPTS`` ran here until 2026-08-28. The ``attempts``
+        # table had zero writers, so issuing its DDL only produced an empty
+        # table that answered readers with a plausible zero. Existing rows
+        # are untouched — we stop issuing the CREATE, we do not DROP.
         conn.executescript(_SCHEMA_CHANNEL_AND_ACL)
         # ``turns`` / ``errors`` / ``heartbeats`` were created by the
         # constant above (then called ``_SCHEMA_DIARY``) until 2026-08-28.
@@ -213,8 +238,9 @@ def init_schema(db_path: Path | None = None) -> Path:
         # PostgreSQL; each store creates its own schema on first open
         # (``state_db_pending_approval.open_pending_prompt_store`` /
         # ``state_db_blocks.open_blocks_store``), so there is nothing to run
-        # here for either. What is left of the pair in SQLite is
-        # ``comms_grants``, which lives in ``state_db_nodes`` and has not moved.
+        # here for either. ``comms_grants`` was the last of that pair left
+        # in SQLite; it moved to the shared PostgreSQL store and its DDL
+        # was deleted on 2026-08-28, so nothing of the pair remains here.
         # The ``incarnations`` birth-certificate table used to be created
         # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
         # this comment block used to make — "lives in the EXISTING sqlite

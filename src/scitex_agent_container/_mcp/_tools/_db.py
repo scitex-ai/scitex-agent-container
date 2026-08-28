@@ -9,7 +9,10 @@ from ._helpers import invoke_cli_json, invoke_cli_text
 
 def db_show() -> dict[str, Any]:
     """Print high-level state-db row counts (definitions, instances,
-    heartbeats, events, attempts). Mirrors ``sac db show --json``."""
+    heartbeats, events, channel_events). Mirrors ``sac db show --json``.
+
+    ``attempts`` was listed here until 2026-08-28, when it left
+    :data:`KNOWN_TABLES`; the counts follow that tuple."""
     return invoke_cli_json(["db", "show", "--json"])
 
 

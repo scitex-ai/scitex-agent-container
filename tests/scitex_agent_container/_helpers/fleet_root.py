@@ -292,25 +292,45 @@ def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
     return db_path
 
 
-COMMS_NODE_SQL = (
-    "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
-    "VALUES (?, ?, ?, ?, ?)"
+# ``COMMS_NODE_SQL`` was here until 2026-08-28. The ADR-0014 directory moved
+# to PostgreSQL, so SQLite has no ``comms_nodes`` table and the INSERT would
+# raise on every fixture that used it. ``definitions`` is the identity table
+# a rename still carries inside state.db.
+DEFINITION_SQL = (
+    "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
+    "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)"
 )
-ATTEMPT_SQL = "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) VALUES (?, ?, ?, ?, ?)"
+CHANNEL_EVENT_SQL = (
+    "INSERT INTO channel_events (target, source, kind, content, meta_json, ts) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """One identity row (comms_nodes) + one history row (attempts) for ``name``.
+    """Identity row (definitions) + history row (channel_events) for ``name``.
 
-    Both halves a rename must carry. ``attempts`` replaced ``turns`` here on
-    2026-08-28, when the diary trio left SQLite for per-host PostgreSQL.
+    Both halves a rename must carry, and both must be columns that are STILL
+    in ``_rename_db.NAME_COLUMNS`` AND still real SQLite tables — a seed
+    naming a table that has moved would raise, and a seed naming a table
+    ``rename_rows`` skips would silently prove nothing.
+
+    Both halves have moved. The identity half was ``comms_nodes.name`` until
+    2026-08-28, when the ADR-0014 directory left SQLite for the shared
+    PostgreSQL store; ``definitions.name`` replaced it. The history half was
+    ``turns`` until the diary trio left the same day, then ``attempts`` for
+    the rest of it, until ``attempts`` was deleted for having zero writers;
+    ``channel_events.target`` replaced that.
     """
     db_path = make_state_db(layout)
     return seed_db_rows(
         db_path,
         [
-            (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
-            (ATTEMPT_SQL, ("t1", name, "run", "ok", 0.5)),
+            (
+                DEFINITION_SQL,
+                (f"def-{name}", name, f"/root/agents/{name}/spec.yaml", "sha",
+                 "user", "t0"),
+            ),
+            (CHANNEL_EVENT_SQL, (name, None, "message", "hi", "{}", 1.0)),
         ],
     )
 

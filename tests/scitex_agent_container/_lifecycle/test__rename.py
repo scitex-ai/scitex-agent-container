@@ -1,8 +1,8 @@
 """The rename engine: preflight, plan, apply — and the rollback, at EVERY step.
 
 A rollback that has never been exercised does not work. So the rollback
-here is not one happy test: a failure is injected at each of the eight
-steps in turn (the ``rolled_back`` fixture is parametrised over all of
+here is not one happy test: a failure is injected at each step
+in turn (the ``rolled_back`` fixture is parametrised over all of
 them), and every one must leave the agent EXACTLY as it was — spec text,
 directory contents, and state.db rows. One organic failure (a read-only
 overlays dir, no injection at all) covers the case where the world, not a
@@ -92,13 +92,21 @@ def _read(path: Path) -> str | None:
 
 
 def _db_names(db_path: Path) -> list[str]:
+    """The identity + history names state.db holds.
+
+    ``SELECT name FROM comms_nodes`` was the identity half until 2026-08-28;
+    the ADR-0014 directory moved to PostgreSQL, so ``definitions.name`` — a
+    ``NAME_COLUMNS`` pair that is still a real SQLite table — takes its
+    place. The directory half of a rename is asserted where it now lives,
+    in ``_state/test_state_db_comms_nodes.py``.
+    """
     conn = sqlite3.connect(str(db_path))
     try:
-        nodes = conn.execute("SELECT name FROM comms_nodes").fetchall()
-        past = conn.execute("SELECT agent FROM attempts").fetchall()
+        defs = conn.execute("SELECT name FROM definitions").fetchall()
+        past = conn.execute("SELECT target FROM channel_events").fetchall()
     finally:
         conn.close()
-    return sorted([r[0] for r in nodes] + [t[0] for t in past])
+    return sorted([r[0] for r in defs] + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):
@@ -277,8 +285,10 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
 
 
 def test_the_plan_counts_the_state_db_rows(world: World):
-    # Arrange
-    key = "comms_nodes.name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28; that table moved to
+    # PostgreSQL and left ``NAME_COLUMNS``, so the dry-run count no longer
+    # names it.
+    key = "definitions.name"
     # Act
     plan = _plan(world)
     # Assert

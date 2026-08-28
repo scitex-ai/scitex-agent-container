@@ -101,8 +101,10 @@ def test_dry_run_reports_the_board_identity_change(dry_run):
 
 
 def test_dry_run_reports_the_state_db_rows(dry_run):
-    # Arrange
-    needle = "comms_nodes.name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28; that table moved to
+    # PostgreSQL and left ``NAME_COLUMNS``, so it is no longer among the
+    # state.db counts the dry run prints.
+    needle = "definitions.name"
     # Act
     output = dry_run.output
     # Assert
@@ -307,7 +309,7 @@ def test_dry_run_moves_no_card(fleet: Layout, board: Path):
     assert len(_owned(OLD, board)) == 3
 
 
-def test_rename_migrates_every_card(fleet: Layout, board: Path):
+def test_rename_migrates_every_card(pg_schema: str, fleet: Layout, board: Path):
     # Arrange
     _seed(board, 3)
     # Act

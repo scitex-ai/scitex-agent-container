@@ -63,7 +63,11 @@ def _table_filter_clauses(
         ),
         "instance_heartbeats": ("WHERE ts >= ?", (since,)),
         "events": ("WHERE ts >= ?", (since,)),
-        "attempts": ("WHERE ts >= ?", (since,)),
+        # ``attempts`` had a ``WHERE ts >= ?`` entry here until 2026-08-28.
+        # It left KNOWN_TABLES that day -- zero writers, DDL deleted -- so
+        # this mapping could never be selected again, and a WHERE clause
+        # naming a table SQLite no longer has reads as "sac still exports
+        # this".
         # ``turns``, ``errors`` and the diary-style ``heartbeats`` each had a
         # ``WHERE ts >= ?`` entry here until 2026-08-28. All three moved to
         # per-host PostgreSQL and left KNOWN_TABLES together, so — exactly as
@@ -74,11 +78,18 @@ def _table_filter_clauses(
         # WI-2 ACL tables — ``created_at`` is the row-mint time.
         "node_tokens": ("WHERE created_at >= ?", (since,)),
         "lineage": ("WHERE created_at >= ?", (since,)),
-        "comms_grants": ("WHERE created_at >= ?", (since,)),
-        # ADR-0014 — anti-entropy filter advances on ``updated_at`` so
-        # a tombstoned row (``ended_at`` set) still ships on the next
-        # pull until both sides converge.
-        "comms_nodes": ("WHERE updated_at >= ?", (since,)),
+        # ``comms_nodes`` had a ``WHERE updated_at >= ?`` entry here until
+        # 2026-08-28 — the ADR-0014 anti-entropy filter, written so a
+        # tombstoned row still shipped on the next pull until both sides
+        # converged. The table moved to the shared PostgreSQL store and left
+        # KNOWN_TABLES, so this mapping could never be selected again. It is
+        # deleted rather than kept for the reason the neighbours are, plus
+        # one of its own: this table is the only one this module ever
+        # EXISTED to sync, and a filter naming it would read as "sac still
+        # ships the directory between hosts". It does not, and it must not —
+        # every host now reads and writes the same directory, so an export /
+        # import round trip could only re-insert a stale copy of rows the
+        # peer already holds. THE STORE IS THE SYNC.
         # node_comms_policy's entry lived here until 2026-08-28. The table
         # moved to PostgreSQL and left KNOWN_TABLES, so this mapping could
         # never be selected again — and a WHERE clause naming a table SQLite
@@ -104,12 +115,18 @@ def export_state(
     host: str | None = None,
     tables: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    """Dump the registry tables (and ``attempts``) into a JSON-able dict.
+    """Dump the registry tables into a JSON-able dict.
+
+    ``attempts`` was named here alongside them until 2026-08-28, when it
+    left :data:`KNOWN_TABLES`; this dump follows that tuple, so it no
+    longer ships an empty ``attempts`` array.
 
     Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).
 
-    ``tables`` (added 2026-05 alongside ADR-0014's anti-entropy sync)
+    ``tables`` (added 2026-05 for ADR-0014's anti-entropy sync, which was
+    retired with the ``comms_nodes`` move on 2026-08-28; the filter itself
+    stays useful for any subset of the tables that remain)
     optionally restricts the dump to a subset of :data:`KNOWN_TABLES`.
     Tables NOT listed are emitted as empty arrays so the wire shape
     stays stable for :func:`import_state` (which iterates over

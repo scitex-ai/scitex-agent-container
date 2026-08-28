@@ -149,11 +149,20 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
-        # Re-pinned 263 -> 267 on 2026-08-28: the a2a-ports migration added a
-        # four-line comment ABOVE this claim, which moved it. The claim itself
-        # is unchanged — this gate pins LINE NUMBERS, so any insertion above
-        # one is a re-pin, not a fix.
-        "scitex_agent_container/_lifecycle/_instances.py:267",
+        # _instances.py LEFT THIS SET 2026-08-28. Its claim was frozen at
+        # :263 as an unnamed one, and it was twice RE-PINNED (:265, then :267
+        # by the a2a-ports migration, whose added comment moved it again) on
+        # the reasoning that a bare `except: pass` has no sink to name.
+        # That reasoning was right about the code and wrong about what to do:
+        # the review then proved the swallow was hiding a live TypeError (a
+        # stale `db_path=` kwarg) on EVERY spec-driven start. The honest fix
+        # was never to re-pin the debt — it was to give the site a sink. Both
+        # handlers now log (warning for a name collision, error for anything
+        # else) and NAME where it lands, so the claim is checkable and the
+        # entry is gone rather than moved. Verified on the merged file: the
+        # a2a-ports comment still shifts the lines, and it no longer matters,
+        # because a claim that names its sink is not this gate's business at
+        # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",

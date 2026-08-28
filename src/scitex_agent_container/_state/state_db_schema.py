@@ -6,13 +6,16 @@ run via ``conn.executescript`` in ``state_db.init_schema``; keeping them
 in a focused sibling mirrors the existing ``state_db_*`` split
 convention (state_db_export / state_db_gc / state_db_instances / ...).
 
-``state_db`` re-imports all three names, so every existing
+``state_db`` re-imports both names, so every existing
 ``from ...state_db import _SCHEMA_*`` / ``executescript(_SCHEMA_*)`` call
 site is unchanged.
 
 WHAT IS NO LONGER HERE: the diary trio (``turns`` / ``errors`` /
 ``heartbeats``). They moved to per-host PostgreSQL on 2026-08-28 and
 :mod:`.state_db_diary` owns them end to end — writers, reader, schema.
+Also gone, same day: ``attempts`` and its ``_SCHEMA_ATTEMPTS`` constant —
+see the departure note below the registry block. That one did not move
+anywhere; it simply never had a writer.
 """
 
 from __future__ import annotations
@@ -101,23 +104,25 @@ CREATE INDEX IF NOT EXISTS idx_events_instance
     ON events(instance_id, ts);
 """
 
-# Attempts predates state.db (lived in actions.db). Bundled here so
-# state.db is self-contained on a fresh host.
-_SCHEMA_ATTEMPTS = """
-CREATE TABLE IF NOT EXISTS attempts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts           TEXT    NOT NULL,
-    agent        TEXT    NOT NULL,
-    action       TEXT    NOT NULL,
-    outcome      TEXT    NOT NULL,
-    elapsed_s    REAL    NOT NULL,
-    pane_before  TEXT,
-    pane_after   TEXT,
-    extras       TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_attempts_ts ON attempts(ts);
-CREATE INDEX IF NOT EXISTS idx_attempts_agent_action ON attempts(agent, action);
-"""
+# ``attempts`` (and its two indexes) was defined here as
+# ``_SCHEMA_ATTEMPTS`` until 2026-08-28. It predated state.db — it lived in
+# ``actions.db`` and was bundled in so state.db was self-contained on a
+# fresh host — and by the time it landed here nothing wrote it: ZERO
+# INSERTs anywhere in ``src/``, only tests. Unlike the tables that left
+# before it, it did not move to PostgreSQL; there was no history to carry,
+# because none was ever recorded.
+#
+# REMOVED rather than left behind, under the same ruling as ``comms_grants``
+# and ``node_comms_policy`` below: a CREATE TABLE with no writer is WORSE
+# than no table. The empty table answers every reader with a plausible-
+# looking zero — ``sac db show`` prints ``attempts 0``, ``sac db query
+# --table=attempts`` prints nothing, ``sac db export`` ships an empty array
+# — and a zero meaning "nobody ever wrote this" is indistinguishable from a
+# zero meaning "this agent did nothing". No table at all raises, which is
+# the honest answer.
+#
+# Deleting this DDL drops NO existing rows: ``CREATE TABLE IF NOT EXISTS``
+# simply stops being issued, so an old state.db keeps whatever it holds.
 
 # Channel-event durability (WI-1) + the WI-2 / ADR-0014 ACL tables.
 #
@@ -181,13 +186,13 @@ CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
 -- derived from lineage: parent + parent's direct children. Schema
 -- stays N-level capable — see derive_group() for the traversal.
 --
--- ``comms_grants`` records explicit cross-group send grants. A row
--- ``(sender, target)`` permits ``sender → target`` even when the
--- two are in different groups. With authenticated identity in force,
--- ``sender`` is the resolved-from-bearer name (administrative caller
--- path: the host-wide bearer honours ``metadata.from_agent`` verbatim
--- — used by cross-host forwarders authenticating with the
--- destination's host bearer pulled from ``peer-tokens/`` registry).
+-- ``comms_grants`` was defined here until 2026-08-28. Its readers had
+-- already moved to the shared PostgreSQL store via
+-- :mod:`.state_db_grants`, which resolves through ``host_store`` and
+-- carries no SQLite path at all, so this DDL was creating a table
+-- nothing read or wrote. A CREATE TABLE with no writer leaves an empty
+-- table that answers "no grants" instead of raising, which is the
+-- reading that turns a migration gap into a silent deny.
 CREATE TABLE IF NOT EXISTS node_tokens (
     name        TEXT PRIMARY KEY,
     token       TEXT NOT NULL UNIQUE,
@@ -202,44 +207,32 @@ CREATE TABLE IF NOT EXISTS lineage (
 );
 CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage(parent_name);
 
-CREATE TABLE IF NOT EXISTS comms_grants (
-    sender_name  TEXT NOT NULL,
-    target_name  TEXT NOT NULL,
-    created_at   REAL NOT NULL,
-    note         TEXT,  -- optional audit annotation
-    PRIMARY KEY (sender_name, target_name)
-);
-CREATE INDEX IF NOT EXISTS idx_comms_grants_target ON comms_grants(target_name);
-
--- ADR-0014 — symmetric federated comms graph.
+-- The ADR-0014 comms graph ``comms_nodes`` (and its ``host`` index) was
+-- defined here until 2026-08-28. It moved to PostgreSQL via
+-- scitex_dev.store; its schema is created on first open by
+-- ``state_db_comms_nodes_store.open_comms_nodes_store``, so there is
+-- nothing to create here.
 --
--- ``comms_nodes`` is the cross-host name → (host, a2a_port) directory
--- that resolves cross-host A2A targets. Every host writes locally;
--- ``sac registry sync`` ssh-pulls from peers and feeds ``import_state``
--- which idempotently merges rows (INSERT OR IGNORE on the ``name`` PK).
+-- REMOVED rather than left behind, under the same ruling as
+-- ``comms_grants`` above and ``node_comms_policy`` below — and this one
+-- is the table where an empty leftover would have been read as ROUTING
+-- TRUTH. ``resolve_node_host`` falls through to this directory when no
+-- live ``instances`` row matches, and answers ``None`` when it finds
+-- nothing; every caller reads ``None`` as "not in the federated graph, do
+-- not cross-host forward". A CREATE TABLE with no writer would therefore
+-- have turned "you are asking the wrong database" into "that agent is
+-- local", silently, on the forwarding path.
 --
--- ``source_host`` is NULL for rows registered locally (operator
--- identity at listen startup, or agent-start hook). It is set to the
--- peer's canonical hostname when the row was pulled via
--- ``sac registry sync --from PEER`` — used by the conflict detector
--- in :func:`state_db_nodes.register_comms_node` to distinguish a
--- benign re-pull (same source) from a true name-collision (different
--- source claiming the same name with a different host/port).
---
--- ``ended_at`` is a soft tombstone — preserved on
--- :func:`unregister_comms_node` so the next ``export_state`` carries
--- the deletion to peers. A GC pass (not in Stage 1) will eventually
--- physically delete tombstoned rows older than a TTL.
-CREATE TABLE IF NOT EXISTS comms_nodes (
-    name           TEXT PRIMARY KEY,
-    host           TEXT NOT NULL,
-    a2a_port       INTEGER NOT NULL,
-    registered_at  REAL NOT NULL,
-    updated_at     REAL NOT NULL,
-    source_host    TEXT,
-    ended_at       REAL
-);
-CREATE INDEX IF NOT EXISTS idx_comms_nodes_host ON comms_nodes(host);
+-- Two of the seven columns have no successor here and that is the point
+-- of the move rather than a loss. ``ended_at`` was a hand-rolled soft
+-- tombstone that existed so ``export_state`` could carry a deletion —
+-- which ``import_state``'s INSERT OR IGNORE then dropped, as the old
+-- module's own docstring admitted. The store's ``hide()`` IS the
+-- tombstone, it replicates as an op, and nothing is hard-deleted, so the
+-- withdrawal that could never propagate now propagates by construction.
+-- ``source_host`` was provenance the writer had to remember to fill (NULL
+-- on every locally registered row); the reserved ``_origin`` column is
+-- stamped by the primitive on every op.
 
 -- The Phase-3 ACL table ``node_comms_policy`` was defined here until
 -- 2026-08-28. It moved to PostgreSQL via scitex_dev.store; its schema is

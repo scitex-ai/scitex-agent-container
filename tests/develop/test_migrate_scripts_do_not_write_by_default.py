@@ -182,3 +182,88 @@ def test_verdict_delivered_bare_invocation_succeeds(tmp_path):
         rc = module.main(["--state-db", str(empty)])
     # Assert
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# node_comms_policy — the table where a silent no-op is a PRIVILEGE change
+#
+# This script had no coverage here at all, which is the shape that let a
+# sibling script go days unable to write a single row: its dry run returned
+# before the write path, so the default invocation looked healthy and only
+# ``--commit`` was broken. On THIS table the cost is worse than a lost
+# observation. The script's own docstring spells it out: a missing row makes
+# read_comms_policy return the all-allow defaults, so a capsule authored
+# ``inbound.siblings=deny`` becomes reachable with nothing logged, and the
+# same missing row strips the agent of its named groups.
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_with_one_policy(tmp_path) -> Path:
+    """One policy row, with every column the ALTER-TABLE history produced."""
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """CREATE TABLE node_comms_policy (
+               name TEXT PRIMARY KEY, outbound_siblings TEXT NOT NULL,
+               outbound_parent TEXT NOT NULL, inbound_siblings TEXT NOT NULL,
+               inbound_parent TEXT NOT NULL, lineage_group TEXT NOT NULL,
+               may_spawn INTEGER NOT NULL, group_name TEXT NOT NULL,
+               updated_at REAL NOT NULL, group_names TEXT NOT NULL)"""
+    )
+    conn.execute(
+        "INSERT INTO node_comms_policy VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("agent-x", "allow", "allow", "deny", "allow", "", 1,
+         "developer", 1756339200.0, "developer"),
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _run_node_comms_policy(tmp_path, capsys, extra: list[str]) -> Run:
+    db = _sqlite_with_one_policy(tmp_path)
+    module = _load("migrate_node_comms_policy_to_postgres.py")
+    argv = ["migrate", "--db-path", str(db), *extra]
+    rc: int | None = None
+    err: BaseException | None = None
+    with _dead_store_and_argv(argv):
+        try:
+            rc = module.main()
+        except BaseException as exc:
+            err = exc
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
+
+
+def test_node_comms_policy_bare_invocation_succeeds(tmp_path, capsys):
+    """A dry run is a success, not an error."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_node_comms_policy(target, capsys, [])
+    # Assert
+    assert run.rc == 0
+
+
+def test_node_comms_policy_bare_invocation_never_reaches_the_store(tmp_path, capsys):
+    """The dead DSN is the detector: a writer could not have stayed silent."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_node_comms_policy(target, capsys, [])
+    # Assert
+    assert run.error is None
+
+
+def test_node_comms_policy_commit_does_reach_for_the_store(tmp_path, capsys):
+    """NEGATIVE CONTROL — the one that matters.
+
+    Without it the two tests above still pass on a script that can never
+    write anything, which is precisely how the diary migration shipped
+    unable to carry a single row. Reaching an unreachable DSN must raise.
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_node_comms_policy(target, capsys, ["--commit"])
+    # Assert
+    assert run.error is not None

@@ -149,7 +149,9 @@ def db_query(
         "definitions": "first_seen_at DESC",
         "instance_heartbeats": "ts DESC",
         "events": "ts DESC",
-        "attempts": "ts DESC",
+        # ``attempts`` had a ``ts DESC`` entry here until 2026-08-28. It
+        # left KNOWN_TABLES, so ``--table`` can no longer name it and this
+        # key could only ever be dead.
     }.get(table)
     if order_by:
         sql += f" ORDER BY {order_by}"
@@ -350,9 +352,10 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     default=None,
     help=(
         "Comma-separated subset of KNOWN_TABLES to include in the dump "
-        "(non-listed tables emit as empty arrays). Used by "
-        "`sac registry sync` to ship only the comms_nodes delta. "
-        "Unknown names fail loud at parse time."
+        "(non-listed tables emit as empty arrays). Unknown names fail "
+        "loud at parse time — including `comms_nodes`, which left "
+        "KNOWN_TABLES on 2026-08-28 when the directory moved to the "
+        "shared store."
     ),
 )
 @click.option(
@@ -393,7 +396,7 @@ def db_export(
     Example:
       $ sac db export
       $ sac db export --since 2026-05-01T00:00:00Z --output dump.json
-      $ sac db export --tables comms_nodes        # ADR-0014 registry sync
+      $ sac db export --tables instances,lineage
       $ sac db export --dry-run
     """
     del yes  # reserved

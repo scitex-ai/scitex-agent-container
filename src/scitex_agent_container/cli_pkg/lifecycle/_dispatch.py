@@ -230,9 +230,11 @@ def _dispatch_remote_start(
         remote=True,
         spawned_by=_spawned_by(),
     )
-    # ADR-0014 Stage 1 — paired comms_nodes row for the cross-host
-    # agent so peers resolving via the federated graph (not just the
-    # local instances table) see the new placement after the next sync.
+    # ADR-0014 — paired comms_nodes entry for the cross-host agent so peers
+    # resolving via the federated graph (not just the local instances table)
+    # see the new placement. Since 2026-08-28 they see it IMMEDIATELY: the
+    # directory is the shared PostgreSQL store, so there is no sync to wait
+    # for and no window in which a just-placed agent is unaddressable.
     if bound is not None:
         try:
             from ..._state.state_db_nodes import register_comms_node

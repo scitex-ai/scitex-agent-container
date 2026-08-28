@@ -39,25 +39,24 @@ _SEED = [
         "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
     ),
-    (
-        "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?)",
-        (OLD, "h", 9001, 1.0, 1.0),
-    ),
+    # An ``INSERT INTO comms_nodes`` row was here until 2026-08-28. The
+    # ADR-0014 directory moved to PostgreSQL, so SQLite has no such table and
+    # the seed would raise on every test in this file.
     (
         "INSERT INTO lineage (child_name, parent_name, created_at) "
         "VALUES (?, ?, ?)",
         ("child-a", OLD, 1.0),
     ),
-    # The history half. This was an ``INSERT INTO turns`` until 2026-08-28,
-    # when the diary trio left SQLite for per-host PostgreSQL and stopped
-    # being a table this rename can reach. ``attempts.agent`` is the history
-    # column still in ``_rename_db.NAME_COLUMNS``, so it is what the
-    # history-follows-the-agent tests below now exercise.
+    # The history half. It was ``INSERT INTO turns`` until 2026-08-28, when
+    # the diary trio left SQLite for per-host PostgreSQL; then ``INSERT INTO
+    # attempts`` for the rest of that day, until ``attempts`` was deleted for
+    # having zero writers. ``channel_events.target`` is the history column
+    # still in ``_rename_db.NAME_COLUMNS`` AND still a real SQLite table, so
+    # it is what the history-follows-the-agent tests below now exercise.
     (
-        "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) "
-        "VALUES (?, ?, ?, ?, ?)",
-        ("t1", OLD, "run", "ok", 0.5),
+        "INSERT INTO channel_events (target, source, kind, content, "
+        "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
+        (OLD, None, "message", "hi", "{}", 1.0),
     ),
 ]
 
@@ -89,8 +88,9 @@ def _one(db: Path, sql: str, *args):
 
 
 def test_count_rows_counts_the_identity_row(seeded: Path):
-    # Arrange
-    key = "comms_nodes.name"
+    # Arrange — ``comms_nodes.name`` was the key here until 2026-08-28;
+    # ``definitions.name`` is the identity column still in SQLite.
+    key = "definitions.name"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -100,7 +100,7 @@ def test_count_rows_counts_the_identity_row(seeded: Path):
 def test_count_rows_counts_the_history_row(seeded: Path):
     """History follows the agent: a renamed agent is the SAME agent."""
     # Arrange
-    key = "attempts.agent"
+    key = "channel_events.target"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -131,14 +131,20 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_rename_moves_the_comms_node_row(seeded: Path):
-    """Miss this and the A2A directory still advertises the dead name."""
-    # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, NEW) == 1
+# ``test_rename_moves_the_comms_node_row`` was here until 2026-08-28, under
+# the docstring "Miss this and the A2A directory still advertises the dead
+# name." That sentence is still true and the test could no longer prove it:
+# the directory moved to PostgreSQL, SQLite has no ``comms_nodes``, and
+# ``rename_rows`` SKIPS tables absent from sqlite_master — so the test would
+# have passed forever while reaching nothing. Same ruling, and the same
+# hazard, as the ACL-policy test noted below: a green test whose name claims
+# a property it can no longer reach is worse than a red one.
+#
+# DELETED, NOT EDITED UNTIL IT PASSED. The property is measured where it now
+# lives — ``_state/test_state_db_comms_nodes.py::test_rename_moves_the_
+# routing_tuple_onto_the_new_name`` and ``::test_rename_withdraws_the_old_
+# name`` — and ``_rename.apply_plan`` runs the move as its own
+# ``comms-directory`` step with its inverse on the undo stack.
 
 
 # ``test_rename_moves_the_acl_policy_row`` was here until 2026-08-28. It
@@ -168,7 +174,7 @@ def test_rename_moves_the_lineage_parent_edge(seeded: Path):
 
 def test_rename_moves_the_history_rows(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM attempts WHERE agent = ?"
+    sql = "SELECT COUNT(*) FROM channel_events WHERE target = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -195,7 +201,7 @@ def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
 
 def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -219,7 +225,7 @@ def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
 def test_undo_restores_the_identity_row(seeded: Path):
     # Arrange
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    sql = "SELECT COUNT(*) FROM definitions WHERE name = ?"
     # Act
     undo_rename_rows(undo)
     # Assert
@@ -247,13 +253,13 @@ def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path
     conn = sqlite3.connect(str(seeded))
     with conn:
         conn.execute(
-            "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("t-stranger", NEW, "stranger", "ok", 0.5),
+            "INSERT INTO channel_events (target, source, kind, content, "
+            "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
+            (NEW, None, "stranger", "hi", "{}", 2.0),
         )
     conn.close()
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT agent FROM attempts WHERE action = 'stranger'"
+    sql = "SELECT target FROM channel_events WHERE kind = 'stranger'"
     # Act
     undo_rename_rows(undo)
     # Assert

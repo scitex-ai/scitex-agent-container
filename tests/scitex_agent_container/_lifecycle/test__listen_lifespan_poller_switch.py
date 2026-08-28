@@ -50,8 +50,11 @@ _POLLER_TASKS = (
 # launch-site switch, so turning them all off keeps this test about the
 # pollers and nothing else — and keeps it from touching ssh, tmux, the
 # registry sweep or a bind watchdog.
+# ``SAC_LISTEN_STARTUP_SYNC_DISABLED`` was listed here until 2026-08-28.
+# The registry-sync lifespan task it disabled is gone — the ADR-0014
+# directory moved to the shared store, so there is no peer sweep to launch
+# and nothing for the switch to turn off.
 _OTHER_LOOPS = (
-    "SAC_LISTEN_STARTUP_SYNC_DISABLED",
     "SAC_PERIODIC_DRIVE_DISABLED",
     "SAC_LIVENESS_TICK_DISABLED",
     "SAC_DEPLOY_FRESHNESS_DISABLED",
