@@ -153,9 +153,16 @@ def record_local_instance(
     IS NULL`` never collides on a restart. Returns the new instance id,
     or ``None`` when the runtime can't report a state dir.
 
-    ``db_path`` PINS the store every write below lands in. ``None``
-    keeps the historical behaviour (resolve ``state_db.DEFAULT_DB_PATH``
-    per write, at call time).
+    ``db_path`` PINS the SQLite store the remaining writes below land in.
+    ``None`` keeps the historical behaviour (resolve
+    ``state_db.DEFAULT_DB_PATH`` per write, at call time).
+
+    SINCE 2026-08-28 IT REACHES ONLY ``get_port``. The ``instances``
+    writes moved to PostgreSQL, where the target is one per host rather
+    than one per file, so there is no path to pin and the parameter is no
+    longer threaded into them. It stays in this signature — and the
+    hazard below stays real — because ``port_allocator`` has not moved
+    yet. When it does, this parameter goes with it.
 
     Why the parameter exists (test-isolation bug, 2026-07-14): this
     function is also reached from the health-monitor's restart callback
@@ -184,11 +191,9 @@ def record_local_instance(
     host = _resolve_host(None)
     # End stale active rows for this name+host (e.g. a previous crash
     # that never reached agent_stop) so the unique index stays clear.
-    for row in list_active_instances(host=host, db_path=db_path):
+    for row in list_active_instances(host=host):
         if row.get("name") == config.name:
-            record_instance_stop(
-                str(row["id"]), exit_reason="superseded", db_path=db_path
-            )
+            record_instance_stop(str(row["id"]), exit_reason="superseded")
 
     a2a_port = get_port(config.name, db_path=db_path)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
@@ -230,7 +235,6 @@ def record_local_instance(
         remote=False,
         spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
-        db_path=db_path,
     )
 
     # ADR-0014 Stage 1 — paired comms_nodes write so cross-host peers

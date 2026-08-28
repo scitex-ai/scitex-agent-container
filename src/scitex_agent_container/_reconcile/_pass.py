@@ -311,7 +311,6 @@ def reconcile_pass(
     apply: bool = False,
     limit: int = DEFAULT_PASS_CAP,
     specs_dir: Path | None = None,
-    db_path: Path | None = None,
     history_file: Path | None = None,
     events_path: Path | None = None,
     alarm: bool = True,
@@ -335,8 +334,16 @@ def reconcile_pass(
         Actually restart. Default ``False``.
     limit
         Global cap on restarts THIS pass (blast radius of one bad tick).
-    specs_dir, db_path, history_file, events_path
+    specs_dir, history_file, events_path
         Real state, redirectable for tests.
+
+        ``db_path`` WAS ONE OF THESE AND IS GONE (2026-08-28). It reached
+        exactly one call — ``last_known_instance`` — and that registry
+        moved to per-host PostgreSQL, which is addressed by DSN and not by
+        a path. Keeping the parameter would have meant accepting a
+        redirection this function can no longer honour, so a test pointing
+        it at a temp file would have silently read the LIVE registry while
+        believing it was isolated.
     restart_fn
         ``(name) -> bool``. The one irreversible act, injectable so tests
         can assert it was never called.
@@ -381,7 +388,7 @@ def reconcile_pass(
         if policy in MANAGED_POLICIES:
             from .._state.state_db_instances import last_known_instance
 
-            row = last_known_instance(name, db_path=db_path)
+            row = last_known_instance(name)
 
         decision = decide(
             name=name,

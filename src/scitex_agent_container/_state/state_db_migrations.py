@@ -12,15 +12,25 @@ every :func:`state_db.init_schema`.
     ``instance_heartbeats`` to add the monotonic ``seq`` PK that makes
     "latest heartbeat" deterministic (see the table DDL in
     :mod:`state_db` and :mod:`state_db_heartbeats`).
-  * :func:`migrate_instances_add_family_tree_cols` — ADD COLUMN the
-    sac-agent-spawn family-tree columns (``bound_port``, ``remote``,
-    ``spawned_by``) onto a pre-existing ``instances`` table.
   * :func:`migrate_node_comms_policy_add_group_name` — ADD COLUMN the
     ``group_name`` column (group-based ACL, operator 2026-06-25) onto a
     pre-existing ``node_comms_policy`` table.
   * :func:`migrate_node_comms_policy_add_group_names` — ADD COLUMN the
     MULTI-value ``group_names`` column (authority-is-membership,
     incident 2026-08-10) onto a pre-existing ``node_comms_policy``.
+
+``migrate_instances_add_family_tree_cols`` WAS HERE AND IS GONE
+(2026-08-28). It ADD-COLUMNed ``bound_port`` / ``remote`` /
+``spawned_by`` onto a pre-existing ``instances`` table with SQLite-native
+``ALTER TABLE`` statements. ``instances`` moved to PostgreSQL, so the
+migration had nothing left to migrate — its own guard (``if "instances"
+not in existing: return``) meant it would have gone on running forever as
+a silent no-op, which is worse than deleting it: a migration that cannot
+fire still reads, to the next person, as evidence that the table it names
+is still here. The three fields it backfilled are now ordinary schema
+fields; the store applies additive schema changes itself
+(``Store._apply_additive_migrations``), so there is no successor function
+to write.
 """
 
 from __future__ import annotations
@@ -91,7 +101,11 @@ def migrate_instance_heartbeats_add_seq(conn: sqlite3.Connection) -> None:
         """
         CREATE TABLE instance_heartbeats__new (
             seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-            instance_id     TEXT NOT NULL REFERENCES instances(id),
+            -- No REFERENCES instances(id): that table is in another
+            -- engine since 2026-08-28, and rebuilding this one with a
+            -- foreign key SQLite cannot check would make the rebuild
+            -- FAIL under `PRAGMA foreign_keys = ON` (which open_db sets).
+            instance_id     TEXT NOT NULL,
             ts              TEXT NOT NULL,
             iter            INTEGER,
             input_tokens    INTEGER,
@@ -108,41 +122,6 @@ def migrate_instance_heartbeats_add_seq(conn: sqlite3.Connection) -> None:
         ALTER TABLE instance_heartbeats__new RENAME TO instance_heartbeats;
         """
     )
-
-
-def migrate_instances_add_family_tree_cols(conn: sqlite3.Connection) -> None:
-    """ADD the sac-agent-spawn family-tree columns to ``instances``.
-
-    New columns (see :mod:`state_db` DDL + :mod:`state_db_instances`):
-
-      * ``bound_port`` INTEGER — the actual bound a2a port.
-      * ``remote``     INTEGER DEFAULT 0 — 1 for a cross-host agent.
-      * ``spawned_by`` TEXT — launching identity (lineage edge).
-
-    A fresh DB gets these from the ``CREATE TABLE`` DDL; this migration
-    is for an EXISTING ``instances`` table created before the columns
-    existed. ``ALTER TABLE ... ADD COLUMN`` is cheap and SQLite-native.
-
-    Detection: ``instances`` exists AND is missing one of the three
-    columns. Per-column guarded so a partially-migrated DB completes.
-    Idempotent: a no-op once all three columns are present (or the
-    table is absent).
-    """
-    existing = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "instances" not in existing:
-        return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(instances)").fetchall()}
-    if "bound_port" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN bound_port INTEGER")
-    if "remote" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN remote INTEGER DEFAULT 0")
-    if "spawned_by" not in cols:
-        conn.execute("ALTER TABLE instances ADD COLUMN spawned_by TEXT")
 
 
 def migrate_node_comms_policy_add_group_name(conn: sqlite3.Connection) -> None:

@@ -229,7 +229,7 @@ def test_resolve_display_host_returns_nonempty_string():
 # ---------------------------------------------------------------------------
 
 
-def test_registered_row_carries_resolved_host_display(tmp_path):
+def test_registered_row_carries_resolved_host_display(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec), "started_at": "ts"}])
@@ -242,7 +242,7 @@ def test_registered_row_carries_resolved_host_display(tmp_path):
     assert out[0]["host_display"] == "ywata-note-win"
 
 
-def test_registered_row_keeps_raw_host_local_for_backward_compat(tmp_path):
+def test_registered_row_keeps_raw_host_local_for_backward_compat(pg_schema: str, tmp_path):
     # Arrange — the raw ``host`` sentinel must stay "local" so _is_ghost_row and
     # any script keying on it keep working.
     spec = _write_valid_spec(tmp_path / "x")
@@ -256,7 +256,7 @@ def test_registered_row_keeps_raw_host_local_for_backward_compat(tmp_path):
     assert out[0]["host"] == "local"
 
 
-def test_defined_row_carries_resolved_host_display(tmp_path):
+def test_defined_row_carries_resolved_host_display(pg_schema: str, tmp_path):
     # Arrange — an on-disk (defined, not registered) agent.
     spec = _write_valid_spec(tmp_path / "ondisk")
     registry = _FakeRegistry([])
@@ -272,7 +272,7 @@ def test_defined_row_carries_resolved_host_display(tmp_path):
     assert row["host_display"] == "ywata-note-win"
 
 
-def test_defined_row_keeps_raw_host_local(tmp_path):
+def test_defined_row_keeps_raw_host_local(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "ondisk")
     registry = _FakeRegistry([])
@@ -288,7 +288,7 @@ def test_defined_row_keeps_raw_host_local(tmp_path):
     assert row["host"] == "local"
 
 
-def test_json_row_exposes_both_host_and_host_display(tmp_path, capsys):
+def test_json_row_exposes_both_host_and_host_display(pg_schema: str, tmp_path, capsys):
     # Arrange — --json consumers get the raw sentinel AND the resolved name.
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -307,7 +307,7 @@ def test_json_row_exposes_both_host_and_host_display(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_json_started_at_keeps_raw_iso(tmp_path, capsys):
+def test_json_started_at_keeps_raw_iso(pg_schema: str, tmp_path, capsys):
     # Arrange — only the human table converts; --json keeps the raw ISO stamp.
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry(
@@ -328,7 +328,7 @@ def test_json_started_at_keeps_raw_iso(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_print_agent_list_renders_resolved_hostname_in_host_column(tmp_path, capsys):
+def test_print_agent_list_renders_resolved_hostname_in_host_column(pg_schema: str, tmp_path, capsys):
     # Arrange — a wide terminal so no column is squeezed out.
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry(
@@ -342,7 +342,7 @@ def test_print_agent_list_renders_resolved_hostname_in_host_column(tmp_path, cap
     assert "ywata-note-win" in out
 
 
-def test_print_agent_list_started_column_renders_pinned_jst(tmp_path, capsys):
+def test_print_agent_list_started_column_renders_pinned_jst(pg_schema: str, tmp_path, capsys):
     # Arrange — pin the display tz to Asia/Tokyo and give the table full width.
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry(

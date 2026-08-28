@@ -51,7 +51,15 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: Tables whose presence means "this is our state store". Deliberately a
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
-CORE_TABLES = ("instances", "definitions")
+#:
+#: ``instances`` was the first entry until 2026-08-28, when it moved to
+#: PostgreSQL. Leaving it would have been harmless to the ``any()`` below —
+#: ``definitions`` still carries the check — and wrong as an inventory: this
+#: tuple is also printed in the ``schemaless`` remedy text, where naming a
+#: table state.db can never contain again would send the reader looking for
+#: it. ``instance_heartbeats`` takes the slot: it is created by the same
+#: ``_SCHEMA_REGISTRY`` script and is still SQLite.
+CORE_TABLES = ("instance_heartbeats", "definitions")
 
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"

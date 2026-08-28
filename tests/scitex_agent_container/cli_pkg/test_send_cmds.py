@@ -296,7 +296,7 @@ def test_no_delivery_path_exits_nonzero(isolated_env):
     assert result.exit_code != 0, result.output
 
 
-def test_no_delivery_path_reports_the_missing_a2a_port(isolated_env):
+def test_no_delivery_path_reports_the_missing_a2a_port(pg_schema: str, isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -305,7 +305,7 @@ def test_no_delivery_path_reports_the_missing_a2a_port(isolated_env):
     assert "no A2A port is recorded" in result.output, result.output
 
 
-def test_no_delivery_path_says_the_agent_is_contained(isolated_env):
+def test_no_delivery_path_says_the_agent_is_contained(pg_schema: str, isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -314,7 +314,7 @@ def test_no_delivery_path_says_the_agent_is_contained(isolated_env):
     assert "apptainer" in result.output, result.output
 
 
-def test_no_delivery_path_names_the_recovery_command(isolated_env):
+def test_no_delivery_path_names_the_recovery_command(pg_schema: str, isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -372,7 +372,7 @@ def remote_send_env(tmp_path):
         importlib.reload(_state_db_mod)
 
 
-def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
+def test_remote_send_without_a2a_port_raises_typed_error(pg_schema: str, remote_send_env):
     # Arrange — seed a row with NO a2a_port (the proj-scitex-stats case).
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -384,7 +384,7 @@ def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
     assert "did not register an A2A port" in result.output
 
 
-def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_env):
+def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(pg_schema: str, remote_send_env):
     # Arrange — seed remote row + stub post_turn_to_url collaborator.
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -410,7 +410,7 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     assert captured.get("url") == "ssh://peer-x:18888/v1/turn"
 
 
-def test_remote_send_prints_reply_from_peer(remote_send_env):
+def test_remote_send_prints_reply_from_peer(pg_schema: str, remote_send_env):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -454,7 +454,7 @@ def _swap_peer_post_turn_to_url(fn: Callable) -> Iterator[None]:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
 
 
-def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env):
+def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(pg_schema: str, remote_send_env):
     # Arrange — seed a LOCAL row (host == current SAC_HOST) with a port.
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -472,7 +472,7 @@ def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env)
     assert captured.get("url") == "http://127.0.0.1:19005/v1/turn"
 
 
-def test_local_send_forwards_the_prompt_text(remote_send_env):
+def test_local_send_forwards_the_prompt_text(pg_schema: str, remote_send_env):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -490,7 +490,7 @@ def test_local_send_forwards_the_prompt_text(remote_send_env):
     assert captured.get("text") == "do the thing"
 
 
-def test_local_send_prints_reply_from_loopback(remote_send_env):
+def test_local_send_prints_reply_from_loopback(pg_schema: str, remote_send_env):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -502,7 +502,7 @@ def test_local_send_prints_reply_from_loopback(remote_send_env):
     assert "LOCAL-REPLY" in result.output
 
 
-def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
+def test_local_send_exits_zero_on_loopback_reply(pg_schema: str, remote_send_env):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -514,7 +514,7 @@ def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
     assert result.exit_code == 0
 
 
-def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env):
+def test_local_send_without_a2a_port_does_not_take_the_http_path(pg_schema: str, remote_send_env):
     # Arrange — a LOCAL row WITHOUT a bound port must not be POSTed to.
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -532,7 +532,7 @@ def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env
     assert "url" not in posted
 
 
-def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_env):
+def test_local_send_without_a2a_port_refuses_instead_of_going_bare(pg_schema: str, remote_send_env):
     """The old name for this was "falls through to resume" — it no longer does."""
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
@@ -549,7 +549,7 @@ def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_e
     assert "no A2A port is recorded" in result.output, result.output
 
 
-def test_local_send_failure_wraps_peer_error(remote_send_env):
+def test_local_send_failure_wraps_peer_error(pg_schema: str, remote_send_env):
     # Arrange
     from scitex_agent_container._network.peer import PeerError
     from scitex_agent_container._state.state_db import record_instance_start

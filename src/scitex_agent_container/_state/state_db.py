@@ -4,9 +4,15 @@ Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
 holding tables in three groups:
 
-  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
+  * F-CS11 registry — ``definitions``. ``instances`` and ``events``
+    moved to per-host PostgreSQL on 2026-08-28
+    (:mod:`state_db_instances`, :mod:`state_db_instance_events`); their
+    DDL was deleted rather than left behind, so a stale reader gets
+    ``no such table`` instead of an empty result that reads as "no
+    agents are running".
   * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
-    ``heartbeats`` time series, tied to an ``instances.id``).
+    ``heartbeats`` time series, keyed by an ``instances.id`` that now
+    lives in another engine).
   * Diary (2026-05-17) — ``turns``, ``errors``, ``heartbeats``. Each
     agent writes here continuously, like a journal; the lead reads
     + filters when it wants cross-host visibility. ``heartbeats``
@@ -51,7 +57,6 @@ from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 from .state_db_migrations import (
     migrate_instance_heartbeats_add_seq,
-    migrate_instances_add_family_tree_cols,
     migrate_legacy_heartbeats,
     migrate_node_comms_policy_add_group_name,
     migrate_node_comms_policy_add_group_names,
@@ -79,9 +84,7 @@ DEFAULT_DB_PATH = Path(
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
     "definitions",
-    "instances",
     "instance_heartbeats",
-    "events",
     "attempts",
     "turns",
     "errors",
@@ -98,6 +101,13 @@ KNOWN_TABLES = (
     # name with no table returns an EMPTY result, and an empty result reads
     # as "this agent has no incarnations" when the truth is "you are asking
     # the wrong database". An unknown-table error is the honest answer.
+    #
+    # ``instances`` and ``events`` left for the same reason on 2026-08-28
+    # (:mod:`.state_db_instances` / :mod:`.state_db_instance_events`), and
+    # for that reason MORE urgently than any table before them: `sac db
+    # query --table=instances` returning zero rows does not read as "wrong
+    # database", it reads as "no agents are running", which is a sentence
+    # an operator acts on.
 )
 
 
@@ -176,10 +186,9 @@ def init_schema(db_path: Path | None = None) -> Path:
         migrate_legacy_heartbeats(conn)
         migrate_instance_heartbeats_add_seq(conn)
         conn.executescript(_SCHEMA_REGISTRY)
-        # ``executescript`` above creates ``instances`` fresh on a new
-        # DB (with the family-tree columns) but is a no-op on an
-        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
-        migrate_instances_add_family_tree_cols(conn)
+        # ``migrate_instances_add_family_tree_cols(conn)`` ran here until
+        # 2026-08-28. ``instances`` moved to PostgreSQL and the function is
+        # gone with it — the store applies additive schema changes itself.
         # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
         # column on a pre-existing ``node_comms_policy`` (operator
         # 2026-06-25). No-op on a fresh DB (DDL already has the column).
@@ -268,11 +277,19 @@ from .state_db_heartbeats import (  # noqa: E402,F401
     latest_instance_heartbeat,
     update_heartbeat,
 )
+from .state_db_instance_events import (  # noqa: E402,F401
+    instance_events,
+)
 from .state_db_instances import (  # noqa: E402,F401
+    all_instances,
+    end_instance,
     last_known_instance,
+    latest_active_instance,
     list_active_instances,
+    put_instance_record,
     record_instance_start,
     record_instance_stop,
+    touch_instance_counters,
 )
 
 

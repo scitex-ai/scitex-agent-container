@@ -98,7 +98,7 @@ def ended(name: str, reason: str) -> None:
     state_db.record_instance_stop(instance_id, exit_reason=reason)
 
 
-def run_pass(registry, db_path, history, events, **overrides):
+def run_pass(registry, history, events, **overrides):
     """One pass with every real seam wired to this test's temp state.
 
     Defaults describe a HOST that can see tmux (``in_sif_fn`` False) and an
@@ -108,10 +108,16 @@ def run_pass(registry, db_path, history, events, **overrides):
     ``events`` is the sac event log this pass records to — a real temp JSONL
     path. A test that wants an UNWRITABLE one passes ``events_path=`` as an
     override, which lands on the same production keyword.
+
+    ``db_path`` WAS THE SECOND POSITIONAL ARGUMENT AND IS GONE (2026-08-28).
+    ``reconcile_pass`` dropped the keyword when ``instances`` moved to
+    PostgreSQL, and forwarding a path the pass cannot honour would have let a
+    caller believe it had redirected state it had not. Suites that still need
+    a temp ``state.db`` on disk keep requesting the fixture; they just no
+    longer hand it to this helper.
     """
     kwargs = {
         "specs_dir": registry,
-        "db_path": db_path,
         "history_file": history,
         "events_path": events,
         "now": NOW,

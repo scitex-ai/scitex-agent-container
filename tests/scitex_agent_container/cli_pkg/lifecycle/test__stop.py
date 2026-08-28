@@ -179,7 +179,7 @@ def bulk_with_yes_run(tmp_path):
     return result, stopped
 
 
-def test_bulk_with_yes_stops_all_exits_zero(bulk_with_yes_run):
+def test_bulk_with_yes_stops_all_exits_zero(pg_schema: str, bulk_with_yes_run):
     # Arrange
     result, _ = bulk_with_yes_run
     # Act
@@ -188,7 +188,7 @@ def test_bulk_with_yes_stops_all_exits_zero(bulk_with_yes_run):
     assert code == 0, result.output
 
 
-def test_bulk_with_yes_stops_all_invokes_agent_stop_per_agent(bulk_with_yes_run):
+def test_bulk_with_yes_stops_all_invokes_agent_stop_per_agent(pg_schema: str, bulk_with_yes_run):
     # Arrange
     _, stopped = bulk_with_yes_run
     # Act
@@ -229,7 +229,7 @@ def test_bulk_failure_reports_and_exits_nonzero_exit_code(bulk_failure_result):
     assert code == 1
 
 
-def test_bulk_failure_reports_and_exits_nonzero_prints_error(bulk_failure_result):
+def test_bulk_failure_reports_and_exits_nonzero_prints_error(pg_schema: str, bulk_failure_result):
     # Arrange
     result = bulk_failure_result
     # Act
@@ -258,7 +258,7 @@ def single_name_run():
     return result, stopped
 
 
-def test_single_name_path_exits_zero(single_name_run):
+def test_single_name_path_exits_zero(pg_schema: str, single_name_run):
     # Arrange
     result, _ = single_name_run
     # Act
@@ -267,7 +267,7 @@ def test_single_name_path_exits_zero(single_name_run):
     assert code == 0
 
 
-def test_single_name_path_invokes_agent_stop_with_name(single_name_run):
+def test_single_name_path_invokes_agent_stop_with_name(pg_schema: str, single_name_run):
     # Arrange
     _, stopped = single_name_run
     # Act
@@ -276,7 +276,7 @@ def test_single_name_path_invokes_agent_stop_with_name(single_name_run):
     assert calls == [("alpha", False)]
 
 
-def test_single_name_path_prints_stopped_message(single_name_run):
+def test_single_name_path_prints_stopped_message(pg_schema: str, single_name_run):
     # Arrange
     result, _ = single_name_run
     # Act
@@ -285,7 +285,7 @@ def test_single_name_path_prints_stopped_message(single_name_run):
     assert "Agent 'alpha' stopped" in out
 
 
-def test_terminal_stop_forwards_prune_runtime_to_agent_stop():
+def test_terminal_stop_forwards_prune_runtime_to_agent_stop(pg_schema: str):
     """A terminal operator stop must OPT IN to the inode-hygiene prune.
 
     The stand-ins above accept ``prune_runtime`` with a default, so they no
@@ -339,7 +339,7 @@ def single_yaml_run(tmp_path):
     return result, stopped
 
 
-def test_single_yaml_path_resolves_name_exits_zero(single_yaml_run):
+def test_single_yaml_path_resolves_name_exits_zero(pg_schema: str, single_yaml_run):
     # Arrange
     result, _ = single_yaml_run
     # Act
@@ -349,7 +349,7 @@ def test_single_yaml_path_resolves_name_exits_zero(single_yaml_run):
 
 
 def test_single_yaml_path_resolves_name_invokes_agent_stop_with_resolved_name(
-    single_yaml_run,
+    pg_schema: str, single_yaml_run,
 ):
     # Arrange
     _, stopped = single_yaml_run
@@ -387,7 +387,7 @@ def test_single_failure_exits_nonzero_exit_code(single_failure_result):
     assert code == 1
 
 
-def test_single_failure_exits_nonzero_prints_error(single_failure_result):
+def test_single_failure_exits_nonzero_prints_error(pg_schema: str, single_failure_result):
     # Arrange
     result = single_failure_result
     # Act
@@ -438,7 +438,7 @@ def cross_host_state_db(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_zeta(cross_host_state_db):
+def remote_row_for_zeta(pg_schema: str, cross_host_state_db):
     """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -483,7 +483,7 @@ def _ssh_invocations(bin_dir):
     return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
-def test_cross_host_stop_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_dispatches_via_ssh(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -492,7 +492,7 @@ def test_cross_host_stop_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
     assert result.exit_code == 0, result.output
 
 
-def test_cross_host_stop_ssh_argv_targets_peer(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_ssh_argv_targets_peer(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -502,7 +502,7 @@ def test_cross_host_stop_ssh_argv_targets_peer(remote_row_for_zeta, ssh_shim):
     assert "peer-x" in argv
 
 
-def test_cross_host_stop_ssh_argv_carries_stop_verb(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_ssh_argv_carries_stop_verb(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -512,7 +512,7 @@ def test_cross_host_stop_ssh_argv_carries_stop_verb(remote_row_for_zeta, ssh_shi
     assert "sac agents stop zeta" in argv
 
 
-def test_cross_host_stop_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_ssh_argv_includes_json_flag(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -522,7 +522,7 @@ def test_cross_host_stop_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_sh
     assert "--json" in argv
 
 
-def test_cross_host_stop_updates_lead_side_row(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_updates_lead_side_row(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     from scitex_agent_container._state.state_db import list_active_instances
 
@@ -534,7 +534,7 @@ def test_cross_host_stop_updates_lead_side_row(remote_row_for_zeta, ssh_shim):
     assert rows == []
 
 
-def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh_shim):
+def test_cross_host_stop_json_envelope_marks_dispatched(pg_schema: str, remote_row_for_zeta, ssh_shim):
     import json as _json
 
     # Arrange
@@ -590,7 +590,7 @@ def ssh_shim_unreachable(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_clew(cross_host_state_db):
+def remote_row_for_clew(pg_schema: str, cross_host_state_db):
     """Seed an active singleton row for ``clew`` on the unreachable
     peer ``peer-x`` AND the matching comms_nodes pin so the test can
     verify BOTH stores are cleared on force-release."""
@@ -605,7 +605,7 @@ def remote_row_for_clew(cross_host_state_db):
 
 
 def test_force_release_on_unreachable_peer_exits_zero(
-    remote_row_for_clew, ssh_shim_unreachable
+    pg_schema: str, remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange
     runner = CliRunner()
@@ -616,7 +616,7 @@ def test_force_release_on_unreachable_peer_exits_zero(
 
 
 def test_force_release_tombstones_instance_row(
-    remote_row_for_clew, ssh_shim_unreachable
+    pg_schema: str, remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange
     from scitex_agent_container._state.state_db import list_active_instances
@@ -630,7 +630,7 @@ def test_force_release_tombstones_instance_row(
 
 
 def test_force_release_clears_comms_nodes_binding(
-    remote_row_for_clew, ssh_shim_unreachable
+    pg_schema: str, remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange — the federated comms_nodes pin must ALSO clear, otherwise
     # subsequent a2a routing still tries the unreachable peer even after
@@ -673,7 +673,7 @@ def test_force_release_json_envelope_carries_release_exit_reason(
 
 
 def test_no_force_on_unreachable_peer_exits_nonzero(
-    remote_row_for_clew, ssh_shim_unreachable
+    pg_schema: str, remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange — without --force, the ssh transport failure MUST surface
     # as an error (operator hasn't opted in to the destructive release).
@@ -685,7 +685,7 @@ def test_no_force_on_unreachable_peer_exits_nonzero(
 
 
 def test_no_force_on_unreachable_peer_leaves_instance_row(
-    remote_row_for_clew, ssh_shim_unreachable
+    pg_schema: str, remote_row_for_clew, ssh_shim_unreachable
 ):
     # Arrange — without --force, the binding MUST remain so the
     # operator can investigate before discarding it.
@@ -737,7 +737,7 @@ def _recorder(stopped: list):
     return _stop
 
 
-def test_all_running_stops_only_the_running_agents():
+def test_all_running_stops_only_the_running_agents(pg_schema: str):
     # Arrange — --all-running must enumerate via the RUNNING-only seam.
     stopped: list = []
     runner = CliRunner()
@@ -752,7 +752,7 @@ def test_all_running_stops_only_the_running_agents():
     assert stopped == ["live-1", "live-2"]
 
 
-def test_all_registry_stops_every_registered_agent():
+def test_all_registry_stops_every_registered_agent(pg_schema: str):
     # Arrange — --all-registry must enumerate via the full-fleet seam.
     stopped: list = []
     runner = CliRunner()
@@ -767,7 +767,7 @@ def test_all_registry_stops_every_registered_agent():
     assert stopped == ["live-1", "stopped-2"]
 
 
-def test_all_alias_matches_all_registry_behaviour():
+def test_all_alias_matches_all_registry_behaviour(pg_schema: str):
     # Arrange — --all is the back-compat alias for --all-registry, exactly as
     # in ``sac agents restart``: it enumerates the FULL fleet.
     stopped: list = []
@@ -920,7 +920,7 @@ def test_bulk_one_failure_exits_nonzero():
     assert result.exit_code == 1
 
 
-def test_bulk_one_failure_still_attempts_the_remaining_agents():
+def test_bulk_one_failure_still_attempts_the_remaining_agents(pg_schema: str):
     # Arrange — a mid-fleet failure must not abort the rest of the shutdown.
     seen: list = []
 

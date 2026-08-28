@@ -103,7 +103,7 @@ def _refuse(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_an_unknown_name_is_reported_as_not_defined(only_alpha_defined: Path) -> None:
+def test_an_unknown_name_is_reported_as_not_defined(pg_schema: str, only_alpha_defined: Path) -> None:
     # Arrange
     unknown = "proj-scitex-stats"
     # Act
@@ -140,7 +140,7 @@ def test_an_unknown_name_does_not_claim_a_missing_port(
 
 
 def test_a_defined_agent_still_gets_the_missing_port_message(
-    only_alpha_defined: Path,
+    pg_schema: str, only_alpha_defined: Path,
 ) -> None:
     # Arrange — alpha has a spec and no reachable port
     defined = "alpha"
@@ -162,7 +162,7 @@ def test_a_defined_agent_is_never_called_not_defined(
 
 
 def test_both_refusals_keep_the_containment_guarantee(
-    only_alpha_defined: Path,
+    pg_schema: str, only_alpha_defined: Path,
 ) -> None:
     # Arrange
     both = ("alpha", "proj-scitex-stats")

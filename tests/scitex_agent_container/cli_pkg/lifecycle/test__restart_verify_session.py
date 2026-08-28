@@ -143,7 +143,7 @@ def _seed_row(name: str, *, screen: str | None, host: str | None = None) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_a_row_with_screen_null_names_no_session(db_path) -> None:
+def test_a_row_with_screen_null_names_no_session(pg_schema: str, db_path) -> None:
     # Arrange — every locally-started row looked like this before the fix.
     _seed_row("null-screen", screen=None)
     # Act
@@ -152,7 +152,7 @@ def test_a_row_with_screen_null_names_no_session(db_path) -> None:
     assert session is None
 
 
-def test_a_row_that_names_a_session_hands_it_over(db_path) -> None:
+def test_a_row_that_names_a_session_hands_it_over(pg_schema: str, db_path) -> None:
     # Arrange — a row written by the fixed start path, on THIS host.
     _seed_row("named-screen", screen="tui-named-screen")
     # Act
@@ -169,7 +169,7 @@ def test_an_unknown_agent_names_no_session(db_path) -> None:
     assert session is None
 
 
-def test_a_caller_inside_a_container_refuses_to_probe_the_name(db_path) -> None:
+def test_a_caller_inside_a_container_refuses_to_probe_the_name(pg_schema: str, db_path) -> None:
     # Arrange — the row is perfectly good and on this host, but the CALLER is
     # in a SIF, whose tmux is a different mount namespace. Probing the name
     # here answers about the CONTAINER's tmux server; an answer from the wrong
@@ -181,7 +181,7 @@ def test_a_caller_inside_a_container_refuses_to_probe_the_name(db_path) -> None:
     assert session is None
 
 
-def test_a_row_written_on_another_host_refuses_to_probe_the_name(db_path) -> None:
+def test_a_row_written_on_another_host_refuses_to_probe_the_name(pg_schema: str, db_path) -> None:
     # Arrange — that session lives in a tmux server on a machine we cannot
     # reach; the same name here would answer about THIS machine.
     _seed_row("elsewhere", screen="tui-elsewhere", host="some-other-host")
@@ -196,7 +196,7 @@ def test_a_row_written_on_another_host_refuses_to_probe_the_name(db_path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_screen_null_reports_that_we_could_not_look(db_path) -> None:
+def test_screen_null_reports_that_we_could_not_look(pg_schema: str, db_path) -> None:
     # Arrange — the P0's registry state, read through the production path.
     _seed_row("blind-agent", screen=None)
     # Act
@@ -209,7 +209,7 @@ def test_screen_null_reports_that_we_could_not_look(db_path) -> None:
     assert seen.observed is False
 
 
-def test_screen_null_names_the_column_in_its_reason(db_path) -> None:
+def test_screen_null_names_the_column_in_its_reason(pg_schema: str, db_path) -> None:
     # Arrange
     _seed_row("blind-why", screen=None)
     # Act
@@ -222,7 +222,7 @@ def test_screen_null_names_the_column_in_its_reason(db_path) -> None:
     assert "screen" in seen.blind_because
 
 
-def test_a_live_session_is_observed_with_its_birthday(tmux_server, db_path) -> None:
+def test_a_live_session_is_observed_with_its_birthday(pg_schema: str, tmux_server, db_path) -> None:
     # Arrange — a REAL row naming a REAL tmux session.
     tmux_server("new-session", "-d", "-s", "tui-live-1", "sleep", "60")
     _seed_row("live-1", screen="tui-live-1")
@@ -287,7 +287,7 @@ def test_an_unverifiable_new_run_says_cannot_verify(tmux_server) -> None:
 
 
 def test_a_new_run_id_over_an_untouched_session_is_a_failure(
-    tmux_server, db_path
+    pg_schema: str, tmux_server, db_path
 ) -> None:
     # Arrange — THE P0, reproduced against real tmux: the ledger mints a new
     # run id while the session is never touched. Both readings are taken from

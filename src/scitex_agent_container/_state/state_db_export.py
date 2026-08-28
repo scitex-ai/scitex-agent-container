@@ -19,16 +19,21 @@ Wire format::
     "host": "<canonical>",   # the host that produced the dump
     "tables": {
       "definitions": [ {row}, ... ],
-      "instances":   [ {row}, ... ],
+      "attempts":    [ {row}, ... ],
       ...
     }
   }
 
 Filtering: each table picks a sensible "advance" column and emits
 only rows where that column >= since (or all rows when since is None).
-instances and definitions emit when *either* their start/seen
-timestamp OR end timestamp is >= since — an aggregator needs both
-halves of the lifecycle.
+``definitions`` and ``incarnations`` emit when *either* their
+start/seen timestamp OR end timestamp is >= since — an aggregator needs
+both halves of the lifecycle.
+
+``instances`` and ``events`` used to be the headline tables here. They
+moved to per-host PostgreSQL on 2026-08-28 and left ``KNOWN_TABLES``,
+so this ssh-and-JSON path no longer carries them; the store replicates
+them through its own federation instead.
 """
 
 from __future__ import annotations
@@ -57,13 +62,15 @@ def _table_filter_clauses(
         return {t: ("", ()) for t in known_tables}
     explicit = {
         "definitions": ("WHERE first_seen_at >= ?", (since,)),
-        "instances": (
-            "WHERE started_at >= ? OR ended_at >= ?",
-            (since, since),
-        ),
+        # ``instances`` and ``events`` had entries here until 2026-08-28.
+        # Both moved to per-host PostgreSQL (state_db_instances /
+        # state_db_instance_events) and left KNOWN_TABLES, so neither
+        # mapping can be selected again — and a WHERE clause naming a
+        # table SQLite no longer has reads as "sac still exports this".
+        # Their cross-host replication is now the store's own federation,
+        # not this ssh-and-JSON path.
         "instance_heartbeats": ("WHERE ts >= ?", (since,)),
         "heartbeats": ("WHERE ts >= ?", (since,)),
-        "events": ("WHERE ts >= ?", (since,)),
         "attempts": ("WHERE ts >= ?", (since,)),
         "turns": ("WHERE ts >= ?", (since,)),
         "errors": ("WHERE ts >= ?", (since,)),
@@ -186,13 +193,27 @@ def import_legacy_registry(
 ) -> dict[str, int]:
     """Lift the JSON files under ``registry_dir`` into ``instances``.
 
-    Each JSON shard becomes one ``instances`` row marked
+    Each JSON shard becomes one ``instances`` record marked
     ``exit_reason='reboot-swept'`` with ``ended_at`` = now. Idempotent:
-    existing rows matched by ``(name, host, started_at)`` are skipped.
+    existing records matched by ``(name, host, started_at)`` are skipped.
 
     Returns ``{"imported": N, "skipped": M}``.
+
+    ``db_path`` is accepted and IGNORED since 2026-08-28: ``instances``
+    moved to PostgreSQL and there is no file to point at. The parameter
+    stays in the signature because this is a public re-export with
+    callers in the CLI and in ``db tick``; removing it is a separate,
+    caller-visible change from moving the storage.
+
+    The duplicate check is now a scan of the records rather than an
+    indexed SELECT. That is the honest trade at this size — the legacy
+    registry is a directory of per-agent JSON shards on one host, tens of
+    files — and it keeps the natural key ``(name, host, started_at)``
+    doing the deduplication instead of inventing a surrogate that would
+    not survive a second store boundary.
     """
-    from .state_db import new_uuid7, now_iso, open_db
+    from .state_db import new_uuid7, now_iso
+    from .state_db_instances import all_instances, put_instance_record
 
     if host is None:
         host = _sac_env("HOST") or socket.gethostname().split(".")[0]
@@ -203,50 +224,42 @@ def import_legacy_registry(
         return {"imported": 0, "skipped": 0}
 
     swept_at = now_iso()
-    with open_db(db_path) as conn:
-        for path in sorted(registry_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text())
-            except (
-                json.JSONDecodeError,
-                OSError,
-            ):  # stx-allow: fallback (reason: malformed shard tolerated)
-                skipped += 1
-                continue
-            name = data.get("name")
-            started_at = data.get("started_at")
-            if not (name and started_at):
-                skipped += 1
-                continue
-            existing = conn.execute(
-                "SELECT id FROM instances WHERE name=? AND host=? AND started_at=?",
-                (name, host, started_at),
-            ).fetchone()
-            if existing:
-                skipped += 1
-                continue
-            conn.execute(
-                """
-                INSERT INTO instances (
-                    id, name, host, scope, pid, screen, workdir,
-                    started_at, ended_at, exit_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_uuid7(),
-                    name,
-                    host,
-                    "global",
-                    data.get("pid"),
-                    data.get("screen"),
-                    data.get("workdir"),
-                    started_at,
-                    swept_at,
-                    "reboot-swept",
-                ),
-            )
-            imported += 1
+    seen = {
+        (r.get("name"), r.get("host"), r.get("started_at")) for r in all_instances()
+    }
+    for path in sorted(registry_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed shard tolerated)
+            skipped += 1
+            continue
+        name = data.get("name")
+        started_at = data.get("started_at")
+        if not (name and started_at):
+            skipped += 1
+            continue
+        if (name, host, started_at) in seen:
+            skipped += 1
+            continue
+        put_instance_record(
+            {
+                "id": new_uuid7(),
+                "name": name,
+                "host": host,
+                "scope": "global",
+                "pid": data.get("pid"),
+                "screen": data.get("screen"),
+                "workdir": data.get("workdir"),
+                "started_at": started_at,
+                "ended_at": swept_at,
+                "exit_reason": "reboot-swept",
+            }
+        )
+        seen.add((name, host, started_at))
+        imported += 1
     return {"imported": imported, "skipped": skipped}
 
 

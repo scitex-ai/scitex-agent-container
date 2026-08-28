@@ -108,7 +108,7 @@ def _seed_agent(tmp_path: Path, name: str, *, spec=True, runtime=True) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_exits_with_zero_status_code(tmp_path):
+def test_dry_run_exits_with_zero_status_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -119,7 +119,7 @@ def test_dry_run_exits_with_zero_status_code(tmp_path):
     assert result.exit_code == 0, result.output
 
 
-def test_dry_run_announces_target_agent_in_output(tmp_path):
+def test_dry_run_announces_target_agent_in_output(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -145,7 +145,7 @@ def test_unknown_agent_exits_with_nonzero_status_code(tmp_path):
     assert result.exit_code == 1
 
 
-def test_unknown_agent_message_says_not_found(tmp_path):
+def test_unknown_agent_message_says_not_found(pg_schema: str, tmp_path):
     # Arrange
     runner = CliRunner()
     # Act
@@ -184,7 +184,7 @@ def test_bulk_delete_without_yes_reports_refusal_message(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_full_delete_exits_with_zero_status_code(tmp_path):
+def test_full_delete_exits_with_zero_status_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -199,7 +199,7 @@ def test_full_delete_exits_with_zero_status_code(tmp_path):
 
 
 @pytest.mark.parametrize("subdir", ["agents", "runtime"])
-def test_full_delete_removes_per_agent_directory(tmp_path, subdir):
+def test_full_delete_removes_per_agent_directory(pg_schema: str, tmp_path, subdir):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     target = tmp_path / ".scitex" / "agent-container" / subdir / "alpha"
@@ -214,7 +214,7 @@ def test_full_delete_removes_per_agent_directory(tmp_path, subdir):
     assert not target.exists()
 
 
-def test_full_delete_invokes_registry_remove_with_agent_name(tmp_path):
+def test_full_delete_invokes_registry_remove_with_agent_name(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     reg = _FakeRegistry(exists=True)
@@ -229,7 +229,7 @@ def test_full_delete_invokes_registry_remove_with_agent_name(tmp_path):
     assert reg.remove_calls == ["alpha"]
 
 
-def test_full_delete_invokes_agent_stop_with_spec_yaml_path(tmp_path):
+def test_full_delete_invokes_agent_stop_with_spec_yaml_path(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     stop_calls: list[str] = []
@@ -244,7 +244,7 @@ def test_full_delete_invokes_agent_stop_with_spec_yaml_path(tmp_path):
     assert stop_calls and stop_calls[0].endswith("spec.yaml")
 
 
-def test_full_delete_emits_deleted_marker_in_output(tmp_path):
+def test_full_delete_emits_deleted_marker_in_output(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -278,7 +278,7 @@ def test_keep_runtime_preserves_runtime_directory(tmp_path):
     assert rt_dir.exists(), result.output
 
 
-def test_keep_runtime_still_exits_with_zero_status_code(tmp_path):
+def test_keep_runtime_still_exits_with_zero_status_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -316,7 +316,7 @@ def test_rmtree_failure_exits_with_nonzero_status_code(tmp_path):
     assert result.exit_code == 1
 
 
-def test_rmtree_failure_emits_warn_marker_in_output(tmp_path):
+def test_rmtree_failure_emits_warn_marker_in_output(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -340,7 +340,7 @@ def _boom_stop(_yaml, _force):
     raise RuntimeError("stop failed")
 
 
-def test_stop_failure_does_not_break_delete_exit_code(tmp_path):
+def test_stop_failure_does_not_break_delete_exit_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -351,7 +351,7 @@ def test_stop_failure_does_not_break_delete_exit_code(tmp_path):
     assert result.exit_code == 0
 
 
-def test_stop_failure_still_emits_deleted_marker_in_output(tmp_path):
+def test_stop_failure_still_emits_deleted_marker_in_output(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -362,7 +362,7 @@ def test_stop_failure_still_emits_deleted_marker_in_output(tmp_path):
     assert "deleted" in result.output
 
 
-def test_registry_remove_failure_does_not_break_exit_code(tmp_path):
+def test_registry_remove_failure_does_not_break_exit_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -376,7 +376,7 @@ def test_registry_remove_failure_does_not_break_exit_code(tmp_path):
     assert result.exit_code == 0
 
 
-def test_registry_remove_failure_still_emits_deleted_marker(tmp_path):
+def test_registry_remove_failure_still_emits_deleted_marker(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     runner = CliRunner()
@@ -413,7 +413,7 @@ def test_missing_spec_yaml_skips_agent_stop_invocation(tmp_path):
     assert stop_calls == [], result.output
 
 
-def test_missing_spec_yaml_still_exits_with_zero_status_code(tmp_path):
+def test_missing_spec_yaml_still_exits_with_zero_status_code(pg_schema: str, tmp_path):
     # Arrange
     _seed_agent(tmp_path, "alpha")
     (
@@ -436,7 +436,7 @@ def test_missing_spec_yaml_still_exits_with_zero_status_code(tmp_path):
 
 
 @pytest.fixture
-def cross_host_delete_env(tmp_path):
+def cross_host_delete_env(pg_schema: str, tmp_path):
     """State.db redirect + peer config + ssh shim for cross-host delete."""
     import importlib
     import json
@@ -497,7 +497,7 @@ def _ssh_invocations_delete(log):
     return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
-def test_cross_host_delete_exits_zero(cross_host_delete_env):
+def test_cross_host_delete_exits_zero(pg_schema: str, cross_host_delete_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -507,7 +507,7 @@ def test_cross_host_delete_exits_zero(cross_host_delete_env):
     assert result.exit_code == 0, result.output
 
 
-def test_cross_host_delete_ssh_includes_stop_and_rm(cross_host_delete_env):
+def test_cross_host_delete_ssh_includes_stop_and_rm(pg_schema: str, cross_host_delete_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -520,7 +520,7 @@ def test_cross_host_delete_ssh_includes_stop_and_rm(cross_host_delete_env):
     )
 
 
-def test_cross_host_delete_closes_lead_side_row(cross_host_delete_env):
+def test_cross_host_delete_closes_lead_side_row(pg_schema: str, cross_host_delete_env):
     # Arrange
     from scitex_agent_container._state.state_db import list_active_instances
 
@@ -533,7 +533,7 @@ def test_cross_host_delete_closes_lead_side_row(cross_host_delete_env):
     assert rows == []
 
 
-def test_cross_host_delete_emits_remote_marker(cross_host_delete_env):
+def test_cross_host_delete_emits_remote_marker(pg_schema: str, cross_host_delete_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -543,7 +543,7 @@ def test_cross_host_delete_emits_remote_marker(cross_host_delete_env):
     assert "removed 'zeta' on peer 'peer-x'" in result.output
 
 
-def test_cross_host_delete_dry_run_does_not_invoke_ssh(cross_host_delete_env):
+def test_cross_host_delete_dry_run_does_not_invoke_ssh(pg_schema: str, cross_host_delete_env):
     # Arrange
     runner = CliRunner()
     # Act

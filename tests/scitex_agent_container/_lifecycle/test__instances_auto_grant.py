@@ -73,7 +73,7 @@ class _RuntimeStub:
 
 
 def test_record_local_instance_grants_self_to_lead(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -92,7 +92,7 @@ def test_record_local_instance_grants_self_to_lead(
 
 
 def test_record_local_instance_grant_to_lead_is_idempotent(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange — two successive starts simulate a crash-recover loop.
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -120,7 +120,7 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
 
 
 def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -263,7 +263,7 @@ def _fire_monitor_restart_against_foreign_db(
 
 
 def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_nodes import list_comms_grants
@@ -278,7 +278,7 @@ def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
 
 
 def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_nodes import has_grant

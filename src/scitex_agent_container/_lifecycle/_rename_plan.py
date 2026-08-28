@@ -127,15 +127,24 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _open_instance_pid(db_path: Path, name: str) -> int | None:
-    """Return the pid of an open ``instances`` row for ``name``, if any."""
-    if not db_path.is_file():
-        return None
-    # Through the OWNING module, not through its table. The raw SELECT this
-    # replaces would keep reading a SQLite ``instances`` table after that
-    # table moves backend, and would report "not running" for every agent
-    # rather than failing — the same silent-stranding shape found in
-    # ``_authheal/_specimen`` during the sqlite->PostgreSQL migration.
+def _open_instance_pid(name: str) -> int | None:
+    """Return the pid of an open ``instances`` record for ``name``, if any.
+
+    THE ``db_path`` PARAMETER AND ITS ``is_file()`` GUARD ARE GONE
+    (2026-08-28), and dropping the guard is the load-bearing half. It
+    short-circuited to "no pid" whenever ``state.db`` was absent, which
+    was a sound proxy while the records lived in that file and is a
+    silent wrong answer now that they live in PostgreSQL: a host with no
+    state.db would have reported every agent as not running, mid-rename.
+    That is the exact shape the comment below was written about, arriving
+    one level up from where it was expected.
+
+    Through the OWNING module, not through its table. The raw SELECT this
+    replaces would keep reading a SQLite ``instances`` table after that
+    table moved backend, and would report "not running" for every agent
+    rather than failing — the same silent-stranding shape found in
+    ``_authheal/_specimen`` during the sqlite->PostgreSQL migration.
+    """
     #
     # ``list_active_instances`` already applies ``ended_at IS NULL`` and
     # orders by ``started_at DESC``, so only this function's two extra
@@ -143,8 +152,8 @@ def _open_instance_pid(db_path: Path, name: str) -> int | None:
     from .._state.state_db_instances import list_active_instances
 
     try:
-        rows = list_active_instances(db_path=db_path)
-    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
+        rows = list_active_instances()
+    except Exception:  # stx-allow: fallback (reason: absence of a readable registry is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error and the store now raises StoreTargetError, so narrowing it here would turn an unreachable database into a crash mid-rename.)
         return None
     for row in rows:
         if row.get("name") == name and row.get("pid") is not None:
@@ -182,12 +191,12 @@ def probe_running(name: str, layout: Layout) -> tuple[str, str]:
         if _pid_alive(pid):
             return "running", f"pid {pid} (from {pid_file}) is alive"
 
-    open_pid = _open_instance_pid(layout.state_db, name)
+    open_pid = _open_instance_pid(name)
     if open_pid is not None and _pid_alive(open_pid):
         return (
             "running",
-            f"state.db has an open instances row for {name!r} whose pid "
-            f"{open_pid} is alive",
+            f"the registry has an open instances record for {name!r} whose "
+            f"pid {open_pid} is alive",
         )
 
     return "stopped", ""

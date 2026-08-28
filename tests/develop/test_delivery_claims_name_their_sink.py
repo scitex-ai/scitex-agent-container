@@ -122,6 +122,14 @@ _ESCAPE_HATCH = re.compile(r"stx-allow:")
 
 #: MEASURED 2026-08-19. Every `stx-allow` line whose reason claims delivery
 #: and names no sink. 73 lines claimed delivery; 4 already named a sink.
+#:
+#: THE ENTRIES ARE ``file:line``, so an unrelated edit ABOVE one of them
+#: moves it and BOTH gates fire at once — "a new unnamed claim" for the new
+#: number and "a stale entry" for the old. Three moved on 2026-08-28 when the
+#: instances sqlite→PostgreSQL migration added docstring lines above them
+#: (``_lifecycle/_instances.py`` 263→267, ``_reconcile/_pass.py`` 370→377 and
+#: 428→435). Re-pinning is the correct response; the claims themselves are
+#: unchanged and still unnamed.
 FROZEN_UNNAMED_CLAIMS = frozenset(
     {
         "scitex_agent_container/_account/claude_usage.py:381",
@@ -149,7 +157,7 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
-        "scitex_agent_container/_lifecycle/_instances.py:263",
+        "scitex_agent_container/_lifecycle/_instances.py:267",
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
@@ -177,8 +185,8 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_network/_peer_dispatch.py:59",
         "scitex_agent_container/_network/probe.py:457",
         "scitex_agent_container/_reconcile/_budget.py:164",
-        "scitex_agent_container/_reconcile/_pass.py:370",
-        "scitex_agent_container/_reconcile/_pass.py:428",
+        "scitex_agent_container/_reconcile/_pass.py:377",
+        "scitex_agent_container/_reconcile/_pass.py:435",
         "scitex_agent_container/_reconcile/_perform.py:96",
         "scitex_agent_container/_runners/_codex_turn_driver.py:169",
         "scitex_agent_container/_runners/_openai_turn_driver.py:240",

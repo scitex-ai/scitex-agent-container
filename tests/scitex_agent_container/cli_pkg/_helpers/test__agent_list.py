@@ -388,7 +388,7 @@ def test_probe_local_reports_a_live_tui_session_as_running():
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_with_empty_registry_returns_empty_list():
+def test_get_data_with_empty_registry_returns_empty_list(pg_schema: str):
     # Arrange
     registry = _FakeRegistry([])
     # Act
@@ -398,7 +398,7 @@ def test_get_data_with_empty_registry_returns_empty_list():
     assert out == []
 
 
-def test_get_data_with_unloadable_config_yields_status_unknown(tmp_path):
+def test_get_data_with_unloadable_config_yields_status_unknown(pg_schema: str, tmp_path):
     # Arrange — config path that does not exist → real load_config raises.
     missing = tmp_path / "nope" / "spec.yaml"
     entries = [{"name": "x", "screen": "s", "started_at": "ts", "config": str(missing)}]
@@ -410,7 +410,7 @@ def test_get_data_with_unloadable_config_yields_status_unknown(tmp_path):
     assert out[0]["status"] == "unknown" and out[0].get("liveness_unknown") is True
 
 
-def test_get_data_with_capability_filter_includes_matching_agent(tmp_path):
+def test_get_data_with_capability_filter_includes_matching_agent(pg_schema: str, tmp_path):
     # Arrange — real spec with labels.capabilities="HPC, GPU".
     spec = _write_valid_spec(tmp_path / "x", capabilities="HPC, GPU")
     entries = [
@@ -424,7 +424,7 @@ def test_get_data_with_capability_filter_includes_matching_agent(tmp_path):
     assert len(out) == 1 and out[0]["name"] == "x"
 
 
-def test_get_data_with_capability_filter_excludes_non_matching_agent(tmp_path):
+def test_get_data_with_capability_filter_excludes_non_matching_agent(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x", capabilities="GPU")
     entries = [{"name": "x", "config": str(spec)}]
@@ -436,7 +436,7 @@ def test_get_data_with_capability_filter_excludes_non_matching_agent(tmp_path):
     assert out == []
 
 
-def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
+def test_get_data_with_machine_filter_excludes_non_matching_agent(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x", machine="m2")
     entries = [{"name": "x", "config": str(spec)}]
@@ -458,7 +458,7 @@ def test_get_data_with_machine_filter_excludes_non_matching_agent(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_with_group_filter_includes_matching_agent(tmp_path):
+def test_get_data_with_group_filter_includes_matching_agent(pg_schema: str, tmp_path):
     # Arrange — real spec with labels.groups: [active, researcher].
     spec = _write_valid_spec(tmp_path / "x", groups=["active", "researcher"])
     entries = [
@@ -472,7 +472,7 @@ def test_get_data_with_group_filter_includes_matching_agent(tmp_path):
     assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_group_filter_excludes_non_matching_agent(tmp_path):
+def test_get_data_with_group_filter_excludes_non_matching_agent(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x", groups=["researcher"])
     entries = [{"name": "x", "config": str(spec)}]
@@ -484,7 +484,7 @@ def test_get_data_with_group_filter_excludes_non_matching_agent(tmp_path):
     assert out == []
 
 
-def test_get_data_with_group_filter_matches_any_of_multiple_wanted_values(tmp_path):
+def test_get_data_with_group_filter_matches_any_of_multiple_wanted_values(pg_schema: str, tmp_path):
     # Arrange — caller passes two comma-separated groups; agent is in one.
     spec = _write_valid_spec(tmp_path / "x", groups=["researcher"])
     entries = [{"name": "x", "config": str(spec)}]
@@ -496,7 +496,7 @@ def test_get_data_with_group_filter_matches_any_of_multiple_wanted_values(tmp_pa
     assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_group_filter_matches_a_non_first_group(tmp_path):
+def test_get_data_with_group_filter_matches_a_non_first_group(pg_schema: str, tmp_path):
     # Arrange — `active` is NOT the first element. The ACL resolver reduces a
     # spec to its FIRST group; selection must use the MULTI-value read instead,
     # or every real fleet spec (groups: [developer, active]) would be missed.
@@ -510,7 +510,7 @@ def test_get_data_with_group_filter_matches_a_non_first_group(tmp_path):
     assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_group_filter_ungrouped_agent_is_excluded(tmp_path):
+def test_get_data_with_group_filter_ungrouped_agent_is_excluded(pg_schema: str, tmp_path):
     # Arrange — agent has no groups label at all.
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -522,7 +522,7 @@ def test_get_data_with_group_filter_ungrouped_agent_is_excluded(tmp_path):
     assert out == []
 
 
-def test_get_data_without_group_filter_includes_ungrouped_agent(tmp_path):
+def test_get_data_without_group_filter_includes_ungrouped_agent(pg_schema: str, tmp_path):
     # Arrange — no --group passed at all: the filter must be a pure no-op.
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -534,7 +534,7 @@ def test_get_data_without_group_filter_includes_ungrouped_agent(tmp_path):
     assert [r["name"] for r in out] == ["x"]
 
 
-def test_get_data_with_group_filter_includes_matching_defined_agent(tmp_path):
+def test_get_data_with_group_filter_includes_matching_defined_agent(pg_schema: str, tmp_path):
     # Arrange — defined-on-disk (not registered) agent; the second filter
     # site (the disk-merge loop) must apply the SAME group matching.
     spec = _write_valid_spec(tmp_path / "ondisk", groups=["developer", "active"])
@@ -550,7 +550,7 @@ def test_get_data_with_group_filter_includes_matching_defined_agent(tmp_path):
     assert any(r["name"] == "ondisk" for r in out)
 
 
-def test_get_data_group_filter_selects_what_the_tags_filter_used_to_select(tmp_path):
+def test_get_data_group_filter_selects_what_the_tags_filter_used_to_select(pg_schema: str, tmp_path):
     """MIGRATION EQUIVALENCE — `--group active` == the old `--tags active-development`.
 
     The abolition rests on the claim that `tags` carried no information
@@ -576,7 +576,7 @@ def test_get_data_group_filter_selects_what_the_tags_filter_used_to_select(tmp_p
     assert [r["name"] for r in out] == ["figrecipe"]
 
 
-def test_get_data_with_group_filter_excludes_non_matching_defined_agent(tmp_path):
+def test_get_data_with_group_filter_excludes_non_matching_defined_agent(pg_schema: str, tmp_path):
     # Arrange — same disk-merge loop, non-matching group this time.
     spec = _write_valid_spec(tmp_path / "ondisk", groups=["researcher"])
     registry = _FakeRegistry([])
@@ -591,7 +591,7 @@ def test_get_data_with_group_filter_excludes_non_matching_defined_agent(tmp_path
     assert out == []
 
 
-def test_get_data_row_status_running_when_probe_returns_true(tmp_path):
+def test_get_data_row_status_running_when_probe_returns_true(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec), "screen": "-", "started_at": "-"}]
@@ -603,7 +603,7 @@ def test_get_data_row_status_running_when_probe_returns_true(tmp_path):
     assert out[0]["status"] == "running"
 
 
-def test_get_data_row_status_stopped_when_probe_returns_false(tmp_path):
+def test_get_data_row_status_stopped_when_probe_returns_false(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -615,7 +615,7 @@ def test_get_data_row_status_stopped_when_probe_returns_false(tmp_path):
     assert out[0]["status"] == "stopped"
 
 
-def test_get_data_row_status_unknown_when_probe_returns_none(tmp_path):
+def test_get_data_row_status_unknown_when_probe_returns_none(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -627,7 +627,7 @@ def test_get_data_row_status_unknown_when_probe_returns_none(tmp_path):
     assert out[0]["status"] == "unknown"
 
 
-def test_get_data_row_liveness_unknown_flagged_when_probe_returns_none(tmp_path):
+def test_get_data_row_liveness_unknown_flagged_when_probe_returns_none(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -650,7 +650,7 @@ def test_get_data_row_liveness_unknown_flagged_when_probe_returns_none(tmp_path)
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_row_names_the_adapter_that_answered(tmp_path):
+def test_get_data_row_names_the_adapter_that_answered(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -661,7 +661,7 @@ def test_get_data_row_names_the_adapter_that_answered(tmp_path):
     assert out[0]["probe_runtime"] == "TuiSessionRuntime"
 
 
-def test_get_data_stopped_row_names_the_adapter_that_answered(tmp_path):
+def test_get_data_stopped_row_names_the_adapter_that_answered(pg_schema: str, tmp_path):
     # Arrange — the diagnostic case. "stopped" + the adapter that said so is
     # what turns a third recurrence into a statement instead of an argument:
     # ClaudeSessionRuntime on a tui agent IS the bug.
@@ -677,7 +677,7 @@ def test_get_data_stopped_row_names_the_adapter_that_answered(tmp_path):
     assert out[0]["probe_runtime"] == "ClaudeSessionRuntime"
 
 
-def test_get_data_row_label_comes_from_the_probe_not_a_second_lookup(tmp_path):
+def test_get_data_row_label_comes_from_the_probe_not_a_second_lookup(pg_schema: str, tmp_path):
     # Arrange — THE design constraint. A row builder that computed the adapter
     # itself would report the CORRECTLY selected one while the probe used
     # another, i.e. it would read clean in exactly the case it exists to catch.
@@ -695,7 +695,7 @@ def test_get_data_row_label_comes_from_the_probe_not_a_second_lookup(tmp_path):
     assert out[0]["probe_runtime"] == "NotTheSelectedOne"
 
 
-def test_get_data_unknown_row_says_why_it_abstained(tmp_path):
+def test_get_data_unknown_row_says_why_it_abstained(pg_schema: str, tmp_path):
     # Arrange — an abstention used to discard its own exception, so `unknown`
     # meant "no answer, and no way to find out why".
     spec = _write_valid_spec(tmp_path / "x")
@@ -718,7 +718,7 @@ def test_probe_detail_records_the_adapter_for_a_tui_config():
     assert probe.runtime == "TuiSessionRuntime"
 
 
-def test_get_data_merges_in_defined_agents_absent_from_registry(tmp_path):
+def test_get_data_merges_in_defined_agents_absent_from_registry(pg_schema: str, tmp_path):
     # Arrange — agent on disk only, not in registry.
     spec = _write_valid_spec(tmp_path / "ondisk")
     registry = _FakeRegistry([])
@@ -733,7 +733,7 @@ def test_get_data_merges_in_defined_agents_absent_from_registry(tmp_path):
     assert any(r["name"] == "ondisk" and r["status"] == "defined" for r in out)
 
 
-def test_get_data_marks_defined_agent_with_invalid_yaml_as_invalid(tmp_path):
+def test_get_data_marks_defined_agent_with_invalid_yaml_as_invalid(pg_schema: str, tmp_path):
     # Arrange — spec.yaml that real validator rejects.
     spec = _write_invalid_spec(tmp_path / "bad")
     registry = _FakeRegistry([])
@@ -754,7 +754,7 @@ def test_get_data_marks_defined_agent_with_invalid_yaml_as_invalid(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_print_agent_list_prints_no_agents_message_when_empty(capsys):
+def test_print_agent_list_prints_no_agents_message_when_empty(pg_schema: str, capsys):
     # Arrange
     registry = _FakeRegistry([])
     # Act
@@ -764,7 +764,7 @@ def test_print_agent_list_prints_no_agents_message_when_empty(capsys):
     assert "No agents found" in capsys.readouterr().out
 
 
-def test_print_agent_list_renders_agent_name_in_table(capsys, tmp_path):
+def test_print_agent_list_renders_agent_name_in_table(pg_schema: str, capsys, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry(
@@ -777,7 +777,7 @@ def test_print_agent_list_renders_agent_name_in_table(capsys, tmp_path):
     assert "x" in capsys.readouterr().out
 
 
-def test_print_agent_list_renders_status_word_for_running_agent(capsys, tmp_path):
+def test_print_agent_list_renders_status_word_for_running_agent(pg_schema: str, capsys, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry(
@@ -790,7 +790,7 @@ def test_print_agent_list_renders_status_word_for_running_agent(capsys, tmp_path
     assert "running" in capsys.readouterr().out
 
 
-def test_print_agent_list_prints_full_validation_errors_under_table(capsys, tmp_path):
+def test_print_agent_list_prints_full_validation_errors_under_table(pg_schema: str, capsys, tmp_path):
     # Arrange — invalid spec triggers real validate_config errors mentioning
     # spec.runtime. The per-agent error blocks now live in the FULL (`-v`)
     # view; the default view hides them (operator TG 1490-1495).
@@ -803,7 +803,7 @@ def test_print_agent_list_prints_full_validation_errors_under_table(capsys, tmp_
     assert "spec.runtime" in capsys.readouterr().out
 
 
-def test_print_agent_list_json_emits_agent_name_in_first_row(capsys, tmp_path):
+def test_print_agent_list_json_emits_agent_name_in_first_row(pg_schema: str, capsys, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -993,7 +993,7 @@ def _swap_account(impl: Callable[[Any], str]) -> Iterator[None]:
         _al._safe_account_for = saved  # type: ignore[assignment]
 
 
-def test_get_data_row_carries_account_field(tmp_path):
+def test_get_data_row_carries_account_field(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     entries = [{"name": "x", "config": str(spec)}]
@@ -1009,7 +1009,7 @@ def test_get_data_row_carries_account_field(tmp_path):
     assert out[0]["account"] == "alice@example.com"
 
 
-def test_get_data_defined_agent_row_carries_account_field(tmp_path):
+def test_get_data_defined_agent_row_carries_account_field(pg_schema: str, tmp_path):
     # Arrange — agent on disk only, not in registry.
     spec = _write_valid_spec(tmp_path / "ondisk")
     registry = _FakeRegistry([])
@@ -1025,7 +1025,7 @@ def test_get_data_defined_agent_row_carries_account_field(tmp_path):
     assert row["account"] == "bob@example.com"
 
 
-def test_print_agent_list_renders_account_column_header(capsys, tmp_path):
+def test_print_agent_list_renders_account_column_header(pg_schema: str, capsys, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -1040,7 +1040,7 @@ def test_print_agent_list_renders_account_column_header(capsys, tmp_path):
     assert "Account" in capsys.readouterr().out
 
 
-def test_print_agent_list_renders_account_value(capsys, tmp_path):
+def test_print_agent_list_renders_account_value(pg_schema: str, capsys, tmp_path):
     # Arrange — a short label survives the narrow capture-mode terminal
     # width (a long email gets ellipsised by rich; the JSON test below
     # covers the full value).
@@ -1057,7 +1057,7 @@ def test_print_agent_list_renders_account_value(capsys, tmp_path):
     assert "acct-x" in capsys.readouterr().out
 
 
-def test_print_agent_list_json_emits_account_in_row(capsys, tmp_path):
+def test_print_agent_list_json_emits_account_in_row(pg_schema: str, capsys, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -1175,7 +1175,7 @@ def test_remote_row_is_never_a_ghost_even_if_spec_missing_locally():
 # ---------------------------------------------------------------------------
 
 
-def test_print_agent_list_hides_ghost_and_shows_hidden_footer(capsys, tmp_path):
+def test_print_agent_list_hides_ghost_and_shows_hidden_footer(pg_schema: str, capsys, tmp_path):
     # Arrange — a real agent + a ghost (registry entry whose spec file is gone).
     good = _write_valid_spec(tmp_path / "good")
     registry = _FakeRegistry(
@@ -1193,7 +1193,7 @@ def test_print_agent_list_hides_ghost_and_shows_hidden_footer(capsys, tmp_path):
     assert "deadrow" not in out and "hidden" in out
 
 
-def test_print_agent_list_show_all_includes_ghost(capsys, tmp_path):
+def test_print_agent_list_show_all_includes_ghost(pg_schema: str, capsys, tmp_path):
     # Arrange
     registry = _FakeRegistry(
         [{"name": "ghost", "config": str(tmp_path / "gone" / "spec.yaml")}]
@@ -1205,7 +1205,7 @@ def test_print_agent_list_show_all_includes_ghost(capsys, tmp_path):
     assert "ghost" in capsys.readouterr().out
 
 
-def test_print_agent_list_verbose_adds_path_column(capsys, tmp_path):
+def test_print_agent_list_verbose_adds_path_column(pg_schema: str, capsys, tmp_path):
     # Arrange
     good = _write_valid_spec(tmp_path / "good")
     registry = _FakeRegistry(
@@ -1218,7 +1218,7 @@ def test_print_agent_list_verbose_adds_path_column(capsys, tmp_path):
     assert "Path" in capsys.readouterr().out
 
 
-def test_print_agent_list_default_omits_path_column(capsys, tmp_path):
+def test_print_agent_list_default_omits_path_column(pg_schema: str, capsys, tmp_path):
     # Arrange
     good = _write_valid_spec(tmp_path / "good")
     registry = _FakeRegistry(
@@ -1284,7 +1284,7 @@ def _running_plus_defined_and_invalid(tmp_path):
     return registry, _discover
 
 
-def test_print_agent_list_default_shows_running_agent(capsys, tmp_path):
+def test_print_agent_list_default_shows_running_agent(pg_schema: str, capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act — default view.
@@ -1294,7 +1294,7 @@ def test_print_agent_list_default_shows_running_agent(capsys, tmp_path):
     assert "runner" in capsys.readouterr().out
 
 
-def test_print_agent_list_default_hides_definition_and_invalid(capsys, tmp_path):
+def test_print_agent_list_default_hides_definition_and_invalid(pg_schema: str, capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act
@@ -1305,7 +1305,7 @@ def test_print_agent_list_default_hides_definition_and_invalid(capsys, tmp_path)
     assert "def1" not in out and "bad1" not in out
 
 
-def test_print_agent_list_default_footer_counts_hidden(capsys, tmp_path):
+def test_print_agent_list_default_footer_counts_hidden(pg_schema: str, capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act
@@ -1316,7 +1316,7 @@ def test_print_agent_list_default_footer_counts_hidden(capsys, tmp_path):
     assert "definitions" in out and "invalid" in out and "hidden" in out
 
 
-def test_print_agent_list_default_omits_validation_blocks(capsys, tmp_path):
+def test_print_agent_list_default_omits_validation_blocks(pg_schema: str, capsys, tmp_path):
     # Arrange — the invalid agent's real spec.runtime error block must NOT
     # print in the default view (the wall the operator asked us to remove).
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
@@ -1327,7 +1327,7 @@ def test_print_agent_list_default_omits_validation_blocks(capsys, tmp_path):
     assert "spec.runtime" not in capsys.readouterr().out
 
 
-def test_print_agent_list_default_hides_stopped_agent(capsys, tmp_path):
+def test_print_agent_list_default_hides_stopped_agent(pg_schema: str, capsys, tmp_path):
     # Arrange — a single registered-but-stopped agent (probe False).
     spec = _write_valid_spec(tmp_path / "stopper")
     registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
@@ -1339,7 +1339,7 @@ def test_print_agent_list_default_hides_stopped_agent(capsys, tmp_path):
     assert "stopper" not in out and "stopped" in out and "No running agents" in out
 
 
-def test_print_agent_list_verbose_includes_stopped_agent(capsys, tmp_path):
+def test_print_agent_list_verbose_includes_stopped_agent(pg_schema: str, capsys, tmp_path):
     # Arrange — same stopped agent; -v restores the full roster.
     spec = _write_valid_spec(tmp_path / "stopper")
     registry = _FakeRegistry([{"name": "stopper", "config": str(spec)}])
@@ -1350,7 +1350,7 @@ def test_print_agent_list_verbose_includes_stopped_agent(capsys, tmp_path):
     assert "stopper" in capsys.readouterr().out
 
 
-def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp_path):
+def test_print_agent_list_verbose_includes_definition_and_validation(pg_schema: str, capsys, tmp_path):
     # Arrange
     registry, discover = _running_plus_defined_and_invalid(tmp_path)
     # Act — -v shows every status AND the per-agent validation-error detail.
@@ -1371,7 +1371,7 @@ def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_running_row_prefers_runtime_account(tmp_path):
+def test_get_data_running_row_prefers_runtime_account(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -1387,7 +1387,7 @@ def test_get_data_running_row_prefers_runtime_account(tmp_path):
     assert out[0]["account"] == "runtime-pick@example.com"
 
 
-def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
+def test_get_data_stopped_row_uses_spec_account_not_runtime(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
@@ -1403,7 +1403,7 @@ def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
     assert out[0]["account"] == "spec-label"
 
 
-def test_get_data_running_row_falls_back_to_spec_when_runtime_unresolved(tmp_path):
+def test_get_data_running_row_falls_back_to_spec_when_runtime_unresolved(pg_schema: str, tmp_path):
     # Arrange — runtime resolver returns None (agent auth not written yet).
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])

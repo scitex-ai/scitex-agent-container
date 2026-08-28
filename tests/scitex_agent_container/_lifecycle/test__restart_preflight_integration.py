@@ -224,7 +224,7 @@ def test_agent_restart_launches_no_successor_on_abort(
 
 
 def test_agent_restart_healthy_successor_still_stops_then_starts(
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — the pre-flight passes (returns None): normal restart proceeds.
     spec = _write_spec(tmp_path)
@@ -244,7 +244,7 @@ def test_agent_restart_healthy_successor_still_stops_then_starts(
 
 
 def test_agent_restart_runs_preflight_before_the_stop(
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — record ordering: the check must fire BEFORE the stop.
     spec = _write_spec(tmp_path)
@@ -324,7 +324,7 @@ def test_agent_start_force_leaves_running_container_up_on_abort(
 
 
 def test_agent_start_force_healthy_successor_still_restarts(
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — pre-flight passes: a normal force-restart must still work.
     spec = _write_spec(tmp_path)

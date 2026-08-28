@@ -54,7 +54,9 @@ def real_store(tmp_path):
     path = tmp_path / "state.db"
     conn = sqlite3.connect(path)
     try:
-        conn.execute("CREATE TABLE instances (name TEXT)")
+        # The two CORE_TABLES. ``instances`` stood here until 2026-08-28,
+        # when it moved to PostgreSQL and left the SQLite schema entirely.
+        conn.execute("CREATE TABLE instance_heartbeats (instance_id TEXT)")
         conn.execute("CREATE TABLE definitions (name TEXT)")
         conn.commit()
     finally:

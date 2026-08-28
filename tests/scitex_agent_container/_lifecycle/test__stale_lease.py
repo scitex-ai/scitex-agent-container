@@ -108,8 +108,8 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
         clear_stale_instance_lease,
     )
     from scitex_agent_container._state.state_db import (
+        last_known_instance,
         list_active_instances,
-        open_db,
         record_instance_start,
     )
 
@@ -117,17 +117,17 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
     record_instance_start(name=name, host="h", pid=dead_pid)
     cleared = clear_stale_instance_lease(name)
     active = [r for r in list_active_instances() if r["name"] == name]
-    with open_db() as conn:
-        cur = conn.execute(
-            "SELECT exit_reason, ended_at FROM instances WHERE name=?",
-            (name,),
-        )
-        raw = dict(cur.fetchone())
+    # Read the tombstone through the accessor that owns it. The raw
+    # ``SELECT exit_reason, ended_at FROM instances`` this replaces would
+    # keep querying a SQLite table that no longer exists (2026-08-28) —
+    # and would do it silently on a host where the table was never
+    # dropped, reporting the pre-migration value forever.
+    raw = last_known_instance(name)
     return cleared, active, raw
 
 
 def test_clear_stale_instance_lease_reports_one_row_cleared_on_dead_pid(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "dead-count"
@@ -138,7 +138,7 @@ def test_clear_stale_instance_lease_reports_one_row_cleared_on_dead_pid(
 
 
 def test_clear_stale_instance_lease_leaves_no_active_row_after_dead_pid_clear(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "dead-active"
@@ -149,7 +149,7 @@ def test_clear_stale_instance_lease_leaves_no_active_row_after_dead_pid_clear(
 
 
 def test_clear_stale_instance_lease_sets_exit_reason_to_stale_cleared(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "audit-reason"
@@ -160,7 +160,7 @@ def test_clear_stale_instance_lease_sets_exit_reason_to_stale_cleared(
 
 
 def test_clear_stale_instance_lease_writes_ended_at_when_dead_pid_cleared(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "audit-ended-at"
@@ -195,7 +195,7 @@ def _drive_live_pid_scenario(name: str) -> tuple[int, list[dict]]:
 
 
 def test_clear_stale_instance_lease_reports_zero_clears_on_live_pid(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "live-count"
@@ -205,7 +205,7 @@ def test_clear_stale_instance_lease_reports_zero_clears_on_live_pid(
     assert cleared == 0
 
 
-def test_clear_stale_instance_lease_keeps_live_row_active(db_path: Path) -> None:
+def test_clear_stale_instance_lease_keeps_live_row_active(pg_schema: str, db_path: Path) -> None:
     # Arrange
     name = "live-active"
     # Act
@@ -215,7 +215,7 @@ def test_clear_stale_instance_lease_keeps_live_row_active(db_path: Path) -> None
 
 
 def test_clear_stale_instance_lease_leaves_ended_at_unset_for_live_row(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "live-ended-at"
@@ -252,7 +252,7 @@ def _drive_name_scoped_scenario() -> tuple[int, set[str]]:
 
 
 def test_clear_stale_instance_lease_reports_one_when_scoped_to_target(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_name_scoped_scenario
@@ -262,7 +262,7 @@ def test_clear_stale_instance_lease_reports_one_when_scoped_to_target(
     assert cleared == 1
 
 
-def test_clear_stale_instance_lease_removes_only_named_target(db_path: Path) -> None:
+def test_clear_stale_instance_lease_removes_only_named_target(pg_schema: str, db_path: Path) -> None:
     # Arrange
     scenario = _drive_name_scoped_scenario
     # Act
@@ -272,7 +272,7 @@ def test_clear_stale_instance_lease_removes_only_named_target(db_path: Path) -> 
 
 
 def test_clear_stale_instance_lease_preserves_bystander_agent_row(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_name_scoped_scenario
@@ -306,7 +306,7 @@ def _drive_null_pid_scenario(name: str) -> tuple[int, list[dict]]:
 
 
 def test_clear_stale_instance_lease_reports_zero_clears_on_null_pid(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "null-count"
@@ -316,7 +316,7 @@ def test_clear_stale_instance_lease_reports_zero_clears_on_null_pid(
     assert cleared == 0
 
 
-def test_clear_stale_instance_lease_keeps_null_pid_row_active(db_path: Path) -> None:
+def test_clear_stale_instance_lease_keeps_null_pid_row_active(pg_schema: str, db_path: Path) -> None:
     # Arrange
     name = "null-active"
     # Act
@@ -326,7 +326,7 @@ def test_clear_stale_instance_lease_keeps_null_pid_row_active(db_path: Path) -> 
 
 
 def test_clear_stale_instance_lease_leaves_ended_at_unset_for_null_pid_row(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     name = "null-ended-at"
@@ -454,7 +454,7 @@ def _drive_dead_runtime_start_scenario(
 
 
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -468,7 +468,7 @@ def test_agent_start_clears_dead_pid_from_active_zombie_rows(
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -505,7 +505,7 @@ def _drive_live_lease_preserve_scenario() -> tuple[int, int, list[dict]]:
 
 
 def test_clear_stale_instance_lease_reports_zero_clears_when_runtime_is_alive(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_live_lease_preserve_scenario
@@ -516,7 +516,7 @@ def test_clear_stale_instance_lease_reports_zero_clears_when_runtime_is_alive(
 
 
 def test_clear_stale_instance_lease_leaves_exactly_one_live_row_for_livepin(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_live_lease_preserve_scenario
@@ -527,7 +527,7 @@ def test_clear_stale_instance_lease_leaves_exactly_one_live_row_for_livepin(
 
 
 def test_clear_stale_instance_lease_preserves_original_live_row_id(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_live_lease_preserve_scenario
@@ -538,7 +538,7 @@ def test_clear_stale_instance_lease_preserves_original_live_row_id(
 
 
 def test_clear_stale_instance_lease_leaves_ended_at_unset_on_live_row(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange
     scenario = _drive_live_lease_preserve_scenario

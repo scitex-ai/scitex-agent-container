@@ -71,7 +71,7 @@ def _claim_port(name: str, port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_creates_active_row(db_path, tmp_path) -> None:
+def test_record_local_instance_creates_active_row(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
 
@@ -83,7 +83,7 @@ def test_record_local_instance_creates_active_row(db_path, tmp_path) -> None:
     assert "rec-1" in _active_names()
 
 
-def test_record_local_instance_persists_resolved_a2a_port(db_path, tmp_path) -> None:
+def test_record_local_instance_persists_resolved_a2a_port(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state.state_db import list_active_instances
@@ -97,7 +97,7 @@ def test_record_local_instance_persists_resolved_a2a_port(db_path, tmp_path) -> 
     assert row["a2a_port"] == 7901
 
 
-def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
+def test_record_local_instance_mirrors_bound_port(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — local row's bound_port mirrors the allocator-claimed port.
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state.state_db import list_active_instances
@@ -111,7 +111,7 @@ def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
     assert row["bound_port"] == 7902
 
 
-def test_record_local_instance_marks_remote_false(db_path, tmp_path) -> None:
+def test_record_local_instance_marks_remote_false(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — a local start records remote=0 (it ran on THIS host).
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state.state_db import list_active_instances
@@ -125,7 +125,7 @@ def test_record_local_instance_marks_remote_false(db_path, tmp_path) -> None:
 
 
 def test_record_local_instance_records_cli_spawned_by_without_sac_name(
-    db_path, tmp_path
+    pg_schema: str, db_path, tmp_path
 ) -> None:
     # Arrange — no SAC_NAME in env → launcher is the bare CLI/lead.
     saved = os.environ.pop("SAC_NAME", None)
@@ -148,7 +148,7 @@ def test_record_local_instance_records_cli_spawned_by_without_sac_name(
 
 
 def test_record_local_instance_records_parent_spawned_by_from_sac_name(
-    db_path, tmp_path
+    pg_schema: str, db_path, tmp_path
 ) -> None:
     # Arrange — a parent agent shelled out; SAC_NAME carries its name.
     saved = os.environ.get("SAC_NAME")
@@ -170,7 +170,7 @@ def test_record_local_instance_records_parent_spawned_by_from_sac_name(
     assert row["spawned_by"] == "parent-bot"
 
 
-def test_record_local_instance_writes_instance_id_marker(db_path, tmp_path) -> None:
+def test_record_local_instance_writes_instance_id_marker(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
 
@@ -181,7 +181,7 @@ def test_record_local_instance_writes_instance_id_marker(db_path, tmp_path) -> N
     assert (tmp_path / "rec-3" / "instance_id").is_file()
 
 
-def test_record_local_instance_supersedes_stale_active_row(db_path, tmp_path) -> None:
+def test_record_local_instance_supersedes_stale_active_row(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — two records for the same name; the unique partial index
     # would reject the second unless the first is ended first.
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -202,7 +202,7 @@ def test_record_local_instance_supersedes_stale_active_row(db_path, tmp_path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_end_local_instance_clears_active_row(db_path, tmp_path) -> None:
+def test_end_local_instance_clears_active_row(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import (
         end_local_instance,
@@ -218,7 +218,7 @@ def test_end_local_instance_clears_active_row(db_path, tmp_path) -> None:
     assert "end-1" not in _active_names()
 
 
-def test_end_local_instance_returns_true_when_row_ended(db_path, tmp_path) -> None:
+def test_end_local_instance_returns_true_when_row_ended(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import (
         end_local_instance,
@@ -234,7 +234,7 @@ def test_end_local_instance_returns_true_when_row_ended(db_path, tmp_path) -> No
     assert result is True
 
 
-def test_end_local_instance_removes_instance_id_marker(db_path, tmp_path) -> None:
+def test_end_local_instance_removes_instance_id_marker(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import (
         end_local_instance,

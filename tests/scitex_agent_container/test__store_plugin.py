@@ -89,7 +89,7 @@ def test_host_is_part_of_the_instance_identity():
     assert "host" in identity
 
 
-def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path):
+def test_the_field_the_per_host_identity_depends_on_is_actually_written(pg_schema: str, tmp_path):
     """A column declared in a schema and never populated is inert.
 
     This fleet found four such things in one night — scitex_dev.store with
@@ -110,7 +110,7 @@ def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path
     from scitex_agent_container._state.state_db_export import export_state
 
     db = tmp_path / "state.db"
-    record_instance_start("agent-under-test", db_path=db)
+    record_instance_start("agent-under-test")
     # Act
     rows = export_state(db_path=db)["tables"]["instances"]
     # Assert

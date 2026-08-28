@@ -697,7 +697,7 @@ def test_agent_start_forwards_assume_yes_to_broker_body(
 
 
 def test_agent_start_not_in_sif_uses_local_runtime(
-    isolated_state, sif_env, listen_env, tmp_path
+    pg_schema: str, isolated_state, sif_env, listen_env, tmp_path
 ) -> None:
     # Arrange — NO in-SIF env vars set → regression guard: local flow intact.
     sif_env(None, key="APPTAINER_CONTAINER")

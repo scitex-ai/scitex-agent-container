@@ -66,7 +66,7 @@ def _kinds(events) -> list[str]:
 # reconciler.
 
 
-def test_unreadable_budget_restarts_nothing(registry, db_path, events, tmp_path):
+def test_unreadable_budget_restarts_nothing(pg_schema: str, registry, db_path, events, tmp_path):
     # Arrange — a corpse, and a history we are forbidden to read.
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -77,9 +77,9 @@ def test_unreadable_budget_restarts_nothing(registry, db_path, events, tmp_path)
     try:
         # Act
         run_pass(
-            registry,
-            db_path,
-            denied / "hist.json",
+      registry,
+      
+      denied / "hist.json",
             events,
             apply=True,
             restart_fn=recorder,
@@ -91,7 +91,7 @@ def test_unreadable_budget_restarts_nothing(registry, db_path, events, tmp_path)
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_is_reported_per_agent(registry, db_path, events, tmp_path):
+def test_unreadable_budget_is_reported_per_agent(pg_schema: str, registry, db_path, events, tmp_path):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -101,9 +101,9 @@ def test_unreadable_budget_is_reported_per_agent(registry, db_path, events, tmp_
     try:
         # Act
         outcome = run_pass(
-            registry,
-            db_path,
-            denied / "hist.json",
+      registry,
+      
+      denied / "hist.json",
             events,
             apply=True,
             err_stream=io.StringIO(),
@@ -114,7 +114,7 @@ def test_unreadable_budget_is_reported_per_agent(registry, db_path, events, tmp_
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_records_self_impaired(registry, db_path, events, tmp_path):
+def test_unreadable_budget_records_self_impaired(pg_schema: str, registry, db_path, events, tmp_path):
     # Arrange — a reconciler that quietly does nothing is exactly the
     # "renewal mechanism that cannot report its own failure" class. It must
     # ALARM, not no-op.
@@ -126,9 +126,9 @@ def test_unreadable_budget_records_self_impaired(registry, db_path, events, tmp_
     try:
         # Act
         run_pass(
-            registry,
-            db_path,
-            denied / "hist.json",
+      registry,
+      
+      denied / "hist.json",
             events,
             apply=True,
             err_stream=io.StringIO(),
@@ -139,7 +139,7 @@ def test_unreadable_budget_records_self_impaired(registry, db_path, events, tmp_
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_is_loud(registry, db_path, events, tmp_path):
+def test_unreadable_budget_is_loud(pg_schema: str, registry, db_path, events, tmp_path):
     # Arrange
     write_spec(registry, "alpha")
     ghost("alpha")
@@ -150,9 +150,9 @@ def test_unreadable_budget_is_loud(registry, db_path, events, tmp_path):
     try:
         # Act
         run_pass(
-            registry,
-            db_path,
-            denied / "hist.json",
+      registry,
+      
+      denied / "hist.json",
             events,
             apply=True,
             err_stream=stream,
@@ -163,7 +163,7 @@ def test_unreadable_budget_is_loud(registry, db_path, events, tmp_path):
         denied.chmod(0o755)
 
 
-def test_unreadable_budget_exits_two(registry, db_path, events, tmp_path):
+def test_unreadable_budget_exits_two(pg_schema: str, registry, db_path, events, tmp_path):
     # Arrange — being blind about our OWN state must not exit 0 and let a
     # cron log it as a healthy tick.
     write_spec(registry, "alpha")
@@ -174,9 +174,9 @@ def test_unreadable_budget_exits_two(registry, db_path, events, tmp_path):
     try:
         # Act
         outcome = run_pass(
-            registry,
-            db_path,
-            denied / "hist.json",
+      registry,
+      
+      denied / "hist.json",
             events,
             apply=True,
             err_stream=io.StringIO(),
@@ -187,7 +187,7 @@ def test_unreadable_budget_exits_two(registry, db_path, events, tmp_path):
         denied.chmod(0o755)
 
 
-def test_corrupt_budget_restarts_nothing(registry, db_path, history, events):
+def test_corrupt_budget_restarts_nothing(pg_schema: str, registry, db_path, history, events):
     # Arrange — a corrupt history means we HAVE a memory and cannot parse
     # it. Treating that as "nothing restarted" disarms the budget just as
     # thoroughly as a permission error.
@@ -197,9 +197,9 @@ def test_corrupt_budget_restarts_nothing(registry, db_path, history, events):
     recorder = Recorder()
     # Act
     run_pass(
-        registry,
-        db_path,
-        history,
+    registry,
+    
+    history,
         events,
         apply=True,
         restart_fn=recorder,
@@ -209,20 +209,20 @@ def test_corrupt_budget_restarts_nothing(registry, db_path, history, events):
     assert recorder.names == []
 
 
-def test_readable_budget_records_self_recovered(registry, db_path, history, events):
+def test_readable_budget_records_self_recovered(pg_schema: str, registry, db_path, history, events):
     # Arrange — the state was unreadable once, so an impairment is on record.
     write_spec(registry, "alpha")
     ghost("alpha")
     history.write_text("{corrupt")
-    run_pass(registry, db_path, history, events, apply=True, err_stream=io.StringIO())
+    run_pass(registry, history, events, apply=True, err_stream=io.StringIO())
     history.unlink()
     # Act — the state is readable again; a fixed problem must say so, once.
-    run_pass(registry, db_path, history, events, apply=True)
+    run_pass(registry, history, events, apply=True)
     # Assert
     assert _kinds(events) == [SELF_IMPAIRED, SELF_RECOVERED]
 
 
-def test_a_healthy_pass_records_no_self_state(registry, db_path, history, events):
+def test_a_healthy_pass_records_no_self_state(pg_schema: str, registry, db_path, history, events):
     # Arrange — a normal first run must not alarm about its own state, AND
     # must not assert its own health either: the pass runs every five minutes
     # forever, so a per-tick "I am fine" would both flood the log and empty
@@ -230,6 +230,6 @@ def test_a_healthy_pass_records_no_self_state(registry, db_path, history, events
     write_spec(registry, "alpha")
     ghost("alpha")
     # Act
-    run_pass(registry, db_path, history, events, apply=True)
+    run_pass(registry, history, events, apply=True)
     # Assert
     assert _kinds(events) == []

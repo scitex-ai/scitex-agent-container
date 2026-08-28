@@ -52,6 +52,7 @@ def update_heartbeat(
     straddle-a-second path.
     """
     from .state_db import now_iso, open_db
+    from .state_db_instances import touch_instance_counters
 
     ts = (now_fn or now_iso)()
     with open_db(db_path) as conn:
@@ -69,17 +70,23 @@ def update_heartbeat(
             """,
             (instance_id, ts, iter, input_tokens, output_tokens, pane_state),
         )
-        conn.execute(
-            """
-            UPDATE instances
-               SET last_heartbeat_at = ?,
-                   iter_count    = COALESCE(?, iter_count),
-                   input_tokens  = COALESCE(?, input_tokens),
-                   output_tokens = COALESCE(?, output_tokens)
-             WHERE id = ?
-            """,
-            (ts, iter, input_tokens, output_tokens, instance_id),
-        )
+    # THE TWO HALVES NOW LIVE IN DIFFERENT ENGINES, 2026-08-28. The time
+    # series above is still SQLite (``instance_heartbeats`` has not moved);
+    # the rolling cache below is the ``instances`` record, which has. This
+    # is the transitional shape and it is worth naming rather than hiding:
+    # the write is no longer one transaction, so a crash between the two
+    # can leave a beat recorded with the cache un-bumped. That direction is
+    # the safe one — the cache is a denormalisation whose only consumer is
+    # "is this agent still working?", and a stale-looking cache is a false
+    # DEAD, which the GC's own staleness threshold already tolerates. The
+    # reverse order would have produced a false ALIVE.
+    touch_instance_counters(
+        instance_id,
+        last_heartbeat_at=ts,
+        iter=iter,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
 
 
 def latest_instance_heartbeat(

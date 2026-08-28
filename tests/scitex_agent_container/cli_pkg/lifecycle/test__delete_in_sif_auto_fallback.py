@@ -289,7 +289,7 @@ def test_in_sif_delete_emits_kind_transport_on_transport_error(env_save_restore)
 # ---------------------------------------------------------------------------
 
 
-def test_non_sif_path_does_not_proxy(env_save_restore, tmp_path):
+def test_non_sif_path_does_not_proxy(pg_schema: str, env_save_restore, tmp_path):
     # Arrange — explicitly unset SIF detection envs + ensure
     # SCITEX_AGENT_CONTAINER_RUNTIME_DIR points at a clean tmp so
     # the existing local logic sees zero matching dirs / registry.

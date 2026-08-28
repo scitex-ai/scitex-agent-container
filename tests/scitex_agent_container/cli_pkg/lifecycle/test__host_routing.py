@@ -249,7 +249,7 @@ def test_has_active_row_false_on_fresh_state_db(fake_home, state_db):
     assert present is False
 
 
-def test_has_active_row_true_after_record_instance_start(fake_home, state_db):
+def test_has_active_row_true_after_record_instance_start(pg_schema: str, fake_home, state_db):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -354,7 +354,7 @@ def test_resolve_spec_with_hostname_placeholder_is_local(fake_home, env_save_res
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_returns_none_when_an_active_row_exists(fake_home, state_db):
+def test_fallback_returns_none_when_an_active_row_exists(pg_schema: str, fake_home, state_db):
     # Arrange — a live row (even remote) means the row-driven dispatcher's
     # answer stands; the spec fallback must not engage.
     from scitex_agent_container._state.state_db import record_instance_start

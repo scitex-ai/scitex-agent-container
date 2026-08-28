@@ -120,7 +120,7 @@ def _dead_pid() -> int:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_persists_runtime_pid(db_path, tmp_path) -> None:
+def test_record_local_instance_persists_runtime_pid(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — the runtime reports the live pid of this very process.
     from scitex_agent_container._lifecycle._instances import record_local_instance
 
@@ -132,7 +132,7 @@ def test_record_local_instance_persists_runtime_pid(db_path, tmp_path) -> None:
 
 
 def test_record_local_instance_leaves_pid_null_for_legacy_runtime(
-    db_path, tmp_path
+    pg_schema: str, db_path, tmp_path
 ) -> None:
     # Arrange — a runtime without the seam must not fabricate a pid.
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -173,7 +173,7 @@ def test_runtime_pid_rejects_bool_pid(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_restart_and_record_refreshes_stale_pid(db_path, tmp_path) -> None:
+def test_restart_and_record_refreshes_stale_pid(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — agent recorded with a now-dead pid, then the supervisor
     # restarts it as a NEW process (the health-monitor's callback path).
     from scitex_agent_container._lifecycle._instances import (
@@ -191,7 +191,7 @@ def test_restart_and_record_refreshes_stale_pid(db_path, tmp_path) -> None:
     assert _row_for("pid-restart")["pid"] == os.getpid()
 
 
-def test_restart_and_record_returns_runtime_verdict(db_path, tmp_path) -> None:
+def test_restart_and_record_returns_runtime_verdict(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import restart_and_record
 
@@ -210,7 +210,7 @@ def test_restart_and_record_returns_runtime_verdict(db_path, tmp_path) -> None:
 
 
 def test_live_agent_resolves_pid_alive_through_send_diagnosis(
-    db_path, tmp_path
+    pg_schema: str, db_path, tmp_path
 ) -> None:
     # Arrange — start a LIVE agent (pid = this process) exactly as
     # agent_start does, with a bound sidecar port.
@@ -233,7 +233,7 @@ def test_live_agent_resolves_pid_alive_through_send_diagnosis(
     assert diagnosis["pid_alive"] is True
 
 
-def test_dead_agent_still_resolves_pid_not_alive(db_path, tmp_path) -> None:
+def test_dead_agent_still_resolves_pid_not_alive(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — a genuinely dead process must still be reported dead, so the
     # fix cannot mask a crash by over-claiming liveness.
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -255,7 +255,7 @@ def test_dead_agent_still_resolves_pid_not_alive(db_path, tmp_path) -> None:
     assert diagnosis["pid_alive"] is False
 
 
-def test_live_agent_resolves_live_through_liveness_tick(db_path, tmp_path) -> None:
+def test_live_agent_resolves_live_through_liveness_tick(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — the stuck-card alarm's owner-liveness resolver read EVERY
     # agent as dead while pids were NULL (_live_agent_pids dropped them all).
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -276,7 +276,7 @@ def test_live_agent_resolves_live_through_liveness_tick(db_path, tmp_path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_gc_reaps_row_whose_recorded_pid_is_dead(db_path, tmp_path) -> None:
+def test_gc_reaps_row_whose_recorded_pid_is_dead(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — before the fix this heuristic never fired: with pid NULL,
     # gc_dead_instances skipped every row (0 'crashed' rows in 1229).
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -292,7 +292,7 @@ def test_gc_reaps_row_whose_recorded_pid_is_dead(db_path, tmp_path) -> None:
     assert counters["crashed"] == 1
 
 
-def test_gc_spares_row_whose_recorded_pid_is_alive(db_path, tmp_path) -> None:
+def test_gc_spares_row_whose_recorded_pid_is_alive(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — the reaper must never sweep a LIVE agent.
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state.state_db import list_active_instances
@@ -312,7 +312,7 @@ def test_gc_spares_row_whose_recorded_pid_is_alive(db_path, tmp_path) -> None:
 @pytest.mark.skipif(
     os.getuid() == 0, reason="as root, os.kill(1, 0) does not raise PermissionError"
 )
-def test_gc_spares_live_process_owned_by_another_uid(db_path, tmp_path) -> None:
+def test_gc_spares_live_process_owned_by_another_uid(pg_schema: str, db_path, tmp_path) -> None:
     # Arrange — pid 1 is ALIVE but not ours: os.kill(1, 0) raises
     # PermissionError, a subclass of OSError. The GC caught OSError broadly
     # and would have reaped this LIVE row as 'crashed' — ending the row is

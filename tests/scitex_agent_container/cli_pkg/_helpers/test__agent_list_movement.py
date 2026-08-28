@@ -90,7 +90,7 @@ def _registered_row(rows: list[dict], name: str) -> dict:
 
 
 def test_row_includes_session_jsonl_bytes_key_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -109,7 +109,7 @@ def test_row_includes_session_jsonl_bytes_key_when_no_state_dir(
 
 
 def test_row_includes_session_jsonl_last_write_key_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -128,7 +128,7 @@ def test_row_includes_session_jsonl_last_write_key_when_no_state_dir(
 
 
 def test_row_includes_heartbeat_at_key_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -147,7 +147,7 @@ def test_row_includes_heartbeat_at_key_when_no_state_dir(
 
 
 def test_row_session_jsonl_bytes_is_zero_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -166,7 +166,7 @@ def test_row_session_jsonl_bytes_is_zero_when_no_state_dir(
 
 
 def test_row_session_jsonl_last_write_is_empty_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -185,7 +185,7 @@ def test_row_session_jsonl_last_write_is_empty_when_no_state_dir(
 
 
 def test_row_heartbeat_at_is_empty_when_no_state_dir(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -204,7 +204,7 @@ def test_row_heartbeat_at_is_empty_when_no_state_dir(
 
 
 def test_row_session_jsonl_bytes_matches_file_size_when_state_dir_present(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange — materialise a state dir with a real session.jsonl + heartbeat.
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -231,7 +231,7 @@ def test_row_session_jsonl_bytes_matches_file_size_when_state_dir_present(
 
 
 def test_row_heartbeat_at_is_non_empty_when_state_dir_present(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange
     import scitex_agent_container.cli_pkg._helpers._agent_list as _al
@@ -256,7 +256,7 @@ def test_row_heartbeat_at_is_non_empty_when_state_dir_present(
 
 
 def test_row_existing_keys_remain_after_movement_enrichment(
-    tmp_path: Path, isolated_runtime: Path
+    pg_schema: str, tmp_path: Path, isolated_runtime: Path
 ):
     # Arrange — existing-key backward-compat: name/status/path must
     # still appear next to the new movement keys (additive contract).

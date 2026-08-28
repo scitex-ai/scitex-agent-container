@@ -278,7 +278,7 @@ def test_the_already_running_noop_with_no_marker_does_not_raise(
 
 
 def test_a_launch_that_merely_returned_keeps_the_marker(
-    tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, isolated_runtime_dir: Path, registry: Registry
 ) -> None:
     # Arrange — nothing vouches for liveness (no registry row, no
     # liveness_verifier): resolve_start_verdict yields UNKNOWN, so

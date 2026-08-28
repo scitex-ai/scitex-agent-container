@@ -230,7 +230,7 @@ def _seed_session_id(runtime_root: Path, name: str, sid: str) -> Path:
 
 
 def test_force_removes_persisted_session_id_file(
-    tmp_path: Path,
+    pg_schema: str, tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
     registry: Registry,
@@ -256,7 +256,7 @@ def test_force_removes_persisted_session_id_file(
 
 
 def test_force_leaves_other_runtime_state_alone(
-    tmp_path: Path,
+    pg_schema: str, tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
     registry: Registry,
@@ -292,7 +292,7 @@ def test_force_leaves_other_runtime_state_alone(
 
 
 def test_no_force_leaves_session_id(
-    tmp_path: Path,
+    pg_schema: str, tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
     registry: Registry,
@@ -317,7 +317,7 @@ def test_no_force_leaves_session_id(
 
 
 def test_missing_session_id_file_under_force_is_no_op(
-    tmp_path: Path,
+    pg_schema: str, tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
     registry: Registry,

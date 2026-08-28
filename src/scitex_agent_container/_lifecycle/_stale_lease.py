@@ -7,16 +7,20 @@ running here". When a container dies WITHOUT going through
 runtime crash), the row is never marked ended — the row is **stale**
 and points at a PID that no longer exists.
 
-Before this helper, the operator's manual workaround was::
+Before this helper, the operator's manual workaround was a ``sqlite3
+… DELETE FROM instances …`` against ``state.db``; otherwise the next
+``sac agents start`` saw the stale row, the already-running check
+fired, and the start no-op'd. This helper automates that into the
+start path: when the row exists but the recorded PID is demonstrably
+dead, the row is marked ended (``exit_reason='stale-cleared'``) and
+the start proceeds normally.
 
-    sqlite3 ~/.scitex/agent-container/state.db \
-        "DELETE FROM instances WHERE name='<name>' AND ended_at IS NULL"
-
-…otherwise the next ``sac agents start`` saw the stale row, the
-already-running check fired, and the start no-op'd. This helper
-automates that DELETE into the start path: when the row exists but
-the recorded PID is demonstrably dead, the row is marked ended
-(``exit_reason='stale-cleared'``) and the start proceeds normally.
+THAT WORKAROUND NO LONGER EXISTS, 2026-08-28. The records moved to
+per-host PostgreSQL; ``state.db`` has no ``instances`` table to delete
+from, and an operator who runs the old command now gets ``no such
+table`` rather than a silent success against an abandoned file. The
+helper below is the only supported route, which is what it was already
+meant to be.
 
 Design notes:
 
@@ -26,10 +30,14 @@ Design notes:
   lease is legitimate; we never clear a row that the runtime still
   vouches for.
 
-* Atomicity: each stale row is closed via :func:`record_instance_stop`
-  which sets ``ended_at`` + writes a paired ``events`` row in a single
-  SQLite transaction — concurrent starts cannot see a half-cleared
-  state.
+* Atomicity: each stale row is closed via :func:`record_instance_stop`,
+  which stamps ``ended_at`` and then appends a paired
+  ``instance_events`` record. Since 2026-08-28 those are two writes to
+  two stores rather than one SQLite transaction, so a crash between them
+  can leave a closed lease with no ``stop`` event. That is the SAFE
+  half: the lease — the thing a concurrent start reads — is closed
+  first, and ``ended_at`` is IMMUTABLE, so no second writer can reopen
+  it. What can be lost is a log line, not a lock.
 
 * Per-row PID truth: when ``row['pid']`` is non-null we probe it with
   ``os.kill(pid, 0)``. When ``pid`` is NULL (the common case for

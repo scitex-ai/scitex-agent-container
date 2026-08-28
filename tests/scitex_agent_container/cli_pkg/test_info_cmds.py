@@ -243,7 +243,7 @@ def test_find_search_path_not_a_dir_returns_empty(tmp_path):
 # ===========================================================================
 
 
-def test_tail_one_missing_in_registry_returns_false(tmp_registry):
+def test_tail_one_missing_in_registry_returns_false(pg_schema: str, tmp_registry):
     # Arrange -- registry is empty (no JSON entry for "ghost").
     # Act
     ok = _tail_one("ghost", lines=5, show_tools=False, as_json=False, prefix=False)
@@ -251,7 +251,7 @@ def test_tail_one_missing_in_registry_returns_false(tmp_registry):
     assert ok is False
 
 
-def test_tail_one_no_transcript_file_returns_false(tmp_registry, tmp_home):
+def test_tail_one_no_transcript_file_returns_false(pg_schema: str, tmp_registry, tmp_home):
     # Arrange -- agent is registered but no session.jsonl on disk.
     _register(tmp_registry, "absent")
     # Act
@@ -260,7 +260,7 @@ def test_tail_one_no_transcript_file_returns_false(tmp_registry, tmp_home):
     assert ok is False
 
 
-def test_tail_one_renders_transcript_records_returns_true(tmp_registry, tmp_home):
+def test_tail_one_renders_transcript_records_returns_true(pg_schema: str, tmp_registry, tmp_home):
     # Arrange
     _register(tmp_registry, "ag")
     _build_transcript(
@@ -288,7 +288,7 @@ def test_tail_one_renders_transcript_records_returns_true(tmp_registry, tmp_home
     assert ok is True
 
 
-def test_tail_one_as_json_returns_true(tmp_registry, tmp_home):
+def test_tail_one_as_json_returns_true(pg_schema: str, tmp_registry, tmp_home):
     # Arrange
     _register(tmp_registry, "ag")
     _build_transcript(
@@ -302,7 +302,7 @@ def test_tail_one_as_json_returns_true(tmp_registry, tmp_home):
     assert ok is True
 
 
-def test_tail_one_skips_invalid_jsonl_lines(tmp_registry, tmp_home):
+def test_tail_one_skips_invalid_jsonl_lines(pg_schema: str, tmp_registry, tmp_home):
     """A malformed JSONL line must be silently skipped, not crash."""
     # Arrange
     _register(tmp_registry, "ag")
@@ -333,7 +333,7 @@ def test_tail_session_aggregates_exit_status_to_one(tmp_registry):
 
 
 @pytest.fixture
-def remote_tail_env(tmp_path):
+def remote_tail_env(pg_schema: str, tmp_path):
     """State.db redirect + peer config + SAC_HOST for cross-host tail."""
     import importlib
     import sys
@@ -394,7 +394,7 @@ def _ssh_invocations(log):
     return [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
-def test_cross_host_tail_returns_true(remote_tail_env):
+def test_cross_host_tail_returns_true(pg_schema: str, remote_tail_env):
     # Arrange
     from scitex_agent_container.cli_pkg.info_cmds import _tail_one
 
@@ -404,7 +404,7 @@ def test_cross_host_tail_returns_true(remote_tail_env):
     assert ok is True
 
 
-def test_cross_host_tail_ssh_argv_targets_peer(remote_tail_env, capsys):
+def test_cross_host_tail_ssh_argv_targets_peer(pg_schema: str, remote_tail_env, capsys):
     # Arrange
     from scitex_agent_container.cli_pkg.info_cmds import _tail_one
 
@@ -415,7 +415,7 @@ def test_cross_host_tail_ssh_argv_targets_peer(remote_tail_env, capsys):
     assert "peer-x" in argv
 
 
-def test_cross_host_tail_ssh_argv_carries_tail_verb(remote_tail_env, capsys):
+def test_cross_host_tail_ssh_argv_carries_tail_verb(pg_schema: str, remote_tail_env, capsys):
     # Arrange
     from scitex_agent_container.cli_pkg.info_cmds import _tail_one
 
@@ -426,7 +426,7 @@ def test_cross_host_tail_ssh_argv_carries_tail_verb(remote_tail_env, capsys):
     assert "sac agents tail zeta" in argv
 
 
-def test_cross_host_tail_prints_peer_output(remote_tail_env, capsys):
+def test_cross_host_tail_prints_peer_output(pg_schema: str, remote_tail_env, capsys):
     # Arrange
     from scitex_agent_container.cli_pkg.info_cmds import _tail_one
 

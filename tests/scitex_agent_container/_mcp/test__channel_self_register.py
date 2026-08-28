@@ -390,7 +390,7 @@ def test_refresh_node_respects_cancellation_promptly(
 
 
 def test_refresh_node_makes_lead_resolvable_via_resolve_node_host(
-    db_path: Path, cfg_with_lead: Path
+    pg_schema: str, db_path: Path, cfg_with_lead: Path
 ) -> None:
     # Arrange — drive one refresh tick (the same path channel.py
     # _serve() schedules at startup) then ask the production resolver.

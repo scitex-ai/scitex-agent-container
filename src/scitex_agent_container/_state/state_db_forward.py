@@ -64,29 +64,25 @@ def resolve_forward_target(
     ``None`` means no source could supply an address. The caller must
     treat that as "cannot forward", never as "not registered" — the name
     may be perfectly well known and simply unreachable.
+
+    ``db_path`` is now ONLY the ``comms_nodes`` fallback's parameter. The
+    ``instances`` half moved to PostgreSQL on 2026-08-28 and no longer
+    names a file; the SELECT above became
+    :func:`.state_db_instances.latest_active_instance`, which is the same
+    statement ``resolve_node_host`` was carrying its own copy of.
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import latest_active_instance
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port, bound_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    row = latest_active_instance(name)
     if row is not None:
-        port = row["a2a_port"]
+        port = row.get("a2a_port")
         if port is None:
-            port = row["bound_port"]
+            port = row.get("bound_port")
         if port is not None:
             return {"host": str(row["host"]), "a2a_port": int(port)}
-        # A live row recording no port is not an ADDRESS. Fall through
+        # A live record carrying no port is not an ADDRESS. Fall through
         # rather than hand back a target the caller can only 502 on.
     return resolve_comms_node_host(name=name, db_path=db_path)

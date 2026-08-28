@@ -110,7 +110,7 @@ def _write_valid_spec(dir_: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_ports_come_from_a_single_list_claims_call(tmp_path):
+def test_ports_come_from_a_single_list_claims_call(pg_schema: str, tmp_path):
     # Arrange — two registered agents; count list_claims + get_port calls.
     from scitex_agent_container._state import port_allocator
 
@@ -139,7 +139,7 @@ def test_ports_come_from_a_single_list_claims_call(tmp_path):
     assert calls == {"list_claims": 1, "get_port": 0}
 
 
-def test_port_from_claims_map_lands_on_the_row(tmp_path):
+def test_port_from_claims_map_lands_on_the_row(pg_schema: str, tmp_path):
     # Arrange
     from scitex_agent_container._state import port_allocator
 
@@ -155,7 +155,7 @@ def test_port_from_claims_map_lands_on_the_row(tmp_path):
     assert out[0]["a2a_port"] == 19001
 
 
-def test_port_none_when_agent_has_no_claim(tmp_path):
+def test_port_none_when_agent_has_no_claim(pg_schema: str, tmp_path):
     # Arrange — claims map has no entry for this agent.
     from scitex_agent_container._state import port_allocator
 
@@ -173,7 +173,7 @@ def test_port_none_when_agent_has_no_claim(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_validate_config_skipped_when_load_succeeds(tmp_path):
+def test_validate_config_skipped_when_load_succeeds(pg_schema: str, tmp_path):
     # Arrange — count explicit validate_config calls from the list builder.
     from scitex_agent_container.config import _validation
 
@@ -192,7 +192,7 @@ def test_validate_config_skipped_when_load_succeeds(tmp_path):
     assert calls["n"] == 0 and out[0]["status"] == "running"
 
 
-def test_validate_config_called_when_load_fails(tmp_path):
+def test_validate_config_called_when_load_fails(pg_schema: str, tmp_path):
     # Arrange — a missing config path: load_config raises, so the error list
     # must be recovered via validate_config.
     from scitex_agent_container.config import _validation
@@ -219,7 +219,7 @@ def test_validate_config_called_when_load_fails(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_running_only_enriches_the_running_row(tmp_path):
+def test_running_only_enriches_the_running_row(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
@@ -234,7 +234,7 @@ def test_running_only_enriches_the_running_row(tmp_path):
     assert out[0]["account"] == "ACCT"
 
 
-def test_running_only_defers_account_for_stopped_row(tmp_path):
+def test_running_only_defers_account_for_stopped_row(pg_schema: str, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
@@ -247,7 +247,7 @@ def test_running_only_defers_account_for_stopped_row(tmp_path):
     assert out[0]["account"] == ""
 
 
-def test_running_only_false_still_enriches_stopped_row(tmp_path):
+def test_running_only_false_still_enriches_stopped_row(pg_schema: str, tmp_path):
     # Arrange — the --json / -v contract: every row stays enriched.
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
@@ -260,7 +260,7 @@ def test_running_only_false_still_enriches_stopped_row(tmp_path):
     assert out[0]["account"] == "ACCT"
 
 
-def test_deferred_row_keeps_the_movement_key_contract(tmp_path):
+def test_deferred_row_keeps_the_movement_key_contract(pg_schema: str, tmp_path):
     # Arrange — deferred rows must still carry the always-present movement trio.
     spec = _write_valid_spec(tmp_path / "a")
     registry = _FakeRegistry([{"name": "a", "config": str(spec)}])
@@ -278,7 +278,7 @@ def test_deferred_row_keeps_the_movement_key_contract(tmp_path):
     )
 
 
-def test_running_only_defers_defined_agent_account(tmp_path):
+def test_running_only_defers_defined_agent_account(pg_schema: str, tmp_path):
     # Arrange — a defined-on-disk agent is never running → hidden by default.
     spec = _write_valid_spec(tmp_path / "ondisk")
 

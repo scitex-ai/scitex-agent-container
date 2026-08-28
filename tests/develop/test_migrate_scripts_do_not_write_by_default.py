@@ -182,3 +182,88 @@ def test_verdict_delivered_bare_invocation_succeeds(tmp_path):
         rc = module.main(["--state-db", str(empty)])
     # Assert
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# instances + events (2026-08-28). Enrolled here on arrival rather than after
+# an incident: the pattern this file exists to enforce only holds if each new
+# script joins the gate, and this one moves the LEASE — a stray write against
+# the wrong target un-registers running agents.
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_with_one_instance(tmp_path: Path) -> Path:
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """CREATE TABLE instances (
+               id TEXT PRIMARY KEY, definition_id TEXT, name TEXT NOT NULL,
+               host TEXT NOT NULL, scope TEXT NOT NULL, pid INTEGER,
+               ppid INTEGER, screen TEXT, workdir TEXT, a2a_port INTEGER,
+               started_at TEXT NOT NULL, last_heartbeat_at TEXT,
+               ended_at TEXT, exit_reason TEXT, iter_count INTEGER,
+               input_tokens INTEGER, output_tokens INTEGER,
+               bound_port INTEGER, remote INTEGER, spawned_by TEXT)"""
+    )
+    conn.execute(
+        "INSERT INTO instances (id, name, host, scope, started_at) "
+        "VALUES (?,?,?,?,?)",
+        ("inst-1", "agent-x", "test-host", "global", "2026-08-24T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _run_instances(tmp_path, capsys, extra: list[str]) -> Run:
+    db = _sqlite_with_one_instance(tmp_path)
+    module = _load("migrate_instances_to_postgres.py")
+    rc: int | None = None
+    err: BaseException | None = None
+    with _dead_store_and_argv(["migrate"]):
+        try:
+            rc = module.main(["--db-path", str(db), *extra])
+        except BaseException as exc:
+            err = exc
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
+
+
+def test_instances_bare_invocation_succeeds(tmp_path, capsys):
+    """A dry run is a success, not an error."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert run.rc == 0
+
+
+def test_instances_bare_invocation_announces_a_dry_run(tmp_path, capsys):
+    """It must SAY it wrote nothing, so a reader is not left guessing."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert "DRY RUN" in run.out
+
+
+def test_instances_bare_invocation_never_reaches_the_store(tmp_path, capsys):
+    """The dead DSN is the detector: a writer could not have stayed silent."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, [])
+    # Assert
+    assert run.error is None
+
+
+def test_instances_commit_does_reach_for_the_store(tmp_path, capsys):
+    """NEGATIVE CONTROL — without this, the tests above would still pass if the
+    script were broken to never write at all."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances(target, capsys, ["--commit"])
+    # Assert
+    assert run.error is not None

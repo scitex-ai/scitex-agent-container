@@ -433,7 +433,7 @@ class TestRegistryActiveOn:
         finally:
             importlib.reload(state_db_mod)
 
-    def test_recorded_instance_seen_as_live(self, tmp_path, env_save_restore):
+    def test_recorded_instance_seen_as_live(self, pg_schema: str, tmp_path, env_save_restore):
         # Arrange
         import importlib
 
@@ -455,7 +455,7 @@ class TestRegistryActiveOn:
             importlib.reload(state_db_mod)
 
     def test_instance_on_other_host_not_live_on_target(
-        self, tmp_path, env_save_restore
+        self, pg_schema: str, tmp_path, env_save_restore
     ):
         # Arrange — row recorded on beta, asking about alpha.
         import importlib
@@ -477,7 +477,7 @@ class TestRegistryActiveOn:
         finally:
             importlib.reload(state_db_mod)
 
-    def test_ended_instance_not_live(self, tmp_path, env_save_restore):
+    def test_ended_instance_not_live(self, pg_schema: str, tmp_path, env_save_restore):
         # Arrange — record then end; the row's ended_at != NULL so it
         # must not be reported as live (mirrors what stop --force would
         # do via the new release path).

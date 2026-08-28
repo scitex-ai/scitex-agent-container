@@ -1,7 +1,11 @@
-"""Garbage-collection sweep for state.db ``instances`` rows.
+"""Garbage-collection sweep for the ``instances`` records.
 
 Extracted from :mod:`state_db` for line-budget. Re-exported by
-:mod:`state_db` so external callers keep the same import path.
+:mod:`state_db` so external callers keep the same import path. The
+records themselves moved to PostgreSQL on 2026-08-28
+(:mod:`state_db_instances`); this module issued three raw ``UPDATE
+instances SET ended_at`` statements and now goes through that module's
+``end_instance`` primitive instead.
 
 AN ``exit_reason`` NAMES THE CHECK, NOT THE FATE
 ------------------------------------------------
@@ -40,7 +44,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 #: What the pid-liveness branch writes: ``os.kill(pid, 0)`` raised ESRCH at
 #: sweep time. It says nothing about WHEN the process left, WHY it left, or
@@ -79,7 +82,6 @@ def _proc_btime() -> str | None:
 
 def gc_dead_instances(
     *,
-    db_path: Path | None = None,
     heartbeat_stale_seconds: int = 300,
     dry_run: bool = False,
 ) -> dict[str, int]:
@@ -108,10 +110,28 @@ def gc_dead_instances(
     remote agent — ``sac agents list`` ssh-probes the peer live instead of
     tombstoning it here.
 
-    ``dry_run=True`` runs all three checks but emits zero UPDATE
-    statements — counters reflect what *would* be swept.
+    ``dry_run=True`` runs all three checks but writes nothing — counters
+    reflect what *would* be swept.
+
+    ON POSTGRESQL SINCE 2026-08-28. ``db_path`` is gone: it named a
+    SQLite file, and ``instances`` no longer lives in one. The three
+    ``UPDATE instances SET ended_at=...`` statements became
+    :func:`.state_db_instances.end_instance` calls, which is a
+    STRENGTHENING rather than a translation: the raw UPDATE relied on its
+    own ``WHERE ended_at IS NULL`` clause to stay idempotent, and
+    ``end_instance`` additionally refuses to overwrite a death stamp
+    another reaper already wrote. Two sweeps racing on one record now
+    keep the FIRST verdict instead of the last.
+
+    The re-read between branches is deliberate and preserves a SQLite
+    detail that is easy to lose: all three statements ran on ONE
+    connection, so branches 2 and 3 saw branch 1's updates and never
+    re-swept a row it had already retired. Under ``dry_run`` nothing is
+    written, so — exactly as before — the later branches DO see rows the
+    earlier ones counted, and a row can appear in two counters.
     """
-    from .state_db import _resolve_host, now_iso, open_db
+    from .state_db import _resolve_host, now_iso
+    from .state_db_instances import all_instances, end_instance
 
     # ``crashed`` is a DEPRECATED ALIAS carrying the same number as
     # ``pid_absent_at_sweep``, so a consumer reading the old key keeps working
@@ -133,88 +153,85 @@ def gc_dead_instances(
     now_ts = now_iso()
     stale_cutoff = datetime.now(timezone.utc).timestamp() - heartbeat_stale_seconds
 
-    with open_db(db_path) as conn:
-        if boot is not None:
-            if dry_run:
-                cur = conn.execute(
-                    "SELECT COUNT(*) AS n FROM instances "
-                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
-                    (canonical_host, boot),
-                ).fetchone()
-                counters["reboot_swept"] = int(cur["n"]) if cur else 0
-            else:
-                cur = conn.execute(
-                    "UPDATE instances SET ended_at=?, exit_reason='reboot-swept' "
-                    "WHERE ended_at IS NULL AND host=? AND started_at < ?",
-                    (boot, canonical_host, boot),
-                )
-                counters["reboot_swept"] = cur.rowcount
+    def _active() -> list[dict]:
+        """The live records, re-read so a later branch sees earlier sweeps.
 
-        rows = conn.execute(
-            "SELECT id, pid FROM instances WHERE ended_at IS NULL AND host=?",
-            (canonical_host,),
-        ).fetchall()
-        for row in rows:
-            pid = row["pid"]
-            if pid is None or pid <= 0:
-                continue
-            try:
-                os.kill(pid, 0)
-            except PermissionError:
-                # ALIVE. The process exists but is owned by another uid, so
-                # we may not signal it — that is proof of life, NOT death.
-                # Reaping here would END a live agent's row, and a missing
-                # row is exactly what makes ``send_to_agent`` report "agent
-                # not running" (cli_pkg/_send.py). This branch had never
-                # actually run before pids were recorded (0 'crashed' rows
-                # in 1229), so the hazard was dormant; it is live now.
-                # Matches every other pid probe in the codebase
-                # (_lifecycle/_stale_lease, cli_pkg/_send_diagnosis,
-                # runtimes/_tui_liveness) — all treat EPERM as alive.
-                continue
-            except (
-                OSError,
-                ProcessLookupError,
-            ):  # stx-allow: fallback (reason: ESRCH/other kernel error — the process is genuinely gone from our POV)
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE instances SET ended_at=?, exit_reason=? WHERE id=?",
-                        (now_ts, EXIT_REASON_PID_ABSENT_AT_SWEEP, row["id"]),
-                    )
-                counters["crashed"] += 1
-                counters[EXIT_REASON_PID_ABSENT_AT_SWEEP] += 1
+        Under ``dry_run`` nothing was written, so this necessarily returns
+        the same set each time — which is what the SQLite version did too.
+        """
+        return all_instances(active_only=True)
 
-        # ``AND remote=0`` — the heartbeat sweep is the ONE branch without a
-        # host filter, so without this a cross-host (``remote=1``) row could be
-        # reaped from the master the instant a stale ``last_heartbeat_at`` were
-        # ever written to it. A master remote row is safe TODAY only because its
-        # heartbeat is NULL; this makes "cross-host instances are never swept"
-        # true BY CONSTRUCTION across all three branches (reboot + pid are
-        # already ``host=<self>``-scoped), not merely true by accident.
-        cur = conn.execute(
-            "SELECT id, last_heartbeat_at FROM instances "
-            "WHERE ended_at IS NULL AND last_heartbeat_at IS NOT NULL AND remote=0"
-        ).fetchall()
-        for row in cur:
-            try:
-                hb = (
-                    datetime.strptime(row["last_heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ")
-                    .replace(tzinfo=timezone.utc)
-                    .timestamp()
-                )
-            except (
-                ValueError,
-                TypeError,
-            ):  # stx-allow: fallback (reason: malformed timestamp tolerated)
+    if boot is not None:
+        for row in _active():
+            if row.get("host") != canonical_host:
                 continue
-            if hb < stale_cutoff:
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE instances SET ended_at=?, exit_reason='gc-stale' "
-                        "WHERE id=?",
-                        (now_ts, row["id"]),
-                    )
-                counters["gc_stale"] += 1
+            if str(row.get("started_at") or "") >= boot:
+                continue
+            if dry_run or end_instance(
+                str(row["id"]), ended_at=boot, exit_reason="reboot-swept"
+            ):
+                counters["reboot_swept"] += 1
+
+    for row in _active():
+        if row.get("host") != canonical_host:
+            continue
+        pid = row.get("pid")
+        if pid is None or pid <= 0:
+            continue
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            # ALIVE. The process exists but is owned by another uid, so
+            # we may not signal it — that is proof of life, NOT death.
+            # Reaping here would END a live agent's row, and a missing
+            # row is exactly what makes ``send_to_agent`` report "agent
+            # not running" (cli_pkg/_send.py). This branch had never
+            # actually run before pids were recorded (0 'crashed' rows
+            # in 1229), so the hazard was dormant; it is live now.
+            # Matches every other pid probe in the codebase
+            # (_lifecycle/_stale_lease, cli_pkg/_send_diagnosis,
+            # runtimes/_tui_liveness) — all treat EPERM as alive.
+            continue
+        except (
+            OSError,
+            ProcessLookupError,
+        ):  # stx-allow: fallback (reason: ESRCH/other kernel error — the process is genuinely gone from our POV)
+            if not dry_run:
+                end_instance(
+                    str(row["id"]),
+                    ended_at=now_ts,
+                    exit_reason=EXIT_REASON_PID_ABSENT_AT_SWEEP,
+                )
+            counters["crashed"] += 1
+            counters[EXIT_REASON_PID_ABSENT_AT_SWEEP] += 1
+
+    # ``remote == 0`` — the heartbeat sweep is the ONE branch without a
+    # host filter, so without this a cross-host (``remote=1``) row could be
+    # reaped from the master the instant a stale ``last_heartbeat_at`` were
+    # ever written to it. A master remote row is safe TODAY only because its
+    # heartbeat is NULL; this makes "cross-host instances are never swept"
+    # true BY CONSTRUCTION across all three branches (reboot + pid are
+    # already ``host=<self>``-scoped), not merely true by accident.
+    for row in _active():
+        if row.get("last_heartbeat_at") is None or int(row.get("remote") or 0) != 0:
+            continue
+        try:
+            hb = (
+                datetime.strptime(row["last_heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+        except (
+            ValueError,
+            TypeError,
+        ):  # stx-allow: fallback (reason: malformed timestamp tolerated)
+            continue
+        if hb < stale_cutoff:
+            if not dry_run:
+                end_instance(
+                    str(row["id"]), ended_at=now_ts, exit_reason="gc-stale"
+                )
+            counters["gc_stale"] += 1
 
     return counters
 

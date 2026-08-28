@@ -31,6 +31,17 @@ from pathlib import Path
 from ._rename_spec import sub_path
 
 # (table, column) pairs holding an agent NAME verbatim.
+#
+# SOME OF THESE TABLES HAVE LEFT SQLITE AND THESE ENTRIES NO LONGER FIRE.
+# ``turns`` / ``errors`` / ``heartbeats`` moved on 2026-08-28 (#1233) and
+# ``instances`` on the same day; the ``if table not in tables: continue``
+# guard below turns each into a silent no-op rather than an error, so a
+# rename now leaves those rows carrying the OLD name. The entries are kept
+# rather than deleted BECAUSE they are the inventory of what a store-aware
+# rewrite of this module still owes: deleting them would erase the list of
+# what stopped working. This module is a rewrite, not a port — it walks
+# ``sqlite_master`` and captures rowids — and it is scoped as such in
+# ``tests/develop/test_sqlite_footprint_frozen.py``.
 NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("definitions", "name"),
     ("instances", "name"),

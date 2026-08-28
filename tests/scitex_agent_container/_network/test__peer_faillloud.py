@@ -101,7 +101,7 @@ def _write_static_local_yaml(tmp_path: Path) -> Path:
 
 class TestUnresolvableInstanceFailsLoud:
     def test_no_live_instance_with_history_names_last_known_host(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML, no local allocator claim, and an
         # ENDED prior instance row recording the last-known host.
@@ -123,7 +123,7 @@ class TestUnresolvableInstanceFailsLoud:
             resolve_peer_url("clew")
 
     def test_no_live_instance_refuses_to_assume_local(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — same ended-history shape.
         env_save_restore.set("SAC_HOST", "lead-host")
@@ -163,7 +163,7 @@ class TestUnresolvableInstanceFailsLoud:
 
 class TestStaleLocalContradictsRemoteFailsLoud:
     def test_static_local_port_with_fresh_remote_row_raises(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — a STATIC loopback port in the YAML would resolve
         # local, but the cross-host registry holds a FRESH remote=True
@@ -182,7 +182,7 @@ class TestStaleLocalContradictsRemoteFailsLoud:
             resolve_peer_url("clew")
 
     def test_contradiction_error_names_the_holding_host(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange
         env_save_restore.set("SAC_HOST", "lead-host")
@@ -211,7 +211,7 @@ class TestStaleLocalContradictsRemoteFailsLoud:
         assert url == "http://127.0.0.1:18888/v1/turn"
 
     def test_local_row_does_not_contradict_local_resolution(
-        self, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — a local (remote=False) instances row must NOT trigger
         # the contradiction guard.

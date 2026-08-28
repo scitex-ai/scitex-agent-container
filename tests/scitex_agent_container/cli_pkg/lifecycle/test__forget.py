@@ -64,11 +64,15 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
             os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
 
 
-def _seed_active_instance(
-    name: str, *, host: str = "h", db_path: Path | None = None
-) -> str:
-    """Insert one active ``instances`` row for ``name`` and return its id."""
-    return record_instance_start(name, host=host, db_path=db_path)
+def _seed_active_instance(name: str, *, host: str = "h") -> str:
+    """Write one active ``instances`` record for ``name``; return its id.
+
+    ``db_path`` left this signature on 2026-08-28 along with the table: the
+    records are in PostgreSQL now and there is no file to point at. Keeping
+    an ignored parameter would have let every call site keep passing a path
+    that redirects nothing.
+    """
+    return record_instance_start(name, host=host)
 
 
 def _seed_comms_node(
@@ -91,23 +95,23 @@ def _run_forget(*argv: str) -> object:
 # ---------------------------------------------------------------------------
 
 
-def test_forget_tombstones_stale_instances_row(isolated_state: Path) -> None:
+def test_forget_tombstones_stale_instances_row(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — a SLURM-reclaimed agent: instances row still active,
     # but no live local process. ``forget`` must tombstone it without
     # SSH or runtime probing.
-    _seed_active_instance("ghost-agent", db_path=isolated_state)
+    _seed_active_instance("ghost-agent")
     # Act
     _run_forget("ghost-agent", "--force")
     # Assert — no active rows remain for ghost-agent.
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "ghost-agent" not in active
 
 
-def test_forget_clears_comms_nodes_pin(isolated_state: Path) -> None:
+def test_forget_clears_comms_nodes_pin(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — federated routing still pins ghost-agent at a dead
     # host. Without this, future a2a sends silently fan out to the
     # dead host even after the instance row is gone.
-    _seed_active_instance("ghost-agent", db_path=isolated_state)
+    _seed_active_instance("ghost-agent")
     _seed_comms_node("ghost-agent", db_path=isolated_state)
     from scitex_agent_container._state.state_db_nodes import (
         resolve_node_host,
@@ -119,21 +123,21 @@ def test_forget_clears_comms_nodes_pin(isolated_state: Path) -> None:
     assert resolve_node_host(name="ghost-agent", db_path=isolated_state) is None
 
 
-def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
+def test_forget_exit_reason_is_operator_forget(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — distinct exit_reason so post-hoc state.db inspection
     # tells "operator forgot this" apart from a graceful stop /
     # liveness sweep / peer-unreachable force-release.
-    _seed_active_instance("ghost-agent", db_path=isolated_state)
+    _seed_active_instance("ghost-agent")
     from scitex_agent_container._state.state_db_instances import last_known_instance
 
     # Act
     _run_forget("ghost-agent", "--force")
-    row = last_known_instance("ghost-agent", db_path=isolated_state)
+    row = last_known_instance("ghost-agent")
     # Assert
     assert row is not None and row["exit_reason"] == "operator-forget"
 
 
-def test_forget_no_active_row_succeeds_silently(isolated_state: Path) -> None:
+def test_forget_no_active_row_succeeds_silently(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — no rows at all (operator double-runs the command).
     # forget MUST be idempotent — exit 0 with a "nothing-to-do" note.
     # Act
@@ -147,22 +151,22 @@ def test_forget_no_active_row_succeeds_silently(isolated_state: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_forget_refuses_live_instance_without_force(isolated_state: Path) -> None:
+def test_forget_refuses_live_instance_without_force(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — a brand-new instance row with a recent heartbeat
     # looks LIVE; clobbering it would lose a real running agent's
     # state. Forget must refuse unless --force.
-    _seed_active_instance("live-agent", db_path=isolated_state)
+    _seed_active_instance("live-agent")
     # Act
     result = _run_forget("live-agent")
     # Assert — non-zero exit, with a clear reason in stderr.
     assert result.exit_code != 0
 
 
-def test_refusal_message_names_the_force_flag(isolated_state: Path) -> None:
+def test_refusal_message_names_the_force_flag(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — the operator-facing error MUST name the remedy
     # (``--force``) so the next step is obvious. Mirrors the
     # ``stop --force`` UX.
-    _seed_active_instance("live-agent", db_path=isolated_state)
+    _seed_active_instance("live-agent")
     # Act
     result = _run_forget("live-agent")
     # Assert
@@ -173,15 +177,15 @@ def test_refusal_message_names_the_force_flag(isolated_state: Path) -> None:
     )
 
 
-def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
+def test_forget_force_overrides_live_safety_gate(pg_schema: str, isolated_state: Path) -> None:
     # Arrange — operator KNOWS the agent is dead despite the live-
     # looking row (SLURM-reclaimed node, peer-OS-rebooted, etc.).
     # --force MUST tombstone the row.
-    _seed_active_instance("live-but-dead", db_path=isolated_state)
+    _seed_active_instance("live-but-dead")
     # Act
     _run_forget("live-but-dead", "--force")
     # Assert
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "live-but-dead" not in active
 
 
@@ -191,7 +195,7 @@ def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
 
 
 def test_forget_does_not_spawn_ssh_subprocess(
-    isolated_state: Path, subprocess_shim
+    pg_schema: str, isolated_state: Path, subprocess_shim
 ) -> None:
     # Arrange — install a real fake ``ssh`` binary on ``$PATH`` via the
     # package's no-mocks ``subprocess_shim`` fixture (the same pattern
@@ -203,7 +207,7 @@ def test_forget_does_not_spawn_ssh_subprocess(
     # PATH lookup, finds the shim, and the shim's argv log is what we
     # read back.
     subprocess_shim.install("ssh", stdout="", exit=0)
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_active_instance("ghost")
     # Act
     _run_forget("ghost", "--force")
     # Assert — the shim records zero invocations because forget never
@@ -216,9 +220,9 @@ def test_forget_does_not_spawn_ssh_subprocess(
 # ---------------------------------------------------------------------------
 
 
-def test_forget_json_envelope_carries_exit_reason(isolated_state: Path) -> None:
+def test_forget_json_envelope_carries_exit_reason(pg_schema: str, isolated_state: Path) -> None:
     # Arrange
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_active_instance("ghost")
     # Act
     result = _run_forget("ghost", "--force", "--json")
     payload = json.loads(result.stdout)
@@ -226,9 +230,9 @@ def test_forget_json_envelope_carries_exit_reason(isolated_state: Path) -> None:
     assert payload.get("exit_reason") == "operator-forget"
 
 
-def test_forget_json_envelope_carries_name(isolated_state: Path) -> None:
+def test_forget_json_envelope_carries_name(pg_schema: str, isolated_state: Path) -> None:
     # Arrange
-    _seed_active_instance("ghost", db_path=isolated_state)
+    _seed_active_instance("ghost")
     # Act
     result = _run_forget("ghost", "--force", "--json")
     payload = json.loads(result.stdout)

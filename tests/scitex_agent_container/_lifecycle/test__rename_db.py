@@ -5,6 +5,22 @@ rowid-scoped, which is the whole point: a naive
 ``UPDATE … SET name = old WHERE name = new`` would also clobber rows that
 ALREADY held the new name — e.g. the history of a previously deleted agent
 that happened to be called that. The last test here is that trap.
+
+WHAT THIS FILE NO LONGER COVERS, and it is a GAP rather than a change of
+mind. ``rename_rows`` walks ``sqlite_master`` and skips any table that is
+absent, so the ``("instances", "name")`` / ``("instances", "spawned_by")``
+/ ``("instances", "workdir")`` entries in ``NAME_COLUMNS`` / ``PATH_COLUMNS``
+became silent no-ops on 2026-08-28 when that table moved to PostgreSQL —
+the same way the diary entries did on the same day. A renamed agent's
+instances records keep the OLD name until this module is rewritten against
+the store rather than against ``sqlite_master``; the entries are kept in
+the source as the inventory of what that rewrite owes.
+
+``test_rename_rewrites_the_instance_workdir_component`` was DELETED here
+rather than repaired, because there is no instances table for it to
+address and a version that seeded one would be testing a fixture rather
+than the code. The PATH-rewriting property it shared is still covered by
+``test_rename_rewrites_the_spec_path_component`` on ``definitions``.
 """
 
 from __future__ import annotations
@@ -33,11 +49,6 @@ _SEED = [
         "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
         "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
         ("d1", OLD, f"/root/agents/{OLD}/spec.yaml", "sha", "user", "t0"),
-    ),
-    (
-        "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
-        "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
     ),
     (
         "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
@@ -175,15 +186,6 @@ def test_rename_rewrites_the_spec_path_component(seeded: Path):
     rename_rows(seeded, OLD, NEW)
     # Assert
     assert _one(seeded, sql) == f"/root/agents/{NEW}/spec.yaml"
-
-
-def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
-    # Arrange
-    sql = "SELECT workdir FROM instances WHERE id = 'i1'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == f"/home/u/proj/{NEW}"
 
 
 def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):

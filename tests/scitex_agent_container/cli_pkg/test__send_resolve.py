@@ -82,7 +82,7 @@ def _seed_claim(name: str, port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_uses_instance_row_port_when_present(state_db_env):
+def test_resolve_uses_instance_row_port_when_present(pg_schema: str, state_db_env):
     # Arrange
     _seed_row("alpha", a2a_port=12345)
     # Act
@@ -91,7 +91,7 @@ def test_resolve_uses_instance_row_port_when_present(state_db_env):
     assert ep.a2a_port == 12345
 
 
-def test_resolve_instance_row_source_label(state_db_env):
+def test_resolve_instance_row_source_label(pg_schema: str, state_db_env):
     # Arrange
     _seed_row("alpha", a2a_port=12345)
     # Act
@@ -100,7 +100,7 @@ def test_resolve_instance_row_source_label(state_db_env):
     assert ep.source == "instance_row"
 
 
-def test_resolve_prefers_bound_port_over_legacy_a2a_port(state_db_env):
+def test_resolve_prefers_bound_port_over_legacy_a2a_port(pg_schema: str, state_db_env):
     # Arrange — both columns set to different values; bound_port must win.
     _seed_row("alpha", a2a_port=11111, bound_port=22222)
     # Act
@@ -143,7 +143,7 @@ def test_resolve_allocator_fallback_host_is_local(state_db_env):
     assert ep.host == _LOCAL_HOST
 
 
-def test_resolve_falls_back_to_allocator_when_row_port_is_null(state_db_env):
+def test_resolve_falls_back_to_allocator_when_row_port_is_null(pg_schema: str, state_db_env):
     # Arrange — a row exists but carries NO port; the claim supplies it.
     _seed_row("beta", a2a_port=None)
     _seed_claim("beta", 19007)
@@ -158,7 +158,7 @@ def test_resolve_falls_back_to_allocator_when_row_port_is_null(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_cross_host_row_preserves_peer_host(state_db_env):
+def test_resolve_cross_host_row_preserves_peer_host(pg_schema: str, state_db_env):
     # Arrange — a remote row (different host) carries the peer + port.
     _seed_row("gamma", host="peer-x", a2a_port=18888)
     # Act

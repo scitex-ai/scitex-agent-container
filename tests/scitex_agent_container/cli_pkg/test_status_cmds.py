@@ -384,7 +384,7 @@ def test_status_fleet_json_returns_agents_list(tmp_registry):
     assert isinstance(data.get("agents"), list)
 
 
-def test_status_fleet_json_includes_registered_agent(tmp_path, tmp_registry):
+def test_status_fleet_json_includes_registered_agent(pg_schema: str, tmp_path, tmp_registry):
     # Arrange
     spec = _write_spec(tmp_path, "fleet-agent")
     _register(tmp_registry, "fleet-agent", spec)
@@ -407,7 +407,7 @@ def test_status_fleet_table_exits_zero(tmp_registry):
     assert result.exit_code == 0
 
 
-def test_status_fleet_table_includes_registered_agent(tmp_path, tmp_registry):
+def test_status_fleet_table_includes_registered_agent(pg_schema: str, tmp_path, tmp_registry):
     # Arrange — a registered agent that is NOT running in the test env
     # (no tmux/container). The DEFAULT view shows only running agents
     # (operator TG 1490-1495), so the full roster is behind ``-v``.

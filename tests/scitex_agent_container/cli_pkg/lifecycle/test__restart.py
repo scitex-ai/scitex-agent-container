@@ -203,7 +203,7 @@ def test_refuse_without_yes_does_not_invoke_agent_restart():
 # ---------------------------------------------------------------------------
 
 
-def test_happy_path_exits_zero():
+def test_happy_path_exits_zero(pg_schema: str):
     # Arrange
     runner = CliRunner()
     # Act
@@ -213,7 +213,7 @@ def test_happy_path_exits_zero():
     assert result.exit_code == 0, result.output
 
 
-def test_happy_path_forwards_name_to_agent_restart():
+def test_happy_path_forwards_name_to_agent_restart(pg_schema: str):
     # Arrange
     called: list[str] = []
     runner = CliRunner()
@@ -224,7 +224,7 @@ def test_happy_path_forwards_name_to_agent_restart():
     assert called == ["alpha"]
 
 
-def test_happy_path_reports_success():
+def test_happy_path_reports_success(pg_schema: str):
     # Arrange
     runner = CliRunner()
     # Act
@@ -247,7 +247,7 @@ def _yaml_path(tmp_path):
     return path
 
 
-def test_yaml_path_exits_zero(_yaml_path):
+def test_yaml_path_exits_zero(pg_schema: str, _yaml_path):
     # Arrange
     runner = CliRunner()
     # Act
@@ -261,7 +261,7 @@ def test_yaml_path_exits_zero(_yaml_path):
     assert result.exit_code == 0, result.output
 
 
-def test_yaml_path_forwards_resolved_name(_yaml_path):
+def test_yaml_path_forwards_resolved_name(pg_schema: str, _yaml_path):
     # Arrange
     called: list[str] = []
     runner = CliRunner()
@@ -296,7 +296,7 @@ def test_failure_exits_one():
     assert result.exit_code == 1
 
 
-def test_failure_reports_exception_message():
+def test_failure_reports_exception_message(pg_schema: str):
     # Arrange
     runner = CliRunner()
     # Act
@@ -352,7 +352,7 @@ def cross_host_state_db(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_zeta(cross_host_state_db):
+def remote_row_for_zeta(pg_schema: str, cross_host_state_db):
     """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
     from scitex_agent_container._state.state_db import record_instance_start
 
@@ -402,7 +402,7 @@ def _ssh_invocations(bin_dir):
     return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
-def test_cross_host_restart_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
+def test_cross_host_restart_dispatches_via_ssh(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -411,7 +411,7 @@ def test_cross_host_restart_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
     assert result.exit_code == 0, result.output
 
 
-def test_cross_host_restart_ssh_argv_targets_peer_node(remote_row_for_zeta, ssh_shim):
+def test_cross_host_restart_ssh_argv_targets_peer_node(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -422,7 +422,7 @@ def test_cross_host_restart_ssh_argv_targets_peer_node(remote_row_for_zeta, ssh_
 
 
 def test_cross_host_restart_ssh_argv_carries_restart_verb(
-    remote_row_for_zeta, ssh_shim
+    pg_schema: str, remote_row_for_zeta, ssh_shim
 ):
     # Arrange
     runner = CliRunner()
@@ -433,7 +433,7 @@ def test_cross_host_restart_ssh_argv_carries_restart_verb(
     assert "sac agents restart zeta" in argv
 
 
-def test_cross_host_restart_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_shim):
+def test_cross_host_restart_ssh_argv_includes_json_flag(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
     # Act
@@ -457,7 +457,7 @@ def test_cross_host_restart_does_not_call_local_agent_restart(
 
 
 def test_cross_host_restart_json_envelope_marks_dispatched(
-    remote_row_for_zeta, ssh_shim
+    pg_schema: str, remote_row_for_zeta, ssh_shim
 ):
     import json as _json
 
@@ -470,7 +470,7 @@ def test_cross_host_restart_json_envelope_marks_dispatched(
     assert envelope.get("dispatched") is True
 
 
-def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_shim):
+def test_cross_host_restart_reopens_fresh_remote_row(pg_schema: str, remote_row_for_zeta, ssh_shim):
     # Arrange
     from scitex_agent_container._state.state_db import list_active_instances
 
@@ -489,7 +489,7 @@ def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_sh
 # ---------------------------------------------------------------------------
 
 
-def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim):
+def test_no_row_agent_restarts_locally_without_ssh(pg_schema: str, cross_host_state_db, ssh_shim):
     # Arrange — no row seeded for ``solo``; agent_restart swapped to a recorder.
     called: list[str] = []
     runner = CliRunner()
@@ -501,7 +501,7 @@ def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim
 
 
 def test_local_restart_json_envelope_marks_not_dispatched(
-    cross_host_state_db, ssh_shim
+    pg_schema: str, cross_host_state_db, ssh_shim
 ):
     import json as _json
 
@@ -516,7 +516,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
 
 
 def test_local_restart_failure_json_envelope_carries_error(
-    cross_host_state_db, ssh_shim
+    pg_schema: str, cross_host_state_db, ssh_shim
 ):
     import json as _json
 
@@ -578,7 +578,7 @@ def ssh_shim_nonjson(tmp_path):
         os.environ["PATH"] = saved_path
 
 
-def test_cross_host_restart_remote_failure_exits_one(remote_row_for_zeta, ssh_shim_rc1):
+def test_cross_host_restart_remote_failure_exits_one(pg_schema: str, remote_row_for_zeta, ssh_shim_rc1):
     # Arrange
     runner = CliRunner()
     # Act
@@ -588,7 +588,7 @@ def test_cross_host_restart_remote_failure_exits_one(remote_row_for_zeta, ssh_sh
 
 
 def test_cross_host_restart_remote_failure_reports_peer(
-    remote_row_for_zeta, ssh_shim_rc1
+    pg_schema: str, remote_row_for_zeta, ssh_shim_rc1
 ):
     # Arrange
     runner = CliRunner()
@@ -599,7 +599,7 @@ def test_cross_host_restart_remote_failure_reports_peer(
 
 
 def test_cross_host_restart_nonjson_stdout_exits_one(
-    remote_row_for_zeta, ssh_shim_nonjson
+    pg_schema: str, remote_row_for_zeta, ssh_shim_nonjson
 ):
     # Arrange
     runner = CliRunner()
@@ -1139,7 +1139,7 @@ def test_in_sif_restart_never_runs_the_local_restart(in_sif_env):
     assert local == []
 
 
-def test_outside_a_sif_restart_runs_locally(bare_host_env):
+def test_outside_a_sif_restart_runs_locally(pg_schema: str, bare_host_env):
     # Arrange — ``bare_host_env`` proves the SIF markers really are clear.
     local: list[str] = []
     brokered: list[str] = []
@@ -1319,7 +1319,7 @@ def test_restart_that_leaves_the_run_unchanged_exits_one(armed_run_marker):
 
 
 def test_restart_that_leaves_the_run_unchanged_reports_verified_false(
-    armed_run_marker,
+    pg_schema: str, armed_run_marker,
 ):
     # Arrange
     runner = CliRunner()
@@ -1331,6 +1331,7 @@ def test_restart_that_leaves_the_run_unchanged_reports_verified_false(
 
 
 def test_restart_that_leaves_the_run_unchanged_reports_the_same_run_both_sides(
+    pg_schema: str,
     armed_run_marker,
 ):
     # Arrange
@@ -1356,7 +1357,7 @@ def _cycling_restart_for(root):
     return _restart
 
 
-def test_restart_that_cycles_the_run_exits_zero(armed_run_marker):
+def test_restart_that_cycles_the_run_exits_zero(pg_schema: str, armed_run_marker):
     # Arrange
     runner = CliRunner()
     # Act
@@ -1380,7 +1381,7 @@ def test_restart_that_cycles_only_the_ledger_cannot_be_verified(armed_run_marker
     assert _envelope(result).get("verified") is None
 
 
-def test_unverifiable_restart_is_not_reported_as_a_failure(armed_run_marker):
+def test_unverifiable_restart_is_not_reported_as_a_failure(pg_schema: str, armed_run_marker):
     # Arrange — the mirror-image lie must not be invented either: "I could not
     # check" is not "it failed", so the restart's own outcome stands.
     runner = CliRunner()
@@ -1391,7 +1392,7 @@ def test_unverifiable_restart_is_not_reported_as_a_failure(armed_run_marker):
     assert _envelope(result).get("restarted") is True
 
 
-def test_unverifiable_restart_is_not_printed_under_the_word_verified(armed_run_marker):
+def test_unverifiable_restart_is_not_printed_under_the_word_verified(pg_schema: str, armed_run_marker):
     # Arrange — the console line is what the operator actually reads, and
     # printing an ABSTENTION under the word "verified" is how an unchecked
     # restart came to look like a checked one. v4 step 5 fixed the label
@@ -1420,7 +1421,7 @@ def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
     assert result.exit_code == 1, result.output
 
 
-def test_no_marker_on_either_side_does_not_invent_a_failure(no_run_marker):
+def test_no_marker_on_either_side_does_not_invent_a_failure(pg_schema: str, no_run_marker):
     # Arrange — no evidence at all. Reporting FAILURE here would be the exact
     # mirror of the false SUCCESS being fixed, so the verdict must abstain.
     runner = CliRunner()

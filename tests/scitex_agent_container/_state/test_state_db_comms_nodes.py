@@ -529,7 +529,16 @@ def test_list_comms_nodes_include_ended_returns_all(
 # ---------------------------------------------------------------------------
 
 
+# These seven take ``pg_schema`` as well as ``db_path``, and the pairing is
+# the point rather than boilerplate: since 2026-08-28 ``resolve_node_host``
+# consults the PostgreSQL ``instances`` store FIRST and the SQLite
+# ``comms_nodes`` table second, so a test of the fall-through has to have
+# both engines actually present. With only ``db_path`` the store raises
+# StoreTargetError before the fall-through is ever reached.
+
+
 def test_resolve_node_host_returns_none_for_unknown_name(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
@@ -541,6 +550,7 @@ def test_resolve_node_host_returns_none_for_unknown_name(
 
 
 def test_resolve_node_host_finds_comms_nodes_when_no_instance(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
@@ -552,24 +562,26 @@ def test_resolve_node_host_finds_comms_nodes_when_no_instance(
 
 
 def test_resolve_node_host_instances_wins_when_both_present(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
     import time as _time
 
-    with state_db.open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO instances (id, name, host, scope, a2a_port, "
-            "started_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "inst-1",
-                "lead",
-                "instances-host",
-                "global",
-                9000,
-                _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
-            ),
-        )
+    from scitex_agent_container._state.state_db_instances import (
+        put_instance_record,
+    )
+
+    put_instance_record(
+        {
+            "id": "inst-1",
+            "name": "lead",
+            "host": "instances-host",
+            "scope": "global",
+            "a2a_port": 9000,
+            "started_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        }
+    )
     register_comms_node(name="lead", host="comms-host", a2a_port=8642, db_path=db_path)
     # Act
     info = resolve_node_host(name="lead", db_path=db_path)
@@ -578,6 +590,7 @@ def test_resolve_node_host_instances_wins_when_both_present(
 
 
 def test_resolve_node_host_skips_tombstoned_comms_node(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
@@ -595,6 +608,7 @@ def test_resolve_node_host_skips_tombstoned_comms_node(
 
 
 def test_is_local_node_true_when_comms_node_matches_local_host(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
@@ -606,6 +620,7 @@ def test_is_local_node_true_when_comms_node_matches_local_host(
 
 
 def test_is_local_node_false_when_comms_node_lives_elsewhere(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     # Arrange
@@ -616,7 +631,9 @@ def test_is_local_node_false_when_comms_node_lives_elsewhere(
     assert not local
 
 
-def test_is_local_node_true_for_unknown_name(db_path: Path) -> None:
+def test_is_local_node_true_for_unknown_name(
+    pg_schema: str, db_path: Path
+) -> None:
     # Arrange
     target_db = db_path
     # Act

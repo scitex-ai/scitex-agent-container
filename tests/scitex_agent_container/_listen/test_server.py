@@ -886,22 +886,20 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     # Arrange
     db = cross_host_env["db"]
     # Register the target as a live instance on host-a.
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    host_a_port = _free_port()
+    host_b_port = _free_port()
+
+    # The port is bound onto the record at START, so the resolver routes
+    # to the right loopback. It used to be recorded as 0 and then UPDATEd;
+    # ``a2a_port`` is an IMMUTABLE field of the PostgreSQL record since
+    # 2026-08-28, so the second write would be silently dropped and the
+    # resolver would route to port 0. Allocating the ports first is the
+    # smaller change and the more honest order.
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=host_a_port)
     # Permitted-peer is registered as a child of root, so is alice;
     # they share a group and ACL allows the send.
     record_lineage(child="permitted-peer", parent="root", db_path=db)
     record_lineage(child="alice", parent="root", db_path=db)
-
-    host_a_port = _free_port()
-    host_b_port = _free_port()
-
-    # Bind the actual port for host A onto the instances row so the
-    # resolver routes to the right loopback.
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -968,16 +966,13 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
     """
     # Arrange
     db = cross_host_env["db"]
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
     host_a_port = _free_port()
     host_b_port = _free_port()
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    # Bound at START, not UPDATEd after: ``a2a_port`` is IMMUTABLE on the
+    # PostgreSQL record (2026-08-28), so a later write is dropped.
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=host_a_port)
+    record_lineage(child="permitted-peer", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root", db_path=db)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1033,33 +1028,41 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
 
 
 @pytest.fixture
-def missing_peer_token_response(tmp_path: Path):
+def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     """Drive a forwarder POST with NO peer-token written for the
     destination host, so the forwarder must fall through to the loud
     502 path. Yielded value is the live ``httpx.Response`` so each
     test can assert one aspect of the failure shape.
     """
     # Arrange — fresh tmp env, NO peer-token for host-z.
+    #
+    # THE SETUP LIVES INSIDE THE ``try`` (moved 2026-08-28) and that is not
+    # tidiness. It used to sit above it, so anything that raised between the
+    # first module-constant assignment and the ``try`` left
+    # ``_reg.REGISTRY_DIR`` / ``_ss.DEFAULT_STATE_ROOT`` pointing at this
+    # test's tmp_path FOREVER. MEASURED: when the instances write below
+    # started needing PostgreSQL, that raise produced 3 setup errors and
+    # then ~480 SAC-STATE-FLOOR-BREACHED teardown errors in unrelated files
+    # for the rest of the session — the real fault was one line and the
+    # report named a hundred innocents.
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    db = tmp_path / "state.db"
-    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    os.environ["HOME"] = str(tmp_path)
-    state_db.DEFAULT_DB_PATH = db
-    _reg.REGISTRY_DIR = tmp_path / "registry"
-    _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
-    state_db.record_instance_start(
-        name="alice", host="host-z", a2a_port=9999, db_path=db
-    )
-    app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
 
     try:
+        db = tmp_path / "state.db"
+        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
+        os.environ["HOME"] = str(tmp_path)
+        state_db.DEFAULT_DB_PATH = db
+        _reg.REGISTRY_DIR = tmp_path / "registry"
+        _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
+        state_db.init_schema(db)
+        record_lineage(child="permitted-peer", parent="root", db_path=db)
+        record_lineage(child="alice", parent="root", db_path=db)
+        state_db.record_instance_start(name="alice", host="host-z", a2a_port=9999)
+        app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
         with TestClient(app_local) as client:
             r = client.post(
                 "/agents/alice/message:send",
@@ -1110,7 +1113,7 @@ def test_cross_host_forward_502_body_names_missing_host(
 
 
 def test_cross_host_forward_502_body_carries_add_peer_fix(
-    missing_peer_token_response,
+    pg_schema: str, missing_peer_token_response,
 ) -> None:
     """The 502 body advertises the ``sac host add-peer`` remediation
     so the loud failure points at the fix."""
@@ -1213,12 +1216,11 @@ def _drive_ssh_cross_host_send(
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
 
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    # The port is written ONCE, at start. It used to be recorded as 0 and
+    # then UPDATEd; ``a2a_port`` is an IMMUTABLE field of the PostgreSQL
+    # record since 2026-08-28, so the second write would be silently
+    # dropped and the resolver would route to port 0.
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1355,12 +1357,11 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     state_db_nodes_grant.record_comms_policy(
         name="alice", inbound_siblings="deny", db_path=db
     )
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    # The port is written ONCE, at start. It used to be recorded as 0 and
+    # then UPDATEd; ``a2a_port`` is an IMMUTABLE field of the PostgreSQL
+    # record since 2026-08-28, so the second write would be silently
+    # dropped and the resolver would route to port 0.
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 

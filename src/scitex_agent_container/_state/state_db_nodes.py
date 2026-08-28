@@ -410,20 +410,14 @@ def resolve_node_host(
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import latest_active_instance
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port, bound_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    # ``instances`` moved to PostgreSQL 2026-08-28. This was a SELECT that
+    # ``state_db_forward`` carried a byte-identical copy of; both now call
+    # the one accessor, so the two cannot drift apart again — and they had
+    # drifted, which is what the bound_port note below records.
+    row = latest_active_instance(name)
     if row is not None:
         # PREFER bound_port, fall back to the legacy a2a_port. Reading only
         # a2a_port discarded a usable address that was sitting in the same
@@ -434,9 +428,9 @@ def resolve_node_host(
         # 502'd at the forwarder while the sibling resolver would have
         # reached it. Same row, same moment, two answers — the asymmetry was
         # the defect, not the null.
-        port = row["a2a_port"]
+        port = row.get("a2a_port")
         if port is None:
-            port = row["bound_port"]
+            port = row.get("bound_port")
         return {
             "host": str(row["host"]),
             "a2a_port": int(port) if port is not None else None,

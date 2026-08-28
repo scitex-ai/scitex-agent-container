@@ -253,8 +253,9 @@ def agent_start(
 
     # Already running?
     forced_stop = False
-    # Stale-lease cleanup (operator pain point — replaces the manual
-    # ``sqlite3 … DELETE FROM instances …`` workaround). When the runtime PID
+    # Stale-lease cleanup (operator pain point — replaced the manual
+    # ``sqlite3 … DELETE FROM instances …`` workaround, which stopped being
+    # possible at all when the records left SQLite). When the runtime PID
     # is dead, any active ``instances`` row for this agent name is stale (the
     # previous container died without going through agent_stop). Clear those
     # rows so a zombie lease cannot vouch for a dead agent. Live runtimes are

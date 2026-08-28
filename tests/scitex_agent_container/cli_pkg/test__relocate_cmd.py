@@ -404,7 +404,7 @@ def test_the_latest_stay_is_the_open_one() -> None:
     assert current_host(history) == "ywata-note-win"
 
 
-def test_an_agent_the_table_never_heard_of_yields_no_history() -> None:
+def test_an_agent_the_table_never_heard_of_yields_no_history(pg_schema: str) -> None:
     # Arrange: genuinely "the db knows nothing", which is what lets a legacy
     # spec host: seed it ONCE. An invented answer here would defeat that.
     # Act

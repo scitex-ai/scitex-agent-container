@@ -145,7 +145,7 @@ def test_the_table_header_echoes_the_localhost_resolution(fleet_config):
     assert f"--host localhost → {LOCAL}" in result.output
 
 
-def test_the_table_header_reports_the_responded_split(fleet_config):
+def test_the_table_header_reports_the_responded_split(pg_schema: str, fleet_config):
     # Arrange -- mandatory, and it renders above the table every time.
     runner = CliRunner()
     # Act

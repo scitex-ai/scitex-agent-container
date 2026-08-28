@@ -229,7 +229,7 @@ def _write_auto_port_yaml(tmp_path: Path) -> Path:
 
 class TestResolvePeerUrlCrossHostFallback:
     def test_remote_instances_row_resolves_to_ssh_url(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML (no static port, no local allocator
         # claim) + a remote instances row recording the peer-resolved
@@ -247,7 +247,7 @@ class TestResolvePeerUrlCrossHostFallback:
         assert url == "ssh://spartan:19123/v1/turn"
 
     def test_remote_instances_row_without_local_claim_does_not_raise(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — same shape; the pre-fix behaviour was a PeerError
         # ("port: auto and no bound port recorded").
@@ -268,7 +268,7 @@ class TestResolvePeerUrlCrossHostFallback:
         assert raised == []
 
     def test_legacy_row_without_bound_port_falls_back_to_a2a_port(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, pg_schema: str, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
     ) -> None:
         # Arrange — a row written before the family-tree columns existed
         # carries the port only in ``a2a_port``; the fallback must still

@@ -240,7 +240,7 @@ def test_mcp_tool_spawn_is_denied_for_child_caller(
 
 
 def test_mcp_tool_spawn_deny_does_not_launch_child(
-    isolated_state, sac_name, tmp_path
+    pg_schema: str, isolated_state, sac_name, tmp_path
 ) -> None:
     # Arrange — same denied child; assert no live instance row was created
     # (the gate fired BEFORE any runtime/instance bookkeeping).

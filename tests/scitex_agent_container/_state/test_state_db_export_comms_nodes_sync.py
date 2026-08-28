@@ -13,7 +13,13 @@ with different (host, port). Importing each other's view raises
 :class:`CommsNodeConflictError` (or the import is rejected) — fail-loud,
 no silent winner-takes-all.
 
-Real on-disk SQLite, no mocks.
+The two resolver tests also take ``pg_schema``: ``resolve_node_host``
+consults the PostgreSQL ``instances`` store before falling through to
+the SQLite ``comms_nodes`` table (2026-08-28), so it cannot be exercised
+without one. The export/import halves stay pure SQLite — ``comms_nodes``
+has not moved.
+
+Real on-disk SQLite plus a real PostgreSQL schema, no mocks.
 """
 
 from __future__ import annotations
@@ -63,7 +69,9 @@ def _stamp_source(payload: dict, source_host: str) -> dict:
     return new_payload
 
 
-def test_register_on_a_sync_to_b_resolves_correctly(db_a: Path, db_b: Path) -> None:
+def test_register_on_a_sync_to_b_resolves_correctly(
+    pg_schema: str, db_a: Path, db_b: Path
+) -> None:
     # Arrange — A registers lead locally.
     register_comms_node(name="lead", host="hostA", a2a_port=8642, db_path=db_a)
     # Act — export from A, restamp source, import to B.
@@ -75,7 +83,9 @@ def test_register_on_a_sync_to_b_resolves_correctly(db_a: Path, db_b: Path) -> N
     assert info == {"host": "hostA", "a2a_port": 8642}
 
 
-def test_register_on_a_sync_to_b_is_not_local_on_b(db_a: Path, db_b: Path) -> None:
+def test_register_on_a_sync_to_b_is_not_local_on_b(
+    pg_schema: str, db_a: Path, db_b: Path
+) -> None:
     # Arrange
     register_comms_node(name="lead", host="hostA", a2a_port=8642, db_path=db_a)
     payload = export_state(db_path=db_a, host="hostA", tables=["comms_nodes"])

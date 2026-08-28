@@ -12,6 +12,17 @@ PA-306 conventions:
   ``SCITEX_AGENT_CONTAINER_STATE_DB`` env var (the same seam the
   ``_state/test_state_db.py`` suite already uses).
 * AAA structure, one assertion per test, 3+ word descriptive names.
+
+RE-POINTED 2026-08-28. Almost every test here used ``instances`` as its
+sample table — the CLI paths under test (provenance line, empty-vs-rows
+rendering, export/import counts) are table-agnostic, and ``instances``
+was simply the one with a convenient writer. It moved to per-host
+PostgreSQL and left ``KNOWN_TABLES``, so ``--table instances`` is now
+rejected at parse time and the payload has no ``instances`` key at all.
+The samples are ``definitions`` (raw insert) and ``comms_nodes``
+(``register_comms_node``), both still SQLite and still exported. The
+REFUSAL itself gets its own test, because an empty result for this table
+would read as "no agents are running".
 """
 
 from __future__ import annotations
@@ -46,6 +57,25 @@ def db_path(tmp_path: Path):
         importlib.reload(mod)
 
 
+def _seed_comms_node(db: Path, name: str = "x", host: str = "h") -> None:
+    """One exportable row on a table that is still SQLite-backed."""
+    from scitex_agent_container._state.state_db_nodes import register_comms_node
+
+    register_comms_node(name=name, host=host, a2a_port=7000, db_path=db)
+
+
+def _seed_definition(db: Path, name: str = "agent-a") -> None:
+    """One row in ``definitions``, written straight through open_db."""
+    from scitex_agent_container._state.state_db import open_db
+
+    with open_db(db) as conn:
+        conn.execute(
+            "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, "
+            "scope, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (f"d-{name}", name, f"/{name}.yaml", f"sha-{name}", "global",
+             "2026-08-28T00:00:00Z"),
+        )
+
 # ---------------------------------------------------------------------------
 # db show — non-JSON console branch (lines 65-68)
 # ---------------------------------------------------------------------------
@@ -62,15 +92,15 @@ def test_db_show_console_output_starts_with_state_db_header(db_path: Path):
     assert "sac state.db" in result.output
 
 
-def test_db_show_console_output_lists_instances_table_row(db_path: Path):
-    # Arrange
+def test_db_show_console_output_lists_a_known_table_row(db_path: Path):
+    # Arrange — was ``instances`` until that table left KNOWN_TABLES.
     from scitex_agent_container.cli_pkg.db_group import db_show
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, [])
     # Assert
-    assert "instances" in result.output
+    assert "definitions" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +143,7 @@ def test_db_query_console_output_names_the_store_it_read(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "definitions", "--limit", "5"])
     # Assert
     assert "store:" in result.output
 
@@ -125,7 +155,7 @@ def test_db_query_json_still_emits_a_bare_array(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--json"])
+    result = runner.invoke(db_query, ["--table", "definitions", "--json"])
     # Assert
     assert json.loads(result.stdout) == []
 
@@ -138,9 +168,22 @@ def test_db_query_mcp_result_names_the_store(db_path: Path):
     from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
 
     # Act
-    result = mcp_db_query(table="instances")
+    result = mcp_db_query(table="definitions")
     # Assert
     assert result["store"] == str(db_path)
+
+
+def test_db_query_refuses_the_migrated_instances_table(db_path: Path):
+    # Arrange — the honest answer for a table that changed backend. An
+    # empty array here would read as "no agents are running", which is a
+    # sentence an operator acts on; a nonzero exit is not.
+    from scitex_agent_container.cli_pkg.db_group import db_query
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_query, ["--table", "instances", "--json"])
+    # Assert
+    assert result.exit_code != 0
 
 
 def test_db_query_mcp_data_still_parses(db_path: Path):
@@ -149,7 +192,7 @@ def test_db_query_mcp_data_still_parses(db_path: Path):
     from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
 
     # Act
-    result = mcp_db_query(table="instances")
+    result = mcp_db_query(table="definitions")
     # Assert
     assert result["data"] == []
 
@@ -165,51 +208,48 @@ def test_db_query_empty_table_console_says_no_rows(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "definitions", "--limit", "5"])
     # Assert
     assert "no rows" in result.output
 
 
 def test_db_query_console_output_includes_row_header_for_populated_table(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("agent-a", host="h")
+    _seed_definition(db_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "definitions", "--limit", "5"])
     # Assert
     assert "row 0" in result.output
 
 
-def test_db_query_console_output_renders_row_name_key_value(db_path: Path):
+def test_db_query_console_output_renders_row_name_key_value(pg_schema: str, db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("agent-a", host="h")
+    _seed_definition(db_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "definitions", "--limit", "5"])
     # Assert
     assert "agent-a" in result.output
 
 
-def test_db_query_with_where_clause_filters_rows_in_json(db_path: Path):
+def test_db_query_with_where_clause_filters_rows_in_json(pg_schema: str, db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("keep-me", host="h")
-    record_instance_start("drop-me", host="h")
+    _seed_definition(db_path, "keep-me")
+    _seed_definition(db_path, "drop-me")
     runner = CliRunner()
     # Act
     result = runner.invoke(
         db_query,
-        ["--table", "instances", "--where", "name='keep-me'", "--json"],
+        ["--table", "definitions", "--where", "name='keep-me'", "--json"],
     )
     rows = json.loads(result.stdout)
     # Assert
@@ -223,7 +263,7 @@ def test_db_query_with_where_clause_filters_rows_in_json(db_path: Path):
 
 
 def test_db_migrate_resolves_registry_dir_from_env_variable(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ):
     # Arrange
     reg = tmp_path / "legacy-reg"
@@ -259,7 +299,7 @@ def test_db_migrate_resolves_registry_dir_from_env_variable(
 
 
 def test_db_migrate_console_output_reports_imported_count(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ):
     # Arrange
     reg = tmp_path / "reg"
@@ -309,7 +349,7 @@ def dead_pid_environment():
 
 
 def test_db_clean_console_output_emits_swept_label_header(
-    db_path: Path, dead_pid_environment
+    pg_schema: str, db_path: Path, dead_pid_environment
 ):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
@@ -324,7 +364,7 @@ def test_db_clean_console_output_emits_swept_label_header(
 
 
 def test_db_clean_dry_run_console_uses_would_sweep_label(
-    db_path: Path, dead_pid_environment
+    pg_schema: str, db_path: Path, dead_pid_environment
 ):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
@@ -339,7 +379,7 @@ def test_db_clean_dry_run_console_uses_would_sweep_label(
 
 
 def test_db_clean_console_lists_crashed_counter_when_nonzero(
-    db_path: Path, dead_pid_environment
+    pg_schema: str, db_path: Path, dead_pid_environment
 ):
     # Arrange
     from scitex_agent_container._state.state_db import record_instance_start
@@ -358,26 +398,24 @@ def test_db_clean_console_lists_crashed_counter_when_nonzero(
 # ---------------------------------------------------------------------------
 
 
-def test_db_export_dry_run_reports_row_counts_for_instances(db_path: Path):
+def test_db_export_dry_run_reports_row_counts_for_a_known_table(pg_schema: str, db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["row_counts"]["instances"] == 1
+    assert body["row_counts"]["comms_nodes"] == 1
 
 
-def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
+def test_db_export_dry_run_echoes_host_stamp_into_body(pg_schema: str, db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
@@ -386,12 +424,11 @@ def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
     assert body["host"] == "h"
 
 
-def test_db_export_with_output_writes_json_blob_to_file(db_path: Path, tmp_path: Path):
+def test_db_export_with_output_writes_json_blob_to_file(pg_schema: str, db_path: Path, tmp_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     out = tmp_path / "nested" / "dump.json"
     runner = CliRunner()
     # Act
@@ -402,13 +439,12 @@ def test_db_export_with_output_writes_json_blob_to_file(db_path: Path, tmp_path:
 
 
 def test_db_export_with_output_creates_parent_directory_on_disk(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     out = tmp_path / "new-subdir" / "dump.json"
     runner = CliRunner()
     # Act
@@ -453,15 +489,12 @@ def switch_to_sink_db(tmp_path: Path):
 
 
 def test_db_import_reads_payload_from_filesystem_path(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -473,19 +506,16 @@ def test_db_import_reads_payload_from_filesystem_path(
     result = runner.invoke(db_import, [str(dump), "--json"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["instances"] == 1
+    assert body["inserted"]["comms_nodes"] == 1
 
 
 def test_db_import_dry_run_json_reports_would_insert_counts(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -497,19 +527,16 @@ def test_db_import_dry_run_json_reports_would_insert_counts(
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["would_insert"]["instances"] == 1
+    assert body["would_insert"]["comms_nodes"] == 1
 
 
 def test_db_import_dry_run_json_flags_payload_as_dry_run(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -525,15 +552,12 @@ def test_db_import_dry_run_json_flags_payload_as_dry_run(
 
 
 def test_db_import_dry_run_console_reports_would_insert_total(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -547,16 +571,13 @@ def test_db_import_dry_run_console_reports_would_insert_total(
     assert "would-insert=" in result.output
 
 
-def test_db_import_dry_run_console_lists_instances_table_count(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+def test_db_import_dry_run_console_lists_a_known_table_count(
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -567,19 +588,16 @@ def test_db_import_dry_run_console_lists_instances_table_count(
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run"])
     # Assert
-    assert "instances" in result.output
+    assert "comms_nodes" in result.output
 
 
 def test_db_import_console_output_reports_inserted_total(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -593,16 +611,13 @@ def test_db_import_console_output_reports_inserted_total(
     assert "inserted=" in result.output
 
 
-def test_db_import_console_output_lists_instances_inserted_count(
-    db_path: Path, switch_to_sink_db, tmp_path: Path
+def test_db_import_console_output_lists_a_known_table_inserted_count(
+    pg_schema: str, db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
+    _seed_comms_node(db_path)
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -613,4 +628,4 @@ def test_db_import_console_output_lists_instances_inserted_count(
     # Act
     result = runner.invoke(db_import, [str(dump)])
     # Assert
-    assert "instances" in result.output
+    assert "comms_nodes" in result.output

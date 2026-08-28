@@ -206,7 +206,7 @@ def _heartbeat_signals(name: str) -> tuple[float | None, float | None]:
     return beat_ts, None
 
 
-def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
+def _live_agent_pids() -> dict[str, int] | None:
     """Map active-agent name → recorded pid — or ``None`` if the registry
     could not be READ AT ALL.
 
@@ -228,11 +228,16 @@ def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
     registry records ``pid = NULL`` on every active row, so a perfectly
     healthy agent contributes no entry here. Callers must corroborate a
     missing pid against the owner's heartbeat before concluding anything —
-    :func:`resolve_liveness` does."""
+    THE ``db_path`` PARAMETER IS GONE (2026-08-28): the ``instances``
+    registry moved to per-host PostgreSQL, which is resolved from
+    ``SCITEX_STORE_DSN`` rather than named by a file. Nothing in
+    production passed it; four tests did, to isolate themselves onto a
+    temp SQLite file, and that isolation is now the ``pg_schema``
+    fixture's job."""
     try:
         from .._state.state_db import list_active_instances
 
-        rows = list_active_instances(db_path=db_path)
+        rows = list_active_instances()
     except Exception as exc:  # stx-allow: fallback (registry unreadable → UNKNOWN, never "dead")
         logger.warning(
             "liveness_tick: instances registry unavailable (%s) — owner "
@@ -253,11 +258,7 @@ def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
     return out
 
 
-def resolve_liveness(
-    owners: Iterable[str],
-    *,
-    db_path: Path | None = None,
-) -> dict[str, AgentLiveness]:
+def resolve_liveness(owners: Iterable[str]) -> dict[str, AgentLiveness]:
     """Resolve each owner agent → :class:`AgentLiveness` (BLOCKING — run
     off-loop).
 
@@ -278,11 +279,14 @@ def resolve_liveness(
     file). When it is false the owner is UNKNOWN and the rule stays silent —
     it never guesses "dead".
 
-    ``db_path`` overrides the registry location (tests point it at a real temp
-    SQLite file; production leaves it ``None``)."""
+    ``db_path`` USED TO OVERRIDE THE REGISTRY LOCATION and is gone
+    (2026-08-28) — the registry is per-host PostgreSQL now, addressed by
+    DSN. Production never passed it; the tests that did now isolate
+    through the ``pg_schema`` fixture, which is a better isolation than a
+    temp path was because it exercises the real resolver."""
     from ._agent_exec_liveness import _pid_alive
 
-    pids = _live_agent_pids(db_path)
+    pids = _live_agent_pids()
     registry_ok = pids is not None
     pids = pids or {}
 

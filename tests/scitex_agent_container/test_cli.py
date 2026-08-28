@@ -127,7 +127,7 @@ class TestCLI:
         # Assert
         assert result.exit_code != 0
 
-    def test_db_clean_sweep_exits_zero(self):
+    def test_db_clean_sweep_exits_zero(self, pg_schema: str):
         # Arrange
         # F-CS11 phase 5: `registry clean` was renamed to `db clean`.
         # The new path is the SQLite GC sweep — runs against state.db,
@@ -597,7 +597,7 @@ spec:
             lambda cfg: _LocalProbe(running=True, runtime="InstantRuntime", error=None),
         )
 
-    def test_hanging_probe_actually_reaches_the_probe_path(self, tmp_path):
+    def test_hanging_probe_actually_reaches_the_probe_path(self, pg_schema: str, tmp_path):
         """Positive control for the whole hanging-probe suite.
 
         The other tests are only meaningful if the fake probe RUNS. A spec
@@ -615,7 +615,7 @@ spec:
             "fixture spec), so the todo#254 timeout guards are VACUOUS"
         )
 
-    def test_hanging_remote_probe_respects_timeout_budget(self, tmp_path):
+    def test_hanging_remote_probe_respects_timeout_budget(self, pg_schema: str, tmp_path):
         """A hanging remote probe must not exceed the per-probe timeout."""
         # Arrange: baseline arm measures the same call WITHOUT the hang, so
         # the assertion charges the budget only for the hang. Asserting raw
@@ -642,7 +642,7 @@ spec:
             f"re-introduced"
         )
 
-    def test_hanging_remote_probe_marks_status_unknown(self, tmp_path):
+    def test_hanging_remote_probe_marks_status_unknown(self, pg_schema: str, tmp_path):
         """A timed-out remote probe must produce status='unknown'."""
         # Arrange
         probe = self._run_hanging_probe
@@ -652,7 +652,7 @@ spec:
         remote_row = next(r for r in rows if r["name"] == "test-remote")
         assert remote_row["status"] == "unknown"
 
-    def test_hanging_remote_probe_marks_liveness_unknown_true(self, tmp_path):
+    def test_hanging_remote_probe_marks_liveness_unknown_true(self, pg_schema: str, tmp_path):
         """A timed-out remote probe must set liveness_unknown=True."""
         # Arrange
         probe = self._run_hanging_probe
@@ -707,7 +707,7 @@ spec:
                 _helpers.probe_local_detail = saved_probe
         return rows[0]
 
-    def test_fast_remote_probe_reports_running_status(self, tmp_path):
+    def test_fast_remote_probe_reports_running_status(self, pg_schema: str, tmp_path):
         """A fast remote probe must report status='running'."""
         # Arrange
         probe = self._run_fast_probe
@@ -716,7 +716,7 @@ spec:
         # Assert
         assert row["status"] == "running"
 
-    def test_fast_remote_probe_is_not_marked_liveness_unknown(self, tmp_path):
+    def test_fast_remote_probe_is_not_marked_liveness_unknown(self, pg_schema: str, tmp_path):
         """A fast remote probe must NOT be marked liveness_unknown."""
         # Arrange
         probe = self._run_fast_probe

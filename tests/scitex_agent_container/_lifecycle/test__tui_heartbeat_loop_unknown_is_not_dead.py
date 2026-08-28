@@ -207,17 +207,17 @@ async def test_slow_tick_does_not_stack_a_second_probe_thread(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_dropped_tick_leaves_the_live_instance_row_active(tmp_path: Path):
+async def test_dropped_tick_leaves_the_live_instance_row_active(pg_schema: str, tmp_path: Path):
     # Arrange — a REAL state.db with a REAL active instance row for a live
     # agent (the scitex-hpc shape: tmux alive, a2a port listening).
     db_path = tmp_path / "state.db"
     state_dir = _seeded_live_agent(tmp_path)
-    record_instance_start(LIVE_AGENT, pid=4242, a2a_port=LIVE_PORT, db_path=db_path)
+    record_instance_start(LIVE_AGENT, pid=4242, a2a_port=LIVE_PORT)
     # Act — a tick that wedges and gets ABANDONED.
     task = _start_loop(state_dir, _wedged_probe, budget=TICK_BUDGET_S)
     await _drive(task)
     still_active = [
-        r for r in list_active_instances(db_path=db_path) if r.get("name") == LIVE_AGENT
+        r for r in list_active_instances() if r.get("name") == LIVE_AGENT
     ]
     # Assert — the row agent_send resolves from is STILL ACTIVE (not ended, not
     # swept, not "stopped"). A dropped tick cannot kill a live agent.

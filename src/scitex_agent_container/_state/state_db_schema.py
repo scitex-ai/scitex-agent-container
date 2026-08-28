@@ -13,10 +13,21 @@ site is unchanged.
 
 from __future__ import annotations
 
-# Registry tables (F-CS11) — definitions, instances, events.
-# The legacy ``heartbeats`` table (instance_id, ts, ...) is now
-# created under the name ``instance_heartbeats``. See _SCHEMA_DIARY
-# below for the new diary-style ``heartbeats``.
+# Registry tables (F-CS11) — what is LEFT of them.
+#
+# ``instances`` and ``events`` were defined here until 2026-08-28. Both
+# moved to per-host PostgreSQL (:mod:`.state_db_instances` and
+# :mod:`.state_db_instance_events`) and the DDL was DELETED rather than
+# left in place, which is the part that matters. A retired CREATE TABLE
+# is not inert: it keeps handing a stale reader an empty table instead of
+# an error, and for ``instances`` an empty table is not a null result —
+# it is the sentence "no agents are running", which reads as an answer
+# and gets acted on. Deleting the DDL turns that silent wrong answer into
+# ``no such table: instances``, which nobody mistakes for a fleet status.
+#
+# The legacy ``heartbeats`` table (instance_id, ts, ...) is created under
+# the name ``instance_heartbeats``. See _SCHEMA_DIARY below for the
+# diary-style ``heartbeats``.
 _SCHEMA_REGISTRY = """
 CREATE TABLE IF NOT EXISTS definitions (
     id              TEXT PRIMARY KEY,
@@ -29,49 +40,20 @@ CREATE TABLE IF NOT EXISTS definitions (
     UNIQUE(yaml_path, yaml_sha256)
 );
 
-CREATE TABLE IF NOT EXISTS instances (
-    id                  TEXT PRIMARY KEY,
-    definition_id       TEXT REFERENCES definitions(id),
-    name                TEXT NOT NULL,
-    host                TEXT NOT NULL,
-    scope               TEXT NOT NULL,
-    pid                 INTEGER,
-    ppid                INTEGER,
-    screen              TEXT,
-    workdir             TEXT,
-    a2a_port            INTEGER,
-    started_at          TEXT NOT NULL,
-    last_heartbeat_at   TEXT,
-    ended_at            TEXT,
-    exit_reason         TEXT,
-    iter_count          INTEGER DEFAULT 0,
-    input_tokens        INTEGER DEFAULT 0,
-    output_tokens       INTEGER DEFAULT 0,
-    -- Family-tree / cross-host columns (sac-agent-spawn design, Rule
-    -- B/D). ``bound_port`` mirrors ``a2a_port`` for new readers (both
-    -- written together so legacy ``a2a_port`` callers keep working);
-    -- ``remote`` is 1 for a cross-host-dispatched agent; ``spawned_by``
-    -- is the launching identity ("cli"/parent-agent-name) — the lineage
-    -- edge the spawn DAG is reconstructed from.
-    bound_port          INTEGER,
-    remote              INTEGER DEFAULT 0,
-    spawned_by          TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_instances_active
-    ON instances(name, host, scope) WHERE ended_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_instances_host
-    ON instances(host);
-
 -- ``seq`` (AUTOINCREMENT) gives a total insertion order so "latest
 -- heartbeat" is MAX(seq) — deterministic regardless of ``ts``
 -- (second-resolution) ties. ``UNIQUE(instance_id, ts)`` keeps the
 -- same-second collapse via the ON CONFLICT upsert in update_heartbeat.
 -- See state_db_heartbeats / state_db_migrations for the full rationale.
+--
+-- ``instance_id`` lost its ``REFERENCES instances(id)`` clause on
+-- 2026-08-28: the referenced table is in another engine now, and a
+-- foreign key SQLite cannot check is a constraint in name only. The
+-- column still holds the instance id and still means the same thing;
+-- what is gone is the pretence that the database enforces it.
 CREATE TABLE IF NOT EXISTS instance_heartbeats (
     seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id     TEXT NOT NULL REFERENCES instances(id),
+    instance_id     TEXT NOT NULL,
     ts              TEXT NOT NULL,
     iter            INTEGER,
     input_tokens    INTEGER,
@@ -79,19 +61,6 @@ CREATE TABLE IF NOT EXISTS instance_heartbeats (
     pane_state      TEXT,
     UNIQUE (instance_id, ts)
 );
-
-CREATE TABLE IF NOT EXISTS events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts              TEXT NOT NULL,
-    instance_id     TEXT,
-    definition_id   TEXT,
-    kind            TEXT NOT NULL,
-    actor           TEXT,
-    payload_json    TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_instance
-    ON events(instance_id, ts);
 """
 
 # Attempts predates state.db (lived in actions.db). Bundled here so

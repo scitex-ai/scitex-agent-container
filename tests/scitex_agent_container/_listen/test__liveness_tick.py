@@ -321,40 +321,56 @@ class TestFleetLastBeatTs:
 
 
 class TestRegistryAvailability:
-    def test_readable_but_empty_registry_is_an_empty_dict(self, tmp_path) -> None:
-        # Arrange — a REAL sqlite state.db, created empty by the real schema
-        # init. The read SUCCEEDS and lists nobody.
+    """UNREADABLE and EMPTY, told apart — with a NEW instrument.
+
+    Both cases used to be staged through ``db_path``: a fresh temp file for
+    "readable and empty", and a path whose parent is a regular FILE for
+    "unreadable". The registry moved to PostgreSQL on 2026-08-28 and
+    ``db_path`` went with it, so neither staging exists any more.
+
+    The replacement is better rather than merely equivalent. "Readable and
+    empty" is now the ``pg_schema`` fixture — a real throwaway schema with
+    no rows. "Unreadable" is the ABSENCE of that fixture: the autouse
+    isolation guard points every test at a DSN with nothing listening, so a
+    test that simply does not ask for a database gets a genuinely
+    unreachable one. Same two states, no contrivance, and the unreadable
+    case now exercises the exact failure production sees when its
+    PostgreSQL is down.
+    """
+
+    def test_readable_but_empty_registry_is_an_empty_dict(
+        self, pg_schema: str
+    ) -> None:
+        # Arrange — a REAL store, created empty. The read SUCCEEDS and lists
+        # nobody.
         # Act
-        pids = mod._live_agent_pids(db_path=tmp_path / "state.db")
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_unreadable_registry_is_none(self, tmp_path) -> None:
-        # Arrange — a REAL failure, no mock: the db's parent path is a regular
-        # FILE, so the OS refuses to create the directory sqlite needs.
-        blocker = tmp_path / "not-a-dir"
-        blocker.write_text("i am a file, not a directory")
+    def test_unreadable_registry_is_none(self) -> None:
+        # Arrange — NO pg_schema on purpose: the isolation guard has pointed
+        # the store at a DSN nothing answers, which is a real unreachable
+        # registry rather than a simulated one.
         # Act
-        pids = mod._live_agent_pids(db_path=blocker / "state.db")
+        pids = mod._live_agent_pids()
         # Assert — distinctly "we could not read it", NOT "nobody is alive".
         assert pids is None
 
-    def test_pidless_rows_contribute_no_pid(self, tmp_path) -> None:
-        # Arrange — EXACTLY what the live fleet writes: an active instances row
-        # with pid=NULL. The read succeeds; it simply proves nothing.
-        db = tmp_path / "state.db"
-        record_instance_start("agent-x", db_path=db)
+    def test_pidless_rows_contribute_no_pid(self, pg_schema: str) -> None:
+        # Arrange — EXACTLY what the live fleet writes: an active instances
+        # record with pid=NULL. The read succeeds; it simply proves nothing.
+        record_instance_start("agent-x")
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_a_recorded_live_pid_is_returned(self, tmp_path) -> None:
-        # Arrange — a row carrying a REAL, alive pid (this test process).
-        db = tmp_path / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+    def test_a_recorded_live_pid_is_returned(self, pg_schema: str) -> None:
+        # Arrange — a record carrying a REAL, alive pid (this test process).
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids["agent-x"] == os.getpid()
 
@@ -371,7 +387,7 @@ class TestRegistryAvailability:
 
 class TestResolveLiveness:
     def test_activity_is_read_even_when_the_registry_proves_nothing(
-        self, home_at_tmp
+        self, pg_schema: str, home_at_tmp
     ) -> None:
         # Arrange — a REAL empty registry (nobody vouched for) + a REAL session
         # record written 10s ago. The owner is plainly alive and working.
@@ -382,77 +398,72 @@ class TestResolveLiveness:
         late = _iso(NOW - 10.0)
         (run_dir / "session.jsonl").write_text(json.dumps({"ts": late}) + "\n")
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=home_at_tmp / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — THE regression: this used to be None (never even read).
         assert out["agent-x"].last_active_ts == pytest.approx(
             datetime.fromisoformat(late.replace("Z", "+00:00")).timestamp()
         )
 
     def test_heartbeat_beat_is_read_for_an_owner_with_no_registry_pid(
-        self, home_at_tmp
+        self, pg_schema: str, home_at_tmp
     ) -> None:
         # Arrange — the fleet's real shape: a pid-less active row + a fresh
         # heartbeat. The heartbeat is the proof of life the registry lost.
-        db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 300.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].last_beat_ts is not None
 
-    def test_a_live_registry_pid_still_resolves_live(self, home_at_tmp) -> None:
+    def test_a_live_registry_pid_still_resolves_live(self, pg_schema: str, home_at_tmp) -> None:
         # Arrange — the registry CAN still vouch for an agent; when it does,
         # that remains corroborating positive evidence.
-        db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].is_live is True
 
     def test_unreadable_registry_makes_the_owner_unknown(self, home_at_tmp) -> None:
-        # Arrange — a REAL unreadable registry (parent path is a file).
-        blocker = home_at_tmp / "not-a-dir"
-        blocker.write_text("i am a file, not a directory")
+        # Arrange — NO pg_schema on purpose (see TestRegistryAvailability):
+        # the isolation guard's dead DSN is a real unreachable registry.
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=blocker / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — UNKNOWN, so the rule stays silent instead of guessing dead.
         assert out["agent-x"].known is False
 
     def test_owner_with_no_pid_and_no_heartbeat_is_unknown(
-        self, home_at_tmp
+        self, pg_schema: str, home_at_tmp
     ) -> None:
         # Arrange — registry readable, but this owner has NO channel that would
         # have shown life (no recorded pid, no heartbeat file). E.g. the
         # pseudo-owners on the real board ("operator", "lead"), which are not
         # sac-managed processes at all and must never be called dead.
-        db = home_at_tmp / "state.db"
-        record_instance_start("someone-else", db_path=db)
+        record_instance_start("someone-else")
         # Act
-        out = mod.resolve_liveness(["operator"], db_path=db)
+        out = mod.resolve_liveness(["operator"])
         # Assert
         assert out["operator"].known is False
 
     def test_a_dead_agent_that_left_a_heartbeat_behind_stays_known(
-        self, home_at_tmp
+        self, pg_schema: str, home_at_tmp
     ) -> None:
         # Arrange — a crashed agent's heartbeat.json PERSISTS with a frozen
         # mtime. That is a channel that would have shown life and does not, so
         # the owner stays KNOWN and real death is still detectable.
-        db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 99_999.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].known is True
 

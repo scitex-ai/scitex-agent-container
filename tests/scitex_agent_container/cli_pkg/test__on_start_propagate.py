@@ -141,7 +141,7 @@ class TestArgvClassification:
 
 class TestPropagateRecordsOverrideHost:
     def test_records_lead_side_row_on_override_host(
-        self, isolated_state_db, capsys
+        self, pg_schema: str, isolated_state_db, capsys
     ) -> None:
         # Arrange — a successful remote start on the override host.
         runner = _started_runner("clew", port=19123)
@@ -155,7 +155,7 @@ class TestPropagateRecordsOverrideHost:
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert rows[0]["host"] == "spartan-bm001"
 
-    def test_records_row_with_remote_flag_set(self, isolated_state_db) -> None:
+    def test_records_row_with_remote_flag_set(self, pg_schema: str, isolated_state_db) -> None:
         # Arrange
         runner = _started_runner("clew", port=19123)
         # Act
@@ -168,7 +168,7 @@ class TestPropagateRecordsOverrideHost:
         rows = [r for r in list_active_instances() if r["name"] == "clew"]
         assert bool(rows[0]["remote"]) is True
 
-    def test_records_remote_resolved_bound_port(self, isolated_state_db) -> None:
+    def test_records_remote_resolved_bound_port(self, pg_schema: str, isolated_state_db) -> None:
         # Arrange
         runner = _started_runner("clew", port=19123)
         # Act
@@ -182,7 +182,7 @@ class TestPropagateRecordsOverrideHost:
         assert rows[0]["bound_port"] == 19123
 
     def test_appends_json_and_no_redispatch_to_remote_argv(
-        self, isolated_state_db
+        self, pg_schema: str, isolated_state_db
     ) -> None:
         # Arrange — capture the argv the runner is invoked with.
         seen: list[list[str]] = []
@@ -218,7 +218,7 @@ class TestPropagateRecordsOverrideHost:
                 "spartan-bm001", ["agents", "start", "clew"], runner=_run
             )
 
-    def test_remote_failure_records_no_row(self, isolated_state_db) -> None:
+    def test_remote_failure_records_no_row(self, pg_schema: str, isolated_state_db) -> None:
         # Arrange — remote start failed (rc 1); no live instance to record.
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(
@@ -304,7 +304,7 @@ class TestFailLoudOnRemoteNonStart:
         captured = capsys.readouterr()
         assert "singleton prefers 'bm043'" in (captured.err + captured.out)
 
-    def test_skipped_status_records_no_row(self, isolated_state_db) -> None:
+    def test_skipped_status_records_no_row(self, pg_schema: str, isolated_state_db) -> None:
         # Arrange
         def _run(peer, full_argv):
             return subprocess.CompletedProcess(

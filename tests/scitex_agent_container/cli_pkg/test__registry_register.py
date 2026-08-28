@@ -119,7 +119,7 @@ def test_registry_register_explicit_source_host_is_stored(db_path: Path) -> None
 
 
 def test_registry_register_after_resolves_via_resolve_node_host(
-    db_path: Path,
+    pg_schema: str, db_path: Path,
 ) -> None:
     # Arrange — the operator-facing contract: after `sac registry register`
     # succeeds, resolve_node_host (the production lookup callers use to
