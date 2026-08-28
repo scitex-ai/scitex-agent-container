@@ -27,6 +27,31 @@ eventually reads them; they are NOT how a failure reaches a human today. An
 enforcer that relied on them alone would be a check whose failure nothing
 reads.
 
+RECORD OR CHECK? Say it plainly: at sac's layer this is a **record**, and at
+the supervisor's layer it is a **check** — but one whose alarm has no last
+mile.
+
+The supervisor half is genuinely a check and not a print: ``PeriodicRunner``
+folds each exit into a per-job rollup and, after ``UNHEALTHY_AFTER``
+consecutive failures — or for a job that has never once succeeded — writes a
+distinct ``job_unhealthy`` record, de-duplicated so it announces once and
+re-armed on recovery so a flapping job is announced again, plus an
+``unhealthy`` flag per job in the supervisor's ``state.json``. That is a
+state machine with hysteresis.
+
+What does NOT exist, measured 2026-08-28 and not dressed up: nothing polls
+either file and tells a human. ``job_unhealthy`` and ``unhealthy`` have zero
+matches anywhere under ``scitex_dev/_cli``, so no verb even reports them; and
+no sac enforcer writes a board card (zero ``scitex_cards`` imports across
+``_reconcile``, ``_authheal`` and this package). So the human-facing consumer
+today is a person running ``sac agents resume-rate-limited`` or grepping
+``periodic-executions.jsonl`` during an incident — which is precisely the
+posture that let the outage this job exists to end run 1h46m unnoticed.
+
+That gap is the same for all three enforcers, it is not created here, and it
+is tracked rather than left implied:
+``liveness-enforcer-failures-reach-no-human-20260828``.
+
 That ranking is why ``WAITING`` exits ZERO. A wall that has not lifted is the
 normal state during a rate limit and can persist for hours; a non-zero exit
 there would stamp ``ok: false`` on the execution log every five minutes for
