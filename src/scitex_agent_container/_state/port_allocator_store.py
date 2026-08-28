@@ -48,6 +48,32 @@ So ``port`` is the sole IDENTITY field and the store's own identity
 uniqueness carries the invariant STRUCTURALLY: one record per port, by
 construction, with no secondary constraint to remember.
 
+WHAT THE INVERSION GIVES AWAY, MEASURED RATHER THAN ASSUMED
+===========================================================
+``name`` was the SQLite PRIMARY KEY, so one agent could not hold two ports.
+That constraint was doing real work and it was not free: the loser of a
+same-agent race got ``no free a2a port in range [...]`` rather than a port —
+the v0.21.18 symptom. Keying on ``port`` removes it and nothing replaces it,
+so IN PRINCIPLE two concurrent auto-claims for ONE agent could each win a
+DIFFERENT port and both return happily. That would be worse than the old
+error, because it raises nothing: ``get_port`` would answer with whichever
+record it met first while the other port stayed claimed forever.
+
+IT DID NOT REPRODUCE. Measured 2026-08-28 through the public surface against a
+real PostgreSQL 18 — 15 runs at 2, 4, 8, 16 and 32 threads, all released
+together on a barrier — and every run ended with EXACTLY ONE claim and zero
+errors. The store serialises ``Store.__init__`` for one schema behind its own
+advisory lock (scitex-dev 0.56.6), so the racers queue at construction and
+every thread after the first finds the claim in ``claim_port``'s idempotent
+fast path.
+
+NO SETTLEMENT LOGIC IS SHIPPED FOR IT, deliberately. A fix for a defect that
+cannot be demonstrated arrives with a test that cannot fail, and a green test
+proving nothing is worse than no test. This paragraph exists so a future
+reader who DOES see one agent holding two ports knows the question was asked,
+what was measured, and where to look: the fast path in ``claim_port`` and the
+store's schema lock are what hold it today, and neither is a guarantee.
+
 THE PRICE IS STATED RATHER THAN HIDDEN: "which port does this agent hold?"
 inverts from a keyed lookup into a scan. The store exposes
 ``get``/``put``/``rows``, not SQL, so :func:`live_claims` reads the whole
