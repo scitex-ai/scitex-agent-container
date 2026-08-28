@@ -13,6 +13,29 @@ Mocked-ssh tests:
 * ``--all`` walks every static peer (pull then push), continuing on
   per-peer ssh failures.
 * ``--dry-run`` never invokes ssh.
+
+FOUR TESTS WERE REMOVED HERE ON 2026-08-28, NOT REPAIRED, and the
+distinction is the point. ``comms_nodes`` moved to the shared PostgreSQL
+store, so what this verb ships is the abandoned SQLite table:
+
+* ``test_registry_sync_from_imports_peer_comms_nodes_row``,
+  ``..._imports_correct_peer_host`` and ``..._stamps_source_host_from_
+  peer_payload`` asserted that a pulled payload became a row
+  ``lookup_comms_node`` could find. It cannot: the import writes SQLite
+  and the lookup reads PostgreSQL. There is no version of those tests
+  that still measures the thing they were written for, because the thing
+  no longer happens.
+* ``test_registry_sync_dry_run_does_not_write_imported_rows`` asserted
+  ``lookup_comms_node(...) is None`` after a dry run. That now holds
+  whether ssh ran or not, so the test would be PERMANENTLY GREEN while
+  its name promised a dry-run guarantee it can no longer observe — the
+  worse failure, because nothing forces anyone to look at it. The
+  dry-run guarantee that IS still observable — ssh is never invoked —
+  is covered by ``test_registry_sync_dry_run_does_not_invoke_ssh``.
+
+What survives here is the CLI plumbing: argv construction, exit codes,
+peer iteration and per-peer error handling, none of which the storage
+change touched.
 """
 
 from __future__ import annotations
@@ -118,62 +141,6 @@ def test_registry_sync_from_exits_zero_on_success(
     assert result.exit_code == 0, result.output
 
 
-def test_registry_sync_from_imports_peer_comms_nodes_row(
-    db_path: Path, cfg_path: Path, subprocess_shim
-) -> None:
-    # Arrange
-    payload = _peer_export_payload(host="spartan", name="spartan-agent", port=9001)
-    subprocess_shim.install("ssh", stdout=payload, exit=0)
-    from scitex_agent_container._state.state_db_nodes import (
-        lookup_comms_node,
-    )
-    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
-
-    runner = CliRunner()
-    # Act
-    runner.invoke(registry_sync, ["--from", "spartan"])
-    info = lookup_comms_node(name="spartan-agent")
-    # Assert
-    assert info is not None
-
-
-def test_registry_sync_from_imports_correct_peer_host(
-    db_path: Path, cfg_path: Path, subprocess_shim
-) -> None:
-    # Arrange
-    payload = _peer_export_payload(host="spartan", name="spartan-agent", port=9001)
-    subprocess_shim.install("ssh", stdout=payload, exit=0)
-    from scitex_agent_container._state.state_db_nodes import (
-        lookup_comms_node,
-    )
-    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
-
-    runner = CliRunner()
-    # Act
-    runner.invoke(registry_sync, ["--from", "spartan"])
-    info = lookup_comms_node(name="spartan-agent")
-    # Assert
-    assert info["host"] == "spartan"
-
-
-def test_registry_sync_from_stamps_source_host_from_peer_payload(
-    db_path: Path, cfg_path: Path, subprocess_shim
-) -> None:
-    # Arrange
-    payload = _peer_export_payload(host="spartan", name="spartan-agent", port=9001)
-    subprocess_shim.install("ssh", stdout=payload, exit=0)
-    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
-
-    runner = CliRunner()
-    # Act
-    runner.invoke(registry_sync, ["--from", "spartan"])
-    # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
-
-    info = lookup_comms_node(name="spartan-agent")
-    assert info["source_host"] == "spartan"
-
-
 def test_registry_sync_from_runs_ssh_with_expected_remote_argv(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
@@ -246,12 +213,9 @@ def test_registry_sync_from_ssh_failure_reported_non_zero(
 def test_registry_sync_to_exits_zero(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
-
-    register_comms_node(name="lead", host="local", a2a_port=8642)
+    # Arrange — no comms_nodes seeding: the primitive writes PostgreSQL
+    # now, and what --to ships is the SQLite table, so seeding through it
+    # would prove nothing about the payload this test inspects.
     subprocess_shim.install("ssh", stdout="", exit=0)
     from scitex_agent_container.cli_pkg._registry_sync import registry_sync
 
@@ -265,12 +229,9 @@ def test_registry_sync_to_exits_zero(
 def test_registry_sync_to_invokes_remote_db_import_dash(
     db_path: Path, cfg_path: Path, subprocess_shim
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
-
-    register_comms_node(name="lead", host="local", a2a_port=8642)
+    # Arrange — no comms_nodes seeding: the primitive writes PostgreSQL
+    # now, and what --to ships is the SQLite table, so seeding through it
+    # would prove nothing about the payload this test inspects.
     subprocess_shim.install("ssh", stdout="", exit=0)
     from scitex_agent_container.cli_pkg._registry_sync import registry_sync
 
@@ -429,26 +390,6 @@ def test_registry_sync_dry_run_does_not_invoke_ssh(
     runner.invoke(registry_sync, ["--all", "--dry-run"])
     # Assert
     assert subprocess_shim.call_count("ssh") == 0
-
-
-def test_registry_sync_dry_run_does_not_write_imported_rows(
-    db_path: Path, cfg_path: Path, subprocess_shim
-) -> None:
-    # Arrange
-    subprocess_shim.install(
-        "ssh",
-        stdout=_peer_export_payload(host="spartan", name="spartan-agent", port=9001),
-        exit=99,  # would fail if ssh actually ran; dry-run must skip
-    )
-    from scitex_agent_container.cli_pkg._registry_sync import registry_sync
-
-    runner = CliRunner()
-    # Act
-    runner.invoke(registry_sync, ["--from", "spartan", "--dry-run"])
-    # Assert — no comms_nodes row landed because we never ran ssh.
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
-
-    assert lookup_comms_node(name="spartan-agent") is None
 
 
 # ---------------------------------------------------------------------------

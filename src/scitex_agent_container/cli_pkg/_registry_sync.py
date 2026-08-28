@@ -408,6 +408,17 @@ def registry_sync(
 ) -> None:
     """Anti-entropy sync of the comms_nodes registry across hosts.
 
+    SUPERSEDED BY THE POSTGRESQL PORT (2026-08-28) AND CURRENTLY MOVES
+    NOTHING. ``comms_nodes`` is one shared PostgreSQL store now, so a
+    row registered on any host is already visible on every host and
+    there is nothing to pull. This verb still ships the SQLite table of
+    the same name, which the resolver no longer reads — so it exits 0
+    having transferred rows nobody consults. The banner below says so
+    on every invocation rather than letting a successful-looking run
+    imply a directory repair that did not happen. Retiring the verb (and
+    the SQLite table under it) is a follow-up, deliberately not folded
+    into the storage migration.
+
     ADR-0014 Stage 1. Re-uses ``sac db export --tables comms_nodes``
     over ssh. Idempotent: INSERT OR IGNORE on the ``name`` PK plus
     the conflict-detect on differing (host, port) from a different
@@ -420,6 +431,14 @@ def registry_sync(
       $ sac registry sync --all                   # bidirectional, all peers
       $ sac registry sync --all --dry-run         # plan only
     """
+    click.echo(
+        "# WARN: `sac registry sync` no longer repairs the A2A directory. "
+        "comms_nodes moved to the shared PostgreSQL store on 2026-08-28, so "
+        "every host already sees every row and this verb only ships the "
+        "abandoned SQLite table. If a name is not resolving, that is not a "
+        "sync gap — check the store itself with `sac a2a peers`.",
+        err=True,
+    )
     rc = registry_sync_impl(
         from_peer=from_peer,
         to_peer=to_peer,

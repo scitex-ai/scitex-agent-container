@@ -21,9 +21,10 @@ This verb closes both gaps. The operator runs::
 
     sac registry register --name lead --host lead-host --a2a-port 7878
 
-and the row lands in ``comms_nodes`` immediately. Other hosts pull it
-via ``sac registry sync --from lead-host`` (ADR-0014 anti-entropy).
-No process restart required.
+and the record lands in ``comms_nodes`` immediately. Since 2026-08-28
+that store is one shared PostgreSQL, so EVERY host sees it at once and
+there is nothing to pull — the ``sac registry sync --from`` step this
+paragraph used to prescribe is obsolete. No process restart required.
 
 Failure policy — **fail loud**, not best-effort. ``sac listen`` and
 ``sac mcp channel`` swallow registry-write failures with
@@ -37,8 +38,6 @@ re-typed-args their way out.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import click
 
@@ -78,23 +77,16 @@ from .._state.state_db_nodes import (
         "Source-of-record host. Defaults to None — the row is treated "
         "as locally-registered (matches what `sac listen` and `sac mcp "
         "channel` self-register write). Set this only when relaying a "
-        "peer's row from a third host (rare; ``sac registry sync`` is "
-        "the supported anti-entropy path for that)."
+        "peer's record from a third host. Rare, and rarer still since "
+        "the store became fleet-shared: it now only marks the record as "
+        "not-locally-owned for the conflict check."
     ),
-)
-@click.option(
-    "--db-path",
-    "db_path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Override the state.db path. Defaults to the standard location.",
 )
 def registry_register(
     name: str,
     host: str,
     a2a_port: int,
     source_host: str | None,
-    db_path: Path | None,
 ) -> None:
     """Write a ``comms_nodes`` row directly. ADR-0014 operator-repair path.
 
@@ -124,7 +116,6 @@ def registry_register(
             host=host,
             a2a_port=a2a_port,
             source_host=source_host,
-            db_path=db_path,
         )
     except CommsNodeConflictError as exc:
         raise click.ClickException(str(exc)) from exc

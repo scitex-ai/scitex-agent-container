@@ -71,7 +71,16 @@ def test_export_state_no_tables_filter_includes_table(
     assert table in payload["tables"]
 
 
-def test_export_state_tables_filter_emits_comms_nodes_row(
+# MEASURED ON ``instances``, NOT ON ``comms_nodes``, SINCE 2026-08-28.
+#
+# These two tests used to seed a row with ``register_comms_node`` and assert
+# the filter emitted it. That primitive now writes PostgreSQL, so the SQLite
+# table it exports from is empty no matter what the filter does — the test
+# would measure nothing while still being named for what it once measured.
+# The PROPERTY (a --tables filter emits the named table and only the named
+# table) is unchanged and is measured here on ``instances``, which is still
+# SQLite and still exported.
+def test_export_state_tables_filter_emits_the_named_tables_rows(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -79,16 +88,12 @@ def test_export_state_tables_filter_emits_comms_nodes_row(
         export_state,
         record_instance_start,
     )
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
     record_instance_start("agent-a", host="h1")
     # Act
-    payload = export_state(tables=["comms_nodes"])
+    payload = export_state(tables=["instances"])
     # Assert
-    assert len(payload["tables"]["comms_nodes"]) == 1
+    assert len(payload["tables"]["instances"]) == 1
 
 
 def test_export_state_tables_filter_excludes_unlisted_tables(
@@ -99,16 +104,12 @@ def test_export_state_tables_filter_excludes_unlisted_tables(
         export_state,
         record_instance_start,
     )
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
     record_instance_start("agent-a", host="h1")
     # Act
-    payload = export_state(tables=["comms_nodes"])
+    payload = export_state(tables=["instances"])
     # Assert
-    assert payload["tables"]["instances"] == []
+    assert payload["tables"]["lineage"] == []
 
 
 def test_export_state_tables_filter_unknown_table_raises(
@@ -129,34 +130,32 @@ def test_export_state_tables_filter_unknown_table_raises(
 
 
 def test_db_export_tables_flag_exits_zero(db_path: Path) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    # Arrange — seeded through ``instances`` rather than
+    # ``register_comms_node``: the latter now writes PostgreSQL, so under
+    # the suite's store guard it raises instead of seeding anything.
+    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
+    result = runner.invoke(db_export, ["--tables", "instances"])
     # Assert
     assert result.exit_code == 0, result.output
 
 
 def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
+    result = runner.invoke(db_export, ["--tables", "instances"])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["comms_nodes"]) == 1
+    assert len(payload["tables"]["instances"]) == 1
 
 
 def test_db_export_tables_flag_unknown_name_exits_two(
@@ -185,7 +184,12 @@ def test_db_export_tables_flag_unknown_name_names_offender_in_output(
     assert "not_a_real_table" in result.output
 
 
-def test_db_export_tables_flag_csv_includes_comms_nodes(
+# The CSV form is measured on two tables that are STILL SQLite. It used to
+# name ``comms_nodes``, which since 2026-08-28 exports an abandoned table:
+# the key is still emitted (KNOWN_TABLES keeps the name), so the assertion
+# would keep passing while naming the one table for which the flag no longer
+# ships anything.
+def test_db_export_tables_flag_csv_includes_the_first_named_table(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -193,13 +197,13 @@ def test_db_export_tables_flag_csv_includes_comms_nodes(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
+    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
     payload = json.loads(result.stdout)
     # Assert
-    assert "comms_nodes" in payload["tables"]
+    assert "lineage" in payload["tables"]
 
 
-def test_db_export_tables_flag_csv_includes_instances(
+def test_db_export_tables_flag_csv_includes_the_second_named_table(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -207,7 +211,7 @@ def test_db_export_tables_flag_csv_includes_instances(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
+    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
     payload = json.loads(result.stdout)
     # Assert
     assert "instances" in payload["tables"]

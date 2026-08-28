@@ -43,7 +43,6 @@ DESIGN
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Iterable, Mapping
 
 log = logging.getLogger(__name__)
@@ -92,7 +91,6 @@ def _resolve_canonical_host() -> str | None:
 def persist_discovered_self_peers(
     peers: Iterable[Mapping[str, object]],
     *,
-    db_path: Path | None = None,
     canonical_host: str | None = None,
     skip_names: frozenset[str] = frozenset(),
 ) -> int:
@@ -105,11 +103,6 @@ def persist_discovered_self_peers(
         Each element is the dict shape
         ``{"name": str, "listen_url": str, ...}``; extra keys are
         ignored.
-    db_path:
-        Optional explicit state.db path. ``None`` defers to
-        :func:`_state.state_db.open_db`'s default (``$
-        SCITEX_AGENT_CONTAINER_STATE_DB`` → resolved at call time so
-        tests under ``tmp_path`` see their own DB).
     canonical_host:
         Host string to record as the row's ``host`` column. ``None``
         means "ask :func:`_resolve_canonical_host`"; a failure there
@@ -203,7 +196,7 @@ def persist_discovered_self_peers(
                 host=host,
                 a2a_port=port,
                 source_host=None,  # locally-discovered
-                db_path=db_path,
+                # No ``db_path``: comms_nodes is a PostgreSQL store now.
                 # PR L1 (operator directive 12847) — discriminator for
                 # the loud-collision error message. Q4 always writes
                 # self-peer rows; the discovered spec file's path goes

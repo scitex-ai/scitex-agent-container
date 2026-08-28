@@ -6,27 +6,22 @@ exercises both helpers directly without spinning a real uvicorn (the
 ``sac listen`` entry point flows through the same helpers, but binding
 a real port + running the ASGI server is out of scope for a unit test).
 
-Real on-disk state.db + config.yaml; no mocks.
+Real config.yaml on disk, and a real throwaway PostgreSQL schema
+(``pg_schema``) for comms_nodes; no mocks.
+
+THE ``db_path`` FIXTURE IS GONE (2026-08-28). It pinned
+``SCITEX_AGENT_CONTAINER_STATE_DB`` at a ``tmp_path`` file, and this hook no
+longer writes SQLite — ``_register_self_comms_node`` goes to the shared
+PostgreSQL store. A fixture isolating a file nothing opens is not isolation;
+``pg_schema`` is.
 """
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 
 import pytest
 import yaml
-
-
-@pytest.fixture
-def db_path(tmp_path: Path, env_save_restore):
-    p = tmp_path / "state.db"
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    yield p
-    importlib.reload(mod)
 
 
 @pytest.fixture
@@ -55,7 +50,7 @@ def cfg_no_lead(tmp_path: Path, env_save_restore) -> Path:
 
 
 def test_register_self_writes_comms_nodes_row_for_lead_identity(
-    db_path: Path, cfg_with_lead: Path
+    cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
@@ -69,7 +64,9 @@ def test_register_self_writes_comms_nodes_row_for_lead_identity(
     assert info is not None and info["host"] == "lead-host"
 
 
-def test_register_self_records_correct_port(db_path: Path, cfg_with_lead: Path) -> None:
+def test_register_self_records_correct_port(
+    cfg_with_lead: Path, pg_schema: str
+) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
@@ -83,7 +80,7 @@ def test_register_self_records_correct_port(db_path: Path, cfg_with_lead: Path) 
 
 
 def test_register_self_no_lead_block_writes_no_row(
-    db_path: Path, cfg_no_lead: Path
+    cfg_no_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — pin the "no row written" half of the contract; the
     # warning-emission half is its own test below so each assertion
@@ -98,7 +95,7 @@ def test_register_self_no_lead_block_writes_no_row(
 
 
 def test_register_self_no_lead_block_warns_loudly_on_stderr(
-    db_path: Path, cfg_no_lead: Path, capsys: pytest.CaptureFixture[str]
+    cfg_no_lead: Path, pg_schema: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Arrange — the pre-PR4 behaviour was a silent return: an operator
     # whose listen failed to advertise `lead` had no diagnostic. The
@@ -116,7 +113,9 @@ def test_register_self_no_lead_block_warns_loudly_on_stderr(
     )
 
 
-def test_register_self_source_host_is_none(db_path: Path, cfg_with_lead: Path) -> None:
+def test_register_self_source_host_is_none(
+    cfg_with_lead: Path, pg_schema: str
+) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
@@ -130,7 +129,7 @@ def test_register_self_source_host_is_none(db_path: Path, cfg_with_lead: Path) -
 
 
 def test_register_self_with_missing_config_writes_no_row(
-    db_path: Path, tmp_path: Path, env_save_restore
+    tmp_path: Path, env_save_restore, pg_schema: str
 ) -> None:
     # Arrange — point config to a non-existent file. ``host_config.load``
     # is missing-tolerant so the hook should land in the "no lead"
@@ -149,7 +148,7 @@ def test_register_self_with_missing_config_writes_no_row(
 
 
 def test_maybe_sync_on_start_no_peers_writes_no_row(
-    db_path: Path, cfg_with_lead: Path
+    cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_nodes import list_comms_nodes
@@ -163,7 +162,7 @@ def test_maybe_sync_on_start_no_peers_writes_no_row(
 
 
 def test_maybe_sync_on_start_respects_disable_flag(
-    tmp_path: Path, db_path: Path, env_save_restore
+    tmp_path: Path, env_save_restore, pg_schema: str
 ) -> None:
     # Arrange — config explicitly disables sync_on_start.
     p = tmp_path / "config.yaml"

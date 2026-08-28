@@ -590,10 +590,15 @@ def ssh_shim_unreachable(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_clew(cross_host_state_db):
+def remote_row_for_clew(cross_host_state_db, pg_schema: str):
     """Seed an active singleton row for ``clew`` on the unreachable
     peer ``peer-x`` AND the matching comms_nodes pin so the test can
-    verify BOTH stores are cleared on force-release."""
+    verify BOTH stores are cleared on force-release.
+
+    ``pg_schema`` joined ``cross_host_state_db`` on 2026-08-28: the two
+    stores are now literally two backends — ``instances`` in SQLite,
+    ``comms_nodes`` in PostgreSQL — so the fixture needs one of each or
+    the comms_nodes half of "BOTH stores" is never written."""
     from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container._state.state_db_comms_nodes import register_comms_node
 

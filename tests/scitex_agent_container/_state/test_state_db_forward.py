@@ -16,7 +16,11 @@ The controls are the weight-bearing half: locality must NOT move. A "fix" that
 made `resolve_node_host` fall through would hand the locality decision to
 `comms_nodes`, which may name a different host — silently redefining "local".
 
-PA-306: no mocks; real on-disk SQLite under `tmp_path`.
+PA-306: no mocks; real on-disk SQLite under `tmp_path` for `instances`, and a
+real throwaway PostgreSQL schema (`pg_schema`) for `comms_nodes`, which moved
+off SQLite on 2026-08-28. Both fixtures, because this resolver is one of the
+few call sites that reads BOTH backends in a single call — `db_path` alone
+would leave the comms_nodes half pointing at the suite's unreachable guard DSN.
 """
 
 from __future__ import annotations
@@ -59,20 +63,20 @@ def _live_row(db_path: Path, *, a2a_port, bound_port, host: str = "host-a") -> N
 # ---------------------------------------------------------------------------
 
 
-def test_a_portless_live_row_falls_through_to_comms_nodes(db_path: Path) -> None:
+def test_a_portless_live_row_falls_through_to_comms_nodes(
+    db_path: Path, pg_schema: str
+) -> None:
     # Arrange — the exact fleet state: live row, both ports NULL, and a
     # comms_nodes entry that DOES carry an address.
     _live_row(db_path, a2a_port=None, bound_port=None)
-    register_comms_node(
-        name="peer", host="host-b", a2a_port=19099, db_path=db_path
-    )
+    register_comms_node(name="peer", host="host-b", a2a_port=19099)
     # Act
     target = resolve_forward_target(name="peer", db_path=db_path)
     # Assert — resolved to {host-a, None} before, and 502'd downstream
     assert target is not None and target["a2a_port"] == 19099
 
 
-def test_no_address_anywhere_returns_none(db_path: Path) -> None:
+def test_no_address_anywhere_returns_none(db_path: Path, pg_schema: str) -> None:
     # Arrange — live row with no port, and nothing in comms_nodes either
     _live_row(db_path, a2a_port=None, bound_port=None)
     # Act
@@ -86,24 +90,24 @@ def test_no_address_anywhere_returns_none(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_usable_instances_row_wins_over_comms_nodes(db_path: Path) -> None:
+def test_a_usable_instances_row_wins_over_comms_nodes(
+    db_path: Path, pg_schema: str
+) -> None:
     # Arrange — both sources have an address; instances is authoritative
     _live_row(db_path, a2a_port=19001, bound_port=None)
-    register_comms_node(
-        name="peer", host="host-b", a2a_port=19099, db_path=db_path
-    )
+    register_comms_node(name="peer", host="host-b", a2a_port=19099)
     # Act
     target = resolve_forward_target(name="peer", db_path=db_path)
     # Assert — the fall-through must not become a preference for comms_nodes
     assert target is not None and target["a2a_port"] == 19001
 
 
-def test_bound_port_counts_as_a_usable_address(db_path: Path) -> None:
+def test_bound_port_counts_as_a_usable_address(
+    db_path: Path, pg_schema: str
+) -> None:
     # Arrange — only bound_port survived on the row
     _live_row(db_path, a2a_port=None, bound_port=19012)
-    register_comms_node(
-        name="peer", host="host-b", a2a_port=19099, db_path=db_path
-    )
+    register_comms_node(name="peer", host="host-b", a2a_port=19099)
     # Act
     target = resolve_forward_target(name="peer", db_path=db_path)
     # Assert — still the instances row, via the fallback column
@@ -115,12 +119,12 @@ def test_bound_port_counts_as_a_usable_address(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_locality_still_comes_from_the_instances_row(db_path: Path) -> None:
+def test_locality_still_comes_from_the_instances_row(
+    db_path: Path, pg_schema: str
+) -> None:
     # Arrange — portless local row, with comms_nodes naming a DIFFERENT host
     _live_row(db_path, a2a_port=None, bound_port=None, host="host-a")
-    register_comms_node(
-        name="peer", host="host-b", a2a_port=19099, db_path=db_path
-    )
+    register_comms_node(name="peer", host="host-b", a2a_port=19099)
     # Act
     local = is_local_node(name="peer", local_host="host-a", db_path=db_path)
     # Assert — the agent IS on host-a; forwarding must not redefine that

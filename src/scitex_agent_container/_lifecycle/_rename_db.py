@@ -46,6 +46,15 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("lineage", "parent_name"),
     ("comms_grants", "sender_name"),
     ("comms_grants", "target_name"),
+    # WARNING (2026-08-28): ``comms_nodes`` moved to the shared PostgreSQL
+    # store, so this entry now renames the ABANDONED SQLite row and NOT the
+    # live A2A directory entry. A renamed agent therefore leaves its old
+    # directory record behind, live, pointing at the same host:port — the
+    # old name keeps resolving until somebody unregisters it. Carrying the
+    # rename into the store is a follow-up: the undo contract here is
+    # rowid-scoped and the store has no rowid, so it needs a design rather
+    # than a line. The entry stays because removing it would ALSO stop
+    # moving the row `sac db export` still ships.
     ("comms_nodes", "name"),
     ("node_comms_policy", "name"),
 )

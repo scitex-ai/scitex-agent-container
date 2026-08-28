@@ -258,7 +258,10 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
-                db_path=db_path,
+                # No ``db_path``: comms_nodes lives in PostgreSQL now, so
+                # there is no file for a caller to point at. ``db_path``
+                # above still routes the ``instances`` write, which is
+                # still SQLite.
             )
         except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
             pass

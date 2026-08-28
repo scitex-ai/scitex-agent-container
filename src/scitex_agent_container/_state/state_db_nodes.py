@@ -453,7 +453,11 @@ def resolve_node_host(
     # routing repair would have silently changed what "local" means.
     # Splitting locality from addressability is the real fix and it is a
     # bigger change than this one; see the a2a card.
-    return resolve_comms_node_host(name=name, db_path=db_path)
+    #
+    # ``db_path`` is NOT forwarded: comms_nodes is a PostgreSQL store and
+    # has no file to point at. It still routes the ``instances`` query
+    # above, which is still SQLite.
+    return resolve_comms_node_host(name=name)
 
 
 def is_local_node(

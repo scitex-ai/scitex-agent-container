@@ -89,4 +89,7 @@ def resolve_forward_target(
             return {"host": str(row["host"]), "a2a_port": int(port)}
         # A live row recording no port is not an ADDRESS. Fall through
         # rather than hand back a target the caller can only 502 on.
-    return resolve_comms_node_host(name=name, db_path=db_path)
+    # ``db_path`` is NOT forwarded: comms_nodes is a PostgreSQL store and
+    # has no file to point at. It still routes the ``instances`` query
+    # above, which is still SQLite.
+    return resolve_comms_node_host(name=name)

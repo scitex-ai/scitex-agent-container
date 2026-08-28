@@ -110,8 +110,13 @@ def test_locality_is_unchanged_for_a_portless_row(db_path: Path) -> None:
     assert local is True
 
 
-def test_an_unknown_name_still_resolves_to_none(db_path: Path) -> None:
-    # Arrange — no row at all
+def test_an_unknown_name_still_resolves_to_none(
+    db_path: Path, pg_schema: str
+) -> None:
+    # Arrange — no row at all. ``pg_schema`` joined ``db_path`` on
+    # 2026-08-28: with no ``instances`` row the resolver falls THROUGH to
+    # comms_nodes, which is PostgreSQL now, so this is the one test in the
+    # file that actually opens the store.
     unknown = "never-registered"
     # Act
     info = resolve_node_host(name=unknown, db_path=db_path)
