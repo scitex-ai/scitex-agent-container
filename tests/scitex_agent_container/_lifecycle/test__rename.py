@@ -95,7 +95,7 @@ def _db_names(db_path: Path) -> list[str]:
     conn = sqlite3.connect(str(db_path))
     try:
         nodes = conn.execute("SELECT name FROM comms_nodes").fetchall()
-        past = conn.execute("SELECT agent FROM attempts").fetchall()
+        past = conn.execute("SELECT target FROM channel_events").fetchall()
     finally:
         conn.close()
     return sorted([r[0] for r in nodes] + [t[0] for t in past])

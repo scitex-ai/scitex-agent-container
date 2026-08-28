@@ -296,21 +296,28 @@ COMMS_NODE_SQL = (
     "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
     "VALUES (?, ?, ?, ?, ?)"
 )
-ATTEMPT_SQL = "INSERT INTO attempts (ts, agent, action, outcome, elapsed_s) VALUES (?, ?, ?, ?, ?)"
+CHANNEL_EVENT_SQL = (
+    "INSERT INTO channel_events (target, source, kind, content, meta_json, ts) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """One identity row (comms_nodes) + one history row (attempts) for ``name``.
+    """Identity row (comms_nodes) + history row (channel_events) for ``name``.
 
-    Both halves a rename must carry. ``attempts`` replaced ``turns`` here on
-    2026-08-28, when the diary trio left SQLite for per-host PostgreSQL.
+    Both halves a rename must carry. The history half has moved twice: it was
+    ``turns`` until 2026-08-28, when the diary trio left SQLite for per-host
+    PostgreSQL; then ``attempts`` for the rest of that day, until ``attempts``
+    itself was deleted for having zero writers. ``channel_events.target`` is
+    the history column still in ``_rename_db.NAME_COLUMNS`` AND still a real
+    SQLite table — the two properties this fixture needs.
     """
     db_path = make_state_db(layout)
     return seed_db_rows(
         db_path,
         [
             (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
-            (ATTEMPT_SQL, ("t1", name, "run", "ok", 0.5)),
+            (CHANNEL_EVENT_SQL, (name, None, "message", "hi", "{}", 1.0)),
         ],
     )
 
