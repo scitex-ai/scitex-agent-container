@@ -75,28 +75,76 @@ def db_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
-def test_init_schema_no_longer_creates_the_diary_table_in_sqlite(
-    db_path: Path, table: str
-):
-    # Arrange — POSITIVE CONTROL. A fixture that never ran the schema would
-    # leave ``names`` empty and pass this test for entirely the wrong reason,
-    # so the precondition is an explicit raise rather than a second assertion.
-    from scitex_agent_container._state.state_db import init_schema
+def _table_names(db_path: Path) -> set[str]:
+    """Read ``sqlite_master`` and hand back the names, closing the connection.
 
-    init_schema()
-    with sqlite3.connect(db_path) as conn:
-        names = {
+    A PLAIN FUNCTION rather than part of the fixture below: STX-TQ005 forbids a
+    fixture that acquires an external resource and ``return``\\ s instead of
+    ``yield``\\ ing, and it reads the fixture body syntactically. Keeping the
+    ``connect`` here means the fixture hands back a ``set``, which owns nothing
+    and needs no teardown — which is the rule's actual point.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
             r[0]
             for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def sqlite_table_names(db_path: Path) -> set[str]:
+    """Every table a fresh ``state.db`` really has, after ``init_schema``.
+
+    THE POSITIVE CONTROL LIVES HERE, not in the tests below. A fixture that
+    never ran the schema would hand them an empty set, and "the diary table is
+    absent" would pass for exactly the wrong reason — absence of evidence
+    reading as evidence of absence, which is the failure this whole file is
+    about. The guard is a ``raise`` rather than an assertion so each test keeps
+    one assertion (STX-TQ007), and it sits in a fixture rather than in a
+    parametrized body (STX-TQ006).
+    """
+    from scitex_agent_container._state.state_db import init_schema
+
+    init_schema()
+    names = _table_names(db_path)
     if "instances" not in names:
         raise RuntimeError(
-            f"init_schema() left no `instances` table in {db_path}, so the "
-            f"schema never ran and the absence of `{table}` proves nothing."
+            f"init_schema() left no `instances` table in {db_path}; the schema "
+            "never ran, so an absent diary table would prove nothing."
         )
+    return names
+
+
+@pytest.fixture
+def known_tables() -> set[str]:
+    """``KNOWN_TABLES`` as a set, with the same control applied to it.
+
+    ``instances`` must be in there for this to be the whitelist the tests below
+    mean to inspect; an empty or wrong tuple would otherwise make every
+    "not whitelisted" assertion pass on its own.
+    """
+    from scitex_agent_container._state.state_db import KNOWN_TABLES
+
+    known = set(KNOWN_TABLES)
+    if "instances" not in known:
+        raise RuntimeError(
+            "KNOWN_TABLES does not contain `instances`; it is not the "
+            "whitelist these tests mean to inspect."
+        )
+    return known
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_init_schema_no_longer_creates_the_diary_table_in_sqlite(
+    sqlite_table_names: set[str], table: str
+):
+    # Arrange — the fixture ran init_schema and cleared its own control.
+    names = sqlite_table_names
     # Act
     created = table in names
     # Assert
@@ -104,18 +152,13 @@ def test_init_schema_no_longer_creates_the_diary_table_in_sqlite(
 
 
 @pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
-def test_the_diary_table_is_no_longer_a_sqlite_known_table(table: str):
+def test_the_diary_table_is_no_longer_a_sqlite_known_table(
+    known_tables: set[str], table: str
+):
     # Arrange — while the name stayed whitelisted, ``sac db show`` reported
     # ``turns 0`` and ``sac db query --table=turns`` returned an empty array,
     # both of them confident and both of them wrong.
-    from scitex_agent_container._state.state_db import KNOWN_TABLES
-
-    known = set(KNOWN_TABLES)
-    if "instances" not in known:
-        raise RuntimeError(
-            "KNOWN_TABLES does not contain `instances`; it is not the "
-            "whitelist this test means to inspect."
-        )
+    known = known_tables
     # Act
     whitelisted = table in known
     # Assert
