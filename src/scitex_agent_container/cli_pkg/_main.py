@@ -435,9 +435,10 @@ def cli_entry_point() -> None:
     # The fleet defaults this process hands to every container, applied to
     # ITSELF — sac opens the same Postgres stores its agents do, and until
     # 2026-08-28 it was the one process in the fleet launching without
-    # ``SCITEX_STORE_DSN``. A variable exported in the operator's shell still
-    # wins; see ``apply_fleet_defaults_to_process`` for the failure this
-    # closes.
+    # ``SCITEX_STORE_DSN``, and without the ``PGUSER`` that DSN is roleless
+    # in order to leave room for. A variable exported in the operator's shell
+    # still wins; see ``apply_fleet_defaults_to_process`` for both halves and
+    # the failure they close.
     from ..runtimes._fleet_env import apply_fleet_defaults_to_process
 
     apply_fleet_defaults_to_process()

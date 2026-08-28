@@ -59,6 +59,16 @@ logger = logging.getLogger(__name__)
 # fleet defaults. Same file + cascade as ``spec.hostname_aliases``.
 CONFIG_SECTION = "fleet_default_env"
 
+# The agent-name slot sac's OWN host-side process occupies in the per-agent
+# PostgreSQL role scheme. It is not an agent and has no agent name, so it uses
+# the reserved name ``cli`` — the cluster holds the role, and compute-04's
+# ``.pgpass`` holds its rows. ONLY THE SLOT LIVES HERE: the role name is
+# composed by :func:`._pg_identity_env.derive_pg_role`, which is the one place
+# that knows the ``<host_user>__<name>`` shape, and the variable it lands in is
+# that module's ``PG_USER_ENV``. See
+# :func:`apply_fleet_defaults_to_process` for why the host process needs one.
+HOST_PROCESS_AGENT_NAME = "cli"
+
 # --------------------------------------------------------------------------
 # THE DATA. Fleet-wide environment defaults, declared once, inherited by every
 # agent that does not override the key in its own ``spec.env``.
@@ -411,8 +421,63 @@ def apply_fleet_defaults_to_process(
     overridden, and an operator who exported ``SCITEX_STORE_DSN`` in their
     shell has overridden it. ``environ`` defaults to ``os.environ`` and is an
     injection seam for tests. Returns the keys it actually set.
+
+    ``PGUSER`` — THE OTHER HALF OF THE SAME IDENTITY (2026-08-28)
+    ------------------------------------------------------------
+    The DSN above is ROLELESS on purpose. ``scitex-primary:55432/scitex``
+    names a host, a port and a database and NO user, because in this fleet the
+    login identity is per-agent and travels in a SECOND variable: containers
+    receive the roleless DSN *and* ``PGUSER=<host_user>__<agent>``, injected by
+    :mod:`._pg_identity_env` (see that module for why specs stopped carrying
+    DSN userinfo at all). Two halves, one scheme.
+
+    Giving the host process only the FIRST half fixed which server it talked
+    to and left it unable to say who it was:
+
+        Cannot connect to Postgres store 'node_comms_policy' ...
+        connection to server at "100.64.0.5", port 55432 failed:
+        fe_sendauth: no password supplied
+
+    With no ``PGUSER``, libpq falls back to the OS user — bare ``ywatanabe``
+    — and ``.pgpass`` matches on (host, port, database, USER). compute-04's
+    file holds 522 rows and NOT ONE names the bare OS user: every row is a
+    service role or a per-agent ``<host_user>__<agent>``. So the OS-user
+    fallback can never authenticate, whichever host the DSN names — the
+    password lookup fails before the server is ever asked. MEASURED on
+    compute-04 2026-08-28 against this branch: with the DSN alone, the read
+    above; with ``PGUSER=ywatanabe__cli`` beside it, the same read returns
+    the policy. COST while it was missing: every ``sac agents start`` that
+    publishes ACL policy died, taking scitex-hub (compute-03) and business
+    (compute-01) down.
+
+    THE ROLE IS DELIBERATELY NOT PUT IN THE DSN, and that constraint is the
+    whole reason this lives here rather than in :data:`FLEET_DEFAULT_ENV`.
+    That mapping is the CONTAINERS' baseline too, so userinfo in its DSN — or
+    a ``PGUSER`` key in it — would reach all 132 agent containers and override
+    every per-agent role, collapsing 132 distinct logins into one shared
+    identity and taking the per-agent audit trail and the ``pg_hba`` grant
+    structure with it. The host process gets its own half of the pair
+    injected HERE, in the one function nothing container-bound calls.
+
+    ``cli`` (:data:`HOST_PROCESS_AGENT_NAME`) is the agent-name slot; the
+    composition is :func:`._pg_identity_env.derive_pg_role`'s, so exactly one
+    module knows the ``<host_user>__<name>`` shape and the libpq variable
+    name. ``ywatanabe__cli`` is verified to authenticate against
+    scitex-primary from compute-01, compute-03, compute-04 and nas-03.
+    compute-02 was NOT tested — it carries neither psycopg nor any agent
+    specs — and is no worse off than before, where it had no host-side login
+    either.
+
+    Declared-anywhere wins here too, and the check runs AFTER the cascade
+    above so all three declaring layers are covered by one lookup: a
+    ``PGUSER`` exported in the operator's shell, one in
+    :data:`FLEET_DEFAULT_ENV`, and one in ``config.yaml``'s
+    ``spec.fleet_default_env`` each land in ``target`` first and suppress the
+    injection.
     """
     import os
+
+    from ._pg_identity_env import PG_USER_ENV, derive_pg_role
 
     target = os.environ if environ is None else environ
     injected: dict[str, str] = {}
@@ -421,6 +486,10 @@ def apply_fleet_defaults_to_process(
             continue
         target[key] = val
         injected[key] = val
+    if PG_USER_ENV not in target:
+        role = derive_pg_role(HOST_PROCESS_AGENT_NAME)
+        target[PG_USER_ENV] = role
+        injected[PG_USER_ENV] = role
     if injected:
         logger.debug("fleet_env: process env gained %s", sorted(injected))
     return injected
@@ -429,6 +498,7 @@ def apply_fleet_defaults_to_process(
 __all__ = [
     "CONFIG_SECTION",
     "FLEET_DEFAULT_ENV",
+    "HOST_PROCESS_AGENT_NAME",
     "apply_fleet_defaults_to_process",
     "declared_fleet_defaults",
     "effective_env",

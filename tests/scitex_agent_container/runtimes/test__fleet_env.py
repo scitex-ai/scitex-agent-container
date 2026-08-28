@@ -23,12 +23,23 @@ import pytest
 from scitex_agent_container.runtimes._fleet_env import (
     CONFIG_SECTION,
     FLEET_DEFAULT_ENV,
+    HOST_PROCESS_AGENT_NAME,
     apply_fleet_defaults_to_process,
     declared_fleet_defaults,
     effective_env,
     fleet_env_flags,
     merge_fleet_env,
 )
+from scitex_agent_container.runtimes._pg_identity_env import (
+    PG_USER_ENV,
+    derive_pg_role,
+)
+
+# The host process's expected role, composed by the SAME primitive the
+# production code uses. Spelling ``ywatanabe__cli`` literally here would make
+# these tests pass on the operator's laptop and fail for anyone else — and
+# would quietly stop testing the composition the moment it changed.
+HOST_PROCESS_ROLE = derive_pg_role(HOST_PROCESS_AGENT_NAME)
 
 
 def _write_config_yaml(path: Path, mapping: dict) -> Path:
@@ -213,8 +224,8 @@ def test_applying_defaults_reports_exactly_the_keys_it_injected(
     injected = apply_fleet_defaults_to_process(
         environ, config_path=tmp_path / "no-such-config.yaml"
     )
-    # Assert
-    assert injected == FLEET_DEFAULT_ENV
+    # Assert — the declared cascade PLUS the host-side half of the pg identity
+    assert injected == {**FLEET_DEFAULT_ENV, PG_USER_ENV: HOST_PROCESS_ROLE}
 
 
 def test_applying_defaults_leaves_unrelated_process_keys_alone(
@@ -258,23 +269,33 @@ def test_the_config_yaml_layer_reaches_the_process_beside_a_kept_override(
     # Act
     injected = apply_fleet_defaults_to_process(environ, config_path=cfg)
     # Assert
-    assert injected == {"OPERATOR_KEY": "from-yaml"}
+    assert injected == {"OPERATOR_KEY": "from-yaml", PG_USER_ENV: HOST_PROCESS_ROLE}
 
 
 def _with_store_dsn_unset(fn):
-    """Run ``fn`` with ``SCITEX_STORE_DSN`` absent from the REAL os.environ."""
+    """Run ``fn`` with the injected keys absent from the REAL os.environ.
+
+    ``PGUSER`` is saved and cleared alongside ``SCITEX_STORE_DSN`` because the
+    process-level injection now sets BOTH. Clearing it makes the two tests
+    below exercise the injection rather than an inherited value (inside an
+    agent container ``PGUSER`` is always already set), and restoring it stops
+    a test from leaving a role name behind in the live environment it borrowed.
+    """
     import os
 
     key = "SCITEX_STORE_DSN"
-    saved = os.environ.get(key)
+    keys = (key, PG_USER_ENV)
+    saved = {k: os.environ.get(k) for k in keys}
     try:
-        os.environ.pop(key, None)
+        for k in keys:
+            os.environ.pop(k, None)
         return fn(key)
     finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
+        for k, previous in saved.items():
+            if previous is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = previous
 
 
 def test_the_default_form_writes_to_the_live_process_environment() -> None:
@@ -306,6 +327,126 @@ def test_a_second_application_finds_the_key_present_and_injects_nothing() -> Non
     second = _with_store_dsn_unset(act)
     # Assert
     assert second == {}
+
+
+# ----------------------------------------------------------------------
+# ``PGUSER`` — the OTHER half of the same identity.
+#
+# The fleet's DSN is roleless on purpose and the login travels separately, so
+# a process holding only the DSN can reach the right server and still not say
+# who it is. libpq then falls back to the OS user, and ``.pgpass`` matches on
+# (host, port, database, USER) — compute-04's 522 rows contain no entry for
+# the bare OS user, so that fallback cannot authenticate at all:
+# ``fe_sendauth: no password supplied``. Containers were never exposed to this
+# because ``_pg_identity_env`` gives each one ``<host_user>__<agent>``; the
+# host-side process had no equivalent until it got ``<host_user>__cli``.
+# ----------------------------------------------------------------------
+
+
+def test_a_bare_process_env_gains_both_halves_of_the_pg_identity(
+    tmp_path: Path,
+) -> None:
+    """One assert on the PAIR, because either half alone cannot connect."""
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert (environ["SCITEX_STORE_DSN"], environ[PG_USER_ENV]) == (
+        FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"],
+        HOST_PROCESS_ROLE,
+    )
+
+
+def test_the_injected_role_is_composed_by_the_shared_primitive(
+    tmp_path: Path,
+) -> None:
+    """SSOT: ``<host_user>__<name>`` is built in exactly one place.
+
+    ``derive_pg_role`` is what every container's ``PGUSER`` already comes
+    from, so asserting against it — rather than against a literal — is what
+    keeps a second copy of the string logic from appearing here later.
+    """
+    # Arrange
+    # Act
+    environ = _bare_process_env(tmp_path)
+    # Assert
+    assert environ[PG_USER_ENV] == derive_pg_role(HOST_PROCESS_AGENT_NAME)
+
+
+def test_a_process_that_already_declares_a_role_keeps_it_verbatim(
+    tmp_path: Path,
+) -> None:
+    """Declared-anywhere wins, same rule as the DSN above.
+
+    An operator debugging as another role, or a wrapper that already resolved
+    an identity, must not have it silently swapped for ``__cli`` — a
+    connection made under the wrong login is worse than one that fails.
+    """
+    # Arrange
+    environ = {PG_USER_ENV: "ywatanabe__deliberately-someone-else"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ[PG_USER_ENV] == "ywatanabe__deliberately-someone-else"
+
+
+def test_a_config_yaml_role_beats_the_host_process_default(tmp_path: Path) -> None:
+    """The third declaring layer: the operator's ``spec.fleet_default_env``.
+
+    The injection is checked AFTER the config cascade precisely so this layer
+    is covered by the same lookup, rather than by a second special case that
+    could disagree with it.
+    """
+    # Arrange
+    cfg = _write_config_yaml(
+        tmp_path / "config.yaml", {PG_USER_ENV: "ywatanabe__from-yaml"}
+    )
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(environ, config_path=cfg)
+    # Assert
+    assert environ[PG_USER_ENV] == "ywatanabe__from-yaml"
+
+
+def test_the_injected_dsn_names_no_role_of_its_own(tmp_path: Path) -> None:
+    """The DSN must stay ROLELESS — the guard on a 132-way identity collapse.
+
+    Putting the role in the DSN would "fix" the host process in one line, and
+    :data:`FLEET_DEFAULT_ENV` is the CONTAINERS' baseline too: apptainer would
+    hand that userinfo to all 132 agents, where libpq prefers it over each
+    agent's own ``PGUSER``, and every distinct per-agent login would become
+    one shared role. Userinfo lives before an ``@`` in the authority, so that
+    is what this looks at — not the whole string, which legitimately contains
+    ``:`` and ``/``.
+    """
+    # Arrange
+    environ = _bare_process_env(tmp_path)
+    # Act
+    authority = environ["SCITEX_STORE_DSN"].split("://", 1)[1].split("/", 1)[0]
+    # Assert
+    assert "@" not in authority
+
+
+def test_the_host_process_role_never_reaches_a_container(tmp_path: Path) -> None:
+    """The other side of the same guard, at the layer that renders containers.
+
+    ``cli`` is injected into the PROCESS, never into the declared defaults, so
+    an agent still launches as itself. If someone ever "simplifies" this by
+    adding ``PGUSER`` to :data:`FLEET_DEFAULT_ENV`, that key would win over
+    ``_pg_identity_env``'s per-agent injection (declared-anywhere-wins cuts
+    both ways) and this goes red.
+    """
+    # Arrange
+    config = SimpleNamespace(name="some-agent", env={}, apptainer=None)
+    # Act
+    env = effective_env(config, defaults=FLEET_DEFAULT_ENV)
+    # Assert
+    assert env[PG_USER_ENV] == derive_pg_role("some-agent")
 
 
 
