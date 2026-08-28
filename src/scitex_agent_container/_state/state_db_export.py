@@ -18,8 +18,7 @@ Wire format::
     "since": "<iso>" | null,
     "host": "<canonical>",   # the host that produced the dump
     "tables": {
-      "channel_events": [ {row}, ... ],
-      "lineage":        [ {row}, ... ],
+      "instances":      [ {row}, ... ],
       ...
     }
   }

@@ -13,11 +13,15 @@ claim about fleet contents.
 
 from __future__ import annotations
 
+import pathlib
+
 import sqlite3
 
 import pytest
 
+from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_health import (
+    CORE_TABLES,
     STORE_STATES,
     StoreState,
     inspect_store,
@@ -51,21 +55,26 @@ def other_database(tmp_path):
 
 @pytest.fixture
 def real_store(tmp_path):
+    """A store built the way production builds one — ``init_schema``.
+
+    IT USED TO HAND-WRITE ``CREATE TABLE`` FOR EACH NAME IN ``CORE_TABLES``,
+    and that is precisely why this suite could not see the bug it exists to
+    catch. Restating the constant in the fixture makes the test a tautology:
+    whatever ``CORE_TABLES`` lists, the fixture creates, so the pair always
+    agrees — even when the real ``init_schema`` stopped creating one of those
+    tables entirely. Measured on 2026-08-28: ``channel_events`` left SQLite
+    for the shared PostgreSQL (ADR-0023) and ``CORE_TABLES`` still named it,
+    so every store this package initialises was permanently missing half its
+    core, and these tests stayed green because the fixture kept building the
+    table by hand.
+
+    Calling the production initialiser makes the two independent: the
+    constant is the claim, ``init_schema`` is the world, and a name in the
+    former with no table in the latter now fails
+    ``test_the_core_tables_are_all_created_by_init_schema`` below.
+    """
     path = tmp_path / "state.db"
-    conn = sqlite3.connect(path)
-    try:
-        # The two names in ``state_db_health.CORE_TABLES``. The second was
-        # ``definitions`` until 2026-08-28, when that table left state.db
-        # for having no writer; ``channel_events`` replaced it in the
-        # constant, and this fixture must follow — a hand-written store
-        # naming a table the CORE no longer lists would classify as
-        # ``schemaless`` and the "populated" tests would stop meaning what
-        # their names say.
-        conn.execute("CREATE TABLE instances (name TEXT)")
-        conn.execute("CREATE TABLE channel_events (target TEXT)")
-        conn.commit()
-    finally:
-        conn.close()
+    state_db.init_schema(path)
     yield path
 
 
@@ -99,13 +108,28 @@ def test_a_zero_byte_file_is_distinguishable_from_a_missing_one(
     assert present.state != gone.state
 
 
-def test_a_foreign_sqlite_file_is_schemaless(other_database):
+def test_a_foreign_sqlite_file_can_no_longer_be_told_apart(other_database):
+    """``schemaless`` is RETIRED, and this test records why rather than going.
+
+    It asserted ``schemaless`` — "a real database, just not ours" — until
+    2026-08-28, when ``instances`` left SQLite as the last table
+    ``init_schema`` created. ``CORE_TABLES`` is empty, so there is no
+    signature left to fail; the probe can no longer distinguish somebody
+    else's database from ours BECAUSE OURS NO LONGER HAS ONE.
+
+    Reporting ``schemaless`` anyway would be the probe asserting "this is a
+    DIFFERENT database" from evidence it stopped collecting — a verdict our
+    own migration manufactured. So a readable SQLite file classifies as
+    ``populated``, which is the weaker but TRUE statement that the file is
+    readable, and the ``absent``/``empty`` verdicts (which still carry real
+    information about a path) are untouched.
+    """
     # Arrange
     path = other_database
     # Act
     result = inspect_store(path)
-    # Assert — a real database, just not ours.
-    assert result.state == "schemaless"
+    # Assert
+    assert result.state == "populated"
 
 
 def test_a_store_with_core_tables_is_populated(real_store):
@@ -171,11 +195,21 @@ def test_empty_advice_names_the_silent_schema_build(zero_byte):
     assert "empty tables" in described or "schema-init" in described
 
 
-def test_schemaless_advice_says_verify_the_path(other_database):
+def test_the_schemaless_remedy_clause_survives_for_when_a_table_returns():
+    """The clause is UNREACHABLE now; it must not be silently lost.
+
+    ``inspect_store`` can no longer produce ``schemaless`` (see
+    ``CORE_TABLES``), so this constructs the state directly rather than
+    driving the classifier. The message is the remedy an operator needs the
+    moment ``init_schema`` creates a table again, and deleting it would make
+    that day a silent regression instead of a one-line change.
+    """
     # Arrange
-    result = inspect_store(other_database)
+    from scitex_agent_container._state.state_db_health import StoreState
+
+    state = StoreState(path=pathlib.Path("/tmp/x.db"), state="schemaless")
     # Act
-    described = result.describe()
+    described = state.describe()
     # Assert
     assert "verify the path" in described.lower()
 
@@ -201,3 +235,74 @@ def test_every_declared_state_is_constructible(tmp_path):
         built.append(StoreState(path=tmp_path / "x.db", state=state).state)
     # Assert
     assert built == list(STORE_STATES)
+
+
+# ---------------------------------------------------------------------------
+# The constant vs the world.
+#
+# ``CORE_TABLES`` is a CLAIM about what an initialised store contains, and
+# until 2026-08-28 nothing checked it against ``init_schema``. It named
+# ``channel_events`` for the rest of the day after that table left SQLite for
+# the shared PostgreSQL (ADR-0023), so every store this package created was
+# missing half its declared core and the suite could not tell, because the
+# ``real_store`` fixture hand-wrote both tables from the same constant.
+# ---------------------------------------------------------------------------
+
+
+def test_the_core_tables_are_all_created_by_init_schema(tmp_path):
+    """Every name in the core must be a table ``init_schema`` actually makes.
+
+    A name here that ``init_schema`` does not create cannot make the store
+    classify wrongly — the predicate is ANY — but it silently shrinks the
+    core, and :meth:`StoreState.describe` prints the whole list to an
+    operator as "this file carries none of ...", sending them to look for a
+    table that exists nowhere.
+    """
+    # Arrange
+    path = tmp_path / "state.db"
+    state_db.init_schema(path)
+    # Act
+    missing_from_schema = sorted(
+        name for name in CORE_TABLES if name not in _table_names(path)
+    )
+    # Assert
+    assert missing_from_schema == []
+
+
+def test_an_empty_core_does_not_classify_every_file_as_ours_by_vacuous_truth(
+    other_database,
+):
+    """The POSITIVE CONTROL, inverted — because the core IS empty now.
+
+    It used to assert ``len(CORE_TABLES) >= 1``, and it was right to: a
+    membership test over an empty tuple is vacuously true, so a core that
+    lost its last name would have made every SQLite file on the machine
+    classify as ours WITHOUT anything failing. That control did its job —
+    it is what caught this when ``instances``, the last table
+    ``init_schema`` created, left on 2026-08-28.
+
+    The core cannot be refilled: there is no table to name. So the guard
+    moves from the CONSTANT to the CLASSIFIER, which now checks
+    ``if CORE_TABLES and ...`` — an empty core means "no signature to
+    check", not "everything matches". The observable difference is in the
+    DESCRIPTION: a vacuous match would claim the file carries our tables,
+    and this asserts it does not say that.
+    """
+    # Arrange
+    result = inspect_store(other_database)
+    # Act
+    described = result.describe()
+    # Assert
+    assert "carries 0 table(s)" not in described
+
+
+def _table_names(path):
+    """The tables in ``path``, read through a real connection."""
+    conn = sqlite3.connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r[0] for r in rows}

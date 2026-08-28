@@ -42,6 +42,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from scitex_agent_container._lifecycle._off_loop import run_blocking
 from scitex_agent_container._state.state_db_channel import (
     persist_event,
 )
@@ -361,10 +362,16 @@ async def _publish_channel_event(
         ack=bool(sac_meta.get("ack", False)),
     )
 
-    # WI-1 durability: persist BEFORE publishing. If state.db is
+    # WI-1 durability: persist BEFORE publishing. If the store is
     # unreachable we surface the error loudly (handoff §0) rather
     # than silently dropping the event to the bus only.
-    row_id = persist_event(target=name, event=event)
+    #
+    # OFF THE EVENT LOOP: since 2026-08-28 this is a PostgreSQL round trip
+    # (ADR-0023), and this coroutine runs inside the per-agent sidecar, so a
+    # blocking call here stalls every request that sidecar is serving. Same
+    # fix and same reasoning as the SSE generators and the ``is_local_node``
+    # hop in ``_listen/_node_channel``.
+    row_id = await run_blocking(persist_event, target=name, event=event)
     event["_row_id"] = row_id
 
     report_zero_delivery(

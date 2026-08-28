@@ -10,10 +10,11 @@ the A2A directory still advertises the dead name, and the ACL gate has no
 policy row for the live one. All three now live in PostgreSQL and are
 renamed by :mod:`._rename` as their own steps — see below.
 
-So: rename EVERY row in state.db that keys on the name, including the
-history (``channel_events``). A renamed agent is the SAME agent — its
-past must still be findable under the new name. This is the ``git mv``
-position: the name changed, history follows.
+So: rename EVERY row that keys on the name, including the history. A
+renamed agent is the SAME agent — its past must still be findable under the
+new name. This is the ``git mv`` position: the name changed, history
+follows. What this MODULE can reach is the SQLite half; the PostgreSQL half
+is renamed by :mod:`._rename` as its own steps.
 
 WHAT THIS NO LONGER COVERS, STATED RATHER THAN LEFT AS A DEAD ENTRY
 ===================================================================
@@ -22,6 +23,13 @@ longer a SQLite table at all — it had zero writers, so its DDL was
 deleted rather than migrated — and the loops below skip a table that does
 not exist, so the entry could only ever match zero rows. Same ruling as
 the trio below: removed, not left as reassuring decoration.
+
+``channel_events`` was in :data:`NAME_COLUMNS` (both its ``target`` and its
+``source`` column) until 2026-08-28, when it became the last table to leave
+SQLite. History still follows a rename — it just follows it through an
+explicit step now, ``state_db_channel.rename_channel_events``, because the
+loops below cannot reach a PostgreSQL table and would have reported success
+having moved nothing.
 
 ``turns`` / ``errors`` / ``heartbeats`` were in :data:`NAME_COLUMNS`
 until 2026-08-28. They are no longer SQLite tables — the diary moved to
@@ -83,8 +91,16 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     # ("turns", "name") / ("errors", "name") / ("heartbeats", "name") were
     # here until 2026-08-28 — see the module docstring for why removing them
     # is the honest edit and why a store call cannot replace them.
-    ("channel_events", "target"),
-    ("channel_events", "source"),
+    # ("channel_events", "target") / ("channel_events", "source") were here
+    # until 2026-08-28. That table -- the LAST SQLite table sac owned -- moved
+    # to the shared PostgreSQL, and leaving the pairs would have been WORSE
+    # than a crash for exactly the reason the ACL and directory pairs below
+    # were: ``rename_rows`` SKIPS tables absent from ``sqlite_master``, so the
+    # rename would have reported success while the agent's ENTIRE MESSAGE
+    # HISTORY stayed under the old name -- invisible, because nobody greps a
+    # history they believe moved. The move is done by
+    # ``state_db_channel.rename_channel_events``, called as its own step in
+    # :mod:`._rename` with its own inverse on the undo stack.
     # ("node_tokens", "name") was here until 2026-08-28, when the
     # never-armed per-node bearer feature and its table were removed. The
     # pair now names a table ``rename_rows`` cannot reach, and this one

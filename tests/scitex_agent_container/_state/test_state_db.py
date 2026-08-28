@@ -772,62 +772,47 @@ def test_export_state_payload_tables_key_covers_all_known_tables(db_path: Path):
     assert set(payload["tables"]) == set(KNOWN_TABLES)
 
 
-def test_export_state_payload_instances_table_contains_recorded_row_name(
-    db_path: Path,
-):
-    # Arrange
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
+def test_export_state_payload_carries_an_empty_tables_map(db_path: Path):
+    """The round trip has no payload left, and that is the assertion.
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('polish-clew', 'message', '{}', 1.0)"
-        )
+    It asserted the recorded ``instances`` row came back in
+    ``payload["tables"]["instances"]`` until 2026-08-28. That table was the
+    last name in ``KNOWN_TABLES``; the map is empty now.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
+
     # Act
     payload = export_state(host="src-host")
     # Assert
-    assert [r["target"] for r in payload["tables"]["channel_events"]] == [
-        "polish-clew"
-    ]
+    assert payload["tables"] == {}
 
 
-def test_export_state_filters_out_instance_rows_older_than_since_cutoff(
+def test_export_state_with_a_since_cutoff_still_carries_an_empty_map(
     db_path: Path,
 ):
-    # Arrange — bracket the cutoff with sleeps so the second boundary is clean.
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    #
-    # ``channel_events.ts`` is a REAL (unix seconds), not the ISO-8601
-    # text ``instances.started_at`` was — so the cutoff is a NUMBER
-    # here. An ISO string against a REAL column matches nothing in
-    # SQLite, which would have made this pass for "the filter excluded
-    # everything" rather than for "it excluded the old row".
-    from scitex_agent_container._state.state_db import export_state, open_db
+    """The ``--since`` filter has nothing to filter, and must not invent it.
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('old', 'message', '{}', 1.0)"
-        )
-    cut = "2.0"
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('new', 'message', '{}', 3.0)"
-        )
+    It bracketed two ``instances`` rows around a cutoff and asserted only the
+    newer survived. With no table the filter's whole observable behaviour is
+    that it still produces a well-formed, EMPTY payload rather than raising
+    or omitting the key.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
+
     # Act
-    payload = export_state(since=cut, host="h")
+    payload = export_state(since="2.0", host="h")
     # Assert
-    assert [r["target"] for r in payload["tables"]["channel_events"]] == ["new"]
+    assert payload["tables"] == {}
 
 
 @pytest.fixture
@@ -872,96 +857,50 @@ def switch_to_sink_db(tmp_path: Path):
             importlib.reload(mod)
 
 
-def test_import_state_into_fresh_db_inserts_each_source_instance_row(
+def test_import_state_of_an_empty_payload_inserts_nothing(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange — write 2 rows on the source db and snapshot them.
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
+    """The import side of the same fact.
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('a', 'message', '{}', 1.0)"
-        )
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('b', 'message', '{}', 2.0)"
-        )
+    It moved two rows into a fresh sink and asserted the count until
+    2026-08-28. With ``KNOWN_TABLES`` empty there is nothing to carry, and
+    what must still hold is that the import SUCCEEDS on a well-formed
+    payload rather than failing on the absence.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
+
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
-    # Act — import into the fresh sink (different env path).
+    # Act
     inserted = sink_mod.import_state(payload)
     # Assert
-    assert inserted["channel_events"] == 2
+    assert inserted == {}
 
 
-def test_import_state_replayed_on_same_payload_inserts_zero_rows(
+def test_import_state_replayed_on_the_same_payload_is_still_a_no_op(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
+    """Replay safety, which outlives the rows: a second import must not fail.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('a', 'message', '{}', 1.0)"
-        )
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('b', 'message', '{}', 2.0)"
-        )
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
     sink_mod.import_state(payload)
     # Act
     inserted_again = sink_mod.import_state(payload)
     # Assert
-    assert inserted_again["channel_events"] == 0
-
-
-def test_import_state_round_trip_lands_exactly_the_source_rows_on_sink(
-    db_path: Path, switch_to_sink_db
-):
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
-
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('a', 'message', '{}', 1.0)"
-        )
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('b', 'message', '{}', 2.0)"
-        )
-    payload = export_state(host="src")
-    sink_mod = switch_to_sink_db()
-    # Act
-    sink_mod.import_state(payload)
-    with sink_mod.open_db() as conn:
-        rows = sorted(
-            r["target"]
-            for r in conn.execute("SELECT target FROM channel_events").fetchall()
-        )
-    # Assert
-    assert rows == ["a", "b"]
+    assert inserted_again == {}
 
 
 def test_import_state_rejects_payload_with_unknown_schema_version(db_path: Path):
@@ -976,40 +915,28 @@ def test_import_state_rejects_payload_with_unknown_schema_version(db_path: Path)
         import_state(bad_payload)
 
 
-def test_db_export_via_cli_emits_json_with_the_recorded_row_for_host(
-    db_path: Path,
-):
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import open_db
+def test_db_export_via_cli_emits_an_empty_tables_map(db_path: Path):
+    """The CLI wrapper carries the same empty map, and still exits zero."""
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('x', 'message', '{}', 1.0)"
-        )
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["channel_events"]) == 1
+    assert payload["tables"] == {}
 
 
 def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
-    # Arrange
-    from scitex_agent_container._state.state_db import open_db
+    # Arrange — the host STAMP survives the tables going away; it is what
+    # tells a reader which machine an (empty) dump describes.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('x', 'message', '{}', 1.0)"
-        )
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
@@ -1018,22 +945,18 @@ def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
     assert payload["host"] == "h"
 
 
-def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
+def test_db_import_via_cli_reads_stdin_and_reports_no_inserts(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange — snapshot source, point CLI at the fresh sink db.
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
+    """stdin still parses and the verb still succeeds — with nothing to add.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('x', 'message', '{}', 1.0)"
-        )
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import
@@ -1043,25 +966,21 @@ def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
     body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["channel_events"] == 1
+    assert body["inserted"] == {}
 
 
 def test_db_import_via_cli_echoes_payload_host_back_in_json_body(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange
-    # Arrange — ``channel_events`` is the seeded table now. ``instances``
-    # left KNOWN_TABLES on 2026-08-28 for the shared PostgreSQL store, and
-    # export/import walk that tuple — so the row a payload carries has to
-    # come from the one table SQLite still has. The property under test is
-    # the wire format, not which table fills it.
-    from scitex_agent_container._state.state_db import export_state, open_db
+    # Arrange — the provenance stamp an operator reads to know WHOSE dump
+    # this was, which matters more now that the dump itself is empty.
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    with open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO channel_events (target, kind, meta_json, ts) "
-            "VALUES ('x', 'message', '{}', 1.0)"
-        )
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import

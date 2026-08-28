@@ -138,8 +138,23 @@ def db_query(
 
     \b
     Example:
-      $ sac db query --table=channel_events --limit=20
-      $ sac db query --table=lineage --where="parent_name = 'lead'" --json
+      (no example: ``KNOWN_TABLES`` is EMPTY, so no value parses)
+
+    \b
+    THIS VERB HAS NOTHING LEFT TO READ. The examples named
+    ``--table=channel_events`` and then ``--table=instances`` on 2026-08-28;
+    both tables moved to the shared PostgreSQL store that day, and
+    ``instances`` was the last one ``init_schema`` created. ``--table`` is a
+    ``click.Choice(KNOWN_TABLES)``, so a stale example did not merely return
+    nothing — it FAILED to parse, which is the worse kind of stale help, and
+    with an empty choice list EVERY value now fails to parse.
+
+    \b
+    That refusal is the intended end state rather than an oversight: an
+    empty result would read as "this agent has no rows", when the truth is
+    "you are asking the wrong database". ``sac agents list`` answers what is
+    running; the channel history is ``sac_channel_events`` in the shared
+    store (ADR-0023).
     """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
     if where:

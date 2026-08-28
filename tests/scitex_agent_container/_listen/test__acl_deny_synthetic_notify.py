@@ -120,7 +120,7 @@ def _send_payload(sender: str, content: str = "hi") -> dict:
 def _synthetic_rows(target: str, db_path: Path) -> list[dict]:
     return [
         r
-        for r in list_undelivered(target=target, db_path=db_path)
+        for r in list_undelivered(target=target)
         if r["event"].get("kind") == "acl_deny_notify"
     ]
 

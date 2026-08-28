@@ -298,49 +298,66 @@ def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
 # rest of that day and then went the same way: ``definitions`` was deleted
 # from state.db for having no writer in any code path, ever.
 #
-# ``channel_events`` is the LAST name column a rename carries inside
-# state.db, and the identity and history halves — two different tables all
-# month — collapse into one row on it.
-#
-# The trail is worth keeping, because every step of it was a table LEAVING
-# SQLite and a seed that named a departed table RAISES: the identity half was
-# ``comms_nodes.name``, then ``definitions.name``, then ``instances.name``,
-# then ``lineage.child_name``; the history half was ``turns``, then
-# ``attempts``, then ``channel_events.target``. Five moves in one day, each
-# loud rather than silent, which is the property this file's own docstring
-# asks for.
-#
-# THERE IS NO PATH HALF ANY MORE. ``instances.workdir`` was the last entry in
-# ``_rename_db.PATH_COLUMNS``, which is now EMPTY. The path rewrite happens
-# in the store and is covered in
-# ``_state/test_state_db_instances_rename.py``.
-CHANNEL_EVENT_SQL = (
-    "INSERT INTO channel_events (target, source, kind, content, meta_json, ts) "
+# ``instances`` is the identity table a rename carries inside state.db now,
+# and it is the one that should have been used all along — it is the only
+# one of the three that a running agent actually WRITES a row to. It also
+# carries the PATH column (``workdir``), so one seeded row now covers both
+# ``NAME_COLUMNS`` and ``PATH_COLUMNS``.
+INSTANCE_SQL = (
+    "INSERT INTO instances (id, name, host, scope, started_at, workdir) "
     "VALUES (?, ?, ?, ?, ?, ?)"
 )
+# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28. ``channel_events`` — the
+# LAST SQLite table sac owned — moved to the shared PostgreSQL as
+# ``sac_channel_events`` (ADR-0023), so the INSERT would raise on every
+# fixture that used it. The history half is now seeded through the real
+# ``persist_event`` writer below, which is a better seed anyway: it exercises
+# the production allocation rather than hand-writing a row.
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Two ``channel_events`` rows for ``name`` — one per NAME_COLUMNS pair.
+    """Identity row (SQLite ``instances``) + history row (PostgreSQL).
 
-    Both halves a rename must carry inside state.db, and both must be columns
-    STILL in ``_rename_db.NAME_COLUMNS`` AND still real SQLite tables. After
-    2026-08-28 that leaves exactly one table, so the two halves are the two
-    COLUMNS of it: ``target`` (a message addressed TO the agent) and
-    ``source`` (one it sent). Seeding both is what keeps the rename's
-    two-column coverage rather than collapsing it to one.
+    Both halves a rename must carry — and they no longer live in the same
+    database, which is the point. The identity half is still a
+    ``_rename_db.NAME_COLUMNS`` pair in ``state.db``; the history half is
+    carried by ``state_db_channel.rename_channel_events`` as its own step in
+    ``_rename.apply_plan``. A seed that named only one of them would silently
+    stop proving the other.
+
+    Both halves have moved, and each has moved more than once. The identity
+    half was ``comms_nodes.name`` until 2026-08-28, when the ADR-0014
+    directory left SQLite for the shared PostgreSQL store;
+    ``definitions.name`` replaced it, and lasted until ``definitions`` was
+    itself deleted later the same day for having no writer.
+    ``instances.name`` is the third and the sturdiest: it is the one identity
+    column in state.db that production code actually INSERTs.
+
+    The history half was ``turns`` until the diary trio left the same day,
+    then ``attempts`` for part of it (deleted, zero writers), then
+    ``channel_events.target`` — and that table has now left SQLite too, as
+    ``sac_channel_events`` in the shared PostgreSQL (ADR-0023). It is seeded
+    through the real ``persist_event`` writer, which is a better seed than the
+    INSERT it replaces: it exercises the production id allocation.
+
+    CALLERS MUST TAKE ``pg_schema``: the history half writes to a real
+    PostgreSQL schema, so a caller without that fixture resolves the
+    deliberately-unreachable DSN and fails.
     """
+    from scitex_agent_container._state.state_db_channel import persist_event
+
     db_path = make_state_db(layout)
-    return seed_db_rows(
+    seeded = seed_db_rows(
         db_path,
         [
-            # history: addressed TO the agent, with NO source — so the
-            # identity read (``SELECT source``) sees exactly one name.
-            (CHANNEL_EVENT_SQL, (name, None, "message", "hi", "{}", 1.0)),
-            # identity: sent BY the agent.
-            (CHANNEL_EVENT_SQL, ("lead", name, "message", "hi back", "{}", 2.0)),
+            (
+                INSTANCE_SQL,
+                (f"inst-{name}", name, "h", "user", "t0", f"/home/u/proj/{name}"),
+            ),
         ],
     )
+    persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
+    return seeded
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:

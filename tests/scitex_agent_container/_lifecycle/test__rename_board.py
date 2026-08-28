@@ -71,7 +71,9 @@ def board(tmp_path: Path):
 
 
 @pytest.fixture
-def layout(tmp_path: Path) -> Layout:
+def layout(tmp_path: Path, pg_schema: str) -> Layout:
+    # ``pg_schema``: ``seed_identity_and_history`` writes the history half to
+    # the shared PostgreSQL since 2026-08-28 (ADR-0023).
     built = make_fleet(tmp_path / "fleet", OLD)
     seed_identity_and_history(built, OLD)
     return built

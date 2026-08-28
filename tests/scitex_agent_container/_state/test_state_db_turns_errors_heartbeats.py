@@ -112,9 +112,14 @@ def sqlite_table_names(db_path: Path) -> set[str]:
 
     init_schema()
     names = _table_names(db_path)
-    if "channel_events" not in names:
+    # The canary was a TABLE NAME until 2026-08-28 — ``instances``,
+    # then ``channel_events``. ``init_schema`` now creates NO table, so
+    # no name can stand for "the schema ran". The FILE existing is what
+    # is left, and it is still a real control: without it an absent
+    # diary table would prove nothing.
+    if not db_path.is_file():
         raise RuntimeError(
-            f"init_schema() left no `channel_events` table in {db_path}; the schema "
+            f"init_schema() created no database file at {db_path}; the schema "
             "never ran, so an absent diary table would prove nothing."
         )
     return names
@@ -133,10 +138,18 @@ def known_tables() -> set[str]:
     from scitex_agent_container._state.state_db import KNOWN_TABLES
 
     known = set(KNOWN_TABLES)
-    if "channel_events" not in known:
+    # The control was "``channel_events`` must be in there, or this is not
+    # the whitelist we mean" until 2026-08-28. KNOWN_TABLES is EMPTY now —
+    # ``instances`` was the last name and it moved to the shared store — so
+    # membership can no longer identify the tuple, and every "X is not
+    # whitelisted" assertion below is vacuously true. Asserting the tuple is
+    # EMPTY is the stronger statement that subsumes all of them: not "the
+    # diary is not exposed" but "NOTHING is".
+    if known:
         raise RuntimeError(
-            "KNOWN_TABLES does not contain `channel_events`; it is not the "
-            "whitelist these tests mean to inspect."
+            f"KNOWN_TABLES is expected to be EMPTY and holds {sorted(known)}; "
+            "the assertions below are about a whitelist that no longer has "
+            "members."
         )
     return known
 

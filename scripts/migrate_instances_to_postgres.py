@@ -84,6 +84,7 @@ owns both rules and the ``$HOME`` trap behind the second one.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -107,6 +108,172 @@ from scitex_agent_container._state.state_db_instances_store import (  # noqa: E4
     new_instances_store,
     run_with_reconnect,
 )
+
+#: The role that must OWN sac's store tables. Every agent connects as
+#: ``ywatanabe__<agent>``; only the tables' owner may ALTER or DROP them, and
+#: ``scitex_store_owner`` is the identity the fleet's other stores are owned
+#: by.
+#:
+#: ``SAC_MIGRATE_OWNER_ROLE`` overrides the name, and setting it to the EMPTY
+#: string opts out entirely — for a single-role deployment where no such role
+#: exists and every reader is the writer. Opting out is loud in the output,
+#: because the incident this guard exists for looked exactly like a healthy
+#: run until the fleet started failing.
+DEFAULT_STORE_OWNER_ROLE = "scitex_store_owner"
+
+
+def _owner_role() -> str:
+    """The configured owner role, read AT CALL TIME.
+
+    Deliberately not a module-level constant. A constant is evaluated at
+    IMPORT, so anything that imports this script before setting the variable
+    — a test harness, a wrapper, an operator's REPL — would silently get the
+    default and the override would look like it had done nothing. Measured
+    while writing the smoke test for this very guard: the opt-out was set
+    after the import and the refusal fired anyway.
+    """
+    return os.environ.get("SAC_MIGRATE_OWNER_ROLE", DEFAULT_STORE_OWNER_ROLE)
+
+
+def _with_role(dsn: str, role: str) -> str:
+    """Return ``dsn`` with libpq ``options=-c role=<role>``.
+
+    The role has to travel IN the DSN because ``scitex_dev``'s Postgres
+    dialect calls ``psycopg.connect(target.dsn)`` with nothing else. An
+    ``options`` already present is left alone — the operator who wrote it
+    outranks this default.
+    """
+    if "options=" in dsn:
+        return dsn
+    separator = "&" if "?" in dsn else "?"
+    return f"{dsn}{separator}options=-c%20role%3D{role}"
+
+
+def _preflight_ownership(log) -> "str | None":
+    """REFUSE unless the store's tables will be owned by the right role.
+
+    MEASURED 2026-08-28, on the channel_events migration, by the operator:
+    the migration CREATES the physical tables, so they come out owned by
+    whichever role ran it. That run used ``ywatanabe__cli``; every agent
+    connects as ``ywatanabe__<agent>``, so three minutes later the fleet's
+    message channel was failing with ``InsufficientPrivilege: must be owner
+    of table sac_channel_events`` and stayed broken for about six minutes.
+
+    So this refuses BEFORE writing rather than letting the fault surface as
+    an outage. It returns the DSN to use (with ``role=`` pinned) or ``None``
+    when the run must abort. Three cases, and they are deliberately not
+    collapsed:
+
+    * already ``scitex_store_owner`` — proceed unchanged.
+    * a MEMBER of it — pin ``role=`` so every CREATE lands owned correctly.
+    * neither — REFUSE, naming the grant the operator needs.
+
+    A store whose tables ALREADY exist is not exempt: this migration adds
+    rows to tables the first ``Store`` open may still have to create (the
+    oplog and cursor tables are created lazily), so the wrong role can still
+    leave a fresh table behind.
+    """
+    role = _owner_role()
+    if not role:
+        log(
+            "  ownership preflight OPTED OUT (SAC_MIGRATE_OWNER_ROLE=''). "
+            "The tables this run creates will be owned by the connecting "
+            "role. That is correct ONLY where every reader connects as that "
+            "same role; on this fleet every agent connects as "
+            "ywatanabe__<agent> and the mismatch is a 6-minute outage."
+        )
+        return os.environ.get("SCITEX_STORE_DSN", "")
+    dsn = os.environ.get("SCITEX_STORE_DSN", "")
+    if not dsn:
+        log(
+            "  ownership preflight SKIPPED — SCITEX_STORE_DSN is unset, so "
+            "the store resolves to this host's PostgreSQL and this check "
+            "cannot pin a role in the DSN. Run with SCITEX_STORE_DSN set."
+        )
+        return dsn or None
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover - the Postgres path needs psycopg
+        log("  ownership preflight SKIPPED — psycopg is not installed")
+        return dsn
+    try:
+        with psycopg.connect(dsn, connect_timeout=5) as conn:
+            # Ask whether the role EXISTS first. ``pg_has_role`` RAISES on an
+            # unknown role, and "the owner role is not provisioned here" is a
+            # different fact with a different remedy from "you are not a
+            # member of it" — collapsing them into one connection error is
+            # how an operator ends up reading a CREATE ROLE problem as a
+            # GRANT problem.
+            exists = conn.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)
+            ).fetchone()
+            if not exists:
+                log(
+                    f"  REFUSING: role {role!r} does not exist on "
+                    f"this server, so the tables this run creates cannot be "
+                    f"owned by it. Fix: provision the role, or re-run with "
+                    f"SAC_MIGRATE_OWNER_ROLE naming the role that should own "
+                    f"them (or ='' to opt out on a single-role deployment)."
+                )
+                return None
+            row = conn.execute(
+                "SELECT current_user, "
+                "pg_has_role(current_user, %s, 'MEMBER')",
+                (role,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        log(f"  ownership preflight FAILED to connect: {exc!r}")
+        return None
+    current, is_member = str(row[0]), bool(row[1])
+    if current == role:
+        log(f"  ownership: connected as {current} — tables land owned correctly")
+        return dsn
+    if is_member:
+        log(
+            f"  ownership: {current} is a member of {role}; "
+            f"pinning role={role} so every CREATE is owned by it"
+        )
+        return _with_role(dsn, role)
+    log(
+        f"  REFUSING: connected as {current!r}, which is NOT {role!r} "
+        f"and not a member of it. This migration CREATES the store's physical "
+        f"tables, so they would be owned by {current!r} and every agent "
+        f"(which connects as ywatanabe__<agent>) would fail with "
+        f"InsufficientPrivilege. Measured on the channel_events migration on "
+        f"2026-08-28: the fleet's message channel broke three minutes after "
+        f"the run and stayed broken ~6 minutes.\n"
+        f"  Fix: run as {role}, or "
+        f"`GRANT {role} TO {current}` and re-run."
+    )
+    return None
+
+
+def _verify_as_consumer(role: str, log) -> bool:
+    """Read the migrated rows back as ``role``. False when it cannot.
+
+    MEASURED 2026-08-28, same incident: the post-migration check passed while
+    the fleet was broken, because it ran as the MIGRATING role — the one
+    identity guaranteed to work. A verification that uses the writer's
+    credential proves the writer can read its own writes and nothing else.
+    """
+    dsn = os.environ.get("SCITEX_STORE_DSN", "")
+    if not dsn:
+        log("  consumer verify SKIPPED — SCITEX_STORE_DSN is unset")
+        return True
+    import psycopg
+
+    try:
+        with psycopg.connect(_with_role(dsn, role), connect_timeout=5) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM instances_rows").fetchone()[0]
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        log(
+            f"  CONSUMER VERIFY FAILED as {role!r}: {exc!r}\n"
+            f"  The rows are written but the fleet cannot READ them. This is "
+            f"the outage shape the ownership preflight exists to prevent."
+        )
+        return False
+    log(f"  consumer verify: {role} can read {n} record(s)")
+    return True
 
 SOURCE = SqliteSource(
     table="instances",
@@ -224,7 +391,31 @@ def _verify() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    return run_migration(
+    """Preflight ownership, migrate, then verify with a CONSUMER credential.
+
+    The two guards around ``run_migration`` are not decoration; each is a
+    measured incident from the sibling migrations run on 2026-08-28. See
+    :func:`_preflight_ownership` and :func:`_verify_as_consumer`.
+
+    NO CROSS-HOST ORDERING ASSUMPTION IS MADE, and that is worth stating
+    because the channel_events migration's ordering guard turned out to be
+    structurally unsatisfiable on this fleet (145 rows that looked like
+    post-cutover writes were another host's legitimately imported history,
+    because two hosts served the SAME targets over OVERLAPPING periods).
+    ``instances`` is immune BY CONSTRUCTION rather than by luck: the record
+    identity is ``{id, host}`` with a uuid7 minted at the origin, so two
+    hosts' rows are different records that never compare, and this script
+    has no rule that reads one host's timestamps against another's. An
+    interleaved history is simply two sets of records.
+    """
+    committing = "--commit" in (argv if argv is not None else sys.argv[1:])
+    if committing:
+        pinned = _preflight_ownership(print)
+        if pinned is None:
+            return 1
+        os.environ["SCITEX_STORE_DSN"] = pinned
+
+    rc = run_migration(
         argv=argv,
         description=__doc__,
         source=SOURCE,
@@ -244,6 +435,20 @@ def main(argv: list[str] | None = None) -> int:
         # must never be handed by mistake.
         actor=ACTOR,
     )
+    if rc == 0 and committing:
+        role = os.environ.get("SAC_MIGRATE_VERIFY_ROLE", "")
+        if role:
+            if not _verify_as_consumer(role, print):
+                return 1
+        else:
+            print(
+                "  WARNING: the verification above ran as the MIGRATING role, "
+                "which is the one identity guaranteed to work. Set "
+                "SAC_MIGRATE_VERIFY_ROLE=<an agent's role> to re-read as a "
+                "CONSUMER. Measured 2026-08-28: a writer-credential check "
+                "passed while the fleet could not read the rows at all."
+            )
+    return rc
 
 
 if __name__ == "__main__":  # pragma: no cover

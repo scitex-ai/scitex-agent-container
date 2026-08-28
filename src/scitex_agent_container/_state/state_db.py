@@ -99,7 +99,7 @@ from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
 # There is no ``state_db_migrations`` import here any more, because there is
 # no such module — see the docstring above for what it did and why it went.
 from .state_db_schema import (
-    _SCHEMA_CHANNEL_AND_ACL,
+    _SCHEMA_ACL,
     _SCHEMA_REGISTRY,
 )
 
@@ -119,16 +119,23 @@ DEFAULT_DB_PATH = Path(
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
-    # ``instances`` left on 2026-08-28 alongside the three below, and it
-    # is the one whose removal has the widest blast radius. It did not go
-    # dead — it MOVED, to the shared PostgreSQL store
-    # (:mod:`.state_db_instances`) — which makes the name left behind a
-    # WRONG ANSWER rather than merely an empty one: ``sac db show`` would
-    # print ``instances 0`` while PostgreSQL holds the fleet's whole
+    # EMPTY. Every name this tuple ever carried left SQLite on 2026-08-28,
+    # and ``instances`` — the LAST one, and the only table sac owned that
+    # both a writer and a reader ever reached — was the last to go, to the
+    # shared PostgreSQL store (:mod:`.state_db_instances`).
+    #
+    # A NAME LEFT HERE WOULD BE A WRONG ANSWER, NOT AN EMPTY ONE, and for
+    # ``instances`` that reading is the worst of the set: ``sac db show``
+    # would print ``instances 0`` while PostgreSQL holds the fleet's entire
     # lifecycle history, about the table an operator reaches for FIRST when
     # asking what is running. ``sac agents list`` is the verb that answers
     # that question now.
-    "channel_events",
+    #
+    # AN EMPTY TUPLE IS THE HONEST SHAPE, and it is what every generic reader
+    # should see: ``table_counts`` returns ``{}``, ``export_state`` /
+    # ``import_state`` carry nothing, and ``sac db query --table`` can name
+    # nothing. ``init_schema`` issues ZERO ``CREATE TABLE`` statements, so
+    # there is no table for any of them to be right about.
     # ``lineage`` left on 2026-08-28, when the spawn DAG moved to the
     # shared PostgreSQL store (:mod:`.state_db_lineage_store`). Its DDL is
     # gone from :mod:`.state_db_schema`, which carries the departure note,
@@ -145,6 +152,7 @@ KNOWN_TABLES = (
     # ``lineage 0`` while the store holds the fleet's 23 edges would be a
     # wrong answer that looks like a right one about the table the whole
     # ACL is derived from.
+    #
     # ``definitions``, ``instance_heartbeats`` and ``events`` left on
     # 2026-08-28, in one change, taking this tuple from six names to three.
     # Their DDL is gone from :mod:`.state_db_schema`, where each carries its
@@ -315,7 +323,14 @@ def init_schema(db_path: Path | None = None) -> Path:
         # table had zero writers, so issuing its DDL only produced an empty
         # table that answered readers with a plausible zero. Existing rows
         # are untouched — we stop issuing the CREATE, we do not DROP.
-        conn.executescript(_SCHEMA_CHANNEL_AND_ACL)
+        # ``_SCHEMA_CHANNEL_AND_ACL`` became ``_SCHEMA_ACL`` on 2026-08-28
+        # when ``channel_events`` -- the LAST SQLite table sac owned -- moved
+        # to the shared PostgreSQL as ``sac_channel_events`` /
+        # ``sac_channel_cursor`` (:mod:`.state_db_channel_store`). Same
+        # ruling as the diary and ``attempts``: we stop issuing the CREATE,
+        # we do not DROP, so an old state.db keeps its rows until
+        # ``scripts/migrate_channel_events_to_postgres.py`` carries them over.
+        conn.executescript(_SCHEMA_ACL)
         # ``turns`` / ``errors`` / ``heartbeats`` were created by the
         # constant above (then called ``_SCHEMA_DIARY``) until 2026-08-28.
         # All three moved to per-host PostgreSQL; each diary store creates

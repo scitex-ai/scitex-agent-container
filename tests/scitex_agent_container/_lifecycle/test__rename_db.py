@@ -29,26 +29,46 @@ NEW = "scitex-cards"
 
 # The rows a real agent leaves across the identity AND history tables.
 _SEED = [
-    # The identity half. It has moved FIVE times in one day, and every move
-    # was a table LEAVING SQLite: ``comms_nodes.name`` (to PostgreSQL),
-    # ``definitions.name`` (deleted — no writer), ``instances.name`` (to the
-    # shared store), ``lineage.child_name`` (to the shared store). What is
-    # left is ``channel_events``, the only table ``init_schema`` still
-    # creates — so the identity and history halves, two different tables all
-    # month, are now its two COLUMNS.
-    #
-    # ``source`` is the identity half (a message this agent SENT) and
-    # ``target`` is the history half (one addressed TO it). Seeding both is
-    # what keeps the rename's two-column coverage instead of collapsing it.
+    # An ``INSERT INTO definitions`` row was here until 2026-08-28, and the
+    # identity + spec-path assertions below were aimed at it. That table was
+    # deleted from state.db for having no writer in any code path, ever, so
+    # the seed would raise. The ``instances`` row below already carries both
+    # halves it stood for — ``name`` is a ``NAME_COLUMNS`` pair and
+    # ``workdir`` is the surviving ``PATH_COLUMNS`` pair — and it is the row
+    # a real agent actually leaves behind.
     (
-        "INSERT INTO channel_events (target, source, kind, content, "
-        "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-        ("lead", OLD, "message", "sent", "{}", 1.0),
+        "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
+        "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
     ),
+    # An ``INSERT INTO comms_nodes`` row was here until 2026-08-28. The
+    # ADR-0014 directory moved to PostgreSQL, so SQLite has no such table and
+    # the seed would raise on every test in this file.
+    # An ``INSERT INTO lineage`` row was here until 2026-08-28. The spawn
+    # DAG moved to PostgreSQL, so SQLite has no such table and the seed
+    # would raise on every test in this file — the same reason the
+    # ``comms_nodes`` seed above went.
+    #
+    # THE HISTORY HALF IS NOW ``instances.spawned_by``, and this is its
+    # FIFTH table. ``turns`` until 2026-08-28 (the diary trio left for
+    # per-host PostgreSQL), then ``attempts`` for part of that day (deleted,
+    # zero writers), then ``channel_events`` (the LAST SQLite table sac
+    # owned, now ``sac_channel_events`` in the shared PostgreSQL, ADR-0023),
+    # then ``lineage`` — which left the same day this did.
+    #
+    # ``spawned_by`` is what remains, and it is the only second name column
+    # in ``_rename_db.NAME_COLUMNS`` still backed by a real SQLite table. It
+    # is a genuine one: a spawned agent's row names its parent, so a rename
+    # that missed it would leave a child pointing at an agent that no longer
+    # exists. The moved histories still follow a rename, each through its own
+    # step in ``_rename.apply_plan`` — the channel via
+    # ``state_db_channel.rename_channel_events``
+    # (``_state/test_state_db_channel_rename.py``) and the DAG via
+    # ``state_db_lineage_rename.rename_lineage``.
     (
-        "INSERT INTO channel_events (target, source, kind, content, "
-        "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-        (OLD, None, "message", "hi", "{}", 2.0),
+        "INSERT INTO instances (id, name, host, scope, started_at, spawned_by) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("i2", "child-a", "h", "user", "t0", OLD),
     ),
 ]
 
@@ -94,7 +114,7 @@ def test_count_rows_counts_the_identity_row(seeded: Path):
 def test_count_rows_counts_the_history_row(seeded: Path):
     """History follows the agent: a renamed agent is the SAME agent."""
     # Arrange
-    key = "channel_events.target"
+    key = "instances.spawned_by"
     # Act
     counts = count_rows(seeded, OLD)
     # Assert
@@ -196,7 +216,7 @@ def test_rename_moves_the_identity_rows(seeded: Path):
 
 def test_rename_moves_the_history_rows(seeded: Path):
     # Arrange
-    sql = "SELECT COUNT(*) FROM channel_events WHERE target = ?"
+    sql = "SELECT COUNT(*) FROM instances WHERE spawned_by = ?"
     # Act
     rename_rows(seeded, OLD, NEW)
     # Assert
@@ -282,17 +302,22 @@ def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path
     history behind. Renaming ``scitex-todo`` -> ``scitex-cards`` and then
     rolling back must NOT drag that stranger's row along.
     """
-    # Arrange
+    # Arrange — ``instances.spawned_by`` rather than a ``lineage`` edge: the
+    # trap needs a row that ALREADY holds the new name, and ``lineage``
+    # declares ``child_name`` UNIQUE, so seeding one there makes the rename
+    # itself fail on the constraint instead of reaching the undo this test is
+    # about. ``spawned_by`` carries an agent name with no uniqueness on it,
+    # which is exactly the shape a stranger row has in the wild.
     conn = sqlite3.connect(str(seeded))
     with conn:
         conn.execute(
-            "INSERT INTO channel_events (target, source, kind, content, "
-            "meta_json, ts) VALUES (?, ?, ?, ?, ?, ?)",
-            (NEW, None, "stranger", "hi", "{}", 2.0),
+            "INSERT INTO instances (id, name, host, scope, started_at, "
+            "spawned_by) VALUES (?, ?, ?, ?, ?, ?)",
+            ("i-stranger", "bystander", "h", "user", "t0", NEW),
         )
     conn.close()
     undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT target FROM channel_events WHERE kind = 'stranger'"
+    sql = "SELECT spawned_by FROM instances WHERE id = 'i-stranger'"
     # Act
     undo_rename_rows(undo)
     # Assert

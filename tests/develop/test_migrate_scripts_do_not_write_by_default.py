@@ -377,10 +377,19 @@ def test_instances_bare_invocation_never_reaches_the_store(tmp_path, capsys):
 def test_instances_commit_does_reach_for_the_store(tmp_path, capsys):
     """NEGATIVE CONTROL — without it the tests above still pass on a script
     that can never write anything, which is exactly how the diary migration
-    shipped unable to carry a single row."""
+    shipped unable to carry a single row.
+
+    It asserts a NONZERO EXIT rather than a raised exception, and the
+    difference is the ownership preflight added on 2026-08-28: ``--commit``
+    now connects BEFORE ``run_migration`` to check who would own the tables
+    it creates, so against the dead DSN it fails there and returns 1 instead
+    of raising deeper in. Either way the claim is the same and is the one
+    that matters — the commit path REACHED for the store, and the bare run
+    above did not.
+    """
     # Arrange
     target = tmp_path
     # Act
     run = _run_instances(target, capsys, ["--commit"])
     # Assert
-    assert run.error is not None
+    assert (run.rc, run.error) != (0, None)

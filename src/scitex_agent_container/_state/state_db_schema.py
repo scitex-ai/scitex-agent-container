@@ -140,50 +140,34 @@ _SCHEMA_REGISTRY = """
 # Deleting this DDL drops NO existing rows: ``CREATE TABLE IF NOT EXISTS``
 # simply stops being issued, so an old state.db keeps whatever it holds.
 
-# Channel-event durability (WI-1) + the WI-2 / ADR-0014 ACL tables.
+# The WI-2 / ADR-0014 ACL tables.
 #
-# THIS CONSTANT WAS ``_SCHEMA_DIARY`` UNTIL 2026-08-28. It was named for
-# the three tables it opened with — ``turns``, ``errors``, ``heartbeats``
-# — and those moved to per-host PostgreSQL that day (:mod:`.state_db_diary`
-# holds both the writers and the reader now). The DDL went with them, and
-# so did the name: a constant still called ``_SCHEMA_DIARY`` while
-# defining only channel and ACL tables is a lie no grep can see through,
-# and the next reader asking "where does the diary live" would land here
-# and find ``channel_events``.
+# THIS CONSTANT WAS ``_SCHEMA_DIARY`` UNTIL 2026-08-28, then
+# ``_SCHEMA_CHANNEL_AND_ACL`` for the rest of that day. Each rename tracked
+# a table leaving: first the diary trio (``turns`` / ``errors`` /
+# ``heartbeats``) to per-host PostgreSQL, then ``channel_events`` to the
+# shared one. A constant named for tables it no longer defines is a lie no
+# grep can see through, and the next reader asking "where does the channel
+# history live" would land here and find nothing to tell them.
+#
+# ``channel_events`` LEFT ON 2026-08-28, the LAST SQLite table sac owned.
+# It is now two plain PostgreSQL tables — ``sac_channel_events`` and
+# ``sac_channel_cursor`` — in the shared database ``host_store`` resolves
+# to; :mod:`.state_db_channel_store` holds their DDL and
+# ``docs/adr/0023-channel-events-plain-postgres.md`` holds the three
+# measurements that kept them OUT of ``scitex_dev.store``.
 #
 # The DDL is REMOVED rather than left behind, for the reason
 # ``incarnations`` was removed from ``KNOWN_TABLES`` on 2026-08-19: a
 # SQLite table that exists and is never written returns an EMPTY result
-# to every reader, and an empty result reads as "this agent recorded no
-# turns" when the truth is "you are asking the wrong database".
-_SCHEMA_CHANNEL_AND_ACL = """
--- WI-1 channel-event durability (handoff §4 "Durability /
--- replay-on-reconnect"): persist every channel-bus event so a POST
--- with no subscriber is delivered on connect, and a kill+reconnect
--- replays exactly the missed events.
---
--- ``id`` is the SSE-cursor (the value of the SSE ``id:`` line); a
--- reconnecting client passes it back as ``Last-Event-ID`` to resume
--- without dropping or duplicating events.
--- ``meta_json`` carries the full minted envelope so the inbox bus can
--- replay byte-identical frames after a process restart.
--- ``delivered_at`` is set the first time the event reaches a live
--- subscriber; NULL means "still waiting on the bus".
-CREATE TABLE IF NOT EXISTS channel_events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    target        TEXT NOT NULL,
-    source        TEXT,
-    kind          TEXT NOT NULL DEFAULT 'message',
-    content       TEXT,
-    meta_json     TEXT NOT NULL,
-    ts            REAL NOT NULL,
-    delivered_at  REAL
-);
-CREATE INDEX IF NOT EXISTS idx_channel_events_target_undelivered
-    ON channel_events(target, id) WHERE delivered_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_channel_events_target_id
-    ON channel_events(target, id);
-
+# to every reader, and an empty result reads as "this agent has no waiting
+# messages" when the truth is "you are asking the wrong database" — which,
+# for the channel, means an inbox that looks delivered.
+#
+# Deleting this DDL drops NO existing rows: ``CREATE TABLE IF NOT EXISTS``
+# simply stops being issued, so an old state.db keeps whatever it holds
+# until ``scripts/migrate_channel_events_to_postgres.py`` carries it over.
+_SCHEMA_ACL = """
 -- WI-2 ACL — authenticated identity, lineage edges, cross-group grants
 -- (handoff §4; lead 2026-05-21 RESTORED the authenticated-identity
 -- criterion the prior limited scope had deferred).
