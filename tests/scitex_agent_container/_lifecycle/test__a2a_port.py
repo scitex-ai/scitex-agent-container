@@ -3,14 +3,16 @@
 PA-306: no `unittest.mock`. Production helpers `port_allocator.claim_port`
 and `port_allocator.release_port` are swapped via a hand-rolled fake
 context manager that records calls and restores the attribute on
-teardown. The "end-to-end" test uses the REAL allocator against a
-``tmp_path`` sqlite DB — no patching whatsoever.
+teardown. The "end-to-end" tests use the REAL allocator against a REAL
+database — no patching whatsoever. They took a ``tmp_path`` sqlite DB until
+2026-08-28, when ``a2a_ports`` moved to per-host PostgreSQL; they now take
+the shared ``pg_schema`` fixture, which points the real store resolver at a
+throwaway schema and SKIPS where no writable database exists.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
@@ -163,45 +165,40 @@ def test_release_calls_allocator() -> None:
     assert rec.calls == [(("alpha",), {})]
 
 
-def test_resolve_end_to_end_assigns_int_port(tmp_path: Path) -> None:
-    """No fakes — drive the real port_allocator against a tmp sqlite DB."""
+def test_resolve_end_to_end_assigns_int_port(pg_schema: str) -> None:
+    """No fakes — drive the real port_allocator against a real database.
+
+    The claim ledger moved off ``state.db`` on 2026-08-28, so pinning
+    ``state_db.DEFAULT_DB_PATH`` at a tmp file no longer isolates anything
+    the allocator reads. ``pg_schema`` points the REAL store resolver at a
+    throwaway schema instead. ``DEFAULT_RANGE`` is still saved and restored
+    by hand (PA-306 — no monkeypatch).
+    """
     # Arrange
-    db = tmp_path / "state.db"
     cfg = _cfg("auto")
     lo, hi = 26000, 26100  # stx-allow: STX-NL001
-    from scitex_agent_container._state import state_db
-
     saved_range = port_allocator.DEFAULT_RANGE
-    saved_db = state_db.DEFAULT_DB_PATH
     port_allocator.DEFAULT_RANGE = (lo, hi)
-    state_db.DEFAULT_DB_PATH = db
     # Act
     try:
         resolve_a2a_port(cfg)
     finally:
         port_allocator.DEFAULT_RANGE = saved_range
-        state_db.DEFAULT_DB_PATH = saved_db
     # Assert
     assert isinstance(cfg.a2a.port, int)
 
 
-def test_resolve_end_to_end_port_within_configured_range(tmp_path: Path) -> None:
-    """No fakes — drive the real port_allocator against a tmp sqlite DB."""
+def test_resolve_end_to_end_port_within_configured_range(pg_schema: str) -> None:
+    """No fakes — drive the real port_allocator against a real database."""
     # Arrange
-    db = tmp_path / "state.db"
     cfg = _cfg("auto")
     lo, hi = 26000, 26100  # stx-allow: STX-NL001
-    from scitex_agent_container._state import state_db
-
     saved_range = port_allocator.DEFAULT_RANGE
-    saved_db = state_db.DEFAULT_DB_PATH
     port_allocator.DEFAULT_RANGE = (lo, hi)
-    state_db.DEFAULT_DB_PATH = db
     # Act
     try:
         resolve_a2a_port(cfg)
     finally:
         port_allocator.DEFAULT_RANGE = saved_range
-        state_db.DEFAULT_DB_PATH = saved_db
     # Assert
     assert lo <= cfg.a2a.port <= hi

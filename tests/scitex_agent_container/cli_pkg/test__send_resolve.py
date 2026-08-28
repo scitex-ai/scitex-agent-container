@@ -34,11 +34,15 @@ _LOCAL_HOST = "lead-host"
 
 
 @pytest.fixture
-def state_db_env(tmp_path):
+def state_db_env(tmp_path, pg_schema: str):
     """Redirect state.db + host to a temp sandbox; reload the module.
 
     Mirrors ``test__send.py``'s fixture so the resolver reads an empty db
     unless the test seeds rows / claims itself.
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28: the durable allocator claim
+    this resolver falls back to lives in PostgreSQL now, so a temp state.db is
+    only half the sandbox.
     """
     saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_host = os.environ.get("SAC_HOST")
