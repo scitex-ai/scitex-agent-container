@@ -137,8 +137,7 @@ def db_query(
     \b
     Example:
       $ sac db query --table=instances --limit=20
-      $ sac db query --table=heartbeats --where="agent='head-nas'"
-      $ sac db query --table=events --json
+      $ sac db query --table=instance_heartbeats --where="iter > 100" --json
     """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
     if where:
@@ -149,11 +148,8 @@ def db_query(
         "instances": "started_at DESC",
         "definitions": "first_seen_at DESC",
         "instance_heartbeats": "ts DESC",
-        "heartbeats": "ts DESC",
         "events": "ts DESC",
         "attempts": "ts DESC",
-        "turns": "ts DESC",
-        "errors": "ts DESC",
     }.get(table)
     if order_by:
         sql += f" ORDER BY {order_by}"

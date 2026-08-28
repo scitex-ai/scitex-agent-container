@@ -95,10 +95,10 @@ def _db_names(db_path: Path) -> list[str]:
     conn = sqlite3.connect(str(db_path))
     try:
         nodes = conn.execute("SELECT name FROM comms_nodes").fetchall()
-        turns = conn.execute("SELECT name FROM turns").fetchall()
+        past = conn.execute("SELECT agent FROM attempts").fetchall()
     finally:
         conn.close()
-    return sorted([r[0] for r in nodes] + [t[0] for t in turns])
+    return sorted([r[0] for r in nodes] + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):

@@ -69,15 +69,15 @@ def _peer_export_payload(*, host: str, name: str, port: int) -> str:
             "tables": {
                 # Only comms_nodes carries data — every other known table
                 # has to be present-but-empty so import_state's
-                # KNOWN_TABLES loop doesn't trip.
+                # KNOWN_TABLES loop doesn't trip. ``turns`` / ``errors`` /
+                # ``heartbeats`` were here until 2026-08-28; the diary left
+                # SQLite and KNOWN_TABLES together, so a peer that still
+                # ships those keys is describing a dump sac no longer makes.
                 "definitions": [],
                 "instances": [],
                 "instance_heartbeats": [],
                 "events": [],
                 "attempts": [],
-                "turns": [],
-                "errors": [],
-                "heartbeats": [],
                 "channel_events": [],
                 "node_tokens": [],
                 "lineage": [],
