@@ -76,7 +76,7 @@ def test_migration_creates_diary_table(db_path: Path, table: str):
 # ---------------------------------------------------------------------------
 
 
-def test_insert_turn_round_trips_status_field(db_path: Path):
+def test_insert_turn_round_trips_status_field(db_path: Path, pg_schema: str):
     # Arrange
     from scitex_agent_container._state.state_db import open_db, record_turn
 
@@ -95,7 +95,7 @@ def test_insert_turn_round_trips_status_field(db_path: Path):
     assert row["status"] == "queued"
 
 
-def test_insert_error_round_trips_cause_field(db_path: Path):
+def test_insert_error_round_trips_cause_field(db_path: Path, pg_schema: str):
     # Arrange
     from scitex_agent_container._state.state_db import open_db, record_error
 
@@ -107,7 +107,7 @@ def test_insert_error_round_trips_cause_field(db_path: Path):
     assert row["cause"] == "sdk-crash"
 
 
-def test_insert_heartbeat_round_trips_state_field(db_path: Path):
+def test_insert_heartbeat_round_trips_state_field(db_path: Path, pg_schema: str):
     # Arrange
     from scitex_agent_container._state.state_db import open_db, record_heartbeat
 
@@ -125,7 +125,7 @@ def test_insert_heartbeat_round_trips_state_field(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path):
+def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path, pg_schema: str):
     # Arrange
     from scitex_agent_container._state.state_db import open_db, record_turn
 
@@ -145,7 +145,7 @@ def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path
     assert {r["turn_id"] for r in rows} == {"t1", "t3"}
 
 
-def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Path):
+def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Path, pg_schema: str):
     # Arrange
     from scitex_agent_container._state.state_db import open_db, record_error
 
@@ -167,6 +167,7 @@ def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Pat
 
 def test_db_query_heartbeats_latest_per_name_returns_one_row_per_agent(
     db_path: Path,
+    pg_schema: str,
 ):
     # Arrange — alice has 3 beats, bob has 2.
     from scitex_agent_container._state.state_db import (

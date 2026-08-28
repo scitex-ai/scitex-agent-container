@@ -67,7 +67,7 @@ def test_record_heartbeat_returns_none_when_the_store_is_unreachable() -> None:
         writer = beat._DefaultDBWriter()
         # Act
         result = writer.record_heartbeat(
-            name="ag-beat-1", host="h", pid=1, state=beat.STATE_READY, ts="2026-08-28T00:00:00Z"
+            name="ag-beat-1", host="h", pid=1, state=beat.STATE_READY, ts=1787877000.0
         )
     # Assert
     assert result is None
@@ -116,7 +116,7 @@ def test_a_dropped_diary_row_is_logged_as_a_warning(caplog) -> None:
         writer = beat._DefaultDBWriter()
         # Act
         writer.record_heartbeat(
-            name="ag-beat-4", host="h", pid=1, state=beat.STATE_READY, ts="2026-08-28T00:00:00Z"
+            name="ag-beat-4", host="h", pid=1, state=beat.STATE_READY, ts=1787877000.0
         )
     # Assert
     assert any("diary heartbeat write failed" in r.getMessage() for r in caplog.records)
@@ -130,7 +130,7 @@ def test_the_warning_carries_the_consecutive_failure_count(caplog) -> None:
         # Act
         for _ in range(beat._DIARY_WARN_EVERY):
             writer.record_heartbeat(
-                name="ag-beat-5", host="h", pid=1, state=beat.STATE_READY, ts="2026-08-28T00:00:00Z"
+                name="ag-beat-5", host="h", pid=1, state=beat.STATE_READY, ts=1787877000.0
             )
         messages = [r.getMessage() for r in caplog.records]
     # Assert
@@ -144,27 +144,43 @@ def test_a_flooding_failure_does_not_log_once_per_call(caplog) -> None:
         # Act
         for _ in range(beat._DIARY_WARN_EVERY):
             writer.record_heartbeat(
-                name="ag-beat-6", host="h", pid=1, state=beat.STATE_READY, ts="2026-08-28T00:00:00Z"
+                name="ag-beat-6", host="h", pid=1, state=beat.STATE_READY, ts=1787877000.0
             )
         dropped = [r for r in caplog.records if "diary heartbeat write failed" in r.getMessage()]
     # Assert — first failure plus the Nth, not one per beat.
     assert len(dropped) == 2
 
 
-def test_each_row_kind_warns_on_its_own_first_failure(caplog) -> None:
-    # Arrange — a broken heartbeat table must not mute the first turn failure.
+def _warn_messages_for_two_kinds(caplog) -> list[str]:
+    """Fail a heartbeat AND an error write, returning the warnings logged.
+
+    Shared by the two tests below so each keeps a single assertion
+    (PA-307) while exercising the same scenario: the counters are keyed
+    by row kind, so a broken heartbeat table must not mute the first
+    turn/error failure.
+    """
     with _dead_store(), caplog.at_level(logging.WARNING):
         writer = beat._DefaultDBWriter()
-        # Act
         writer.record_heartbeat(
-            name="ag-beat-7", host="h", pid=1, state=beat.STATE_READY, ts="2026-08-28T00:00:00Z"
+            name="ag-beat-7", host="h", pid=1, state=beat.STATE_READY, ts=1787877000.0
         )
         writer.record_error(
             name="ag-beat-7", host="h", cause="sdk-crash", detail=None, turn_id=None
         )
-        messages = [r.getMessage() for r in caplog.records]
+        return [r.getMessage() for r in caplog.records]
+
+
+def test_heartbeat_kind_warns_on_its_own_first_failure(caplog) -> None:
+    # Arrange / Act
+    messages = _warn_messages_for_two_kinds(caplog)
     # Assert
     assert any("diary heartbeat write failed" in m for m in messages)
+
+
+def test_error_kind_warns_on_its_own_first_failure(caplog) -> None:
+    # Arrange / Act
+    messages = _warn_messages_for_two_kinds(caplog)
+    # Assert
     assert any("diary error write failed" in m for m in messages)
 
 
