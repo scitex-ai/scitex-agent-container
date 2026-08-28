@@ -233,12 +233,14 @@ def record_local_instance(
         db_path=db_path,
     )
 
-    # ADR-0014 Stage 1 — paired comms_nodes write so cross-host peers
-    # can resolve this agent after a `sac registry sync`. The instances
-    # table is local; comms_nodes is the federated layer. Best-effort:
-    # any error here is logged but does not abort the agent start (a
-    # missing comms_nodes row degrades to "peers can't see this agent
-    # via the federated graph until next sync" — not a startup blocker).
+    # ADR-0014 — paired comms_nodes write so cross-host peers can resolve
+    # this agent. The instances table is per-host SQLite; comms_nodes is the
+    # federated layer, and since 2026-08-28 that is the SHARED PostgreSQL
+    # store, so peers see this entry immediately — there is no sync to wait
+    # for. Best-effort: any error here is logged but does not abort the agent
+    # start (a missing entry degrades to "peers can't see this agent via the
+    # federated graph" — not a startup blocker, and PostgreSQL being briefly
+    # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
             from .._state.state_db_nodes import register_comms_node
@@ -430,7 +432,9 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
                 updated = record_instance_stop(str(row["id"]), exit_reason="stopped")
                 break
 
-    # ADR-0014 Stage 1 — paired tombstone in comms_nodes. Best-effort.
+    # ADR-0014 — paired withdrawal from comms_nodes. It is a hide() now,
+    # not an ``ended_at`` column, so it reaches every host by the same path
+    # the registration did. Best-effort.
     if updated:
         try:
             from .._state.state_db_nodes import unregister_comms_node

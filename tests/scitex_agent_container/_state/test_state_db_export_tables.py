@@ -1,7 +1,15 @@
-"""ADR-0014 — ``export_state(tables=...)`` and ``sac db export --tables``.
+"""``export_state(tables=...)`` and ``sac db export --tables``.
 
-Covers the new ``--tables TABLE[,TABLE...]`` filter that
-``sac registry sync`` relies on to ship only the comms_nodes delta.
+The filter was added for ``sac registry sync``, which shipped only the
+``comms_nodes`` delta. Both are gone as of 2026-08-28 — the directory moved
+to the shared PostgreSQL store, so there is no slice to ship and no verb to
+ship it. The filter itself stays useful for any subset of the tables that
+remain, and these tests now exercise it with ``lineage`` / ``instances``.
+
+``comms_nodes`` is asserted here in ONE direction only: that asking for it
+now FAILS. A filter that still accepted the name would emit an empty array
+and read as "sac exports the directory, and it is empty" — the
+success-shaped answer this whole migration exists to remove.
 """
 
 from __future__ import annotations
@@ -63,7 +71,7 @@ def test_export_state_no_tables_filter_includes_table(
     assert table in payload["tables"]
 
 
-def test_export_state_tables_filter_emits_comms_nodes_row(
+def test_export_state_tables_filter_emits_the_named_tables_rows(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -71,16 +79,14 @@ def test_export_state_tables_filter_emits_comms_nodes_row(
         export_state,
         record_instance_start,
     )
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    from scitex_agent_container._state.state_db_nodes import record_lineage
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     record_instance_start("agent-a", host="h1")
     # Act
-    payload = export_state(tables=["comms_nodes"])
+    payload = export_state(tables=["lineage"])
     # Assert
-    assert len(payload["tables"]["comms_nodes"]) == 1
+    assert len(payload["tables"]["lineage"]) == 1
 
 
 def test_export_state_tables_filter_excludes_unlisted_tables(
@@ -91,16 +97,26 @@ def test_export_state_tables_filter_excludes_unlisted_tables(
         export_state,
         record_instance_start,
     )
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    from scitex_agent_container._state.state_db_nodes import record_lineage
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     record_instance_start("agent-a", host="h1")
     # Act
-    payload = export_state(tables=["comms_nodes"])
+    payload = export_state(tables=["lineage"])
     # Assert
     assert payload["tables"]["instances"] == []
+
+
+def test_export_state_rejects_comms_nodes_now_that_it_moved(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container._state.state_db import export_state
+
+    # Act
+    # Assert — an empty array would read as "the directory is empty".
+    with pytest.raises(ValueError, match="unknown table"):
+        export_state(tables=["comms_nodes"])
 
 
 def test_export_state_tables_filter_unknown_table_raises(
@@ -122,33 +138,29 @@ def test_export_state_tables_filter_unknown_table_raises(
 
 def test_db_export_tables_flag_exits_zero(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    from scitex_agent_container._state.state_db_nodes import record_lineage
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
+    result = runner.invoke(db_export, ["--tables", "lineage"])
     # Assert
     assert result.exit_code == 0, result.output
 
 
 def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import (
-        register_comms_node,
-    )
+    from scitex_agent_container._state.state_db_nodes import record_lineage
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    register_comms_node(name="alpha", host="h1", a2a_port=7000, db_path=db_path)
+    record_lineage(child="child-a", parent="parent-a", db_path=db_path)
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
+    result = runner.invoke(db_export, ["--tables", "lineage"])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["comms_nodes"]) == 1
+    assert len(payload["tables"]["lineage"]) == 1
 
 
 def test_db_export_tables_flag_unknown_name_exits_two(
@@ -177,7 +189,7 @@ def test_db_export_tables_flag_unknown_name_names_offender_in_output(
     assert "not_a_real_table" in result.output
 
 
-def test_db_export_tables_flag_csv_includes_comms_nodes(
+def test_db_export_tables_flag_csv_includes_lineage(
     db_path: Path,
 ) -> None:
     # Arrange
@@ -185,10 +197,10 @@ def test_db_export_tables_flag_csv_includes_comms_nodes(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
+    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
     payload = json.loads(result.stdout)
     # Assert
-    assert "comms_nodes" in payload["tables"]
+    assert "lineage" in payload["tables"]
 
 
 def test_db_export_tables_flag_csv_includes_instances(
@@ -199,7 +211,20 @@ def test_db_export_tables_flag_csv_includes_instances(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "comms_nodes,instances"])
+    result = runner.invoke(db_export, ["--tables", "lineage,instances"])
     payload = json.loads(result.stdout)
     # Assert
     assert "instances" in payload["tables"]
+
+
+def test_db_export_tables_flag_rejects_comms_nodes(
+    db_path: Path,
+) -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg.db_group import db_export
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_export, ["--tables", "comms_nodes"])
+    # Assert — the name must fail at parse time, not emit an empty array.
+    assert result.exit_code == 2

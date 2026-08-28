@@ -93,6 +93,7 @@ __all__ = [
     "record_comms_policy",
     "record_lineage",
     "register_comms_node",
+    "rename_comms_node",
     "resolve_group_name",
     "resolve_group_names",
     "resolve_node_host",
@@ -394,10 +395,12 @@ def resolve_node_host(
 
     1. ``instances`` table — the canonical "live agent" registry. Picks
        the most recently started live (``ended_at IS NULL``) row.
-    2. ``comms_nodes`` table (ADR-0014 federated comms graph) — used
-       for nodes that are NOT sac-managed agents (operator identities
-       like ``lead``, peer hosts' listen-targets, cross-host
-       registrations sync'd via ``sac registry sync``).
+    2. the ADR-0014 ``comms_nodes`` directory — used for nodes that are
+       NOT sac-managed agents (operator identities like ``lead``, peer
+       hosts' listen-targets) and for agents registered on OTHER hosts.
+       Since 2026-08-28 that is a read of the shared PostgreSQL store
+       rather than of a local copy some earlier ``sac registry sync``
+       may or may not have pulled.
 
     Returns ``None`` only when neither table knows the name. Callers
     treat ``None`` as "this is a local-only/unknown node; do not
@@ -449,7 +452,10 @@ def resolve_node_host(
     # routing repair would have silently changed what "local" means.
     # Splitting locality from addressability is the real fix and it is a
     # bigger change than this one; see the a2a card.
-    return resolve_comms_node_host(name=name, db_path=db_path)
+    # No ``db_path``: since 2026-08-28 the directory is the shared PostgreSQL
+    # store, not a table in this file. ``db_path`` still selects the SQLite
+    # ``instances`` lookup above, which has not moved.
+    return resolve_comms_node_host(name=name)
 
 
 def is_local_node(
@@ -493,5 +499,6 @@ from .state_db_comms_nodes import (  # noqa: E402, F401
     list_comms_nodes,
     lookup_comms_node,
     register_comms_node,
+    rename_comms_node,
     unregister_comms_node,
 )

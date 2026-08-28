@@ -84,10 +84,8 @@ for WRITERS. sac's answer is mixed and worth stating plainly:
   ``host``. All three are refused for other reasons (see NEVER_SYNCED).
 * ``lineage``, ``comms_grants``, ``node_comms_policy``, ``node_tokens``,
   ``channel_events`` — NO origin column of any kind exists.
-* ``comms_nodes.source_host`` — present, but NULL for every locally
-  registered row and set only on the PULL path. It records who a row was
-  pulled FROM, not who created it, so a locally-created row is anonymous
-  by design.
+* ``comms_nodes.source_host`` — was NULL for every locally registered row
+  and set only on the PULL path; deleted in the 2026-08-28 move.
 
 That gap is closed by adopting the primitive rather than by adding
 columns here: ``_origin`` is a RESERVED column the store stamps on every
@@ -156,24 +154,25 @@ def _data(
 # FLEET — one fact the fleet shares; disagreement is a real conflict.
 # ---------------------------------------------------------------------------
 # The cross-host directory (ADR-0014): "agent <name> is reachable at
-# host:a2a_port". This is the one table sac already syncs, and the one
-# whose existing sync is provably lossy — state_db_comms_nodes.py:241
-# admits deletion propagation "will need an UPDATE-shaped sync (future
-# work)" because INSERT OR IGNORE can carry neither an update nor a
-# tombstone.
+# host:a2a_port". LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
+# field by ``_state.state_db_comms_nodes_store``. It was the one table sac
+# synced, and that sync was provably lossy: INSERT OR IGNORE carries
+# neither an update nor a tombstone, so the old module admitted deletion
+# propagation "will need an UPDATE-shaped sync (future work)". There is
+# none — every host reads and writes THIS directory now, so the whole
+# anti-entropy layer has nothing left to converge.
 #
-# Two hand-rolled columns are DELETED here rather than declared, because
-# the primitive owns both concepts natively and a second copy would drift:
-#   * ``ended_at``   — the soft tombstone. The primitive's hide()/unhide()
-#                      is "the ONLY removal" and replicates as an op, so a
-#                      tombstone now propagates by construction.
-#   * ``source_host`` — hand-rolled provenance. The oplog's ``_origin`` is
-#                      exactly this, maintained by the primitive.
+# Three hand-rolled columns are DELETED rather than declared, because the
+# primitive owns each concept and a second copy drifts: ``ended_at`` (the
+# soft tombstone — hide()/unhide() is "the ONLY removal", replicated as an
+# op), ``source_host`` (provenance, NULL on every local row — ``_origin``
+# is exactly this) and ``updated_at`` (the HLC restamps every op and is
+# comparable across hosts, unlike a skewed wall clock).
 #
-# ``registered_at`` is IMMUTABLE deliberately: two hosts claiming the same
-# agent NAME with different registration times is precisely the collision
-# sac already raises CommsNodeConflictError for, and IMMUTABLE reports it
-# as a MergeConflict (kept/rejected/reason) instead of quietly picking one.
+# ``registered_at`` is IMMUTABLE deliberately: two hosts claiming one agent
+# NAME with different registration times is precisely the collision sac
+# raises CommsNodeConflictError for; IMMUTABLE reports it as a MergeConflict
+# (kept/rejected/reason) rather than quietly picking one.
 COMMS_NODES = Schema.build(
     "sac_comms_nodes",
     {
@@ -354,6 +353,9 @@ NODE_COMMS_POLICY = Schema.build(
 
 #: Every schema sac declares, with the classification it follows from.
 CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
+    # LIVE since 2026-08-28 — the move made this classification real rather
+    # than planned. SINGLE_WRITER survived it: the ownership check is on the
+    # ACTOR (a package constant), so cross-host operator repair still works.
     "sac_comms_nodes": (COMMS_NODES, Truth.FLEET, WriterPolicy.SINGLE_WRITER),
     "sac_comms_grants": (COMMS_GRANTS, Truth.FLEET, WriterPolicy.MULTI_WRITER),
     # MULTI_WRITER since 2026-08-28, when the table moved to PostgreSQL

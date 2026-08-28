@@ -16,7 +16,14 @@ The places (:class:`._rename_plan.Layout` owns the paths):
   4. runtime/state dir ``<root>/runtime/<name>/``  (bound at ``/state/<name>``)
   5. registry json     ``<root>/runtime/registry/<name>.json``
   6. state.db rows     16 name columns + 2 path columns (``_rename_db``)
-  7. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
+  7. ACL policy        the PostgreSQL ``node_comms_policy`` record
+  8. comms directory   the PostgreSQL ADR-0014 ``comms_nodes`` record
+  9. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
+
+Steps 7 and 8 are separate steps rather than more ``NAME_COLUMNS`` pairs
+because both tables left SQLite on 2026-08-28 and ``rename_rows`` SKIPS a
+table it cannot find — so a pair left behind would have made each a silent
+no-op that still reported success.
 
 ATOMICITY
 ---------
@@ -39,6 +46,7 @@ from pathlib import Path
 from typing import Callable
 
 from .._state.state_db_acl_policy import rename_comms_policy
+from .._state.state_db_comms_nodes import rename_comms_node
 from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
 from ._rename_cards import migrate_cards, undo_migrate_cards
 from ._rename_db import DbUndo, count_rows, rename_rows, undo_rename_rows
@@ -62,6 +70,7 @@ STEP_RUNTIME_DIR = "runtime-dir"
 STEP_REGISTRY = "registry"
 STEP_STATE_DB = "state-db"
 STEP_ACL = "acl-policy"
+STEP_DIRECTORY = "comms-directory"
 STEP_CARDS = "cards"
 STEP_VERIFY = "verify"
 
@@ -73,6 +82,7 @@ STEPS: tuple[str, ...] = (
     STEP_REGISTRY,
     STEP_STATE_DB,
     STEP_ACL,
+    STEP_DIRECTORY,
     STEP_CARDS,
     STEP_VERIFY,
 )
@@ -158,12 +168,29 @@ def apply_plan(
         if rename_comms_policy(old=old, new=new):
             undo.append((STEP_ACL, _undo_acl_policy(old, new)))
 
-        # 8. The board. LAST — see the module docstring.
+        # 8. The ADR-0014 comms directory — PostgreSQL since 2026-08-28, so
+        # its own step for the same reason step 7 is one.
+        #
+        # It used to ride along in step 6 as the ``comms_nodes.name`` pair in
+        # ``NAME_COLUMNS``. Leaving it there after the move would have been
+        # the ROUTING version of the ACL bug above: ``rename_rows`` skips
+        # tables absent from ``sqlite_master``, so the rename reports success
+        # while the directory keeps advertising the OLD name — peers resolve
+        # a name the agent no longer answers to, dial it, and get nothing.
+        #
+        # ``name`` is the record IDENTITY in the store, so this is a copy +
+        # withdraw rather than an update; the inverse is the same verb with
+        # the arguments swapped.
+        _step(STEP_DIRECTORY)
+        if rename_comms_node(old=old, new=new):
+            undo.append((STEP_DIRECTORY, _undo_comms_node(old, new)))
+
+        # 9. The board. LAST — see the module docstring.
         _step(STEP_CARDS)
         if plan.cards_enabled:
             _migrate_cards_step(old, new, store, by, undo)
 
-        # 9. Postcondition. "I ran the steps" is not the same claim as "the
+        # 10. Postcondition. "I ran the steps" is not the same claim as "the
         # world is now correct", and this verb exists because the second one
         # is what an operator actually needs. Anything still standing under
         # the old name means a step silently did not take — roll back rather
@@ -278,6 +305,21 @@ def _undo_acl_policy(old: str, new: str) -> Callable[[], None]:
 
     def _undo() -> None:
         rename_comms_policy(old=new, new=old)
+
+    return _undo
+
+
+def _undo_comms_node(old: str, new: str) -> Callable[[], None]:
+    """Put the directory entry back under ``old``.
+
+    The same verb with the arguments swapped — it copies the routing tuple
+    back and withdraws the name the forward step created, so an unwound
+    rename leaves exactly one live entry, under the name the agent actually
+    answers to.
+    """
+
+    def _undo() -> None:
+        rename_comms_node(old=new, new=old)
 
     return _undo
 

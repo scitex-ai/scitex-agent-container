@@ -14,6 +14,14 @@ fallback semantics that ``is_local_node`` and the comms_nodes fall-through
 depend on.
 
 PA-306: no mocks; real on-disk SQLite under ``tmp_path``.
+
+ONE TEST HERE TAKES ``pg_schema``, AND WHICH ONE IS THE POINT. Since
+2026-08-28 the comms_nodes fall-through is a read of the shared PostgreSQL
+store, so only the case that REACHES the fall-through — an unknown name,
+where the instances lookup misses — needs a database. Every test above it
+is answered by the instances row and never gets that far, which is itself
+the guarantee this file exists to protect: the port preference must not
+push a resolvable name into the fall-through.
 """
 
 from __future__ import annotations
@@ -110,7 +118,9 @@ def test_locality_is_unchanged_for_a_portless_row(db_path: Path) -> None:
     assert local is True
 
 
-def test_an_unknown_name_still_resolves_to_none(db_path: Path) -> None:
+def test_an_unknown_name_still_resolves_to_none(
+    db_path: Path, pg_schema: str
+) -> None:
     # Arrange — no row at all
     unknown = "never-registered"
     # Act
