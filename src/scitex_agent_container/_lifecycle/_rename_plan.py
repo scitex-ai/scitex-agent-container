@@ -239,6 +239,44 @@ def preflight(old: str, new: str, layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
+    """``{"table.column": n}`` across BOTH databases a rename now touches.
+
+    ONE REPORT, TWO BACKENDS, and the merge is load-bearing rather than
+    tidy. ``count_rows`` reads ``state.db``, where every ``NAME_COLUMNS``
+    pair that remains names a table ``init_schema`` stopped creating on
+    2026-08-28 — so that half can only return ``{}`` on any database sac
+    makes today. The rows a rename actually carries are in the shared
+    PostgreSQL store, and ``count_instance_rename_rows`` is their reader.
+
+    Without the merge the dry run prints ``0 column(s)`` for an agent with
+    hundreds of recorded lifetimes: a zero that reads as "nothing to carry"
+    while naming no database it failed to ask. Both halves report under the
+    same ``table.column`` keys, so the operator reads one list.
+
+    AN UNREACHABLE STORE PRODUCES A WARNING, NEVER A SILENT ZERO. ``--dry-run``
+    must not be the step that fails a rename — the same reasoning
+    :func:`_open_instance_pid` states — but an empty count for the reason
+    "the store did not answer" is indistinguishable from an empty count for
+    the reason "there is nothing there", and only one of those is safe to
+    act on. So the failure is caught and SAID.
+    """
+    counts = dict(count_rows(plan.layout.state_db, old))
+
+    from .._state.state_db_instances_rename import count_instance_rename_rows
+
+    try:
+        counts.update(count_instance_rename_rows(old=old))
+    except Exception as exc:  # stx-allow: fallback (reason: --dry-run must not be the step that fails a rename, and an unreachable store is a fact about this host rather than about the plan. Kept broad because the store raises per-backend types; the warning below is what keeps the resulting zero from being read as "nothing to carry".)
+        plan.warnings.append(
+            "could not read the instances store, so the row counts below are "
+            f"the state.db half ONLY and are NOT a total ({exc}). The rename "
+            "itself still carries those records — this is the count that is "
+            "missing, not the step."
+        )
+    return counts
+
+
 def build_plan(
     old: str,
     new: str,
@@ -286,7 +324,7 @@ def build_plan(
         else:
             plan.warnings.append(f"no {label} at {src} — skipping that step")
 
-    plan.db_counts = count_rows(layout.state_db, old)
+    plan.db_counts = _count_rows_everywhere(plan, old)
 
     if cards:
         plan.card_ids = find_owned_cards(old, store=store)

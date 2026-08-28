@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,7 +82,7 @@ class World:
                     self.layout.registry_json(NEW),
                 )
             ),
-            "db_names": _db_names(self.layout.state_db),
+            "carried_names": _carried_names(),
         }
 
 
@@ -91,21 +90,28 @@ def _read(path: Path) -> str | None:
     return path.read_text() if path.is_file() else None
 
 
-def _db_names(db_path: Path) -> list[str]:
+def _carried_names() -> list[str]:
     """The identity + history names the rename must have carried.
 
     THE TWO HALVES NO LONGER SHARE A DATABASE, and reading both here is what
-    keeps that from going unnoticed. ``SELECT name FROM comms_nodes`` was the
-    identity half until 2026-08-28; the ADR-0014 directory moved to
-    PostgreSQL and ``definitions.name`` took its place, until ``definitions``
-    was itself deleted later the same day for having no writer in any code
-    path. ``instances.name`` is the identity half now — the one
-    ``NAME_COLUMNS`` pair that production code actually INSERTs.
+    keeps that from going unnoticed. Neither is in ``state.db`` any more, so
+    this function takes no path: as of 2026-08-28 sac's ``init_schema``
+    issues ZERO ``CREATE TABLE`` and a SELECT against that file cannot
+    answer either half.
+
+    ``SELECT name FROM comms_nodes`` was the identity half until 2026-08-28;
+    the ADR-0014 directory moved to PostgreSQL and ``definitions.name`` took
+    its place, until ``definitions`` was itself deleted later the same day
+    for having no writer in any code path. ``instances.name`` replaced it and
+    then moved to the shared store as well, so the identity half is read
+    through ``list_active_instances`` — the same accessor ``sac agents
+    list``, the start preflight and the reconciler read — and carried by
+    ``rename_instance_rows`` as its own step.
 
     The history half left SQLite the same day: ``channel_events`` became
     ``sac_channel_events`` in the shared PostgreSQL (ADR-0023) and is carried
     by ``rename_channel_events`` as its own step, so it is read through that
-    store's own connection rather than by SQL against ``db_path``.
+    store's own connection.
 
     The directory half of a rename is asserted where it now lives, in
     ``_state/test_state_db_comms_nodes.py``.
@@ -113,18 +119,17 @@ def _db_names(db_path: Path) -> list[str]:
     from scitex_agent_container._state.state_db_channel_store import (
         new_channel_connection,
     )
+    from scitex_agent_container._state.state_db_instances import (
+        list_active_instances,
+    )
 
-    conn = sqlite3.connect(str(db_path))
-    try:
-        ident = conn.execute("SELECT name FROM instances").fetchall()
-    finally:
-        conn.close()
+    ident = [row["name"] for row in list_active_instances()]
     pg = new_channel_connection()
     try:
         past = pg.execute("SELECT target FROM sac_channel_events").fetchall()
     finally:
         pg.close()
-    return sorted([r[0] for r in ident] + [t[0] for t in past])
+    return sorted(ident + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):
@@ -309,15 +314,24 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
     assert any(needle in c.path for c in plan.spec_changes)
 
 
-def test_the_plan_counts_the_state_db_rows(world: World):
-    # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
-    # then ``definitions.name`` for the rest of that day (deleted: no
-    # writer), then ``instances.name`` and ``lineage.child_name`` (both to
-    # the shared store). All four left ``NAME_COLUMNS``, so the dry-run
-    # count names none of them; ``channel_events.source`` is what it counts
-    # now. The instances counts have their own reader,
-    # ``count_instance_rename_rows``.
-    key = "channel_events.source"
+def test_the_plan_counts_the_rows_a_rename_would_touch(world: World):
+    """The dry-run count must survive the table leaving SQLite.
+
+    ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL), then
+    ``definitions.name`` for the rest of that day (deleted: no writer), then
+    ``instances.name`` — which moved to the shared store as well. Every
+    ``NAME_COLUMNS`` pair that remains names a table ``init_schema`` no
+    longer creates, so ``count_rows`` can only return ``{}``; the count that
+    reaches the operator now comes from ``count_instance_rename_rows``,
+    merged into the same report by ``build_plan``.
+
+    THAT MERGE IS THE PROPERTY UNDER TEST, not a detail of it. Without it the
+    dry run prints ``0 column(s)`` for an agent with hundreds of lifetime
+    records — a zero that reads as "nothing to carry" while naming no
+    database it failed to ask.
+    """
+    # Arrange
+    key = "instances.name"
     # Act
     plan = _plan(world)
     # Assert
@@ -431,11 +445,12 @@ def test_rename_repoints_the_registry_config_path(pg_schema: str, renamed: World
     assert entry["config"] == expected
 
 
-def test_rename_moves_the_state_db_rows(pg_schema: str, renamed: World):
+def test_rename_moves_the_state_rows(pg_schema: str, renamed: World):
+    """Both carried halves — the instances record and the channel history."""
     # Arrange
     expected = [NEW, NEW]
     # Act
-    names = _db_names(renamed.layout.state_db)
+    names = _carried_names()
     # Assert
     assert names == expected
 
@@ -493,11 +508,11 @@ def test_rollback_leaves_nothing_under_the_new_name(rolled_back: World):
     assert not exists
 
 
-def test_rollback_restores_the_state_db_rows(rolled_back: World):
+def test_rollback_restores_the_state_rows(rolled_back: World):
     # Arrange
     expected = [OLD, OLD]
     # Act
-    names = _db_names(rolled_back.layout.state_db)
+    names = _carried_names()
     # Assert
     assert names == expected
 
