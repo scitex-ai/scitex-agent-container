@@ -1,9 +1,16 @@
-"""Tests for the diary tables: turns / errors / heartbeats (2026-05-17).
+"""Tests for the diary stores: turns / errors / heartbeats (2026-05-17).
 
 Foundation for fleet-wide visibility before fanout: every agent
-writes timestamped state-transition rows to state.db like a journal;
-the lead reads + filters them. Three new tables — ``turns``,
-``errors``, ``heartbeats`` — plus runner write-paths.
+writes timestamped state-transition rows like a journal; the lead
+reads + filters them. Three logical stores — ``turns``, ``errors``,
+``heartbeats`` — plus runner write-paths.
+
+They lived in ``state.db`` until 2026-08-28 and are now per-host
+PostgreSQL (:mod:`scitex_agent_container._state.state_db_diary`). The
+SQLite half of this file was INVERTED rather than deleted: the first
+group below now asserts the tables are absent, unqueryable, and refused
+by ``sac db query``, because a table that still exists and is never
+written answers every reader with a confident zero.
 
 Conventions:
 
@@ -55,26 +62,123 @@ def db_path(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Migration — the three new tables exist on a fresh DB.
+# The SQLite tables are GONE, and asking for one must SAY so.
+#
+# These three tests were ONE test asserting the exact opposite — that
+# ``init_schema`` created ``turns`` / ``errors`` / ``heartbeats`` in state.db.
+# The writers moved to PostgreSQL first, which left DDL creating three tables
+# nothing would ever write again. An always-empty table is the worst shape
+# available: every reader still gets an answer, the answer is zero rows, and
+# zero rows reads as "this agent recorded no turns" when the truth is "you are
+# asking the wrong database". That is the ruling ``incarnations`` established
+# on 2026-08-19, applied to the trio on 2026-08-28.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
-def test_migration_creates_diary_table(db_path: Path, table: str):
-    # Arrange
-    from scitex_agent_container._state.state_db import init_schema
+def _table_names(db_path: Path) -> set[str]:
+    """Read ``sqlite_master`` and hand back the names, closing the connection.
 
-    # Act
-    init_schema()
-    with sqlite3.connect(db_path) as conn:
-        names = {
+    A PLAIN FUNCTION rather than part of the fixture below: STX-TQ005 forbids a
+    fixture that acquires an external resource and ``return``\\ s instead of
+    ``yield``\\ ing, and it reads the fixture body syntactically. Keeping the
+    ``connect`` here means the fixture hands back a ``set``, which owns nothing
+    and needs no teardown — which is the rule's actual point.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
             r[0]
             for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def sqlite_table_names(db_path: Path) -> set[str]:
+    """Every table a fresh ``state.db`` really has, after ``init_schema``.
+
+    THE POSITIVE CONTROL LIVES HERE, not in the tests below. A fixture that
+    never ran the schema would hand them an empty set, and "the diary table is
+    absent" would pass for exactly the wrong reason — absence of evidence
+    reading as evidence of absence, which is the failure this whole file is
+    about. The guard is a ``raise`` rather than an assertion so each test keeps
+    one assertion (STX-TQ007), and it sits in a fixture rather than in a
+    parametrized body (STX-TQ006).
+    """
+    from scitex_agent_container._state.state_db import init_schema
+
+    init_schema()
+    names = _table_names(db_path)
+    if "instances" not in names:
+        raise RuntimeError(
+            f"init_schema() left no `instances` table in {db_path}; the schema "
+            "never ran, so an absent diary table would prove nothing."
+        )
+    return names
+
+
+@pytest.fixture
+def known_tables() -> set[str]:
+    """``KNOWN_TABLES`` as a set, with the same control applied to it.
+
+    ``instances`` must be in there for this to be the whitelist the tests below
+    mean to inspect; an empty or wrong tuple would otherwise make every
+    "not whitelisted" assertion pass on its own.
+    """
+    from scitex_agent_container._state.state_db import KNOWN_TABLES
+
+    known = set(KNOWN_TABLES)
+    if "instances" not in known:
+        raise RuntimeError(
+            "KNOWN_TABLES does not contain `instances`; it is not the "
+            "whitelist these tests mean to inspect."
+        )
+    return known
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_init_schema_no_longer_creates_the_diary_table_in_sqlite(
+    sqlite_table_names: set[str], table: str
+):
+    # Arrange — the fixture ran init_schema and cleared its own control.
+    names = sqlite_table_names
+    # Act
+    created = table in names
     # Assert
-    assert table in names
+    assert not created
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_the_diary_table_is_no_longer_a_sqlite_known_table(
+    known_tables: set[str], table: str
+):
+    # Arrange — while the name stayed whitelisted, ``sac db show`` reported
+    # ``turns 0`` and ``sac db query --table=turns`` returned an empty array,
+    # both of them confident and both of them wrong.
+    known = known_tables
+    # Act
+    whitelisted = table in known
+    # Assert
+    assert not whitelisted
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_sac_db_query_refuses_the_moved_diary_table(db_path: Path, table: str):
+    # Arrange — the end-to-end half. Removing the name from KNOWN_TABLES is
+    # only useful if the CLI turns the request into a usage ERROR; exit code 2
+    # is what click raises for a rejected ``--table`` choice.
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg.db_group import db_query
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_query, [f"--table={table}"])
+    # Assert
+    assert result.exit_code == 2, result.output
 
 
 # ---------------------------------------------------------------------------

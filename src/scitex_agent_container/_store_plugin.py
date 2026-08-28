@@ -415,24 +415,31 @@ NEVER_SYNCED: dict[str, str] = {
     ),
     "turns": (
         "the agent conversation diary — prompt_text and response_text, i.e. "
-        "the full content of what agents were asked and answered. It has NO "
-        "primary key at all, so today's importer duplicates every row on "
-        "every re-import. High-volume per-host diagnostics whose content is "
-        "the most sensitive thing in the DB: it should not leave its host "
-        "as a side effect of a directory sync"
+        "the full content of what agents were asked and answered. Since "
+        "2026-08-28 a per-host PostgreSQL store rather than a SQLite table, "
+        "which does not change the ruling: high-volume per-host diagnostics "
+        "whose content is the most sensitive thing sac records, and it "
+        "should not leave its host as a side effect of a directory sync"
     ),
     "errors": (
-        "per-host error journal keyed by an autoincrement error_id. Useful "
-        "to READ across hosts, but that is a query concern; replicating it "
-        "puts an unbounded diagnostic stream on the sync path and its ids "
-        "collide between hosts"
+        "per-host error journal, since 2026-08-28 a per-host PostgreSQL "
+        "store rather than a SQLite table. Useful to READ across hosts, but "
+        "that is a query concern; replicating it puts an unbounded "
+        "diagnostic stream on the sync path"
     ),
     "heartbeats": (
         "the diary-style heartbeat stream (name, host, pid, state, ts), "
-        "append-only with an autoincrement id and no uniqueness. Same "
-        "argument as instance_heartbeats: the fleet-relevant content is the "
-        "latest sample, carried as sac_instances.last_heartbeat_at"
+        "append-only, and since 2026-08-28 a per-host PostgreSQL store "
+        "rather than a SQLite table. Same argument as instance_heartbeats: "
+        "the fleet-relevant content is the latest sample, carried as "
+        "sac_instances.last_heartbeat_at"
     ),
+    # The three entries above no longer appear in KNOWN_TABLES — the diary
+    # left SQLite on 2026-08-28. They STAY here for the reason
+    # acl_deny_notify_log stays: the completeness gate only checks that every
+    # KNOWN_TABLES name is decided, so a table leaving that tuple must not be
+    # read as the refusal being withdrawn. A store that moved backend still
+    # must not replicate, and deleting the reason would lose why.
 }
 
 
