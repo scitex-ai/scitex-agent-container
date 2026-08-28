@@ -188,8 +188,20 @@ def _migrate_journal(rows: list[dict], v1_rows: list[dict], commit: bool) -> int
     return len(payload)
 
 
-def _verify() -> int:
-    """Read back through the PRODUCTION path. Returns the record count seen."""
+def _verify(expected: "dict[str, int] | None" = None) -> int:
+    """Read back through the PRODUCTION path and COMPARE against the source.
+
+    This used to count `len(store.rows())`, print it, and return the total —
+    with nothing to compare it against. A control that cannot fail is not a
+    control: an empty store printed "0 record(s) readable" and the run still
+    reported success, which is indistinguishable from a migration that moved
+    everything. `expected` supplies the SQLite-side count per table so a short
+    read is an ERROR rather than a number nobody checks.
+
+    `expected=None` keeps the old count-only behaviour for callers that have no
+    source to compare against, and SAYS SO in the output rather than implying a
+    verdict it did not reach.
+    """
     from scitex_agent_container._state.relocation_pg import (
         _journal_store,
         _lease_store,
@@ -197,6 +209,7 @@ def _verify() -> int:
     )
 
     total = 0
+    short: list[str] = []
     for label, opener in (
         ("agent_residency", _residency_store),
         ("relocation_leases", _lease_store),
@@ -207,8 +220,20 @@ def _verify() -> int:
             seen = len(store.rows())
         finally:
             store.close()
-        print(f"  verify {label}: {seen} record(s) readable")
+        want = None if expected is None else expected.get(label, 0)
+        if want is None:
+            print(f"  verify {label}: {seen} record(s) readable (NOT COMPARED)")
+        elif seen < want:
+            print(f"  verify {label}: {seen} readable but source held {want} — SHORT")
+            short.append(f"{label} ({seen} < {want})")
+        else:
+            print(f"  verify {label}: {seen} record(s) readable, source had {want} — OK")
         total += seen
+    if short:
+        raise SystemExit(
+            "verification FAILED — the store holds fewer records than the "
+            "SQLite source for: " + ", ".join(short)
+        )
     return total
 
 
@@ -282,7 +307,19 @@ def main() -> int:
         print(f"\nDRY RUN — {moved} record(s) would move. Re-run with --commit.")
         return 0
     print(f"\nmoved {moved} record(s); verifying through the production path")
-    _verify()
+    # LOWER BOUNDS, deliberately, so the check cannot cry wolf. Every modern
+    # source row must arrive; `journal` therefore excludes `v1`, because
+    # _migrate_journal DEDUPES a v1 row against a modern attempt-1 row for the
+    # same agent, so `len(journal) + len(v1)` would flag a correct dedup as a
+    # short read. A check that fires on correct behaviour gets ignored, which
+    # is how it ends up as useless as no check at all.
+    _verify(
+        {
+            "agent_residency": len(residency),
+            "relocation_leases": len(leases),
+            "relocation_journal": len(journal),
+        }
+    )
     print("SQLite untouched — the old tables remain as a fallback.")
     return 0
 

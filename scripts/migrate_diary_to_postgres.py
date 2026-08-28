@@ -115,16 +115,45 @@ def _migrate(table: str, rows: list[dict], schema_fn, commit: bool) -> int:
         print(f"  {table}: {len(rows)} rows WOULD move (dry run)")
         return 0
 
+    from scitex_dev.store import NEW_RECORD, RevisionMismatchError
+
     from scitex_agent_container._state.state_db_diary import _open
 
-    store = _open(schema_fn())
+    # `expected_revision` is KEYWORD-ONLY WITH NO DEFAULT
+    # (Store.put(self, values, *, expected_revision, owner=None, actor=None)).
+    # This loop used to call `store.put({...})` with no revision, so `--commit`
+    # raised TypeError on its FIRST row and this script had never carried a
+    # single row on any host. The dry-run path returns above, so the failure
+    # was invisible to anyone who ran the default.
+    #
+    # NEW_RECORD, not ANY_REVISION: a migration must never overwrite a row that
+    # is already there. These tables order by their timestamps, so re-running
+    # with ANY_REVISION would silently re-stamp history. Skipping a present key
+    # makes the script IDEMPOTENT — safe to re-run after a partial move, which
+    # is exactly what you want in the middle of a cutover.
+    schema = schema_fn()
+    identity = list(schema.identity_fields)
+    store = _open(schema)
     written = 0
+    already = 0
     try:
         for row in rows:
-            store.put({k: v for k, v in row.items()})
-            written += 1
+            values = {k: v for k, v in row.items()}
+            key = {k: values[k] for k in identity}
+            if store.get(key, include_hidden=True) is not None:
+                already += 1
+                continue
+            try:
+                store.put(values, expected_revision=NEW_RECORD)
+                written += 1
+            except RevisionMismatchError:
+                # Another writer won the race between the get and the put.
+                # The row exists, which is the goal — not an error.
+                already += 1
     finally:
         store.close()
+    if already:
+        print(f"  {table}: {already} row(s) already present, left untouched")
 
     # VERIFY through the same dialect production reads through, rather than
     # trusting the write count. A put that silently no-ops would otherwise be
