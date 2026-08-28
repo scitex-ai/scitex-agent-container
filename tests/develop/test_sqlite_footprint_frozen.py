@@ -162,7 +162,29 @@ FROZEN_SQLITE = frozenset(
         "_state/state_db_health.py",
         "_state/state_db_heartbeats.py",
         "_state/state_db_migrations.py",
-        "_state/state_db_relocation.py",
+        # _state/state_db_relocation.py LEFT THIS SET 2026-08-28 — the
+        # relocation TRIO (agent_residency, relocation_leases,
+        # relocation_journal) moved to PostgreSQL together, in one change, and
+        # the module itself was DELETED rather than emptied: its three tables
+        # now live in _state/relocation_pg.py via scitex_dev.store.
+        #
+        # ALL THREE OR NONE, and the reason is worth keeping because it is not
+        # obvious from the tables alone. They shared this one module, so a
+        # lease-only cutover would have left the fence being written to
+        # PostgreSQL and read from SQLite — a handover that lands at fence 1
+        # instead of 3 — while a residency-only one would have forked residency
+        # from the journal that records the move which set it. Either half is a
+        # split brain that raises nothing: some readers see a record, others do
+        # not.
+        #
+        # It also carried TWO PIECES OF PROSE that became false at the cutover
+        # and that no import check can see: cli_pkg/_relocate_readiness.py named
+        # this module as where residency is written, and
+        # _lifecycle/_relocate_checks_late.py told an operator to read the
+        # relocation_leases row — at check_lease_holdable, the gate that stands
+        # between one live agent and two. `sqlite3 state.db` still answers that
+        # question, from the row this cutover left behind. Both now name the
+        # store.
         # _state/state_db_verdict_dedup.py LEFT THIS SET 2026-08-19 — the
         # first table to move to PostgreSQL, by adopting
         # scitex_dev.store rather than by sac growing its own psycopg

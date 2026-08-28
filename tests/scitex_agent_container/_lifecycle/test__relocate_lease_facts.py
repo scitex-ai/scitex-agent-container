@@ -88,6 +88,19 @@ def test_an_unreadable_store_says_why() -> None:
     assert "unable to open database file" in facts.recorded_holder_evidence
 
 
+def test_the_default_reader_reaches_the_real_store_and_can_fail_loudly() -> None:
+    # Arrange — NO injected loader, so this drives the path the preflight
+    # actually uses: the default reader, which since 2026-08-28 opens the
+    # PostgreSQL lease store. The autouse isolation points SCITEX_STORE_DSN at
+    # a port nothing listens on, so the read fails — and what must NOT happen
+    # is that the failure becomes ``lease=None``, which bootstraps a lease and
+    # proceeds at the one gate standing between one live agent and two.
+    # Act
+    facts = gather_lease_facts(AGENT, from_host=B, now=NOW)
+    # Assert
+    assert facts.read is False
+
+
 def test_a_store_with_no_row_is_read_and_empty() -> None:
     # Arrange
     # Act
@@ -211,10 +224,19 @@ def test_an_unnamed_source_asks_no_host_anything(absent_watcher: _Watcher) -> No
 
 
 def test_the_store_that_was_read_is_named() -> None:
-    # Arrange: one db per host, no sync — which one answered is part of the answer.
+    # Arrange: one store per host, no sync — which one answered is part of the
+    # answer. Since 2026-08-28 that is the per-host PostgreSQL locator, not a
+    # state.db path, and it is resolved WITHOUT connecting, so it is named even
+    # when the store turns out to be unreachable — the case a reader most needs
+    # named. The locator names the ENDPOINT rather than the table, so what this
+    # pins is that a resolved locator is reported at all, rather than the old
+    # file path or the empty string the fallback returns.
+    from scitex_dev.store import host_store
+
+    from scitex_agent_container._state.relocation_pg import LEASE_STORE
+
+    expected = str(host_store(pkg="scitex_agent_container", name=LEASE_STORE).locator)
     # Act
-    facts = gather_lease_facts(
-        AGENT, from_host=B, now=NOW, db_path="/state/x/state.db", load=lambda a: None
-    )
+    facts = gather_lease_facts(AGENT, from_host=B, now=NOW, load=lambda a: None)
     # Assert
-    assert facts.store == "/state/x/state.db"
+    assert facts.store == expected

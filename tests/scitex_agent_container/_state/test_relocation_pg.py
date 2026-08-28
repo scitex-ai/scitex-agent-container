@@ -228,6 +228,19 @@ def test_a_second_save_replaces_rather_than_appends(pg_schema: str) -> None:
     assert load_lease("zz-a").fence == 2
 
 
+def test_the_fence_survives_the_round_trip(pg_schema: str) -> None:
+    # Arrange — carried over from the deleted SQLite suite. The fence is what
+    # actually fences: a holder that comes back reads this record, sees a fence
+    # above its own and knows it is out, so a fence that does not survive the
+    # round trip disarms the whole instrument.
+    init_relocation_schema()
+    save_lease(Lease(agent="zz-a", holder="h1", token="tok1", fence=3, expires_at=9.0))
+    # Act
+    lease = load_lease("zz-a")
+    # Assert
+    assert lease.fence == 3
+
+
 def test_an_unheld_lease_reads_as_none(pg_schema: str) -> None:
     # Arrange
     init_relocation_schema()
@@ -326,6 +339,27 @@ def test_load_journal_returns_the_latest_attempt(pg_schema: str) -> None:
     relocation = load_journal("zz-a")
     # Assert
     assert relocation.to_host == "h3"
+
+
+def test_another_agents_attempts_are_counted_separately(pg_schema: str) -> None:
+    # Arrange — carried over from the deleted SQLite suite. MAX(attempt)+1 is
+    # allocated per AGENT; a counter shared across agents would number a first
+    # relocation as attempt 3 and make the journal unreadable as a history.
+    init_relocation_schema()
+    save_journal(_relocation("h2", 200.0))
+    save_journal(_relocation("h3", 300.0))
+    # Act
+    other = save_journal(
+        Relocation(
+            agent="zz-other",
+            from_host="h1",
+            to_host="h2",
+            phase=PHASE,
+            steps=(Step(phase=PHASE, at=400.0, detail=""),),
+        )
+    )
+    # Assert
+    assert other == 1
 
 
 def test_an_unknown_agent_has_no_journal(pg_schema: str) -> None:
