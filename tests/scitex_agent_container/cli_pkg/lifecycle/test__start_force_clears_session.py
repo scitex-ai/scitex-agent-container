@@ -39,8 +39,13 @@ from scitex_agent_container.config import AgentConfig
 
 
 @pytest.fixture
-def runtime_root(tmp_path: Path) -> Iterator[Path]:
+def runtime_root(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Point sac's runtime root at ``tmp_path/runtime`` for this test.
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28: these drive a real
+    ``agent_start``, which resolves the agent's a2a port, and that ledger
+    moved to PostgreSQL — so runtime-root isolation alone no longer covers
+    everything a start writes.
 
     The lifecycle code reads ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` at
     call time (not import time), so an env-var swap is the honest

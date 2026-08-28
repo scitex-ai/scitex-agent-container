@@ -149,7 +149,11 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
-        "scitex_agent_container/_lifecycle/_instances.py:263",
+        # Re-pinned 263 -> 267 on 2026-08-28: the a2a-ports migration added a
+        # four-line comment ABOVE this claim, which moved it. The claim itself
+        # is unchanged — this gate pins LINE NUMBERS, so any insertion above
+        # one is a re-pin, not a fix.
+        "scitex_agent_container/_lifecycle/_instances.py:267",
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
