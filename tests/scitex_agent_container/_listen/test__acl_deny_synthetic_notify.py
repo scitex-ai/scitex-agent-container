@@ -44,7 +44,16 @@ _TOKEN = "test-token-acl-deny-synthetic-notify"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
+    """The deny scenario, seeded across BOTH stores.
+
+    ``pg_schema`` is a dependency of the FIXTURE rather than only of the
+    tests because the seed below calls ``record_comms_policy``, which since
+    2026-08-28 writes to PostgreSQL. A test that lists ``pg_schema`` after
+    ``isolated_state`` gets them set up in that order, so the seed would run
+    against the deliberately unreachable DSN and ERROR before the skip could
+    fire — which is exactly what happened.
+    """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_default = state_db.DEFAULT_DB_PATH
@@ -72,7 +81,7 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # so ``worker-a → lead`` is denied.
         record_lineage(child="worker-a", parent="root", db_path=db)
         record_lineage(child="lead", parent="root", db_path=db)
-        record_comms_policy(name="lead", inbound_siblings="deny", db_path=db)
+        record_comms_policy(name="lead", inbound_siblings="deny")
         yield db
     finally:
         state_db.DEFAULT_DB_PATH = saved_default

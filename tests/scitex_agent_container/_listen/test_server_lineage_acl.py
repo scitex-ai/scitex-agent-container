@@ -97,7 +97,7 @@ def test_delete_with_host_bearer_does_not_403(client, isolated_env):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_unrelated_caller_returns_403(client, isolated_env):
+def test_delete_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
     # Arrange — alice is a known node with no lineage edge to
     # ``unrelated-target``.
     headers = _node_headers("alice")
@@ -107,7 +107,7 @@ def test_delete_unrelated_caller_returns_403(client, isolated_env):
     assert response.status_code == 403
 
 
-def test_delete_unrelated_caller_body_has_kind_acl_deny(client, isolated_env):
+def test_delete_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
     # Arrange
     headers = _node_headers("alice")
     # Act
@@ -117,7 +117,7 @@ def test_delete_unrelated_caller_body_has_kind_acl_deny(client, isolated_env):
     assert body["kind"] == "acl_deny"
 
 
-def test_delete_unrelated_caller_body_has_error_acl_deny(client, isolated_env):
+def test_delete_unrelated_caller_body_has_error_acl_deny(pg_schema: str, client, isolated_env):
     # Arrange
     headers = _node_headers("alice")
     # Act
@@ -127,7 +127,7 @@ def test_delete_unrelated_caller_body_has_error_acl_deny(client, isolated_env):
     assert body["error"] == "ACL deny"
 
 
-def test_delete_unrelated_caller_body_has_reason_naming_target(client, isolated_env):
+def test_delete_unrelated_caller_body_has_reason_naming_target(pg_schema: str, client, isolated_env):
     # Arrange — the deny reason must name the target for diagnosability.
     headers = _node_headers("alice")
     # Act
@@ -153,7 +153,7 @@ def test_delete_caller_can_target_self(client, isolated_env):
     assert response.status_code != 403
 
 
-def test_delete_caller_can_target_direct_child(client, isolated_env):
+def test_delete_caller_can_target_direct_child(pg_schema: str, client, isolated_env):
     # Arrange — alice has child ``kid`` via the lineage table.
     headers = _node_headers("alice")
     record_lineage(child="kid", parent="alice")
@@ -182,7 +182,7 @@ def test_tail_with_host_bearer_does_not_403(client, isolated_env):
 # ---------------------------------------------------------------------------
 
 
-def test_tail_unrelated_caller_returns_403(client, isolated_env):
+def test_tail_unrelated_caller_returns_403(pg_schema: str, client, isolated_env):
     # Arrange
     headers = _node_headers("alice")
     # Act
@@ -191,7 +191,7 @@ def test_tail_unrelated_caller_returns_403(client, isolated_env):
     assert response.status_code == 403
 
 
-def test_tail_unrelated_caller_body_has_kind_acl_deny(client, isolated_env):
+def test_tail_unrelated_caller_body_has_kind_acl_deny(pg_schema: str, client, isolated_env):
     # Arrange
     headers = _node_headers("alice")
     # Act
@@ -215,7 +215,7 @@ def test_tail_caller_can_target_self(client, isolated_env):
     assert response.status_code != 403
 
 
-def test_tail_caller_can_target_descendant(client, isolated_env):
+def test_tail_caller_can_target_descendant(pg_schema: str, client, isolated_env):
     # Arrange — root → alice → ada (grandchild).
     headers = _node_headers("root")
     record_lineage(child="alice", parent="root")

@@ -184,7 +184,7 @@ def derive_group(
         raise ValueError("derive_group: name must be non-empty")
     # Phase-3 solitary override — short-circuits to the singleton group
     # without touching the lineage table.
-    policy = read_comms_policy(name=name, db_path=db_path)
+    policy = read_comms_policy(name=name)
     if policy["lineage_group"] == "solitary":
         return {name}
     from .state_db import open_db
@@ -293,7 +293,7 @@ def spawn_allowed(
     if caller is None or caller == "":
         # Admin / human operator. Skips the global root-only check;
         # per-spec may_spawn (Phase-3 Gap-5) layers on top.
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
     # The three spawn-authorised groups, checked as MEMBERSHIP over the
     # caller's whole named-group set. Hoisted above the lineage lookup
     # because the authority is lineage-independent: a developer- /
@@ -302,11 +302,11 @@ def spawn_allowed(
     # 2026-07-06 ACL incident). The per-spec may_spawn gate still layers
     # on top, exactly like the root path above.
     if (
-        is_developer(name=caller, db_path=db_path)
-        or is_researcher(name=caller, db_path=db_path)
-        or is_privileged(name=caller, db_path=db_path)
+        is_developer(name=caller)
+        or is_researcher(name=caller)
+        or is_privileged(name=caller)
     ):
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
     from .state_db import open_db
 
     with open_db(db_path) as conn:
@@ -314,15 +314,11 @@ def spawn_allowed(
             "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
         ).fetchone()
     if parent_row is None:
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    return (False, _spawn_denied_reason(caller, parent_row["parent_name"], db_path))
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    return (False, _spawn_denied_reason(caller, parent_row["parent_name"]))
 
 
-def _spawn_denied_reason(
-    caller: str,
-    parent: str,
-    db_path: Path | None,
-) -> str:
+def _spawn_denied_reason(caller: str, parent: str) -> str:
     """Compose the spawn-deny reason, naming the groups ACTUALLY resolved.
 
     The message this replaces asserted the caller "is in none of the
@@ -342,13 +338,13 @@ def _spawn_denied_reason(
     """
     from .state_db_acl_policy import comms_policy_row_exists
 
-    groups = sorted(resolve_group_names(name=caller, db_path=db_path))
+    groups = sorted(resolve_group_names(name=caller))
     if groups:
         seen = (
             f"the groups this host resolved for it are {groups}, none of "
             "which grant spawn authority"
         )
-    elif comms_policy_row_exists(name=caller, db_path=db_path):
+    elif comms_policy_row_exists(name=caller):
         seen = "it IS registered on this host but resolved to NO named group at all"
     else:
         seen = (

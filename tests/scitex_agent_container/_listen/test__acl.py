@@ -249,7 +249,7 @@ def test_acl_denies_when_target_missing(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_allows_root_caller(db_path: Path) -> None:
+def test_spawn_allows_root_caller(pg_schema: str, db_path: Path) -> None:
     """A node with no parent in lineage is allowed to spawn."""
     # Arrange
     caller = "root"
@@ -269,7 +269,7 @@ def test_spawn_allows_admin_caller_when_caller_is_none(db_path: Path) -> None:
     assert decision == "allow"
 
 
-def test_spawn_denies_child_caller(db_path: Path) -> None:
+def test_spawn_denies_child_caller(pg_schema: str, db_path: Path) -> None:
     """A node with a parent (child) is NOT allowed to spawn."""
     # Arrange
     record_lineage(child="worker-a", parent="root", db_path=db_path)
@@ -279,7 +279,7 @@ def test_spawn_denies_child_caller(db_path: Path) -> None:
     assert decision == "deny"
 
 
-def test_spawn_deny_reason_explains_root_only_policy(db_path: Path) -> None:
+def test_spawn_deny_reason_explains_root_only_policy(pg_schema: str, db_path: Path) -> None:
     """The 403 body names the groups that WOULD authorise the spawn.
 
     It no longer asserts the caller holds none of them — that claim was
@@ -367,7 +367,7 @@ def test_http_node_message_send_403_body_carries_per_spec_reason(
     # Arrange — siblings so the per-spec inbound-sibling deny applies.
     record_lineage(child="worker-a", parent="root", db_path=db_path)
     record_lineage(child="worker-b", parent="root", db_path=db_path)
-    record_comms_policy(name="worker-b", inbound_siblings="deny", db_path=db_path)
+    record_comms_policy(name="worker-b", inbound_siblings="deny")
     app = create_app(token=TOKEN)
     # Act
     with TestClient(app) as client:
@@ -500,6 +500,7 @@ def test_http_per_node_bearer_403_body_explains_spoof(
 
 
 def test_http_agents_start_denies_child_caller_with_403(
+    pg_schema: str,
     isolated_listen_env, db_path: Path
 ) -> None:
     """Root-only spawn (current policy): a child caller → 403."""
@@ -519,6 +520,7 @@ def test_http_agents_start_denies_child_caller_with_403(
 
 
 def test_http_agents_start_403_carries_role_policy_text(
+    pg_schema: str,
     isolated_listen_env, db_path: Path
 ) -> None:
     # Arrange
@@ -578,7 +580,7 @@ def cross_group_deny_scenario(isolated_listen_env, db_path: Path, pg_schema: str
     the sibling relationship applies."""
     record_lineage(child="child-1", parent="root", db_path=db_path)
     record_lineage(child="child-2", parent="root", db_path=db_path)
-    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny")
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
         resp = client.post(
@@ -667,7 +669,7 @@ def body_leak_scenario(isolated_listen_env, db_path: Path, pg_schema: str) -> di
     deny path under messaging default-allow)."""
     record_lineage(child="child-1", parent="root", db_path=db_path)
     record_lineage(child="child-2", parent="root", db_path=db_path)
-    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny")
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
         resp = client.post(
@@ -728,7 +730,7 @@ def fanout_scope_scenario(isolated_listen_env, db_path: Path, pg_schema: str) ->
     """
     record_lineage(child="child-1", parent="root", db_path=db_path)
     record_lineage(child="child-2", parent="root", db_path=db_path)
-    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny")
     record_lineage(child="bystander", parent="root-3", db_path=db_path)
     app = create_app(token=TOKEN)
     with TestClient(app) as client:
@@ -852,7 +854,7 @@ def live_broker_event(isolated_listen_env, db_path: Path, pg_schema: str) -> dic
 
     record_lineage(child="child-1", parent="root", db_path=db_path)
     record_lineage(child="child-2", parent="root", db_path=db_path)
-    record_comms_policy(name="child-2", inbound_siblings="deny", db_path=db_path)
+    record_comms_policy(name="child-2", inbound_siblings="deny")
     app = create_app(token=TOKEN)
 
     async def driver() -> dict:

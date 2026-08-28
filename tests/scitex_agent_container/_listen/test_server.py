@@ -1357,7 +1357,7 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     record_lineage(child="alice", parent="root", db_path=db)
     record_lineage(child="outsider", parent="root", db_path=db)
     state_db_nodes_grant.record_comms_policy(
-        name="alice", inbound_siblings="deny", db_path=db
+        name="alice", inbound_siblings="deny"
     )
     state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
     with state_db.open_db(db) as conn:

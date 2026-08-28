@@ -607,6 +607,7 @@ def _restart(tmp_path: Path, runtime: Any, *, name: str = "alpha") -> bool:
 
 
 def test_restart_kills_the_runtime_that_ignored_sigterm(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange — the neurovista shape: a REAL process that ignores SIGTERM.
@@ -619,6 +620,7 @@ def test_restart_kills_the_runtime_that_ignored_sigterm(
 
 
 def test_restart_starts_the_replacement_after_escalating(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange

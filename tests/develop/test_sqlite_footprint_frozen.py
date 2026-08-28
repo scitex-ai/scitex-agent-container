@@ -234,7 +234,17 @@ FROZEN_SQLITE_DDL = frozenset(
         # `test_the_ddl_freeze_list_has_no_stale_entries` reported. A ratchet
         # that only checks one direction would have gone green on a half-done
         # migration.
-        "_state/state_db_acl_policy.py",
+        #
+        # _state/state_db_acl_policy.py LEFT THIS SET 2026-08-28 — the Phase-3
+        # per-spec ACL table, and the first move where a lost write is a
+        # PRIVILEGE change rather than a lost observation: read_comms_policy
+        # answers a missing record with all-allow defaults, so an unreachable
+        # store that returned empty instead of raising would read as
+        # PERMISSION. It is also the first to leave this set on the strength
+        # of its DOCSTRING: the module never executed DDL, it quoted the
+        # CREATE TABLE in its prose, and this scan reads file text — so the
+        # entry went stale the moment the prose was rewritten, exactly as the
+        # two-directional rule intends.
         # _state/state_db_blocks.py LEFT THIS SET 2026-08-20 — the FOURTH table
         # to move to PostgreSQL, and the first where the migration's own
         # PREDICTION was wrong in the safe direction. It was scoped as "a

@@ -241,29 +241,16 @@ CREATE TABLE IF NOT EXISTS comms_nodes (
 );
 CREATE INDEX IF NOT EXISTS idx_comms_nodes_host ON comms_nodes(host);
 
--- Phase-3 ACL: per-spec capsule-isolation policy (ADR-0010 Step 2).
--- Row written at agent_start from the loaded spec.comms/spec.lineage
--- blocks. Read at ACL-check time by check_send_acl / check_spawn /
--- derive_group so policy lookups stay synchronous with no YAML re-parse.
--- Defaults match the dataclass defaults (everything "allow", may_spawn=1,
--- lineage_group=""), so absence of a row is byte-equivalent to the
--- pre-Phase-3 group-default ACL.
--- ``group_name`` (operator 2026-06-25): the agent's NAMED group, resolved
--- at agent_start from metadata.labels.group (else role-derived; the
--- developer-ish roles default to 'developer'). Read at ACL-check time so
--- a same-named-group send is allowed (full mesh within a group) and the
--- 'developer' group gets full agent-CRUD authority. Default '' (ungrouped)
--- keeps absence byte-equivalent to the pre-group-name behaviour.
-CREATE TABLE IF NOT EXISTS node_comms_policy (
-    name              TEXT PRIMARY KEY,
-    outbound_siblings TEXT NOT NULL DEFAULT 'allow',
-    outbound_parent   TEXT NOT NULL DEFAULT 'allow',
-    inbound_siblings  TEXT NOT NULL DEFAULT 'allow',
-    inbound_parent    TEXT NOT NULL DEFAULT 'allow',
-    lineage_group     TEXT NOT NULL DEFAULT '',
-    may_spawn         INTEGER NOT NULL DEFAULT 1,
-    group_name        TEXT NOT NULL DEFAULT '',
-    group_names       TEXT NOT NULL DEFAULT '',
-    updated_at        REAL NOT NULL
-);
+-- The Phase-3 ACL table ``node_comms_policy`` was defined here until
+-- 2026-08-28. It moved to PostgreSQL via scitex_dev.store; its schema is
+-- created on first open by ``state_db_acl_policy_store.open_policy_store``,
+-- so there is nothing to create here.
+--
+-- REMOVED rather than left behind, which for an ACL matters more than for
+-- the tables that went before it. A CREATE TABLE with no writer leaves an
+-- EMPTY table, and an empty ACL table does not read as "wrong database" —
+-- ``read_comms_policy`` answers a missing row with all-allow defaults, so a
+-- stale reader querying the abandoned table would have been handed
+-- PERMISSION, silently, with no error anywhere. No table at all is the
+-- honest answer.
 """

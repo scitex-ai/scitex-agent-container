@@ -142,7 +142,7 @@ def test_dry_run_leaves_the_spec_dir_where_it_was(dry_run, fleet: Layout):
 # ---------------------------------------------------------------------------
 
 
-def test_rename_exits_clean(applied):
+def test_rename_exits_clean(pg_schema: str, applied):
     # Arrange
     expected = 0
     # Act
@@ -151,7 +151,7 @@ def test_rename_exits_clean(applied):
     assert code == expected, applied.output
 
 
-def test_rename_moves_the_spec_dir(applied, fleet: Layout):
+def test_rename_moves_the_spec_dir(pg_schema: str, applied, fleet: Layout):
     # Arrange
     new_spec = fleet.spec_file(NEW)
     # Act
@@ -160,7 +160,7 @@ def test_rename_moves_the_spec_dir(applied, fleet: Layout):
     assert exists
 
 
-def test_rename_tells_the_operator_how_to_start_the_agent(applied):
+def test_rename_tells_the_operator_how_to_start_the_agent(pg_schema: str, applied):
     # Arrange
     needle = f"sac agents start {NEW}"
     # Act

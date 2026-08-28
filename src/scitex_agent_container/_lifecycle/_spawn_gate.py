@@ -61,7 +61,7 @@ __all__ = [
 ]
 
 
-def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
+def persist_acl_policy(config: Any) -> None:
     """Write the loaded spec's Phase-3 ACL policy into ``node_comms_policy``.
 
     Idempotent upsert keyed by ``config.name``. Called from core
@@ -100,7 +100,6 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
         may_spawn=lineage.may_spawn,
         group_name=group_name,
         group_names=group_names,
-        db_path=db_path,
     )
 
 

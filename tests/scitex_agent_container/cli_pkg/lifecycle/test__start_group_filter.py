@@ -84,7 +84,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == []
 
-    def test_single_group_matches_agent(self, isolated_agents_root):
+    def test_single_group_matches_agent(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         # Act
@@ -92,7 +92,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == ["alpha"]
 
-    def test_non_matching_agent_is_excluded(self, isolated_agents_root):
+    def test_non_matching_agent_is_excluded(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         _write_agent_spec(isolated_agents_root, "beta", groups_yaml="[researcher]")
@@ -101,7 +101,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == ["alpha"]
 
-    def test_matching_is_case_insensitive(self, isolated_agents_root):
+    def test_matching_is_case_insensitive(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         # Act
@@ -118,7 +118,7 @@ class TestResolveGroupTargets:
         assert result == []
 
     def test_agent_with_multiple_groups_matches_non_first_element(
-        self, isolated_agents_root
+        self, pg_schema: str, isolated_agents_root
     ):
         # Arrange — grant-style spec: developer is NOT the first element,
         # so the ACL-effective group_from_labels would miss it; the
@@ -133,7 +133,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == ["grant"]
 
-    def test_multiple_wanted_groups_union_across_agents(self, isolated_agents_root):
+    def test_multiple_wanted_groups_union_across_agents(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         _write_agent_spec(isolated_agents_root, "beta", groups_yaml="[researcher]")
@@ -143,7 +143,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == ["alpha", "beta"]
 
-    def test_result_is_sorted(self, isolated_agents_root):
+    def test_result_is_sorted(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "zeta", groups_yaml="[developer]")
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
@@ -160,7 +160,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == []
 
-    def test_broken_spec_is_excluded_not_raised(self, isolated_agents_root):
+    def test_broken_spec_is_excluded_not_raised(self, pg_schema: str, isolated_agents_root):
         # Arrange — a spec missing every required field must not crash
         # resolution; it is simply excluded from every group.
         broken = isolated_agents_root / "broken"
@@ -172,7 +172,7 @@ class TestResolveGroupTargets:
         # Assert
         assert result == ["alpha"]
 
-    def test_ungrouped_agent_never_matches(self, isolated_agents_root):
+    def test_ungrouped_agent_never_matches(self, pg_schema: str, isolated_agents_root):
         # Arrange — spec with no groups label at all.
         d = isolated_agents_root / "ungrouped"
         d.mkdir()
@@ -242,7 +242,7 @@ class TestApplyGroupTargets:
         assert "nonexistent" in capsys.readouterr().err
 
     def test_matching_group_resolves_with_no_explicit_targets(
-        self, isolated_agents_root
+        self, pg_schema: str, isolated_agents_root
     ):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
@@ -251,7 +251,7 @@ class TestApplyGroupTargets:
         # Assert
         assert result == ("alpha",)
 
-    def test_explicit_targets_and_group_are_unioned(self, isolated_agents_root):
+    def test_explicit_targets_and_group_are_unioned(self, pg_schema: str, isolated_agents_root):
         # Arrange
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         # Act
@@ -259,7 +259,7 @@ class TestApplyGroupTargets:
         # Assert
         assert result == ("other-agent", "alpha")
 
-    def test_union_is_de_duplicated(self, isolated_agents_root):
+    def test_union_is_de_duplicated(self, pg_schema: str, isolated_agents_root):
         # Arrange — "alpha" is both an explicit target AND group-resolved.
         _write_agent_spec(isolated_agents_root, "alpha", groups_yaml="[developer]")
         # Act
