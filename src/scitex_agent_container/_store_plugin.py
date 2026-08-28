@@ -422,9 +422,10 @@ NEVER_SYNCED: dict[str, str] = {
         "thousands of times the cost"
     ),
     "attempts": (
-        "declared in KNOWN_TABLES and exported by sac today, but it has "
-        "ZERO writers anywhere in src/ — replicating a table nothing "
-        "writes moves no information"
+        "a legacy actions.db carry-over with ZERO writers anywhere in src/ "
+        "— replicating a table nothing writes moves no information. Since "
+        "2026-08-28 it is not a SQLite table either: it left KNOWN_TABLES "
+        "and its DDL was deleted, which does not change the ruling"
     ),
     "definitions": (
         "same: in KNOWN_TABLES, FK'd from instances.definition_id, and "
@@ -459,8 +460,9 @@ NEVER_SYNCED: dict[str, str] = {
         "the fleet-relevant content is the latest sample, carried as "
         "sac_instances.last_heartbeat_at"
     ),
-    # The three entries above no longer appear in KNOWN_TABLES — the diary
-    # left SQLite on 2026-08-28. They STAY here for the reason
+    # The three entries above — and ``attempts`` — no longer appear in
+    # KNOWN_TABLES: the diary left SQLite on 2026-08-28 and ``attempts``
+    # left the same day. They STAY here for the reason
     # acl_deny_notify_log stays: the completeness gate only checks that every
     # KNOWN_TABLES name is decided, so a table leaving that tuple must not be
     # read as the refusal being withdrawn. A store that moved backend still

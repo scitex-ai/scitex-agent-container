@@ -63,7 +63,11 @@ def _table_filter_clauses(
         ),
         "instance_heartbeats": ("WHERE ts >= ?", (since,)),
         "events": ("WHERE ts >= ?", (since,)),
-        "attempts": ("WHERE ts >= ?", (since,)),
+        # ``attempts`` had a ``WHERE ts >= ?`` entry here until 2026-08-28.
+        # It left KNOWN_TABLES that day -- zero writers, DDL deleted -- so
+        # this mapping could never be selected again, and a WHERE clause
+        # naming a table SQLite no longer has reads as "sac still exports
+        # this".
         # ``turns``, ``errors`` and the diary-style ``heartbeats`` each had a
         # ``WHERE ts >= ?`` entry here until 2026-08-28. All three moved to
         # per-host PostgreSQL and left KNOWN_TABLES together, so — exactly as
@@ -103,7 +107,11 @@ def export_state(
     host: str | None = None,
     tables: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    """Dump the registry tables (and ``attempts``) into a JSON-able dict.
+    """Dump the registry tables into a JSON-able dict.
+
+    ``attempts`` was named here alongside them until 2026-08-28, when it
+    left :data:`KNOWN_TABLES`; this dump follows that tuple, so it no
+    longer ships an empty ``attempts`` array.
 
     Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).

@@ -6,13 +6,16 @@ run via ``conn.executescript`` in ``state_db.init_schema``; keeping them
 in a focused sibling mirrors the existing ``state_db_*`` split
 convention (state_db_export / state_db_gc / state_db_instances / ...).
 
-``state_db`` re-imports all three names, so every existing
+``state_db`` re-imports both names, so every existing
 ``from ...state_db import _SCHEMA_*`` / ``executescript(_SCHEMA_*)`` call
 site is unchanged.
 
 WHAT IS NO LONGER HERE: the diary trio (``turns`` / ``errors`` /
 ``heartbeats``). They moved to per-host PostgreSQL on 2026-08-28 and
 :mod:`.state_db_diary` owns them end to end — writers, reader, schema.
+Also gone, same day: ``attempts`` and its ``_SCHEMA_ATTEMPTS`` constant —
+see the departure note below the registry block. That one did not move
+anywhere; it simply never had a writer.
 """
 
 from __future__ import annotations
@@ -101,23 +104,25 @@ CREATE INDEX IF NOT EXISTS idx_events_instance
     ON events(instance_id, ts);
 """
 
-# Attempts predates state.db (lived in actions.db). Bundled here so
-# state.db is self-contained on a fresh host.
-_SCHEMA_ATTEMPTS = """
-CREATE TABLE IF NOT EXISTS attempts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts           TEXT    NOT NULL,
-    agent        TEXT    NOT NULL,
-    action       TEXT    NOT NULL,
-    outcome      TEXT    NOT NULL,
-    elapsed_s    REAL    NOT NULL,
-    pane_before  TEXT,
-    pane_after   TEXT,
-    extras       TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_attempts_ts ON attempts(ts);
-CREATE INDEX IF NOT EXISTS idx_attempts_agent_action ON attempts(agent, action);
-"""
+# ``attempts`` (and its two indexes) was defined here as
+# ``_SCHEMA_ATTEMPTS`` until 2026-08-28. It predated state.db — it lived in
+# ``actions.db`` and was bundled in so state.db was self-contained on a
+# fresh host — and by the time it landed here nothing wrote it: ZERO
+# INSERTs anywhere in ``src/``, only tests. Unlike the tables that left
+# before it, it did not move to PostgreSQL; there was no history to carry,
+# because none was ever recorded.
+#
+# REMOVED rather than left behind, under the same ruling as ``comms_grants``
+# and ``node_comms_policy`` below: a CREATE TABLE with no writer is WORSE
+# than no table. The empty table answers every reader with a plausible-
+# looking zero — ``sac db show`` prints ``attempts 0``, ``sac db query
+# --table=attempts`` prints nothing, ``sac db export`` ships an empty array
+# — and a zero meaning "nobody ever wrote this" is indistinguishable from a
+# zero meaning "this agent did nothing". No table at all raises, which is
+# the honest answer.
+#
+# Deleting this DDL drops NO existing rows: ``CREATE TABLE IF NOT EXISTS``
+# simply stops being issued, so an old state.db keeps whatever it holds.
 
 # Channel-event durability (WI-1) + the WI-2 / ADR-0014 ACL tables.
 #

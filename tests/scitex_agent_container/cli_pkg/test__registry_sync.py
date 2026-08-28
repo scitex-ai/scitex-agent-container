@@ -73,11 +73,11 @@ def _peer_export_payload(*, host: str, name: str, port: int) -> str:
                 # ``heartbeats`` were here until 2026-08-28; the diary left
                 # SQLite and KNOWN_TABLES together, so a peer that still
                 # ships those keys is describing a dump sac no longer makes.
+                # ``attempts`` left the same day for having zero writers.
                 "definitions": [],
                 "instances": [],
                 "instance_heartbeats": [],
                 "events": [],
-                "attempts": [],
                 "channel_events": [],
                 "node_tokens": [],
                 "lineage": [],
@@ -306,7 +306,6 @@ def test_registry_sync_all_invokes_ssh_for_every_static_peer(
                         "instances",
                         "instance_heartbeats",
                         "events",
-                        "attempts",
                         "turns",
                         "errors",
                         "heartbeats",
@@ -351,7 +350,6 @@ def test_registry_sync_all_per_peer_error_continues(
                     "instances",
                     "instance_heartbeats",
                     "events",
-                    "attempts",
                     "turns",
                     "errors",
                     "heartbeats",

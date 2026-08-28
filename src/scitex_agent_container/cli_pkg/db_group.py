@@ -149,7 +149,9 @@ def db_query(
         "definitions": "first_seen_at DESC",
         "instance_heartbeats": "ts DESC",
         "events": "ts DESC",
-        "attempts": "ts DESC",
+        # ``attempts`` had a ``ts DESC`` entry here until 2026-08-28. It
+        # left KNOWN_TABLES, so ``--table`` can no longer name it and this
+        # key could only ever be dead.
     }.get(table)
     if order_by:
         sql += f" ORDER BY {order_by}"
