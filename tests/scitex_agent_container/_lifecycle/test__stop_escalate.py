@@ -607,6 +607,7 @@ def _restart(tmp_path: Path, runtime: Any, *, name: str = "alpha") -> bool:
 
 
 def test_restart_kills_the_runtime_that_ignored_sigterm(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange — the neurovista shape: a REAL process that ignores SIGTERM.
@@ -619,6 +620,7 @@ def test_restart_kills_the_runtime_that_ignored_sigterm(
 
 
 def test_restart_starts_the_replacement_after_escalating(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange
@@ -630,7 +632,7 @@ def test_restart_starts_the_replacement_after_escalating(
     assert runtime.start_calls == 1
 
 
-def test_restart_raises_when_the_survivor_cannot_be_killed(tmp_path: Path) -> None:
+def test_restart_raises_when_the_survivor_cannot_be_killed(pg_schema, tmp_path: Path) -> None:
     # Arrange — up, and unkillable (no nameable pid).
     _write_spec(tmp_path)
     # Act
@@ -641,7 +643,7 @@ def test_restart_raises_when_the_survivor_cannot_be_killed(tmp_path: Path) -> No
         call()
 
 
-def test_restart_never_starts_over_a_surviving_runtime(tmp_path: Path) -> None:
+def test_restart_never_starts_over_a_surviving_runtime(pg_schema, tmp_path: Path) -> None:
     # Arrange
     _write_spec(tmp_path)
     runtime = _PidlessRuntime()

@@ -213,7 +213,7 @@ def test_refusal_names_the_named_override(tmp_path, registry, capsys):
     assert "--allow-stale-spec" in capsys.readouterr().err
 
 
-def test_allow_stale_spec_starts_the_agent(tmp_path, registry):
+def test_allow_stale_spec_starts_the_agent(pg_schema, tmp_path, registry):
     # Arrange — the escape hatch, passed the way --allow-stale-spec passes it.
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
@@ -223,7 +223,7 @@ def test_allow_stale_spec_starts_the_agent(tmp_path, registry):
     assert len(runtime.started) == 1
 
 
-def test_allow_stale_spec_env_starts_the_agent(tmp_path, registry, env_save_restore):
+def test_allow_stale_spec_env_starts_the_agent(pg_schema, tmp_path, registry, env_save_restore):
     # Arrange — same override, env transport (what the parallel path inherits).
     env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
     spec = _make_spec_repo(tmp_path, drifted=True)
@@ -234,7 +234,7 @@ def test_allow_stale_spec_env_starts_the_agent(tmp_path, registry, env_save_rest
     assert len(runtime.started) == 1
 
 
-def test_unpushed_local_commits_still_start(tmp_path, registry):
+def test_unpushed_local_commits_still_start(pg_schema, tmp_path, registry):
     # Arrange — AHEAD is not staleness: the spec here IS the newest that
     # exists. Hosts like spartan legitimately carry local commits.
     spec = _make_spec_repo(tmp_path, drifted=False)
@@ -248,7 +248,7 @@ def test_unpushed_local_commits_still_start(tmp_path, registry):
     assert len(runtime.started) == 1
 
 
-def test_unpushed_local_commits_still_warn(tmp_path, registry, capsys):
+def test_unpushed_local_commits_still_warn(pg_schema, tmp_path, registry, capsys):
     # Arrange — not refusing is not the same as staying quiet.
     spec = _make_spec_repo(tmp_path, drifted=False)
     (spec.parent / "local.txt").write_text("local only")
@@ -261,7 +261,7 @@ def test_unpushed_local_commits_still_warn(tmp_path, registry, capsys):
     assert "sac-drift WARNING" in capsys.readouterr().err
 
 
-def test_clean_source_starts_normally(tmp_path, registry):
+def test_clean_source_starts_normally(pg_schema, tmp_path, registry):
     # Arrange
     spec = _make_spec_repo(tmp_path, drifted=False)
     runtime = _FakeRuntime()
