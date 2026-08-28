@@ -54,8 +54,15 @@ def real_store(tmp_path):
     path = tmp_path / "state.db"
     conn = sqlite3.connect(path)
     try:
+        # The two names in ``state_db_health.CORE_TABLES``. The second was
+        # ``definitions`` until 2026-08-28, when that table left state.db
+        # for having no writer; ``channel_events`` replaced it in the
+        # constant, and this fixture must follow — a hand-written store
+        # naming a table the CORE no longer lists would classify as
+        # ``schemaless`` and the "populated" tests would stop meaning what
+        # their names say.
         conn.execute("CREATE TABLE instances (name TEXT)")
-        conn.execute("CREATE TABLE definitions (name TEXT)")
+        conn.execute("CREATE TABLE channel_events (target TEXT)")
         conn.commit()
     finally:
         conn.close()

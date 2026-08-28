@@ -96,12 +96,16 @@ def _db_names(db_path: Path) -> list[str]:
 
     THE TWO HALVES NO LONGER SHARE A DATABASE, and reading both here is what
     keeps that from going unnoticed. ``SELECT name FROM comms_nodes`` was the
-    identity half until 2026-08-28, when the ADR-0014 directory moved to
-    PostgreSQL and ``definitions.name`` — a ``NAME_COLUMNS`` pair still in
-    SQLite — took its place. The history half left the same day:
-    ``channel_events`` became ``sac_channel_events`` in the shared PostgreSQL
-    (ADR-0023) and is carried by ``rename_channel_events`` as its own step,
-    so it is read through that store's own reader rather than by SQL here.
+    identity half until 2026-08-28; the ADR-0014 directory moved to
+    PostgreSQL and ``definitions.name`` took its place, until ``definitions``
+    was itself deleted later the same day for having no writer in any code
+    path. ``instances.name`` is the identity half now — the one
+    ``NAME_COLUMNS`` pair that production code actually INSERTs.
+
+    The history half left SQLite the same day: ``channel_events`` became
+    ``sac_channel_events`` in the shared PostgreSQL (ADR-0023) and is carried
+    by ``rename_channel_events`` as its own step, so it is read through that
+    store's own connection rather than by SQL against ``db_path``.
 
     The directory half of a rename is asserted where it now lives, in
     ``_state/test_state_db_comms_nodes.py``.
@@ -112,7 +116,7 @@ def _db_names(db_path: Path) -> list[str]:
 
     conn = sqlite3.connect(str(db_path))
     try:
-        defs = conn.execute("SELECT name FROM definitions").fetchall()
+        ident = conn.execute("SELECT name FROM instances").fetchall()
     finally:
         conn.close()
     pg = new_channel_connection()
@@ -120,7 +124,7 @@ def _db_names(db_path: Path) -> list[str]:
         past = pg.execute("SELECT target FROM sac_channel_events").fetchall()
     finally:
         pg.close()
-    return sorted([r[0] for r in defs] + [t[0] for t in past])
+    return sorted([r[0] for r in ident] + [t[0] for t in past])
 
 
 def _raise_at(step_to_fail: str):
@@ -306,10 +310,11 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
 
 
 def test_the_plan_counts_the_state_db_rows(world: World):
-    # Arrange — ``comms_nodes.name`` until 2026-08-28; that table moved to
-    # PostgreSQL and left ``NAME_COLUMNS``, so the dry-run count no longer
-    # names it.
-    key = "definitions.name"
+    # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
+    # then ``definitions.name`` for the rest of that day (deleted: no
+    # writer). Both left ``NAME_COLUMNS``, so the dry-run count names
+    # neither; ``instances.name`` is what it counts now.
+    key = "instances.name"
     # Act
     plan = _plan(world)
     # Assert

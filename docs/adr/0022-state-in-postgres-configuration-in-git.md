@@ -130,7 +130,15 @@ change how a running agent was started.
 | `node_comms_policy` | A projection of `spec.yaml`'s `metadata.labels` / `spec.comms` / `spec.lineage`. Both writers derive it from the spec. |
 | `comms_grants` | Operator-declared cross-group permissions. |
 | `comms_blocks` | Operator-declared receiver-side vetoes. |
-| `definitions` | Content-addressed cache of git-resident YAML. |
+
+`definitions` was listed here — "content-addressed cache of git-resident
+YAML" — until 2026-08-28, when it was DELETED rather than migrated. The
+classification was right and it was the classification that condemned it:
+a cache of something git already holds is only worth carrying if somebody
+fills it, and no code path has ever INSERTed a row (0 rows on every
+state.db measured; `_store_plugin.NEVER_SYNCED` had recorded the finding
+before this ADR was written). `instances.definition_id` keeps its
+all-NULL column; only the table and the `REFERENCES` clause are gone.
 
 ### STATE → PostgreSQL, single-writer per row
 
@@ -146,10 +154,36 @@ That is what makes them safely syncable (§5).
 
 ### LOG / EVENT → PostgreSQL, append-only
 
-`events`, `attempts`, `turns`, `errors`, `heartbeats`,
-`instance_heartbeats`, `channel_events`, `dispatches`,
+`turns`, `errors`, `heartbeats`, `channel_events`, `dispatches`,
 `relocation_journal`, `verdict_delivered`. Bulk of the bytes, least
 urgent, and the easiest to sync (pure union).
+
+`events`, `attempts` and `instance_heartbeats` were listed here too, and
+all three were DELETED rather than migrated — `attempts` on 2026-08-28,
+`events` and `instance_heartbeats` the same day. This paragraph is the
+amendment rather than a footnote because the list above was, until it was
+written, the document telling a reader to MIGRATE tables the evidence says
+to drop:
+
+* `instance_heartbeats` — its writer (`update_heartbeat`) and its reader
+  (`latest_instance_heartbeat`) each had ZERO callers in `src/`, and it
+  held 0 rows on compute-01, compute-03, compute-04 and nas-03. Migrating
+  it would have carried an empty table onto a new backend and kept the
+  determinism argument in its DDL comment alive for another year.
+* `attempts` — never had a writer at all.
+* `events` — the one that is NOT empty (1181 rows on the host state.db)
+  and still should not move, because it has zero READERS. Both its writers
+  wrote `kind='start'` / `'stop'` as SQL literals, and both facts are
+  already on the `instances` row in the same transaction, which is the
+  same argument `_store_plugin.NEVER_SYNCED` gives for refusing to
+  replicate it. It was also never a faithful log: `state_db_gc` closes
+  stale instances with a bare UPDATE and wrote no event, so GC-reaped
+  deaths were already missing from it.
+
+"Append-only log" is a category that earns a migration only when something
+reads the log. These three did not, and the existing rows stay on disk —
+nothing is dropped, sac just stops issuing the DDL and stops claiming to
+maintain them.
 
 ### LAUNCH SNAPSHOT → a file burned into the agent
 
@@ -440,8 +474,11 @@ spec path is exercised through the real
 6. **`hosts.yaml` `pg:` block is not implemented**, and `hosts.yaml` is
    not itself under git. "Configuration → files" is done for specs;
    "→ **under Git**" remains a separate step for both.
-7. **`comms_grants` / `comms_blocks` / `definitions`** are classified as
-   configuration but still live in SQLite.
+7. **`comms_grants` / `comms_blocks`** are classified as configuration but
+   still live in SQLite. `definitions` was named here too until
+   2026-08-28; it no longer lives anywhere. It was deleted rather than
+   migrated — nothing had ever written it — so this line is one open
+   question shorter rather than one answer longer.
 8. ~~**`node_tokens` is a secret** and must never follow
    `node_comms_policy` into git; its migration needs a credential story
    first.~~ **RESOLVED 2026-08-28 — the credential story is that there

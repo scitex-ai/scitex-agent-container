@@ -66,7 +66,14 @@ from ._rename_spec import sub_path
 
 # (table, column) pairs holding an agent NAME verbatim.
 NAME_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("definitions", "name"),
+    # ("definitions", "name") was here until 2026-08-28, when the table was
+    # deleted for having no writer at any point in its life (0 rows on every
+    # state.db measured). It is the mildest version of the ``comms_nodes``
+    # hazard below — ``rename_rows`` skips tables absent from
+    # ``sqlite_master``, so the pair would have become a silent no-op, but a
+    # no-op over a table that has never held a row misses nothing. Removed
+    # regardless: a pair here ASSERTS that a rename must carry an agent's
+    # spec cache across, and there is no spec cache.
     ("instances", "name"),
     ("instances", "spawned_by"),
     # ("attempts", "agent") was here until 2026-08-28 — the table itself is
@@ -119,7 +126,11 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
 # (table, column) pairs holding a PATH that embeds the agent name as a
 # component (``…/agents/<name>/spec.yaml``, ``…/proj/<name>``).
 PATH_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("definitions", "yaml_path"),
+    # ("definitions", "yaml_path") was here until 2026-08-28 — same table,
+    # same ruling as the ``NAME_COLUMNS`` entry above. ``instances.workdir``
+    # is now the only path column a rename rewrites inside state.db, and the
+    # authoritative spec path is the file on disk, which
+    # :mod:`._rename` moves as its own step.
     ("instances", "workdir"),
 )
 
