@@ -321,11 +321,11 @@ def test_cross_group_deny_smoke_body_does_not_leak_to_recipient(
 # ---------------------------------------------------------------------------
 
 
-def test_cross_group_send_after_grant_delivers_to_recipient(comms_env):
+def test_cross_group_send_after_grant_delivers_to_recipient(pg_schema: str, comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
-    grant_send(sender="alpha", target="gamma", db_path=db, note="smoke-test grant")
+    grant_send(sender="alpha", target="gamma", note="smoke-test grant")
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 

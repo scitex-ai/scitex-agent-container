@@ -279,7 +279,6 @@ def record_local_instance(
             sender=config.name,
             target="lead",
             note="auto-grant on agent_start (op-2026-06-09)",
-            db_path=db_path,
         )
     except Exception:  # stx-allow: fallback (reason: never block agent start on grant write; missing grant degrades to operator running `sac a2a grant <name> lead` manually until next start)
         pass

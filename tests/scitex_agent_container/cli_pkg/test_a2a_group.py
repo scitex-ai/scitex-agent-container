@@ -780,6 +780,7 @@ def test_revoke_empty_target_writes_error_to_stderr(
 
 def test_grants_empty_table_renders_no_grants_marker(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -791,6 +792,7 @@ def test_grants_empty_table_renders_no_grants_marker(
 
 def test_grants_json_empty_table_is_empty_array(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()

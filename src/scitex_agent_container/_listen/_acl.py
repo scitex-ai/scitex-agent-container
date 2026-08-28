@@ -346,7 +346,10 @@ def check_send_acl(
     ):
         return ("allow", None)
 
-    if has_grant(sender=sender, target=target, db_path=db_path):
+    # db_path is gone from the grants primitives — that store is on
+    # PostgreSQL now and isolates via SCITEX_STORE_DSN. The other
+    # lookups in this function still take it, so the parameter stays.
+    if has_grant(sender=sender, target=target):
         return ("allow", None)
 
     # DEFAULT-ALLOW for cross-group a2a MESSAGING (operator 2026-07-03):

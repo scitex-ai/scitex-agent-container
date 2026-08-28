@@ -66,7 +66,7 @@ def test_unblock_route_writes_comms_grants_row(isolated_state: Path, pg_schema: 
             headers=_auth(),
         )
     # Assert
-    assert has_grant(sender="alice", target="lead", db_path=isolated_state)
+    assert has_grant(sender="alice", target="lead")
 
 
 def test_unblock_route_returns_200(isolated_state: Path, pg_schema: str) -> None:
@@ -137,7 +137,7 @@ def test_grant_route_writes_comms_grants_like_unblock(
             headers=_auth(),
         )
     # Assert
-    assert has_grant(sender="alice", target="lead", db_path=isolated_state)
+    assert has_grant(sender="alice", target="lead")
 
 
 # ---------------------------------------------------------------------------
