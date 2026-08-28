@@ -33,8 +33,20 @@ exists. ``IMMUTABLE`` here would make a spec edit unpublishable — the
 newest write really is the best answer, so ``LAST_WRITER_WINS`` is
 honest.
 
-``updated_at`` is the exception: ``MergeRule.MAX``, so a late-arriving
-stale replica cannot walk the record's own clock backwards.
+``updated_at`` is ``LAST_WRITER_WINS`` too, and deliberately so. It was
+``MergeRule.MAX``, to stop a late-arriving stale replica walking the
+record's clock backwards -- but HLC ordering already delivers exactly
+that for every other field, and MAX bought the guarantee at the price of
+resolving this one field by a DIFFERENT ordering than the rest of the
+record. ``_merge.py`` decides LAST_WRITER_WINS on ``incoming_stamp >
+current_stamp`` (the HLC) and MAX on ``incoming > current`` (the value),
+so the two disagree whenever a node's HLC wall has been pulled forward
+by a peer's message while its own ``time.time()`` has not. In that case
+MAX keeps the LOSING write's larger timestamp, and the record advertises
+itself as fresher than the write that actually supplied its data -- a
+stale ACL that reads as current, which is the exact failure this module
+says it exists to prevent. One ordering for the whole record is both
+simpler and safer.
 """
 
 from __future__ import annotations
@@ -120,9 +132,13 @@ def policy_schema() -> Any:
                 kind=FieldKind.REAL,
                 role=FieldRole.DATA,
                 required=True,
-                # MAX, not LAST_WRITER_WINS: a stale replica arriving late
-                # must not walk this record's clock backwards.
-                merge=MergeRule.MAX,
+                # LAST_WRITER_WINS, like every other field -- see the module
+                # docstring. A stale replica arriving late loses the HLC
+                # comparison, so its clock cannot win here either; MAX only
+                # differed when the value order and the HLC order disagreed,
+                # and in exactly that case it detached this timestamp from the
+                # data it is supposed to describe.
+                merge=MergeRule.LAST_WRITER_WINS,
                 indexed=False,
             ),
         },
