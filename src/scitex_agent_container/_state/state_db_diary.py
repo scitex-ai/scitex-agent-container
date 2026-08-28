@@ -46,6 +46,19 @@ TIMESTAMPS STAY REAL UNIX-SECONDS, the format the SQLite columns used
 and the format callers already read. Same clock, same wire format,
 different storage.
 
+``expected_revision`` IS MANDATORY, AND ``NEW_RECORD`` IS THE RIGHT VALUE
+========================================================================
+``Store.put`` takes it keyword-only; omitting it is a ``TypeError`` at the
+first write, not a review comment. Every record here is NEW by construction —
+the identity carries the timestamp, so a new tick is a new key — which is
+exactly what ``NEW_RECORD`` asserts.
+
+``RevisionMismatchError`` therefore means one thing only: a record with this
+identity already exists, i.e. a duplicate beat at a byte-identical timestamp.
+"Already recorded" is the outcome we wanted, so it returns rather than raising.
+The catch is deliberately NARROW — nothing else is swallowed, so an unreachable
+store still fails loudly, which is the whole point of moving off SQLite.
+
 THE ``lastrowid`` CONTRACT
 ==========================
 ``record_error`` returned SQLite's ``lastrowid`` and one caller
@@ -206,6 +219,8 @@ def record_turn(
 ) -> None:
     """Append one ``turns`` record. Append-only, as before."""
     row_ts = float(ts) if ts is not None else time.time()
+    from scitex_dev.store import NEW_RECORD, RevisionMismatchError
+
     store = _open(_turns_schema())
     try:
         store.put(
@@ -220,8 +235,11 @@ def record_turn(
                 "session_id": session_id,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-            }
+            },
+            expected_revision=NEW_RECORD,
         )
+    except RevisionMismatchError:
+        return  # same turn_id+status+ts already recorded
     finally:
         store.close()
 
@@ -240,6 +258,8 @@ def record_error(
     The id is the store's monotonic ``next_seq()`` rather than SQLite's
     ``lastrowid`` — see the module docstring.
     """
+    from scitex_dev.store import NEW_RECORD
+
     row_ts = float(ts) if ts is not None else time.time()
     store = _open(_errors_schema())
     try:
@@ -253,7 +273,8 @@ def record_error(
                 "detail": _clip(detail, _ERROR_DETAIL_LIMIT),
                 "ts": row_ts,
                 "turn_id": turn_id,
-            }
+            },
+            expected_revision=NEW_RECORD,
         )
         return error_id
     finally:
@@ -273,6 +294,8 @@ def record_heartbeat(
     ``state`` follows the runner's vocabulary (``starting`` | ``idle`` |
     ``working`` | ``stopping`` | ``error`` | ``down``).
     """
+    from scitex_dev.store import NEW_RECORD, RevisionMismatchError
+
     row_ts = float(ts) if ts is not None else time.time()
     store = _open(_heartbeats_schema())
     try:
@@ -284,9 +307,12 @@ def record_heartbeat(
                 "ts": row_ts,
                 "pid": pid,
                 "state": state,
-            }
+            },
+            expected_revision=NEW_RECORD,
         )
         return seq
+    except RevisionMismatchError:
+        return seq  # a beat with this exact (name, host, ts) is already recorded
     finally:
         store.close()
 
@@ -303,7 +329,16 @@ def latest_heartbeats_per_name() -> list[dict]:
     try:
         latest: dict[str, dict] = {}
         for row in store.rows():
-            data = dict(row.fields) if hasattr(row, "fields") else dict(row)
+            # ``row.values`` is the accessor, MEASURED not assumed. Row is a
+            # dataclass whose ``key`` is a TUPLE of the identity values and
+            # whose ``data`` is a bound METHOD; only ``values`` is the dict,
+            # and it carries identity and data fields together. Two earlier
+            # guesses here (``.fields``, then ``dict(row)``) both raised.
+            if row.hidden:
+                # Hidden is the store's soft-delete. A reader that ignores it
+                # resurrects retired rows.
+                continue
+            data = dict(row.values)
             key = str(data.get("name", ""))
             prev = latest.get(key)
             if prev is None or float(data.get("ts") or 0) > float(
