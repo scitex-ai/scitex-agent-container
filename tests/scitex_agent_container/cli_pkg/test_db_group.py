@@ -76,15 +76,17 @@ def test_db_show_console_output_starts_with_state_db_header(db_path: Path):
     assert "sac state.db" in result.output
 
 
-def test_db_show_console_output_lists_instances_table_row(db_path: Path):
-    # Arrange
+def test_db_show_console_output_lists_the_surviving_table_row(db_path: Path):
+    # Arrange — ``instances`` until 2026-08-28, when it moved to the shared
+    # store and left KNOWN_TABLES. ``sac db show`` walks that tuple, so the
+    # row it prints is now the one table SQLite still has.
     from scitex_agent_container.cli_pkg.db_group import db_show
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, [])
     # Assert
-    assert "instances" in result.output
+    assert "channel_events" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ def test_db_query_console_output_names_the_store_it_read(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "channel_events", "--limit", "5"])
     # Assert
     assert "store:" in result.output
 
@@ -139,7 +141,7 @@ def test_db_query_json_still_emits_a_bare_array(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--json"])
+    result = runner.invoke(db_query, ["--table", "channel_events", "--json"])
     # Assert
     assert json.loads(result.stdout) == []
 
@@ -152,7 +154,7 @@ def test_db_query_mcp_result_names_the_store(db_path: Path):
     from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
 
     # Act
-    result = mcp_db_query(table="instances")
+    result = mcp_db_query(table="channel_events")
     # Assert
     assert result["store"] == str(db_path)
 
@@ -163,7 +165,7 @@ def test_db_query_mcp_data_still_parses(db_path: Path):
     from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
 
     # Act
-    result = mcp_db_query(table="instances")
+    result = mcp_db_query(table="channel_events")
     # Assert
     assert result["data"] == []
 
@@ -179,7 +181,7 @@ def test_db_query_empty_table_console_says_no_rows(db_path: Path):
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "channel_events", "--limit", "5"])
     # Assert
     assert "no rows" in result.output
 
@@ -188,46 +190,54 @@ def test_db_query_console_output_includes_row_header_for_populated_table(
     db_path: Path,
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("agent-a", host="h")
+    persist_event(
+        target="agent-a", event={"from_agent": "p", "kind": "message", "ts": 1.0}
+    )
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "channel_events", "--limit", "5"])
     # Assert
     assert "row 0" in result.output
 
 
 def test_db_query_console_output_renders_row_name_key_value(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("agent-a", host="h")
+    persist_event(
+        target="agent-a", event={"from_agent": "p", "kind": "message", "ts": 1.0}
+    )
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
+    result = runner.invoke(db_query, ["--table", "channel_events", "--limit", "5"])
     # Assert
     assert "agent-a" in result.output
 
 
 def test_db_query_with_where_clause_filters_rows_in_json(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_query
 
-    record_instance_start("keep-me", host="h")
-    record_instance_start("drop-me", host="h")
+    persist_event(
+        target="keep-me", event={"from_agent": "p", "kind": "message", "ts": 1.0}
+    )
+    persist_event(
+        target="drop-me", event={"from_agent": "p", "kind": "message", "ts": 2.0}
+    )
     runner = CliRunner()
     # Act
     result = runner.invoke(
         db_query,
-        ["--table", "instances", "--where", "name='keep-me'", "--json"],
+        ["--table", "channel_events", "--where", "target='keep-me'", "--json"],
     )
     rows = json.loads(result.stdout)
     # Assert
-    assert [r["name"] for r in rows] == ["keep-me"]
+    assert [r["target"] for r in rows] == ["keep-me"]
 
 
 # ---------------------------------------------------------------------------
@@ -372,26 +382,26 @@ def test_db_clean_console_lists_crashed_counter_when_nonzero(
 # ---------------------------------------------------------------------------
 
 
-def test_db_export_dry_run_reports_row_counts_for_instances(db_path: Path):
+def test_db_export_dry_run_reports_row_counts_for_the_surviving_table(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["row_counts"]["instances"] == 1
+    assert body["row_counts"]["channel_events"] == 1
 
 
 def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
@@ -402,10 +412,10 @@ def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
 
 def test_db_export_with_output_writes_json_blob_to_file(db_path: Path, tmp_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     out = tmp_path / "nested" / "dump.json"
     runner = CliRunner()
     # Act
@@ -419,10 +429,10 @@ def test_db_export_with_output_creates_parent_directory_on_disk(
     db_path: Path, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     out = tmp_path / "new-subdir" / "dump.json"
     runner = CliRunner()
     # Act
@@ -470,12 +480,10 @@ def test_db_import_reads_payload_from_filesystem_path(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -487,19 +495,17 @@ def test_db_import_reads_payload_from_filesystem_path(
     result = runner.invoke(db_import, [str(dump), "--json"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["instances"] == 1
+    assert body["inserted"]["channel_events"] == 1
 
 
 def test_db_import_dry_run_json_reports_would_insert_counts(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -511,19 +517,17 @@ def test_db_import_dry_run_json_reports_would_insert_counts(
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
     body = json.loads(result.stdout)
     # Assert
-    assert body["would_insert"]["instances"] == 1
+    assert body["would_insert"]["channel_events"] == 1
 
 
 def test_db_import_dry_run_json_flags_payload_as_dry_run(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -542,12 +546,10 @@ def test_db_import_dry_run_console_reports_would_insert_total(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -561,16 +563,14 @@ def test_db_import_dry_run_console_reports_would_insert_total(
     assert "would-insert=" in result.output
 
 
-def test_db_import_dry_run_console_lists_instances_table_count(
+def test_db_import_dry_run_console_lists_the_surviving_table_count(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -581,19 +581,17 @@ def test_db_import_dry_run_console_lists_instances_table_count(
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run"])
     # Assert
-    assert "instances" in result.output
+    assert "channel_events" in result.output
 
 
 def test_db_import_console_output_reports_inserted_total(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -607,16 +605,14 @@ def test_db_import_console_output_reports_inserted_total(
     assert "inserted=" in result.output
 
 
-def test_db_import_console_output_lists_instances_inserted_count(
+def test_db_import_console_output_lists_the_inserted_count(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -627,4 +623,4 @@ def test_db_import_console_output_lists_instances_inserted_count(
     # Act
     result = runner.invoke(db_import, [str(dump)])
     # Assert
-    assert "instances" in result.output
+    assert "channel_events" in result.output

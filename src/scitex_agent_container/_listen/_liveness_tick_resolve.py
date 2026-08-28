@@ -206,7 +206,7 @@ def _heartbeat_signals(name: str) -> tuple[float | None, float | None]:
     return beat_ts, None
 
 
-def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
+def _live_agent_pids() -> dict[str, int] | None:
     """Map active-agent name → recorded pid — or ``None`` if the registry
     could not be READ AT ALL.
 
@@ -228,7 +228,15 @@ def _live_agent_pids(db_path: Path | None = None) -> dict[str, int] | None:
     registry records ``pid = NULL`` on every active row, so a perfectly
     healthy agent contributes no entry here. Callers must corroborate a
     missing pid against the owner's heartbeat before concluding anything —
-    :func:`resolve_liveness` does."""
+    :func:`resolve_liveness` does.
+
+    ``db_path`` IS GONE. It named the SQLite file the registry used to live
+    in; since 2026-08-28 ``instances`` is in the shared PostgreSQL store, so
+    the parameter selected nothing. Removing it rather than accepting and
+    ignoring it matters HERE more than elsewhere: a caller passing a path and
+    getting ``{}`` would read that as "this registry lists nobody" when the
+    function never looked at their registry at all — which is precisely the
+    absence-as-evidence confusion the ``None`` return exists to prevent."""
     try:
         from .._state.state_db import list_active_instances
 
@@ -282,7 +290,7 @@ def resolve_liveness(
     SQLite file; production leaves it ``None``)."""
     from ._agent_exec_liveness import _pid_alive
 
-    pids = _live_agent_pids(db_path)
+    pids = _live_agent_pids()
     registry_ok = pids is not None
     pids = pids or {}
 

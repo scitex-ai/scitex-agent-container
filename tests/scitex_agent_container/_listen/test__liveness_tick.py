@@ -335,40 +335,61 @@ class TestFleetLastBeatTs:
 
 
 class TestRegistryAvailability:
-    def test_readable_but_empty_registry_is_an_empty_dict(self, tmp_path) -> None:
-        # Arrange — a REAL sqlite state.db, created empty by the real schema
-        # init. The read SUCCEEDS and lists nobody.
+    def test_readable_but_empty_registry_is_an_empty_dict(
+        self, pg_schema: str
+    ) -> None:
+        # Arrange — a REAL, empty store (the throwaway schema). The read
+        # SUCCEEDS and lists nobody. It was an empty SQLite state.db until
+        # 2026-08-28, when ``instances`` moved to the shared store.
         # Act
-        pids = mod._live_agent_pids(db_path=tmp_path / "state.db")
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_unreadable_registry_is_none(self, tmp_path) -> None:
-        # Arrange — a REAL failure, no mock: the db's parent path is a regular
-        # FILE, so the OS refuses to create the directory sqlite needs.
-        blocker = tmp_path / "not-a-dir"
-        blocker.write_text("i am a file, not a directory")
-        # Act
-        pids = mod._live_agent_pids(db_path=blocker / "state.db")
+    def test_unreadable_registry_is_none(self) -> None:
+        # Arrange — a REAL failure, no mock. It used to be a state.db whose
+        # parent path was a regular FILE, so the OS refused to create the
+        # directory sqlite needed. The registry is the shared PostgreSQL
+        # store since 2026-08-28, so the equivalent real failure is a DSN
+        # nothing answers on — port 1, refused immediately. Env is saved and
+        # restored by hand (PA-306 bans monkeypatch), and the module's own
+        # reset hook drops the cached handle so the next test reconnects.
+        import os
+
+        from scitex_agent_container._state.state_db_instances_store import (
+            reset_instances_store,
+        )
+
+        key = "SCITEX_STORE_DSN"
+        saved = os.environ.get(key)
+        os.environ[key] = "postgresql://127.0.0.1:1/nothing"
+        reset_instances_store()
+        try:
+            # Act
+            pids = mod._live_agent_pids()
+        finally:
+            if saved is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved
+            reset_instances_store()
         # Assert — distinctly "we could not read it", NOT "nobody is alive".
         assert pids is None
 
-    def test_pidless_rows_contribute_no_pid(self, tmp_path) -> None:
-        # Arrange — EXACTLY what the live fleet writes: an active instances row
-        # with pid=NULL. The read succeeds; it simply proves nothing.
-        db = tmp_path / "state.db"
+    def test_pidless_rows_contribute_no_pid(self, pg_schema: str) -> None:
+        # Arrange — EXACTLY what the live fleet writes: an active instances
+        # record with no pid. The read succeeds; it simply proves nothing.
         record_instance_start("agent-x")
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_a_recorded_live_pid_is_returned(self, tmp_path) -> None:
-        # Arrange — a row carrying a REAL, alive pid (this test process).
-        db = tmp_path / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+    def test_a_recorded_live_pid_is_returned(self, pg_schema: str) -> None:
+        # Arrange — a record carrying a REAL, alive pid (this test process).
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids["agent-x"] == os.getpid()
 
@@ -396,7 +417,7 @@ class TestResolveLiveness:
         late = _iso(NOW - 10.0)
         (run_dir / "session.jsonl").write_text(json.dumps({"ts": late}) + "\n")
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=home_at_tmp / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — THE regression: this used to be None (never even read).
         assert out["agent-x"].last_active_ts == pytest.approx(
             datetime.fromisoformat(late.replace("Z", "+00:00")).timestamp()
@@ -415,7 +436,7 @@ class TestResolveLiveness:
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 300.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].last_beat_ts is not None
 
@@ -423,9 +444,9 @@ class TestResolveLiveness:
         # Arrange — the registry CAN still vouch for an agent; when it does,
         # that remains corroborating positive evidence.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].is_live is True
 
@@ -434,7 +455,7 @@ class TestResolveLiveness:
         blocker = home_at_tmp / "not-a-dir"
         blocker.write_text("i am a file, not a directory")
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=blocker / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — UNKNOWN, so the rule stays silent instead of guessing dead.
         assert out["agent-x"].known is False
 
@@ -466,7 +487,7 @@ class TestResolveLiveness:
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 99_999.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].known is True
 

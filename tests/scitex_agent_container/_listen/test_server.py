@@ -41,6 +41,35 @@ from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
 
+def _bind_instance_port(name: str, port: int) -> None:
+    """Point ``name``'s live instances record at ``port``.
+
+    A partial ``Store.put`` — ``instances`` moved to the shared PostgreSQL
+    store on 2026-08-28, so there is no table to ``UPDATE``. The record was
+    just written by ``record_instance_start`` with ``a2a_port=0``; this binds
+    the loopback port the test actually listens on, which is what the
+    forwarder resolves.
+    """
+    from scitex_dev.store import ANY_REVISION
+
+    from scitex_agent_container._state.state_db_instances import (
+        live_instance_for_name,
+    )
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
+    )
+
+    row = live_instance_for_name(name)
+    run_with_reconnect(
+        lambda store: store.put(
+            {"id": row["id"], "host": row["host"], "a2a_port": port},
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
+        )
+    )
+
+
 @pytest.fixture(autouse=True)
 def _instances_store(pg_schema: str):
     """A throwaway ``instances`` store for every test in this file.
@@ -909,13 +938,9 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     host_a_port = _free_port()
     host_b_port = _free_port()
 
-    # Bind the actual port for host A onto the instances row so the
+    # Bind the actual port for host A onto the instances record so the
     # resolver routes to the right loopback.
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -987,11 +1012,7 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
     record_lineage(child="alice", parent="root")
     host_a_port = _free_port()
     host_b_port = _free_port()
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1228,11 +1249,7 @@ def _drive_ssh_cross_host_send(
     host_b_port = cross_host_ssh_env["host_b_port"]
 
     state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1374,11 +1391,7 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
         name="alice", inbound_siblings="deny"
     )
     state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
