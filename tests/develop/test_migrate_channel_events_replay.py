@@ -42,7 +42,13 @@ import pytest
 from scitex_agent_container._state.state_db_channel_store import (
     reset_channel_connection,
 )
-from tests.develop._channel_migration_kit import event_row, legacy_db, query, run
+from tests.develop._channel_migration_kit import (
+    event_row,
+    execute,
+    legacy_db,
+    query,
+    run,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -185,7 +191,7 @@ def test_that_refusal_says_the_case_has_its_own_mechanism(
     # Act
     run(earlier, "--commit", "--accept-post-cutover-replay", "lead")
     # Assert
-    assert "needs no override" in capsys.readouterr().out
+    assert "nothing to waive" in capsys.readouterr().out
 
 
 def test_the_waiver_is_per_target_and_does_not_leak(
@@ -247,3 +253,116 @@ def test_the_remedy_text_no_longer_promises_that_stopping_clears_it(
     run(later, "--commit")
     # Assert
     assert "STOPPING THE DAEMON WILL NOT CLEAR THIS" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# MOOT IS NOT UNNECESSARY.
+#
+# Measured 2026-08-29, re-running the exact command that had just completed
+# compute-03's import against merged develop:
+#
+#   --commit --db-path <compute-03> --accept-post-cutover-replay scitex-agent-container
+#     REFUSED ... named to a waiver flag, but nothing is blocking it   exit 1
+#   --commit --db-path <compute-03>
+#     exit 0, 19/19 targets MATCHES SQLite, nothing moved
+#
+# The refusal was literally true -- after a successful import nothing IS
+# blocking the target -- and it still broke the script's own RE-RUNNING IS
+# SAFE contract. exit 1 on an already-correct state is indistinguishable from
+# real failure to a retry wrapper, a cron, or an operator following a runbook.
+#
+# The cause was one line's position: `unnecessary.discard(target)` sat below
+# both early-continues, so an already-imported target never left the set.
+# ---------------------------------------------------------------------------
+
+
+def test_re_running_a_successful_import_with_its_flag_is_a_no_op(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """THE REGRESSION. The documented command must stay re-runnable."""
+    # Arrange
+    _earlier, later = _blocked(tmp_path)
+    run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    # Act
+    rc = run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    # Assert
+    assert rc == 0
+
+
+def test_that_re_run_moves_nothing(tmp_path: Path, pg_schema: str) -> None:
+    """Idempotent in the rows too, not merely in the exit code."""
+    # Arrange
+    _earlier, later = _blocked(tmp_path)
+    run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    # Act
+    run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    # Assert
+    assert query(
+        "SELECT id FROM sac_channel_events WHERE target = %s ORDER BY id",
+        ("lead",),
+    ) == [(1,), (2,), (3,), (4,)]
+
+
+def test_that_re_run_says_the_flag_was_moot(
+    tmp_path: Path, pg_schema: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Silently accepting it would teach the operator the flag is always fine.
+
+    Saying "already imported, the flag did nothing" is what keeps the next
+    person from concluding the waiver is a harmless thing to leave on.
+    """
+    # Arrange
+    _earlier, later = _blocked(tmp_path)
+    run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    capsys.readouterr()
+    # Act
+    run(later, "--commit", "--accept-post-cutover-replay", "lead")
+    # Assert
+    assert "ALREADY IMPORTED" in capsys.readouterr().out
+
+
+def _overlapping_unattributed(tmp_path: Path) -> tuple[Path, Path]:
+    """An earlier host that OVERLAPS the later one, with its ledger removed.
+
+    The earlier host's 9.0 row postdates the later host's newest (3.0), so it
+    blocks; deleting the ledger entry makes it unattributed, which is the
+    state a store imported before provenance existed is in. Without the
+    overlap there is nothing to waive and the FIRST run refuses too — which
+    is what my initial version of this test got wrong.
+    """
+    earlier = legacy_db(
+        tmp_path / "host-a",
+        [event_row("lead", "a-1", 1.0), event_row("lead", "a-late", 9.0)],
+    )
+    later = _later_host(tmp_path)
+    run(earlier, "--commit")
+    execute("DELETE FROM sac_channel_import WHERE target = %s", ("lead",))
+    return earlier, later
+
+
+def test_the_imported_history_waiver_is_needed_first(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """CONTROL for the test below: without the flag this really is blocked.
+
+    A re-run test proves nothing if the first run never needed the flag.
+    """
+    # Arrange
+    _earlier, later = _overlapping_unattributed(tmp_path)
+    # Act
+    rc = run(later, "--commit")
+    # Assert
+    assert rc == 1
+
+
+def test_the_same_holds_for_the_imported_history_waiver(
+    tmp_path: Path, pg_schema: str
+) -> None:
+    """Both flags share the code path, so both share the contract."""
+    # Arrange
+    _earlier, later = _overlapping_unattributed(tmp_path)
+    run(later, "--commit", "--accept-imported-history", "lead")
+    # Act
+    rc = run(later, "--commit", "--accept-imported-history", "lead")
+    # Assert
+    assert rc == 0

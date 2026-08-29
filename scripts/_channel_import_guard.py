@@ -159,6 +159,19 @@ def refusals(
     cannot survive. So each is refused when its own precondition does not
     hold, rather than being quietly ignored.
 
+    MOOT IS NOT THE SAME AS UNNECESSARY, and merging them broke the script's
+    own contract. A waiver named for a target this run has ALREADY IMPORTED is
+    MOOT: nothing is blocking it because the work is done, and refusing there
+    made re-running the exact command that succeeded exit 1 on an
+    already-correct state — indistinguishable from real failure to any retry
+    wrapper or runbook, and a direct contradiction of RE-RUNNING IS SAFE in the
+    script's module docstring. That case is now a NOTE and a no-op.
+
+    A waiver named for a target that was never blocked at all is UNNECESSARY
+    and is still REFUSED. That is the habit-forming case the two-flag design
+    exists to prevent: an override passed where no override was ever needed is
+    how "pass the flag anyway" becomes reflex.
+
     WHY THIS STAYS CONSERVATIVE, deliberately. The guard cannot tell whether
     a shift would actually strand anything, because that depends on where live
     CONSUMERS sit and there is no server-side record of consumer position:
@@ -169,11 +182,18 @@ def refusals(
     """
     refused: list[str] = []
     waived: list[str] = []
-    unnecessary = set(accepted_replay) | set(accepted)
+    named = set(accepted_replay) | set(accepted)
+    # Named-but-not-needed splits in two, and collapsing them cost the
+    # documented command its idempotence. See the MOOT/UNNECESSARY note below.
+    moot: set[str] = set()
+    unnecessary = set(named)
     for target in sorted(grouped):
         entries = grouped[target]
         _, already = offset_for(conn, target=target, entries=entries)
         if already:
+            if target in named:
+                unnecessary.discard(target)
+                moot.add(target)
             continue
         unclaimed, claimed = newer_rows_than_source(
             conn, target=target, entries=entries
@@ -235,13 +255,18 @@ def refusals(
             f"they are an import whose state.db is GONE, assert that instead "
             f"with --accept-imported-history {target}."
         )
+    for target in sorted(moot):
+        waived.append(
+            f"{target}: ALREADY IMPORTED, so the waiver flag was not needed "
+            f"and did nothing. This run is a no-op for it. Re-running is safe "
+            f"— the flag can stay in the command or be dropped, either way."
+        )
     for target in sorted(unnecessary):
         refused.append(
             f"{target}: named to a waiver flag, but nothing is blocking it — "
-            f"either it has no rows newer than this state.db, or the newer "
-            f"rows it does have are already accounted for by a recorded "
-            f"import. That case has its own mechanism and needs no override. "
-            f"Drop the flag for {target!r} and re-run."
+            f"it has no rows newer than this state.db, so there is nothing to "
+            f"waive. That is not a case an override exists for. Drop the flag "
+            f"for {target!r} and re-run."
         )
     return refused, waived
 
