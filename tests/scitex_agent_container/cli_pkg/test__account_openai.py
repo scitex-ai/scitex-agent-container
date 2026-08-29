@@ -97,7 +97,7 @@ def test_json_has_distinct_qualified_ids(sandbox_home: Path):
     # Act
     result = CliRunner().invoke(account, ["list", "--json"])
     identities = {
-        item["qualified_id"] for item in json.loads(result.output)["accounts"]
+        item["qualified_id"] for item in json.loads(result.stdout)["accounts"]
     }
     # Assert
     assert identities == {
@@ -113,7 +113,7 @@ def test_json_preserves_legacy_stored_list(sandbox_home: Path):
     # Act
     result = CliRunner().invoke(account, ["list", "--json"])
     # Assert
-    assert json.loads(result.output)["stored"][0]["name"] == "same-example-com"
+    assert json.loads(result.stdout)["stored"][0]["name"] == "same-example-com"
 
 
 def test_json_lists_every_gateway_account(sandbox_home: Path, env_save_restore):
@@ -128,7 +128,7 @@ def test_json_lists_every_gateway_account(sandbox_home: Path, env_save_restore):
     )
     # Act
     result = CliRunner().invoke(account, ["list", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     identities = [item["qualified_id"] for item in payload["accounts"]]
     # Assert
     assert identities == ["openai:codex-primary", "openai:codex-secondary"]

@@ -151,6 +151,7 @@ def plan_one(
     present: Iterable[str] = (),
     dropin_dirs: Iterable[str] = (),
     install_argv: Callable[[Rename], tuple[str, ...]] = default_install_argv,
+    include_held: bool = False,
 ) -> tuple[Step, ...]:
     """Build the ordered plan for ONE job.
 
@@ -159,13 +160,18 @@ def plan_one(
     the caller and passed in, so this stays pure and the plan is a
     function of observed state rather than of hope.
 
-    A held job plans nothing — see ``Rename.hold``.
+    A held job plans nothing UNLESS ``include_held`` is passed — see
+    ``Rename.hold``. The default stays refuse-by-default so a bulk run can
+    never sweep one up; the override exists because the hold text itself
+    names the supervised command that is meant to clear it, and a flag the
+    caller can set but the planner ignores is a declaration with no
+    mechanism behind it.
 
     A job whose old units are absent still gets ``install``, ``logging``
     and ``verify``: the rename may have half-completed on this host, and
     saying so is what ``verify`` is for.
     """
-    if rename.held:
+    if rename.held and not include_held:
         return ()
 
     on_host = frozenset(present)
@@ -272,8 +278,14 @@ def plan(
     present: Iterable[str] = (),
     dropin_dirs: Iterable[str] = (),
     install_argv: Callable[[Rename], tuple[str, ...]] = default_install_argv,
+    include_held: bool = False,
 ) -> tuple[Step, ...]:
-    """The full ordered plan across every non-held job in ``renames``."""
+    """The full ordered plan across ``renames``.
+
+    Held jobs contribute nothing unless ``include_held`` is set; the caller
+    that sets it is expected to have narrowed ``renames`` to the one job it
+    means (the CLI enforces ``--include-held`` requires ``--only``).
+    """
     on_host = frozenset(present)
     dirs = frozenset(dropin_dirs)
     steps: list[Step] = []
@@ -284,6 +296,7 @@ def plan(
                 present=on_host,
                 dropin_dirs=dirs,
                 install_argv=install_argv,
+                include_held=include_held,
             )
         )
     out = tuple(steps)

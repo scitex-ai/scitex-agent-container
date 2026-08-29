@@ -133,7 +133,7 @@ def test_empty_store_json_reports_written_false(tmp_path: Path) -> None:
     cache = tmp_path / "quota-cache.json"
     # Act
     result = _invoke(cache, "--json")
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["written"] is False
 
@@ -145,7 +145,7 @@ def test_empty_store_json_reports_the_no_accounts_reason(tmp_path: Path) -> None
     cache = tmp_path / "quota-cache.json"
     # Act
     result = _invoke(cache, "--json")
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["reason"] == "no-accounts"
 

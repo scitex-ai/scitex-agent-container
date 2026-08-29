@@ -88,6 +88,42 @@ def test_an_unreadable_store_says_why() -> None:
     assert "unable to open database file" in facts.recorded_holder_evidence
 
 
+def test_the_default_reader_reaches_the_real_store_and_can_fail_loudly() -> None:
+    # Arrange — NO injected loader, so this drives the path the preflight
+    # that the preflight uses: the default reader, which since 2026-08-28 opens
+    # PostgreSQL lease store. ``tests/_store_isolation.py`` points
+    # SCITEX_STORE_DSN at 127.0.0.1:1, so the read fails — and what must NOT
+    # happen is that the failure becomes ``lease=None``, which bootstraps a
+    # lease and proceeds at the one gate standing between one live agent and
+    # two.
+    #
+    # THE GUARD BELOW IS LOAD-BEARING, and this test was wrong without it.
+    # ``_default_load`` does its import INSIDE the closure, and
+    # ``gather_lease_facts`` wraps ``reader(agent)`` in ``except Exception`` —
+    # so a ModuleNotFoundError produces facts byte-identical to a refused
+    # connection. Asserting ``read is False`` alone therefore passed just as
+    # happily when the store module did not exist at all. MEASURED: with
+    # ``relocation_pg`` made unimportable, the old single assertion still held,
+    # which means it never tested the store. Proving the import SEPARATELY is
+    # what makes the assertion below mean "the STORE refused" rather than
+    # "something, somewhere, raised".
+    #
+    # It is a ``raise`` and not a second assert because STX-TQ007 allows one
+    # one assertion per test, and because a failed arrange is an ERROR, not a
+    # test failure — the distinction is the whole point of putting it here.
+    from scitex_agent_container._state import relocation_pg
+
+    if not callable(getattr(relocation_pg, "load_lease", None)):
+        raise RuntimeError(
+            "arrange failed: relocation_pg.load_lease is not importable, so a "
+            "read=False below would prove nothing about the lease store"
+        )
+    # Act
+    facts = gather_lease_facts(AGENT, from_host=B, now=NOW)
+    # Assert
+    assert facts.read is False
+
+
 def test_a_store_with_no_row_is_read_and_empty() -> None:
     # Arrange
     # Act
@@ -211,10 +247,25 @@ def test_an_unnamed_source_asks_no_host_anything(absent_watcher: _Watcher) -> No
 
 
 def test_the_store_that_was_read_is_named() -> None:
-    # Arrange: one db per host, no sync — which one answered is part of the answer.
+    # Arrange: one store per host, no sync — which one answered is part of the
+    # answer. Since 2026-08-28 that is the per-host PostgreSQL locator, not a
+    # state.db path, and it is resolved WITHOUT connecting, so it is named even
+    # when the store turns out to be unreachable — the case a reader most needs
+    # named. The locator names the ENDPOINT rather than the table, so what this
+    # pins is that a resolved locator is reported at all, rather than the old
+    # file path or the empty string the fallback returns.
+    #
+    # THIS USED TO COMPARE THE IMPLEMENTATION AGAINST ITSELF. ``expected`` was
+    # built by calling ``host_store(pkg=..., name=LEASE_STORE).locator`` — the
+    # same expression, on the same inputs, that ``_store_locator()`` evaluates
+    # internally — so the assertion reduced to A == A and would have held for
+    # whatever the two agreed on, including a wrong locator. What the report
+    # actually depends on is a PROPERTY: that a PostgreSQL endpoint is named.
+    # That is what is pinned now, and it is the property that separates a real
+    # answer from BOTH failure modes this test exists to catch — the old
+    # ``state.db`` file path, and the empty string ``_store_locator()`` returns
+    # from its fallback when resolution raises.
     # Act
-    facts = gather_lease_facts(
-        AGENT, from_host=B, now=NOW, db_path="/state/x/state.db", load=lambda a: None
-    )
+    facts = gather_lease_facts(AGENT, from_host=B, now=NOW, load=lambda a: None)
     # Assert
-    assert facts.store == "/state/x/state.db"
+    assert facts.store.startswith("postgres[")

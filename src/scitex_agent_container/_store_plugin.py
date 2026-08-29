@@ -82,12 +82,10 @@ for WRITERS. sac's answer is mixed and worth stating plainly:
   because the per-host identity below is worthless if it does not.
 * ``turns`` / ``errors`` / ``heartbeats`` — YES, each carries a written
   ``host``. All three are refused for other reasons (see NEVER_SYNCED).
-* ``lineage``, ``comms_grants``, ``node_comms_policy``, ``node_tokens``,
-  ``channel_events`` — NO origin column of any kind exists.
-* ``comms_nodes.source_host`` — present, but NULL for every locally
-  registered row and set only on the PULL path. It records who a row was
-  pulled FROM, not who created it, so a locally-created row is anonymous
-  by design.
+* ``lineage``, ``comms_grants``, ``node_comms_policy``, ``channel_events``
+  — NO origin column of any kind exists.
+* ``comms_nodes.source_host`` — was NULL for every locally registered row
+  and set only on the PULL path; deleted in the 2026-08-28 move.
 
 That gap is closed by adopting the primitive rather than by adding
 columns here: ``_origin`` is a RESERVED column the store stamps on every
@@ -156,24 +154,25 @@ def _data(
 # FLEET — one fact the fleet shares; disagreement is a real conflict.
 # ---------------------------------------------------------------------------
 # The cross-host directory (ADR-0014): "agent <name> is reachable at
-# host:a2a_port". This is the one table sac already syncs, and the one
-# whose existing sync is provably lossy — state_db_comms_nodes.py:241
-# admits deletion propagation "will need an UPDATE-shaped sync (future
-# work)" because INSERT OR IGNORE can carry neither an update nor a
-# tombstone.
+# host:a2a_port". LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
+# field by ``_state.state_db_comms_nodes_store``. It was the one table sac
+# synced, and that sync was provably lossy: INSERT OR IGNORE carries
+# neither an update nor a tombstone, so the old module admitted deletion
+# propagation "will need an UPDATE-shaped sync (future work)". There is
+# none — every host reads and writes THIS directory now, so the whole
+# anti-entropy layer has nothing left to converge.
 #
-# Two hand-rolled columns are DELETED here rather than declared, because
-# the primitive owns both concepts natively and a second copy would drift:
-#   * ``ended_at``   — the soft tombstone. The primitive's hide()/unhide()
-#                      is "the ONLY removal" and replicates as an op, so a
-#                      tombstone now propagates by construction.
-#   * ``source_host`` — hand-rolled provenance. The oplog's ``_origin`` is
-#                      exactly this, maintained by the primitive.
+# Three hand-rolled columns are DELETED rather than declared, because the
+# primitive owns each concept and a second copy drifts: ``ended_at`` (the
+# soft tombstone — hide()/unhide() is "the ONLY removal", replicated as an
+# op), ``source_host`` (provenance, NULL on every local row — ``_origin``
+# is exactly this) and ``updated_at`` (the HLC restamps every op and is
+# comparable across hosts, unlike a skewed wall clock).
 #
-# ``registered_at`` is IMMUTABLE deliberately: two hosts claiming the same
-# agent NAME with different registration times is precisely the collision
-# sac already raises CommsNodeConflictError for, and IMMUTABLE reports it
-# as a MergeConflict (kept/rejected/reason) instead of quietly picking one.
+# ``registered_at`` is IMMUTABLE deliberately: two hosts claiming one agent
+# NAME with different registration times is precisely the collision sac
+# raises CommsNodeConflictError for; IMMUTABLE reports it as a MergeConflict
+# (kept/rejected/reason) rather than quietly picking one.
 COMMS_NODES = Schema.build(
     "sac_comms_nodes",
     {
@@ -187,6 +186,10 @@ COMMS_NODES = Schema.build(
 # ---------------------------------------------------------------------------
 # HISTORY — append-only; merging must never lose a branch.
 # ---------------------------------------------------------------------------
+# The spawn DAG. LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for
+# field by ``_state.state_db_lineage_store``; what follows describes a
+# schema the fleet is running, not one it is planning.
+#
 # One record per CHILD (a child has exactly one parent, ever), so distinct
 # edges are distinct records and a union can drop none of them. The
 # load-bearing choice is IMMUTABLE on ``parent_name``: if two hosts claim
@@ -196,10 +199,24 @@ COMMS_NODES = Schema.build(
 # ACL derives group membership from it (check_lineage_acl), so a silent
 # rewrite is a silent privilege change.
 #
+# THE CONTRADICTION WAS MEASURED BEFORE THE CUTOVER, and it was real: the
+# fleet's four state.db files held 23 edges between them and one child
+# disagreed — ``scitex-cards`` recorded ``proj-scitex-hub`` as its parent
+# on scitex-compute-03 and ``scitex-agent-container`` on scitex-compute-04.
+# The migration refuses to pick a winner (it reports and exits non-zero);
+# this rule is what keeps a later write from picking one silently.
+#
 # MULTI_WRITER, not SINGLE_WRITER: a cross-host spawn is brokered, so the
 # edge can legitimately be written by either end, and a second writer must
 # get the loud MergeConflict rather than an ownership rejection that says
 # nothing about WHY the two disagree.
+#
+# IMMUTABLE KEEPS THE FIRST VALUE AND DOES NOT RAISE. The rejected value
+# comes back in ``PutResult.conflicts``, so ``record_lineage`` INSPECTS the
+# result rather than waiting for an exception that never arrives. The same
+# property is why an edge can never be re-pointed once written, which is
+# what makes ``rename_lineage`` refuse to rename an agent that has
+# children instead of pretending it moved their edges.
 LINEAGE = Schema.build(
     "sac_lineage",
     {
@@ -213,32 +230,47 @@ LINEAGE = Schema.build(
 # PER_HOST — each host is right about itself.
 # ---------------------------------------------------------------------------
 # ``host`` is an IDENTITY field, and that is the entire per-host-truth
-# mechanism: it makes compute-04's row and spartan's row DIFFERENT
-# RECORDS, so a merge between them is not resolved-in-favour-of-one, it
-# never occurs. ``id`` (uuid7, minted at the origin) is also identity, so
-# even repeated observations of one agent name stay separate lifetimes.
+# mechanism: it makes compute-04's row and spartan's row DIFFERENT RECORDS,
+# so a merge between them is not resolved-in-favour-of-one, it never occurs.
+# ``id`` (uuid7, minted at the origin) is also identity, so even repeated
+# observations of one agent name stay separate lifetimes. SINGLE_WRITER:
+# only the observing host writes its own telemetry, and an agent RELOCATION
+# is then an explicit ownership handover() rather than an illegal write.
 #
-# The merge rules on the mutable fields are chosen so a STALE replica can
-# never move a live host's truth backwards:
-#   * last_heartbeat_at → MAX. An ISO-8601 UTC string sorts lexicographically,
-#     so MAX is a high-water mark: an old sample arriving late cannot
-#     resurrect a dead agent or rewind a live one. LAST_WRITER_WINS would
-#     let a delayed delivery do exactly that.
-#   * iter_count / input_tokens / output_tokens → MAX. Monotone counters.
-#   * ended_at / exit_reason → IMMUTABLE. A process ends ONCE. A second,
-#     different end time is not a later opinion, it is a contradiction —
-#     and sac has already been burned by believing one: on 2026-08-11
-#     eleven rows shared ended_at=2026-08-11T17:54:26Z and three readers
-#     independently read that as a simultaneous mass kill. It was one
-#     now_iso() evaluated once per GC sweep and stamped on every reaped
-#     row; the agents had died 10h46m earlier. IMMUTABLE makes the second
-#     stamp a reported conflict instead of a believed fact.
-#   * started_at → IMMUTABLE for the same reason, in the other direction.
+# The mutable rules keep a STALE replica from moving a live host's truth
+# backwards. ``last_heartbeat_at`` and the counters take MAX — an ISO-8601
+# UTC string sorts lexicographically, so MAX is a high-water mark a late
+# delivery cannot rewind. ``started_at``/``ended_at``/``exit_reason`` are
+# IMMUTABLE because a process starts once and ends once; a second, different
+# end time is a contradiction, not a later opinion, and sac has been burned
+# by believing one (2026-08-11: eleven rows sharing one ended_at read as a
+# mass kill; it was one now_iso() per GC sweep, and they had died 10h46m
+# apart). MEASURED TRAP: immutability starts at the FIRST STAMPED VALUE and
+# writing None counts, so every writer strips unset fields from its payload
+# (``state_db_instances_store.strip_unset``) or the tombstone never lands.
 #
-# SINGLE_WRITER: only the observing host may write its own telemetry. An
-# agent RELOCATION (sac moves a running agent between hosts) is then not
-# an illegal cross-host write but an explicit ownership handover() — which
-# is the honest shape, because relocation already carries a fencing lease.
+# LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for field by
+# ``_state.state_db_instances_store``. Checking this declaration against the
+# real DDL and against every reader in ``src/`` found gaps BOTH ways, and
+# closing them HERE is the point of this module: the declaration is what
+# says what sac's rows mean.
+#
+# DROPPED, none of them ever read and none ever set: ``definition_id`` (a FK
+# to ``definitions``, a table nothing has INSERTed into), ``scope`` (the
+# literal 'global', read by nobody, alive only inside idx_instances_active)
+# and ``ppid`` (a parameter with no call site).
+#
+# ADDED, because production code reads them: ``screen`` (``_restart_verify``
+# takes the tmux handle off an ENDED row), ``workdir`` (never read back, but
+# the rename verb REWRITES it — dropping it retires live coverage) and
+# ``remote`` (the authoritative locality flag, deliberately not a hostname
+# compare; five readers plus the GC branch on it).
+#
+# ``bound_port`` is a FOLD, not a drop: the DDL had it beside ``a2a_port``
+# and every writer set both from ONE value. Two columns holding one fact is
+# how the two drift, and they had — ``state_db_forward`` records a live row
+# where the split answered "where do I send this" two ways. One field here;
+# the row codec mirrors it out under both KEYS so no reader changes shape.
 INSTANCES = Schema.build(
     "sac_instances",
     {
@@ -247,7 +279,19 @@ INSTANCES = Schema.build(
         "name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True, indexed=True),
         "pid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "a2a_port": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
-        "spawned_by": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "screen": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "workdir": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "remote": _data(FieldKind.BOOL, MergeRule.LAST_WRITER_WINS),
+        # LAST_WRITER_WINS since 2026-08-28; IMMUTABLE while this was a PLAN.
+        # Measured against the real rename path, IMMUTABLE is not
+        # implementable: it freezes the field and reports a MergeConflict
+        # WITHOUT raising, so renaming a parent would leave every child's
+        # ``spawned_by`` on the dead name while the rename reported success.
+        # It bought no replication safety here — ``host`` is in the identity
+        # and the policy is SINGLE_WRITER, so this rule can only ever decide
+        # a SAME-HOST rewrite, which is exactly the rename. ``sac_lineage``
+        # is where a contradicted parent still surfaces as a MergeConflict.
+        "spawned_by": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "started_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
         "last_heartbeat_at": _data(FieldKind.TEXT, MergeRule.MAX),
         "iter_count": _data(FieldKind.INTEGER, MergeRule.MAX),
@@ -255,6 +299,38 @@ INSTANCES = Schema.build(
         "output_tokens": _data(FieldKind.INTEGER, MergeRule.MAX),
         "ended_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
         "exit_reason": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+    },
+)
+
+
+# The birth certificate (v4 step 5, operator directive 2026-08-14): the
+# COMPILED spec recorded at launch, keyed by incarnation id, plus the
+# death mirror. PER_HOST truth with the SAME idiom as ``sac_instances``
+# — the observing host is describing ITS OWN launch of ITS OWN process,
+# so ``host`` joins the identity and SINGLE_WRITER keeps the birth host
+# the only author — and it SYNCS, deliberately: an incarnation born on
+# host A must be visible from host B (the record answers "how was this
+# agent born", which the fleet asks about agents it did not launch), and
+# the rows are write-once by construction (``incarnation_id`` is a
+# globally-unique uuid7; every field is filled at birth or exactly once
+# at death), so replication can never diverge — a second, DIFFERENT
+# value for any field is a real contradiction and IMMUTABLE reports it
+# as a MergeConflict instead of quietly picking one. The exit trio uses
+# the same fill-once IMMUTABLE shape as ``instances.ended_at``: a
+# process is born once and dies once.
+INCARNATIONS = Schema.build(
+    "sac_incarnations",
+    {
+        "incarnation_id": _identity(FieldKind.TEXT),
+        "host": _identity(FieldKind.TEXT),
+        "agent_id": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True, indexed=True),
+        "spec_id": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "spec_git_sha": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "born_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "compiled_spec_json": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "exit_reason": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "exit_code": _data(FieldKind.INTEGER, MergeRule.IMMUTABLE),
+        "exited_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
     },
 )
 
@@ -285,8 +361,19 @@ COMMS_GRANTS = Schema.build(
 # the loaded spec. Its content is DERIVED from the spec, so the newest
 # write is genuinely the best answer and LAST_WRITER_WINS is honest here —
 # unlike on a heartbeat, where the newest DELIVERY is not the newest FACT.
-# ``updated_at`` is MAX rather than LWW so the row's own clock cannot be
-# walked backwards by a late-arriving stale replica.
+# ``updated_at`` is LAST_WRITER_WINS too, matching the live store. It was
+# MAX here, to stop a late-arriving stale replica walking the row's clock
+# backwards -- but HLC ordering already delivers that for every other
+# field, and MAX bought it by resolving this one field on a DIFFERENT
+# ordering than the rest of the record. ``_merge.py`` decides
+# LAST_WRITER_WINS on ``incoming_stamp > current_stamp`` (the HLC) and MAX
+# on ``incoming > current`` (the value), and those disagree whenever a
+# node's HLC wall has been pulled forward by a peer's message while its own
+# ``time.time()`` -- which is what ``updated_at`` holds -- has not. MAX then
+# keeps the LOSING write's larger timestamp and the record advertises itself
+# as fresher than the write that supplied its data: a stale ACL reading as
+# current. See ``state_db_acl_policy_store`` for the same argument at the
+# point the value is actually written.
 NODE_COMMS_POLICY = Schema.build(
     "sac_node_comms_policy",
     {
@@ -297,23 +384,44 @@ NODE_COMMS_POLICY = Schema.build(
         "inbound_parent": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "lineage_group": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "may_spawn": _data(FieldKind.BOOL, MergeRule.LAST_WRITER_WINS, required=True),
+        # BOTH group projections. They are written together by
+        # ``record_comms_policy`` from one ``metadata.labels``, and
+        # declaring only ``group_names`` here let the primary drift out
+        # of the replication contract while the mesh still resolved
+        # through it.
+        "group_name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
         "group_names": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True),
-        "updated_at": _data(FieldKind.REAL, MergeRule.MAX, required=True),
+        "updated_at": _data(FieldKind.REAL, MergeRule.LAST_WRITER_WINS, required=True),
     },
 )
 
 
 #: Every schema sac declares, with the classification it follows from.
 CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
+    # LIVE since 2026-08-28 — the move made this classification real rather
+    # than planned. SINGLE_WRITER survived it: the ownership check is on the
+    # ACTOR (a package constant), so cross-host operator repair still works.
     "sac_comms_nodes": (COMMS_NODES, Truth.FLEET, WriterPolicy.SINGLE_WRITER),
     "sac_comms_grants": (COMMS_GRANTS, Truth.FLEET, WriterPolicy.MULTI_WRITER),
+    # MULTI_WRITER since 2026-08-28, when the table moved to PostgreSQL
+    # and this declaration stopped being a plan and started describing a
+    # live store. SINGLE_WRITER modelled the record as owned by the host
+    # running the agent, which it is not: ``sac agents refresh-acl``
+    # re-publishes the whole fleet from wherever the operator is, agents
+    # relocate between hosts, and ``import_state`` bulk-imports peer rows.
+    # A refused ACL write is a STALE ACL row, and a stale ACL row denies
+    # an agent its groups or leaves it holding groups its spec dropped.
     "sac_node_comms_policy": (
         NODE_COMMS_POLICY,
         Truth.FLEET,
-        WriterPolicy.SINGLE_WRITER,
+        WriterPolicy.MULTI_WRITER,
     ),
+    # LIVE since 2026-08-28. HISTORY + MULTI_WRITER both survived the
+    # move unchanged: the edges are append-only, and a brokered spawn is
+    # legitimately written by either end.
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
+    "sac_incarnations": (INCARNATIONS, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
 }
 
 
@@ -326,6 +434,7 @@ SOURCE_TABLE: dict[str, str] = {
     "sac_node_comms_policy": "node_comms_policy",
     "sac_lineage": "lineage",
     "sac_instances": "instances",
+    "sac_incarnations": "incarnations",
 }
 
 
@@ -337,67 +446,100 @@ SOURCE_TABLE: dict[str, str] = {
 #: tell those apart, exactly as it does for ``_system_deps``.
 NEVER_SYNCED: dict[str, str] = {
     "node_tokens": (
-        "bearer SECRETS. A token is the authenticated identity the listen "
-        "server resolves Authorization: Bearer against; replicating it "
-        "hands every host the credentials to impersonate every agent on "
-        "every other host, turning one host's compromise into the fleet's"
+        "bearer SECRETS: replicating one hands every host the credentials to "
+        "impersonate every agent on every other host. Table REMOVED 2026-08-28, "
+        "feature never armed (zero minters, 0 rows on every host); refusal KEPT "
+        "-- a name leaving KNOWN_TABLES must not read as the refusal withdrawn"
     ),
     "channel_events": (
-        "the autoincrement id IS the SSE cursor a client passes back as "
-        "Last-Event-ID. Interleaving another host's numbering silently "
-        "changes what 'resume from N' means, so a reconnecting client "
-        "skips or replays frames with no error anywhere"
+        "not a Store schema; one shared database, nothing to converge. Since "
+        "2026-08-28 the channel history is two PLAIN PostgreSQL tables -- "
+        "sac_channel_events / sac_channel_cursor -- that every host reads and "
+        "writes directly (docs/adr/0023), so there is no per-host copy for an "
+        "anti-entropy layer to reconcile. The REFUSAL IS KEPT, not withdrawn: "
+        "the id is a per-target cursor a client passes back as Last-Event-ID, "
+        "and interleaving another host's numbering silently changes what "
+        "'resume from N' means -- a reconnecting client skips or replays "
+        "frames with no error anywhere. That ruling is what makes a single "
+        "shared table the right shape rather than a replicated one"
     ),
     "acl_deny_notify_log": (
-        "a per-host rate-limit ledger (last_notified_at). Merging it "
-        "suppresses a deny-notification on a host that never sent one — "
-        "the failure is a notification that does NOT arrive, which is "
-        "invisible by construction"
+        "a per-host rate-limit ledger (last_notified_at) — since 2026-08-20 a "
+        "per-host PostgreSQL store rather than a SQLite table, which does not "
+        "change the ruling. Merging it suppresses a deny-notification on a "
+        "host that never sent one — the failure is a notification that does "
+        "NOT arrive, which is invisible by construction"
     ),
     "instance_heartbeats": (
-        "the per-sample heartbeat STREAM, thousands of rows per agent per "
-        "day, whose fleet-relevant content is one number: the latest. That "
-        "number is carried as sac_instances.last_heartbeat_at under "
-        "MergeRule.MAX, so syncing the stream would move the same fact at "
-        "thousands of times the cost"
+        "the per-sample heartbeat STREAM, whose fleet-relevant content is "
+        "one number: the latest. That number is carried as "
+        "sac_instances.last_heartbeat_at under MergeRule.MAX, so syncing "
+        "the stream would move the same fact at many times the cost. The "
+        "original wording said 'thousands of rows per agent per day'; it "
+        "was never thousands and never one — since 2026-08-28 it is not a "
+        "SQLite table either. It left KNOWN_TABLES with its writer and "
+        "reader, both of which had zero callers in src/, and it held 0 "
+        "rows on every host measured. None of that withdraws the refusal: "
+        "if a heartbeat stream is ever written again it must not sync"
     ),
     "attempts": (
-        "declared in KNOWN_TABLES and exported by sac today, but it has "
-        "ZERO writers anywhere in src/ — replicating a table nothing "
-        "writes moves no information"
+        "a legacy actions.db carry-over with ZERO writers anywhere in src/ "
+        "— replicating a table nothing writes moves no information. Since "
+        "2026-08-28 it is not a SQLite table either: it left KNOWN_TABLES "
+        "and its DDL was deleted, which does not change the ruling"
     ),
     "definitions": (
-        "same: in KNOWN_TABLES, FK'd from instances.definition_id, and "
-        "never INSERTed by any code path. Sync it only once something "
-        "writes it; a spec is a promise and its truth is the YAML on disk"
+        "same: never INSERTed by any code path. This entry used to open "
+        "'in KNOWN_TABLES, FK'd from instances.definition_id' — since "
+        "2026-08-28 it is neither: the table was deleted on exactly the "
+        "evidence recorded here, and instances.definition_id keeps its "
+        "(all-NULL) column without the REFERENCES clause. The ruling is "
+        "unchanged, which is why the entry stays: sync it only once "
+        "something writes it; a spec is a promise and its truth is the "
+        "YAML on disk"
     ),
     "events": (
         "per-host lifecycle log carrying only kind='start'/'stop', both of "
         "which are already the started_at/ended_at columns of the "
         "sac_instances row it points at. Its autoincrement id would also "
         "collide across hosts, so it costs a key rewrite to move a fact "
-        "that is already replicated"
+        "that is already replicated. Since 2026-08-28 it is not a SQLite "
+        "table either — deleted for having zero readers, on the same "
+        "already-replicated argument this refusal rests on — and the rows "
+        "it left on existing databases must still not sync"
     ),
     "turns": (
         "the agent conversation diary — prompt_text and response_text, i.e. "
-        "the full content of what agents were asked and answered. It has NO "
-        "primary key at all, so today's importer duplicates every row on "
-        "every re-import. High-volume per-host diagnostics whose content is "
-        "the most sensitive thing in the DB: it should not leave its host "
-        "as a side effect of a directory sync"
+        "the full content of what agents were asked and answered. Since "
+        "2026-08-28 a per-host PostgreSQL store rather than a SQLite table, "
+        "which does not change the ruling: high-volume per-host diagnostics "
+        "whose content is the most sensitive thing sac records, and it "
+        "should not leave its host as a side effect of a directory sync"
     ),
     "errors": (
-        "per-host error journal keyed by an autoincrement error_id. Useful "
-        "to READ across hosts, but that is a query concern; replicating it "
-        "puts an unbounded diagnostic stream on the sync path and its ids "
-        "collide between hosts"
+        "per-host error journal, since 2026-08-28 a per-host PostgreSQL "
+        "store rather than a SQLite table. Useful to READ across hosts, but "
+        "that is a query concern; replicating it puts an unbounded "
+        "diagnostic stream on the sync path"
     ),
     "heartbeats": (
         "the diary-style heartbeat stream (name, host, pid, state, ts), "
-        "append-only with an autoincrement id and no uniqueness. Same "
-        "argument as instance_heartbeats: the fleet-relevant content is the "
-        "latest sample, carried as sac_instances.last_heartbeat_at"
+        "append-only, and since 2026-08-28 a per-host PostgreSQL store "
+        "rather than a SQLite table. Same argument as instance_heartbeats: "
+        "the fleet-relevant content is the latest sample, carried as "
+        "sac_instances.last_heartbeat_at"
     ),
+    # MOST OF THIS DICT NO LONGER APPEARS IN KNOWN_TABLES, and that is fine.
+    # The diary trio left SQLite on 2026-08-28; ``attempts``, ``node_tokens``,
+    # ``definitions``, ``instance_heartbeats`` and ``events`` were deleted
+    # over the same few days. Every one of them STAYS here for the reason
+    # acl_deny_notify_log stays: the completeness gate only checks that every
+    # KNOWN_TABLES name is decided, so a table leaving that tuple must not be
+    # read as the refusal being withdrawn. A store that moved backend — or a
+    # table that was deleted outright — still must not replicate, and
+    # deleting the reason would lose why. The tense of each entry is updated
+    # instead, so a reader can tell "refused, and no longer exists" from
+    # "refused, and live".
 }
 
 
@@ -430,6 +572,7 @@ def provide() -> list:
 __all__ = [
     "CLASSIFIED",
     "COMMS_NODES",
+    "INCARNATIONS",
     "INSTANCES",
     "LINEAGE",
     "NEVER_SYNCED",

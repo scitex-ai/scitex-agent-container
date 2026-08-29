@@ -2,11 +2,20 @@
 
 Both ``test_node_comms_e2e_http.py`` (raw HTTP/SSE transport) and
 ``test_node_comms_e2e_mcp.py`` (the ``a2a_*`` MCP tool layer) drive
-the *same* substrate — a real ``sac listen`` on a loopback port, a
-real ``state.db``, and real per-node bearer tokens. The wiring that
-brings that substrate up (lineage + tokens + uvicorn + the A2A
-JSON-RPC body shape + SSE consumers) lives here so neither test file
-duplicates it.
+the *same* substrate — a real ``sac listen`` on a loopback port and a
+real ``state.db``. The wiring that brings that substrate up (lineage +
+uvicorn + the A2A JSON-RPC body shape + SSE consumers) lives here so
+neither test file duplicates it.
+
+Every name in the cast used to get its OWN bearer, minted into the
+``node_tokens`` table by ``mint_node_token``. That feature was removed
+2026-08-28: nothing in ``src/`` ever minted a token, so the table was
+empty on every fleet host and the per-node bearer the smoke layer
+handed the server was a shape production never produced. The setup
+functions still return a ``{name: bearer}`` map so the call sites are
+unchanged — but every entry is now the HOST bearer, which is what a
+real sac agent presents. Sender identity travels where it always
+travelled in production: ``params.metadata.from_agent``.
 
 Leading-underscore filename ⇒ pytest does not collect it as a test
 module (``python_files = ["test_*.py"]``). Imported as
@@ -30,11 +39,13 @@ import httpx
 import yaml
 
 from scitex_agent_container._state.state_db_acl_policy import record_comms_policy
-from scitex_agent_container._state.state_db_nodes import (
-    mint_node_token,
-    record_lineage,
-)
+from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
+
+#: The one bearer the listen daemon admits. Every cast member presents
+#: it (see the module docstring); ``create_app(token=tokens["host"])``
+#: is what makes it valid.
+HOST_TOKEN = "smoke-host-token"
 
 # ---------------------------------------------------------------------------
 # uvicorn loopback helpers (mirrors tests/.../_listen/test_server.py).
@@ -123,27 +134,29 @@ async def _consume_event_with_id(url: str) -> tuple[str | None, dict]:
 
 
 # ---------------------------------------------------------------------------
-# Listen-server bring-up: lineage + tokens for a fixed cast.
+# Listen-server bring-up: lineage for a fixed cast.
 # ---------------------------------------------------------------------------
+
+
+def _host_bearers(*names: str) -> dict[str, str]:
+    """``{name: HOST_TOKEN}`` for every name, plus the ``"host"`` key.
+
+    The map shape survives from when each name carried its own minted
+    bearer; the values no longer differ because the host token is the
+    only credential the daemon accepts.
+    """
+    return {"host": HOST_TOKEN, **{n: HOST_TOKEN for n in names}}
 
 
 def _set_up_two_groups(db: Path) -> dict[str, str]:
     """Group A = parent_a + {alpha, beta}. Group B = parent_b + {gamma}.
 
-    Mints a per-node bearer for every name (so each node can
-    authenticate from its own session). Returns ``{name: token}``.
+    Returns ``{name: bearer}`` — see :func:`_host_bearers`.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="beta", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_b", db_path=db)
-    return {
-        "host": "smoke-host-token",
-        "parent_a": mint_node_token(name="parent_a", db_path=db),
-        "alpha": mint_node_token(name="alpha", db_path=db),
-        "beta": mint_node_token(name="beta", db_path=db),
-        "parent_b": mint_node_token(name="parent_b", db_path=db),
-        "gamma": mint_node_token(name="gamma", db_path=db),
-    }
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="beta", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_b")
+    return _host_bearers("parent_a", "alpha", "beta", "parent_b", "gamma")
 
 
 def _set_up_denied_send(db: Path) -> dict[str, str]:
@@ -168,17 +181,12 @@ def _set_up_denied_send(db: Path) -> dict[str, str]:
       approval prompt. That is the path these tests exist to pin, so that
       is the one we trigger.
 
-    Mints a per-node bearer for every name. Returns ``{name: token}``.
+    Returns ``{name: bearer}`` — see :func:`_host_bearers`.
     """
-    record_lineage(child="alpha", parent="parent_a", db_path=db)
-    record_lineage(child="gamma", parent="parent_a", db_path=db)
-    record_comms_policy(name="gamma", inbound_siblings="deny", db_path=db)
-    return {
-        "host": "smoke-host-token",
-        "parent_a": mint_node_token(name="parent_a", db_path=db),
-        "alpha": mint_node_token(name="alpha", db_path=db),
-        "gamma": mint_node_token(name="gamma", db_path=db),
-    }
+    record_lineage(child="alpha", parent="parent_a")
+    record_lineage(child="gamma", parent="parent_a")
+    record_comms_policy(name="gamma", inbound_siblings="deny")
+    return _host_bearers("parent_a", "alpha", "gamma")
 
 
 def _set_up_four_siblings(db: Path) -> dict[str, str]:
@@ -188,11 +196,8 @@ def _set_up_four_siblings(db: Path) -> dict[str, str]:
     not conflict with gamma's group-B placement there.
     """
     for child in ("alpha", "beta", "gamma", "zeta"):
-        record_lineage(child=child, parent="parent_a", db_path=db)
-    tokens = {"host": "smoke-host-token"}
-    for name in ("parent_a", "alpha", "beta", "gamma", "zeta"):
-        tokens[name] = mint_node_token(name=name, db_path=db)
-    return tokens
+        record_lineage(child=child, parent="parent_a")
+    return _host_bearers("parent_a", "alpha", "beta", "gamma", "zeta")
 
 
 # ---------------------------------------------------------------------------

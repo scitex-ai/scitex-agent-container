@@ -47,6 +47,22 @@ def test_interpolate_env_keeps_scitex_todo_agent_id_literal_even_when_set(
     assert out == "agent=${SCITEX_TODO_AGENT_ID}"
 
 
+def test_interpolate_env_keeps_scitex_cards_agent_id_literal_even_when_set(
+    env_save_restore,
+):
+    # The CURRENT board identity. Its RETIRED predecessor
+    # (SCITEX_TODO_AGENT_ID, above) was guarded from the start and this one
+    # was not, so the canonical name was the only identity var deploy-time
+    # interpolation would still have baked — and retiring the legacy key from
+    # the baseline .mcp.json requires a template to reference this one.
+    # Arrange
+    env_save_restore.set("SCITEX_CARDS_AGENT_ID", "agent:scitex-agent-container")
+    # Act
+    out = interpolate_env("agent=${SCITEX_CARDS_AGENT_ID}")
+    # Assert
+    assert out == "agent=${SCITEX_CARDS_AGENT_ID}"
+
+
 def test_interpolate_env_keeps_legacy_scitex_todo_agent_literal_even_when_set(
     env_save_restore,
 ):

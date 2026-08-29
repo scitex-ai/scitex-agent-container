@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from ._explicit_validation import validate as _validate_explicit_fields
+from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
+from ._residency_types import resolve_spec_residency
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -20,7 +21,6 @@ from ._parsers import (
     parse_claude,
     parse_comms,
     parse_container,
-    parse_context_management,
     parse_extensions,
     parse_health,
     parse_hooks,
@@ -35,66 +35,17 @@ from ._parsers import (
     parse_to_home_layers,
     parse_watchdog,
 )
-from ._types import AgentConfig, HostsSpec, StartupCommand
+from ._types import AgentConfig, HostsSpec
 
-# Guarded default startup command APPENDED to EVERY agent's ``startup_commands``
-# (operator directive, Telegram 2862 / card
-# ``sac-auto-direnv-allow-at-agent-start-guarded-20260717``). It whitelists a
-# project's ``.envrc`` with direnv so the project's NON-SECRET environment
-# surfaces inside the container — WITHOUT any per-spec hand-editing, and VISIBLE
-# in the materialized spec (``AgentConfig.startup_commands``), not buried in the
-# launch code the operator explicitly did not want.
-#
-# GUARDED + FAIL-SOFT + IDEMPOTENT:
-#   * ``command -v direnv`` — no-op when direnv is not installed;
-#   * ``[ -f "$PWD/.envrc" ]`` — no-op when the workdir has no ``.envrc``;
-#   * trailing ``|| true`` — a failed allow NEVER breaks the boot.
-#
-# ``$PWD`` is the agent workdir AT RUN TIME: the inner ``bash -lc`` wrapper that
-# runs ``startup_commands`` inherits apptainer's ``--pwd
-# str(Path(config.workdir).expanduser())`` (runtimes/_apptainer_build_argv.py)
-# and sac emits NO ``cd`` before the commands, so ``$PWD`` == the workdir. If a
-# workdir is not bound in-container ``$PWD`` falls back to ``$HOME``/``/`` where
-# the ``-f "$PWD/.envrc"`` guard simply finds no ``.envrc`` and skips — still
-# fail-soft. This surfaces ONLY the project's ``.envrc``; sac SECRETS and
-# IDENTITY (SCITEX_TODO_AGENT_ID, cct token pool, listen bearer) stay
-# sac-DIRECT-injected and are never routed through direnv.
-DEFAULT_DIRENV_ALLOW_COMMAND = (
-    'command -v direnv >/dev/null 2>&1 && [ -f "$PWD/.envrc" ] '
-    '&& direnv allow "$PWD" || true'
-)
-
-# Recognises an already-authored ``direnv allow`` in a startup command so the
-# default is not duplicated (idempotency; tolerates extra whitespace).
-_DIRENV_ALLOW_RE = re.compile(r"\bdirenv\s+allow\b")
-
-
-def _with_default_direnv_allow(
-    commands: list[StartupCommand],
-) -> list[StartupCommand]:
-    """Append the guarded direnv-allow default unless one is already present.
-
-    Idempotent: a spec whose ``startup_commands`` ALREADY run ``direnv allow``
-    (authored explicitly) is returned unchanged — no duplicate. Otherwise the
-    guarded, fail-soft :data:`DEFAULT_DIRENV_ALLOW_COMMAND` is APPENDED so it
-    runs last, just before the claude runner ``exec``s. Appended (not
-    prepended) so an authored ``startup_commands[0]`` keeps its position.
-    """
-    for cmd in commands:
-        if _DIRENV_ALLOW_RE.search(cmd.command or ""):
-            return commands
-    return [*commands, StartupCommand(command=DEFAULT_DIRENV_ALLOW_COMMAND)]
-
-
-# Generic boot-kick used when a spec omits ``startup_prompts``. Role/ID live in
-# the auto-generated $HOME/.claude/CLAUDE.md and the task lives on the agent's
-# scitex-todo card slice, so the boot prompt only needs a generic kick — per-spec
-# restatement of scope/task is the anti-pattern (operator, 2026-06-25). Bare +
-# period (no colon) so it also parses plain in YAML without >-/quotes.
-DEFAULT_STARTUP_PROMPT = (
-    "Start or continue. Scan your scitex-todo card slice, resume any in-flight "
-    "or assigned work (hold idle if none), then report readiness. Follow "
-    "CLAUDE.md + your skills; don't restate, don't invent scope."
+# The two defaults ``load_v3`` injects into every agent — the guarded
+# direnv-allow startup command and the generic boot kick — live in the
+# sibling ``_loader_startup_defaults`` module (extracted when this
+# orchestrator hit the per-file line cap). Re-imported here so every
+# existing consumer keeps its ``config._loaders`` import path.
+from ._loader_startup_defaults import (
+    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
+    DEFAULT_STARTUP_PROMPT,
+    _with_default_direnv_allow,
 )
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
@@ -328,19 +279,28 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # back-compat consumers and populated from the new homes.
     claude_spec = parse_claude(spec)
     apptainer_spec = parse_apptainer(spec)
-    # Role-based session-continuity default ("fresh by default, opt-in
-    # continue", 2026-06-22). ``claude.session`` now defaults to ``fresh``
-    # (parse_claude) so experiment capsules — which carry no coordinator
-    # role — start hermetic. But LONG-LIVED coordinator agents
-    # (lead/head/worker/telegrammer/project-maintainer/…) must keep their
-    # conversation across restarts. Those specs are hand-deployed OUTSIDE
-    # this repo and none of them set ``claude.session``, so we map an
-    # OMITTED field back to ``continue`` BY ROLE here — the one place that
-    # sees both the ``metadata.labels.role`` and the env-injected fleet
-    # role. An EXPLICIT ``session:`` (top-level or nested) is authored
-    # intent and is left untouched (so ``session: fresh`` on a coordinator
-    # stays fresh); a later CLI ``--continue`` / ``--fresh`` still wins by
-    # mutating ``config.claude.session`` after load.
+    # Session-continuity default for an OMITTED ``session:`` — ``continue``,
+    # unconditionally (operator 2026-08-18: 「スペックは全てレジュームで」).
+    #
+    # THIS USED TO BE ROLE-BASED and defaulted to ``fresh``; the polarity was
+    # inverted deliberately, so do not read the role lookup below as a gate.
+    # The old rule was an ALLOWLIST — a role had to be enumerated to keep its
+    # memory — and scitex-hub's ``product-lead-orchestrator`` matched neither
+    # the set nor any prefix, so it silently resolved to ``fresh`` and lost a
+    # day of working memory on restart. 91 of 117 live specs omit the field,
+    # so a default nobody chose was deciding the fleet's memory.
+    #
+    # ``_role`` is still resolved and still passed, because this is the one
+    # place that sees both ``metadata.labels.role`` and the env-injected fleet
+    # role, and ``default_session_for_role`` keeps the parameter for callers
+    # that ask the role question directly — but it no longer DECIDES.
+    #
+    # An EXPLICIT ``session:`` (top-level or nested) is authored intent and is
+    # left untouched (so ``session: fresh`` on a coordinator stays fresh); a
+    # later CLI ``--continue`` / ``--fresh`` still wins by mutating
+    # ``config.claude.session`` after load — that per-start override is the
+    # sanctioned escape hatch, and a failed start now says so (see
+    # ``_lifecycle/_start_failure_diag.fresh_retry_hint``).
     _session_authored = (
         spec.get("session") is not None
         or (spec.get("claude") or {}).get("session") is not None
@@ -428,10 +388,18 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     return AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
-        # Agent SDK family (top-level; NOT spec.claude.provider — see the
-        # naming-collision note in config._provider_types.AgentProvider).
-        # Default mirrors the dataclass default; openai-compat-1 foundation.
-        provider=str(spec.get("provider") or "anthropic"),
+        # HARNESS — which agent SDK runs the session. NOT
+        # spec.claude.provider (the inference backend). ``spec.harness``
+        # is canonical; ``spec.provider`` is the deprecated alias, and a
+        # STATED disagreement between the two raises rather than picking
+        # one silently (config._harness_types).
+        harness=resolve_spec_harness(spec),
+        harness_key_is_legacy=uses_legacy_harness_key(spec),
+        # RESIDENCY — does the daemon outlive its work? Absent/null
+        # defaults to "resident" (the fleet posture; v4 step 6 —
+        # config._residency_types explains why this NEW axis is
+        # defaulted while the red-start map exists).
+        residency=resolve_spec_residency(spec),
         # spec.access REMOVED 2026-06-23 — host access + cwd are declared
         # explicitly via apptainer.binds + spec.workdir (SSoT). A spec still
         # carrying `access:` is rejected loud in _validation.validate_raw.
@@ -456,7 +424,6 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         startup_prompts=startup_prompts,
         exclude_hooks=exclude_hooks,
         exclude_skills=exclude_skills,
-        context_management=parse_context_management(spec),
         listen=parse_listen(spec),
         extensions=parse_extensions(spec),
         mcp_servers=mcp_servers,

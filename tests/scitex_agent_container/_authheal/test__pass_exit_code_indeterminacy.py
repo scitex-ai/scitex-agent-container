@@ -143,3 +143,51 @@ def test_the_sessionless_count_survives_a_clean_exit() -> None:
     counted = outcome.counts()
     # Assert
     assert counted[Verdict.UNOBSERVED.value] == 92
+
+
+# --- the RENDERED populations ------------------------------------------
+# exit_code() and the printed summary must be driven by the SAME split, or the
+# command contradicts itself. Measured 2026-08-16 on this host: a pass exited 0
+# while printing "this pass therefore CANNOT report a clean fleet" about 100
+# sessionless agents. The verdict had been fixed months earlier; the narration
+# still counted EVERY UNOBSERVED. These pin the two populations the CLI renders
+# separately, so the alarming banner can never again describe a clean pass.
+
+
+def test_sessionless_reports_are_not_this_passs_indeterminacy() -> None:
+    """The banner population must be empty when nothing was truly unreadable."""
+    # Arrange
+    outcome = PassOutcome(reports=tuple(_sessionless(f"a{i}") for i in range(100)))
+    # Act
+    indeterminate = outcome.indeterminate()
+    # Assert
+    assert indeterminate == ()
+
+
+def test_an_unreadable_pane_is_this_passs_indeterminacy() -> None:
+    """A live-but-unreadable pane is the real blind spot and must be named."""
+    # Arrange
+    outcome = PassOutcome(reports=(_sessionless("idle"), _unreadable("live")))
+    # Act
+    names = tuple(r.name for r in outcome.indeterminate())
+    # Assert
+    assert names == ("live",)
+
+
+def test_the_two_rendered_populations_partition_every_unobserved() -> None:
+    """Exhaustive AND disjoint: no report may vanish, none may be printed twice.
+
+    Comparing the concatenation to the whole pins both at once — an overlap
+    makes it longer, a gap makes it shorter.
+    """
+    # Arrange
+    outcome = PassOutcome(
+        reports=(_sessionless("idle1"), _unreadable("live1"), _sessionless("idle2"))
+    )
+    unseen = outcome.of(Verdict.UNOBSERVED)
+    # Act
+    rendered = outcome.indeterminate() + tuple(
+        r for r in unseen if r.reason == "no-session"
+    )
+    # Assert
+    assert sorted(r.name for r in rendered) == sorted(r.name for r in unseen)

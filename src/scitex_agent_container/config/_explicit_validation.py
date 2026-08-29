@@ -69,6 +69,19 @@ def _is_present(spec: dict, path: str) -> bool:
     return True
 
 
+def _satisfied(spec: dict, field: RequiredField) -> bool:
+    """True when the spec declares ``field`` under EITHER of its spellings.
+
+    A field carrying a ``legacy_path`` was renamed, and the older name is
+    still honoured — so a spec that wrote the old key HAS written the
+    field. Reporting it missing would demand both spellings of one
+    declaration, which is not what the red-start ruling asks for.
+    """
+    if _is_present(spec, field.path):
+        return True
+    return bool(field.legacy_path) and _is_present(spec, field.legacy_path)
+
+
 def _missing_fields(doc: dict) -> list[RequiredField]:
     spec = doc.get("spec")
     if not isinstance(spec, dict):
@@ -79,7 +92,7 @@ def _missing_fields(doc: dict) -> list[RequiredField]:
     return [
         field
         for field in required_fields_for_kind(kind)
-        if not _is_present(spec, field.path)
+        if not _satisfied(spec, field)
     ]
 
 

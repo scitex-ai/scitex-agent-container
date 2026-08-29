@@ -36,24 +36,24 @@ def _declared_names() -> frozenset[str]:
 
 
 def test_no_tabled_row_names_an_undeclared_job() -> None:
-    # Arrange — a row's DECLARED name is `old` while it is held and `new`
-    # once it has been cut over. A row naming neither is a row that
-    # migrates something no provider offers.
+    # Arrange — every row's DECLARED name is `new`, held or not. A row
+    # naming a job no provider offers is a row that migrates nothing.
     declared = _declared_names()
     # Act
-    orphans = [
-        r.local
-        for r in _renames.RENAMES
-        if (r.old if r.held else r.new) not in declared
-    ]
+    orphans = [r.local for r in _renames.RENAMES if r.new not in declared]
     # Assert
     assert orphans == []
 
 
 def test_every_declared_job_has_a_row() -> None:
-    # Arrange — a job added without a row would never migrate.
-    tabled = frozenset(r.new for r in _renames.RENAMES) | frozenset(
-        r.old for r in _renames.RENAMES
+    # Arrange — a job added without a row would never migrate. A job BORN
+    # canonical has nothing to migrate and cannot have a row at all
+    # (Rename rejects old == new), so it must be accounted for explicitly
+    # in BORN_CANONICAL rather than by silently shrinking this guard.
+    tabled = (
+        frozenset(r.new for r in _renames.RENAMES)
+        | frozenset(r.old for r in _renames.RENAMES)
+        | _renames.BORN_CANONICAL
     )
     # Act
     uncovered = _declared_names() - tabled
@@ -61,25 +61,63 @@ def test_every_declared_job_has_a_row() -> None:
     assert uncovered == frozenset()
 
 
-def test_a_held_job_still_declares_its_legacy_name() -> None:
-    # Arrange — the invariant stopping the CLI from reporting a running
-    # refresher as absent: a held spec must keep the name its unit has.
+def test_born_canonical_names_are_actually_declared() -> None:
+    # Arrange — the exemption must not outlive the job. A stale entry here
+    # would silently widen the guard above for a name nothing declares.
+    # Act
+    orphans = _renames.BORN_CANONICAL - _declared_names()
+    # Assert
+    assert orphans == frozenset()
+
+
+def test_no_born_canonical_name_also_has_a_rename_row() -> None:
+    # Arrange — the two claims are contradictory: a job cannot both have
+    # been born under the canonical name and have a legacy unit to migrate
+    # away from. Overlap means one of them is wrong.
+    tabled_new = frozenset(r.new for r in _renames.RENAMES)
+    # Act
+    contradictory = _renames.BORN_CANONICAL & tabled_new
+    # Assert
+    assert contradictory == frozenset()
+
+
+def test_born_canonical_names_carry_no_legacy_prefix() -> None:
+    # Arrange — "born canonical" is a claim about the NAME. A `sac.*` name
+    # in this set would be asserting the opposite of what the set means.
+    # Act
+    legacy = [n for n in _renames.BORN_CANONICAL if n.startswith("sac.")]
+    # Assert
+    assert legacy == []
+
+
+def test_a_held_row_declares_its_new_name_so_install_can_resolve_it() -> None:
+    # Arrange — THIS INVARIANT WAS INVERTED 2026-08-19, deliberately. It
+    # used to say a HELD row must still declare its LEGACY name, to stop
+    # the CLI reporting a running refresher as absent. That protected a
+    # real hazard and made the cutover unreachable: the migration's
+    # install step delegates BY THE NEW CANONICAL NAME, and scitex-dev
+    # resolves only names a JobSpec DECLARES —
+    #     $ sac dev timer install scitex-agent-container-accounts-refresh
+    #     no job named 'scitex-agent-container-accounts-refresh' here
+    # so install-new could never run while the spec was held. The spec
+    # leads and the unit follows; `hold` still gates the HOST cutover.
     held = [r for r in _renames.RENAMES if r.held]
     declared = _declared_names()
     # Act
-    mismatched = [r.local for r in held if r.old not in declared]
+    unresolvable = [r.local for r in held if r.new not in declared]
     # Assert
-    assert mismatched == []
+    assert unresolvable == []
 
 
-def test_a_held_job_does_not_yet_declare_its_new_name() -> None:
-    # Arrange
-    held = [r for r in _renames.RENAMES if r.held]
+def test_no_row_still_declares_its_legacy_name() -> None:
+    # Arrange — the guard the inversion above must not lose: nothing may
+    # regress to the legacy `sac.*` prefix, whose dot becomes a dot in the
+    # derived unit filename (PS-226).
     declared = _declared_names()
     # Act
-    premature = [r.local for r in held if r.new in declared]
+    regressed = [r.local for r in _renames.RENAMES if r.old in declared]
     # Assert
-    assert premature == []
+    assert regressed == []
 
 
 def test_every_tabled_kind_is_one_the_real_validator_accepts() -> None:
@@ -96,11 +134,7 @@ def test_the_tabled_kind_matches_what_the_spec_declares() -> None:
     # Arrange
     by_name = {j.name: j for j in provide_jobs()}
     # Act
-    wrong = [
-        r.local
-        for r in _renames.RENAMES
-        if by_name[r.old if r.held else r.new].kind != r.kind
-    ]
+    wrong = [r.local for r in _renames.RENAMES if by_name[r.new].kind != r.kind]
     # Assert
     assert wrong == []
 

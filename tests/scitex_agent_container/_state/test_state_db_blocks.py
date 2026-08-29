@@ -11,36 +11,18 @@ assertion per test.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Iterator
+import time
+
 
 import pytest
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import (
     block_send,
+    ensure_comms_blocks_table,
     has_block,
+    open_blocks_store,
     unblock_send,
 )
-
-
-@pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
-    db = tmp_path / "state.db"
-    saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
-    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
-    try:
-        yield db
-    finally:
-        state_db.DEFAULT_DB_PATH = saved_default
-        if saved_env is None:
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
-        else:
-            os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
 
 
 # ---------------------------------------------------------------------------
@@ -48,43 +30,42 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
 # ---------------------------------------------------------------------------
 
 
-def test_block_then_has_block_returns_true(isolated_state: Path) -> None:
+def test_block_then_has_block_returns_true(pg_schema: str) -> None:
     # Arrange
-    block_send(sender="alice", target="lead", db_path=isolated_state)
+    block_send(sender="alice", target="lead")
     # Act
-    flag = has_block(sender="alice", target="lead", db_path=isolated_state)
+    flag = has_block(sender="alice", target="lead")
     # Assert
     assert flag is True
 
 
-def test_has_block_returns_false_for_absent_pair(isolated_state: Path) -> None:
+def test_has_block_returns_false_for_absent_pair(pg_schema: str) -> None:
     # Arrange — no block_send.
     # Act
-    flag = has_block(sender="ghost", target="lead", db_path=isolated_state)
+    flag = has_block(sender="ghost", target="lead")
     # Assert
     assert flag is False
 
 
-def test_block_is_directional(isolated_state: Path) -> None:
+def test_block_is_directional(pg_schema: str) -> None:
     # Arrange — block alice → lead. The REVERSE direction
     # (lead → alice) must be unaffected.
-    block_send(sender="alice", target="lead", db_path=isolated_state)
+    block_send(sender="alice", target="lead")
     # Act
-    reverse_flag = has_block(sender="lead", target="alice", db_path=isolated_state)
+    reverse_flag = has_block(sender="lead", target="alice")
     # Assert
     assert reverse_flag is False
 
 
-def test_block_is_idempotent(isolated_state: Path) -> None:
-    # Arrange — block twice. The row's timestamp must not bump on
-    # the second call (mirrors grant_send semantics).
-    block_send(sender="alice", target="lead", note="first", db_path=isolated_state)
+def test_block_is_idempotent(pg_schema: str) -> None:
+    # Arrange
+    block_send(sender="alice", target="lead", note="first")
     # Act
-    block_send(sender="alice", target="lead", note="second", db_path=isolated_state)
-    # Assert — still exactly one row's worth of state visible via
-    # has_block; the test pins the public observable, not the row
-    # count (idempotency is the contract).
-    assert has_block(sender="alice", target="lead", db_path=isolated_state)
+    block_send(sender="alice", target="lead", note="second")
+    # Assert — still blocked. The TIMESTAMP half of idempotence, which this
+    # test's comment used to claim and never checked, is pinned separately
+    # below where it can actually fail.
+    assert has_block(sender="alice", target="lead")
 
 
 # ---------------------------------------------------------------------------
@@ -92,29 +73,29 @@ def test_block_is_idempotent(isolated_state: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unblock_removes_the_block_row(isolated_state: Path) -> None:
+def test_unblock_removes_the_block_row(pg_schema: str) -> None:
     # Arrange
-    block_send(sender="alice", target="lead", db_path=isolated_state)
-    unblock_send(sender="alice", target="lead", db_path=isolated_state)
+    block_send(sender="alice", target="lead")
+    unblock_send(sender="alice", target="lead")
     # Act
-    flag = has_block(sender="alice", target="lead", db_path=isolated_state)
+    flag = has_block(sender="alice", target="lead")
     # Assert
     assert flag is False
 
 
-def test_unblock_returns_true_when_row_existed(isolated_state: Path) -> None:
+def test_unblock_returns_true_when_row_existed(pg_schema: str) -> None:
     # Arrange
-    block_send(sender="alice", target="lead", db_path=isolated_state)
+    block_send(sender="alice", target="lead")
     # Act
-    removed = unblock_send(sender="alice", target="lead", db_path=isolated_state)
+    removed = unblock_send(sender="alice", target="lead")
     # Assert
     assert removed is True
 
 
-def test_unblock_returns_false_when_row_absent(isolated_state: Path) -> None:
+def test_unblock_returns_false_when_row_absent(pg_schema: str) -> None:
     # Arrange — no prior block.
     # Act
-    removed = unblock_send(sender="ghost", target="lead", db_path=isolated_state)
+    removed = unblock_send(sender="ghost", target="lead")
     # Assert
     assert removed is False
 
@@ -124,17 +105,97 @@ def test_unblock_returns_false_when_row_absent(isolated_state: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_block_empty_sender_raises(isolated_state: Path) -> None:
+def test_block_empty_sender_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
     with pytest.raises(ValueError, match="non-empty"):
-        block_send(sender="", target="lead", db_path=isolated_state)
+        block_send(sender="", target="lead")
 
 
-def test_block_empty_target_raises(isolated_state: Path) -> None:
+def test_block_empty_target_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
     with pytest.raises(ValueError, match="non-empty"):
-        block_send(sender="alice", target="", db_path=isolated_state)
+        block_send(sender="alice", target="")
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL semantics (2026-08-20): the store hides, it does not delete
+# ---------------------------------------------------------------------------
+#
+# `unblock_send` used to DELETE. The store has no delete — it has `hide`, which
+# is the better primitive here (who unblocked whom, and when, survives) but
+# introduces a state SQLite did not have: a cleared pair is HIDDEN, not ABSENT.
+# These pin the three-value branch that distinguishes them.
+
+
+def _created_at(sender: str, target: str) -> float:
+    """The stored timestamp, read back through the store the module writes to."""
+    store = open_blocks_store()
+    try:
+        record = store.get({"sender_name": sender, "target_name": target})
+        return float(record.values["created_at"])
+    finally:
+        store.close()
+
+
+def test_reblocking_does_not_bump_the_timestamp(pg_schema: str) -> None:
+    """The documented idempotence: "re-blocking leaves the row untouched".
+
+    Falsifiable, and it is the one the old test only claimed: make the visible
+    branch write instead of returning early and this goes RED.
+    """
+    # Arrange
+    block_send(sender="alice", target="lead")
+    first = _created_at("alice", "lead")
+    time.sleep(0.01)
+    # Act
+    block_send(sender="alice", target="lead")
+    # Assert
+    assert _created_at("alice", "lead") == first
+
+
+def test_reblocking_after_an_unblock_does_bump_the_timestamp(pg_schema: str) -> None:
+    """An unblock followed by a block is a NEW decision, not a repeat.
+
+    Dating it to the superseded block would misreport when the receiver made
+    it. This is the case that separates "hidden" from "visible": collapse the
+    two and one of these two tests must fail.
+    """
+    # Arrange
+    block_send(sender="alice", target="lead")
+    first = _created_at("alice", "lead")
+    unblock_send(sender="alice", target="lead")
+    time.sleep(0.01)
+    # Act
+    block_send(sender="alice", target="lead")
+    # Assert
+    assert _created_at("alice", "lead") > first
+
+
+def test_unblocking_hides_the_record_rather_than_destroying_it(pg_schema: str) -> None:
+    """The audit trail a DELETE destroyed."""
+    # Arrange
+    block_send(sender="alice", target="lead")
+    unblock_send(sender="alice", target="lead")
+    # Act
+    store = open_blocks_store()
+    try:
+        hidden = store.is_hidden({"sender_name": "alice", "target_name": "lead"})
+    finally:
+        store.close()
+    # Assert — True means "present but hidden"; None would mean it was erased.
+    assert hidden is True
+
+
+def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> None:
+    """The SQLite version returned None. Naming where the state went is more
+    useful: an operator can check it instead of assuming it."""
+    # Arrange
+    expected_scheme = "postgres"
+    # Act
+    locator = ensure_comms_blocks_table()
+    # Assert
+    assert expected_scheme in locator

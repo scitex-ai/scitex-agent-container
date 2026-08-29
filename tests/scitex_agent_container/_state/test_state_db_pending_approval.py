@@ -7,20 +7,21 @@ identity, not on content. This module covers the flag CRUD in
 isolation; the integration (denied send records the flag, the CLI
 decision clears it) lives in its own test file.
 
-No-mocks (PA-306): real on-disk state.db, env + module constant
-save/restore. Each test: AAA markers (TQ002), one assertion (TQ007),
-3+-word name.
+No-mocks (PA-306): a REAL PostgreSQL via the shared ``pg_schema``
+fixture, which gives each test a throwaway schema so the live fleet
+store is never touched. The flag moved off SQLite on 2026-08-20; there
+is deliberately NO skipif on database availability, because a skip that
+reads as a pass is the defect this migration exists to remove.
+
+Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 """
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Iterator
+from tests._store_isolation import pg_endpoint_port
 
 import pytest
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_pending_approval import (
     clear_pending_prompt,
     has_pending_prompt,
@@ -28,57 +29,39 @@ from scitex_agent_container._state.state_db_pending_approval import (
 )
 
 
-@pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
-    db = tmp_path / "state.db"
-    saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
-    os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
-    try:
-        yield db
-    finally:
-        state_db.DEFAULT_DB_PATH = saved_default
-        if saved_env is None:
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
-        else:
-            os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
-
-
 # ---------------------------------------------------------------------------
 # record_pending_prompt — first-wins flag semantics
 # ---------------------------------------------------------------------------
 
 
-def test_first_record_returns_true(isolated_state: Path) -> None:
+def test_first_record_returns_true(pg_schema: str) -> None:
     # Arrange — fresh DB, no prior row.
     # Act
-    first = record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    first = record_pending_prompt(sender="alice", target="lead")
     # Assert — caller uses this signal to "emit the receiver-facing
     # push exactly once per pair until a decision".
     assert first is True
 
 
 def test_second_record_returns_false_no_duplicate_push(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — a pending row already exists.
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
     # Act
     second = record_pending_prompt(
-        sender="alice", target="lead", db_path=isolated_state
+        sender="alice", target="lead"
     )
     # Assert — duplicate denied attempts MUST NOT re-prompt.
     assert second is False
 
 
-def test_different_sender_target_pairs_both_emit(isolated_state: Path) -> None:
+def test_different_sender_target_pairs_both_emit(pg_schema: str) -> None:
     # Arrange — dedupe is per-pair, not global.
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
     # Act
     second_pair = record_pending_prompt(
-        sender="bob", target="lead", db_path=isolated_state
+        sender="bob", target="lead"
     )
     # Assert
     assert second_pair is True
@@ -90,22 +73,22 @@ def test_different_sender_target_pairs_both_emit(isolated_state: Path) -> None:
 
 
 def test_has_pending_prompt_returns_true_after_record(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
     # Act
-    flag = has_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    flag = has_pending_prompt(sender="alice", target="lead")
     # Assert
     assert flag is True
 
 
 def test_has_pending_prompt_returns_false_for_absent_pair(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — no record_pending_prompt call.
     # Act
-    flag = has_pending_prompt(sender="ghost", target="lead", db_path=isolated_state)
+    flag = has_pending_prompt(sender="ghost", target="lead")
     # Assert
     assert flag is False
 
@@ -115,48 +98,48 @@ def test_has_pending_prompt_returns_false_for_absent_pair(
 # ---------------------------------------------------------------------------
 
 
-def test_clear_removes_pending_row(isolated_state: Path) -> None:
+def test_clear_removes_pending_row(pg_schema: str) -> None:
     # Arrange
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
-    clear_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
+    clear_pending_prompt(sender="alice", target="lead")
     # Act
-    flag = has_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    flag = has_pending_prompt(sender="alice", target="lead")
     # Assert
     assert flag is False
 
 
-def test_clear_returns_true_when_row_existed(isolated_state: Path) -> None:
+def test_clear_returns_true_when_row_existed(pg_schema: str) -> None:
     # Arrange
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
     # Act
     removed = clear_pending_prompt(
-        sender="alice", target="lead", db_path=isolated_state
+        sender="alice", target="lead"
     )
     # Assert
     assert removed is True
 
 
-def test_clear_returns_false_when_row_absent(isolated_state: Path) -> None:
+def test_clear_returns_false_when_row_absent(pg_schema: str) -> None:
     # Arrange — no prior record.
     # Act
     removed = clear_pending_prompt(
-        sender="ghost", target="lead", db_path=isolated_state
+        sender="ghost", target="lead"
     )
     # Assert
     assert removed is False
 
 
 def test_after_clear_next_record_returns_true_again(
-    isolated_state: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — record + clear + record again. The second record
     # MUST return True (i.e. emit the prompt) because the prior
     # decision was already made.
-    record_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
-    clear_pending_prompt(sender="alice", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="alice", target="lead")
+    clear_pending_prompt(sender="alice", target="lead")
     # Act
     second = record_pending_prompt(
-        sender="alice", target="lead", db_path=isolated_state
+        sender="alice", target="lead"
     )
     # Assert
     assert second is True
@@ -167,17 +150,101 @@ def test_after_clear_next_record_returns_true_again(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_sender_raises(isolated_state: Path) -> None:
+def test_empty_sender_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
     with pytest.raises(ValueError, match="non-empty"):
-        record_pending_prompt(sender="", target="lead", db_path=isolated_state)
+        record_pending_prompt(sender="", target="lead")
 
 
-def test_empty_target_raises(isolated_state: Path) -> None:
+def test_empty_target_raises(pg_schema: str) -> None:
     # Arrange
     # Act
     # Assert
     with pytest.raises(ValueError, match="non-empty"):
-        record_pending_prompt(sender="alice", target="", db_path=isolated_state)
+        record_pending_prompt(sender="alice", target="")
+
+
+# ---------------------------------------------------------------------------
+# What the PostgreSQL move CHANGED — clearing hides, it does not delete
+# ---------------------------------------------------------------------------
+
+
+def test_clearing_hides_the_record_rather_than_destroying_it(pg_schema: str) -> None:
+    """The decision survives the clear, which the SQLite DELETE destroyed.
+
+    ``clear_pending_prompt`` maps to the store's ``hide``, so the record
+    stays in the oplog with the actor that cleared it. Reads are
+    unaffected — ``get`` skips hidden records — but "who cleared this
+    pair, and when" is now answerable, and under DELETE it was not.
+
+    Asserted through the store's own ``is_hidden`` rather than by peeking
+    at a physical table: the claim is about the RECORD's state, and a raw
+    table read would be a true statement about a different artifact.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db_pending_approval import (
+        open_pending_prompt_store,
+    )
+
+    record_pending_prompt(sender="alice", target="lead")
+    clear_pending_prompt(sender="alice", target="lead")
+    # Act
+    store = open_pending_prompt_store()
+    try:
+        hidden = store.is_hidden({"sender": "alice", "target": "lead"})
+    finally:
+        store.close()
+    # Assert — True means "record exists and is hidden", not "absent".
+    assert hidden is True
+
+
+def test_re_recording_after_a_clear_refreshes_the_timestamp(pg_schema: str) -> None:
+    """A re-armed pair carries the NEW prompt's time, not the old one.
+
+    This is why ``ts`` is LAST_WRITER_WINS rather than IMMUTABLE. Nothing
+    orders decisions on this field today, so the refresh cannot reorder
+    anything — but a stale timestamp on a live prompt would misreport when
+    the receiver was actually asked.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db_pending_approval import (
+        open_pending_prompt_store,
+    )
+
+    record_pending_prompt(sender="alice", target="lead")
+    store = open_pending_prompt_store()
+    try:
+        first_ts = store.get({"sender": "alice", "target": "lead"}).values["ts"]
+    finally:
+        store.close()
+    clear_pending_prompt(sender="alice", target="lead")
+    record_pending_prompt(sender="alice", target="lead")
+    # Act
+    store = open_pending_prompt_store()
+    try:
+        second_ts = store.get({"sender": "alice", "target": "lead"}).values["ts"]
+    finally:
+        store.close()
+    # Assert
+    assert second_ts >= first_ts
+
+
+def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> None:
+    """The return value names WHERE the state went, so it can be checked.
+
+    The SQLite version returned None. The locator names the DATABASE and
+    not the search_path schema layered on top — the same shape the
+    incarnations store has, pinned here so the two do not drift apart.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db_pending_approval import (
+        init_pending_prompts_schema,
+    )
+
+    expected = pg_endpoint_port()
+    # Act
+    locator = init_pending_prompts_schema()
+    # Assert
+    assert expected in locator

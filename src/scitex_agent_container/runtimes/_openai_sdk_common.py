@@ -1,7 +1,7 @@
 """Shared helpers for the ``openai-agents`` SDK runtime path.
 
 Sibling of :mod:`runtimes._sdk_common` for the ``openai`` agent SDK
-family (scitex-todo card ``openai-compat-2``; ``spec.provider: openai``
+harness (scitex-todo card ``openai-compat-2``; ``spec.harness: openai``
 — see :mod:`config._provider_types` for the two-axis naming-collision
 note). Mirrors the concern split established there:
 

@@ -25,6 +25,20 @@ import pytest
 from click.testing import CliRunner
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 @pytest.fixture
 def db_path(tmp_path: Path):
     """Isolated state.db location pinned via env, reloaded on teardown."""
@@ -62,7 +76,16 @@ def test_db_show_console_output_starts_with_state_db_header(db_path: Path):
     assert "sac state.db" in result.output
 
 
-def test_db_show_console_output_lists_instances_table_row(db_path: Path):
+def test_db_show_console_output_lists_no_table_row(db_path: Path):
+    """``sac db show`` has nothing to count, and must not invent a line.
+
+    It listed the ``instances`` row until 2026-08-28, then
+    ``channel_events``; both moved to the shared PostgreSQL store and
+    ``KNOWN_TABLES`` is empty. A printed ``instances 0`` would be the exact
+    wrong answer — it reads as "no agent has ever run here" while PostgreSQL
+    holds the fleet's whole lifecycle history — so the honest rendering
+    prints the header and no counts at all.
+    """
     # Arrange
     from scitex_agent_container.cli_pkg.db_group import db_show
 
@@ -70,7 +93,7 @@ def test_db_show_console_output_lists_instances_table_row(db_path: Path):
     # Act
     result = runner.invoke(db_show, [])
     # Assert
-    assert "instances" in result.output
+    assert "instances" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +116,7 @@ def test_db_show_json_payload_names_the_store_it_read(db_path: Path):
     # Act
     result = runner.invoke(db_show, ["--json"])
     # Assert
-    assert json.loads(result.output)["store"] == str(db_path)
+    assert json.loads(result.stdout)["store"] == str(db_path)
 
 
 def test_db_show_console_output_names_the_store_it_read(db_path: Path):
@@ -107,7 +130,25 @@ def test_db_show_console_output_names_the_store_it_read(db_path: Path):
     assert db_path.name in result.output
 
 
-def test_db_query_console_output_names_the_store_it_read(db_path: Path):
+def test_db_query_refuses_every_name_because_none_is_known(db_path: Path):
+    """``--table`` is a ``click.Choice(KNOWN_TABLES)`` over an EMPTY tuple.
+
+    Eight tests here drove ``--table instances`` (and, before it,
+    ``--table channel_events``) through the console, the JSON, the MCP
+    wrapper, the ``--where`` fragment and the empty-table rendering. All of
+    those tables moved to the shared PostgreSQL store on 2026-08-28, so the
+    verb can no longer name anything and every one of those renderings is
+    unreachable.
+
+    THE REFUSAL IS THE PROPERTY WORTH KEEPING, and it is not a formality:
+    had the names been left whitelisted, this command would print ``[]`` for
+    a table PostgreSQL is holding rows for, and an empty array reads as "this
+    agent has nothing" rather than "you are asking the wrong database".
+    ``sac agents list`` is the verb that answers the question this one used
+    to. The store-provenance guarantees those tests protected (the bare JSON
+    array, the MCP sibling ``store`` key) are exercised by ``db show``, which
+    still runs.
+    """
     # Arrange
     from scitex_agent_container.cli_pkg.db_group import db_query
 
@@ -115,105 +156,19 @@ def test_db_query_console_output_names_the_store_it_read(db_path: Path):
     # Act
     result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
     # Assert
-    assert "store:" in result.output
+    assert result.exit_code != 0
 
 
-def test_db_query_json_still_emits_a_bare_array(db_path: Path):
-    # Arrange: the published contract. Consumers index this result, so
-    # wrapping it would be a migration, not a rename.
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--json"])
-    # Assert
-    assert json.loads(result.stdout) == []
-
-
-def test_db_query_mcp_result_names_the_store(db_path: Path):
-    # Arrange: an MCP caller never sees the console rendering, so the
-    # provenance has to ride on the RESULT. Sibling key, not an envelope
-    # — and deliberately not stderr, which invoke_cli_json merges into
-    # stdout and which would make `data` unparseable.
-    from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
-
-    # Act
-    result = mcp_db_query(table="instances")
-    # Assert
-    assert result["store"] == str(db_path)
-
-
-def test_db_query_mcp_data_still_parses(db_path: Path):
-    # Arrange: the guard against "fixing" this with a stderr line again,
-    # which is what turns `data` into None for every agent.
-    from scitex_agent_container._mcp._tools._db import db_query as mcp_db_query
-
-    # Act
-    result = mcp_db_query(table="instances")
-    # Assert
-    assert result["data"] == []
-
-
-# ---------------------------------------------------------------------------
-# db query — --where branch + non-JSON renderings (lines 104, 124-132)
-# ---------------------------------------------------------------------------
-
-
-def test_db_query_empty_table_console_says_no_rows(db_path: Path):
-    # Arrange
+def test_db_query_refusal_names_the_offending_table(db_path: Path):
+    # Arrange — an operator who typed a table name needs to see WHICH name
+    # was refused, not just that something was.
     from scitex_agent_container.cli_pkg.db_group import db_query
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
     # Assert
-    assert "no rows" in result.output
-
-
-def test_db_query_console_output_includes_row_header_for_populated_table(
-    db_path: Path,
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    record_instance_start("agent-a", host="h")
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
-    # Assert
-    assert "row 0" in result.output
-
-
-def test_db_query_console_output_renders_row_name_key_value(db_path: Path):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    record_instance_start("agent-a", host="h")
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5"])
-    # Assert
-    assert "agent-a" in result.output
-
-
-def test_db_query_with_where_clause_filters_rows_in_json(db_path: Path):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    record_instance_start("keep-me", host="h")
-    record_instance_start("drop-me", host="h")
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(
-        db_query,
-        ["--table", "instances", "--where", "name='keep-me'", "--json"],
-    )
-    rows = json.loads(result.output)
-    # Assert
-    assert [r["name"] for r in rows] == ["keep-me"]
+    assert "instances" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +203,7 @@ def test_db_migrate_resolves_registry_dir_from_env_variable(
     try:
         # Act
         result = runner.invoke(db_migrate, ["--host", "h", "--json"])
-        body = json.loads(result.output)
+        body = json.loads(result.stdout)
         # Assert
         assert body == {"registry_dir": str(reg), "imported": 1, "skipped": 0}
     finally:
@@ -358,40 +313,39 @@ def test_db_clean_console_lists_crashed_counter_when_nonzero(
 # ---------------------------------------------------------------------------
 
 
-def test_db_export_dry_run_reports_row_counts_for_instances(db_path: Path):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+def test_db_export_dry_run_reports_an_empty_row_counts_map(db_path: Path):
+    """The dry run's counts map is empty, not a zero per table."""
+    # Arrange — no table to seed; see the module docstring.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
-    assert body["row_counts"]["instances"] == 1
+    assert body["row_counts"] == {}
 
 
 def test_db_export_dry_run_echoes_host_stamp_into_body(db_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h", "--dry-run"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["host"] == "h"
 
 
 def test_db_export_with_output_writes_json_blob_to_file(db_path: Path, tmp_path: Path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     out = tmp_path / "nested" / "dump.json"
     runner = CliRunner()
     # Act
@@ -405,10 +359,10 @@ def test_db_export_with_output_creates_parent_directory_on_disk(
     db_path: Path, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_db_channel import persist_event
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     out = tmp_path / "new-subdir" / "dump.json"
     runner = CliRunner()
     # Act
@@ -455,13 +409,10 @@ def switch_to_sink_db(tmp_path: Path):
 def test_db_import_reads_payload_from_filesystem_path(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
+    """The FILE-path branch still parses and succeeds, carrying nothing."""
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -471,21 +422,18 @@ def test_db_import_reads_payload_from_filesystem_path(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["instances"] == 1
+    assert body["inserted"] == {}
 
 
-def test_db_import_dry_run_json_reports_would_insert_counts(
+def test_db_import_dry_run_json_reports_an_empty_would_insert_map(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
+    """The dry run's preview is empty, not a zero per table."""
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -495,21 +443,19 @@ def test_db_import_dry_run_json_reports_would_insert_counts(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
-    assert body["would_insert"]["instances"] == 1
+    assert body["would_insert"] == {}
 
 
 def test_db_import_dry_run_json_flags_payload_as_dry_run(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -519,7 +465,7 @@ def test_db_import_dry_run_json_flags_payload_as_dry_run(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run", "--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["dry_run"] is True
 
@@ -528,12 +474,10 @@ def test_db_import_dry_run_console_reports_would_insert_total(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -547,16 +491,14 @@ def test_db_import_dry_run_console_reports_would_insert_total(
     assert "would-insert=" in result.output
 
 
-def test_db_import_dry_run_console_lists_instances_table_count(
+def test_db_import_dry_run_console_lists_no_table_count(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
+    """The console rendering prints no per-table line, for the same reason
+    ``db show`` does not: a printed zero would be a claim about the fleet."""
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -567,19 +509,17 @@ def test_db_import_dry_run_console_lists_instances_table_count(
     # Act
     result = runner.invoke(db_import, [str(dump), "--dry-run"])
     # Assert
-    assert "instances" in result.output
+    assert "instances" not in result.output
 
 
 def test_db_import_console_output_reports_inserted_total(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
+    from scitex_agent_container._state.state_db_channel import persist_event
 
-    record_instance_start("x", host="h")
+    persist_event(target="x", event={"from_agent": "p", "kind": "message", "ts": 1.0})
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -593,16 +533,13 @@ def test_db_import_console_output_reports_inserted_total(
     assert "inserted=" in result.output
 
 
-def test_db_import_console_output_lists_instances_inserted_count(
+def test_db_import_console_output_lists_no_inserted_count(
     db_path: Path, switch_to_sink_db, tmp_path: Path
 ):
+    """Same for the committed import."""
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     dump = tmp_path / "dump.json"
     dump.write_text(json.dumps(payload))
@@ -613,4 +550,5 @@ def test_db_import_console_output_lists_instances_inserted_count(
     # Act
     result = runner.invoke(db_import, [str(dump)])
     # Assert
-    assert "instances" in result.output
+    assert "instances" not in result.output
+

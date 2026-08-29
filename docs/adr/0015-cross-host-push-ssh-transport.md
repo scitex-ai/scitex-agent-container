@@ -79,7 +79,12 @@ Concretely:
 3. **Receiver-side ACL: unchanged.** The destination's
    ``NodeAuthMiddleware`` admits the request as an administrative caller
    (``authenticated_node=None`` because the *destination's* host bearer
-   was presented, not a per-node token). ``check_send_acl`` then runs
+   was presented, not a per-node token). *(2026-08-28: the per-node
+   token feature was removed having never been armed — see ADR-0022
+   open question 8. `BearerAuthMiddleware` is now the whole perimeter
+   and every caller is the administrative one, so this paragraph's
+   conclusion is unchanged and its "not a per-node token" caveat is
+   now unconditional.)* ``check_send_acl`` then runs
    against the original ``metadata.from_agent`` carried in the body,
    gating on the destination's local ``comms_grants`` table. Cross-group
    denials fire at the receiving host. The Stage-2 ACL work in this PR

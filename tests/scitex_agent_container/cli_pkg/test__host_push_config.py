@@ -150,7 +150,7 @@ def test_json_output_carries_the_exit_code(cfg_path, subprocess_shim):
         host_push_config, ["--check", "--no-tokens", "spartan", "--json"]
     )
     # Assert
-    assert json.loads(result.output)["exit_code"] == 1
+    assert json.loads(result.stdout)["exit_code"] == 1
 
 
 def test_all_visits_only_concrete_non_centre_peers(
@@ -168,7 +168,7 @@ def test_all_visits_only_concrete_non_centre_peers(
     subprocess_shim.install("ssh", stdout=_ABSENT_BLOCK)
     # Act
     result = CliRunner().invoke(host_push_config, ["--check", "--all", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert [p["peer"] for p in payload["peers"]] == ["mba", "spartan"]
 
@@ -528,7 +528,7 @@ def test_check_json_carries_the_token_verdict(cfg_path, master_tokens, subproces
     )
     # Act
     result = CliRunner().invoke(host_push_config, ["--check", "spartan", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["tokens"][0]["verdict"] == "tokens-drifted"
 

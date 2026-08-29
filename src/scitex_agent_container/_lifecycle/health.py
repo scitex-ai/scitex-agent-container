@@ -118,11 +118,15 @@ def _check_sdk_alive(
 def _is_tui_runtime(config: AgentConfig) -> bool:
     """True iff this spec runs under the TUI runtime (the default when unset).
 
-    Mirrors ``_runtime_select._get_runtime``'s mapping — ``""`` and ``"tui"``
-    both mean TuiSessionRuntime — so the gate covers exactly the agents that
-    HAVE a host-side turn bridge.
+    Mirrors ``_runtime_select._get_runtime``'s mapping — every spelling
+    the harness registry's TUI entry claims (``""`` and ``"tui"``, v4
+    step-4 derivation) means TuiSessionRuntime — so the gate covers
+    exactly the agents that HAVE a host-side turn bridge.
     """
-    return (getattr(config, "runtime", "") or "tui").strip() in ("", "tui")
+    from ..config._harness_registry import CLAUDE_CODE_TUI, runtime_spellings_for
+
+    spelling = (getattr(config, "runtime", "") or "tui").strip()
+    return spelling in runtime_spellings_for(CLAUDE_CODE_TUI)
 
 
 def _gate_on_turn_bridge(config: AgentConfig, healthy_message: str) -> tuple[bool, str]:

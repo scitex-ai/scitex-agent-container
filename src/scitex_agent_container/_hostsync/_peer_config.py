@@ -26,6 +26,19 @@ needs its own canonical name (pins its state.db identity),
 and its route BACK to the master — nothing else. Anything more would be
 topology duplicated across N hosts, which is the drift machine this
 subsystem exists to retire.
+
+``sync_on_start`` IS STILL EMITTED, AND IT IS INERT ON CURRENT sac
+------------------------------------------------------------------
+The startup sync it disables was deleted on 2026-08-28 along with
+``sac registry sync``: the ADR-0014 directory moved to the shared
+PostgreSQL store, so there is no per-host copy to converge and nothing to
+fetch at boot. No current reader consults the flag.
+
+It is kept because these files are written ONTO OTHER HOSTS, which may be
+running an older sac than the one rendering them — and on those builds the
+flag is exactly the guard ADR-0020 added it for. Dropping it would silently
+re-arm the pre-bind hang on the one class of host that cannot be checked
+from here. It should be removed once no peer runs a build that reads it.
 """
 
 from __future__ import annotations

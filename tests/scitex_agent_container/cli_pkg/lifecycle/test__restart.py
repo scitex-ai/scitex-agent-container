@@ -31,7 +31,23 @@ import pytest
 from click.testing import CliRunner
 
 import scitex_agent_container.cli_pkg.lifecycle._restart as restart_mod
+import scitex_agent_container.cli_pkg.lifecycle._restart_local as restart_local_mod
 from scitex_agent_container.cli_pkg.lifecycle._restart import restart
+from scitex_agent_container.cli_pkg.lifecycle._restart_verify import SessionObservation
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +84,20 @@ def _isolate_runtime_root(tmp_path):
     directions: the legacy happy-path tests get a guaranteed-empty root (no
     marker either side → the verdict abstains → their historical success is
     preserved), and no test can ever touch the operator's real runtime dir.
+
+    RESTORING THE ENV VAR IS NOT ENOUGH, and the teardown reload below is not
+    decoration. ``_runners._session_state.DEFAULT_STATE_ROOT`` is a MODULE
+    CONSTANT evaluated once, at import — and that import happens lazily, from
+    inside the first test that reads a run marker, i.e. while this fixture
+    has the env var pointed at a pytest tmp dir. Dropping the env var
+    afterwards therefore un-pinned nothing: the constant stayed at the first
+    test's ``tmp_path`` for the rest of the worker, and the suite's own state
+    floor flagged it on the teardown of EVERY subsequent test in this file
+    (69 such errors, all of them this one cause). Re-importing AFTER the
+    restore is what actually puts the constant back.
     """
+    import importlib
+
     from scitex_agent_container._runtime_paths import RUNTIME_DIR_ENV
 
     root = tmp_path / "runtime-root"
@@ -82,16 +111,32 @@ def _isolate_runtime_root(tmp_path):
             os.environ.pop(RUNTIME_DIR_ENV, None)
         else:
             os.environ[RUNTIME_DIR_ENV] = saved
+        # Order matters: the env var is restored FIRST, then the module is
+        # re-executed, so the constant is re-derived from the real value.
+        import scitex_agent_container._runners._session_state as _session_state
+
+        importlib.reload(_session_state)
 
 
 @contextmanager
 def _swap(name: str, fn: Callable) -> Iterator[None]:
-    saved = getattr(restart_mod, name)
-    setattr(restart_mod, name, fn)
+    """Swap a collaborator in BOTH restart modules (v4 step 5 split).
+
+    The local leg (``_restart_locally`` / ``_restart_via_broker``) moved
+    into ``_restart_local`` and reads its collaborators from ITS OWN
+    module globals, while the command orchestration stays in
+    ``_restart``. Swapping on whichever of the two carries the name
+    keeps every existing test meaningful across the split.
+    """
+    targets = [m for m in (restart_mod, restart_local_mod) if hasattr(m, name)]
+    saved = [(m, getattr(m, name)) for m in targets]
+    for m in targets:
+        setattr(m, name, fn)
     try:
         yield
     finally:
-        setattr(restart_mod, name, saved)
+        for m, value in saved:
+            setattr(m, name, value)
 
 
 class _FakeCfg:
@@ -434,7 +479,7 @@ def test_cross_host_restart_json_envelope_marks_dispatched(
     runner = CliRunner()
     # Act
     result = runner.invoke(restart, ["zeta", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("dispatched") is True
 
@@ -464,7 +509,7 @@ def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim
     runner = CliRunner()
     # Act
     with _swap("agent_restart", lambda name: called.append(name)):
-        result = runner.invoke(restart, ["solo", "-y"])
+        runner.invoke(restart, ["solo", "-y"])
     # Assert — local path taken (agent_restart called), no ssh dispatched.
     assert called == ["solo"] and _ssh_invocations(ssh_shim) == []
 
@@ -479,7 +524,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
     # Act
     with _swap("agent_restart", lambda _name: None):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert — JSON envelope reports the local (non-dispatched) restart.
     assert envelope.get("dispatched") is False and envelope.get("restarted") is True
 
@@ -494,7 +539,7 @@ def test_local_restart_failure_json_envelope_carries_error(
     # Act
     with _swap("agent_restart", _boom):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert "boom" in envelope.get("error", "")
 
@@ -727,7 +772,7 @@ def test_multiple_names_json_emits_array():
     # Act
     with _swap("_restart_one", _ok_restart_one):
         result = runner.invoke(restart, ["alpha", "beta", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — multiple names aggregate into a JSON array.
     assert isinstance(payload, list) and len(payload) == 2
 
@@ -762,7 +807,7 @@ def test_all_flag_json_emits_array():
         _swap("_restart_one", _ok_restart_one),
     ):
         result = runner.invoke(restart, ["--all", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — --all always emits an array, even for a single enumerated agent.
     assert isinstance(payload, list) and len(payload) == 1
 
@@ -848,7 +893,7 @@ def test_single_name_json_stays_bare_object():
     # Act
     with _swap("agent_restart", lambda _name: None):
         result = runner.invoke(restart, ["alpha", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert
     assert isinstance(payload, dict) and payload.get("name") == "alpha"
 
@@ -964,7 +1009,7 @@ def test_all_running_json_emits_array():
         _swap("_restart_one", _ok_restart_one),
     ):
         result = runner.invoke(restart, ["--all-running", "-y", "--json"])
-    payload = _json.loads(result.output.strip().splitlines()[-1])
+    payload = _json.loads(result.stdout)
     # Assert — a batch selection flag always emits an array.
     assert isinstance(payload, list) and len(payload) == 1
 
@@ -1155,7 +1200,7 @@ def test_in_sif_without_a_listen_url_names_the_missing_env_var(
     runner = CliRunner()
     # Act
     result = runner.invoke(restart, ["broker-me", "-y", "--json"])
-    payload = json.loads(result.output.strip().splitlines()[-1])
+    payload = json.loads(result.stdout)
     # Assert — the operator is told WHICH knob is missing.
     assert "SAC_LISTEN_BASE_URL" in payload.get("error", "")
 
@@ -1168,6 +1213,18 @@ def test_in_sif_without_a_listen_url_names_the_missing_env_var(
 # the restart collaborator is a REAL function that either rewrites the marker
 # (a genuine restart), leaves it alone (the P0's no-op) or deletes it (a stop
 # whose start leg never came back).
+#
+# THE MARKER IS NECESSARY, NEVER SUFFICIENT (P0 2026-08-14). It is written by
+# the same start path these tests are checking, so a NEW marker on its own is
+# an echo, not evidence — measured on scitex-compute-04, "verified: ... is a
+# NEW run" printed over a tmux session alive and untouched since the previous
+# day. A pass now also needs the OS to agree, read through the session name
+# ``instances.screen`` records; with the registry isolated and EMPTY here,
+# that second witness is absent by construction, so these tests pin the
+# ABSTENTION ("cannot verify") rather than the old unearned pass. The
+# two-witness table itself is ``test_verify_cycled_is_a_ternary`` below, and
+# the end-to-end proof against a real tmux server lives in
+# ``test__restart_verify_session.py``.
 # ---------------------------------------------------------------------------
 
 
@@ -1175,6 +1232,37 @@ def test_in_sif_without_a_listen_url_names_the_missing_env_var(
 def runtime_root(_isolate_runtime_root):
     """The per-test runtime root, named for tests that write markers into it."""
     return _isolate_runtime_root
+
+
+@pytest.fixture
+def isolated_state_db(tmp_path, pg_schema: str):
+    """Pin the ``instances`` registry at a real, EMPTY, per-test state.db.
+
+    The postcondition now reads a SECOND witness — ``instances.screen``, the
+    tmux session the start path recorded — so the registry is live input to
+    every test below, exactly as the runtime root already was. Left ambient,
+    these tests would ask the OPERATOR'S real fleet database whether
+    ``verify-me`` names a session, and would answer differently on a host
+    that happens to hold such a row. Isolating it makes "no row names a
+    session for this agent" a FACT of the test rather than a property of the
+    machine it runs on.
+    """
+    import importlib
+
+    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
+    saved = os.environ.get(key)
+    os.environ[key] = str(tmp_path / "state.db")
+    import scitex_agent_container._state.state_db as mod
+
+    importlib.reload(mod)
+    try:
+        yield tmp_path / "state.db"
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+        importlib.reload(mod)
 
 
 def _write_run_marker(root, name: str, value: str) -> None:
@@ -1197,11 +1285,11 @@ def _envelope(result):
     """Parse the CLI's ``--json`` envelope off the last stdout line."""
     import json
 
-    return json.loads(result.output.strip().splitlines()[-1])
+    return json.loads(result.stdout)
 
 
 @pytest.fixture
-def armed_run_marker(runtime_root):
+def armed_run_marker(runtime_root, isolated_state_db):
     """Give ``verify-me`` a real run marker and PROVE the CLI can read it.
 
     Arming is checked HERE, not in each test: a fixture that silently
@@ -1220,7 +1308,7 @@ def armed_run_marker(runtime_root):
 
 
 @pytest.fixture
-def no_run_marker(runtime_root):
+def no_run_marker(runtime_root, isolated_state_db):
     """Prove ``ghost-agent`` has NO run marker (the abstention case)."""
     assert _current_run("ghost-agent") is None, (
         "fixture failed to arm the no-evidence case — a stray marker would "
@@ -1292,14 +1380,44 @@ def test_restart_that_cycles_the_run_exits_zero(armed_run_marker):
     assert result.exit_code == 0, result.output
 
 
-def test_restart_that_cycles_the_run_reports_verified_true(armed_run_marker):
-    # Arrange
+def test_restart_that_cycles_only_the_ledger_cannot_be_verified(armed_run_marker):
+    # Arrange — the marker cycles, and NOTHING else does. This used to report
+    # ``verified: true``, which is the P0 of 2026-08-14: the marker is written
+    # by the very start path being checked, so on its own it can only ever
+    # agree with itself. With no ``instances`` row naming a tmux session there
+    # is no second witness, and the honest answer is "I could not check".
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
+        result = runner.invoke(restart, ["verify-me", "-y", "--json"])
+    # Assert — an abstention, not the old unearned pass.
+    assert _envelope(result).get("verified") is None
+
+
+def test_unverifiable_restart_is_not_reported_as_a_failure(armed_run_marker):
+    # Arrange — the mirror-image lie must not be invented either: "I could not
+    # check" is not "it failed", so the restart's own outcome stands.
     runner = CliRunner()
     # Act
     with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
         result = runner.invoke(restart, ["verify-me", "-y", "--json"])
     # Assert
-    assert _envelope(result).get("verified") is True
+    assert _envelope(result).get("restarted") is True
+
+
+def test_unverifiable_restart_is_not_printed_under_the_word_verified(armed_run_marker):
+    # Arrange — the console line is what the operator actually reads, and
+    # printing an ABSTENTION under the word "verified" is how an unchecked
+    # restart came to look like a checked one. v4 step 5 fixed the label
+    # too: "NOT verified" was a BINARY word on a TERNARY verdict — it
+    # accused a restart nobody could observe. An abstention now renders
+    # in its own words.
+    runner = CliRunner()
+    # Act
+    with _swap("agent_restart", _cycling_restart_for(armed_run_marker)):
+        result = runner.invoke(restart, ["verify-me", "-y"])
+    # Assert
+    assert "CANNOT VERIFY" in result.output
 
 
 def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
@@ -1337,22 +1455,48 @@ def test_no_marker_on_either_side_reports_verified_null(no_run_marker):
     assert _envelope(result).get("verified") is None
 
 
+_BLIND = SessionObservation()
+_OLD_SESSION = SessionObservation(True, "tui-some-agent@1000")
+_NEW_SESSION = SessionObservation(True, "tui-some-agent@2000")
+_NO_SESSION = SessionObservation(True, None)
+
+
 @pytest.mark.parametrize(
-    "before,after,expected",
+    "before,after,seen_before,seen_after,expected",
     [
-        ("run-1", "run-2", True),
-        (None, "run-2", True),
-        ("run-1", "run-1", False),
-        ("run-1", None, False),
-        (None, None, None),
+        # BOTH witnesses agree the agent cycled — the only path to a pass.
+        ("run-1", "run-2", _OLD_SESSION, _NEW_SESSION, True),
+        ("run-1", "run-2", _NO_SESSION, _NEW_SESSION, True),
+        (None, "run-2", _NO_SESSION, _NEW_SESSION, True),
+        # The ledger says NEW RUN and nobody asked the OS. This is the P0's
+        # own input, and it used to be the pass above: the marker is written
+        # by the start path under test, so alone it is an echo, not evidence.
+        ("run-1", "run-2", _BLIND, _BLIND, None),
+        (None, "run-2", _BLIND, _BLIND, None),
+        # A new run id minted over a session the OS says never moved.
+        ("run-1", "run-2", _OLD_SESSION, _OLD_SESSION, False),
+        # The ledger says it came back up; the OS says nothing is running.
+        ("run-1", "run-2", _OLD_SESSION, _NO_SESSION, False),
+        # Ledger-definitive NOs, unchanged: still the same run, or no run at
+        # all afterwards. These need no second witness to be conclusive.
+        ("run-1", "run-1", _BLIND, _BLIND, False),
+        ("run-1", None, _BLIND, _BLIND, False),
+        # No evidence from either witness.
+        (None, None, _BLIND, _BLIND, None),
     ],
 )
-def test_verify_cycled_is_a_ternary(before, after, expected):
+def test_verify_cycled_is_a_ternary(before, after, seen_before, seen_after, expected):
     # Arrange
     from scitex_agent_container.cli_pkg.lifecycle._restart_verify import verify_cycled
 
     # Act
-    verdict = verify_cycled("some-agent", before, after)
+    verdict = verify_cycled(
+        "some-agent",
+        before,
+        after,
+        session_before=seen_before,
+        session_after=seen_after,
+    )
     # Assert — True / False / None, never a two-valued collapse.
     assert verdict.verified is expected
 

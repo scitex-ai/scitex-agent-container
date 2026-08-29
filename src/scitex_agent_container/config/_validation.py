@@ -1,8 +1,15 @@
 """YAML config validation.
 
-Sac is SDK-only and container-only since the CLI/TUI runtime cleanup.
-Accepted ``spec.runtime`` values are ``docker``, ``podman``, ``apptainer``
-— each backend wraps the same long-running Claude Agent SDK runner.
+Sac is SDK-only and container-only. The container ENGINE is not a spec
+decision at all: apptainer is the only one, unconditionally (see
+``_container_engine``), and ``spec.container.runtime`` — the field that
+used to pretend otherwise — is REMOVED and rejected on sight.
+
+``spec.runtime`` is a different axis with an unfortunate shared name: it
+selects the HARNESS LAUNCH MODE (``tui`` / ``claude-agent-sdk``, plus the
+legacy ``apptainer`` alias) and is derived from the harness registry.
+Both launch modes run inside apptainer.
+
 Communication with the agent uses the HTTP A2A surface, never panes.
 """
 
@@ -20,14 +27,24 @@ from ._acl_validation import validate_phase3_acl
 # back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
+from ._container_engine import container_runtime_removed_error
 from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
 
-# spec.provider (TOP-LEVEL agent-SDK-family selector; openai-compat-1
-# foundation) — distinct from spec.claude.provider (validated inside
-# validate_claude via _provider_validation). See the naming-collision
-# note in config._provider_types.AgentProvider.
-from ._provider_registry import is_known_agent_provider, list_agent_providers
+# spec.harness (TOP-LEVEL: which agent SDK runs the session), plus its
+# DEPRECATED alias spec.provider — distinct from spec.claude.provider
+# (the inference backend, validated inside validate_claude via
+# _provider_validation). See config._harness_types.
+from ._harness_registry import valid_runtime_spellings
+from ._harness_types import (
+    HARNESS_KEY,
+    LEGACY_HARNESS_KEY,
+    harness_key_conflict_error,
+    is_known_harness,
+    list_harnesses,
+)
+from ._reserved_names import reserved_spec_path_errors
+from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
 
@@ -49,11 +66,15 @@ _VALID_KINDS = frozenset({"Agent", "AgentProxy"})
 # (degenerate since sac became apptainer-only on 2026-05-13). ``""``
 # and ``"apptainer"`` are accepted as back-compat and mapped to
 # ``"claude-agent-sdk"`` at dispatch — see ``_lifecycle/_runtime_select``.
-_VALID_RUNTIMES = frozenset({"claude-agent-sdk", "tui", "apptainer", ""})
+# DERIVED from the harness registry (v4 step 4): the accepted spellings
+# are whatever the descriptor entries claim, so a new harness's runtime
+# spelling is one registry entry, not an edit here. The name is kept —
+# it is imported elsewhere (e.g. ``_lifecycle/_relocate_probe_shell``).
+_VALID_RUNTIMES = valid_runtime_spellings()
 
-# spec.container.runtime — every value here must have a working engine
-# behind it. docker/podman were ripped out 2026-05-13.
-VALID_CONTAINER_RUNTIMES = frozenset({"none", "apptainer"})
+# ``VALID_CONTAINER_RUNTIMES`` is GONE, and deliberately not replaced by a
+# one-member frozenset: a set of one is still a menu, and the menu is what
+# 2026-08-14 abolished. The engine is ``_container_engine.CONTAINER_ENGINE``.
 
 
 _SDK_IMAGE = "scitex-agent-container:scitex"
@@ -65,9 +86,14 @@ _SDK_IMAGE = "scitex-agent-container:scitex"
 _KNOWN_SPEC_KEYS = frozenset(
     {
         "runtime",
-        "provider",  # agent SDK family: anthropic (default) | openai — see
-        # config._provider_types.AgentProvider for the naming-collision
-        # note against the unrelated, nested spec.claude.provider.
+        "harness",  # which agent SDK runs the session: anthropic | openai
+        "provider",  # DEPRECATED alias of "harness" — still honoured so the
+        # existing spec corpus loads unchanged. Unrelated to the nested
+        # spec.claude.provider (inference backend). See _harness_types.
+        "residency",  # v4 residency axis: resident (default) | one-shot —
+        # does the daemon outlive its work? DEFAULTED, not required: a NEW
+        # axis the live corpus predates; requiring it would red-start the
+        # fleet for declaring nothing new. See _residency_types.
         "access",  # host-access posture: full (default) | capsule
         "workdir",
         "python-venv",
@@ -81,7 +107,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "startup_commands",
         "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",
-        "context_management",
+        "context_management",  # TOLERATED FOSSIL (2026-08-15): schema deleted — nothing ever read it; key parses to nothing. Drop from this list only after the fleet sweep strips deployed specs, else every spec red-starts (the container.runtime trap).
         "listen",
         "extensions",
         "mcp_servers",
@@ -177,6 +203,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if not isinstance(raw, dict):
         return [f"Config file is not a YAML mapping: {path}"]
 
+    # dir-as-SSoT: the agent name is the spec's parent directory, so a
+    # reserved name (the host-process role slot) is refused by PATH here —
+    # this runs under check, list-discovery, AND every load_config/start.
+    errors.extend(reserved_spec_path_errors(path))
+
     # Unknown top-level keys
     unknown_top = set(raw.keys()) - _KNOWN_TOP_LEVEL_KEYS
     for k in sorted(unknown_top):
@@ -264,21 +295,47 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                 "'claude-agent-sdk' at dispatch."
             )
 
-        # spec.provider — AGENT SDK FAMILY selector (openai-compat-1
-        # foundation). Distinct from spec.claude.provider (ProviderSpec,
-        # validated inside validate_claude) — see the naming-collision
-        # note in config._provider_types.AgentProvider. Presence is
-        # enforced by the explicit-fields map (red-start ruling
-        # 2026-07-21); this check only owns the VALUE diagnostic.
-        provider = spec.get("provider")
-        if provider and not is_known_agent_provider(str(provider)):
-            errors.append(
-                f"spec.provider must be one of {list_agent_providers()} "
-                f"(got '{provider}'). 'anthropic' (default) = "
-                "claude-agent-sdk, the only implemented family today; "
-                "'openai' is accepted by the schema but has no runner yet "
-                "(openai-compat-2)."
-            )
+        # spec.harness — WHICH AGENT SDK runs the session. Distinct from
+        # spec.claude.provider (ProviderSpec: the inference backend,
+        # validated inside validate_claude). Presence is enforced by the
+        # explicit-fields map (red-start ruling 2026-07-21); this check
+        # owns the CONFLICT and VALUE diagnostics.
+        #
+        # A STATED disagreement between the two keys is its own error,
+        # and its message names both values — see _harness_types.
+        errors.extend(harness_key_conflict_error(spec))
+        # The VALUE check runs per WRITTEN key (not on the resolved
+        # value) so the error names the line the operator has to edit,
+        # and so an illegal value is caught in either spelling.
+        for key in (HARNESS_KEY, LEGACY_HARNESS_KEY):
+            value = spec.get(key)
+            if value and not is_known_harness(str(value)):
+                errors.append(
+                    f"spec.{key} must be one of {list_harnesses()} "
+                    f"(got '{value}'). 'anthropic' (default) = the "
+                    "claude-agent-sdk harness; 'openai' = the "
+                    "openai-agents SDK harness; 'codex' = the "
+                    "openai-codex (Codex SDK) harness. ('provider' is "
+                    "the DEPRECATED alias of 'harness'; neither is "
+                    "spec.claude.provider, which selects an "
+                    "Anthropic-compatible inference backend — note "
+                    "'codex' is a legal value of BOTH, and they mean "
+                    "different things: as a HARNESS the codex agent "
+                    "program runs the loop, as spec.claude.provider it "
+                    "is an inference gateway with Claude Code still "
+                    "driving.)"
+                )
+
+        # spec.residency — DOES THE DAEMON OUTLIVE ITS WORK (v4 step 6):
+        # resident (default) parks awaiting more turns; one-shot exits
+        # cleanly (ExitRecord reason oneshot-complete) when the
+        # conversation completes. Absence is the resident default — the
+        # live corpus predates the axis — but an ILLEGAL value and the
+        # unsupported couplings (externally hosted TUI harness, kind:
+        # AgentProxy) fail loud. Both checks live with the axis in
+        # _residency_types.
+        errors.extend(residency_value_error(spec))
+        errors.extend(residency_coupling_error(spec, kind))
 
         # spec.access — REMOVED 2026-06-23 (SSoT: explicit binds + workdir).
         # The knob silently injected a whole-home bind, a ``/work`` alias and
@@ -336,15 +393,14 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # module (keeps this orchestrator under the per-file cap).
         errors.extend(validate_claude(spec))
 
-        # container.runtime — apptainer is the only implemented engine
-        # (docker/podman ripout 2026-05-13).
+        # container.runtime — REMOVED 2026-08-14: the container ENGINE is
+        # not a spec decision. Keyed on key PRESENCE (not truthiness), so a
+        # ``runtime:`` written empty or null is caught too — the previous
+        # ``if cr and cr not in ...`` shape let exactly those through
+        # unexamined. See _container_engine for the ruling and the message.
+        errors.extend(container_runtime_removed_error(spec))
+
         container = spec.get("container", {}) or {}
-        cr = container.get("runtime")
-        if cr and cr not in VALID_CONTAINER_RUNTIMES:
-            errors.append(
-                "spec.container.runtime must be "
-                f"{'|'.join(sorted(VALID_CONTAINER_RUNTIMES))}, got '{cr}'"
-            )
 
         # container.mount_host_claude (opt-in; default False)
         mhc = container.get("mount_host_claude")

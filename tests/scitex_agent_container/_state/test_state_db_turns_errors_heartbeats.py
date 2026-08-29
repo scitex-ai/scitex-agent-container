@@ -1,9 +1,16 @@
-"""Tests for the diary tables: turns / errors / heartbeats (2026-05-17).
+"""Tests for the diary stores: turns / errors / heartbeats (2026-05-17).
 
 Foundation for fleet-wide visibility before fanout: every agent
-writes timestamped state-transition rows to state.db like a journal;
-the lead reads + filters them. Three new tables — ``turns``,
-``errors``, ``heartbeats`` — plus runner write-paths.
+writes timestamped state-transition rows like a journal; the lead
+reads + filters them. Three logical stores — ``turns``, ``errors``,
+``heartbeats`` — plus runner write-paths.
+
+They lived in ``state.db`` until 2026-08-28 and are now per-host
+PostgreSQL (:mod:`scitex_agent_container._state.state_db_diary`). The
+SQLite half of this file was INVERTED rather than deleted: the first
+group below now asserts the tables are absent, unqueryable, and refused
+by ``sac db query``, because a table that still exists and is never
+written answers every reader with a confident zero.
 
 Conventions:
 
@@ -23,6 +30,12 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+
+from scitex_agent_container._state.state_db_diary import (
+    ERRORS_STORE,
+    HEARTBEATS_STORE,
+    TURNS_STORE,
+)
 
 
 @pytest.fixture
@@ -49,26 +62,138 @@ def db_path(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Migration — the three new tables exist on a fresh DB.
+# The SQLite tables are GONE, and asking for one must SAY so.
+#
+# These three tests were ONE test asserting the exact opposite — that
+# ``init_schema`` created ``turns`` / ``errors`` / ``heartbeats`` in state.db.
+# The writers moved to PostgreSQL first, which left DDL creating three tables
+# nothing would ever write again. An always-empty table is the worst shape
+# available: every reader still gets an answer, the answer is zero rows, and
+# zero rows reads as "this agent recorded no turns" when the truth is "you are
+# asking the wrong database". That is the ruling ``incarnations`` established
+# on 2026-08-19, applied to the trio on 2026-08-28.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
-def test_migration_creates_diary_table(db_path: Path, table: str):
-    # Arrange
-    from scitex_agent_container._state.state_db import init_schema
+def _table_names(db_path: Path) -> set[str]:
+    """Read ``sqlite_master`` and hand back the names, closing the connection.
 
-    # Act
-    init_schema()
-    with sqlite3.connect(db_path) as conn:
-        names = {
+    A PLAIN FUNCTION rather than part of the fixture below: STX-TQ005 forbids a
+    fixture that acquires an external resource and ``return``\\ s instead of
+    ``yield``\\ ing, and it reads the fixture body syntactically. Keeping the
+    ``connect`` here means the fixture hands back a ``set``, which owns nothing
+    and needs no teardown — which is the rule's actual point.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
             r[0]
             for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def sqlite_table_names(db_path: Path) -> set[str]:
+    """Every table a fresh ``state.db`` really has, after ``init_schema``.
+
+    THE POSITIVE CONTROL LIVES HERE, not in the tests below. A fixture that
+    never ran the schema would hand them an empty set, and "the diary table is
+    absent" would pass for exactly the wrong reason — absence of evidence
+    reading as evidence of absence, which is the failure this whole file is
+    about. The guard is a ``raise`` rather than an assertion so each test keeps
+    one assertion (STX-TQ007), and it sits in a fixture rather than in a
+    parametrized body (STX-TQ006).
+    """
+    from scitex_agent_container._state.state_db import init_schema
+
+    init_schema()
+    names = _table_names(db_path)
+    # The canary was a TABLE NAME until 2026-08-28 — ``instances``,
+    # then ``channel_events``. ``init_schema`` now creates NO table, so
+    # no name can stand for "the schema ran". The FILE existing is what
+    # is left, and it is still a real control: without it an absent
+    # diary table would prove nothing.
+    if not db_path.is_file():
+        raise RuntimeError(
+            f"init_schema() created no database file at {db_path}; the schema "
+            "never ran, so an absent diary table would prove nothing."
+        )
+    return names
+
+
+@pytest.fixture
+def known_tables() -> set[str]:
+    """``KNOWN_TABLES`` as a set, with the same control applied to it.
+
+    ``channel_events`` must be in there for this to be the whitelist the tests
+    below mean to inspect; an empty or wrong tuple would otherwise make every
+    "not whitelisted" assertion pass on its own. The canary was ``instances``
+    until 2026-08-28, when that name left the tuple for the shared PostgreSQL
+    store — a control that has itself become false is worse than no control.
+    """
+    from scitex_agent_container._state.state_db import KNOWN_TABLES
+
+    known = set(KNOWN_TABLES)
+    # The control was "``channel_events`` must be in there, or this is not
+    # the whitelist we mean" until 2026-08-28. KNOWN_TABLES is EMPTY now —
+    # ``instances`` was the last name and it moved to the shared store — so
+    # membership can no longer identify the tuple, and every "X is not
+    # whitelisted" assertion below is vacuously true. Asserting the tuple is
+    # EMPTY is the stronger statement that subsumes all of them: not "the
+    # diary is not exposed" but "NOTHING is".
+    if known:
+        raise RuntimeError(
+            f"KNOWN_TABLES is expected to be EMPTY and holds {sorted(known)}; "
+            "the assertions below are about a whitelist that no longer has "
+            "members."
+        )
+    return known
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_init_schema_no_longer_creates_the_diary_table_in_sqlite(
+    sqlite_table_names: set[str], table: str
+):
+    # Arrange — the fixture ran init_schema and cleared its own control.
+    names = sqlite_table_names
+    # Act
+    created = table in names
     # Assert
-    assert table in names
+    assert not created
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_the_diary_table_is_no_longer_a_sqlite_known_table(
+    known_tables: set[str], table: str
+):
+    # Arrange — while the name stayed whitelisted, ``sac db show`` reported
+    # ``turns 0`` and ``sac db query --table=turns`` returned an empty array,
+    # both of them confident and both of them wrong.
+    known = known_tables
+    # Act
+    whitelisted = table in known
+    # Assert
+    assert not whitelisted
+
+
+@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
+def test_sac_db_query_refuses_the_moved_diary_table(db_path: Path, table: str):
+    # Arrange — the end-to-end half. Removing the name from KNOWN_TABLES is
+    # only useful if the CLI turns the request into a usage ERROR; exit code 2
+    # is what click raises for a rejected ``--table`` choice.
+    from click.testing import CliRunner
+
+    from scitex_agent_container.cli_pkg.db_group import db_query
+
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(db_query, [f"--table={table}"])
+    # Assert
+    assert result.exit_code == 2, result.output
 
 
 # ---------------------------------------------------------------------------
@@ -76,9 +201,38 @@ def test_migration_creates_diary_table(db_path: Path, table: str):
 # ---------------------------------------------------------------------------
 
 
-def test_insert_turn_round_trips_status_field(db_path: Path):
+def _diary_rows(store_name: str) -> list[dict]:
+    """Every visible row of one diary store, read through the module's opener.
+
+    The tests below used to read back with ``open_db()`` and a raw
+    ``SELECT * FROM turns``. That named a SQLite table, and once the diary
+    moved to PostgreSQL the writes landed in one place and the assertions
+    looked in another — so the round-trip tests failed with a bare
+    ``TypeError: 'NoneType' object is not iterable`` on ``fetchone()``,
+    which says nothing about what actually broke.
+
+    Reading through ``state_db_diary._open`` keeps the reader and the writer
+    on the SAME store by construction. A private name is used deliberately:
+    the diary exposes no public reader, and inventing one HERE would make the
+    test assert against a path production never takes.
+    """
+    from scitex_agent_container._state import state_db_diary as diary
+
+    schema = {
+        diary.TURNS_STORE: diary._turns_schema,
+        diary.ERRORS_STORE: diary._errors_schema,
+        diary.HEARTBEATS_STORE: diary._heartbeats_schema,
+    }[store_name]()
+    store = diary._open(schema)
+    try:
+        return [dict(row.values) for row in store.rows() if not row.hidden]
+    finally:
+        store.close()
+
+
+def test_insert_turn_round_trips_status_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_turn
+    from scitex_agent_container._state.state_db import record_turn
 
     # Act
     record_turn(
@@ -89,34 +243,31 @@ def test_insert_turn_round_trips_status_field(db_path: Path):
         prompt_text="hi",
         ts=1700000000.0,
     )
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM turns").fetchone())
+    rows = _diary_rows(TURNS_STORE)
     # Assert
-    assert row["status"] == "queued"
+    assert [r["status"] for r in rows] == ["queued"]
 
 
-def test_insert_error_round_trips_cause_field(db_path: Path):
+def test_insert_error_round_trips_cause_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_error
+    from scitex_agent_container._state.state_db import record_error
 
     # Act
     record_error(name="alice", host="h", cause="sdk-crash", detail="boom")
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM errors").fetchone())
+    rows = _diary_rows(ERRORS_STORE)
     # Assert
-    assert row["cause"] == "sdk-crash"
+    assert [r["cause"] for r in rows] == ["sdk-crash"]
 
 
-def test_insert_heartbeat_round_trips_state_field(db_path: Path):
+def test_insert_heartbeat_round_trips_state_field(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_heartbeat
+    from scitex_agent_container._state.state_db import record_heartbeat
 
     # Act
     record_heartbeat(name="alice", host="h", pid=4242, state="idle")
-    with open_db() as conn:
-        row = dict(conn.execute("SELECT * FROM heartbeats").fetchone())
+    rows = _diary_rows(HEARTBEATS_STORE)
     # Assert
-    assert row["state"] == "idle"
+    assert [r["state"] for r in rows] == ["idle"]
 
 
 # ---------------------------------------------------------------------------
@@ -125,48 +276,35 @@ def test_insert_heartbeat_round_trips_state_field(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path):
+def test_db_query_turns_filter_by_name_returns_only_matching_agent(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_turn
+    from scitex_agent_container._state.state_db import record_turn
 
     record_turn(turn_id="t1", name="alice", host="h", status="queued")
     record_turn(turn_id="t2", name="bob", host="h", status="queued")
     record_turn(turn_id="t3", name="alice", host="h", status="responded")
     # Act
-    with open_db() as conn:
-        rows = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM turns WHERE name=? ORDER BY ts ASC",
-                ("alice",),
-            ).fetchall()
-        ]
+    rows = [r for r in _diary_rows(TURNS_STORE) if r["name"] == "alice"]
     # Assert
     assert {r["turn_id"] for r in rows} == {"t1", "t3"}
 
 
-def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Path):
+def test_db_query_errors_filter_by_cause_returns_only_matching_rows(db_path: Path, pg_schema: str):
     # Arrange
-    from scitex_agent_container._state.state_db import open_db, record_error
+    from scitex_agent_container._state.state_db import record_error
 
     record_error(name="alice", host="h", cause="auth", detail="x")
     record_error(name="alice", host="h", cause="network", detail="y")
     record_error(name="bob", host="h", cause="auth", detail="z")
     # Act
-    with open_db() as conn:
-        rows = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM errors WHERE cause=? ORDER BY error_id ASC",
-                ("auth",),
-            ).fetchall()
-        ]
+    rows = [r for r in _diary_rows(ERRORS_STORE) if r["cause"] == "auth"]
     # Assert
     assert {r["name"] for r in rows} == {"alice", "bob"}
 
 
 def test_db_query_heartbeats_latest_per_name_returns_one_row_per_agent(
     db_path: Path,
+    pg_schema: str,
 ):
     # Arrange — alice has 3 beats, bob has 2.
     from scitex_agent_container._state.state_db import (

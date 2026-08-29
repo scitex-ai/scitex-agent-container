@@ -13,7 +13,9 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 # ApptainerSpec extracted to a sibling module (per-file line cap);
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
-from ._provider_types import DEFAULT_AGENT_PROVIDER, AgentProvider, ProviderSpec
+from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
+from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
+from ._provider_types import ProviderSpec
 
 # Supervision-policy dataclasses (health / watchdog / autonomous / restart)
 # extracted to a sibling module for the per-file line cap; re-exported here so
@@ -30,7 +32,7 @@ from ._supervision_types import (  # noqa: E402,F401
 
 @dataclass
 class ContainerSpec:
-    runtime: str = "none"  # none | apptainer (see VALID_CONTAINER_RUNTIMES)
+    # NO engine field: apptainer is the only one — see _container_engine.
     image: str = "scitex-agent-container:latest"
     volumes: list[str] = field(default_factory=list)
     network: str = "host"
@@ -171,25 +173,6 @@ class A2ASpec:
 
 
 @dataclass
-class ContextManagementConfig:
-    """Context-lifecycle policy for an agent.
-
-    Defaults mirror ``strategy="noop"`` so absence of the ``context_management``
-    block preserves existing behavior (sensor disabled).
-    """
-
-    trigger_at_percent: float = 70.0
-    strategy: str = "noop"  # "compact" | "restart" | "noop"
-    warn_before_n_checks: int = 0
-    check_interval_seconds: int = 300
-    state_file: str = "~/.scitex/agent-container/state/<agent>.json"
-
-    @property
-    def enabled(self) -> bool:
-        return self.strategy != "noop"
-
-
-@dataclass
 class SkillsSpec:
     required: list[str] = field(default_factory=list)  # Auto-loaded at startup
     available: list[str] = field(default_factory=list)  # Available but not auto-loaded
@@ -324,13 +307,17 @@ class AgentConfig:
     # TUI — operator directive 2026-06-15). ``"claude-agent-sdk"`` =
     # headless SDK runner; legacy ``"apptainer"`` maps to the SDK runner.
     runtime: str = "tui"
-    # Agent SDK family selector (top-level, sibling of ``runtime`` — NOT
-    # the same field as ``claude.provider`` below; see the naming-collision
-    # note in ``config._provider_types.AgentProvider``). Default
-    # "anthropic" = claude-agent-sdk, the only implemented family today.
-    # "openai" validates (openai-compat-1 foundation) but has no runner
-    # until openai-compat-2 lands — this field is inert until then.
-    provider: AgentProvider = DEFAULT_AGENT_PROVIDER
+    # HARNESS: which agent SDK runs the session ("anthropic" = the
+    # claude-agent-sdk | "openai"). Carries ``spec.harness`` or its
+    # DEPRECATED alias ``spec.provider`` — see ``config._harness_types``.
+    harness: AgentHarness = DEFAULT_AGENT_HARNESS
+    # Provenance, NOT a spec field: reached only through the alias.
+    harness_key_is_legacy: bool = False
+    # RESIDENCY: does the daemon outlive its work? "resident" (default)
+    # parks awaiting more turns after a conversation completes;
+    # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when
+    # the conversation completes. v4 step 6 — see config._residency_types.
+    residency: AgentResidency = DEFAULT_AGENT_RESIDENCY
     # spec.access REMOVED 2026-06-23 — host access + cwd are the single
     # source of truth in apptainer.binds + spec.workdir. There is no posture
     # enum: a "full" agent declares ``- /home/<user>:/home/<user>:rw``; a
@@ -368,9 +355,14 @@ class AgentConfig:
     # via the old ``spec.remote.{host,hops,user,key,...}`` block has
     # been retired together with ``runtimes/ssh_remote.py``.
     skills: SkillsSpec = field(default_factory=SkillsSpec)
-    context_management: ContextManagementConfig = field(
-        default_factory=ContextManagementConfig
-    )
+    # ``context_management`` was DELETED 2026-08-15, and deleting it changed
+    # nothing, which is the point: every one of the 109 live specs declared
+    # ``strategy: noop``, ``state_file`` had no reader and no writer anywhere
+    # in this package, and the directory it named was never created. The
+    # status surface hardcoded ``result["context_management"] = None``. Five
+    # required lines per spec, zero behaviour. The key is still TOLERATED at
+    # load (see _validation.py) so deployed specs keep parsing until the
+    # fleet sweep strips the block.
     # startup_commands run as SHELL commands inside the container before
     # the claude SDK starts. startup_prompts (separate field) carries
     # the claude mission. No fallback between the two.

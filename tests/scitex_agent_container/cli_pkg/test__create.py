@@ -841,3 +841,53 @@ def test_create_rejects_unknown_template_still_lists_choices(tmp_path: Path) -> 
     )
     # Assert
     assert "developer" in result.output and result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Reserved names — the host-process role slot must be refused at CREATION.
+# HOST_PROCESS_AGENT_NAME ("cli") passes the charset check, and until
+# 2026-08-28 nothing else stood in the way: `sac agents create cli` scaffolded
+# an agent whose derived PGUSER role is byte-identical to the host-side sac
+# process's own, collapsing the per-agent audit trail (audit of #1250).
+# ---------------------------------------------------------------------------
+
+
+def test_create_refuses_the_reserved_host_process_name(tmp_path: Path) -> None:
+    # Arrange — the reserved name comes from the SSOT constant, not a
+    # restated string literal.
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    result = runner.invoke(
+        create_cmd, [HOST_PROCESS_AGENT_NAME, "--base-dir", str(base)]
+    )
+    # Assert — refused loudly, naming the reason (the role collision).
+    assert "reserved" in result.output and result.exit_code != 0
+
+
+def test_create_reserved_name_writes_nothing(tmp_path: Path) -> None:
+    # Arrange — the refusal must land BEFORE any filesystem write: a
+    # half-scaffolded reserved agent dir would still be startable by hand.
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    runner.invoke(create_cmd, [HOST_PROCESS_AGENT_NAME, "--base-dir", str(base)])
+    # Assert
+    assert not (base / HOST_PROCESS_AGENT_NAME).exists()
+
+
+def test_create_accepts_a_name_merely_containing_the_reserved_one(
+    tmp_path: Path,
+) -> None:
+    # Arrange — CONTROL: the reservation is an exact match, not a substring
+    # or prefix rule; "cli-agent" must scaffold normally.
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    runner.invoke(create_cmd, ["cli-agent", "--base-dir", str(base)])
+    # Assert
+    assert (base / "cli-agent" / "spec.yaml").is_file()

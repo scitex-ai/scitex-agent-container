@@ -620,7 +620,7 @@ def isolated_state_db(tmp_path: Path, env_save_restore) -> Iterator[Path]:
         importlib.reload(_sdb)
 
 
-def test_grant_exit_zero_on_happy_path(isolated_state_db: Path) -> None:
+def test_grant_exit_zero_on_happy_path(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -629,7 +629,7 @@ def test_grant_exit_zero_on_happy_path(isolated_state_db: Path) -> None:
     assert res.exit_code == 0
 
 
-def test_grant_persists_row_into_comms_grants(isolated_state_db: Path) -> None:
+def test_grant_persists_row_into_comms_grants(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
@@ -641,7 +641,7 @@ def test_grant_persists_row_into_comms_grants(isolated_state_db: Path) -> None:
     assert any(r["sender"] == "worker-a" and r["target"] == "worker-b" for r in rows)
 
 
-def test_grant_stores_optional_note(isolated_state_db: Path) -> None:
+def test_grant_stores_optional_note(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b", "--note", "ticket-PA-512"])
@@ -653,7 +653,7 @@ def test_grant_stores_optional_note(isolated_state_db: Path) -> None:
     assert "ticket-PA-512" in notes
 
 
-def test_grant_idempotent_no_duplicate_rows(isolated_state_db: Path) -> None:
+def test_grant_idempotent_no_duplicate_rows(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange: grant twice with the same pair
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
@@ -670,7 +670,7 @@ def test_grant_idempotent_no_duplicate_rows(isolated_state_db: Path) -> None:
     assert len(rows) == 1
 
 
-def test_grant_empty_sender_exits_two(isolated_state_db: Path) -> None:
+def test_grant_empty_sender_exits_two(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -681,6 +681,7 @@ def test_grant_empty_sender_exits_two(isolated_state_db: Path) -> None:
 
 def test_grant_empty_sender_writes_error_to_stderr(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -692,6 +693,7 @@ def test_grant_empty_sender_writes_error_to_stderr(
 
 def test_grant_human_output_announces_direction(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -704,7 +706,7 @@ def test_grant_human_output_announces_direction(
 # --- revoke -----------------------------------------------------------------
 
 
-def test_revoke_existing_grant_exits_zero(isolated_state_db: Path) -> None:
+def test_revoke_existing_grant_exits_zero(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
@@ -714,7 +716,7 @@ def test_revoke_existing_grant_exits_zero(isolated_state_db: Path) -> None:
     assert res.exit_code == 0
 
 
-def test_revoke_removes_row_from_comms_grants(isolated_state_db: Path) -> None:
+def test_revoke_removes_row_from_comms_grants(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b"])
@@ -731,7 +733,7 @@ def test_revoke_removes_row_from_comms_grants(isolated_state_db: Path) -> None:
     assert rows == []
 
 
-def test_revoke_missing_grant_is_noop_zero_exit(isolated_state_db: Path) -> None:
+def test_revoke_missing_grant_is_noop_zero_exit(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange: no grant exists
     runner = CliRunner()
     # Act
@@ -742,6 +744,7 @@ def test_revoke_missing_grant_is_noop_zero_exit(isolated_state_db: Path) -> None
 
 def test_revoke_missing_grant_emits_noop_marker(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -751,7 +754,7 @@ def test_revoke_missing_grant_emits_noop_marker(
     assert "no-op" in res.output
 
 
-def test_revoke_empty_sender_exits_two(isolated_state_db: Path) -> None:
+def test_revoke_empty_sender_exits_two(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -762,6 +765,7 @@ def test_revoke_empty_sender_exits_two(isolated_state_db: Path) -> None:
 
 def test_revoke_empty_target_writes_error_to_stderr(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -776,6 +780,7 @@ def test_revoke_empty_target_writes_error_to_stderr(
 
 def test_grants_empty_table_renders_no_grants_marker(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -787,6 +792,7 @@ def test_grants_empty_table_renders_no_grants_marker(
 
 def test_grants_json_empty_table_is_empty_array(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -796,7 +802,7 @@ def test_grants_json_empty_table_is_empty_array(
     assert json.loads(res.output) == []
 
 
-def test_grants_json_lists_inserted_grant(isolated_state_db: Path) -> None:
+def test_grants_json_lists_inserted_grant(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "worker-a", "worker-b", "--note", "demo"])
@@ -812,6 +818,7 @@ def test_grants_json_lists_inserted_grant(isolated_state_db: Path) -> None:
 
 def test_grants_rich_table_shows_sender_and_target(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -822,7 +829,7 @@ def test_grants_rich_table_shows_sender_and_target(
     assert "alpha" in res.output and "beta" in res.output
 
 
-def test_grants_json_orders_by_insertion(isolated_state_db: Path) -> None:
+def test_grants_json_orders_by_insertion(isolated_state_db: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     runner.invoke(a2a, ["grant", "first-sender", "first-target"])
@@ -838,6 +845,7 @@ def test_grants_json_orders_by_insertion(isolated_state_db: Path) -> None:
 
 def test_grants_json_after_revoke_drops_the_row(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -849,7 +857,7 @@ def test_grants_json_after_revoke_drops_the_row(
     assert json.loads(res.output) == []
 
 
-def test_grant_direction_is_one_way(isolated_state_db: Path) -> None:
+def test_grant_direction_is_one_way(isolated_state_db: Path, pg_schema: str) -> None:
     """Granting A→B must NOT auto-grant B→A (the ACL is directional)."""
     # Arrange
     runner = CliRunner()

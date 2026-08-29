@@ -7,6 +7,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -234,6 +235,7 @@ def agent_restart(
     config_resolver: Optional[Callable[[str], str]] = None,
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
     successor_auth_check: Optional[Callable[[str], None]] = None,
+    thread_factory: Callable[..., Any] = threading.Thread,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -450,4 +452,10 @@ def agent_restart(
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,
+        # Forwarded so a test can keep the health monitor from spawning a
+        # REAL daemon thread that outlives it. Every other seam already
+        # passed through; this one did not, so the 11 restart tests in
+        # test_lifecycle.py each leaked a monitor that fired ~90 s later
+        # into an unrelated test's caplog (develop red, 2026-08-24).
+        thread_factory=thread_factory,
     )

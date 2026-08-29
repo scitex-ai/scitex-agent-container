@@ -8,9 +8,15 @@ This module is the missing piece — it registers the channel process
 comms_nodes on startup, then refreshes ``updated_at`` on a 10s
 cadence matching the agent runner's heartbeat.
 
-Real on-disk state.db + config.yaml via the shared ``env_save_restore``
-fixture; no mocks. AAA, ≥3-word test names, one assert per test
-(STX-TQ002 / PA-307).
+ON POSTGRESQL SINCE 2026-08-28. The directory moved to the shared store, so
+these tests take ``pg_schema`` and ``register_self_node`` / ``refresh_node``
+lost their ``db_path`` argument — it threaded a SQLite file that no longer
+exists. The ``updated_at`` the refresh loop advances is the store's hybrid
+logical clock rather than a column each writer had to remember to bump.
+
+Real config.yaml via the shared ``env_save_restore`` fixture and a real
+store via ``pg_schema``; no mocks. AAA, >=3-word test names, one assert per
+test (STX-TQ002 / PA-307).
 """
 
 from __future__ import annotations
@@ -117,7 +123,7 @@ def test_parse_listen_port_handles_https_scheme() -> None:
 
 
 def test_register_self_node_writes_comms_nodes_row_for_lead_name(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._mcp._channel_self_register import register_self_node
@@ -132,7 +138,7 @@ def test_register_self_node_writes_comms_nodes_row_for_lead_name(
 
 
 def test_register_self_node_records_port_parsed_from_listen_url(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — the production bug stored a2a_port=0 because nothing
     # parsed the URL; pin the correct extracted port here.
@@ -148,7 +154,7 @@ def test_register_self_node_records_port_parsed_from_listen_url(
 
 
 def test_register_self_node_uses_canonical_host_from_config(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — cfg has host.canonical=lead-host; that's what the row
     # should advertise as the dialable host, NOT 127.0.0.1 from the URL.
@@ -163,11 +169,15 @@ def test_register_self_node_uses_canonical_host_from_config(
     assert info["host"] == "lead-host"
 
 
-def test_register_self_node_source_host_is_none_for_local_registration(
-    db_path: Path, cfg_with_lead: Path
+def test_register_self_node_records_this_host_as_the_origin(
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
-    # Arrange — locally-registered rows have source_host=None (the sync
-    # contract distinguishes self-registrations from peer-pulled rows).
+    # Arrange — the old ``source_host`` column held NULL for a
+    # self-registration, so the sync contract could tell it apart from a
+    # peer-pulled row. There is no pull any more; provenance is the store's
+    # ``_origin``, stamped from the writing node.
+    import socket
+
     from scitex_agent_container._mcp._channel_self_register import register_self_node
 
     # Act
@@ -176,11 +186,11 @@ def test_register_self_node_source_host_is_none_for_local_registration(
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
-    assert info["source_host"] is None
+    assert info["source_host"] == socket.gethostname()
 
 
 def test_register_self_node_returns_true_on_successful_write(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._mcp._channel_self_register import register_self_node
@@ -192,7 +202,7 @@ def test_register_self_node_returns_true_on_successful_write(
 
 
 def test_register_self_node_is_idempotent_for_same_name(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — second call must UPDATE not INSERT (no DUPLICATE PK).
     from scitex_agent_container._mcp._channel_self_register import register_self_node
@@ -208,7 +218,7 @@ def test_register_self_node_is_idempotent_for_same_name(
 
 
 def test_register_self_node_refresh_advances_updated_at(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — second call must bump updated_at so a stale-row
     # detector sees the row as fresh. Without this the production bug
@@ -234,7 +244,7 @@ def test_register_self_node_refresh_advances_updated_at(
 
 
 def test_register_self_node_writes_no_row_when_listen_url_has_port_zero(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — the EXACT production-bug signature was port=0. The
     # function MUST refuse rather than persist a 0 port (which is what
@@ -249,7 +259,7 @@ def test_register_self_node_writes_no_row_when_listen_url_has_port_zero(
 
 
 def test_register_self_node_returns_false_for_portless_url(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._mcp._channel_self_register import register_self_node
@@ -261,7 +271,7 @@ def test_register_self_node_returns_false_for_portless_url(
 
 
 def test_register_self_node_does_not_raise_when_name_is_empty(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — best-effort contract: callers must not have to wrap
     # this in try/except. An empty name is logged + skipped.
@@ -274,7 +284,7 @@ def test_register_self_node_does_not_raise_when_name_is_empty(
 
 
 def test_register_self_node_does_not_raise_when_listen_url_is_empty(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._mcp._channel_self_register import register_self_node
@@ -291,7 +301,7 @@ def test_register_self_node_does_not_raise_when_listen_url_is_empty(
 
 
 def test_refresh_node_writes_initial_row_on_first_tick(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — refresh_node should write a row on its first iteration
     # so a caller doesn't have to call register_self_node separately
@@ -318,7 +328,7 @@ def test_refresh_node_writes_initial_row_on_first_tick(
 
 
 def test_refresh_node_advances_updated_at_across_ticks(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — let the loop tick twice; updated_at must advance.
     from scitex_agent_container._mcp._channel_self_register import refresh_node
@@ -351,7 +361,7 @@ def test_refresh_node_advances_updated_at_across_ticks(
 
 
 def test_refresh_node_respects_cancellation_promptly(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — the loop must propagate CancelledError so the channel's
     # shutdown path can tear it down cleanly (no orphan task).
@@ -390,7 +400,7 @@ def test_refresh_node_respects_cancellation_promptly(
 
 
 def test_refresh_node_makes_lead_resolvable_via_resolve_node_host(
-    db_path: Path, cfg_with_lead: Path
+    db_path: Path, cfg_with_lead: Path, pg_schema: str
 ) -> None:
     # Arrange — drive one refresh tick (the same path channel.py
     # _serve() schedules at startup) then ask the production resolver.

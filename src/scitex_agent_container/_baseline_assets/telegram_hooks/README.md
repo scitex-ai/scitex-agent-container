@@ -82,9 +82,32 @@ implementation detail is not the property.
 
 Each script supports `--self-test` and emits a `pass=N fail=M` summary
 plus rc=0 (all pass) / rc=1 (any fail). The companion pytest at
-`tests/scitex_agent_container/_baseline_assets/test_telegram_hooks.py`
+`tests/integration/telegram_hooks/test_telegram_hooks_self_tests.py`
 runs every script's self-test in CI so a regression to either the
 script logic or the test contract surfaces on PR.
+
+### How the self-tests decide "did the hook fire?"
+
+The four **BLOCK** hooks signal their verdict in the exit code (rc=2
+blocked / rc=0 allowed), so their self-tests assert on rc and are
+immune to whatever else writes to stderr.
+
+`encourage_telegram_terse_style.sh` is **nudge-only** — it always exits
+0, so the exit code carries no verdict and stderr is its only
+observable. It therefore asserts on a **sentinel** it emits
+(`TERSE_NUDGE_MARKER`, exported by the bash wrapper and read by the
+embedded python, so there is exactly one copy of the string).
+
+Do **not** regress that to "stderr is non-empty". stderr is a shared
+channel: a broken `.pth`, a DeprecationWarning or a locale complaint
+lands there too, and some of it prints before the hook's own code
+runs. Measured 2026-08 — a venv whose subprocess-coverage `.pth`
+raised `ModuleNotFoundError` at interpreter startup flipped the very
+same script from `pass=6 fail=0` under `/usr/bin/python3` to
+`pass=1 fail=5` under `/opt/venv-sac`. The self-test now carries
+NOISY-prefixed cases that inject synthetic stderr and pin that the
+verdict does not move, and the pytest re-runs the whole self-test
+behind a deliberately noisy `python3` shim.
 
 ## Deployment (operator)
 

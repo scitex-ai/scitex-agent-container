@@ -1,0 +1,18 @@
+"""Tiny command interface over Store."""
+
+
+def run_command(store, argv):
+    if not argv:
+        return "usage: add|get|total"
+    cmd, *rest = argv
+    if cmd == "add":
+        name, price, quantity = rest
+        store.add_item(name, float(price), int(quantity))
+        return f"added {name}"
+    if cmd == "get":
+        (name,) = rest
+        item = store.get_item(name)
+        return f"{item.name} x{item.quantity} @ {item.price}"
+    if cmd == "total":
+        return f"total {store.total_value()}"
+    return f"unknown command: {cmd}"

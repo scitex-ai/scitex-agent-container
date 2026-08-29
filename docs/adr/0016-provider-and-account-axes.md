@@ -87,9 +87,11 @@ harnesses. Backend switching happens below Claude Code by setting
 `ANTHROPIC_BASE_URL`, authentication, and model environment variables through
 `spec.claude.provider`.
 
-The top-level `spec.provider` field is a different, unfinished SDK-family axis.
-Selecting `spec.provider: openai` would replace the Claude harness and therefore
-does not implement this decision.
+The top-level field is a different axis: the HARNESS. Selecting
+`spec.harness: openai` would replace the Claude harness and therefore does not
+implement this decision. (This ADR originally called that field
+`spec.provider`; it was renamed to `spec.harness` — the old key still loads as
+a deprecated alias. See `docs/spec-reference.md`.)
 
 The implemented Codex shape is:
 

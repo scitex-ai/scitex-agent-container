@@ -46,7 +46,6 @@ spec:
   user: ""
   to_home: ./to_home
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -116,6 +115,10 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
+  # DELIBERATELY KEPT: context_management was deleted from the schema on
+  # 2026-08-15, but every deployed spec still carries the block, so the key
+  # must stay a tolerated no-op until the fleet sweep strips it. This fixture
+  # loading successfully IS the tolerance test.
   context_management:
     trigger_at_percent: 70.0
     strategy: noop
@@ -209,7 +212,7 @@ def test_fully_explicit_spec_loads_green(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # MUTATION-PROOF: removing any sampled field turns the load RED and the
 # error names that exact YAML path. Sample spans top-level, claude,
-# apptainer, health, watchdog, a2a (+ restart/comms/context_management).
+# apptainer, health, watchdog, a2a (+ restart/comms).
 # ---------------------------------------------------------------------------
 
 
@@ -228,7 +231,6 @@ def test_fully_explicit_spec_loads_green(tmp_path: Path) -> None:
         "a2a.port",
         "restart.backoff.initial",
         "comms.a2a.listen",
-        "context_management.strategy",
     ],
 )
 def test_removing_field_turns_load_red_naming_exact_path(
@@ -320,13 +322,18 @@ def test_paste_ready_hint_round_trips_to_green(
 def test_paste_ready_hint_preserves_omission_behaviour(
     tmp_path: Path, _round_trip_healed: dict
 ) -> None:
-    # Arrange — pasted claude.session must reproduce what omission meant:
-    # role-less agent -> 'fresh' (null keeps the role-derived default).
+    # Arrange — THE INVARIANT IS UNCHANGED: a pasted explicit
+    # `session: null` must resolve to whatever OMISSION resolves to, so a
+    # round-tripped spec never silently changes an agent's memory. Only the
+    # value moved: omission now means 'continue' for every role (operator,
+    # 2026-08-18, 「スペックは全てレジュームで」). Asserted as a literal rather
+    # than by calling default_session_for_role() — a test parameterised by
+    # the implementation it checks cannot fail.
     healed_path = _write_doc(tmp_path, _round_trip_healed, "healed-session")
     # Act
     cfg = load_config(healed_path)
     # Assert
-    assert cfg.claude.session == "fresh"
+    assert cfg.claude.session == "continue"
 
 
 # ---------------------------------------------------------------------------
