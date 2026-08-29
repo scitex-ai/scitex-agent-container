@@ -25,6 +25,22 @@ from typing import Any
 
 _DEFAULT_STORE_SUBDIR = Path(".scitex") / "agent-container" / "accounts"
 _METADATA_FILENAME = "account.json"
+#: Sidecars that describe the STORED account and must never be copied
+#: into ``~/.claude`` by :func:`switch_account`. Each answers a question
+#: about the account in the store — who it is, whether the API still
+#: accepts it, how much of its quota is gone, whether the operator has
+#: rested it — and none of them says anything about the LIVE login the
+#: switch is establishing. They are listed by name rather than filtered
+#: by suffix so a new credential file added beside them still travels.
+_STORE_ONLY_SIDECARS = frozenset(
+    {
+        _METADATA_FILENAME,
+        "pause.json",
+        "entitlement.json",
+        "identity.json",
+        "usage.json",
+    }
+)
 _CREDENTIALS_FILENAME = ".credentials.json"
 
 # ``sac`` is a first-class short alias for ``agent-container``.
@@ -123,7 +139,28 @@ def list_accounts(
         # credentials snapshot is MISSING but whose `account.json` remains —
         # that is a real account in a broken state and callers must still
         # see it, which a "has credentials" test alone would hide.
-        if account_dir.name.startswith("_"):
+        # DOT-PREFIXED DIRS ARE BOOKKEEPING TOO, and omitting them shipped a
+        # visible bug. Measured 2026-08-16: an editor left
+        # `.swap-backup-20260815` in the store, and `sac accounts list` — which
+        # the operator watches on a 10s refresh — rendered it as a real account:
+        #
+        #     - claude-code:.swap-backup-20260815
+        #         5h  [      unknown       ] (unknown)
+        #         ! no usage snapshot
+        #
+        # It reached that far because the structural test below DELIBERATELY
+        # admits a BARE directory: an account whose metadata and credentials
+        # are both gone is a real account in a broken state and callers must
+        # still see it. Editor litter is bare in exactly the same way, so the
+        # structural test cannot tell them apart — which is precisely why the
+        # `_` skip exists above it, and why `.` belongs in the same rule rather
+        # than in a new one. Neither prefix is a legal account name; both mark
+        # something the store keeps beside its accounts.
+        #
+        # The operator's judgement on finding it: 「dirty codebase means buggy
+        # project」. Deleting the stray file would have cleared the symptom and
+        # left the enumerator ready to do it again on the next editor crash.
+        if account_dir.name.startswith(("_", ".")):
             continue
         meta_file = account_dir / _METADATA_FILENAME
         if (
@@ -390,8 +427,17 @@ def switch_account(
     try:
         claude_dir.mkdir(parents=True, exist_ok=True)
         for src in account_dir.iterdir():
-            if src.name == _METADATA_FILENAME:
-                continue  # metadata stays in the account dir; never copy into ~/.claude/
+            if src.name in _STORE_ONLY_SIDECARS:
+                # These describe the STORED ACCOUNT, not the live login,
+                # and none of them has a reader under ~/.claude (checked
+                # 2026-08-26: zero references fleet-wide). Copying them
+                # there produces decision- and verdict-shaped litter in a
+                # directory that is backed up, bind-mounted and copied,
+                # where a future reader could reasonably mistake one for
+                # authority over the live session. `pause.json` is the
+                # one that made this worth naming: a switch used to
+                # deposit the operator's PAUSE DECISION into ~/.claude.
+                continue
             dst = claude_dir / src.name
             tmp = dst.with_suffix(dst.suffix + ".tmp")
             shutil.copy2(src, tmp)

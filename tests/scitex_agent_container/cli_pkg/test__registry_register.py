@@ -5,9 +5,16 @@ directly so the operator can fix a missing federated entry without
 restarting whatever process "owns" it (the lead's mcp channel, a
 peer's listen).
 
-Real on-disk state.db via the shared ``env_save_restore`` fixture +
-``click.testing.CliRunner`` — no MagicMock anywhere. AAA, one assert
-per test (STX-TQ002 / PA-307), ≥3-word names.
+ON POSTGRESQL SINCE 2026-08-28. The directory moved to the shared store, so
+these tests take ``pg_schema`` and the verb lost its ``--db-path`` override
+(there is no file to override). ``--source-host`` survives with a sharpened
+meaning: it is no longer STORED, it declares on whose behalf the write is
+made, and the conflict check compares it against the record's ``_origin``.
+The two ``--source-host`` tests below therefore assert the CONFLICT
+behaviour rather than a round-trip of the value.
+
+Real store via ``pg_schema`` + ``click.testing.CliRunner`` — no MagicMock
+anywhere. AAA, one assert per test (STX-TQ002 / PA-307), >=3-word names.
 """
 
 from __future__ import annotations
@@ -43,7 +50,7 @@ def db_path(tmp_path: Path, env_save_restore) -> Path:
 
 
 def test_registry_register_writes_comms_nodes_row_with_given_name(
-    db_path: Path,
+    db_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -58,7 +65,7 @@ def test_registry_register_writes_comms_nodes_row_with_given_name(
     assert result.exit_code == 0 and lookup_comms_node(name="lead") is not None
 
 
-def test_registry_register_records_host_and_port_verbatim(db_path: Path) -> None:
+def test_registry_register_records_host_and_port_verbatim(db_path: Path, pg_schema: str) -> None:
     # Arrange — pin that the verb persists the args the operator typed,
     # not some derived value.
     runner = CliRunner()
@@ -74,12 +81,14 @@ def test_registry_register_records_host_and_port_verbatim(db_path: Path) -> None
     assert info["host"] == "lead-host" and info["a2a_port"] == 7878
 
 
-def test_registry_register_defaults_source_host_to_none_local(
-    db_path: Path,
+def test_registry_register_reports_this_host_as_the_origin(
+    db_path: Path, pg_schema: str
 ) -> None:
-    # Arrange — locally-registered rows have source_host=None so the
-    # ADR-0014 conflict detector treats them as authoritative for the
-    # registering host. The verb must default to this.
+    # Arrange — provenance is the store's ``_origin`` now, stamped from the
+    # writing node, so a locally-registered entry names THIS host rather
+    # than the NULL the old ``source_host`` column carried.
+    import socket
+
     runner = CliRunner()
     # Act
     runner.invoke(
@@ -90,15 +99,19 @@ def test_registry_register_defaults_source_host_to_none_local(
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
-    assert info["source_host"] is None
+    assert info["source_host"] == socket.gethostname()
 
 
-def test_registry_register_explicit_source_host_is_stored(db_path: Path) -> None:
-    # Arrange — the operator may relay a peer's row from a third host;
-    # --source-host is the supported way to tag it correctly.
+def test_explicit_source_host_relays_without_claiming_the_name(
+    db_path: Path, pg_schema: str
+) -> None:
+    # Arrange — the operator relays a peer's entry from a third host.
+    # ``--source-host`` declares that, and the INSERT path has no stored
+    # record to compare against, so it must succeed rather than read as a
+    # cross-host collision.
     runner = CliRunner()
     # Act
-    runner.invoke(
+    result = runner.invoke(
         registry_register,
         [
             "--name",
@@ -114,12 +127,11 @@ def test_registry_register_explicit_source_host_is_stored(db_path: Path) -> None
     # Assert
     from scitex_agent_container._state.state_db_nodes import lookup_comms_node
 
-    info = lookup_comms_node(name="peer-2")
-    assert info["source_host"] == "relay-host"
+    assert result.exit_code == 0 and lookup_comms_node(name="peer-2") is not None
 
 
 def test_registry_register_after_resolves_via_resolve_node_host(
-    db_path: Path,
+    db_path: Path, pg_schema: str
 ) -> None:
     # Arrange — the operator-facing contract: after `sac registry register`
     # succeeds, resolve_node_host (the production lookup callers use to
@@ -144,7 +156,7 @@ def test_registry_register_after_resolves_via_resolve_node_host(
 
 
 def test_registry_register_idempotent_when_same_host_and_port(
-    db_path: Path,
+    db_path: Path, pg_schema: str
 ) -> None:
     # Arrange — second invocation with identical args must NOT exit
     # non-zero and must NOT create a duplicate row.
@@ -171,7 +183,7 @@ def test_registry_register_idempotent_when_same_host_and_port(
 
 
 def test_registry_register_exits_nonzero_on_cross_source_conflict(
-    db_path: Path,
+    db_path: Path, pg_schema: str
 ) -> None:
     # Arrange — first registration claims (host=A, port=7878), second
     # tries to overwrite with (host=B, port=7878) from a DIFFERENT
@@ -210,7 +222,7 @@ def test_registry_register_exits_nonzero_on_cross_source_conflict(
 
 
 def test_registry_register_does_not_overwrite_existing_row_on_conflict(
-    db_path: Path,
+    db_path: Path, pg_schema: str
 ) -> None:
     # Arrange — pair with the exit-code test above: the existing row
     # must survive the rejected second invocation untouched.
@@ -254,7 +266,7 @@ def test_registry_register_does_not_overwrite_existing_row_on_conflict(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_register_requires_name_flag(db_path: Path) -> None:
+def test_registry_register_requires_name_flag(db_path: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -266,7 +278,7 @@ def test_registry_register_requires_name_flag(db_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_registry_register_requires_host_flag(db_path: Path) -> None:
+def test_registry_register_requires_host_flag(db_path: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -278,7 +290,7 @@ def test_registry_register_requires_host_flag(db_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_registry_register_requires_a2a_port_flag(db_path: Path) -> None:
+def test_registry_register_requires_a2a_port_flag(db_path: Path, pg_schema: str) -> None:
     # Arrange
     runner = CliRunner()
     # Act
@@ -290,7 +302,7 @@ def test_registry_register_requires_a2a_port_flag(db_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_registry_register_rejects_non_positive_port(db_path: Path) -> None:
+def test_registry_register_rejects_non_positive_port(db_path: Path, pg_schema: str) -> None:
     # Arrange — register_comms_node enforces a2a_port > 0; the verb
     # surfaces that as a UsageError (exit 2). The 0-port footgun was
     # the EXACT production-bug signature ADR-0014 closed the door on.

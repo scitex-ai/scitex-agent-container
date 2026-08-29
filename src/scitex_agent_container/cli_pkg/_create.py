@@ -45,7 +45,6 @@ freed the ``create`` name back up.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
@@ -57,6 +56,7 @@ from ._create_templates import (  # noqa: F401
     _MINIMAL_TEMPLATE,
     _TEMPLATES,
 )
+from ._helpers._console import system_msg
 from ._new_dir_template import (
     DirTemplateError,
     discover_dir_templates,
@@ -299,6 +299,16 @@ def create(
             "digits, '-', and '_' only (dir-as-SSoT convention)."
         )
 
+    # Reserved slots (the host-process role name) are refused at the front
+    # door, before anything is written — the collision story lives in
+    # config/_reserved_names.py. Imported lazily for the same cold-start
+    # budget reason as _default_base_dir (config is a heavy package).
+    from ..config._reserved_names import reserved_agent_name_error
+
+    reserved_msg = reserved_agent_name_error(name)
+    if reserved_msg is not None:
+        raise click.UsageError(reserved_msg)
+
     base = base_dir if base_dir is not None else _default_base_dir()
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
@@ -334,11 +344,7 @@ def create(
             )
         except DirTemplateError as exc:
             raise click.ClickException(str(exc)) from exc
-        print(
-            f"Wrote {agent_dir} (template={kind}, dir-template).",
-            file=sys.stderr,
-            flush=True,
-        )
+        system_msg(f"Wrote {agent_dir} (template={kind}, dir-template).")
         return
 
     if spec_path.exists() and not force:
@@ -393,11 +399,7 @@ def create(
     to_home = agent_dir / "to_home"
     to_home.mkdir(parents=True, exist_ok=True)
 
-    print(
-        f"Wrote {spec_path} (template={kind}).",
-        file=sys.stderr,
-        flush=True,
-    )
+    system_msg(f"Wrote {spec_path} (template={kind}).")
 
 
 __all__ = ["create"]

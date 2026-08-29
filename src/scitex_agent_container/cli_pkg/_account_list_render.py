@@ -41,6 +41,7 @@ contract downstream consumers parse.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -135,6 +136,26 @@ class AccountRow:
     identity_state: str = "unverified"
     verified_email: str | None = None
     duplicate_of: str | None = None
+    # The operator's OWN reason for resting this account, and when he
+    # decided it. Empty / None means not paused — presence is the pause,
+    # exactly as it is on disk (see :mod:`.._creds._pause`). Both default,
+    # so every hand-rolled AccountRow in the existing tests still
+    # constructs, which is this dataclass's stated design.
+    #
+    # It is here at all because 「また復活させる」 — he intends to bring
+    # these accounts back. A pause that is invisible on the screen he
+    # actually reads is a trap: it never expires and nothing nags, so the
+    # listing IS the reminder.
+    pause_reason: str = ""
+    pause_since: float | None = None
+    # WHICH MACHINE this credential lives on. Empty on the single-host path,
+    # which is why the Host column only appears once something fills it in.
+    # A credential is a per-host FILE and is not on the sync rail, so the same
+    # account is routinely VALID on one machine and EXPIRED on another —
+    # measured 2026-08-14, when a restart on one host refused with "no healthy
+    # stored account" while the identical three accounts were hours-fresh on
+    # another. Without this field the fleet table cannot say which is which.
+    host: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +163,44 @@ class AccountRow:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_status(state: str, hours: float | None) -> str:
+#: How much of an operator's reason survives into the Status cell. Long
+#: enough to be recognised, short enough not to shove the columns beside
+#: it off the terminal.
+_PAUSE_REASON_CHARS = 40
+
+
+def _fmt_status(
+    state: str,
+    hours: float | None,
+    *,
+    pause_reason: str = "",
+    pause_since: float | None = None,
+    now_ts: float | None = None,
+) -> str:
+    """The Status cell: what this credential is, in one phrase.
+
+    A PAUSE OUTRANKS THE TTL AND REPLACES IT. The cell normally reads
+    ``VALID +2h26m``, and that TTL belongs to the TOKEN. Printing it
+    beside PAUSED — ``PAUSED +6.2h`` — would be read as "the pause
+    expires in 6.2 hours", which is a lie about the one property that
+    makes a pause trustworthy: it never expires. So the paused row
+    carries the age of the DECISION and the operator's own words
+    instead, and no token TTL at all. There is precedent for a
+    non-freshness value in this field (``CONFIGURED``, for the Codex
+    login, which has no TTL to show either).
+    """
+    if pause_reason:
+        from .._creds._pause import format_age
+
+        age = (
+            format_age((now_ts if now_ts is not None else time.time()) - pause_since)
+            if pause_since is not None
+            else "?"
+        )
+        reason = pause_reason.strip()
+        if len(reason) > _PAUSE_REASON_CHARS:
+            reason = reason[: _PAUSE_REASON_CHARS - 1].rstrip() + "…"
+        return f"PAUSED {age} — {reason}"
     if state == "ABSENT":
         return "ABSENT"
     if hours is None:
@@ -225,20 +283,33 @@ def render_stored_table(
     the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
+    # The Host column appears ONLY when a row carries a host — i.e. in the
+    # fleet view. Adding it unconditionally would put a column of one repeated
+    # name in front of every single-host listing, and a column that always says
+    # the same thing teaches the eye to skip the place where the answer lives.
+    with_host = any(r.host for r in rows)
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    if with_host:
+        table.add_column("Host", style="cyan")
     table.add_column("Provider")
     table.add_column("Account", style="bold")
     table.add_column("Status")
     table.add_column("Identity")
     table.add_column("Usage as of")
     for r in rows:
-        table.add_row(
+        cells = [
             r.provider,
             r.name,
-            _fmt_status(r.freshness_state, r.freshness_hours),
+            _fmt_status(
+                r.freshness_state,
+                r.freshness_hours,
+                pause_reason=r.pause_reason,
+                pause_since=r.pause_since,
+            ),
             _fmt_identity_cell(r),
             _fmt_last_update_cell(r.snapshot_as_of, now=now),
-        )
+        ]
+        table.add_row(*([r.host or "—", *cells] if with_host else cells))
     return table
 
 

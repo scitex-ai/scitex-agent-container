@@ -50,7 +50,6 @@ row. The ``spec.acl`` schema (Step 2) and ``child ⊆ parent`` clamp
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 __all__ = [
@@ -61,7 +60,7 @@ __all__ = [
 ]
 
 
-def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
+def persist_acl_policy(config: Any) -> None:
     """Write the loaded spec's Phase-3 ACL policy into ``node_comms_policy``.
 
     Idempotent upsert keyed by ``config.name``. Called from core
@@ -100,7 +99,6 @@ def persist_acl_policy(config: Any, db_path: Path | None = None) -> None:
         may_spawn=lineage.may_spawn,
         group_name=group_name,
         group_names=group_names,
-        db_path=db_path,
     )
 
 
@@ -138,7 +136,6 @@ def enforce_spawn_gate(
     child_name: str,
     *,
     caller: str | None = None,
-    db_path: Path | None = None,
 ) -> str | None:
     """Gate a spawn of ``child_name`` and record its lineage edge.
 
@@ -161,7 +158,6 @@ def enforce_spawn_gate(
             the parent's ``SAC_NAME`` env via :func:`resolve_spawn_caller`.
             An explicit ``caller`` (e.g. the server handler's request
             ``caller`` field) overrides the env.
-        db_path: Optional isolated state.db (tests). ``None`` → default.
 
     Returns the resolved caller (``None`` for the admin path), so a
     diagnostic / log line can attribute the spawn.
@@ -177,7 +173,7 @@ def enforce_spawn_gate(
     if caller is None:
         caller = resolve_spawn_caller()
 
-    decision, reason = check_spawn(caller=caller, db_path=db_path)
+    decision, reason = check_spawn(caller=caller)
     if decision == "deny":
         raise SpawnDeniedError(reason or f"spawn of {child_name!r} denied")
 
@@ -186,7 +182,7 @@ def enforce_spawn_gate(
     # would make every operator-launched agent a child of "").
     if caller:
         try:
-            record_lineage(child=child_name, parent=caller, db_path=db_path)
+            record_lineage(child=child_name, parent=caller)
         except ValueError as exc:
             # record_lineage keeps the existing parent on a re-parent
             # attempt (restart-in-place) rather than raising; this except

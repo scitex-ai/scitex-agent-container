@@ -35,6 +35,20 @@ from scitex_agent_container._lifecycle._start_outcome import (
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, real YAML on disk
 # ---------------------------------------------------------------------------
@@ -382,6 +396,7 @@ def test_fire_forget_hook_swallows_run_hook_exceptions() -> None:
 
 
 def test_agent_start_happy_path_returns_true(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -395,12 +410,14 @@ def test_agent_start_happy_path_returns_true(
         runtime_factory=lambda _c: runtime,
         handover_mod=handover,
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True
 
 
 def test_agent_start_happy_path_calls_runtime_start_once(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -413,12 +430,14 @@ def test_agent_start_happy_path_calls_runtime_start_once(
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert len(runtime.start_calls) == 1
 
 
 def test_agent_start_happy_path_registers_agent(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -431,12 +450,14 @@ def test_agent_start_happy_path_registers_agent(
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert registry.exists("alpha")
 
 
 def test_agent_start_happy_path_invokes_handover(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -449,12 +470,14 @@ def test_agent_start_happy_path_invokes_handover(
         runtime_factory=lambda _c: FakeRuntime(start_result=True),
         handover_mod=handover,
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert len(handover.ensure_calls) == 1 and len(handover.hydrate_calls) == 1
 
 
 def test_agent_start_idempotent_when_already_running(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: registry knows the agent, runtime reports it running,
@@ -472,6 +495,7 @@ def test_agent_start_idempotent_when_already_running(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         liveness_verifier=lambda _cfg, _rt: True,
+        thread_factory=FakeThread,
     )
     # Assert: returns success, says WHY, and never calls start.
     #
@@ -491,6 +515,7 @@ def test_agent_start_idempotent_when_already_running(
 
 
 def test_agent_start_force_restarts_when_already_running(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -506,6 +531,7 @@ def test_agent_start_force_restarts_when_already_running(
         sleep_fn=_no_sleep,
         force=True,
         liveness_verifier=lambda _cfg, _rt: True,
+        thread_factory=FakeThread,
     )
     # Assert: force triggered stop AND start on the same runtime instance.
     assert len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
@@ -521,6 +547,7 @@ def test_agent_start_force_restarts_when_already_running(
 
 
 def test_agent_start_launches_when_liveness_verifier_returns_false(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — registry says exists, runtime PID-check says running,
@@ -536,6 +563,7 @@ def test_agent_start_launches_when_liveness_verifier_returns_false(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         liveness_verifier=lambda _cfg, _rt: False,
+        thread_factory=FakeThread,
     )
     # Assert — fell through to a real launch instead of the silent no-op.
     assert len(runtime.start_calls) == 1
@@ -654,10 +682,12 @@ def _force_restart_running_agent(
         sleep_fn=_no_sleep,
         force=True,
         liveness_verifier=lambda _cfg, _rt: True,
+        thread_factory=FakeThread,
     )
 
 
 def test_agent_start_force_restart_records_single_active_instance_row(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, isolated_state_db: Path
 ) -> None:
     # Arrange
@@ -671,6 +701,7 @@ def test_agent_start_force_restart_records_single_active_instance_row(
 
 
 def test_agent_start_force_restart_records_non_none_a2a_port(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, isolated_state_db: Path
 ) -> None:
     """Regression: before the fix, the ``--force`` ``agent_stop`` released
@@ -689,6 +720,7 @@ def test_agent_start_force_restart_records_non_none_a2a_port(
 
 
 def test_agent_start_force_restart_instances_port_matches_claim(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, isolated_state_db: Path
 ) -> None:
     """After a force restart the ``instances`` row a2a_port must equal the
@@ -706,6 +738,7 @@ def test_agent_start_force_restart_instances_port_matches_claim(
 
 
 def test_agent_start_force_clears_stale_registry_entry(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: registered but runtime says not running → stale entry.
@@ -720,12 +753,14 @@ def test_agent_start_force_clears_stale_registry_entry(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         force=True,
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True and len(runtime.stop_calls) == 1
 
 
 def test_agent_start_session_override_mutates_claude_session(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -745,12 +780,14 @@ def test_agent_start_session_override_mutates_claude_session(
         sleep_fn=_no_sleep,
         session_override="resume",
         resume_id_override="abc-123",
+        thread_factory=FakeThread,
     )
     # Assert
     assert captured["cfg"].claude.session == "resume"
 
 
 def test_agent_start_continue_override_beats_spec_fresh(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — spec explicitly says fresh; the CLI --continue maps to a
@@ -770,12 +807,14 @@ def test_agent_start_continue_override_beats_spec_fresh(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         session_override="continue",
+        thread_factory=FakeThread,
     )
     # Assert
     assert captured["cfg"].claude.session == "continue"
 
 
 def test_agent_start_fresh_override_beats_spec_continue(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — spec explicitly says continue; the CLI --fresh maps to a
@@ -795,12 +834,14 @@ def test_agent_start_fresh_override_beats_spec_continue(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         session_override="fresh",
+        thread_factory=FakeThread,
     )
     # Assert
     assert captured["cfg"].claude.session == "fresh"
 
 
 def test_agent_start_resume_id_override_mutates_resume_id(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -820,12 +861,14 @@ def test_agent_start_resume_id_override_mutates_resume_id(
         sleep_fn=_no_sleep,
         session_override="resume",
         resume_id_override="abc-123",
+        thread_factory=FakeThread,
     )
     # Assert
     assert captured["cfg"].claude.resume_id == "abc-123"
 
 
 def test_agent_start_runtime_failure_raises_runtime_error(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -838,6 +881,7 @@ def test_agent_start_runtime_failure_raises_runtime_error(
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     with pytest.raises(RuntimeError, match="Failed to start"):
@@ -857,12 +901,14 @@ def _start_with_failing_runtime(spec: Path, registry: Registry) -> None:
             runtime_factory=lambda _c: runtime,
             handover_mod=FakeHandover(),
             sleep_fn=_no_sleep,
+            thread_factory=FakeThread,
         )
     except RuntimeError:
         pass
 
 
 def test_agent_start_runtime_failure_persists_diag_file(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange -- a false-negative start whose only evidence must survive
@@ -881,6 +927,7 @@ def test_agent_start_runtime_failure_persists_diag_file(
 
 
 def test_agent_start_runtime_failure_diag_names_the_reason(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -896,6 +943,7 @@ def test_agent_start_runtime_failure_diag_names_the_reason(
 
 
 def test_agent_start_dry_run_does_not_register(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -909,12 +957,14 @@ def test_agent_start_dry_run_does_not_register(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         dry_run=True,
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True and not registry.exists("alpha")
 
 
 def test_agent_start_dry_run_passes_dry_run_kwarg_to_runtime(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -928,12 +978,14 @@ def test_agent_start_dry_run_passes_dry_run_kwarg_to_runtime(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         dry_run=True,
+        thread_factory=FakeThread,
     )
     # Assert
     assert runtime.start_kwargs.get("dry_run") is True
 
 
 def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: a runtime whose ``start`` refuses ``dry_run`` (older runtime).
@@ -948,6 +1000,7 @@ def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         dry_run=True,
+        thread_factory=FakeThread,
     )
     # Assert
     with pytest.raises(RuntimeError, match="does not support --dry-run"):
@@ -955,6 +1008,7 @@ def test_agent_start_dry_run_typeerror_raises_helpful_runtime_error(
 
 
 def test_agent_start_hydrate_failure_does_not_block_start(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: hydrate_from_hub raises but agent_start must still succeed.
@@ -968,12 +1022,14 @@ def test_agent_start_hydrate_failure_does_not_block_start(
         runtime_factory=lambda _c: FakeRuntime(start_result=True),
         handover_mod=handover,
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True
 
 
 def test_agent_start_starts_health_monitor_thread_when_enabled(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: health.enabled=true in the spec → production must spawn a thread.
@@ -1000,6 +1056,7 @@ def test_agent_start_starts_health_monitor_thread_when_enabled(
 
 
 def test_agent_start_failback_poller_failure_is_swallowed(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1013,12 +1070,14 @@ def test_agent_start_failback_poller_failure_is_swallowed(
         runtime_factory=lambda _c: FakeRuntime(start_result=True),
         handover_mod=handover,
         sleep_fn=_no_sleep,
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True
 
 
 def test_agent_start_cli_no_preflight_propagates_to_runtime(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     """WI-6 removed ``RemoteSpec`` and the
@@ -1038,6 +1097,7 @@ def test_agent_start_cli_no_preflight_propagates_to_runtime(
         handover_mod=FakeHandover(),
         sleep_fn=_no_sleep,
         no_preflight=True,
+        thread_factory=FakeThread,
     )
     # Assert
     assert runtime.start_kwargs.get("no_preflight") is True
@@ -1080,7 +1140,7 @@ def test_agent_stop_unknown_agent_with_force_returns_true(
     assert ok is True
 
 
-def test_agent_stop_happy_path_returns_true(tmp_path: Path, registry: Registry) -> None:
+def test_agent_stop_happy_path_returns_true(pg_schema: str, tmp_path: Path, registry: Registry) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
@@ -1097,6 +1157,7 @@ def test_agent_stop_happy_path_returns_true(tmp_path: Path, registry: Registry) 
 
 
 def test_agent_stop_happy_path_calls_runtime_stop(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1115,6 +1176,7 @@ def test_agent_stop_happy_path_calls_runtime_stop(
 
 
 def test_agent_stop_happy_path_removes_registry_entry(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1168,6 +1230,7 @@ def _stop_with_prune(
 
 
 def test_agent_stop_prune_removes_ephemeral_runtime_dir(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, env_save_restore
 ) -> None:
     # Arrange
@@ -1187,6 +1250,7 @@ def test_agent_stop_prune_removes_ephemeral_runtime_dir(
 
 
 def test_agent_stop_prune_keeps_persistent_runtime_dir(
+    pg_schema: str,
     tmp_path: Path, registry: Registry, env_save_restore
 ) -> None:
     # Arrange — persistent (always) agent must NEVER be pruned, even when
@@ -1244,6 +1308,7 @@ def test_agent_stop_yaml_gone_without_force_raises(
 
 
 def test_agent_stop_runtime_stop_failure_with_force_removes_entry(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1348,6 +1413,7 @@ def test_agent_stop_all_without_force_aborts_on_first_failure(
 
 
 def test_agent_restart_calls_runtime_stop_then_start(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1361,12 +1427,14 @@ def test_agent_restart_calls_runtime_stop_then_start(
         runtime_factory=lambda _c: runtime,
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
+        thread_factory=FakeThread,
     )
     # Assert
     assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
 def test_agent_restart_clears_dead_session_marker(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — a runtime state dir holding a DEAD resume marker + history
@@ -1390,6 +1458,7 @@ def test_agent_restart_clears_dead_session_marker(
             runtime_factory=lambda _c: FakeRuntime(start_result=True),
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
+            thread_factory=FakeThread,
         )
         # Assert — the dead resume marker is gone so the restart is fresh.
         result = sid.read_session_id(state_dir)
@@ -1402,6 +1471,7 @@ def test_agent_restart_clears_dead_session_marker(
 
 
 def test_agent_restart_clears_dead_session_history(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — the dead uuid lives in the append-only history that the
@@ -1424,6 +1494,7 @@ def test_agent_restart_clears_dead_session_history(
             runtime_factory=lambda _c: FakeRuntime(start_result=True),
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
+            thread_factory=FakeThread,
         )
         # Assert — the whole history is cleared so no dead uuid can be
         # re-resumed on the next start (the crash-loop is closed).
@@ -1437,6 +1508,7 @@ def test_agent_restart_clears_dead_session_history(
 
 
 def test_agent_restart_backs_up_dead_session_history(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — clearing the dead history must preserve it as an audit
@@ -1458,6 +1530,7 @@ def test_agent_restart_backs_up_dead_session_history(
             runtime_factory=lambda _c: FakeRuntime(start_result=True),
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
+            thread_factory=FakeThread,
         )
         # Assert
         backups = list(state_dir.glob("session_id_history.dead-*"))
@@ -1483,6 +1556,7 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
         config_resolver=_no_spec,
+        thread_factory=FakeThread,
     )
     # Assert
     with pytest.raises(RuntimeError, match="not found"):
@@ -1490,6 +1564,7 @@ def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> Non
 
 
 def test_agent_restart_no_row_falls_back_to_spec_and_starts(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — NO registry row for "alpha" (ad-hoc / pre-autorecord
@@ -1505,12 +1580,14 @@ def test_agent_restart_no_row_falls_back_to_spec_and_starts(
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
         config_resolver=lambda _name: str(spec),
+        thread_factory=FakeThread,
     )
     # Assert — the spec-resolved start ran (fallback path reached the runtime).
     assert ok is True and len(runtime.start_calls) == 1
 
 
 def test_agent_restart_no_row_force_stops_before_start(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — no registry row; a runtime whose stop() raises. The
@@ -1526,12 +1603,14 @@ def test_agent_restart_no_row_force_stops_before_start(
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
         config_resolver=lambda _name: str(spec),
+        thread_factory=FakeThread,
     )
     # Assert — force-stop tolerated the dead session and start still ran.
     assert ok is True and len(runtime.start_calls) == 1
 
 
 def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — no registry row, NO injected resolver: the real default
@@ -1560,6 +1639,7 @@ def test_agent_restart_no_row_uses_default_resolver_discovery_chain(
             runtime_factory=lambda _c: runtime,
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
+            thread_factory=FakeThread,
         )
     finally:
         os.chdir(prev_cwd)
@@ -1614,6 +1694,7 @@ def test_agent_restart_passes_assume_yes_to_start_leg(
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
             config_resolver=lambda _name: str(spec),
+            thread_factory=FakeThread,
         )
     finally:
         _start_mod.agent_start = original_start
@@ -1710,10 +1791,12 @@ def _restart_alpha(runtime: _StaggeredRuntime, registry: Registry) -> bool:
         runtime_factory=lambda _c: runtime,
         sleep_fn=_no_sleep,
         handover_mod=FakeHandover(),
+        thread_factory=FakeThread,
     )
 
 
 def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1727,6 +1810,7 @@ def test_agent_restart_returns_true_after_waiting_for_previous_to_stop(
 
 
 def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1740,6 +1824,7 @@ def test_agent_restart_calls_runtime_start_exactly_once_after_waiting_for_stop(
 
 
 def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_running(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1755,6 +1840,7 @@ def test_agent_restart_does_not_call_start_while_previous_runtime_is_still_runni
 
 
 def test_agent_restart_polls_is_running_until_false(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -1827,11 +1913,12 @@ def _restart_alpha_with_short_wait(
         # Short timeout so the test is fast; ``_no_sleep`` makes the poll
         # loop spin as fast as Python allows.
         wait_for_stop_timeout_s=0.05,
+        thread_factory=FakeThread,
     )
 
 
 def test_agent_restart_raises_when_previous_runtime_will_not_exit(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
@@ -1845,7 +1932,7 @@ def test_agent_restart_raises_when_previous_runtime_will_not_exit(
 
 
 def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError
@@ -1861,7 +1948,7 @@ def test_agent_restart_does_not_start_when_previous_runtime_will_not_exit(
 
 
 def test_agent_restart_warns_about_still_running_previous_runtime(
-    tmp_path: Path, registry: Registry, caplog: Any
+    tmp_path: Path, registry: Registry, pg_schema: str, caplog: Any
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._stop_escalate import StopEscalationError

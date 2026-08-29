@@ -25,6 +25,7 @@ import pytest
 from scitex_agent_container.runtimes._board_identity_env import (
     UnexpandedEnvValueError,
 )
+from scitex_agent_container.runtimes._mcp_config_file import read_mcp_servers
 from scitex_agent_container.runtimes._mcp_spec_env import (
     SPEC_ENV_KEYS_VAR,
     SpecEnvUnresolvedError,
@@ -346,7 +347,10 @@ def test_build_sdk_options_bakes_manifested_spec_env_into_servers(
     # Act
     opts = _sdk_common.build_sdk_options("alpha")
     # Assert: the entry the respawner reads carries the literal value.
-    assert opts.mcp_servers["stx"]["env"]["SCITEX_CARDS_DB"] == "/shared/cards.db"
+    # ``mcp_servers`` is a 0600 FILE PATH now (secrets must not ride the child
+    # argv — see runtimes/_mcp_config_file), so read the effective table back.
+    servers = read_mcp_servers(opts.mcp_servers)
+    assert servers["stx"]["env"]["SCITEX_CARDS_DB"] == "/shared/cards.db"
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ running against, so the gate reads THE CODE UNDER TEST or fails loudly.
 This mirrors what our sibling gates already do (`test_git_hooks.py`'s
 ``_REPO``, `test_skills_quality.py`'s ``package_root``).
 
-scitex-dev >= 0.31.1 is REQUIRED (see [dev] in pyproject.toml): `path=`
+scitex-dev >= 0.31.1 is REQUIRED by this gate -- `path=`
 first exists there. Older versions also lack the CWD-git-root safety net
 (step 2), so on them the home-disk guess is the ONLY fallback. The
 fixture asserts that support rather than silently dropping `path=` —
@@ -52,8 +52,9 @@ this — drift goes silent.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
-import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,10 +99,41 @@ def _verified_repo_root() -> Path:
 
 @pytest.fixture
 def scitex_dev_audit():
-    if shutil.which("scitex-dev") is None:
+    # PROBE WHAT THE AUDITOR ACTUALLY RUNS, NOT A CONSOLE SCRIPT IT IGNORES.
+    #
+    # This used to be `shutil.which("scitex-dev") is None -> skip`. The
+    # auditor never invokes that binary. `_audit_conformance.py` builds its
+    # argv as `[sys.executable, "-m", "scitex_dev", ...]`, with the comment
+    # "`sys.executable -m` binds the auditor to the interpreter running the
+    # tests" — so what matters is whether THIS interpreter can import
+    # scitex_dev, and the console script's presence on $PATH is unrelated.
+    #
+    # The two disagree in the common case and the gate lost. Measured
+    # 2026-08-20 on scitex-compute-04: scitex-dev is installed in
+    # ~/.venv/bin, which is not on the $PATH the test process inherits, so
+    # `which` returned None and this gate SKIPPED — while the same
+    # interpreter ran `python -m scitex_dev ecosystem audit-all` to
+    # completion, exit 0. Re-running the suite with that directory on $PATH
+    # turned "1 passed, 1 skipped" into "2 passed in 83s".
+    #
+    # THE COST WAS PAID THE SAME DAY. PR #1155 added a test file in a
+    # location PS-204 rejects. Local runs of tests/develop/ reported
+    # "1 passed, 1 skipped" three times and looked like coverage; the
+    # skipped one WAS the gate. CI caught it, and the message told me
+    # scitex-dev was "not installed" — false, and it points at a fix that
+    # changes nothing.
+    #
+    # So: skip only when the MODULE is genuinely unavailable, which is the
+    # condition the auditor cannot survive. importlib rather than a bare
+    # try/import so that an ImportError raised from INSIDE scitex_dev — a
+    # real breakage — still propagates instead of being read as absence.
+    if importlib.util.find_spec("scitex_dev") is None:
         pytest.skip(
-            "scitex-dev not installed — add `scitex-dev[cli-audit]` "
-            "to [project.optional-dependencies.dev]"
+            "scitex_dev is not importable by this interpreter "
+            f"({sys.executable}) — add `scitex-dev[cli-audit]` to "
+            "[project.optional-dependencies.dev]. Note this is about the "
+            "MODULE, not the `scitex-dev` console script: the auditor runs "
+            "`sys.executable -m scitex_dev` and never looks at $PATH."
         )
     from scitex_dev.testing import audit_all_for_package
 
@@ -110,7 +142,7 @@ def scitex_dev_audit():
             "installed scitex-dev's audit_all_for_package() has no `path` "
             "parameter, so this gate cannot name the tree under test and "
             "would silently audit a ~/proj guess instead. Upgrade to "
-            "scitex-dev>=0.31.1 (the [dev] floor in pyproject.toml). "
+            "scitex-dev>=0.31.1, the release where `path=` first exists. "
             "Failing loudly rather than auditing the wrong checkout."
         )
     return audit_all_for_package

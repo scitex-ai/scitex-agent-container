@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .._creds._pause import Pause
     from ._account_list_render import AccountRow
 
 # ``AccountRow`` is imported INSIDE the functions that construct it, not at
@@ -56,8 +57,28 @@ def _per_account_usage_cache_path(name: str):
     return _store_path(None, Path.home()) / name / "usage.json"
 
 
-def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
+def usage_for_account(
+    acct_meta: dict, *, refresh: bool = False, passive: bool = False
+) -> dict | None:
     """Live PER-ACCOUNT usage fetch (5-min cache); ``--refresh`` busts it.
+
+    ``passive=True`` READS AND NOTHING ELSE — the cache, never the network.
+
+    That mode exists because THIS FUNCTION CAN ROTATE A CREDENTIAL. The
+    ``fetch_usage_for_credentials`` call below refreshes the OAuth token when it
+    is expired (and again on a 401), and that refresh rewrites the account's
+    ``.credentials.json`` in place. The refresh token is SINGLE USE: the server
+    invalidates the previous one, so every agent still holding the old access
+    token — on this host and on every other host that binds the same snapshot —
+    starts getting 401s. That is INCIDENT 2026-08-09, written up in
+    :mod:`._account_refresh_gate`, whose ``needs_refresh`` gate guards
+    ``sac accounts refresh`` and never guarded this path.
+
+    A LISTING MUST NOT ROTATE ANYTHING, and a listing that fans out across the
+    fleet must not do it N times at once, which is why the fleet view passes
+    ``passive=True`` for every host including this one. The local single-host
+    view keeps its historical behaviour so nothing an operator relies on
+    changes silently.
 
     The snapshot lives at
     ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
@@ -85,6 +106,12 @@ def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
     name = acct_meta.get("name")
     if not name:
         return None
+    if passive:
+        # The ONLY statement on this branch, deliberately: everything below can
+        # reach the network and can rewrite the credential. Returning here makes
+        # the passivity a property of the control flow rather than a promise in
+        # prose that a later edit could quietly break.
+        return read_account_usage_cache(name)
     store = _store_path(None, Path.home())
     creds_path = store / name / ".credentials.json"
     if not creds_path.is_file():
@@ -147,8 +174,36 @@ def verify_stored_identities(accounts: list[dict], *, opener=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def read_account_pause(name: str) -> "Pause":
+    """This host's pause decision for ``name`` — a plain local file read.
+
+    The listing reads the PAUSE DIRECTLY rather than switching from
+    :func:`account_freshness` to :func:`account_health`. Both would
+    surface PAUSED, and the swap is arguably the better long-run shape,
+    but it would also start rendering FORBIDDEN on a screen the operator
+    refreshes every few seconds — a visible behaviour change to a
+    different signal, riding along in a change about pausing. That is a
+    separate defect ("the list never surfaces the entitlement verdict")
+    and deserves its own change and its own test.
+
+    Reading the pause on its own is also strictly more capable here: a
+    paused account whose token has EXPIRED still renders as PAUSED,
+    because the decision is true regardless of what the snapshot says.
+    """
+    from .._creds._pause import read_pause
+    from .._state.account_store import _store_path
+
+    store = _store_path(None, Path.home())
+    return read_pause(name, store / name)
+
+
 def build_stored_rows(
-    accounts: list[dict], *, refresh: bool = False, opener=None
+    accounts: list[dict],
+    *,
+    refresh: bool = False,
+    opener=None,
+    passive: bool = False,
+    host: str = "",
 ) -> list[AccountRow]:
     """Convert stored-account dicts into :class:`AccountRow` for rendering.
 
@@ -176,11 +231,13 @@ def build_stored_rows(
     for acct in accounts:
         name = acct["name"]
         fresh = account_freshness(name)
-        usage = usage_for_account(acct, refresh=refresh) or {}
+        usage = usage_for_account(acct, refresh=refresh, passive=passive) or {}
         ident = identities.get(name)
         reading = classify_usage(usage, ident)
+        pause = read_account_pause(name)
         rows.append(
             AccountRow(
+                host=host,
                 name=name,
                 freshness_state=fresh.state,
                 freshness_hours=fresh.hours,
@@ -196,13 +253,20 @@ def build_stored_rows(
                 identity_state=ident.state if ident else "unverified",
                 verified_email=ident.verified_email if ident else None,
                 duplicate_of=ident.duplicate_of if ident else None,
+                pause_reason=pause.reason,
+                pause_since=pause.since,
             )
         )
     return rows
 
 
 def build_stored_json(
-    accounts: list[dict], *, refresh: bool = False, opener=None
+    accounts: list[dict],
+    *,
+    refresh: bool = False,
+    opener=None,
+    passive: bool = False,
+    host: str = "",
 ) -> list[dict]:
     """Enrich stored-account dicts for ``sac accounts list --json``.
 
@@ -229,11 +293,28 @@ def build_stored_json(
         name = acct["name"]
         entry["provider"] = "claude-code"
         entry["qualified_id"] = f"claude-code:{name}"
+        # WHICH MACHINE this credential lives on. Empty on the historical
+        # single-host path (nothing there had a second machine to disambiguate
+        # from); the fleet view stamps it, because a credential is a per-host
+        # FILE and the same account is routinely valid here and expired there.
+        if host:
+            entry["host"] = host
         entry.update(read_account_plan(name))
         fresh = account_freshness(name)
         entry["freshness"] = fresh.state
         entry["freshness_hours"] = fresh.hours
-        usage = usage_for_account(acct, refresh=refresh)
+        # A SIBLING key, never folded into `freshness`. Freshness is a
+        # measurement of a token; a pause is a decision about an account.
+        # A consumer that wants either must not have to disentangle them
+        # from one string — and `None` (not `{"paused": false}`) is the
+        # only spelling of "not paused", matching the disk.
+        pause = read_account_pause(name)
+        entry["paused"] = (
+            {"reason": pause.reason, "since": pause.since, "by": pause.by}
+            if pause.active
+            else None
+        )
+        usage = usage_for_account(acct, refresh=refresh, passive=passive)
         entry["usage"] = usage
         ident = identities.get(name)
         reading = classify_usage(usage or {}, ident)

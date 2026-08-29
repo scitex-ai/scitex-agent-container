@@ -217,7 +217,18 @@ def agent_start(
     # becomes live without manual state.db surgery. Defaults preserve
     # pre-Phase-3 behaviour, so an existing YAML with no spec.comms /
     # spec.lineage blocks writes the all-allow / may_spawn=True row.
-    persist_acl_policy(config)
+    #
+    # NOT ON A DRY RUN. This publish was a write to the host's own
+    # state.db, where a dry run doing it was untidy but contained. The
+    # policy now lives in ONE store shared by the whole fleet, so the same
+    # line makes `sac agents start --dry-run` mutate fleet-wide ACL state
+    # for an agent it is not starting -- and makes the dry run fail
+    # outright wherever that store is unreachable, which is how CI found
+    # it: the smoke test drives the real CLI against the isolation DSN and
+    # got `exit=1 ... Cannot connect to Postgres store 'node_comms_policy'`.
+    # A dry run answers "would this start?" and must not write to do it.
+    if not dry_run:
+        persist_acl_policy(config)
 
     # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
     # gets a fresh allocator claim; an explicit int is recorded so
@@ -316,14 +327,17 @@ def agent_start(
         else:
             # INFO, not SUCC: the requested end state holds, but nothing was
             # launched — so the line must not read as an accomplishment.
-            # The verdict evidence stays: a no-op that says only "already
+            # The verdict evidence stays, and the notice NAMES the session
+            # (+ pane pid) it believed in: a no-op that says only "already
             # running" is unfalsifiable from the outside, and the operator
-            # could not tell an OBSERVED agent from a process-shaped shadow.
+            # could not tell an OBSERVED agent from a process-shaped shadow
+            # (incident 2026-08-14: a prefix-matched SIBLING session pinned
+            # this branch — see _start_noop_notice).
             from ..cli_pkg._helpers._console import system_msg
-            from ._start_noop_notice import render_already_running
+            from ._start_noop_notice import render_start_noop_notice
 
             system_msg(
-                render_already_running(config.name, verdict.render()),
+                render_start_noop_notice(config, verdict),
                 style="info",
             )
             from ._startup_failed import retract_marker_for
@@ -481,18 +495,19 @@ def agent_start(
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
     # TELEGRAM-RAIL VERDICT (card sac-cct-rail-loud-when-no-slot-resolves-
-    # 20260812). Runs HERE, after ``runtime.start`` materialised the agent's
-    # ``$HOME/.env`` — that file is precedence #1 of the token resolution, so
-    # reading it earlier would report an agent as token-less that in fact has
-    # one. A spec that declares the telegrammer MCP but resolves NO slot has
-    # its MCP server removed (correctly, by operator ruling) and the agent
-    # then starts perfectly, reports healthy, and is MUTE and DEAF on Telegram
-    # with no signal anywhere. It does NOT gate the start; the alarm is
-    # three-valued and rides the LEAD's rail, not the broken one. Full
-    # argument in :mod:`..runtimes._cct_rail_alarm`.
-    from ..runtimes._cct_rail_alarm import check_cct_rail_at_start
+    # 20260812) + TOKEN-OWNERSHIP LEDGER. Both run HERE, after ``runtime.start``
+    # materialised the agent's ``$HOME/.env`` — that file is precedence #1 of
+    # the token resolution, so reading it earlier would report an agent as
+    # token-less that in fact has one. A spec that declares the telegrammer MCP
+    # but resolves NO slot has its MCP server removed (correctly, by operator
+    # ruling) and the agent then starts perfectly, reports healthy, and is MUTE
+    # and DEAF on Telegram with no signal anywhere; the ledger separately
+    # records WHICH bot this agent took, so "who holds this one?" is a query
+    # rather than a 409 from Telegram. NEITHER gates the start, and neither
+    # raises. See :mod:`..runtimes._cct_start_observers`.
+    from ..runtimes._cct_start_observers import observe_cct_at_start
 
-    check_cct_rail_at_start(config)
+    observe_cct_at_start(config)
 
     # Daemon supervisors for an agent that is now up — health monitor +
     # priority-failback poller. See :mod:`._start_supervision`.

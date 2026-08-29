@@ -71,7 +71,9 @@ __all__ = [
 ]
 
 # Per-invocation bearer token entropy. 32 bytes → 43-char URL-safe
-# string; identical convention to :func:`_state.state_db_nodes.mint_node_token`.
+# string. Same convention the removed ``mint_node_token`` used; this
+# token is minted per invocation and never persisted, which is why it
+# outlived the ``node_tokens`` table (deleted 2026-08-28).
 _TOKEN_BYTES = 32
 
 # Default health-poll cap PER ATTEMPT. 15s is generous enough for a

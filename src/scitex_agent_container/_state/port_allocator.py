@@ -1,24 +1,17 @@
-"""Atomic per-agent A2A port allocator.
+"""Atomic per-agent A2A port allocator — the allocation POLICY.
 
-Per-agent A2A ports are an IPC mechanism between ``sac listen`` (the
-single externally-visible host port, default 7878) and each agent's
-in-process sidecar runner. Operators should never hand-pick them —
-collisions are silent (second binder fails) and the only sane default
-is auto-allocation.
-
-This module owns the ``a2a_ports`` table in ``state.db``. The table
-maintains a ``(agent_name, port)`` claim with a UNIQUE constraint on
-``port`` so concurrent claims can never hand the same port to two
-agents. Claims are idempotent: re-claiming for the same agent returns
-the existing port.
+Per-agent A2A ports are an IPC mechanism between ``sac listen`` (the single
+externally-visible host port, default 7878) and each agent's in-process
+sidecar runner. Operators should never hand-pick them — collisions are
+silent (the second binder fails) and the only sane default is
+auto-allocation.
 
 Resolution order at agent_start:
 
-  1. Spec author pinned an explicit int → that int is recorded as the
-     claim. Collisions raise (operator intent disagrees with reality —
-     fail loudly).
-  2. Spec author set ``port: auto`` (or left a2a unset) → allocator
-     scans ``range_`` ascending and persists the first unused port.
+  1. Spec author pinned an explicit int → that int is recorded as the claim.
+     Collisions raise (operator intent disagrees with reality — fail loudly).
+  2. Spec author set ``port: auto`` (or left a2a unset) → the allocator scans
+     ``range_`` ascending and persists the first unused port.
 
 Range defaults to ``(19000, 19999)``. Override via
 ``~/.scitex/agent-container/config.yaml``::
@@ -26,18 +19,51 @@ Range defaults to ``(19000, 19999)``. Override via
     a2a:
       port_range: [19000, 19999]
 
-The allocator only owns the **claim**. Actual port binding happens
-inside the runner (which exits non-zero if the kernel refuses the
-bind); a sweeper (sac agents stop) calls ``release_port`` so claims
-don't leak across runs.
+The allocator only owns the **claim**. Actual port binding happens inside the
+runner (which exits non-zero if the kernel refuses the bind); ``agent_stop``
+calls :func:`release_port` so claims don't leak across runs.
+
+WHERE THE CLAIMS LIVE
+=====================
+In per-host PostgreSQL via :mod:`scitex_dev.store`, NOT in ``state.db``.
+:mod:`.port_allocator_store` is the storage adapter and carries the full
+rationale: why the store IDENTITY is the PORT rather than the agent name (the
+invariant is ``UNIQUE(port)``), why a released claim is a TOMBSTONE that must
+be unhidden rather than treated as held, and why the lookup cost inverts into
+an O(n) scan over a range-bounded ledger.
+
+``db_path`` IS GONE from every function here. It named a SQLite file; there is
+no file. Callers that threaded it through simply stop, and test isolation
+comes from the shared ``pg_schema`` fixture pointing ``SCITEX_STORE_DSN`` at a
+throwaway schema.
+
+THE ONE INVARIANT THIS MODULE MUST NOT LOSE
+===========================================
+    claim(pin) -> release -> re-claim(SAME pin)  MUST SUCCEED.
+
+A pinned agent restarts through exactly that sequence, so a re-claim that
+raises means the agent never comes back — every pinned agent on the fleet one
+restart from staying down. ``test_port_allocator_pin_reclaim.py`` pins it from
+two vantages and states the store behaviour that endangers it.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
+import time
 
-from .state_db import init_schema, open_db
+from .port_allocator_store import (
+    ACTOR as _ACTOR,
+)
+from .port_allocator_store import (
+    STORE_NAME,
+    holder_of,
+    init_port_schema,
+    live_claims,
+    open_port_store,
+    port_store,
+    port_store_target,
+    try_claim,
+)
 
 # Built-in default range. Tuned to sit above the IANA dynamic range
 # floor (49152) is overkill for a single-host loopback IPC channel;
@@ -46,27 +72,18 @@ from .state_db import init_schema, open_db
 # sockets. Operators override via config.yaml.
 DEFAULT_RANGE: tuple[int, int] = (19000, 19999)
 
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS a2a_ports (
-    name        TEXT PRIMARY KEY,
-    port        INTEGER NOT NULL UNIQUE,
-    claimed_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_a2a_ports_port ON a2a_ports(port);
-"""
-
-
-def _ensure_schema(db_path: Path | None) -> None:
-    """Create ``a2a_ports`` if missing. ``state.db`` core schema first.
-
-    Kept separate from ``state_db._SCHEMA_REGISTRY`` so a partial
-    rollback of this feature doesn't leave foreign-key debris on the
-    main ``instances`` table.
-    """
-    init_schema(db_path)
-    with open_db(db_path) as conn:
-        conn.executescript(_SCHEMA)
+__all__ = [
+    "DEFAULT_RANGE",
+    "STORE_NAME",
+    "claim_port",
+    "get_port",
+    "init_port_schema",
+    "list_claims",
+    "open_port_store",
+    "port_store",
+    "port_store_target",
+    "release_port",
+]
 
 
 def _resolve_range(range_: tuple[int, int] | None) -> tuple[int, int]:
@@ -104,25 +121,19 @@ def _resolve_range(range_: tuple[int, int] | None) -> tuple[int, int]:
     return DEFAULT_RANGE
 
 
-def _now_iso() -> str:
-    """Local copy avoids pulling state_db's full surface into hot path."""
-    from datetime import datetime, timezone
+def get_port(agent_name: str) -> int | None:
+    """Return the currently-claimed port for ``agent_name``, else ``None``.
 
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def get_port(agent_name: str, *, db_path: Path | None = None) -> int | None:
-    """Return the currently-claimed port for ``agent_name``, else None.
-
-    Fast read — no schema mutation when the table is missing (treated
-    as 'no claim').
+    A scan by design — the store identity is the port, so the agent is data.
+    See :mod:`.port_allocator_store` for the cost, which is stated there
+    rather than hidden. The handle is the per-process cached one (card
+    sqlite-out-per-call-connect-cost-20260828): never closed here.
     """
-    _ensure_schema(db_path)
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT port FROM a2a_ports WHERE name=?", (agent_name,)
-        ).fetchone()
-        return int(row["port"]) if row else None
+    store = port_store()
+    for port, holder in live_claims(store).items():
+        if holder == agent_name:
+            return port
+    return None
 
 
 def claim_port(
@@ -130,19 +141,17 @@ def claim_port(
     *,
     range_: tuple[int, int] | None = None,
     explicit: int | None = None,
-    db_path: Path | None = None,
     explicit_is_pin: bool = True,
 ) -> int:
     """Atomically claim a free port for ``agent_name``.
 
     Args:
-        agent_name: The spec's ``metadata.name``. Idempotent: a second
-            call for the same agent returns the existing port without
-            mutating state.
+        agent_name: The spec's ``metadata.name``. Idempotent: a second call
+            for the same agent returns the existing port without mutating
+            state.
         range_: ``(lo, hi)`` inclusive scan range. Falls back to
             ``config.yaml``'s ``a2a.port_range``, then ``DEFAULT_RANGE``.
         explicit: When set, try to persist this specific port for the agent.
-        db_path: Override state.db location (tests).
         explicit_is_pin: What a LOST RACE for ``explicit`` MEANS. The two
             origins of an ``explicit`` value are not the same request, and
             conflating them is what made a routine restart fail:
@@ -169,111 +178,103 @@ def claim_port(
         RuntimeError: When no free port remains in ``range_``, or when an
             operator-PINNED ``explicit`` port is held by another agent.
     """
-    _ensure_schema(db_path)
+    from scitex_dev.store import ANY_REVISION
+
     lo, hi = _resolve_range(range_)
-    now = _now_iso()
+    now = time.time()
 
-    with open_db(db_path) as conn:
-        # Idempotent fast path: same agent → return existing claim.
-        row = conn.execute(
-            "SELECT port FROM a2a_ports WHERE name=?", (agent_name,)
-        ).fetchone()
-        if row:
-            existing = int(row["port"])
-            if explicit is not None and explicit != existing:
-                # Operator changed the pin between starts. Update the
-                # claim to the new explicit port (releasing the old).
-                conn.execute("DELETE FROM a2a_ports WHERE name=?", (agent_name,))
-            else:
-                return existing
+    store = port_store()
+    # ONE read serves the fast path AND the auto scan below. Re-reading
+    # per candidate would turn a crowded range into a thousand round trips
+    # against PostgreSQL, where SQLite paid only a local file write.
+    held = live_claims(store)
 
-        if explicit is not None:
-            # ATOMIC claim-or-lose. This used to be a TOCTOU — a `SELECT` for a
-            # clash, then a bare `INSERT` — and that is exactly how the v0.21.19
-            # release died:
-            #
-            #   sqlite3.IntegrityError: UNIQUE constraint failed: a2a_ports.port
-            #
-            # A concurrent claimant landing between the two statements tripped
-            # UNIQUE(port) and the raw driver exception escaped. WHICH error you
-            # got — the intended diagnosis or a sqlite traceback — was decided
-            # purely by thread timing, which is why the failure MOVED between
-            # releases and read as a flake. Reproduced deterministically: 16
-            # threads => 6 raw IntegrityError escapes, 9 clean RuntimeErrors.
-            #
-            # NOT a test artefact. `resolve_a2a_port` MUTATES `config.a2a.port`
-            # from "auto" to the int it just claimed, and `agent_start`'s
-            # force/restart path re-resolves AFTER `agent_stop` released the
-            # row — so a plain `--force` restart of an *auto*-port agent
-            # re-enters this branch with an int. Two concurrent restarts race
-            # here on a real host too.
-            #
-            # ONE STATEMENT now decides it. `ON CONFLICT DO NOTHING` + read-back
-            # cannot interleave: either our row is in, or someone else's is, and
-            # the read-back says whose. Catching the exception was not enough —
-            # a caught-then-failed claim is still a FAILED LAUNCH, and the
-            # operator relaunches ~14 agents at once. A live start must WIN a
-            # port, not error politely.
-            conn.execute(
-                "INSERT INTO a2a_ports (name, port, claimed_at) VALUES (?, ?, ?) "
-                "ON CONFLICT DO NOTHING",
-                (agent_name, explicit, now),
+    # Idempotent fast path: same agent -> return the existing claim.
+    existing = next((p for p, n in held.items() if n == agent_name), None)
+    if existing is not None:
+        if explicit is None or int(explicit) == existing:
+            return existing
+        # The operator changed the pin between starts. Release the old
+        # claim so the new one can be attempted below.
+        store.hide({"port": existing}, expected_revision=ANY_REVISION, actor=_ACTOR)
+        held.pop(existing, None)
+
+    if explicit is not None:
+        want = int(explicit)
+        if try_claim(store, port=want, agent_name=agent_name, now=now):
+            return want
+
+        holder = holder_of(store, want)
+        if holder == agent_name:
+            # We raced OURSELVES (two starts of one agent), which honours
+            # claim_port's documented idempotency rather than failing a
+            # legitimate re-entry.
+            return want
+
+        if explicit_is_pin:
+            # An OPERATOR PIN held by someone else is a real
+            # misconfiguration. Handing back a different port would
+            # silently break the contract the pin exists to state, so
+            # fail loud.
+            owner = holder if holder is not None else "another agent"
+            raise RuntimeError(
+                f"a2a port {want} already claimed by "
+                f"{owner!r}; cannot pin for {agent_name!r}"
             )
-            holder = conn.execute(
-                "SELECT name FROM a2a_ports WHERE port=?", (explicit,)
-            ).fetchone()
-            if holder is not None and str(holder["name"]) == agent_name:
-                # We won it — or we raced OURSELVES (two starts of one agent),
-                # which honours claim_port's documented idempotency rather than
-                # failing a legitimate re-entry.
-                return int(explicit)
+        # Not a pin — just the port we happened to hold before this
+        # restart, taken while we were down. A fresh port is the correct
+        # answer; a dead agent is not. Fall through to the auto scan.
 
-            if explicit_is_pin:
-                # An OPERATOR PIN held by someone else is a real
-                # misconfiguration. Handing back a different port would silently
-                # break the contract the pin exists to state, so fail loud.
-                owner = str(holder["name"]) if holder is not None else "another agent"
-                raise RuntimeError(
-                    f"a2a port {explicit} already claimed by "
-                    f"{owner!r}; cannot pin for {agent_name!r}"
-                )
-            # Not a pin — just the port we happened to hold before this restart,
-            # taken while we were down. A fresh port is the correct answer; a
-            # dead agent is not. Fall through to the auto scan.
-
-        # Auto: ascending scan + UNIQUE-constraint optimistic insert.
-        # The transaction (open_db wraps commit/rollback) plus
-        # UNIQUE(port) means two threads racing on the same candidate
-        # serialise: one wins the INSERT, the other catches
-        # IntegrityError and re-scans.
-        for candidate in range(lo, hi + 1):
-            try:
-                conn.execute(
-                    "INSERT INTO a2a_ports (name, port, claimed_at) VALUES (?, ?, ?)",
-                    (agent_name, candidate, now),
-                )
-                return candidate
-            except sqlite3.IntegrityError:
-                continue
-        raise RuntimeError(
-            f"no free a2a port in range [{lo}, {hi}] (all claimed); "
-            "extend a2a.port_range in ~/.scitex/agent-container/config.yaml"
-        )
+    for candidate in range(lo, hi + 1):
+        if candidate in held:
+            continue
+        if try_claim(store, port=candidate, agent_name=agent_name, now=now):
+            return candidate
+    raise RuntimeError(
+        f"no free a2a port in range [{lo}, {hi}] (all claimed); "
+        "extend a2a.port_range in ~/.scitex/agent-container/config.yaml"
+    )
 
 
-def release_port(agent_name: str, *, db_path: Path | None = None) -> bool:
-    """Drop the claim. Idempotent — returns True iff a row was deleted."""
-    _ensure_schema(db_path)
-    with open_db(db_path) as conn:
-        cur = conn.execute("DELETE FROM a2a_ports WHERE name=?", (agent_name,))
-        return cur.rowcount > 0
+def release_port(agent_name: str) -> bool:
+    """Drop the claim. Idempotent — ``True`` iff a LIVE claim was released.
+
+    Hides rather than deletes, because ``hide`` is the store's only removal.
+    The record, its values and its whole history stay readable through
+    ``include_hidden=True`` and in the oplog, while every default read treats
+    the port as free — so the property the SQLite ``DELETE`` gave ("this agent
+    no longer holds a port") is unchanged and only the forgetting stopped.
+    ``port_allocator_store.try_claim`` is what makes the tombstone
+    re-claimable; that module's docstring says why it has to.
+    """
+    from scitex_dev.store import ANY_REVISION
+
+    store = port_store()
+    for port, holder in live_claims(store).items():
+        if holder == agent_name:
+            store.hide({"port": port}, expected_revision=ANY_REVISION, actor=_ACTOR)
+            return True
+    return False
 
 
-def list_claims(*, db_path: Path | None = None) -> list[dict]:
-    """Return every active claim. Used by ``sac agents list`` to enrich rows."""
-    _ensure_schema(db_path)
-    with open_db(db_path) as conn:
-        rows = conn.execute(
-            "SELECT name, port, claimed_at FROM a2a_ports ORDER BY port"
-        ).fetchall()
-        return [dict(r) for r in rows]
+def list_claims() -> list[dict]:
+    """Every LIVE claim, ascending by port — the shape the CLI renders.
+
+    Used by ``sac agents list``, ``sac ports`` and the listen registry.
+    Sorted EXPLICITLY: ``rows()`` returns no order at all, so the SQLite
+    ``ORDER BY port`` has to be re-stated here rather than inherited.
+
+    The dict key stays ``"name"`` — the shape every CLI/listen consumer
+    renders — even though the store field is ``claimed_by`` (the protocol's
+    vocabulary): the mapping is this module's job, not each caller's.
+    """
+    store = port_store()
+    claims = [
+        {
+            "name": str(row.values["claimed_by"]),
+            "port": int(row.values["port"]),
+            "claimed_at": row.values["claimed_at"],
+        }
+        for row in store.rows()
+    ]
+    return sorted(claims, key=lambda claim: claim["port"])

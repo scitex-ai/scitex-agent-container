@@ -31,6 +31,38 @@ _DEFAULT_LOG_PATH = (
 )
 
 
+def _paused_candidates(
+    accounts: list[dict],
+    current_email: str | None,
+    *,
+    store_dir: Path | None = None,
+    home: Path | None = None,
+    now: float | None = None,
+) -> list[str]:
+    """Which non-current accounts were dropped because they are PAUSED.
+
+    The ONLY consumer is the "nothing to rotate to" alert, and it exists
+    so that alert can name the real reason. Same candidate set and same
+    health call as :func:`_select_next_account`, asked one question
+    later: not "who can I use" but "who did I refuse, and was it his
+    decision or a fault".
+    """
+    from .._creds._pick_healthy import account_health
+
+    out: list[str] = []
+    for acct in accounts:
+        if acct.get("email_address") == current_email:
+            continue
+        name = acct.get("name", "")
+        if not name:
+            continue
+        if account_health(name, store_dir=store_dir, home=home, now=now).state == (
+            "PAUSED"
+        ):
+            out.append(name)
+    return out
+
+
 def _select_next_account(
     accounts: list[dict],
     current_email: str | None,
@@ -41,8 +73,18 @@ def _select_next_account(
 ) -> dict | None:
     """Pick the HEALTHY account with lowest 5h usage that isn't the current one.
 
-    Health is credential-snapshot freshness — a non-expired
-    ``claudeAiOauth.expiresAt`` — reusing
+    Health is credential-snapshot freshness AND the operator's own
+    pause decision (2026-08-26): :func:`.._creds._account_health` now
+    also returns ``PAUSED``, which ``is_healthy`` excludes, so an
+    account the operator has rested is never rotated onto. That is
+    correct on its own terms — rotating onto a rested account is
+    exactly the spend he paused it to avoid — but it means "no
+    candidate" no longer implies a fault, which is why
+    :func:`check_and_rotate` asks :func:`_paused_candidates` before it
+    writes an alert about one.
+
+    Freshness itself is a non-expired ``claudeAiOauth.expiresAt``,
+    reusing
     :func:`.._creds._pick_healthy.account_health` (the same predicate the
     boot-time picker uses). An account whose stored credential is EXPIRED
     or ABSENT is NEVER selected, even when its usage reads 0.0%.
@@ -158,6 +200,32 @@ def check_and_rotate(
             # EXPIRED/ABSENT". Staying put is the safe choice — rotating to
             # an unhealthy account would hand the fleet a dead token
             # (the 2026-07-06 expired-account bug). Never rotate here.
+            #
+            # THERE IS NOW A THIRD WAY TO GET HERE, and it must not be
+            # reported with the diagnosis written for the other two. A
+            # PAUSED account is dropped from the candidate set on
+            # purpose (a rested account should not be rotated onto), but
+            # saying "absent or credential-expired" names a fault that
+            # does not exist and prescribes a command that does nothing.
+            # The operator's stated workflow is to pause several
+            # accounts to rest quota; the survivor then crosses this
+            # threshold and this is the sentence he gets.
+            rested = _paused_candidates(
+                accounts, current_email, store_dir=store_dir, home=home
+            )
+            if rested:
+                return {
+                    "action": "no_accounts",
+                    "quota_5h_pct": q5,
+                    "quota_7d_pct": q7,
+                    "switched_to": None,
+                    "message": (
+                        f"ALERT: quota {q5}% (5h) — no account to rotate to: "
+                        f"{len(rested)} PAUSED ({', '.join(rested)}); staying "
+                        f"put. Lift one with `sac accounts resume "
+                        f"{rested[0]}` if you want the headroom back."
+                    ),
+                }
             return {
                 "action": "no_accounts",
                 "quota_5h_pct": q5,

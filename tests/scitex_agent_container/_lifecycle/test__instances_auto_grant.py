@@ -30,6 +30,20 @@ import pytest
 from scitex_agent_container.config import AgentConfig
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
@@ -72,7 +86,7 @@ class _RuntimeStub:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_grants_self_to_lead(
+def test_record_local_instance_grants_self_to_lead(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -92,25 +106,55 @@ def test_record_local_instance_grants_self_to_lead(
 
 
 def test_record_local_instance_grant_to_lead_is_idempotent(
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
+    """A repeat start must not RE-STAMP the grant it already holds.
+
+    This used to COUNT rows through ``open_db`` and raw SQL against the
+    SQLite ``comms_grants`` table. That table is abandoned — and worse, the
+    query did not fail: the vestigial DDL is still in ``_SCHEMA_REGISTRY``,
+    so the count came back 0 from a table nothing writes any more, which is
+    a silent wrong answer rather than a loud one.
+
+    A COUNT is also near-tautological now: the store's identity is
+    (sender_name, target_name), so a duplicate row is structurally
+    impossible and the assertion would hold even if grant_send were broken.
+    The property worth pinning is the documented one — re-granting a LIVE
+    pair leaves the row untouched and does NOT bump created_at — which an
+    implementation genuinely can break.
+    """
     # Arrange — two successive starts simulate a crash-recover loop.
+    #
+    # The precondition (the FIRST start wrote exactly one grant) is checked
+    # with an explicit raise rather than a second ``assert``: it is setup
+    # validation, not a second clause of the contract under test, and
+    # STX-TQ007 counts asserts precisely so that a failing first one cannot
+    # hide a later contract check. Keeping it as a raise says which of the
+    # two it is.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import open_db
+    from scitex_agent_container._state.state_db_nodes import list_comms_grants
 
     cfg = AgentConfig(name="grant-2", runtime="apptainer")
     rt = _RuntimeStub(tmp_path)
     record_local_instance(cfg, rt)
+    first = [
+        r for r in list_comms_grants()
+        if (r["sender"], r["target"]) == ("grant-2", "lead")
+    ]
+    if len(first) != 1:
+        raise RuntimeError(
+            "arrange failed: the first start wrote "
+            f"{len(first)} grant row(s), expected exactly 1"
+        )
+    stamped = first[0]["created_at"]
     # Act
     record_local_instance(cfg, rt)
-    # Assert — exactly one comms_grants row for (grant-2, lead).
-    with open_db() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) AS c FROM comms_grants "
-            "WHERE sender_name = ? AND target_name = ?",
-            ("grant-2", "lead"),
-        ).fetchone()["c"]
-    assert count == 1
+    # Assert — still one row, and its timestamp did not move.
+    rows = [
+        r for r in list_comms_grants()
+        if (r["sender"], r["target"]) == ("grant-2", "lead")
+    ]
+    assert [r["created_at"] for r in rows] == [stamped]
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +163,7 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(
+def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(pg_schema: str, 
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -223,11 +267,18 @@ def _write_health_spec(tmp_path: Path, name: str) -> Path:
 
 def _fire_monitor_restart_against_foreign_db(
     db_path: Path, tmp_path: Path, name: str
-) -> Path:
+) -> tuple[Path, set[str]]:
     """Arrange + Act: start a health-monitored agent against ``db_path``,
     then move the process-global default to a FOREIGN db and fire the
     monitor's restart callback (what the leaked daemon thread does on its
-    next tick). Returns the foreign db path for the caller to assert on."""
+    next tick).
+
+    Returns ``(foreign_db_path, instance_ids_in_db_path_before_restart)``.
+    The second element exists so a caller can tell "the write went to the
+    right place" apart from "the write was lost entirely" — bare absence
+    from the foreign db is not a positive control, because ``agent_start``
+    has already written a row to ``db_path`` before the callback fires.
+    """
     from scitex_agent_container._lifecycle import lifecycle as lc
     from scitex_agent_container._state import state_db
     from scitex_agent_container._state.registry import Registry
@@ -251,6 +302,10 @@ def _fire_monitor_restart_against_foreign_db(
     config = created[0].args[1]
 
     # An unrelated LATER test isolates itself: the process-global moves.
+    from scitex_agent_container._state.state_db_instances import list_active_instances
+
+    before = {r["id"] for r in list_active_instances()}
+
     foreign = tmp_path / "foreign" / "state.db"
     state_db.init_schema(foreign)
     saved = state_db.DEFAULT_DB_PATH
@@ -259,32 +314,58 @@ def _fire_monitor_restart_against_foreign_db(
         restart_cb(config)  # the leaked monitor thread fires
     finally:
         state_db.DEFAULT_DB_PATH = saved
-    return foreign
+    return foreign, before
 
 
-def test_monitor_restart_does_not_auto_grant_into_a_foreign_state_db(
-    db_path: Path, tmp_path: Path
+# ``test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db``
+# was here until 2026-08-28, and it is the SECOND time this test outlived its
+# own premise — which is why it is deleted rather than re-pointed again.
+#
+# It measured the 2026-07-14 regression: a leaked monitor DAEMON THREAD
+# followed a mutable process-global instead of the store its agent started
+# against, and wrote into an unrelated database. It asserted that on
+# ``comms_grants`` first; when comms_grants became one shared PostgreSQL store
+# there was no second store to be foreign TO, and the test moved onto
+# ``instances``, whose row ``record_local_instance`` still wrote through
+# ``db_path``. Its docstring said exactly that: "The mechanism did NOT
+# migrate."
+#
+# THE MECHANISM HAS NOW MIGRATED. ``instances`` is the shared store as well,
+# addressed by ``SCITEX_STORE_DSN``, and ``DEFAULT_DB_PATH`` no longer selects
+# where a lifecycle record lands — so pinning the global to a "foreign"
+# state.db changes nothing about where the write goes, and the assertion
+# ``stray == []`` can only pass by accident of which store the process happens
+# to resolve. There is no third table to move it to: state.db creates ONE
+# table now.
+#
+# DELETED, NOT EDITED UNTIL IT PASSED. The positive control it was paired with
+# survives immediately below — the restart callback still runs and still
+# auto-grants — and the property the deleted half named (a write goes to the
+# store the agent started against) is now true BY CONSTRUCTION rather than by
+# a global nobody may mutate.
+
+
+def test_monitor_restart_callback_still_auto_grants_self_to_lead(
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+    """RENAMED, because the old name claimed a property it can no longer test.
 
-    name = "pinned-1"
-    # Act — the leaked monitor thread fires while the global points elsewhere.
-    foreign = _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
-    # Assert — the unrelated store MUST be untouched. Pre-fix it held
-    # ("pinned-1" -> "lead"): exactly the stray target='lead' row that made
-    # cli_pkg/test_a2a_group.py's grants tests red in full-suite runs.
-    assert list_comms_grants(db_path=foreign) == []
+    It was `..._auto_grants_into_the_db_the_agent_started_against`, which
+    asserted PINNING. Against one shared PostgreSQL store that assertion
+    cannot fail — there is no other store the grant could have landed in — so
+    under the old name this was a permanently-green test certifying something
+    it does not check. It was not in the failure list, so nothing would have
+    forced anyone to look at it.
 
-
-def test_monitor_restart_auto_grants_into_the_db_the_agent_started_against(
-    db_path: Path, tmp_path: Path
-) -> None:
+    What it still legitimately covers: the restart callback reaches
+    grant_send at all, i.e. the write is not LOST. Kept under a name that
+    says only that.
+    """
     # Arrange
     from scitex_agent_container._state.state_db_nodes import has_grant
 
     name = "pinned-2"
-    # Act — same drive, asserting the other half of the contract.
+    # Act
     _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
-    # Assert — pinning must not LOSE the write, only aim it correctly.
-    assert has_grant(sender=name, target="lead", db_path=db_path) is True
+    # Assert
+    assert has_grant(sender=name, target="lead") is True

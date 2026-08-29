@@ -160,6 +160,22 @@ _CARDS_STORE_IDENTITY_VARS = frozenset(
 _RUNTIME_ONLY_VARS = (
     frozenset(
         {
+            # The CURRENT board identity. Its retired predecessor
+            # ``SCITEX_TODO_AGENT_ID`` was listed here from the start and this
+            # one never was, so the canonical name was the ONE identity var
+            # this guard did not cover (measured 2026-08-22:
+            # ``_is_runtime_only_var("SCITEX_CARDS_AGENT_ID")`` was False while
+            # the legacy name, SAC_NAME and SCITEX_CARDS_DB were all True).
+            #
+            # It is a LATENT trap, not a live bug: no template references
+            # ``${SCITEX_CARDS_AGENT_ID}`` today, so nothing has been baked. The
+            # moment one does — and retiring the legacy key from the baseline
+            # ``.mcp.json`` requires exactly that — deploy-time interpolation
+            # would substitute the DEPLOYING process's identity into every
+            # agent's materialized file. That is the 2026-07-02 wrong-identity
+            # incident this whole mechanism exists to prevent, re-entered
+            # through the migration meant to close it.
+            "SCITEX_CARDS_AGENT_ID",
             # scitex-todo >= 0.7.30 names
             "SCITEX_TODO_AGENT_ID",
             "SCITEX_TODO_TASKS_YAML_SHARED",

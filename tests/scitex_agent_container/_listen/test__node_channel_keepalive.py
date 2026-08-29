@@ -52,12 +52,18 @@ BEAT_S = "0.2"
 
 
 @pytest.fixture
-def fast_beat_env():
+def fast_beat_env(pg_schema: str):
     """Set the REAL env var the server reads for its beat cadence, then restore.
 
     The interval is resolved at CALL time precisely so a deployment (or a test)
     can steer it — this exercises that real path rather than rewriting an
     internal.
+
+    ``pg_schema`` joined on 2026-08-28: the SSE stream's first act is a
+    durable replay, and ``channel_events`` left SQLite for the shared
+    PostgreSQL that day (ADR-0023). Without a reachable schema the stream
+    raises before it can beat, so the keepalive assertion would be testing a
+    connection error.
     """
     key = "SAC_INBOX_KEEPALIVE_S"
     previous = os.environ.get(key)

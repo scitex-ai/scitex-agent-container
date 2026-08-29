@@ -18,17 +18,18 @@ Wire format::
     "since": "<iso>" | null,
     "host": "<canonical>",   # the host that produced the dump
     "tables": {
-      "definitions": [ {row}, ... ],
-      "instances":   [ {row}, ... ],
+      "instances":      [ {row}, ... ],
       ...
     }
   }
 
 Filtering: each table picks a sensible "advance" column and emits
 only rows where that column >= since (or all rows when since is None).
-instances and definitions emit when *either* their start/seen
-timestamp OR end timestamp is >= since — an aggregator needs both
-halves of the lifecycle.
+``instances`` emits when *either* its start timestamp OR its end
+timestamp is >= since — an aggregator needs both halves of the
+lifecycle. (``definitions`` shared that two-sided rule until 2026-08-28,
+when it left :data:`KNOWN_TABLES` alongside ``instance_heartbeats`` and
+``events``; see the map below.)
 """
 
 from __future__ import annotations
@@ -56,32 +57,79 @@ def _table_filter_clauses(
     if since is None:
         return {t: ("", ()) for t in known_tables}
     explicit = {
-        "definitions": ("WHERE first_seen_at >= ?", (since,)),
-        "instances": (
-            "WHERE started_at >= ? OR ended_at >= ?",
+        # ``instances`` had a ``WHERE started_at >= ? OR ended_at >= ?``
+        # entry here, ``definitions`` a ``WHERE first_seen_at >= ?``, and
+        # ``instance_heartbeats`` and ``events`` a ``WHERE ts >= ?`` each,
+        # until 2026-08-28. All four left KNOWN_TABLES that day, so none of
+        # the four mappings could ever be selected again — and a WHERE
+        # clause naming a table SQLite no longer has reads as "sac still
+        # exports this". For ``events`` that would be the wrong promise
+        # twice over: the rows still sit on old databases, and this filter
+        # is exactly what would have kept shipping them to a peer as though
+        # something on the far side read them. For ``instances`` it would be
+        # wrong in the other direction — the rows moved to the shared store,
+        # so an export naming it would ship an empty array while the data is
+        # somewhere every host can already read.
+        # ``attempts`` had a ``WHERE ts >= ?`` entry here until 2026-08-28.
+        # It left KNOWN_TABLES that day -- zero writers, DDL deleted -- so
+        # this mapping could never be selected again, and a WHERE clause
+        # naming a table SQLite no longer has reads as "sac still exports
+        # this".
+        # ``turns``, ``errors`` and the diary-style ``heartbeats`` each had a
+        # ``WHERE ts >= ?`` entry here until 2026-08-28. All three moved to
+        # per-host PostgreSQL and left KNOWN_TABLES together, so — exactly as
+        # for acl_deny_notify_log below — these mappings could never be
+        # selected again, and a WHERE clause naming a table SQLite no longer
+        # has reads as "sac still exports this". This note used to add "note
+        # ``instance_heartbeats`` above is a DIFFERENT table and has not
+        # moved"; it is a different table and it has now gone too, though
+        # not to PostgreSQL — it was deleted for having neither a caller nor
+        # a row. See the note above.
+        # WI-2 ACL tables — ``created_at`` is the row-mint time.
+        # ``node_tokens`` had a ``WHERE created_at >= ?`` entry here until
+        # 2026-08-28. The per-node bearer feature was removed that day --
+        # zero callers, 0 rows on every host, DDL deleted -- so it left
+        # KNOWN_TABLES and this mapping could never be selected again.
+        # Deleting it matters more here than for the neighbours below: the
+        # row this filter selected carried a bearer SECRET in its ``token``
+        # column, and ``export_state`` ships every column of the tables it
+        # is given. A filter naming it would read as "sac still exports
+        # this", which for this one table would have been a description of
+        # a credential leak rather than of a stale sync.
+        # ``lineage`` had a ``WHERE created_at >= ?`` entry here until
+        # 2026-08-28. The spawn DAG moved to the shared PostgreSQL store and
+        # left KNOWN_TABLES, so this mapping could never be selected again.
+        # Deleted rather than kept: on the shared store every host reads and
+        # writes ONE set of edges, so there is no longer a peer to ship them
+        # to -- an incremental filter here would describe a sync that has
+        # nothing left to converge.
+        # ``comms_nodes`` had a ``WHERE updated_at >= ?`` entry here until
+        # 2026-08-28 — the ADR-0014 anti-entropy filter, written so a
+        # tombstoned row still shipped on the next pull until both sides
+        # converged. The table moved to the shared PostgreSQL store and left
+        # KNOWN_TABLES, so this mapping could never be selected again. It is
+        # deleted rather than kept for the reason the neighbours are, plus
+        # one of its own: this table is the only one this module ever
+        # EXISTED to sync, and a filter naming it would read as "sac still
+        # ships the directory between hosts". It does not, and it must not —
+        # every host now reads and writes the same directory, so an export /
+        # import round trip could only re-insert a stale copy of rows the
+        # peer already holds. THE STORE IS THE SYNC.
+        # node_comms_policy's entry lived here until 2026-08-28. The table
+        # moved to PostgreSQL and left KNOWN_TABLES, so this mapping could
+        # never be selected again — and a WHERE clause naming a table SQLite
+        # no longer has reads as "sac still exports this".
+        # acl_deny_notify_log's entry lived here until 2026-08-20. The table
+        # moved to per-host PostgreSQL and left KNOWN_TABLES, so this mapping
+        # could never be selected again — and a WHERE clause naming a table
+        # SQLite no longer has reads as "sac still exports this".
+        # v4 step 5 — birth certificates. A row moves when it is BORN or
+        # when its death is mirrored on, so filter on either stamp (same
+        # shape as ``instances``).
+        "incarnations": (
+            "WHERE born_at >= ? OR exited_at >= ?",
             (since, since),
         ),
-        "instance_heartbeats": ("WHERE ts >= ?", (since,)),
-        "heartbeats": ("WHERE ts >= ?", (since,)),
-        "events": ("WHERE ts >= ?", (since,)),
-        "attempts": ("WHERE ts >= ?", (since,)),
-        "turns": ("WHERE ts >= ?", (since,)),
-        "errors": ("WHERE ts >= ?", (since,)),
-        # WI-2 ACL tables — ``created_at`` is the row-mint time.
-        "node_tokens": ("WHERE created_at >= ?", (since,)),
-        "lineage": ("WHERE created_at >= ?", (since,)),
-        "comms_grants": ("WHERE created_at >= ?", (since,)),
-        # ADR-0014 — anti-entropy filter advances on ``updated_at`` so
-        # a tombstoned row (``ended_at`` set) still ships on the next
-        # pull until both sides converge.
-        "comms_nodes": ("WHERE updated_at >= ?", (since,)),
-        # Phase-3 ACL table (ADR-0010 Step 2). Uses ``updated_at`` since
-        # the row is upserted on every agent_start with no historical
-        # tail (latest write wins).
-        "node_comms_policy": ("WHERE updated_at >= ?", (since,)),
-        # acl_deny_notify_log — rate-limit ledger keyed on (sender, target);
-        # the ts-equivalent column is ``last_notified_at`` (REAL).
-        "acl_deny_notify_log": ("WHERE last_notified_at >= ?", (since,)),
     }
     return {t: explicit.get(t, ("WHERE ts >= ?", (since,))) for t in known_tables}
 
@@ -92,12 +140,20 @@ def export_state(
     host: str | None = None,
     tables: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    """Dump the registry tables (and ``attempts``) into a JSON-able dict.
+    """Dump the registry tables into a JSON-able dict.
+
+    ``attempts`` was named here alongside them until 2026-08-28, when it
+    left :data:`KNOWN_TABLES`; this dump follows that tuple, so it no
+    longer ships an empty ``attempts`` array. ``definitions``,
+    ``instance_heartbeats`` and ``events`` left the same tuple the same
+    day and are gone from the dump for the same mechanical reason.
 
     Used by ``sac db export``; an aggregator consumes the result via
     ``sac db import`` (or its own importer).
 
-    ``tables`` (added 2026-05 alongside ADR-0014's anti-entropy sync)
+    ``tables`` (added 2026-05 for ADR-0014's anti-entropy sync, which was
+    retired with the ``comms_nodes`` move on 2026-08-28; the filter itself
+    stays useful for any subset of the tables that remain)
     optionally restricts the dump to a subset of :data:`KNOWN_TABLES`.
     Tables NOT listed are emitted as empty arrays so the wire shape
     stays stable for :func:`import_state` (which iterates over
@@ -178,13 +234,37 @@ def import_legacy_registry(
 ) -> dict[str, int]:
     """Lift the JSON files under ``registry_dir`` into ``instances``.
 
-    Each JSON shard becomes one ``instances`` row marked
+    Each JSON shard becomes one ``instances`` record marked
     ``exit_reason='reboot-swept'`` with ``ended_at`` = now. Idempotent:
-    existing rows matched by ``(name, host, started_at)`` are skipped.
+    shards matching an existing record on ``(name, host, started_at)`` are
+    skipped.
 
     Returns ``{"imported": N, "skipped": M}``.
+
+    ``db_path`` IS ACCEPTED AND IGNORED, deliberately. ``instances`` moved to
+    the shared PostgreSQL store on 2026-08-28 and this writer moved with it,
+    but the parameter stays in the signature because ``sac db
+    import-legacy-registry`` still threads a ``--db-path`` through and a
+    ``TypeError`` at the CLI boundary would be a worse answer than a
+    parameter that no longer selects anything. It is named here rather than
+    left as a silent no-op.
+
+    THE DEDUPE KEY IS ``(name, host, started_at)``, NOT the record identity.
+    That is unchanged from the SQLite version and it has to be: the identity
+    is ``(id, host)`` and ``id`` is MINTED here, so every re-run would mint a
+    fresh one and every re-run would import everything again. The natural key
+    is what makes this idempotent; the surrogate id never could.
+
+    ``ended_at``/``exit_reason`` are written IN THE SAME PUT as the rest.
+    They are IMMUTABLE fields and the store freezes such a field at its first
+    stamped value, so a two-step "insert then tombstone" would work exactly
+    once and then be unrepeatable. One put, one stamp.
     """
-    from .state_db import new_uuid7, now_iso, open_db
+    from scitex_dev.store import NEW_RECORD
+
+    from .state_db import new_uuid7, now_iso
+    from .state_db_instances import scan_instances
+    from .state_db_instances_store import ACTOR, run_with_reconnect, strip_unset
 
     if host is None:
         host = _sac_env("HOST") or socket.gethostname().split(".")[0]
@@ -195,51 +275,62 @@ def import_legacy_registry(
         return {"imported": 0, "skipped": 0}
 
     swept_at = now_iso()
-    with open_db(db_path) as conn:
-        for path in sorted(registry_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text())
-            except (
-                json.JSONDecodeError,
-                OSError,
-            ):  # stx-allow: fallback (reason: malformed shard tolerated)
-                skipped += 1
-                continue
-            name = data.get("name")
-            started_at = data.get("started_at")
-            if not (name and started_at):
-                skipped += 1
-                continue
-            existing = conn.execute(
-                "SELECT id FROM instances WHERE name=? AND host=? AND started_at=?",
-                (name, host, started_at),
-            ).fetchone()
-            if existing:
-                skipped += 1
-                continue
-            conn.execute(
-                """
-                INSERT INTO instances (
-                    id, name, host, scope, pid, screen, workdir,
-                    started_at, ended_at, exit_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_uuid7(),
-                    name,
-                    host,
-                    "global",
-                    data.get("pid"),
-                    data.get("screen"),
-                    data.get("workdir"),
-                    started_at,
-                    swept_at,
-                    "reboot-swept",
-                ),
+    shards: list[dict] = []
+    for path in sorted(registry_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed shard tolerated)
+            skipped += 1
+            continue
+        if not (data.get("name") and data.get("started_at")):
+            skipped += 1
+            continue
+        shards.append(data)
+
+    if not shards:
+        return {"imported": imported, "skipped": skipped}
+
+    def _import(store) -> tuple[int, int]:
+        seen = {
+            (
+                str(row.values.get("name")),
+                str(row.values.get("host")),
+                str(row.values.get("started_at")),
             )
-            imported += 1
-    return {"imported": imported, "skipped": skipped}
+            for row in scan_instances(store)
+        }
+        added = 0
+        ignored = 0
+        for data in shards:
+            name = str(data["name"])
+            started_at = str(data["started_at"])
+            if (name, str(host), started_at) in seen:
+                ignored += 1
+                continue
+            values = strip_unset(
+                {
+                    "name": name,
+                    "pid": data.get("pid"),
+                    "screen": data.get("screen"),
+                    "workdir": data.get("workdir"),
+                    "started_at": started_at,
+                    "ended_at": swept_at,
+                    "exit_reason": "reboot-swept",
+                }
+            )
+            values["remote"] = False
+            values["id"] = new_uuid7()
+            values["host"] = str(host)
+            store.put(values, expected_revision=NEW_RECORD, actor=ACTOR)
+            seen.add((name, str(host), started_at))
+            added += 1
+        return added, ignored
+
+    added, ignored = run_with_reconnect(_import)
+    return {"imported": imported + added, "skipped": skipped + ignored}
 
 
 __all__ = [

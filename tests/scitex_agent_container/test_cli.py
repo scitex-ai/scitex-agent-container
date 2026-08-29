@@ -16,6 +16,20 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_probe import (
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
@@ -200,7 +214,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "list", "nonexistent", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "error" in data
 
     def test_agents_health_unknown_name_json_exits_nonzero(self):
@@ -217,7 +231,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["agents", "health", "nonexistent", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "error" in data
 
     def test_list_python_apis_command_exits_zero(self):
@@ -250,7 +264,7 @@ class TestCLI:
         # Act
         result = runner.invoke(main, ["list-python-apis", "--json"])
         # Assert
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list) and len(data) > 0
 
     def test_help_recursive_command_exits_zero(self):
@@ -342,7 +356,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert len(data) == 1
 
     def test_agents_find_in_directory_match_has_expected_name(self):
@@ -351,7 +365,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert data[0]["name"] == "test-gpu-agent"
 
     def test_agents_find_in_directory_match_has_gpu_capability(self):
@@ -360,7 +374,7 @@ class TestCLI:
             # Act
             result = self._find_setup_gpu_agent(tmpdir)
             # Assert
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             assert "gpu" in data[0]["capabilities"]
 
     def test_agents_check_local_agent_runs_preflight(self):

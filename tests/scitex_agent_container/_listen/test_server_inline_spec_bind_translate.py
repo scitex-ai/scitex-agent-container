@@ -144,6 +144,7 @@ def _child_body(name: str, caller: str | None, binds: list) -> dict:
 
 
 def test_child_with_work_prefix_bind_is_accepted_after_translate(
+    pg_schema: str,
     client, auth_headers, isolated_env, tmp_path
 ):
     # Arrange — parent maps its host $HOME/proj/foo at /work; child
@@ -170,6 +171,7 @@ def test_child_with_work_prefix_bind_is_accepted_after_translate(
 
 
 def test_translated_bind_is_what_gets_written_to_disk(
+    pg_schema: str,
     client, auth_headers, isolated_env, tmp_path
 ):
     # Arrange — same setup as above, but inspect the materialised
@@ -229,6 +231,7 @@ def test_no_caller_means_no_translate_so_pr1_still_rejects_work_path(
 
 
 def test_unknown_caller_falls_back_to_pr1_rejection(
+    pg_schema: str,
     client, auth_headers, isolated_env, tmp_path
 ):
     # Arrange — caller string doesn't resolve to any registered
@@ -251,6 +254,7 @@ def test_unknown_caller_falls_back_to_pr1_rejection(
 
 
 def test_translate_passthrough_for_non_work_bind_still_caught_by_pr1(
+    pg_schema: str,
     client, auth_headers, isolated_env, tmp_path
 ):
     # Arrange — caller IS known but the child requested a bind
@@ -278,6 +282,7 @@ def test_translate_passthrough_for_non_work_bind_still_caught_by_pr1(
 
 
 def test_mixed_binds_translate_only_work_prefix_others_pass_through(
+    pg_schema: str,
     client, auth_headers, isolated_env, tmp_path
 ):
     # Arrange — child requests two binds: one /work-prefixed

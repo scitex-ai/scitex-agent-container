@@ -97,6 +97,24 @@ name: auto-merge-to-develop
 # ITSELF AND ITS REASONS *BEFORE* it merges. If that comment cannot be posted the
 # merge does NOT happen — an untraceable automated merge is precisely the defect
 # the comment exists to close — and the PR waits for the next tick instead.
+#
+# *** A QUEUED CHECK IS NOT A GREEN CHECK. ***
+# Until 2026-08-12 the greenness filter here dropped every check whose value was
+# the EMPTY STRING — and an empty string is exactly what `gh` reports as the
+# `conclusion` of a check that is QUEUED or IN_PROGRESS. It therefore discarded
+# precisely the checks meaning "we do not know yet" and answered 0 pending.
+# Measured against PR #985 with 8 queued checks on it: the old expression said
+# fully green. Combined with `--admin`, that merged unverified code past the
+# branch protection that would have refused it, and the saturated self-hosted
+# pool made the window near-permanent rather than rare.
+# Two changes close it, and they are independent on purpose:
+#   * the predicate is now THREE-VALUED (passing / failing / not yet known),
+#     with "not yet known" as the DEFAULT for anything unrecognised, so a state
+#     GitHub invents tomorrow blocks a merge instead of passing it; and
+#   * `--admin` is GONE, so GitHub's own required checks must agree before
+#     anything lands. One wrong predicate is no longer sufficient to merge.
+# See the two commented blocks in the merge step for the measurements behind
+# each decision, including why SKIPPED counts as passing.
 on:
   schedule:
     # Every ~15 min, deliberately OFF the top of the hour: GitHub queues all
@@ -198,7 +216,6 @@ jobs:
           # Space-separated; every entry must accept a bare workflow_dispatch.
           POST_MERGE_GATES: >-
             pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
-            quality-audit-on-ubuntu-latest.yml
             lint.yml
             import-smoke-on-ubuntu-py3-12.yml
             no-hosted-runners-guard-on-self-hosted.yml
@@ -350,13 +367,172 @@ jobs:
               continue
             fi
 
-            pending=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup --jq '
-              [ .statusCheckRollup[]
-                | select(((.name // .context // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-                | (.conclusion // .state // "")
-                | select(. != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "") ] | length' 2>/dev/null || echo 1)
-            if [ "$pending" != "0" ]; then
-              echo "PR #$pr not green ($pending) — skip"
+            # -------------------------------------------------------------
+            # GREENNESS IS THREE-VALUED: passing / failing / NOT YET KNOWN.
+            # -------------------------------------------------------------
+            # WHAT THIS REPLACES (measured 2026-08-12). The old filter mapped
+            # each check to `(.conclusion // .state // "")` and then kept only
+            # the entries that were NOT "SUCCESS"/"NEUTRAL"/"SKIPPED"/"". `gh`
+            # reports `conclusion` as an EMPTY STRING for a check that is QUEUED
+            # or IN_PROGRESS, so `select(. != "")` discarded EXACTLY the checks
+            # that mean "we do not know yet" and the pending count came back 0.
+            # Measured against PR #985 while it carried 8 QUEUED checks and 1
+            # finished one, the old expression answered 0 — fully green. A PR
+            # pushed shortly before a tick therefore merged with NO CI HAVING
+            # RUN. The self-hosted pool is usually saturated, so that window is
+            # close to permanent rather than rare.
+            #
+            # The defect is not a typo, it is a MISSING THIRD STATE: a check is
+            # passing, failing, or NOT YET KNOWN, and two buckets for three
+            # states meant the third one landed in "green". Below, all three are
+            # named and counted separately, and the merge needs `failing` AND
+            # `not yet known` to BOTH be zero. The classifier's default arm is
+            # "not yet known", so a state GitHub invents after this was written
+            # blocks a merge instead of passing it. Unrecognised must never
+            # mean green.
+            #
+            # WHY THE CLASSIFICATION IS SHELL AND NOT jq: so a test can execute
+            # it. `gh` embeds its own jq and the bare runner has neither `gh` nor
+            # `jq` (see the header), so a decision written in jq can only be
+            # checked by RE-IMPLEMENTING it — which tests the re-implementation,
+            # not the code that ships. jq's job here is a PURE PROJECTION: it
+            # hands over four raw fields verbatim and interprets nothing. Every
+            # judgement is shell, and
+            # tests/integration/test_ci_auto_merge_greenness.py lifts this exact
+            # block out of this file and runs it under bash.
+            if ! rollup=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup --jq '
+                  (.statusCheckRollup // [])[]
+                  | select(((.name // .context // "") | ascii_downcase | test("codecov|readthedocs")) | not)
+                  | [ (.status // ""), (.conclusion // ""), (.state // ""), (.name // .context // "(unnamed check)") ]
+                  | @tsv' 2>/dev/null); then
+              # A read that FAILED is not a PR with no checks. Three states, not
+              # two — the same rule the develop gate above follows.
+              echo "::warning::#$pr — could not read its checks at all (statusCheckRollup unreadable). Merging nothing for this PR this tick (fail-safe); the next tick re-reads it."
+              continue
+            fi
+
+            n_pass=0
+            n_fail=0
+            n_unknown=0
+            n_total=0
+            # DO NOT PARSE THIS WITH `IFS=$'\t' read -r a b c d`. Tab is an IFS
+            # *whitespace* character, so bash collapses runs of tabs into ONE
+            # separator and strips leading ones — which silently shifts every
+            # column left exactly when a field is EMPTY, and empty fields are
+            # the entire subject of this block. Measured while writing it: the
+            # row ("", "", "SUCCESS", name) was read back as status=SUCCESS,
+            # putting a green StatusContext into the unknown bucket. The four
+            # fields are therefore cut out explicitly. @tsv escapes any literal
+            # tab inside a check name, so exactly three separators are present.
+            tab=$'\t'
+            while IFS= read -r line; do
+              # An empty rollup still yields one empty line through a here-string.
+              if [ -z "$line" ]; then
+                continue
+              fi
+              c_status="${line%%"$tab"*}"
+              rest="${line#*"$tab"}"
+              c_conclusion="${rest%%"$tab"*}"
+              rest="${rest#*"$tab"}"
+              c_state="${rest%%"$tab"*}"
+              c_name="${rest#*"$tab"}"
+              n_total=$((n_total + 1))
+              phase=""
+              detail=""
+
+              # A check that has not COMPLETED has no verdict yet, whatever its
+              # conclusion field says — and for QUEUED / IN_PROGRESS that field
+              # is precisely the empty string this rewrite exists to stop
+              # trusting. Status is consulted FIRST for that reason.
+              case "${c_status^^}" in
+                ""|COMPLETED) ;;
+                *) phase="unknown"; detail="status=${c_status^^}" ;;
+              esac
+
+              if [ -z "$phase" ]; then
+                # CheckRun reports `conclusion`; the older StatusContext reports
+                # `state`. Whichever is present is recorded VERBATIM, and an
+                # absent one is given a NAME rather than being left blank: an
+                # empty conclusion rendered as an empty cell is exactly how a
+                # human reads "nothing wrong" off a PR that is still running.
+                if [ -n "$c_conclusion" ]; then
+                  verdict="${c_conclusion^^}"
+                  detail="conclusion=$verdict"
+                elif [ -n "$c_state" ]; then
+                  verdict="${c_state^^}"
+                  detail="state=$verdict"
+                else
+                  verdict=""
+                  detail="NO STATE REPORTED (conclusion and state both empty)"
+                fi
+
+                case "$verdict" in
+                  # Ran and raised no objection. NEUTRAL is GitHub's own "I ran,
+                  # I am not blocking you"; branch protection counts it as
+                  # satisfied and so does this sweep.
+                  SUCCESS|NEUTRAL) phase="pass" ;;
+                  # SKIPPED — the one that deserved a decision instead of a
+                  # default, because it means two different things. It PASSES
+                  # here, for two reasons.
+                  # (1) GitHub's own branch protection treats a skipped required
+                  #     check as satisfied. Blocking on it would make this sweep
+                  #     stricter than the protection it is meant to respect, and
+                  #     would deadlock every PR carrying a legitimately
+                  #     inapplicable matrix leg. A sweep that never merges is
+                  #     its own outage — this file exists because of one.
+                  # (2) The frightening reading of SKIPPED — "it silently did
+                  #     not happen" — does NOT arrive as SKIPPED. A workflow that
+                  #     never ran contributes NO ENTRY to statusCheckRollup at
+                  #     all. That is ABSENCE, and absence is caught by the
+                  #     zero-checks guard below, not here. A SKIPPED entry is an
+                  #     affirmative report from CI that the leg did not apply.
+                  # REVISIT THIS the day a REQUIRED job becomes path-filtered:
+                  # "skipped" would then start meaning "did not happen" and this
+                  # arm would be wrong.
+                  SKIPPED) phase="pass" ;;
+                  # Reported a negative verdict.
+                  FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE) phase="fail" ;;
+                  # Ran, but produced no verdict anyone should trust. Not
+                  # "failing" (nothing was shown wrong) and not "passing"
+                  # (nothing was shown right). Unknown blocks, and re-running
+                  # the check is what resolves it.
+                  CANCELLED|STALE) phase="unknown" ;;
+                  # EVERYTHING ELSE, and this arm is the whole point: "" (the
+                  # empty conclusion of a queued check — the original bug),
+                  # PENDING, EXPECTED, and any state GitHub adds after this was
+                  # written. Unrecognised lands in "not yet known", never green.
+                  *) phase="unknown" ;;
+                esac
+              fi
+
+              case "$phase" in
+                pass) n_pass=$((n_pass + 1)) ;;
+                fail) n_fail=$((n_fail + 1))
+                      echo "  #$pr FAILING       $c_name ($detail)" ;;
+                *)    n_unknown=$((n_unknown + 1))
+                      echo "  #$pr NOT-YET-KNOWN $c_name ($detail)" ;;
+              esac
+            done <<< "$rollup"
+
+            # COUNTS PER STATE, not a table of checks. A table with an empty
+            # conclusion column renders those cells blank, and a blank cell
+            # reads to a human as "nothing wrong" — the same misreading in the
+            # REPORT that the old filter made in the CODE. Counts cannot be
+            # blank.
+            echo "PR #$pr checks: $n_pass passing, $n_fail failing, $n_unknown not yet known (of $n_total non-advisory; codecov/readthedocs excluded)."
+
+            if [ "$n_total" -eq 0 ]; then
+              # Absence of evidence is not evidence of green — the develop gate
+              # above says the same sentence, and it matters more here. develop's
+              # head may legitimately carry no checks; a PR that produced none
+              # has simply not been tested, and this sweep must not be the thing
+              # that lands it.
+              echo "::warning::#$pr has NO non-advisory checks at all — nothing has tested it. Not merging: absence of evidence is not evidence of green. If this PR genuinely needs no CI, it needs a deliberate human merge."
+              continue
+            fi
+
+            if [ "$n_fail" -gt 0 ] || [ "$n_unknown" -gt 0 ]; then
+              echo "PR #$pr is not green — skip ($n_fail failing, $n_unknown not yet known). NOT-YET-KNOWN IS A REFUSAL, NOT A PASS: a queued check has tested nothing."
               continue
             fi
 
@@ -418,7 +594,7 @@ jobs:
               "" \
               "- base branch is \`develop\` (the only base this sweep touches);" \
               "- no hold marker: not a draft, and none of the labels \`$HOLD_LABELS\`;" \
-              "- every non-advisory check on the PR head is green (codecov and readthedocs are advisory and ignored);" \
+              "- every non-advisory check on the PR head is green — $n_pass passing, $n_fail failing, $n_unknown not yet known, of $n_total (codecov and readthedocs are advisory and ignored). A queued or in-progress check counts as NOT YET KNOWN and blocks this merge; it is not read as green;" \
               "- \`develop\`'s own head was settled and green when the sweep ran, so this lands on a base that was known good;" \
               "- \`mergeStateStatus\` = \`$merge_state\`." \
               "" \
@@ -446,11 +622,44 @@ jobs:
                 fi ;;
             esac
 
-            if gh pr merge "$pr" --repo "$REPO" --merge --admin --delete-branch; then
-              echo "MERGED #$pr -> develop (attribution comment posted first)"
+            # -------------------------------------------------------------
+            # NO `--admin`. BRANCH PROTECTION IS THE SECOND, INDEPENDENT GUARD.
+            # -------------------------------------------------------------
+            # `--admin` is what turned the queued-checks bug above from "merges
+            # early" into "merges past the one thing that would have caught it".
+            # GitHub would have REFUSED those merges — develop requires
+            # `pytest-matrix-on-ubuntu-py3.11` and `pytest-matrix-on-ubuntu-py3.13`
+            # to have SUCCEEDED, and a queued check has not succeeded — and the
+            # flag suppressed the refusal. One bad predicate was therefore
+            # enough to land unverified code, because nothing downstream was
+            # allowed to disagree with it.
+            #
+            # Dropping the flag costs a genuinely green PR NOTHING here, and
+            # that is MEASURED, not assumed. develop's protection on 2026-08-12
+            # (`gh api repos/<repo>/branches/develop/protection`):
+            #   required_status_checks.contexts = [ pytest-matrix-on-ubuntu-py3.11,
+            #                                       pytest-matrix-on-ubuntu-py3.13 ]
+            #   required_approving_review_count = 0   <- NO human review required
+            #   strict = false                        <- no up-to-date/rebase demand
+            #   enforce_admins = false
+            # Both required contexts do report on every PR in this repo, so
+            # there is no never-reporting required check to route around — which
+            # is the one honest reason to keep `--admin`. With review count 0
+            # and `strict` off, nothing else can block a green PR either.
+            #
+            # What this buys: the sweep's predicate and GitHub's protection must
+            # now AGREE before anything lands. If a future edit reintroduces a
+            # bug of the shape above, the merge is refused rather than performed,
+            # and the refusal is logged loudly below.
+            #
+            # IF YOU RESTORE `--admin`, NAME THE REQUIRED CHECK THAT FORCED IT,
+            # here, in this comment. Putting it back by inertia re-arms the exact
+            # incident this block exists to prevent.
+            if gh pr merge "$pr" --repo "$REPO" --merge --delete-branch; then
+              echo "MERGED #$pr -> develop (attribution comment posted first; merged WITHOUT --admin, so branch protection agreed)"
               merges=$((merges + 1))
             else
-              echo "::warning::blocked #$pr (merge refused — branch policy or a race). Left open on purpose. Its attribution comment is already posted and will NOT be repeated: the next tick recognises the marker and merges without re-commenting."
+              echo "::warning::blocked #$pr (merge refused — branch protection or a race). Left open on purpose. This sweep does NOT pass --admin, so a refusal here is the second guard doing its job: GitHub disagreed that this PR was ready, and the merge did not happen. Its attribution comment is already posted and will NOT be repeated: the next tick recognises the marker and merges without re-commenting."
             fi
           done
 

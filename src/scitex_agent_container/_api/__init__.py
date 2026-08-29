@@ -4,7 +4,7 @@ Each submodule re-exports the verb functions for one CLI noun
 group, so users can write::
 
     sac.agent.list()
-    sac.db.query(table="instances")
+    sac.db.query(table="events")
     sac.host.list()
 
 …instead of the flat ``sac.agent_list()`` form. Both shapes work;

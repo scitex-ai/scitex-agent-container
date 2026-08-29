@@ -1,0 +1,27 @@
+"""In-memory item store."""
+
+from models import Item
+
+
+class Store:
+    def __init__(self):
+        self._items = {}
+
+    def add_item(self, name, price, quantity):
+        if name in self._items:
+            raise ValueError(f"duplicate item: {name}")
+        item = Item(name=name, price=price, quantity=quantity)
+        self._items[name] = item
+        return item
+
+    def get_item(self, name):
+        try:
+            return self._items[name]
+        except KeyError:
+            raise KeyError(f"no such item: {name}") from None
+
+    def list_items(self):
+        return sorted(self._items.values(), key=lambda i: i.name)
+
+    def total_value(self):
+        return sum(i.value() for i in self._items.values())

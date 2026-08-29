@@ -1,29 +1,30 @@
 """ADR-0014 comms_nodes registry hooks for ``sac listen`` boot.
 
 Extracted from :mod:`scitex_agent_container.cli_pkg.listen_cmds` (which
-grew past the per-file line cap). These are the two best-effort registry
-side-effects the daemon-start path runs — neither may ever block or abort
-the bind (a listen that won't bind because of a registry write is worse
-than a missing federated row):
+grew past the per-file line cap). :func:`_register_self_comms_node` is the best-effort registry
+side-effect the daemon-start path runs — it may never block or abort the
+bind (a listen that won't bind because of a registry write is worse than a
+missing federated entry). It writes this host's operator-identity entry
+into the ADR-0014 directory so cross-host peers can resolve it.
 
-* :func:`_register_self_comms_node` — writes this host's operator-identity
-  row into ``comms_nodes`` so cross-host peers can resolve it.
-* :func:`_maybe_sync_on_start` — the retained-for-legacy synchronous
-  startup sync (NO LONGER on the boot path; the live sync now runs off the
-  event loop as a lifespan task — see
-  :func:`scitex_agent_container._listen._startup_peer_sync.sync_peers_on_listen_startup`).
+``_maybe_sync_on_start`` lived here until 2026-08-28. It triggered
+``sac registry sync --all``, and that verb is GONE: the directory moved to
+the shared PostgreSQL store, so there is no per-host copy to converge and
+no peer to pull from. The startup sweep it was retained for
+(``_listen._startup_peer_sync``) went with it. Nothing replaces either —
+the point of the move is that the peer view is never stale, so there is
+nothing to refresh at boot.
 
-``listen_cmds`` re-imports both names so the historical import path
+``listen_cmds`` re-imports the remaining name so the historical import path
 ``from scitex_agent_container.cli_pkg.listen_cmds import
-_register_self_comms_node`` keeps working unchanged. Pure extraction —
-no behaviour change.
+_register_self_comms_node`` keeps working unchanged.
 """
 
 from __future__ import annotations
 
 import click
 
-__all__ = ["_register_self_comms_node", "_maybe_sync_on_start"]
+__all__ = ["_register_self_comms_node"]
 
 
 def _register_self_comms_node(*, port: int) -> None:
@@ -92,72 +93,5 @@ def _register_self_comms_node(*, port: int) -> None:
     ) as exc:  # stx-allow: fallback (reason: never block listen on registry write)
         click.echo(
             f"# WARN: comms_nodes self-register failed: {exc!r}",
-            err=True,
-        )
-
-
-def _maybe_sync_on_start() -> None:
-    """ADR-0014 — optionally trigger ``sac registry sync --all`` once.
-
-    Opt-out via the ``comms_nodes.sync_on_start: false`` config flag
-    (default True). Best-effort: per-peer failures are logged by the
-    sync command itself; we never raise.
-
-    NOT on the boot path anymore. This synchronous helper used to run
-    BEFORE ``uvicorn.run`` so the listen had the latest peer view before
-    answering inbound A2A POSTs — but an unreachable static peer made its
-    ssh call hang and blocked the bind, with no error logged (INCIDENT
-    2026-06-26). The startup sync now runs best-effort AFTER the bind, off
-    the event loop, as a lifespan task
-    (:func:`_listen._startup_peer_sync.sync_peers_on_listen_startup`). This
-    helper is retained for explicit/legacy callers only and is bounded by
-    an overall budget so even a direct call can never wedge — but
-    ``_do_start_listen`` no longer invokes it.
-    """
-    try:
-        from .._state.host_config import load
-
-        cfg = load()
-        # The config flag is read by hand because LeadConfig is the
-        # only structured block sac currently parses. Look in the raw
-        # config dict if present; default True.
-        raw_path = cfg.source_path
-        sync_on_start = True
-        if raw_path is not None and raw_path.is_file():
-            import yaml
-
-            raw = yaml.safe_load(raw_path.read_text()) or {}
-            comms_nodes_cfg = raw.get("comms_nodes")
-            if isinstance(comms_nodes_cfg, dict):
-                flag = comms_nodes_cfg.get("sync_on_start", True)
-                if isinstance(flag, bool):
-                    sync_on_start = flag
-        if not sync_on_start:
-            return
-        # Only run when there is at least one static peer; skip silently
-        # otherwise so single-host installs don't spam warnings.
-        static_peers = [n for n in cfg.peers.keys() if not any(c in n for c in "*?[")]
-        if not static_peers:
-            return
-        from ._registry_sync import registry_sync_impl
-
-        rc = registry_sync_impl(
-            from_peer=None,
-            to_peer=None,
-            all_peers=True,
-            dry_run=False,
-            as_json=False,
-            # Bound even this legacy/direct path so a re-introduced
-            # pre-bind call can never wedge (defense in depth).
-            overall_budget_s=60.0,
-        )
-        if rc != 0:
-            click.echo(
-                f"# WARN: comms_nodes startup sync had peer failures (rc={rc})",
-                err=True,
-            )
-    except Exception as exc:  # stx-allow: fallback (reason: never block listen on sync)
-        click.echo(
-            f"# WARN: comms_nodes startup sync failed: {exc!r}",
             err=True,
         )

@@ -10,15 +10,15 @@ from .._types import ClaudeSpec
 def _parse_provider(raw: dict) -> ProviderSpec | None:
     """Parse ``spec.claude.provider`` into a ``ProviderSpec`` or ``None``.
 
-    NAMING COLLISION NOTE (openai-compat-1): this is the NESTED
-    ``spec.claude.provider`` — a vendor-agnostic Anthropic-COMPATIBLE
-    backend override (DeepSeek, Mimo/Xiaomi, ...) that still runs the
-    Claude Agent SDK. It is unrelated to the TOP-LEVEL ``spec.provider``
-    (``AgentConfig.provider`` / ``config._provider_types.AgentProvider``),
-    which selects WHICH agent SDK family (``anthropic`` vs ``openai``)
-    backs the session at all. The top-level field is parsed directly in
-    ``_loaders.load_v3`` (mirroring ``spec.runtime``), NOT here — this
-    function's scope stays exactly ``spec.claude.provider``.
+    This is the NESTED ``spec.claude.provider`` — a vendor-agnostic
+    Anthropic-COMPATIBLE backend override (DeepSeek, Mimo/Xiaomi, ...)
+    that still runs the Claude Agent SDK. It is unrelated to the
+    TOP-LEVEL ``spec.harness`` (``AgentConfig.harness`` /
+    ``config._harness_types``), which selects WHICH agent SDK runs the
+    session at all — that key used to be spelled ``spec.provider``,
+    which is what made this note necessary. The top-level field is
+    resolved in ``_loaders.load_v3`` (mirroring ``spec.runtime``), NOT
+    here — this function's scope stays exactly ``spec.claude.provider``.
 
     Accepts two shapes (back-compat — see ADR-0011 extension):
 

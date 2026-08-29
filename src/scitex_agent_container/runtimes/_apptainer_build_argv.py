@@ -22,7 +22,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .._runtime_paths import runtime_base_dir
 from ..config import AgentConfig
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    HARNESS_DESCRIPTORS,
+    OPENAI_AGENTS,
+)
 from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 from ._apptainer_quota_cache import (
     QUOTA_CACHE_CONTAINER_PATH,
@@ -33,9 +39,20 @@ from ._apptainer_quota_cache import (
 
 # ----------------------------------------------------------------------
 # Module-level constants (moved from _apptainer_runtime, re-exported
-# there for back-compat).
+# there for back-compat). DERIVED from the harness registry (v4 step 4,
+# ``config._harness_registry``) — the registry entry is the single
+# source for each runner-module path.
 # ----------------------------------------------------------------------
-RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
+RUNNER_MODULE = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].runner_module
+
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED from here YET: the v4 step-2 refusal at the top of
+# ``build_run_argv`` guards every shape of this argv, so a non-Anthropic
+# harness raises instead of dispatching. The registry's ``openai-agents``
+# entry carries the real module + argv builder; key-based launch is
+# migration step 7
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
+RUNNER_MODULE_OPENAI = HARNESS_DESCRIPTORS[OPENAI_AGENTS].runner_module
 
 # Quota-cache constants + resolver now live in _apptainer_quota_cache (this
 # file sat at the 512-line cap); imported below and re-exported via __all__ so
@@ -65,6 +82,28 @@ def build_run_argv(
     process differs). The caller (``TuiSessionRuntime``) launches the
     returned argv inside a tmux PTY rather than backgrounding it.
     """
+    # v4 STEP-2 LOUDNESS (card sac-v4-layering-refactor-harness-runtime-
+    # inference-20260813): every shape of this argv launches the CLAUDE
+    # harness (TUI, SDK runner, pre-built runner_argv), so a
+    # non-Anthropic ``config.harness`` refuses HERE — before any side
+    # effect (home mkdir, overlay provisioning, auth provisioning).
+    # The old check sat in the pre-built runner_argv branch below and
+    # read ``getattr(config, "provider", None)`` — a field the harness
+    # rename removed — so it was DEAD, while the auth step later in this
+    # function reads ``config.harness`` CORRECTLY. That split-brain is
+    # exactly the bug this guard retires: OPENAI_* auth env provisioned,
+    # Claude runner launched, no error anywhere.
+    from ..config._harness_types import ensure_harness_matches_claude_launch
+
+    ensure_harness_matches_claude_launch(
+        config,
+        launching=(
+            "the interactive claude TUI"
+            if tui
+            else f"runner module {RUNNER_MODULE!r}"
+        ),
+    )
+
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
     # overlay/writable-tmpfs incompatibility) and docs/isolation.md.
@@ -187,6 +226,30 @@ def build_run_argv(
         # writable home automatically.
         "--env",
         "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
+        # AND ITS SIBLING, which was missing and blinded fleet liveness.
+        #
+        # `beat_is_recent(name)` resolves `runtime_base_dir() / name /
+        # heartbeat.json`, and `runtime_base_dir()` honours this env var
+        # before falling back to `~/.scitex/agent-container/runtime`. Inside a
+        # container `~` is /home/agent — ephemeral, and no agent ever writes a
+        # beat there — so the fallback made the lookup answer None for EVERY
+        # name. Measured 2026-08-27 from a live container: a beat file 30
+        # seconds old, and beat_is_recent returning None for this agent, for a
+        # real peer, and for a name that does not exist alike. Live, dead and
+        # nonexistent were indistinguishable, which is
+        # `sac-agent-liveness-undetectable-and-no-autoheal-20260823`.
+        #
+        # The HOST runtime root, not /state: /state binds THIS agent only
+        # (measured: 1 entry), so it answers self-liveness and nothing else.
+        # The host root carries every agent (measured: 79 dirs, 29 with a live
+        # beat) and is already reachable wherever the spec declares a
+        # whole-home bind.
+        #
+        # Setting it where that bind is ABSENT costs nothing: the reader then
+        # finds no file and returns None, which is what it returns today. This
+        # can make the answer better and cannot make it worse.
+        "--env",
+        f"SCITEX_AGENT_CONTAINER_RUNTIME_DIR={runtime_base_dir()}",
         "--pwd",
         str(Path(config.workdir).expanduser()),
     ]
@@ -419,7 +482,17 @@ def build_run_argv(
         )
     else:
         kind = getattr(config, "kind", "Agent")
-        module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE
+        if kind == "AgentProxy":
+            module = RUNNER_MODULE_PROXY
+        else:
+            # Claude runner unconditionally: the top-of-function harness
+            # guard already refused any non-Anthropic spec (v4 step 2 —
+            # the old ``getattr(config, "provider", None)`` read here
+            # was DEAD, so ``RUNNER_MODULE_OPENAI`` was never actually
+            # dispatched). ``RUNNER_MODULE`` is now DERIVED from the
+            # harness registry's SDK entry (v4 step 4); dispatching
+            # OTHER entries' modules here is migration step 7.
+            module = RUNNER_MODULE
         inner_argv = [
             "/usr/bin/tini",
             "-s",

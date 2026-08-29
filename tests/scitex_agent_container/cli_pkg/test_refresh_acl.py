@@ -107,63 +107,63 @@ def registry(tmp_path: Path):
             os.environ[env_key] = saved
 
 
-def test_refresh_writes_resolved_group_for_stale_agent(db_path, registry):
+def test_refresh_writes_resolved_group_for_stale_agent(pg_schema: str, db_path, registry):
     """A spec with groups:[researcher] whose persisted group is stale →
     after the command read_comms_policy returns ``researcher``."""
     # Arrange — spec says researcher; DB still holds the stale developer.
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
     CliRunner().invoke(refresh_acl, [], catch_exceptions=False)
     # Assert
     assert read_comms_policy(name="alice")["group_name"] == "researcher"
 
 
-def test_diff_output_shows_the_change(db_path, registry):
+def test_diff_output_shows_the_change(pg_schema: str, db_path, registry):
     """The printed per-agent diff shows old -> new for a changed group."""
     # Arrange
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
     result = CliRunner().invoke(refresh_acl, [], catch_exceptions=False)
     # Assert
     assert "alice: developer -> researcher" in result.output
 
 
-def test_unchanged_agent_marked_unchanged(db_path, registry):
+def test_unchanged_agent_marked_unchanged(pg_schema: str, db_path, registry):
     """An agent already at its resolved group prints ``(unchanged)``."""
     # Arrange
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="alice", group_name="researcher")
     # Act
     result = CliRunner().invoke(refresh_acl, [], catch_exceptions=False)
     # Assert
     assert "(unchanged)" in result.output
 
 
-def test_dry_run_does_not_mutate_the_db(db_path, registry):
+def test_dry_run_does_not_mutate_the_db(pg_schema: str, db_path, registry):
     """--dry-run shows the diff WITHOUT writing — DB stays stale."""
     # Arrange
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
     CliRunner().invoke(refresh_acl, ["--dry-run"], catch_exceptions=False)
     # Assert
     assert read_comms_policy(name="alice")["group_name"] == "developer"
 
 
-def test_dry_run_still_previews_the_new_group(db_path, registry):
+def test_dry_run_still_previews_the_new_group(pg_schema: str, db_path, registry):
     """--dry-run previews the would-be group in the diff output."""
     # Arrange
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     # Act
     result = CliRunner().invoke(refresh_acl, ["--dry-run"], catch_exceptions=False)
     # Assert
     assert "alice: developer -> researcher" in result.output
 
 
-def test_underscore_dirs_are_skipped(db_path, registry):
+def test_underscore_dirs_are_skipped(pg_schema: str, db_path, registry):
     """``_shared`` / ``_template_*`` dirs are NOT treated as fleet agents."""
     # Arrange — a real agent plus two underscore scaffolding dirs.
     _write_spec(registry, "alice", {"groups": ["researcher"]})
@@ -175,7 +175,7 @@ def test_underscore_dirs_are_skipped(db_path, registry):
     assert "_shared" not in result.output and "_template_dev" not in result.output
 
 
-def test_malformed_spec_reported_with_nonzero_exit(db_path, registry):
+def test_malformed_spec_reported_with_nonzero_exit(pg_schema: str, db_path, registry):
     """A malformed spec is reported + non-zero exit, but the others still
     refresh."""
     # Arrange — one good agent, one spec.yaml that fails validation.
@@ -189,11 +189,11 @@ def test_malformed_spec_reported_with_nonzero_exit(db_path, registry):
     assert result.exit_code == 1
 
 
-def test_malformed_spec_does_not_abort_the_others(db_path, registry):
+def test_malformed_spec_does_not_abort_the_others(pg_schema: str, db_path, registry):
     """The good agent is still refreshed despite the sibling failure."""
     # Arrange
     _write_spec(registry, "alice", {"groups": ["researcher"]})
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
     bad_dir = registry / "broken"
     bad_dir.mkdir()
     (bad_dir / "spec.yaml").write_text("this: is: not: a: valid: v3 spec\n")

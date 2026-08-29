@@ -16,7 +16,7 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
-from ._start_gate_options import spec_gate_options
+from ._start_gate_options import spec_gate_options, verify_window_option
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
 
@@ -186,6 +186,7 @@ from ._start_preflight_gate import make_preflight_runner
     help="Replace existing materialised yamls under --params-out.",
 )
 @spec_gate_options
+@verify_window_option
 @click.option(
     "--no-redispatch",
     "no_redispatch",
@@ -356,8 +357,21 @@ def start(
             dry_run=dry_run,
             force=force,
             # Use the SAME bulk-dir detector the classifier below uses, so an
-            # agents-root dir (``<name>/<name>.yaml`` layout) is treated as an
-            # existing bulk target, not cold-started.
+            # agents-root dir is treated as an existing bulk target, not
+            # cold-started. This override is WIDER than the resolver's own
+            # _dir_has_agents_default, which sees only <child>/spec.yaml:
+            # _iter_agent_yamls accepts BOTH <name>/spec.yaml (what every
+            # registry writer emits) and <name>/<name>.yaml (what `sac fleet
+            # materialize` still emits), so both kinds of agents-root are
+            # recognised.
+            #
+            # Until 2026-08-27 the helper matched ONLY <name>/<name>.yaml, so a
+            # real registry of 122 spec.yaml agents read as EMPTY here and fell
+            # through to COLD-START -- materializing a phantom agent named after
+            # the directory while starting none of the real ones. The defect was
+            # the helper's layout blindness, NOT this injection: removing the
+            # injection instead makes the SELF-NAMED layout cold-start, which is
+            # the same bug pointed the other way (8 tests in this file catch it).
             dir_has_agents=lambda p: bool(_iter_agent_yamls(p)),
         )
     except (ColdStartParseError, ColdStartConflictError) as exc:

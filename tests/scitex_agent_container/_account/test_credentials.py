@@ -74,8 +74,8 @@ _HAPPY_CREDENTIALS_JSON = {
 
 _HAPPY_SETTINGS_JSON = {
     "permissions": {"allow": []},
-    "statusLine": {"type": "command", "command": "claude-hud"},
-    "enabledPlugins": ["hud"],
+    "statusLine": {"type": "command", "command": "sac-statusline"},
+    "enabledPlugins": ["sample"],
 }
 
 
@@ -102,8 +102,8 @@ def happy_path_result(tmp_path: Path) -> dict:
         ("num_startups", 42),
         ("subscription_type", "max"),
         ("rate_limit_tier", "default_claude_max_20x"),
-        ("status_line_command", "claude-hud"),
-        ("enabled_plugins", ["hud"]),
+        ("status_line_command", "sac-statusline"),
+        ("enabled_plugins", ["sample"]),
     ],
 )
 def test_happy_path_field_value_matches_expected(
@@ -581,7 +581,7 @@ def installed_plugins_two_distinct(tmp_path: Path) -> list[dict]:
             {
                 "version": 2,
                 "plugins": {
-                    "claude-hud@claude-hud": [
+                    "sample-plugin@sample-marketplace": [
                         {
                             "scope": "user",
                             "version": "0.0.10",
@@ -627,7 +627,7 @@ def test_installed_plugins_parsed_names_match_expected_pair(
     names = sorted(p["name"] for p in plugins)
     # Assert
     assert names == [
-        "claude-hud@claude-hud",
+        "sample-plugin@sample-marketplace",
         "telegram@claude-plugins-official",
     ]
 
@@ -640,17 +640,17 @@ def test_installed_plugins_parsed_names_match_expected_pair(
         ("installed_at", "2026-03-18T00:00:26.724Z"),
     ],
 )
-def test_installed_plugins_parsed_hud_entry_field_matches(
+def test_installed_plugins_parsed_first_entry_field_matches(
     installed_plugins_two_distinct: list[dict], field: str, expected: str
 ) -> None:
     # Arrange
-    hud = next(
+    entry = next(
         p
         for p in installed_plugins_two_distinct
-        if p["name"] == "claude-hud@claude-hud"
+        if p["name"] == "sample-plugin@sample-marketplace"
     )
     # Act
-    actual = hud[field]
+    actual = entry[field]
     # Assert
     assert actual == expected
 

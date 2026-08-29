@@ -131,13 +131,39 @@ def mint_access_only_artifact(
     # --- EXCLUSIVE-STRICT health gate --------------------------------------
     health = account_health(account, store_dir=store_dir, home=_home, now=now_s)
     if not health.is_healthy:
+        # ONE BRANCH PER STATE, and the remedy belongs to the state.
+        # This was a two-way branch written before FORBIDDEN existed, so
+        # every non-EXPIRED refusal claimed "no credential snapshot on
+        # disk" — which is what the operator's red keepalive told him
+        # about `wyusuuke-gmail-com` on 2026-08-26 while that account's
+        # .credentials.json sat there, 1146 bytes, refreshed hours
+        # earlier. It named the wrong fault and offered a remedy that
+        # cannot work. PAUSED would have fallen into the same else, so
+        # the branch is made explicit here rather than compounded.
+        if health.state == "PAUSED":
+            reason = health.pause_reason or "no reason recorded"
+            raise MintError(
+                f"cannot mint: account '{account}' is PAUSED ({reason}) — "
+                "this is a decision, not a fault; nothing is broken and "
+                f"nothing was deleted. Run `sac accounts resume {account}` "
+                "to put it back in service."
+            )
+        if health.state == "FORBIDDEN":
+            detail = health.entitlement_detail or "no detail recorded"
+            raise MintError(
+                f"cannot mint: account '{account}' is FORBIDDEN — its OAuth "
+                "token is fine but the API refuses it: "
+                f"{detail}. The credential is not the problem, the "
+                "subscription is. Restore it (the entitlement probe clears "
+                f"this on its own within 30 minutes), or run `sac accounts "
+                f"pause {account} --reason ...` so this stops failing."
+            )
         if health.state == "EXPIRED":
-            hrs = (
+            detail = (
                 f" (expired {abs(health.hours_remaining or 0):.1f}h ago)"
                 if health.hours_remaining is not None
                 else " (expired)"
             )
-            detail = hrs
         else:  # ABSENT — dir exists but snapshot is missing/unparseable
             detail = " (no credential snapshot on disk)"
         raise MintError(

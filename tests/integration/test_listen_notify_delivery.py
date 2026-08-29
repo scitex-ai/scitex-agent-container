@@ -71,8 +71,23 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def listen_state_db(tmp_path: Path):
-    """Isolated state.db + registry/runtime dirs for the real app.
+def listen_state_db(tmp_path: Path, pg_schema: str):
+    """Isolated state.db + registry/runtime dirs + channel store for the app.
+
+    ``pg_schema`` JOINED ON 2026-08-28, AND ITS ABSENCE WAS THE FAILURE.
+    ``/v1/notify`` persists the event BEFORE it publishes, and that write
+    moved from the local ``state.db`` to the shared PostgreSQL (ADR-0023).
+    The suite-wide guard in ``tests/_store_isolation.py`` points every test
+    that does NOT ask for a real store at ``127.0.0.1:1`` — a sentinel that
+    cannot connect — so this module's four tests began failing with
+    ``connection to server at "127.0.0.1", port 1 failed``.
+
+    The sentinel was never asserting "this path contacts no store"; it is
+    the default isolation, and that fixture's own docstring names the
+    opt-in: "Tests that need a REAL store take ``pg_schema``". This path now
+    needs one, so it takes one. Adding a production fallback that shrugged
+    at an unreachable store would have made the durability guarantee this
+    endpoint exists to provide silently untrue.
 
     Function-scoped (TQ004 — no shared mutable state across tests); sets
     its env + module constants, ``yield``s the bundle (TQ005), and

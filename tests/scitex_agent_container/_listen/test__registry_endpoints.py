@@ -26,6 +26,20 @@ from scitex_agent_container._state import port_allocator as _pa
 from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state import state_db_instances as _instances
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -94,9 +108,10 @@ def isolated_host_env(tmp_path: Path) -> Iterator[Path]:
 
 def test_resolve_a2a_port_returns_allocator_value_when_present(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
-    _pa.claim_port("alpha", range_=(20000, 20001), db_path=isolated_state_db)
+    _pa.claim_port("alpha", range_=(20000, 20001))
     # Act
     result = _re.resolve_a2a_port("alpha")
     # Assert
@@ -108,7 +123,7 @@ def test_resolve_a2a_port_falls_back_to_instance_when_allocator_empty(
 ) -> None:
     # Arrange — no port_allocator claim; an instance row holds the port.
     _instances.record_instance_start(
-        name="beta", host="other-host", a2a_port=31337, db_path=isolated_state_db
+        name="beta", host="other-host", a2a_port=31337
     )
     # Act
     result = _re.resolve_a2a_port("beta")
@@ -140,7 +155,6 @@ def test_resolve_a2a_host_returns_instance_host_when_set(
         name="gamma",
         host="other-host",
         a2a_port=40404,
-        db_path=isolated_state_db,
     )
     # Act
     result = _re.resolve_a2a_host("gamma")
@@ -211,9 +225,10 @@ def test_derive_turn_url_returns_none_when_host_is_empty_string() -> None:
 
 def test_enrich_row_with_endpoint_adds_both_fields_when_sources_present(
     isolated_host_env: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
-    _pa.claim_port("epsilon", range_=(21000, 21001), db_path=isolated_host_env)
+    _pa.claim_port("epsilon", range_=(21000, 21001))
     row = {"name": "epsilon"}
     # Act
     enriched = _re.enrich_row_with_endpoint(row)
@@ -223,9 +238,10 @@ def test_enrich_row_with_endpoint_adds_both_fields_when_sources_present(
 
 def test_enrich_row_with_endpoint_carries_resolved_a2a_port(
     isolated_host_env: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
-    _pa.claim_port("zeta", range_=(21100, 21101), db_path=isolated_host_env)
+    _pa.claim_port("zeta", range_=(21100, 21101))
     row = {"name": "zeta"}
     # Act
     enriched = _re.enrich_row_with_endpoint(row)
@@ -235,10 +251,11 @@ def test_enrich_row_with_endpoint_carries_resolved_a2a_port(
 
 def test_enrich_row_with_endpoint_preserves_preexisting_a2a_port(
     isolated_host_env: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — self-peer-style row already carrying its own port; the
     # allocator's claim for the SAME name must NOT clobber it.
-    _pa.claim_port("eta", range_=(21200, 21201), db_path=isolated_host_env)
+    _pa.claim_port("eta", range_=(21200, 21201))
     row = {"name": "eta", "a2a_port": 9999, "turn_url": None}
     # Act
     enriched = _re.enrich_row_with_endpoint(row)
@@ -248,9 +265,10 @@ def test_enrich_row_with_endpoint_preserves_preexisting_a2a_port(
 
 def test_enrich_row_with_endpoint_preserves_preexisting_turn_url(
     isolated_host_env: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange — self-peer-style row already carrying its own turn_url.
-    _pa.claim_port("theta", range_=(21300, 21301), db_path=isolated_host_env)
+    _pa.claim_port("theta", range_=(21300, 21301))
     row = {
         "name": "theta",
         "a2a_port": None,

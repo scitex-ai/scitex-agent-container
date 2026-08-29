@@ -344,6 +344,34 @@ def delivery_error(target: str, status: Any, body: Any) -> SendError:
     )
 
 
+#: ADR-0007: the two SendError classes this module can honestly relabel
+#: as a ``scitex_dev.status.StatusCode`` — exactly the two closed-kind
+#: ``scitex`` codes (``AGENT_UNAVAILABLE`` / ``NOT_RESOLVABLE``), matching
+#: the boundaries already declared for this package in
+#: ``scitex_dev.status``'s own ``spec/boundaries.yaml``. Every other
+#: ``ERR_*`` (no-subscriber-ambiguous, transport, 5xx) is deliberately
+#: left without a ``status_code`` here: this module cannot honestly tell
+#: "detached adapter, will replay" apart from "dead", and a parsed-then-
+#: wrong HTTP code is worse than none — see the PR body for the full
+#: account of this scope limit.
+def _status_code_for(exc: SendError) -> dict[str, Any] | None:
+    """Return the honest ``StatusCode.to_dict()`` for ``exc``, or ``None``."""
+    from ..cli_pkg._send_status_code import (
+        agent_unavailable_status_code,
+        not_resolvable_status_code,
+    )
+
+    if exc.code == ERR_TARGET_NOT_RUNNING:
+        return agent_unavailable_status_code(
+            exc.target, "the listen daemon observed no live session for it"
+        ).to_dict()
+    if exc.code == ERR_UNKNOWN_TARGET:
+        return not_resolvable_status_code(
+            exc.target, "no agent by that name is registered on this listen"
+        ).to_dict()
+    return None
+
+
 def _error_payload(exc: SendError) -> dict[str, Any]:
     """Project a :class:`SendError` onto the tool's JSON error body."""
     payload: dict[str, Any] = {
@@ -353,6 +381,9 @@ def _error_payload(exc: SendError) -> dict[str, Any]:
         "delivered": False,
     }
     payload.update(exc.detail)
+    status_code = _status_code_for(exc)
+    if status_code is not None:
+        payload["status_code"] = status_code
     return payload
 
 

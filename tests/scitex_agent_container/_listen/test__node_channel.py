@@ -29,7 +29,7 @@ TOKEN = "test-kind-pin-token"
 
 
 @pytest.fixture
-def kind_env(tmp_path: Path):
+def kind_env(pg_schema: str, tmp_path: Path):
     """Isolated state.db so ``channel_events`` reads back our send."""
     saved_home = os.environ.get("HOME")
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
@@ -50,8 +50,8 @@ def kind_env(tmp_path: Path):
     state_db.init_schema(db)
 
     # Same-group ACL — alice (sender) and lead (target) both rooted.
-    record_lineage(child="alice", parent="root", db_path=db)
-    record_lineage(child="lead", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="lead", parent="root")
 
     try:
         yield {"db": db, "tmp_path": tmp_path}
@@ -89,7 +89,7 @@ def _send(client: TestClient, *, kind, headers) -> object:
     return client.post("/agents/lead/message:send", json=body, headers=headers)
 
 
-def test_string_kind_lands_on_persisted_event(kind_env) -> None:
+def test_string_kind_lands_on_persisted_event(kind_env, pg_schema: str) -> None:
     # Arrange — real app, real state.db; same-group ACL was set up.
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     headers = {"authorization": f"Bearer {TOKEN}"}
@@ -101,7 +101,7 @@ def test_string_kind_lands_on_persisted_event(kind_env) -> None:
     assert rows and rows[0]["event"].get("kind") == "done"
 
 
-def test_string_kind_round_trips_status(kind_env) -> None:
+def test_string_kind_round_trips_status(kind_env, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     headers = {"authorization": f"Bearer {TOKEN}"}
@@ -113,7 +113,7 @@ def test_string_kind_round_trips_status(kind_env) -> None:
     assert rows and rows[0]["event"].get("kind") == "status"
 
 
-def test_missing_kind_yields_no_kind_field(kind_env) -> None:
+def test_missing_kind_yields_no_kind_field(kind_env, pg_schema: str) -> None:
     # Arrange — the receiver only stamps ``kind`` when the sender sends
     # one; absence must stay absent so legacy callers (auto-ack, dispatch
     # ledger, ...) are unchanged.
@@ -140,7 +140,7 @@ def test_missing_kind_yields_no_kind_field(kind_env) -> None:
     assert rows and "kind" not in rows[0]["event"]
 
 
-def test_non_string_kind_is_loud_400(kind_env) -> None:
+def test_non_string_kind_is_loud_400(kind_env, pg_schema: str) -> None:
     # Arrange — a numeric ``kind`` would silently round-trip as JSON
     # if the receiver coerced; refuse it loudly so bad senders cannot
     # poison the inbox shape.
@@ -166,7 +166,7 @@ def test_non_string_kind_is_loud_400(kind_env) -> None:
     assert resp.status_code == 400
 
 
-def test_non_string_kind_400_names_metadata_field(kind_env) -> None:
+def test_non_string_kind_400_names_metadata_field(kind_env, pg_schema: str) -> None:
     # Arrange — the 400 body must say where the bad value came from
     # so an operator chasing a failed push sees what to fix.
     app = create_app(token=TOKEN, local_host="127.0.0.1")
@@ -203,7 +203,7 @@ def test_non_string_kind_400_names_metadata_field(kind_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_extra_dict_round_trips_onto_event(kind_env) -> None:
+def test_extra_dict_round_trips_onto_event(kind_env, pg_schema: str) -> None:
     # Arrange
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     headers = {"authorization": f"Bearer {TOKEN}"}
@@ -233,7 +233,7 @@ def test_extra_dict_round_trips_onto_event(kind_env) -> None:
     assert extra.get("reacted_dispatch_id") == "did-abc"
 
 
-def test_empty_extra_does_not_land_on_event(kind_env) -> None:
+def test_empty_extra_does_not_land_on_event(kind_env, pg_schema: str) -> None:
     # Arrange — an empty ``extra`` dict is morally absent; the receiver
     # MUST keep the persisted envelope compact (no empty placeholder key).
     app = create_app(token=TOKEN, local_host="127.0.0.1")

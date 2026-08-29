@@ -62,7 +62,7 @@ TOKEN = "test-token-wi3"
 
 
 @pytest.fixture
-def isolated_env(tmp_path: Path):
+def isolated_env(pg_schema: str, tmp_path: Path):
     saved_home = os.environ.get("HOME")
     saved_reg_env = os.environ.get("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
@@ -87,8 +87,8 @@ def isolated_env(tmp_path: Path):
     # common root so they share a group. Without this the new
     # ACL gate would deny ``permitted-peer → external-bob`` as
     # cross-group (each unattached node is its own singleton).
-    record_lineage(child="permitted-peer", parent="root", db_path=db_path)
-    record_lineage(child="external-bob", parent="root", db_path=db_path)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="external-bob", parent="root")
 
     try:
         yield tmp_path
@@ -126,7 +126,7 @@ def auth_headers():
 # ---------------------------------------------------------------------------
 
 
-def test_message_send_to_external_node_returns_2xx(client, auth_headers) -> None:
+def test_message_send_to_external_node_returns_2xx(client, auth_headers, pg_schema: str) -> None:
     """An external node has no YAML and is not in the local registry,
     but ``message:send`` must still accept the POST and route it to
     the inbox bus. The implicit-registration semantics (handoff §4)
@@ -157,7 +157,7 @@ def test_message_send_to_external_node_returns_2xx(client, auth_headers) -> None
 
 
 def test_message_send_to_external_node_response_carries_msg_id(
-    client, auth_headers
+    client, auth_headers, pg_schema: str
 ) -> None:
     """The published event must include the broker-minted ``msg_id`` so
     the sender can correlate. This is the same envelope shape the
@@ -284,7 +284,7 @@ def _make_payload(text: str = "hello external", **meta: object) -> dict:
     }
 
 
-def test_external_inbox_stream_delivers_posted_event(isolated_env) -> None:
+def test_external_inbox_stream_delivers_posted_event(isolated_env, pg_schema: str) -> None:
     """End-to-end: subscribe to inbox/stream, POST a ``message:send``
     to the same name, observe the SSE frame.
 
@@ -299,7 +299,7 @@ def test_external_inbox_stream_delivers_posted_event(isolated_env) -> None:
     assert event.get("content") == "hello external"
 
 
-def test_external_inbox_stream_event_preserves_from_agent(isolated_env) -> None:
+def test_external_inbox_stream_event_preserves_from_agent(isolated_env, pg_schema: str) -> None:
     """The publisher's ``from_agent`` metadata reaches the receiver."""
     # Arrange
     payload = _make_payload(text="x")
@@ -315,7 +315,7 @@ def test_external_inbox_stream_event_preserves_from_agent(isolated_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_external_node_agent_card_returns_200(client, auth_headers) -> None:
+def test_external_node_agent_card_returns_200(client, auth_headers, pg_schema: str) -> None:
     """The AgentCard route must succeed for a registered external node.
     Currently returns 404 because the lookup goes through ``resolve_config``
     which only knows YAML-backed names.
@@ -349,7 +349,7 @@ def test_external_node_agent_card_returns_200(client, auth_headers) -> None:
 
 
 def test_external_node_agent_card_advertises_node_kind_external(
-    client, auth_headers
+    client, auth_headers, pg_schema: str
 ) -> None:
     """The synthesised card carries
     ``x-scitex-agent-container.node_kind == "external"`` so consumers
@@ -387,7 +387,7 @@ def test_external_node_agent_card_advertises_node_kind_external(
 
 
 def test_external_node_agent_card_supportedinterfaces_url_targets_inbox(
-    client, auth_headers
+    client, auth_headers, pg_schema: str
 ) -> None:
     """The card's supportedInterfaces URL is the agent's inbox base —
     that's what an A2A v1 client uses to send messages.

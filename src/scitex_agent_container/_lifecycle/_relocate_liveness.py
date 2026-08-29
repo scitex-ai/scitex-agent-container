@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .._runners._tmux._target import exact_target
 from ._relocate_execute import StepResult
 from ._relocate_shell import Shell
 
@@ -86,7 +87,10 @@ def observe_running(
         f"printf '{MARK_RUN}no-tmux\\n'; exit 0; fi\n"
         "if ! tmux list-sessions >/dev/null 2>&1; then "
         f"printf '{MARK_RUN}no-server\\n'; exit 0; fi\n"
-        f"if tmux has-session -t '{session}' 2>/dev/null; then "
+        # EXACT-match target (exact_target): a bare -t prefix-matches, so a
+        # sibling session (tui-foo-gui) would vouch tui-foo alive here and the
+        # transport would read a dead source as running (incident 2026-08-14).
+        f"if tmux has-session -t '{exact_target(session)}' 2>/dev/null; then "
         f"printf '{MARK_RUN}yes\\n'; else printf '{MARK_RUN}no\\n'; fi"
     )
     run = shell.run(body, exec_fn=exec_fn)

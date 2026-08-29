@@ -308,7 +308,7 @@ def test_whoami_global_json_flag_propagates(tmp_path):
     # Act
     result = CliRunner().invoke(main, ["--json", "whoami"], env=env)
     # Assert
-    assert set(json.loads(result.output)) == {
+    assert set(json.loads(result.stdout)) == {
         "identity",
         "placement",
         "execution",

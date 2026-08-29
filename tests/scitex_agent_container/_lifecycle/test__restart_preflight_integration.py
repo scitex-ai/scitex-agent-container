@@ -224,6 +224,7 @@ def test_agent_restart_launches_no_successor_on_abort(
 
 
 def test_agent_restart_healthy_successor_still_stops_then_starts(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — the pre-flight passes (returns None): normal restart proceeds.
@@ -244,6 +245,7 @@ def test_agent_restart_healthy_successor_still_stops_then_starts(
 
 
 def test_agent_restart_runs_preflight_before_the_stop(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — record ordering: the check must fire BEFORE the stop.
@@ -276,6 +278,7 @@ def test_agent_restart_runs_preflight_before_the_stop(
 
 
 def test_agent_start_force_raises_abort_on_unusable_successor(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — a live agent, force-restart, pre-flight will REJECT.
@@ -299,6 +302,7 @@ def test_agent_start_force_raises_abort_on_unusable_successor(
 
 
 def test_agent_start_force_leaves_running_container_up_on_abort(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
@@ -324,6 +328,7 @@ def test_agent_start_force_leaves_running_container_up_on_abort(
 
 
 def test_agent_start_force_healthy_successor_still_restarts(
+    pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — pre-flight passes: a normal force-restart must still work.

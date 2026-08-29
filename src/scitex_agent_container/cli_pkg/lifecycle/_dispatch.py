@@ -9,8 +9,9 @@ which asks the pure resolver in ``_common.classify_dispatch_host`` to map
 the concrete ``spec.host`` to local / remote / unknown. A ``remote``
 classification calls :func:`_dispatch_remote_start` to:
 
-  * drift-check via ``rsync --dry-run --itemize-changes``,
-  * rsync the spec dir to the peer,
+  * drift-check by comparing content digests with the peer,
+  * ship the spec dir and VERIFY it landed (see :mod:`._spec_handoff`,
+    which documents why an rsync exit code is not evidence of delivery),
   * invoke ``sac agents start <name> --no-redispatch --json`` over ssh
     (env_preamble-aware via :func:`build_ssh_argv`), and
   * write a lead-side ``state.db.instances`` row so cross-host
@@ -32,7 +33,14 @@ import click
 
 from ...config import AgentConfig
 from ._common import _local_host_names
-from ._dispatch_paths import local_spec_dir, remote_spec_target
+from ._dispatch_paths import local_spec_dir, remote_spec_dir
+from ._spec_handoff import (
+    local_manifest,
+    plan_handoff,
+    push_spec_dir,
+    read_remote_manifest,
+    ssh_runner,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection
@@ -54,19 +62,6 @@ def _spawned_by() -> str:
     return getenv("NAME") or "cli"
 
 
-def _is_first_launch_line(line: str) -> bool:
-    """Return True when an rsync ``--itemize-changes`` row is a pure-new
-    entry (head contains only ``+`` markers, no ``*`` deletion flag).
-
-    Itemized format: ``YXcstpoguax <name>`` — the leading 11-char head
-    is everything before the first space. First-launch markers are
-    ``>f+++++++++`` / ``cd+++++++++``; drift uses letters like
-    ``c.st....``; deletes use ``*deleting``.
-    """
-    head = line.split(" ", 1)[0]
-    return "+++++++++" in head and "*" not in head
-
-
 def _dispatch_remote_start(
     name: str,
     peer: str,
@@ -76,9 +71,9 @@ def _dispatch_remote_start(
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
-    Step 4 implementation: locate the local spec dir, drift-check via
-    ``rsync --dry-run --itemize-changes`` (content-checksum mode),
-    rsync the spec when the drift gate allows it, then invoke
+    Step 4 implementation: locate the local spec dir, drift-check by
+    comparing per-file digests with the peer, ship the spec when the
+    drift gate allows it and verify it actually landed, then invoke
     ``sac agents start <name> --no-redispatch --json`` on the peer
     over ssh (env_preamble-aware via :func:`build_ssh_argv`), parse
     the resulting JSON, and write a lead-side ``state.db.instances``
@@ -91,16 +86,17 @@ def _dispatch_remote_start(
             ``ssh:`` field in ``~/.scitex/agent-container/config.yaml``
             is the source of this alias.
         dry_run: When True, print the planned change count and return
-            0 without performing the actual rsync.
-        force: When True, override the drift gate and rsync anyway.
+            0 without shipping anything.
+        force: When True, override the drift gate and ship anyway.
 
     Raises:
         FileNotFoundError: When the local spec dir for ``name`` does
             not exist under ``~/.scitex/agent-container/agents/``.
-        RuntimeError: When ``rsync --dry-run`` fails, when drift is
-            detected without ``--force``, when the real rsync fails,
-            when the remote ``sac agents start`` returns non-zero,
-            or when its stdout is not valid JSON.
+        RuntimeError: When the peer's manifest cannot be read, when
+            drift is detected without ``--force``, when the transfer
+            fails OR SILENTLY MIS-DELIVERS (post-transfer digests do
+            not match), when the remote ``sac agents start`` returns
+            non-zero, or when its stdout is not valid JSON.
     """
     # 1. Locate the local spec dir ($SCITEX_DIR-aware — see _dispatch_paths).
     src_dir = local_spec_dir(name)
@@ -110,119 +106,59 @@ def _dispatch_remote_start(
             f"Create the spec locally before dispatching to {peer!r}."
         )
 
-    # 2. rsync --dry-run --itemize-changes (content-checksum mode).
-    # The destination root comes from the host REGISTRY (the SSOT port), not
-    # from the remote's ``~/.scitex`` — see :mod:`._dispatch_paths` for the
-    # measured Spartan incident that makes this mandatory.
+    # 2. Compare content digests with the peer. The destination root comes
+    # from the host REGISTRY (the SSOT port), not from the remote's
+    # ``~/.scitex`` — see :mod:`._dispatch_paths` for the measured Spartan
+    # incident that makes this mandatory.
     from ..._state.host_config import load as _load_host_config_for_root
 
-    remote_target = remote_spec_target(name, peer, _load_host_config_for_root().peers)
-    exclude_args = [
-        "--exclude=runtime/",
-        "--exclude=__pycache__/",
-        "--exclude=.pytest_cache/",
-        "--exclude=_sphinx_html/",
-    ]
-    # Drive rsync's ssh transport with the same TOFU policy we use for
-    # bare ssh (build_ssh_argv): accept-new lets the first-touch peer
-    # be added to known_hosts, but rejects any later key change. Without
-    # ``-e``, rsync would invoke ssh with whatever the user's defaults
-    # are, which on a fresh peer surfaces as a silent rc-1 from rsync.
-    rsync_ssh_opt = "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
-    rsync_dry_argv = [
-        "rsync",
-        "-acvn",  # archive + checksum + verbose + dry-run
-        "-e",
-        rsync_ssh_opt,
-        "--itemize-changes",
-        "--delete",
-        *exclude_args,
-        f"{src_dir!s}/",
-        remote_target,
-    ]
-    rsync_dry = subprocess.run(
-        rsync_dry_argv,
-        capture_output=True,
-        text=True,
-        check=False,
+    peers_for_root = _load_host_config_for_root().peers
+    remote_dir = remote_spec_dir(name, peer, peers_for_root)
+    peer_shell = ssh_runner(peer, peers_for_root)
+    plan = plan_handoff(
+        local_manifest(src_dir),
+        read_remote_manifest(remote_dir, peer_shell),
     )
-    if rsync_dry.returncode != 0:
-        raise RuntimeError(
-            f"rsync --dry-run failed against {peer!r} (rc={rsync_dry.returncode}):\n"
-            f"argv: {' '.join(shlex.quote(a) for a in rsync_dry_argv)}\n"
-            f"stderr:\n{rsync_dry.stderr}"
-        )
 
-    # 3. Parse itemized output. Itemized rows have an 11-char "YXcstpoguax"
-    # head (position 0 is one of "<>ch*."; position 1 is one of "fdLD");
-    # first-launch rows are all-plus; drift rows use letters; deletes start
-    # with "*deleting".  rsync also emits informational lines that are NOT
-    # itemize records — "sending incremental file list" (header), "created
-    # directory <path>" (top-level dir creation notice), "sent N bytes ..."
-    # (footer), "total size is ..." (footer).  We must keep only true
-    # itemize records.
-    _ITEMIZE_OP_CHARS = set("<>ch*.")
-    itemized = []
-    for line in rsync_dry.stdout.splitlines():
-        if not line or line.startswith((" ", "sending", "sent", "total", "created")):
-            continue
-        # A true itemize record starts with one of <>ch*. — informational
-        # lines (e.g. "Number of files: ...") will not match.
-        if len(line) < 11 or line[0] not in _ITEMIZE_OP_CHARS:
-            continue
-        itemized.append(line)
-    changes = itemized
-    first_launch = bool(changes) and all(_is_first_launch_line(c) for c in changes)
-    drift = bool(changes) and not first_launch
-
-    # 4. Drift gate — error unless --force was passed.
-    if drift and not force:
+    # 3. Drift gate — error unless --force was passed. Only a file the peer
+    # holds with DIFFERENT content is drift; peer-only files are reported at
+    # step 5 and kept (see :mod:`._spec_handoff` on dropping ``--delete``).
+    if plan.drift and not force:
         raise RuntimeError(
-            f"Spec drift between lead and {peer!r} for agent {name!r}:\n"
-            + "\n".join(f"  {c}" for c in changes)
+            f"Spec drift between lead and {peer!r} for agent {name!r} — the "
+            f"peer's copy of these files differs from the lead's:\n"
+            + "\n".join(f"  {rel}" for rel in plan.changed)
             + "\n\nResolve manually then re-run, "
             + "or pass --force to overwrite peer-side from lead. "
             + "See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
         )
 
-    # 5. Dry-run mode: report the plan and return without rsyncing.
+    # 4. Dry-run mode: report the plan and return without shipping anything.
     if dry_run:
-        if not changes:
+        if not plan.new and not plan.changed:
             status = "no drift"
-        elif first_launch:
+        elif plan.first_launch:
             status = "first launch"
-        else:
+        elif plan.changed:
             status = "drift overridden by --force"
+        else:
+            status = "new files only"
         click.echo(
-            f"[dispatch] dry-run for {name!r} -> {peer!r}: "
-            f"{status}; {len(changes)} file change(s) planned."
+            f"[dispatch] dry-run for {name!r} -> {peer!r} at {remote_dir}: "
+            f"{status}; {plan.summary()}."
         )
         return 0
 
-    # 6. Actual rsync (no --dry-run). Same TOFU ssh transport as the
-    # dry-run above so the real handoff also accepts a first-touch
-    # peer key.
-    rsync_real_argv = [
-        "rsync",
-        "-acv",
-        "-e",
-        rsync_ssh_opt,
-        "--delete",
-        *exclude_args,
-        f"{src_dir!s}/",
-        remote_target,
-    ]
-    rsync_real = subprocess.run(
-        rsync_real_argv,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if rsync_real.returncode != 0:
-        raise RuntimeError(
-            f"rsync failed against {peer!r} (rc={rsync_real.returncode}):\n"
-            f"argv: {' '.join(shlex.quote(a) for a in rsync_real_argv)}\n"
-            f"stderr:\n{rsync_real.stderr}"
+    # 5. Deliver — and PROVE delivery by re-reading the peer's own digests.
+    # An exit code is not evidence: a vendor-patched transport can exit 0
+    # having written the spec somewhere nobody reads, after which the remote
+    # `sac agents start` below would boot the agent from the STALE spec and
+    # this dispatch would report success. push_spec_dir raises instead.
+    push_spec_dir(src_dir, remote_dir, peer_shell, peer=peer)
+    if plan.extra:
+        click.echo(
+            f"[dispatch] {len(plan.extra)} peer-only file(s) on {peer!r} kept "
+            f"(the handoff never deletes): {', '.join(plan.extra)}"
         )
 
     # 7. Step 4: invoke remote-side `sac agents start --no-redispatch --json`
@@ -294,9 +230,11 @@ def _dispatch_remote_start(
         remote=True,
         spawned_by=_spawned_by(),
     )
-    # ADR-0014 Stage 1 — paired comms_nodes row for the cross-host
-    # agent so peers resolving via the federated graph (not just the
-    # local instances table) see the new placement after the next sync.
+    # ADR-0014 — paired comms_nodes entry for the cross-host agent so peers
+    # resolving via the federated graph (not just the local instances table)
+    # see the new placement. Since 2026-08-28 they see it IMMEDIATELY: the
+    # directory is the shared PostgreSQL store, so there is no sync to wait
+    # for and no window in which a just-placed agent is unaddressable.
     if bound is not None:
         try:
             from ..._state.state_db_nodes import register_comms_node
@@ -393,13 +331,67 @@ def try_dispatch(
     )
     if dispatch_peer is None:
         return False
-    (dispatcher or _dispatch_remote_start)(
-        name=config.name,
-        peer=dispatch_peer,
-        dry_run=dry_run,
-        force=force,
-    )
+    try:
+        (dispatcher or _dispatch_remote_start)(
+            name=config.name,
+            peer=dispatch_peer,
+            dry_run=dry_run,
+            force=force,
+        )
+    except Exception:
+        # The failure is re-raised UNCHANGED — this only adds the sentence the
+        # operator needs to attribute it. See :func:`_explain_pinned_hop_failure`.
+        _explain_pinned_hop_failure(
+            config.name, config.hosts_spec.host, dispatch_peer
+        )
+        raise
     return True
+
+
+def _explain_pinned_hop_failure(
+    name: str,
+    spec_host: str | list[str] | None,
+    peer: str,
+) -> None:
+    """Name ``spec.host`` when a dispatch driven by it fails.
+
+    MEASURED 2026-08-09: specs across the fleet carried ``host: ywata-note-win``
+    after the laptop was retired. The lifecycle verbs dispatched there and TWELVE
+    agents died with ``Permission denied (publickey)`` — a message that names the
+    AGENT and never the field that chose the destination. Attributing it took
+    days, because nothing in the output connected "this agent will not start" to
+    "a line in its spec points at a machine that is gone".
+
+    Why this is a message and not a probe: ``_host_chain.resolve_host_chain``
+    deliberately never probes a STRING ``host:`` — only a LIST is probed, where
+    the verdict CHOOSES among alternatives. A pin has no alternatives, so a probe
+    there could only REFUSE, and refusing an explicit pin on a prober's say-so is
+    a worse failure than the one being fixed ("never a licence to reject a host
+    the operator asked for"). Probing pre-emptively would also add an ssh
+    round-trip to every remote start, to say something the imminent hop is about
+    to establish for free.
+
+    So the pin is still obeyed and the error still propagates untouched. What
+    changes is that the operator is no longer left to guess WHY this peer.
+    """
+    if not isinstance(spec_host, str) or not spec_host:
+        # A LIST was already walked and probed candidate-by-candidate, and its
+        # own error accounts for every entry; an empty pin never routes remote.
+        return
+    from .._helpers._console import system_msg
+
+    system_msg(
+        f"{name}: this hop was chosen by `host: {spec_host}` in the agent's "
+        f"spec — sac dispatched to peer {peer!r} because of that line, and the "
+        "hop failed (the error below is the peer's, unmodified). A plain "
+        "`host:` pin is never reachability-probed, so a pin at a machine that "
+        "is retired, asleep, or no longer accepting this key fails HERE, with "
+        "a message that names the agent rather than the spec. If "
+        f"{spec_host} is not where this agent should run, correct or remove "
+        "`host:` — an absent `host:` means 'start on whichever machine runs "
+        "the command'.",
+        style="warn",
+    )
 
 
 def lookup_remote_peer(name: str) -> tuple[str, dict] | None:

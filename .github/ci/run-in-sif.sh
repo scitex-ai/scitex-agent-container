@@ -37,7 +37,7 @@ export LC_ALL=C.UTF-8 LANG=C.UTF-8
 #       gpg.format      = ssh
 #       user.signingkey = ~/.ssh/id_ed25519_scitex.pub
 #
-# When that key is absent — as it was on 2026-08-09 — every one of those
+# When that key is absent — as it is on scitex-compute-04 — every one of those
 # commits dies, and git reports it like this:
 #
 #     error: Couldn't load public key .../id_ed25519_scitex.pub: No such file
@@ -46,10 +46,19 @@ export LC_ALL=C.UTF-8 LANG=C.UTF-8
 #
 # THAT SECOND LINE IS THE TRAP. "failed to write commit object" reads as disk
 # I/O, so the obvious diagnosis is a full filesystem or a broken runner. It
-# cost most of an afternoon and two WRONG root causes broadcast to other
-# agents (a shared-runner git-identity fault, then ENOSPC) before anyone read
-# the line above it. Reproduced exactly, and verified fixed, before this
+# cost most of an afternoon and FOUR wrong root causes (safe.directory, ENOSPC,
+# a /tmp/pytest-of-<uid> collision, .gitconfig.lock contention) before anyone
+# read the line above it. Reproduced exactly, and verified fixed, before this
 # landed — see tests/integration/test_ci_commit_signing_disabled.py.
+#
+# WHY IT LOOKS INTERMITTENT AND IS NOT: the outcome is decided by WHICH RUNNER
+# the job lands on. Only compute-04's ~/.gitconfig includes the dotfiles config;
+# 01/02/03 carry that file on disk without including it. Measured 2026-08-12
+# across both runner pools: 13/13 jobs on a compute-04 runner emit the error,
+# 0/11 on 01/02/03. Two runs seconds apart on identical code therefore differ.
+#
+# This mirrors the same fix already on develop (#939); it is repeated here
+# because the release path runs from main, which does not carry that commit.
 #
 # A test's scratch repo has no business carrying a signature. Signing stays ON
 # for real commits; this scopes it off for CI only, and additively — two
@@ -418,6 +427,25 @@ fi
 # after EVERY test, so loadscope's "same worker per module" buys nothing here —
 # it only serialized. `load` spreads the parametrized cases across ALL workers.
 #
+# -rfEs: PRINT FAILURES, ERRORS AND SKIP REASONS. Without the `s` a bare `-q`
+# prints only a count, and on 2026-08-26 that made a blind gate look like a
+# healthy one: 308 PostgreSQL tests were skipping on two of three runners for
+# want of a writable database and every one of those runs reported green.
+# Establishing that took reconstructing 392 - 84 = 308 by arithmetic from a
+# 9.9 MB log, because nothing in the output said which tests were skipped or
+# why. A skip that nobody can see is a pass.
+#
+# THE `f` AND `E` ARE NOT DECORATION — DO NOT TRIM THEM BACK TO `-rs`.
+# pytest's -r REPLACES the default set, it does not add to it. The default is
+# `fE`, so `-rs` means "skips ONLY" and DELETES the FAILED lines from the short
+# summary. This bit us the same day it was introduced: run 32943760311 reported
+# `2 failed, 17626 passed` while `grep FAILED` over the whole 445 KB log
+# returned NOTHING, so the two failing test ids had to be recovered from the
+# traceback headers instead. Measured on pytest 8.4.2:
+#     -rs    -> summary lists SKIPPED only
+#     -rfEs  -> summary lists FAILED and SKIPPED
+# A failure nobody can see is the same defect as a skip nobody can see.
+#
 # nice -n 19 ionice -c 3: run at the lowest CPU + idle I/O priority so that if
 # this node is ever shared with interactive/dev work, CI grabs otherwise-idle
 # cores but YIELDS the CPU and disk to any higher-priority process — "all
@@ -425,6 +453,6 @@ fi
 # which execs ionice, which execs python (still PID-traceable, signals/exit
 # code propagate to the runner step).
 exec nice -n 19 ionice -c 3 \
-    python -m pytest tests/ -n "$WORKERS" --dist load -q \
+    python -m pytest tests/ -n "$WORKERS" --dist load -q -rfEs \
     --cov=src/scitex_agent_container --cov-report=xml --cov-report=term \
     -p no:cacheprovider

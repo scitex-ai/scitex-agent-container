@@ -92,12 +92,14 @@ process).
    The forwarder loads this per-request, so no listen restart is needed for
    it to take effect on forwards.
 
-7. **Sync the master's agents into Spartan's registry** (final step for the
-   spartan-dev → master-side-agent leg). An agent on Spartan reaches an agent
-   on ywata-note-win **by agent name** (e.g. `scitex-agent-container`),
-   resolved through the federated `comms_nodes` registry — the fleet does
-   **not** use a `lead` identity. Run `sac registry sync` from the master so
-   Spartan holds a `{host, a2a_port}` row for each target agent.
+7. **Nothing to run for the registry leg** (this step used to be a
+   `sac registry sync` from the master; that verb was removed 2026-08-28
+   when `comms_nodes` moved to the shared PostgreSQL store). An agent on
+   Spartan reaches an agent on ywata-note-win **by agent name** (e.g.
+   `scitex-agent-container`), resolved through the `comms_nodes` directory —
+   the fleet does **not** use a `lead` identity. The shared store already
+   holds a `{host, a2a_port}` row for each target agent; if one is missing,
+   `sac registry register` is the manual repair path.
    (Terminology, to avoid the confusion this ADR originally shipped with:
    "master" = the host **ywata-note-win**, "Spartan" = the host; a2a is
    always **agent→agent** (e.g. `spartan-dev` → `scitex-agent-container`),
