@@ -196,7 +196,17 @@ FROZEN_SQLITE = frozenset(
         # records an unavailable reading instead of aborting the specimen. It
         # now goes through auth_state.get_auth_state(), so the next backend
         # move carries it along instead of stranding it.
-        "_lifecycle/_rename_db.py",
+        # _lifecycle/_rename_db.py LEFT THIS SET 2026-08-29, by DELETION. It
+        # was the last module here that opened SQLite as an ENGINE rather than
+        # as a backend — it enumerated sqlite_master to rewrite an agent's
+        # rows across every table — and the note below said it would leave
+        # "when that rewrite happens, not before". That rewrite is done: every
+        # table it walked is in PostgreSQL and renamed by its own step in
+        # `_lifecycle/_rename`, the last of them `comms_grants`. The entry has
+        # to go in the SAME commit as the file, because this list may only
+        # shrink and an entry naming a file that no longer exists is a blessed
+        # coordinate waiting for whatever drifts into its place.
+        #
         # _lifecycle/_rename_plan.py LEFT THIS SET 2026-08-24, and like
         # _authheal/_specimen.py it left WITHOUT being ported — it was reading
         # a table it does not own. It opened its own sqlite3 connection to
@@ -206,11 +216,6 @@ FROZEN_SQLITE = frozenset(
         # because this caller treats any error as absence of evidence. It now
         # calls list_active_instances(), so the accessor's backend is the only
         # thing that has to change when that table moves.
-        #
-        # `_rename_db.py` deliberately STAYS: it enumerates sqlite_master to
-        # rewrite an agent's rows across every table, which is SQLite-engine
-        # code rather than merely SQLite-backed, and is a rewrite rather than
-        # a port. It leaves this set when that rewrite happens, not before.
         #
         # _state/auth_state.py LEFT THIS SET 2026-08-24 — the agent auth-verdict
         # cache, moved to per-host PostgreSQL via scitex_dev.store. db_path is
@@ -409,9 +414,11 @@ FROZEN_SQLITE_TESTS = frozenset(
         # it opens the source db afterwards to prove nothing was written.
         "tests/develop/test_migrate_scripts_do_not_write_by_default.py",
         # --- tests of production code that still speaks SQLite ---
-        # Pairs with src ``_lifecycle/_rename_db.py``, which enumerates
-        # sqlite_master and is SQLite-ENGINE code rather than SQLite-backed.
-        "tests/scitex_agent_container/_lifecycle/test__rename_db.py",
+        # ``test__rename_db.py`` LEFT THIS SET 2026-08-29, by DELETION,
+        # together with the src module it paired with. Its own control test
+        # said what to do when the module ran out of work to describe: delete
+        # it "along with its ``state-db`` step rather than kept as a loop over
+        # an empty tuple". That is what happened.
         "tests/scitex_agent_container/_state/test_state_db.py",
         "tests/scitex_agent_container/_state/test_state_db_connect_branches.py",
         # tests/.../_state/test_state_db_health.py LEFT THIS SET 2026-08-29

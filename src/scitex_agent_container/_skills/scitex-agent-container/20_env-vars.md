@@ -61,7 +61,7 @@ resolver walks per-host `<host>/agents/`, then `shared/agents/`, then
 | `SCITEX_AGENT_CONTAINER_REGISTRY_DIR` | Directory where the container registers its presence. | `~/.scitex/agent-container/runtime/registry` | path |
 | `SCITEX_AGENT_CONTAINER_RUNTIME_DIR` | Per-agent runtime state root for the claude-session runner (pid / heartbeat.json / session.jsonl / quota.json / session_id). | `~/.scitex/agent-container/runtime` | path |
 | `SCITEX_AGENT_CONTAINER_SLURM_STATE_DIR` | Directory for SLURM-job state handoff. | `~/.scitex/agent-container/slurm` | path |
-| `SCITEX_AGENT_CONTAINER_ROOT` | sac's install root, as a single base. Read by `sac agents rename` (`_lifecycle._rename_plan.Layout.default`) to derive the spec / overlay / runtime / registry / state.db paths together. Resolved at CALL time, so it actually takes effect. | `~/.scitex/agent-container` | path |
+| `SCITEX_AGENT_CONTAINER_ROOT` | sac's install root, as a single base. Read by `sac agents rename` (`_lifecycle._rename_plan.Layout.default`) to derive the spec / overlay / runtime / registry paths together. Resolved at CALL time, so it actually takes effect. | `~/.scitex/agent-container` | path |
 | `SAC_CACHE_DIR` | Agent-local cache directory. | `~/.cache/scitex-agent` | path |
 
 ## Credentials

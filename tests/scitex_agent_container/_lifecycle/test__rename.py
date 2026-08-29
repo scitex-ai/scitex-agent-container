@@ -4,9 +4,9 @@ A rollback that has never been exercised does not work. So the rollback
 here is not one happy test: a failure is injected at each step
 in turn (the ``rolled_back`` fixture is parametrised over all of
 them), and every one must leave the agent EXACTLY as it was — spec text,
-directory contents, and state.db rows. One organic failure (a read-only
-overlays dir, no injection at all) covers the case where the world, not a
-callback, says no.
+directory contents, the store's identity and history records, and the ACL
+grants. One organic failure (a read-only overlays dir, no injection at all)
+covers the case where the world, not a callback, says no.
 
 BOARD-FREE ON PURPOSE (``cards=False`` throughout). ``scitex-todo`` is an
 OPTIONAL peer — it is not a declared dependency of sac and is absent from
@@ -42,7 +42,12 @@ from scitex_agent_container._lifecycle._rename_plan import (
     probe_running,
 )
 
-from .._helpers.fleet_root import make_fleet, make_spec, seed_identity_and_history
+from .._helpers.fleet_root import (
+    GRANT_PEER,
+    make_fleet,
+    make_spec,
+    seed_identity_and_history,
+)
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
@@ -83,6 +88,7 @@ class World:
                 )
             ),
             "carried_names": _carried_names(),
+            "carried_grants": _carried_grants(),
         }
 
 
@@ -132,6 +138,21 @@ def _carried_names() -> list[str]:
     return sorted(ident + [t[0] for t in past])
 
 
+def _carried_grants() -> list[tuple[str, str]]:
+    """The LIVE ACL grants, as ``(sender, target)`` pairs.
+
+    A fourth thing a rename must carry, and the newest: ``comms_grants`` was
+    two ``NAME_COLUMNS`` pairs inside ``_rename_db`` until 2026-08-29, which
+    means that from the day the table left SQLite until that one, a rename
+    silently dropped every cross-group permission the agent had. Read through
+    ``list_comms_grants``, which excludes revoked rows — so this photographs
+    what the ACL gate would actually authorise, not what the table holds.
+    """
+    from scitex_agent_container._state.state_db_grants import list_comms_grants
+
+    return sorted((g["sender"], g["target"]) for g in list_comms_grants())
+
+
 def _raise_at(step_to_fail: str):
     """An ``on_step`` callback that aborts the rename at one step.
 
@@ -177,7 +198,7 @@ def world(tmp_path: Path, pg_schema: str) -> World:
     ordering rather than hoping for it.
     """
     layout = make_fleet(tmp_path / "fleet", OLD)
-    seed_identity_and_history(layout, OLD)
+    seed_identity_and_history(OLD)
     built = World(layout=layout)
     built.before = built.snapshot()
     return built
@@ -329,9 +350,23 @@ def test_the_plan_counts_the_rows_a_rename_would_touch(world: World):
     dry run prints ``0 column(s)`` for an agent with hundreds of lifetime
     records — a zero that reads as "nothing to carry" while naming no
     database it failed to ask.
+
+    ``count_rows`` and its ``state.db`` half were deleted with ``_rename_db``
+    on 2026-08-29; the report is now entirely the store's, under the same
+    ``table.column`` keys.
     """
     # Arrange
     key = "instances.name"
+    # Act
+    plan = _plan(world)
+    # Assert
+    assert plan.db_counts[key] == 1
+
+
+def test_the_plan_counts_the_acl_grants_a_rename_would_carry(world: World):
+    """The grants half of the same report, under its SQLite-era key."""
+    # Arrange
+    key = "comms_grants.sender_name"
     # Act
     plan = _plan(world)
     # Assert
@@ -455,6 +490,16 @@ def test_rename_moves_the_state_rows(pg_schema: str, renamed: World):
     assert names == expected
 
 
+def test_rename_carries_the_acl_grants(pg_schema: str, renamed: World):
+    """The permission follows the agent, through the whole real flow."""
+    # Arrange
+    expected = [(NEW, GRANT_PEER)]
+    # Act
+    grants = _carried_grants()
+    # Assert
+    assert grants == expected
+
+
 def test_rename_keeps_the_operators_spec_comments(pg_schema: str, renamed: World):
     # Arrange
     marker = "# This comment block is LOAD-BEARING"
@@ -515,6 +560,16 @@ def test_rollback_restores_the_state_rows(rolled_back: World):
     names = _carried_names()
     # Assert
     assert names == expected
+
+
+def test_rollback_restores_the_acl_grants(rolled_back: World):
+    """An unwound rename must not leave a permission quietly withdrawn."""
+    # Arrange
+    expected = [(OLD, GRANT_PEER)]
+    # Act
+    grants = _carried_grants()
+    # Assert
+    assert grants == expected
 
 
 def test_rollback_restores_the_original_spec_text(rolled_back: World):

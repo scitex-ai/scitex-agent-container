@@ -377,7 +377,7 @@ def rename_comms_node(*, old: str, new: str) -> bool:
 
     Called from the agent-rename flow, which used to do this with
     ``UPDATE comms_nodes SET name = ?`` as one more ``(table, column)`` pair
-    in :data:`.._lifecycle._rename_db.NAME_COLUMNS`. Leaving the pair there
+    in ``_lifecycle/_rename_db.NAME_COLUMNS``. Leaving the pair there
     after the move would have been WORSE than a crash: ``rename_rows`` skips
     tables absent from ``sqlite_master``, so the rename would have reported
     success while the A2A directory kept advertising the OLD name. Peers then
