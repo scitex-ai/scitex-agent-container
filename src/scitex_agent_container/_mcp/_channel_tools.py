@@ -36,7 +36,10 @@ from ._channel_target_lookup import (
     names_of,
     rows_from_agents_body,
 )
+from ._channel_tool_defs import build_tool_list
 from .channel import _recent
+
+from ..cli_pkg._send_status_code import publish_accepted_status_code
 
 log = logging.getLogger(__name__)
 
@@ -318,88 +321,7 @@ def register_tools(
 
     @server.list_tools()
     async def _list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name="a2a_send",
-                description=(
-                    "Send a message to another agent on this sac listen. "
-                    "Sets from_agent automatically; mints conversation_id "
-                    "when omitted. FAILS (isError) when the message reached "
-                    "no live inbox subscriber — a peer listed as running is "
-                    "NOT necessarily subscribed. Check `inbox_subscribers` "
-                    "via a2a_peers before handing work to a peer."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["target", "content"],
-                    "properties": {
-                        "target": {"type": "string"},
-                        "content": {"type": "string"},
-                        "conversation_id": {"type": "string"},
-                        "priority": {
-                            "type": "string",
-                            "enum": ["low", "normal", "high"],
-                        },
-                        "requires_reply": {"type": "boolean"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_reply",
-                description=(
-                    "Reply to a received message. Looks up the original "
-                    "sender by msg_id; carries the same conversation_id."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["in_reply_to", "content"],
-                    "properties": {
-                        "in_reply_to": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_ack",
-                description=(
-                    "Acknowledge a received message without content. "
-                    "Cheap 'got it' to a sender that set requires_reply=true."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["msg_id"],
-                    "properties": {"msg_id": {"type": "string"}},
-                },
-            ),
-            Tool(
-                name="a2a_peers",
-                description=(
-                    "List agents known to this sac listen. REGISTERED IS NOT "
-                    "REACHABLE: a row can show a pid, a port and group "
-                    "'active' while having NO inbox subscriber, in which case "
-                    "a2a_send to it delivers nothing. Each row carries "
-                    "`inbox_subscribers` (live subscriber count) and "
-                    "`inbox_reachable` ('reachable' / 'unreachable' / "
-                    "'unknown' when it lives on another host and this listen "
-                    "cannot observe it). Only 'reachable' means a message "
-                    "will actually wake them."
-                ),
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            Tool(
-                name="a2a_inbox",
-                description=(
-                    "Return up to `limit` most recent received messages "
-                    "from this agent's inbox buffer (default 20)."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    },
-                },
-            ),
-        ]
+        return build_tool_list()
 
     @server.call_tool()
     async def _call_tool(
@@ -440,6 +362,15 @@ def register_tools(
                 _ledger_update(dispatch_id, STATUS_FAILED)
                 return error_result(exc)
             _ledger_update(dispatch_id, STATUS_DELIVERED)
+            # ADR-0007: attach the honest StatusCode alongside the raw
+            # response — http/202, final=False. A REAL measured count (the
+            # publish's own fan-out), never fabricated; absent for a
+            # suppressed contentless ack, which sent nothing to attach a
+            # verdict to.
+            body = res.get("body")
+            count = body.get("delivered_subscriber_count") if isinstance(body, dict) else None
+            if isinstance(count, int):
+                res["status_code"] = publish_accepted_status_code(target, count).to_dict()
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":

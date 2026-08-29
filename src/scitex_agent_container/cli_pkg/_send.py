@@ -21,6 +21,27 @@ swap :data:`_post_turn` for a fake at the module level — the helper
 resolves the symbol at call time, so the swap takes effect. The
 preflight creds check accepts an explicit ``ssh_runner=`` callable so
 the peer probe path is testable without an actual ssh subprocess.
+
+``status_code`` (ADR-0007, added 2026-08-29)
+---------------------------------------------
+Every returned dict that reports a verdict about the TARGET (not a
+local refusal like ``creds-expired``, and not a transport error whose
+real HTTP code we cannot honestly recover) now also carries
+``status_code`` — a :class:`scitex_dev.status.StatusCode` (as
+``.to_dict()``): ``{"kind", "code", "message"}``. See
+:mod:`._send_status_code`. This is additive — every existing string
+``status`` value is unchanged — so callers that only read ``status``
+keep working exactly as before; a caller that wants the honest
+ok/final distinction reads ``status_code`` instead. The scitex-hpc
+incident (2026-08-29: a card routed three times to a defined-but-
+never-started agent, every ``agent_send`` call reporting
+``status="dispatched"``) is why: the OLD payload's
+``delivered_subscriber_count: 1`` was a hardcoded literal, not a
+measurement, on the brokered/cross-host path where reachability
+cannot be locally probed. It is now ``1`` only when a probe actually
+confirmed the sidecar is listening (``None`` otherwise), and
+``status_code`` carries the honest verdict either way — see
+:mod:`._send_dispatch_nonblocking` for the full account.
 """
 
 from __future__ import annotations
@@ -28,7 +49,14 @@ from __future__ import annotations
 from typing import Any
 
 from ._send_diagnosis import diagnose_send_failure
+from ._send_dispatch_nonblocking import dispatch_nonblocking, unknown_lookup_payload
 from ._send_preflight import SshRunner, preflight_send_creds
+from ._send_status_code import (
+    agent_unavailable_status_code,
+    completed_status_code,
+    not_resolvable_status_code,
+    timed_out_status_code,
+)
 
 from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
     build_track_command,
@@ -97,18 +125,34 @@ def send_to_agent(
     Returns:
         ``{"status": "dispatched", "agent": str, "host": str, "url": str,
         "a2a_port": int, "track_command": str, "track_command_argv":
-        [str, ...], "delivered_subscriber_count": 1}`` in the default
-        non-blocking mode once reachability is validated;
+        [str, ...], "delivered_subscriber_count": 1 | None,
+        "status_code": {...}}`` in the default non-blocking mode once
+        reachability is validated — ``delivered_subscriber_count`` is
+        ``1`` only when a local probe confirmed the sidecar is
+        listening, ``None`` when unverified (see
+        :mod:`._send_dispatch_nonblocking`); ``status_code`` is always
+        ``http/202, final=False`` here, either way, and its message
+        says which case applies;
         ``{"status": "ok", "response_text": str, "response_metadata":
-        {...}}`` on a successful blocking (``wait=True``) reply;
-        ``{"status": "error", "error": "..."}`` when the agent isn't
-        running, the row has no a2a_port, the sidecar is unreachable,
-        transport fails, or the sidecar returns non-200;
+        {...}, "status_code": {...}}`` on a successful blocking
+        (``wait=True``) reply — ``status_code`` is ``http/200,
+        final=True``;
+        ``{"status": "error", "error": "...", "status_code": {...} | absent}``
+        when the agent isn't running, the row has no a2a_port, the
+        sidecar is unreachable, transport fails, or the sidecar returns
+        non-200 — ``status_code`` is ``scitex/AGENT_UNAVAILABLE`` for a
+        registered-but-not-running agent, ``scitex/NOT_RESOLVABLE`` for a
+        name the host fleet registry has never heard of, and ABSENT for
+        the cases this module cannot honestly label (a demonstrably
+        unreachable /v1/turn port, or a non-timeout transport error —
+        see the PR body for why);
         ``{"status": "creds-expired", "error": "...", "agent": str}``
         when the lead's OAuth token (or the peer's, via ssh probe) is
         expired / near-expiry. Refuses to dispatch.
-        ``{"status": "timeout", "error": "no response in <N>s"}`` when a
-        blocking send's sidecar doesn't reply within ``timeout_seconds``.
+        ``{"status": "timeout", "error": "no response in <N>s",
+        "status_code": {...}}`` when a blocking send's sidecar doesn't
+        reply within ``timeout_seconds`` — ``status_code`` is
+        ``http/504`` (§4: "I stopped waiting", never a peer verdict).
 
     Args:
         wait: When ``True`` block on the agent's turn and return the
@@ -169,7 +213,7 @@ def send_to_agent(
             # We could not ASK the host. That is UNKNOWN — not dead. We refuse
             # to fall back to the blind local read, because its empty result
             # would masquerade as death, which is the bug we are fixing.
-            return _unknown_lookup_payload(name, exc, current_host=current_host)
+            return unknown_lookup_payload(name, exc, current_host=current_host)
     else:
         # Resolve the LIVE endpoint the same way ``a2a_send`` / the listen
         # forwarder do: active ``instances`` row port first, then the durable
@@ -187,13 +231,15 @@ def send_to_agent(
     if endpoint.source == "host_broker_unknown_agent":
         # The HOST — which can see the whole fleet — has no agent by this
         # name. This is the one definitive negative in the brokered path.
+        reason = "the host's `sac listen` returned 404 for it"
         return {
             "status": "error",
             "error": (
                 f"agent {name!r} is not in the host fleet registry "
-                f"(the host's `sac listen` returned 404 for it) — check the "
-                f"name, or the agent was never registered on this host"
+                f"({reason}) — check the name, or the agent was never "
+                f"registered on this host"
             ),
+            "status_code": not_resolvable_status_code(name, reason).to_dict(),
             "diagnosis": diagnose_send_failure(
                 name,
                 a2a_port=None,
@@ -205,9 +251,11 @@ def send_to_agent(
     if endpoint.row is None and endpoint.source == "none":
         # No active instances row AND no durable allocator claim → the
         # agent is genuinely not running anywhere this host can see.
+        reason = "no active instances row and no durable port-allocator claim"
         return {
             "status": "error",
             "error": f"agent {name!r} not running",
+            "status_code": agent_unavailable_status_code(name, reason).to_dict(),
             "diagnosis": diagnose_send_failure(
                 name,
                 a2a_port=None,
@@ -221,16 +269,22 @@ def send_to_agent(
         # names the SOURCE of the verdict, so a reader never has to guess
         # whether it came from the real fleet registry or a blind local read.
         if endpoint.source == "host_broker_no_port":
+            reason = (
+                "the host fleet registry holds no a2a port claim for it "
+                "(a claim is released only at `sac agents stop` / --force)"
+            )
             error = (
-                f"agent {name!r} is registered on the host, but the host fleet "
-                f"registry holds no a2a port claim for it (a claim is released "
-                f"only at `sac agents stop` / --force); there is no /v1/turn "
-                f"to reach"
+                f"agent {name!r} is registered on the host, but {reason}; "
+                f"there is no /v1/turn to reach"
             )
         else:
             # A row exists but neither it nor the allocator carries a usable
             # port (sidecar-disabled spec, or a row written before the port
             # was resolved).
+            reason = (
+                "an active instances row exists but records no port and "
+                "no port_allocator claim exists either"
+            )
             error = (
                 f"agent {name!r} has no a2a_port recorded "
                 f"(no active instances-row port and no port_allocator "
@@ -239,6 +293,7 @@ def send_to_agent(
         return {
             "status": "error",
             "error": error,
+            "status_code": agent_unavailable_status_code(name, reason).to_dict(),
             "diagnosis": diagnose_send_failure(
                 name,
                 a2a_port=None,
@@ -290,7 +345,7 @@ def send_to_agent(
         # — that would hang the caller until the agent finishes. Instead
         # validate that the agent can actually receive the turn and hand
         # back a backgroundable CLI that delivers + tracks the reply.
-        return _dispatch_nonblocking(
+        return dispatch_nonblocking(
             name,
             prompt or "",
             a2a_port=a2a_port,
@@ -325,8 +380,13 @@ def send_to_agent(
             return {
                 "status": "timeout",
                 "error": f"no response in {timeout_seconds}s",
+                "status_code": timed_out_status_code(name, timeout_seconds).to_dict(),
                 "diagnosis": diagnosis,
             }
+        # A non-timeout PeerError carries no code this module can honestly
+        # attach as StatusCode without parsing peer.py's free-text message
+        # (a parsed-then-wrong code is worse than none) — a deliberate
+        # scope limit, not an oversight; see the PR body.
         return {"status": "error", "error": msg, "diagnosis": diagnosis}
 
     metadata: dict[
@@ -344,151 +404,10 @@ def send_to_agent(
         "status": "ok",
         "response_text": reply,
         "response_metadata": metadata,
+        "status_code": completed_status_code(name).to_dict(),
     }
 
 
-def _unknown_lookup_payload(
-    name: str,
-    exc: Exception,
-    *,
-    current_host: str,
-) -> dict[str, Any]:
-    """Payload for "the host broker could not be asked" — UNKNOWN, not dead.
-
-    The one thing this must never do is render an unperformed lookup as a
-    stopped agent. ``registry_status`` comes back ``"unknown: …"``,
-    ``pid_alive`` and ``boot_complete`` stay ``None``, and the message names
-    the broker as the thing that failed — not the agent.
-    """
-    from ._send_diagnosis_brokered import unknown_lookup_diagnosis
-
-    return {
-        "status": "error",
-        "error": str(exc),
-        "diagnosis": unknown_lookup_diagnosis(
-            name, current_host=current_host, reason=str(exc)
-        ),
-    }
-
-
-def _dispatch_nonblocking(
-    name: str,
-    prompt: str,
-    *,
-    a2a_port: int,
-    peer_host: str,
-    current_host: str,
-    url: str,
-    metadata_extras: dict[str, Any],
-    brokered: Any = None,
-) -> dict[str, Any]:
-    """Validate reachability, then return a non-blocking dispatch payload.
-
-    Reachability is gathered via :func:`diagnose_send_failure`, which
-    runs the SAME state probes (registry row, pid liveness, local sidecar
-    TCP connect) the blocking path attaches on failure. We translate
-    *demonstrable* unreachability into a LOUD ``status="error"`` — never a
-    misleading "dispatched":
-
-      * recorded pid is not alive       -> the process is dead
-      * local sidecar port refuses TCP  -> the sidecar isn't listening
-
-    A cross-host agent (``peer_host != current_host``) cannot be locally
-    port-probed; we don't invent a verdict — the diagnosis records
-    ``port_reachable=None`` and we proceed to ``dispatched`` (the
-    backgrounded ``track_command`` is what ultimately surfaces a
-    cross-host transport failure, loudly, when the caller runs it).
-
-    On success the payload carries ``track_command`` — the backgroundable
-    ``sac agents send`` CLI that delivers the prompt and streams the
-    reply — so the caller fires-and-tracks instead of blocking inline.
-    ``delivered_subscriber_count`` is ``1`` (the validated live sidecar)
-    so callers sharing the channel-send contract can branch uniformly.
-    """
-    diagnosis = diagnose_send_failure(
-        name,
-        a2a_port=a2a_port,
-        peer_host=peer_host,
-        current_host=current_host,
-        brokered=brokered,
-    )
-
-    # Fail loud on demonstrable unreachability (local probes only — a
-    # cross-host port we cannot probe stays None and is NOT treated as
-    # unreachable, which would be a false-positive failure).
-    #
-    # Both gates fire ONLY on an explicit ``False`` — never on ``None``.
-    # That is the whole discipline: a probe we could not run leaves ``None``
-    # and must not be read as a failed probe. On the brokered (in-container)
-    # path ``pid_alive`` is deliberately always ``None`` — the host status
-    # route exposes no pid, and importing a STALE one would make
-    # ``os.kill(pid, 0)`` report a healthy, restarted agent as dead. See
-    # :mod:`._send_diagnosis_brokered`.
-    if diagnosis.get("pid_alive") is False:
-        return {
-            "status": "error",
-            "error": (
-                f"agent {name!r} recorded pid is not alive; the process "
-                "crashed or was killed — cannot dispatch"
-            ),
-            "diagnosis": diagnosis,
-        }
-    if diagnosis.get("port_reachable") is False:
-        # An unbound /v1/turn port means THIS TRANSPORT cannot carry the turn.
-        # It does NOT mean the agent is dead, and the old wording here ("it is
-        # not booted or the sidecar crashed") asserted exactly that. Measured
-        # on the live fleet 2026-07-14: only 5 of 47 registered agents had
-        # /v1/turn bound at all — the other 41 held a port claim with nothing
-        # listening, and several of them answered a2a messages that same
-        # minute. Saying "crashed" here would hand the caller a death verdict
-        # whose remedy (`--force --fresh`) destroys a healthy, working agent.
-        return {
-            "status": "error",
-            "error": (
-                f"agent {name!r}: nothing is listening on a2a port {a2a_port}, "
-                f"so the /v1/turn transport cannot deliver this turn. This is "
-                f"NOT a death verdict — most agents in this fleet never bind "
-                f"/v1/turn and are reached over the a2a subscriber channel "
-                f"instead. Deliver with `sac a2a send {name} ...` (or the "
-                f"a2a_send tool), which does not require this port. Do NOT "
-                f"force-restart the agent on this signal"
-            ),
-            "diagnosis": diagnosis,
-        }
-
-    # WHICH VERB ACTUALLY REACHES THIS AGENT. Resolving the route here is what
-    # stops the caller having to know whether the target runs TUI or SDK — the
-    # detail that used to leak, and used to fail silently in the "delivered"
-    # direction. Only the ROUTE is resolved (cheap); the paste/arrival/submit
-    # half of delivery is deliberately not run, so this path stays non-blocking.
-    # See :mod:`._send_track`.
-    strategy = resolve_track_strategy(name)
-    track_command = build_track_command(name, prompt, strategy=strategy)
-    payload: dict[str, Any] = {
-        "status": "dispatched",
-        "agent": name,
-        "host": peer_host or current_host,
-        "url": url,
-        "a2a_port": a2a_port,
-        # The validated live sidecar is the single subscriber for this
-        # turn; mirrors the channel-send `delivered_subscriber_count`
-        # contract so callers can branch uniformly.
-        "delivered_subscriber_count": 1,
-        # Backgroundable CLI: run this in a background shell to deliver
-        # the prompt + stream the reply without blocking this turn.
-        "track_command": track_command,
-        # Derived from the same builder as ``track_command`` above, so the two
-        # renderings cannot disagree about the verb. They used to be two
-        # independent literals.
-        "track_command_argv": build_track_command_argv(
-            name, prompt, strategy=strategy
-        ),
-        "note": (
-            "non-blocking dispatch: the prompt was NOT yet delivered. Run "
-            "`track_command` in a backgrounded shell to deliver it and "
-            "stream the reply, or call agent_send(..., wait=True) to block "
-            "inline."
-        ),
-    }
-    payload.update(metadata_extras)
-    return payload
+# ``_unknown_lookup_payload`` and ``_dispatch_nonblocking`` moved to
+# :mod:`._send_dispatch_nonblocking` (module size budget) — imported above
+# as ``unknown_lookup_payload`` / ``dispatch_nonblocking``.
