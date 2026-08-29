@@ -132,6 +132,40 @@ def owner_is_reachable(conn: Any, *, owner: str) -> str | None:
     to the new owner, and CREATE on the table's schema for that owner. Only
     the first is checkable without attempting it; the second surfaces as the
     error :func:`ensure_owner` reports verbatim.
+
+    IT ASKS ``'SET'``, NOT ``'USAGE'``, AND THAT IS A CORRECTION
+    ============================================================
+    PostgreSQL 16 split role membership into two independent options: INHERIT
+    (you hold the role's privileges) and SET (you may ``SET ROLE`` to it), and
+    ``GRANT ... TO ... WITH SET FALSE`` gives the first without the second.
+    ``pg_has_role(u, r, 'USAGE')`` answers the INHERIT question;
+    ``ALTER TABLE ... OWNER TO`` requires the SET one. They are not the same
+    question and this asked the wrong one.
+
+    MEASURED ON THE FLEET PRIMARY (PG 18.6, 2026-08-29), for an ordinary agent
+    role against ``scitex_store_owner``::
+
+        pg_has_role(..., 'USAGE')  = True      <- what this used to ask
+        pg_has_role(..., 'MEMBER') = True
+        pg_has_role(..., 'SET')    = False     <- what ALTER TABLE needs
+
+        scitex_store_owner <- ywatanabe          inherit=True  set=TRUE
+        ywatanabe          <- ywatanabe__<agent> inherit=True  set=FALSE
+
+    SET does not transit a ``SET FALSE`` grant, so the capability stops at
+    ``ywatanabe``. That single fact explains the whole shape of the
+    2026-08-28 incident: inheritance is why every agent can READ AND WRITE the
+    channel tables, and the missing SET is why the operator had to reach for
+    break-glass to REOWN them. Of 127 login non-superuser roles that inherit
+    ``scitex_store_owner`` on that cluster, exactly THREE can ``SET ROLE`` to
+    it.
+
+    THE COST OF ASKING 'USAGE' WAS NOT A WRONG MESSAGE, IT WAS A BROKEN
+    ORDERING. The pre-check passed for a session that could not perform the
+    reown, so the DDL ran and the refusal fired AFTER it — leaving behind a
+    table owned by a role no other agent can use. A gate that runs before the
+    DDL only for the sessions that pass it is not a pre-DDL gate. Asking 'SET'
+    is what restores the property the ordering was built for.
     """
     if owner == current_role(conn):
         return None
@@ -140,17 +174,34 @@ def owner_is_reachable(conn: Any, *, owner: str) -> str | None:
             f"the intended table owner {owner!r} is not a role in this "
             f"cluster. Name an existing role with --table-owner, or create it."
         )
-    allowed = conn.execute(
-        "SELECT pg_has_role(current_user, %s, 'USAGE')", (owner,)
-    ).fetchone()[0]
-    if allowed:
+    inherits, can_set = conn.execute(
+        "SELECT pg_has_role(current_user, %s, 'USAGE'), "
+        "       pg_has_role(current_user, %s, 'SET')",
+        (owner, owner),
+    ).fetchone()
+    if can_set:
         return None
+    capable = ", ".join(
+        str(r[0])
+        for r in conn.execute(
+            "SELECT rolname FROM pg_roles WHERE rolcanlogin "
+            "AND pg_has_role(oid, %s::regrole, 'SET') ORDER BY 1",
+            (owner,),
+        ).fetchall()
+    ) or "(none — this needs a superuser or break-glass)"
+    detail = (
+        f"it INHERITS {owner!r}'s privileges but cannot SET ROLE to it "
+        f"(PostgreSQL 16 split those, and SET does not transit a "
+        f"`GRANT ... WITH SET FALSE`)"
+        if inherits
+        else f"it is not a member of {owner!r} at all"
+    )
     return (
-        f"this session runs as {current_role(conn)!r}, which is not a member "
-        f"of {owner!r}, so the tables it creates would be owned by a role the "
-        f"other agents cannot use — the 2026-08-28 channel outage exactly. "
-        f"Re-run as a member of {owner!r}, or GRANT {owner} TO "
-        f"{current_role(conn)};"
+        f"this session runs as {current_role(conn)!r}, and {detail}. "
+        f"ALTER TABLE ... OWNER TO needs the SET capability, so this run "
+        f"could create tables it cannot hand over — the 2026-08-28 channel "
+        f"outage exactly. Re-run as one of the roles that CAN: {capable}. "
+        f"Or grant it: GRANT {owner} TO {current_role(conn)} WITH SET TRUE;"
     )
 
 
