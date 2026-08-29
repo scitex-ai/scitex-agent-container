@@ -487,3 +487,127 @@ def test_instances_dry_run_ignores_a_missing_verify_role(tmp_path, capsys):
     run = _run_instances_no_verify_role(target, capsys, [])
     # Assert
     assert run.rc == 0
+
+
+# ---------------------------------------------------------------------------
+# inbound_dispatches — THE MIGRATION THAT DID NOT EXIST
+#
+# THIS FILE ENUMERATES SCRIPTS BY HAND. There is no discovery loop over
+# ``scripts/migrate_*.py``, so a new migration is covered by this guard only
+# when somebody adds a section like this one. That is the same shape as the
+# gap being closed here: the cutover (#1169, 2026-08-20) landed with no
+# migration script at all, and nothing in the repo enumerated the thirteen
+# tables that had one against the fourteen that had moved.
+#
+# The table matters more than most. Measured fleet-wide 2026-08-29: 5,200+
+# rows stranded in SQLite, 133 of them still ``pending``/``reporting`` — each
+# an inbound dispatch whose requester is still owed a completion report from
+# a ``claim_oldest_pending`` that reads PostgreSQL and nothing else. So a
+# bare invocation that quietly wrote, or a ``--commit`` that quietly could
+# not, are both worse here than a lost observation.
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_with_inbound_dispatches(tmp_path) -> Path:
+    """One settled row and one unfinished one, with the DDL #1169 deleted.
+
+    The ``pending`` row is deliberate: a source query that filtered
+    unfinished dispatches out would still print a plausible dry run, and
+    those are the rows the migration exists for.
+    """
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """CREATE TABLE inbound_dispatches (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               agent TEXT NOT NULL, from_agent TEXT NOT NULL,
+               dispatch_id TEXT, status TEXT NOT NULL DEFAULT 'pending',
+               ts REAL NOT NULL, reported_ts REAL)"""
+    )
+    conn.executemany(
+        "INSERT INTO inbound_dispatches "
+        "(agent, from_agent, dispatch_id, status, ts, reported_ts) "
+        "VALUES (?,?,?,?,?,?)",
+        [
+            ("agent-x", "lead", "d-1", "reported", 1000.5, 1001.0),
+            ("agent-x", "lead", None, "pending", 1002.5, None),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _run_inbound_dispatches(tmp_path, capsys, extra: list[str]) -> Run:
+    db = _sqlite_with_inbound_dispatches(tmp_path)
+    module = _load("migrate_inbound_dispatches_to_postgres.py")
+    argv = ["migrate", "--db-path", str(db), *extra]
+    rc: int | None = None
+    err: BaseException | None = None
+    with _dead_store_and_argv(argv):
+        try:
+            rc = module.main()
+        except BaseException as exc:
+            err = exc
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
+
+
+def test_inbound_dispatches_bare_invocation_succeeds(tmp_path, capsys):
+    """A dry run is a success, not an error."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_inbound_dispatches(target, capsys, [])
+    # Assert
+    assert run.rc == 0
+
+
+def test_inbound_dispatches_bare_invocation_announces_a_dry_run(tmp_path, capsys):
+    """It must SAY it wrote nothing, so a reader is not left guessing."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_inbound_dispatches(target, capsys, [])
+    # Assert
+    assert "DRY RUN" in run.out
+
+
+def test_inbound_dispatches_bare_invocation_lists_the_unfinished_row(
+    tmp_path, capsys
+):
+    """UNFINISHED rows MOVE, and are marked.
+
+    A ``pending`` row is a completion report still owed; a source query that
+    carried only settled history would still print a plausible dry run, and
+    the debt would stay invisible to the only code that can discharge it.
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_inbound_dispatches(target, capsys, [])
+    # Assert
+    assert "UNFINISHED" in run.out
+
+
+def test_inbound_dispatches_bare_invocation_never_reaches_the_store(
+    tmp_path, capsys
+):
+    """The dead DSN is the detector: a writer could not have stayed silent."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_inbound_dispatches(target, capsys, [])
+    # Assert
+    assert run.error is None
+
+
+def test_inbound_dispatches_commit_does_reach_for_the_store(tmp_path, capsys):
+    """NEGATIVE CONTROL — without it the three tests above still pass on a
+    script that can never write anything, which is exactly how the diary
+    migration shipped unable to carry a single row."""
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_inbound_dispatches(target, capsys, ["--commit"])
+    # Assert
+    assert run.error is not None
