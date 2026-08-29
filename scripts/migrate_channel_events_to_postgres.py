@@ -312,6 +312,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--accept-post-cutover-replay",
+        action="append",
+        default=[],
+        metavar="TARGET",
+        help=(
+            "assert that the unattributed rows above TARGET really are live "
+            "daemon traffic, and accept the consequence: they keep their ids "
+            "and stay reachable, but a consumer at their top id receives this "
+            "host's rows as if new. NAMED PER TARGET and repeatable. This is "
+            "NOT interchangeable with --accept-imported-history: the two "
+            "assert opposite things about the same rows"
+        ),
+    )
+    parser.add_argument(
         "--table-owner",
         metavar="ROLE",
         help=(
@@ -332,13 +346,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     # A waiver aimed at a target this state.db does not contain waives
     # NOTHING, and would read exactly like one that worked. Refuse the typo.
     accepted = frozenset(args.accept_imported_history)
-    unknown = sorted(accepted - set(grouped))
-    if unknown:
-        parser.error(
-            f"--accept-imported-history names {unknown} , which "
-            f"{'is' if len(unknown) == 1 else 'are'} not in {db_path}. "
-            f"Targets in this file: {sorted(grouped)}"
-        )
+    accepted_replay = frozenset(args.accept_post_cutover_replay)
+    for flag, named in (
+        ("--accept-imported-history", accepted),
+        ("--accept-post-cutover-replay", accepted_replay),
+    ):
+        unknown = sorted(named - set(grouped))
+        if unknown:
+            parser.error(
+                f"{flag} names {unknown} , which "
+                f"{'is' if len(unknown) == 1 else 'are'} not in {db_path}. "
+                f"Targets in this file: {sorted(grouped)}"
+            )
 
     if not args.commit:
         for target in sorted(grouped):
@@ -354,7 +373,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # cannot be opened is reported as unchecked rather than as clean —
         # the same shape ``_migrate_lib._preview_collisions`` uses, and for
         # the same reason.
-        blocked, waived = guard.dry_run_refusals(grouped, accepted=accepted)
+        blocked, waived = guard.dry_run_refusals(
+            grouped, accepted=accepted, accepted_replay=accepted_replay
+        )
         for line in waived:
             print(f"  ACCEPTED {line}")
         if blocked:
@@ -395,7 +416,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("REFUSED — no rows were written. SQLite left untouched.")
             return 1
 
-        blocked, waived = guard.refusals(conn, grouped, accepted=accepted)
+        blocked, waived = guard.refusals(
+            conn, grouped, accepted=accepted, accepted_replay=accepted_replay
+        )
         for line in waived:
             print(f"  ACCEPTED {line}")
         if blocked:
