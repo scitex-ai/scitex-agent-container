@@ -55,6 +55,73 @@ versioning follows [SemVer](https://semver.org/).
   (`~/.scitex/dev/runtime/periodic-executions.jsonl`), why the orphans are
   dead, and that they want removing rather than reviving.
 
+### Changed
+- **`sac agents rename` now carries an agent's ACL grants, and REFUSES rather
+  than guessing when it cannot.** `comms_grants` was the last pair of
+  `(table, column)` entries inside `_lifecycle/_rename_db`, and that module
+  renamed rows with a SQLite `UPDATE` over a table that has not existed since
+  2026-08-28 — it SKIPS a table absent from `sqlite_master`, so the rename
+  reported success having moved nothing. For an ACL table that silence cut
+  both ways: the renamed agent silently LOST every cross-group permission an
+  operator had granted it (`check_send_acl` asks `has_grant` about the LIVE
+  name), while the old name kept a live authorisation nobody owned. The carry
+  is now `_state/state_db_grants_rename.rename_comms_grants`, running as its
+  own `acl-grants` step in `_rename.apply_plan` with its own inverse on the
+  undo stack, and the shared rename fixture seeds a grant so the whole
+  rollback matrix — a failure injected at every step in turn — checks that an
+  unwound rename hands the permission back.
+  - It REFUSES, before writing anything, when a destination identity is
+    occupied by a HIDDEN (revoked) grant. `revoke_send` hides rather than
+    deletes, so that record is somebody's deliberate decision: taking the
+    identity over would silently reinstate a withdrawn grant, and skipping it
+    would silently drop the one being carried. Neither is defensible, so the
+    step raises and names the blocked pairs. A LIVE occupant is not a refusal
+    — it already grants what the carry was for, and keeps its own
+    `created_at`.
+  - `created_at` travels VERBATIM; the permission was given when it was given.
+    That is also what makes renaming BACK possible: the forward pass hides the
+    source, so the reverse meets a hidden record at its destination, and a
+    blanket refusal would make `sac agents rename` a one-way door for any
+    agent holding a grant — the failure `rename_comms_node` names for itself.
+    A hidden destination is revived ONLY when its stamp is exactly the one
+    being carried onto it, which is evidence the two records are one
+    authorisation; a revoked grant carries its own and still blocks.
+  - The undo is KEY-SCOPED and must be: "the same verb with the arguments
+    swapped" — the correct inverse for the policy and directory stores —
+    would also carry over every grant that already named the destination.
+- **`comms_grants` was the only ACL-path store still opening a connection per
+  call.** The schema and the handle moved to `_state/state_db_grants_store.py`,
+  which caches one target-keyed `Store` per process behind
+  `run_with_reconnect`, matching the `lineage` / `instances` / `comms_nodes` /
+  `channel` stores. `has_grant` runs inside `check_send_acl` on every
+  cross-group send and was paying a 10.7 ms `psycopg.connect` each time, and a
+  connection dying under the handle had no recovery at all. `_open` keeps its
+  name, its module, and its meaning — a FRESH, caller-owned store the caller
+  closes — because the migration script and three tests import it by name and
+  every one of them calls `close()`.
+- **`sac agents rename --json` emits `store_rows` alongside `state_db_rows`.**
+  The counts have not come from `state.db` for a while and now cannot: the
+  report is the PostgreSQL store's, merged from the instances and grants
+  counters under the same `table.column` keys an operator already reads.
+  `state_db_rows` is a deprecated alias carrying the identical dict and ships
+  for one release — a published output shape is a migration, not a rename —
+  and goes in the next minor. The human-readable block is relabelled
+  `[store]`.
+
+### Removed
+- **`_lifecycle/_rename_db.py`, and with it the last SQLite-ENGINE module in
+  `src/`.** It walked `sqlite_master` to rewrite an agent's rows across every
+  table; every one of those tables now lives in PostgreSQL and is renamed by
+  its own step with its own inverse. The `state-db` step, `Layout.state_db`,
+  `_rename_db`'s frozen-footprint entry and its test file all go in the same
+  commit — a may-only-shrink freeze list naming a file that no longer exists
+  is a blessed coordinate waiting for whatever drifts into its place.
+- **`_open_instance_pid`'s `db_path` parameter**, which was not merely unused.
+  An absent `state.db` made it answer `None` — "not running" — BEFORE asking
+  the store that actually holds the records, so on a host with no `state.db` a
+  LIVE agent read as stopped and `preflight` let the rename proceed underneath
+  it.
+
 ## [0.27.0] - 2026-08-26
 
 **A job that has nothing to do is not a job that failed.** The theme of this

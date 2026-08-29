@@ -49,7 +49,6 @@ def test_every_layout_path_stays_inside_the_injected_root(tmp_path: Path):
     layout = Layout(root=tmp_path / "fleet")
     # Act
     paths = [
-        layout.state_db,
         layout.spec_dir("a"),
         layout.spec_file("a"),
         layout.overlay_dir("a"),

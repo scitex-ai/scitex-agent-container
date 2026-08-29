@@ -83,7 +83,7 @@ def _render_plan(plan: RenamePlan, *, dry_run: bool) -> None:
     click.echo("")
 
     click.echo(
-        f"  [state-db]     {plan.db_total} row(s) across "
+        f"  [store]        {plan.db_total} row(s) across "
         f"{len(plan.db_counts)} column(s)"
     )
     for column, count in sorted(plan.db_counts.items()):
@@ -154,6 +154,16 @@ def _plan_json(plan: RenamePlan, *, dry_run: bool, applied: bool) -> str:
                     ("registry", plan.registry_move),
                 )
             },
+            # BOTH KEYS, ON PURPOSE, FOR ONE RELEASE. The counts stopped
+            # coming from ``state.db`` on 2026-08-29 — that file holds no
+            # table a rename can touch and ``_rename_db`` was deleted — so
+            # ``store_rows`` is the honest name and the canonical key from
+            # here on. ``state_db_rows`` is a PUBLISHED output shape, though:
+            # ``--json`` exists to be parsed, and dropping a key in the same
+            # release that introduces its replacement breaks every reader at
+            # once with no window to move. It is a deprecated ALIAS carrying
+            # the identical dict, and it goes in the next minor.
+            "store_rows": plan.db_counts,
             "state_db_rows": plan.db_counts,
             "cards": {
                 "enabled": plan.cards_enabled,
@@ -222,7 +232,7 @@ def rename(
     store: str | None,
     as_json: bool,
 ) -> None:
-    """Rename an agent everywhere — spec, dirs, state.db, and its task cards.
+    """Rename an agent everywhere — spec, dirs, store records, task cards.
 
     An agent names itself in six places on disk plus the shared board.
     This verb changes all of them together, or none of them: every step
@@ -236,7 +246,8 @@ def rename(
       3. overlay dir       .../containers/overlays/<name>/
       4. runtime+state dir .../runtime/<name>/   (bound at /state/<name>)
       5. registry entry    .../runtime/registry/<name>.json
-      6. state.db rows     every table that keys on the agent name
+      6. store records     instances / grants / ACL policy / directory /
+                           lineage / channel history, each its own step
       7. TASK CARDS        reassigned via scitex-todo's own reassign_task
 
     \b

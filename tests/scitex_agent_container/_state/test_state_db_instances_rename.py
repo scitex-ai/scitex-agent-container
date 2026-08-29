@@ -221,21 +221,6 @@ def test_the_dry_run_count_writes_nothing(pg_schema: str) -> None:
     assert read_instance(instance_id)["name"] == "old"
 
 
-def test_the_rename_db_tables_no_longer_name_instances() -> None:
-    # Arrange — the pairs had to LEAVE, not merely stop matching:
-    # ``rename_rows`` skips an absent table, so a pair left behind is a
-    # silent no-op that still reports success.
-    from scitex_agent_container._lifecycle._rename_db import (
-        NAME_COLUMNS,
-        PATH_COLUMNS,
-    )
-
-    # Act
-    tables = {table for table, _column in (*NAME_COLUMNS, *PATH_COLUMNS)}
-    # Assert
-    assert "instances" not in tables
-
-
 def test_the_rename_flow_runs_the_instances_step() -> None:
     # Arrange — a step that exists but is never called is the same silent
     # no-op wearing a different hat.

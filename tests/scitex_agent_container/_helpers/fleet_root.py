@@ -252,62 +252,36 @@ def make_fleet(
     return layout
 
 
-def make_state_db(layout: Layout) -> Path:
-    """Create a REAL state.db with the REAL schema under ``layout.root``.
-
-    Uses sac's own ``init_schema`` so the tables (and therefore the
-    columns the rename walks) are exactly the production ones — a
-    hand-rolled fixture schema would drift and the tests would stop
-    proving anything.
-    """
-    from scitex_agent_container._state.state_db import init_schema
-
-    db_path = layout.state_db
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_schema(db_path)
-    return db_path
-
-
-# ``seed_db_rows`` was here until 2026-08-28. It executed raw INSERTs against
-# a real ``state.db`` and carried a long note explaining why it was a plain
-# helper rather than a fixture (STX-TQ005 forbids a fixture that opens an
-# external resource and hands it back with ``return``). Both the helper and
-# that argument went with its last caller, for the reason recorded below:
-# ``init_schema`` creates NO TABLES at all any more, so there is nothing in
-# state.db to INSERT into. A seeding helper for an empty schema can only
-# raise, and a helper kept for a rule it no longer has occasion to satisfy is
-# the reassuring decoration this package keeps deleting elsewhere.
-
-
-# ``COMMS_NODE_SQL`` was here until 2026-08-28. The ADR-0014 directory moved
-# to PostgreSQL, so SQLite has no ``comms_nodes`` table and the INSERT would
-# raise on every fixture that used it. ``DEFINITION_SQL`` replaced it for the
-# rest of that day and then went the same way: ``definitions`` was deleted
-# from state.db for having no writer in any code path, ever.
+# ``make_state_db`` was here until 2026-08-29. It called sac's own
+# ``init_schema`` on ``Layout.state_db`` so the rename suites walked the
+# production SQLite schema rather than a hand-rolled one. Both halves of that
+# sentence stopped being true: ``init_schema`` issues ZERO ``CREATE TABLE``,
+# and ``Layout.state_db`` is gone with ``_lifecycle/_rename_db.py`` — there is
+# no state.db path for a rename to touch, so there is nothing for a helper to
+# create. Its only surviving caller went with it.
 #
-# ``INSTANCE_SQL`` replaced BOTH of them for the remainder of that day, and
-# then went the same way for the third time. ``instances`` moved to the
-# shared PostgreSQL store, so ``INSERT INTO instances`` raises ``no such
-# table`` — which is exactly how this file announced the move: 147 setup
-# ERRORs across three rename suites, every one of them here.
-#
-# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28 too. ``channel_events``
-# moved to the shared PostgreSQL as ``sac_channel_events`` (ADR-0023), so
-# that INSERT would raise as well. Both halves are now seeded through their
-# REAL production writers below, which is a better seed than either INSERT
+# ``seed_db_rows`` had gone the same way on 2026-08-28, and before it
+# ``COMMS_NODE_SQL`` / ``DEFINITION_SQL`` / ``INSTANCE_SQL`` /
+# ``CHANNEL_EVENT_SQL`` — four raw INSERTs, each retired as its table left
+# SQLite, the last of them announcing the move as 147 setup ERRORs across
+# three rename suites. Both halves a rename must carry are now seeded through
+# their REAL production writers below, which is a better seed than any INSERT
 # was: it exercises the production id allocation and the production merge
 # rules rather than hand-writing a row into a shape the code never uses.
 
 
-def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Identity record + history row — BOTH in PostgreSQL now, and neither
-    in ``state.db``.
+#: The counterparty of the grant :func:`seed_identity_and_history` writes.
+#: Named once so the suites asserting the carry cannot drift from the seed.
+GRANT_PEER = "grant-peer"
 
-    Both halves a rename must carry. They stopped sharing a database on
+
+def seed_identity_and_history(name: str) -> None:
+    """Identity record, history row and ACL grant — all three in PostgreSQL.
+
+    Every part a rename must carry. They stopped sharing a database on
     2026-08-28 and then, later the same day, stopped being in SQLite at all:
-    ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Reading and
-    writing both here is what keeps either half from going unnoticed when it
-    moves again.
+    ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Writing all
+    three here is what keeps any one of them from moving again unnoticed.
 
     The identity half has moved three times. It was ``comms_nodes.name``
     until the ADR-0014 directory left SQLite for the shared store, then
@@ -324,27 +298,39 @@ def seed_identity_and_history(layout: Layout, name: str) -> Path:
     PostgreSQL (ADR-0023). It is written through the real ``persist_event``
     and carried by ``state_db_channel.rename_channel_events``.
 
-    ``state.db`` IS STILL CREATED, and deliberately: ``Layout.state_db`` is a
-    real path the rename still touches, and calling the production
-    ``init_schema`` on it is the one place these suites prove that a fresh
-    database still opens cleanly now that it defines nothing.
+    The AUTHORISATION half was the last of the three to need seeding: it rode
+    inside ``_rename_db``'s ``comms_grants`` pairs until 2026-08-29, which is
+    to say it was not carried at all once the table left SQLite. It is written
+    through the real ``grant_send`` and carried by
+    ``state_db_grants_rename.rename_comms_grants``.
 
-    CALLERS MUST TAKE ``pg_schema``: both halves write to a real PostgreSQL
-    schema, so a caller without that fixture resolves the
-    deliberately-unreachable DSN and fails.
+    NO ``layout`` ARGUMENT, and no ``state.db``. It took one only to build
+    that file, ``Layout.state_db`` was deleted on 2026-08-29 with the rename
+    step that was its last reader, and a parameter kept past its last use is
+    the shape that made ``_open_instance_pid`` answer "not running" for a live
+    agent. Nothing here is rooted on disk any more; every record it writes is
+    keyed by ``name`` in the shared store.
+
+    CALLERS MUST TAKE ``pg_schema``: all three write to a real PostgreSQL
+    schema, so a caller without it resolves the unreachable DSN and fails.
     """
     from scitex_agent_container._state.state_db_channel import persist_event
+    from scitex_agent_container._state.state_db_grants import grant_send
     from scitex_agent_container._state.state_db_instances import (
         record_instance_start,
     )
 
-    db_path = make_state_db(layout)
     # ``workdir`` carries the name as a whole path component on purpose: it is
     # the PATH half of the rename, rewritten component-wise by
     # ``rename_instance_rows``, and the only seeded field that proves it.
     record_instance_start(name, workdir=f"/home/u/proj/{name}")
     persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
-    return db_path
+    # A THIRD half, added 2026-08-29 with the ``acl-grants`` step. It is here
+    # rather than in one test because the rollback matrix photographs whatever
+    # this helper seeds: an ACL grant that a failed rename does not hand back
+    # is a permission silently withdrawn, and that has to be checked at every
+    # injection point, not at one.
+    grant_send(sender=name, target=GRANT_PEER, note=f"seed for {name}")
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:

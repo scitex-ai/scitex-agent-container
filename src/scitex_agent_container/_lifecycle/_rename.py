@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """``agent_rename`` — rename an agent everywhere, atomically, or not at all.
 
-An agent's name is written into SIX places on disk plus the shared task
-board. Renaming by hand means editing all of them consistently, and the
-one a human misses is silent — see ``_rename_cards`` for the card
-orphaning that motivated this verb.
+An agent's name is written into FIVE places on disk plus six records in the
+shared PostgreSQL store plus the task board. Renaming by hand means editing
+all of them consistently, and the one a human misses is silent — see
+``_rename_cards`` for the card orphaning that motivated this verb.
 
 The places (:class:`._rename_plan.Layout` owns the paths):
 
@@ -15,17 +15,30 @@ The places (:class:`._rename_plan.Layout` owns the paths):
   3. overlay dir       ``<root>/containers/overlays/<name>/``
   4. runtime/state dir ``<root>/runtime/<name>/``  (bound at ``/state/<name>``)
   5. registry json     ``<root>/runtime/registry/<name>.json``
-  6. state.db rows     16 name columns + 2 path columns (``_rename_db``)
-  7. ACL policy        the PostgreSQL ``node_comms_policy`` record
-  8. comms directory   the PostgreSQL ADR-0014 ``comms_nodes`` record
-  9. spawn DAG         the PostgreSQL ``lineage`` edges
- 10. channel history   the PostgreSQL ``sac_channel_events`` rows
- 11. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
+  6. instances         the PostgreSQL lifetime records
+  7. ACL grants        the PostgreSQL ``comms_grants`` records
+  8. ACL policy        the PostgreSQL ``node_comms_policy`` record
+  9. comms directory   the PostgreSQL ADR-0014 ``comms_nodes`` record
+ 10. spawn DAG         the PostgreSQL ``lineage`` edges
+ 11. channel history   the PostgreSQL ``sac_channel_events`` rows
+ 12. task cards        scitex-todo's ``reassign_task`` (``_rename_cards``)
 
-Steps 7 through 10 are separate steps rather than more ``NAME_COLUMNS``
-pairs because all four tables left SQLite on 2026-08-28 and ``rename_rows``
-SKIPS a table it cannot find — so a pair left behind would have made each a
-silent no-op that still reported success.
+WHY 6 THROUGH 11 ARE SIX STEPS AND NOT SIX MORE ``NAME_COLUMNS`` PAIRS
+======================================================================
+Every one of them was a ``(table, column)`` pair inside ``_rename_db`` until
+its table left SQLite. That module walked ``sqlite_master`` and SKIPPED a
+table it could not find — deliberately, so a fleet that has never started an
+agent does not block a rename — which turned each stale pair into a SILENT
+NO-OP: the rename reported success having moved nothing. Worse than a crash,
+every time, and differently damaging per table. So each table left with its
+pair, gaining its own step, its own inverse on the undo stack, and its own
+tests against the store that now holds the rows. ``_rename_db`` itself was
+deleted on 2026-08-29, when the last pair went.
+
+The diary history (``turns`` / ``errors`` / ``heartbeats``) does NOT follow a
+rename, and cannot be made to by adding a call here: ``name`` is an IDENTITY
+field of the heartbeats store and an ``IMMUTABLE`` data field of the turns
+and errors stores, so the store REFUSES the write by design.
 
 ATOMICITY
 ---------
@@ -54,6 +67,11 @@ from .._state.state_db_channel import (
     undo_rename_channel_events,
 )
 from .._state.state_db_comms_nodes import rename_comms_node
+from .._state.state_db_grants_rename import (
+    GrantsRenameUndo,
+    rename_comms_grants,
+    undo_rename_comms_grants,
+)
 from .._state.state_db_lineage_rename import rename_lineage
 from .._state.state_db_instances_rename import (
     InstancesRenameUndo,
@@ -62,7 +80,6 @@ from .._state.state_db_instances_rename import (
 )
 from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
 from ._rename_cards import migrate_cards, undo_migrate_cards
-from ._rename_db import DbUndo, count_rows, rename_rows, undo_rename_rows
 from ._rename_plan import (
     Layout,
     Move,
@@ -81,8 +98,8 @@ STEP_SPEC_FILE = "spec-file"
 STEP_OVERLAY_DIR = "overlay-dir"
 STEP_RUNTIME_DIR = "runtime-dir"
 STEP_REGISTRY = "registry"
-STEP_STATE_DB = "state-db"
 STEP_INSTANCES = "instances"
+STEP_GRANTS = "acl-grants"
 STEP_ACL = "acl-policy"
 STEP_DIRECTORY = "comms-directory"
 STEP_LINEAGE = "lineage"
@@ -96,8 +113,8 @@ STEPS: tuple[str, ...] = (
     STEP_OVERLAY_DIR,
     STEP_RUNTIME_DIR,
     STEP_REGISTRY,
-    STEP_STATE_DB,
     STEP_INSTANCES,
+    STEP_GRANTS,
     STEP_ACL,
     STEP_DIRECTORY,
     STEP_LINEAGE,
@@ -163,29 +180,12 @@ def apply_plan(
             _rewrite_registry_json(plan.registry_move.dst, old, new, layout)
             undo.append((STEP_REGISTRY, _undo_registry(plan.registry_move, before)))
 
-        # 6. state.db rows — one transaction, rowid-scoped undo.
-        _step(STEP_STATE_DB)
-        db_undo: DbUndo = rename_rows(layout.state_db, old, new)
-        undo.append((STEP_STATE_DB, lambda: undo_rename_rows(db_undo)))
-
-        # 6b. The ``instances`` records — PostgreSQL since 2026-08-28, so
-        # their own step for exactly the reason steps 7 and 8 are their own.
-        #
-        # Three fields carried the name (``name``, ``spawned_by``, and
-        # ``workdir`` as a path component) and all three were pairs in
-        # ``_rename_db``'s tables until the move. ``rename_rows`` skips a
-        # table absent from ``sqlite_master``, so leaving them would have
-        # made this a SILENT no-op: the rename reports success while every
-        # lifecycle record still names the old agent. That is worse than the
-        # ACL and routing versions of the same bug, because the start
-        # PREFLIGHT reads these records — seeing no live record under the new
-        # name, it would start a SECOND copy of a running agent.
-        #
-        # ``id``/``host`` are the record identity and are untouched: a
-        # renamed agent is the SAME agent and its recorded lifetimes are the
-        # same lifetimes. So this is an UPDATE, not the copy-and-retire that
-        # steps 7 and 8 must perform — and the inverse is correspondingly
-        # key-scoped rather than "the same verb with the arguments swapped".
+        # 6. The ``instances`` lifetime records. ``id``/``host`` are the
+        # identity and are untouched — a renamed agent is the SAME agent and
+        # its recorded lifetimes are the same lifetimes — so this is an UPDATE
+        # and its inverse is key-scoped. Missing it is the loudest of the six
+        # silent no-ops: the start PREFLIGHT reads these records, so seeing
+        # none under the new name it would start a SECOND copy of a live agent.
         _step(STEP_INSTANCES)
         instances_undo: InstancesRenameUndo = rename_instance_rows(old=old, new=new)
         if instances_undo.total:
@@ -193,85 +193,53 @@ def apply_plan(
                 (STEP_INSTANCES, lambda: undo_rename_instance_rows(instances_undo))
             )
 
-        # 7. The ACL policy record — PostgreSQL, so its own step.
+        # 7. The cross-group send grants — the LAST pair to leave
+        # ``_rename_db``. Both columns are the IDENTITY, so this is a copy +
+        # retire. Missing it cuts both ways: the renamed agent silently LOSES
+        # every grant an operator gave it (``check_send_acl`` asks about the
+        # LIVE name), and the old name keeps an authorisation nobody owns.
         #
-        # It used to ride along in step 6: ``node_comms_policy.name`` was one
-        # more (table, column) pair in ``NAME_COLUMNS``. The table moved to
-        # PostgreSQL on 2026-08-28 and ``rename_rows`` skips tables absent
-        # from ``sqlite_master``, so leaving it there would have made this a
-        # SILENT no-op — the rename reporting success while the policy stayed
-        # under the old name. The renamed agent then resolves to NO named
-        # group and every authority gate denies it.
-        #
-        # ``name`` is the record IDENTITY in the store, so this is a copy +
-        # retire rather than an update; the inverse is the same verb with the
-        # arguments swapped. It raises rather than degrades when PostgreSQL
-        # is unreachable: half a rename is recoverable, an agent running
-        # under a name no gate has a policy for is not.
+        # THIS STEP CAN REFUSE, like step 10: a grant landing on a REVOKED
+        # record is neither taken over (that reinstates a withdrawn grant) nor
+        # skipped (that drops the one being carried) — except where the
+        # carried ``created_at`` proves the two are one authorisation, which
+        # is what keeps renaming BACK possible. Its inverse is key-scoped.
+        _step(STEP_GRANTS)
+        grants_undo: GrantsRenameUndo = rename_comms_grants(old=old, new=new)
+        if grants_undo.total:
+            undo.append((STEP_GRANTS, lambda: undo_rename_comms_grants(grants_undo)))
+
+        # 8. The ACL policy record. ``name`` is the record IDENTITY, so this
+        # is a copy + retire and the inverse is the same verb with the
+        # arguments swapped. It raises rather than degrades when PostgreSQL is
+        # unreachable: half a rename is recoverable, an agent running under a
+        # name no gate has a policy for is not.
         _step(STEP_ACL)
         if rename_comms_policy(old=old, new=new):
             undo.append((STEP_ACL, _undo_acl_policy(old, new)))
 
-        # 8. The ADR-0014 comms directory — PostgreSQL since 2026-08-28, so
-        # its own step for the same reason step 7 is one.
-        #
-        # It used to ride along in step 6 as the ``comms_nodes.name`` pair in
-        # ``NAME_COLUMNS``. Leaving it there after the move would have been
-        # the ROUTING version of the ACL bug above: ``rename_rows`` skips
-        # tables absent from ``sqlite_master``, so the rename reports success
-        # while the directory keeps advertising the OLD name — peers resolve
-        # a name the agent no longer answers to, dial it, and get nothing.
-        #
-        # ``name`` is the record IDENTITY in the store, so this is a copy +
-        # withdraw rather than an update; the inverse is the same verb with
-        # the arguments swapped.
+        # 9. The ADR-0014 comms directory — the ROUTING half of the same
+        # story. ``name`` is the record IDENTITY, so this is a copy +
+        # withdraw; the inverse is the same verb with the arguments swapped.
         _step(STEP_DIRECTORY)
         if rename_comms_node(old=old, new=new):
             undo.append((STEP_DIRECTORY, _undo_comms_node(old, new)))
 
-        # 9. The spawn DAG — PostgreSQL since 2026-08-28, so its own step
-        # for the same reason steps 7 and 8 are.
-        #
-        # It used to ride along in step 6 as the ``lineage.child_name`` and
-        # ``lineage.parent_name`` pairs in ``NAME_COLUMNS``, and leaving
-        # them there would have been the PRIVILEGE version of the two bugs
-        # above: ``rename_rows`` skips a table absent from
-        # ``sqlite_master``, so the rename reports success while the edge
-        # stays under the old name — and an agent with no edge is a ROOT,
-        # which may spawn.
-        #
-        # THIS STEP CAN REFUSE, and unlike its two neighbours that refusal
-        # is expected rather than exceptional. ``parent_name`` is IMMUTABLE
-        # in the store, so an edge naming ``old`` as a PARENT cannot be
-        # re-pointed at all; :func:`rename_lineage` raises rather than
-        # leaving or hiding it (both of which grant spawn authority), and
-        # the raise propagates into the unwind below. Renaming an agent
-        # that has spawned children is therefore refused outright — see
-        # :mod:`..._state.state_db_lineage_rename` for why that is the
-        # least-bad of the three available answers.
+        # 10. The spawn DAG. THIS STEP CAN REFUSE, and unlike its neighbours
+        # that refusal is expected rather than exceptional: ``parent_name`` is
+        # IMMUTABLE, so an edge naming ``old`` as a PARENT cannot be
+        # re-pointed at all. ``rename_lineage`` raises rather than leaving or
+        # hiding it — both of which would make each child a ROOT, and a root
+        # may spawn — and the raise propagates into the unwind below.
         _step(STEP_LINEAGE)
         if rename_lineage(old=old, new=new):
             undo.append((STEP_LINEAGE, _undo_lineage(old, new)))
 
-        # 10. The channel history — PostgreSQL since 2026-08-28, so its own
-        # step for the same reason steps 7 and 8 are ones.
-        #
-        # It used to ride along in step 6 as the ``channel_events.target``
-        # and ``channel_events.source`` pairs in ``NAME_COLUMNS``. Leaving
-        # them there after the move would have been the HISTORY version of
-        # the ACL and routing bugs above, and the quietest of the three:
-        # ``rename_rows`` skips tables absent from ``sqlite_master``, so the
-        # rename reports success while every message the agent ever sent or
-        # received stays filed under the old name. Nobody greps a history
-        # they have been told moved.
-        #
-        # UNLIKE steps 7 and 8 this is an in-place UPDATE, not a copy +
-        # retire: ``target`` is half of a composite key, not the record
-        # identity, so the rows keep their ids (and a live consumer's
-        # ``Last-Event-ID`` keeps resolving) unless the destination name
-        # already owns rows. The inverse is id-scoped rather than the same
-        # verb reversed — see ``undo_rename_channel_events`` for why winding
-        # the id counter back is the one thing it must not do.
+        # 11. The channel history — the quietest of the six to lose. UNLIKE
+        # steps 8 and 9 this is an in-place UPDATE: ``target`` is half of a
+        # composite key, not the record identity, so the rows keep their ids
+        # (and a live consumer's ``Last-Event-ID`` keeps resolving) unless the
+        # destination name already owns rows. The inverse is id-scoped.
         _step(STEP_CHANNEL)
         channel_undo: ChannelRename | None = rename_channel_events(old=old, new=new)
         if channel_undo is not None:
@@ -279,12 +247,12 @@ def apply_plan(
                 (STEP_CHANNEL, _undo_channel_history(channel_undo)),
             )
 
-        # 11. The board. LAST — see the module docstring.
+        # 12. The board. LAST — see the module docstring.
         _step(STEP_CARDS)
         if plan.cards_enabled:
             _migrate_cards_step(old, new, store, by, undo)
 
-        # 12. Postcondition. "I ran the steps" is not the same claim as "the
+        # 13. Postcondition. "I ran the steps" is not the same claim as "the
         # world is now correct", and this verb exists because the second one
         # is what an operator actually needs. Anything still standing under
         # the old name means a step silently did not take — roll back rather
@@ -340,10 +308,6 @@ def _verify_nothing_left_behind(
         if path.exists():
             leftovers.append(f"{label} still at {path}")
 
-    rows = count_rows(layout.state_db, old)
-    if rows:
-        leftovers.append(f"state.db still has rows for {old!r}: {rows}")
-
     if plan.cards_enabled:
         orphans = find_owned_cards(old, store=store)
         if orphans:
@@ -390,11 +354,13 @@ def _undo_move(move: Move) -> Callable[[], None]:
 
 
 def _undo_acl_policy(old: str, new: str) -> Callable[[], None]:
-    """Put the policy record back under ``old``.
+    """Put the policy record back under ``old``. Same verb, arguments swapped.
 
-    The same verb with the arguments swapped — it copies the values back and
-    retires the name the forward step created, so an unwound rename leaves
-    exactly one live policy, under the name the agent actually has.
+    Legitimate here (and for the directory below) because ``name`` is the
+    whole identity: the reversed call copies the values back and retires the
+    name the forward step created, leaving exactly one live record under the
+    name the agent actually has. The channel, instances and grants steps
+    CANNOT be inverted this way — see :func:`_undo_channel_history`.
     """
 
     def _undo() -> None:
@@ -418,13 +384,7 @@ def _undo_lineage(old: str, new: str) -> Callable[[], None]:
 
 
 def _undo_comms_node(old: str, new: str) -> Callable[[], None]:
-    """Put the directory entry back under ``old``.
-
-    The same verb with the arguments swapped — it copies the routing tuple
-    back and withdraws the name the forward step created, so an unwound
-    rename leaves exactly one live entry, under the name the agent actually
-    answers to.
-    """
+    """Put the directory entry back under ``old``. Same verb, arguments swapped."""
 
     def _undo() -> None:
         rename_comms_node(old=new, new=old)
@@ -433,13 +393,14 @@ def _undo_comms_node(old: str, new: str) -> Callable[[], None]:
 
 
 def _undo_channel_history(undo: ChannelRename) -> Callable[[], None]:
-    """The inverse of step 9 — id-scoped, not the same verb reversed.
+    """The inverse of the channel step — id-scoped, not the same verb reversed.
 
     ``rename_channel_events(old=new, new=old)`` would look symmetric and be
     wrong: it would also drag rows that legitimately held ``new`` BEFORE the
     rename (the leftovers of a previously deleted agent by that name) over to
-    ``old``. The recorded ids are what make the undo exact, the same property
-    ``_rename_db``'s rowid capture buys for the SQLite half.
+    ``old``. Recording what was touched is what makes an undo exact — the
+    property the deleted ``_rename_db`` bought with its rowid capture, and the
+    one the instances and grants steps reproduce with store keys.
     """
 
     def _undo() -> None:
@@ -547,12 +508,15 @@ __all__ = [
     "STEP_ACL",
     "STEP_CARDS",
     "STEP_CHANNEL",
+    "STEP_DIRECTORY",
+    "STEP_GRANTS",
+    "STEP_INSTANCES",
+    "STEP_LINEAGE",
     "STEP_OVERLAY_DIR",
     "STEP_REGISTRY",
     "STEP_RUNTIME_DIR",
     "STEP_SPEC_DIR",
     "STEP_SPEC_FILE",
-    "STEP_STATE_DB",
     "STEP_VERIFY",
     "Layout",
     "Move",
