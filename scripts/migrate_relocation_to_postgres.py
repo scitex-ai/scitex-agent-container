@@ -43,6 +43,7 @@ Nothing is deleted from SQLite — the old tables stay untouched as a fallback.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -248,13 +249,18 @@ def main() -> int:
         "--db-path",
         type=Path,
         default=None,
-        help="override the SQLite source (defaults to state_db.DEFAULT_DB_PATH)",
+        help="override the SQLite source (default: $SCITEX_AGENT_CONTAINER_STATE_DB, else <runtime>/state.db)",
     )
     args = parser.parse_args()
 
-    from scitex_agent_container._state.state_db import DEFAULT_DB_PATH
+    from scitex_agent_container._runtime_paths import runtime_base_dir
 
-    db_path = args.db_path or DEFAULT_DB_PATH
+    db_path = args.db_path or Path(
+            os.environ.get(
+                "SCITEX_AGENT_CONTAINER_STATE_DB",
+                str(runtime_base_dir() / "state.db"),
+            )
+        )
     print(f"source: {db_path}")
     if not Path(db_path).exists():
         print("source does not exist — nothing to migrate")

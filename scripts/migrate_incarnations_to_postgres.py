@@ -42,6 +42,7 @@ as a fallback for a human, untouched.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -80,7 +81,7 @@ def main() -> int:
         "--db",
         type=Path,
         default=None,
-        help="SQLite state.db to read (default: sac's resolved DEFAULT_DB_PATH)",
+        help="SQLite state.db to read (default: $SCITEX_AGENT_CONTAINER_STATE_DB, else <runtime>/state.db)",
     )
     # WRITING IS OPT-IN. This script used to write by DEFAULT, with --dry-run
     # as the opt-in — so the bare, obvious invocation was the destructive one.
@@ -106,14 +107,19 @@ def main() -> int:
 
     from scitex_dev.store import ANY_REVISION
 
-    from scitex_agent_container._state.state_db import DEFAULT_DB_PATH
+    from scitex_agent_container._runtime_paths import runtime_base_dir
     from scitex_agent_container._state.state_db_incarnations import (
         get_incarnation,
         incarnation_store_target,
         open_incarnation_store,
     )
 
-    db_path = args.db or DEFAULT_DB_PATH
+    db_path = args.db or Path(
+            os.environ.get(
+                "SCITEX_AGENT_CONTAINER_STATE_DB",
+                str(runtime_base_dir() / "state.db"),
+            )
+        )
     print(f"source (sqlite) : {db_path}")
     print(f"target (postgres): {incarnation_store_target().locator}")
 
