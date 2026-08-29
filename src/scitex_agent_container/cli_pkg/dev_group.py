@@ -169,6 +169,21 @@ def dev_group() -> None:
     """Developer / maintainer plumbing (CI secrets, scheduled jobs, etc.)."""
 
 
+# `sac dev skills` — self-maintenance, so it belongs under `dev` rather
+# than at the top level (audit-cli §13; doctrine 20_dev-commands.md,
+# operator directive). The top-level `sac skills` still works: it is
+# registered in `_main.py`'s LAZY_RENAMED, which redirects to this path
+# and tells the caller the new spelling.
+#
+# Imported at dev_group import time, not at CLI startup. `dev_group`
+# itself is a LAZY_COMMANDS entry, so this module is only loaded when
+# someone actually types `sac dev …` — the cold-start budget (§10) is
+# untouched. Attaching it in `_main.py` instead WOULD have cost every
+# invocation an eager import of skills_group.
+from .skills_group import skills_group
+
+dev_group.add_command(skills_group)
+
 # Federated scheduled-job subcommands (`sac dev {cron,systemd}`, derived
 # from `_dev_jobs.GROUP_KINDS`) delegate to scitex-dev's ecosystem
 # aggregator. Kept in their own module to hold this file under the

@@ -51,6 +51,31 @@ def _print_report(report) -> None:
     console.print(f"    [dim]{report.detail}[/dim]", soft_wrap=True)
 
 
+def already_summarised_by_count(report) -> bool:
+    """True when this report's per-agent detail adds nothing to the count line.
+
+    A ``no-session`` UNOBSERVED is a DETERMINATE reading handed to
+    fleet-reconcile, and the pass already prints it once, by count:
+
+        "105 registered agent(s) have no live session — fleet-reconcile's half
+         of the fleet, not this pass's."
+
+    Printing each of those agents as well repeats one sentence ~105 times per
+    pass, every 5 minutes. Measured on compute-04 2026-08-18: 93,778 UNOBSERVED
+    lines in a 32 MB timer log (~105 per pass x ~893 passes ~= 74 hours), while
+    the summary above appeared once per pass and said everything the 105 did.
+
+    An INDETERMINATE UNOBSERVED is never suppressed. Those mean "nothing was
+    learned about this agent", they are why a pass cannot report a clean fleet,
+    and losing them would turn a loud gap into a silent one — the opposite of
+    the fix. The distinction is the point, not an optimisation.
+
+    ``.reason`` is only read once the verdict is UNOBSERVED (``and`` short
+    circuits), which is the same access the no_session tuple below already makes.
+    """
+    return report.verdict is Verdict.UNOBSERVED and report.reason == "no-session"
+
+
 @click.command(name="restart-login-expired")
 @click.option(
     "--apply",
@@ -121,10 +146,22 @@ def restart_login_expired(
       two restarters bouncing one fleet is the double-supervisor class. Running
       THIS COMMAND by hand is always safe.
 
-    Exits 0 ONLY when every registered agent was actually observed and none is
-    wedged, 1 if something is wedged, and 2 if anything could not be determined
-    — an unreadable pane, a registered agent with no live session, an
-    unreadable fleet roster, or an unreadable restart history.
+    Exits 0 ONLY when everything this pass COULD observe was observed and none
+    of it is wedged, 1 if something is wedged, and 2 if anything could not be
+    determined — an unreadable pane, an unreadable fleet roster, or an
+    unreadable restart history.
+
+    \b
+    A registered agent with NO live session is NOT one of those. It is a
+    DETERMINATE reading: no session means no pane to be wedged, and a missing
+    session is fleet-reconcile's half of the fleet, not this verb's — a pass
+    cannot both delegate a case and let that case decide its answer. Counting
+    it was tried and reverted: the roster is spec FILES and this fleet has far
+    more registered agents than running ones by design, so every pass carried
+    sessionless reports and this verb could never return 0 for ANY fleet state.
+    The count is not hidden — it prints beside the exit code, so "unobserved:
+    92" next to 0 reads as "we looked at all we could, and it is clean", never
+    as "we failed to look". Full argument: _authheal/_pass.py:indeterminate.
     """
     if apply and check:
         raise click.UsageError(
@@ -160,7 +197,12 @@ def restart_login_expired(
         f"{len(outcome.reports) - len(unseen)} corroborated login-expired "
         f"agent(s), {len(unseen)} NOT observed\n"
     )
+    # See :func:`already_summarised_by_count` — the no-session population is printed
+    # once, by count, below; repeating it per-agent is what put 93,778 lines in a
+    # 32 MB timer log. Indeterminate UNOBSERVED reports still print individually.
     for report in outcome.reports:
+        if already_summarised_by_count(report):
+            continue
         _print_report(report)
 
     counts = outcome.counts()
@@ -186,15 +228,31 @@ def restart_login_expired(
             "  Each has a board card. A human needs to look — restarting is not "
             "fixing these (usually a real account problem)."
         )
-    if unseen:
+    # `unseen` is EVERY UNOBSERVED, but only some of them are this pass's own
+    # indeterminacy. `no-session` is a DETERMINATE reading handed to
+    # fleet-reconcile, and :meth:`PassOutcome.exit_code` already excludes it.
+    # Rendering both under one banner is how the summary came to contradict the
+    # verdict printed beside it: measured 2026-08-16, a pass exited 0 while
+    # announcing "this pass therefore CANNOT report a clean fleet" about 100
+    # sessionless agents. The verdict was fixed; the narration was not.
+    indeterminate = outcome.indeterminate()
+    no_session = tuple(r for r in unseen if r.reason == "no-session")
+    if indeterminate:
         console.print(
-            f"\n[magenta]{len(unseen)} agent(s) were NOT observed:[/magenta] "
-            f"{', '.join(r.name for r in unseen)}\n"
+            f"\n[magenta]{len(indeterminate)} agent(s) were NOT observed:[/magenta] "
+            f"{', '.join(r.name for r in indeterminate)}\n"
             "  Nothing was learned about these — they are neither healthy nor "
             "wedged, and this pass therefore CANNOT report a clean fleet.\n"
             "  Look at them by hand:\n"
             "    sac agents auth-status\n"
             "    sac agents list"
+        )
+    if no_session:
+        console.print(
+            f"\n[dim]{len(no_session)} registered agent(s) have no live session[/dim] "
+            "— fleet-reconcile's half of the fleet, not this pass's. A missing "
+            "session is a determinate reading, so it does NOT prevent a clean "
+            "report here."
         )
     if outcome.of(Verdict.BUDGET_UNKNOWN):
         console.print(

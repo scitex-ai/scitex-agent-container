@@ -314,12 +314,10 @@ def resolve_with_prefix(name: str) -> str:
     except FileNotFoundError as exact_miss:
         matches = [n for n in enumerate_agent_names() if n.startswith(name)]
         if len(matches) == 1:
-            import sys
+            from .._logging import get_logger
 
-            print(
-                f"resolved '{name}' → '{matches[0]}' (prefix match)",
-                file=sys.stderr,
-                flush=True,
+            get_logger(__name__).info(
+                f"resolved '{name}' → '{matches[0]}' (prefix match)"
             )
             return resolve_config(matches[0])
         if len(matches) > 1:

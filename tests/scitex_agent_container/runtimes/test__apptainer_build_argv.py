@@ -37,7 +37,11 @@ from typing import Iterator
 
 import pytest
 
-from scitex_agent_container.config import load_config
+from scitex_agent_container.config import AgentConfig, load_config
+from scitex_agent_container.config._harness_types import (
+    V4_HARNESS_DISPATCH_CARD,
+    HarnessRuntimeMismatchError,
+)
 from scitex_agent_container.runtimes._apptainer_auth import (
     CredentialExpiredError,
     credentials_file_bind,
@@ -1286,3 +1290,134 @@ def test_spec_env_key_not_in_fleet_defaults_still_reaches_argv(tmp_path) -> None
     argv = _argv_for_env(tmp_path, env_block)
     # Assert
     assert _env_values(argv, "AGENT_ONLY_FLAG") == ["agent-value"]
+
+
+# ---------------------------------------------------------------------------
+# v4 step-2 harness guard — build_run_argv refuses a wrong-vendor launch
+# BEFORE any side effect (card
+# sac-v4-layering-refactor-harness-runtime-inference-20260813). Pre-fix,
+# the ``getattr(config, "provider", None)`` read in the pre-built
+# runner_argv branch was DEAD (the harness rename removed the field), so a
+# ``harness: openai`` spec got OPENAI_* auth provisioning (the auth step
+# reads config.harness correctly — pre-fix it raised ProviderEnvError over
+# a missing key) and then the CLAUDE runner module: a silent wrong-vendor
+# launch whenever the key resolved.
+# ---------------------------------------------------------------------------
+
+
+def test_build_run_argv_raises_harness_mismatch_for_openai_harness(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the pre-built runner_argv path, whose dispatch held the
+    # dead provider read.
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=tmp_path / "state",
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_run_argv_openai_harness_refuses_before_any_side_effect(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the guard sits at the top of the function, before the
+    # workspace-home mkdir / overlay provisioning / auth provisioning.
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    state_dir = tmp_path / "state"
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=state_dir,
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError:  # stx-allow: test-capture (reason: STX-TQ002; the raise itself is pinned by the sibling test.)
+        pass
+    # Assert
+    assert not state_dir.exists()
+
+
+def test_build_run_argv_openai_harness_refusal_names_the_v4_card(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    cfg = AgentConfig(name="t", runtime="apptainer", harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_run_argv(
+            cfg,
+            state_dir=tmp_path / "state",
+            sif_path=tmp_path / "img.sif",
+            runner_argv=["--flag"],
+        )
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
+
+
+# ---------------------------------------------------------------------------
+# SCITEX_AGENT_CONTAINER_RUNTIME_DIR — telling the container where beats live
+# ---------------------------------------------------------------------------
+
+
+def test_the_runtime_dir_env_is_passed_into_the_container(tui_config, tmp_path):
+    """Without this flag the container cannot see ANY agent's heartbeat.
+
+    `beat_is_recent` resolves `runtime_base_dir() / name / heartbeat.json`, and
+    `runtime_base_dir()` falls back to `~/.scitex/agent-container/runtime` when
+    this variable is unset. Inside a container `~` is /home/agent — ephemeral,
+    and no agent writes a beat there — so the fallback answered None for EVERY
+    name. Measured 2026-08-27 from a live container: a beat file 30s old, and
+    the reader returning None for this agent, a real peer, and a nonexistent
+    name alike (sac-agent-liveness-undetectable-and-no-autoheal-20260823).
+
+    THIS TEST IS THE LAUNCHER HALF and it is deliberately separate from the
+    reader tests in test__apptainer_runtime_dir_env.py. Those prove the reader
+    works when told where to look; this proves the launcher tells it. Either
+    one alone passes while the pair is broken — a reader nothing configures, or
+    a variable nothing reads.
+    """
+    # Arrange
+    from scitex_agent_container._runtime_paths import runtime_base_dir
+
+    expected = f"SCITEX_AGENT_CONTAINER_RUNTIME_DIR={runtime_base_dir()}"
+    # Act
+    argv = build_run_argv(
+        tui_config, state_dir=tmp_path / "state", sif_path=tmp_path / "img.sif"
+    )
+    # Assert
+    assert expected in argv
+
+
+def test_the_runtime_dir_env_carries_a_usable_path(tui_config, tmp_path):
+    """CONTROL on the VALUE, not just the key.
+
+    `--env FOO=` is emitted, deduped and asserted-present exactly like a real
+    one, and it points the reader at nothing. The flag being present is not
+    evidence the value can be used.
+    """
+    # Arrange
+    argv = build_run_argv(
+        tui_config, state_dir=tmp_path / "state", sif_path=tmp_path / "img.sif"
+    )
+    # Act
+    flag = next(
+        a for a in argv if a.startswith("SCITEX_AGENT_CONTAINER_RUNTIME_DIR=")
+    )
+    # Assert
+    assert flag.split("=", 1)[1].startswith("/")
+
+
+# EOF

@@ -1,25 +1,58 @@
-"""SQLite-backed state for scitex-agent-container (F-CS11 + diary tables).
+"""SQLite-backed state for scitex-agent-container (F-CS11).
 
 Replaces the per-agent JSON files under
-``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
-holding tables in three groups:
+``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``.
 
-  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
-  * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
-    ``heartbeats`` time series, tied to an ``instances.id``).
-  * Diary (2026-05-17) — ``turns``, ``errors``, ``heartbeats``. Each
-    agent writes here continuously, like a journal; the lead reads
-    + filters when it wants cross-host visibility. ``heartbeats``
-    promotes the per-agent ``heartbeat.json`` file into a queryable
-    table keyed by ``(name, host, pid, state, ts)``.
+WHAT IT HOLDS TODAY IS ONE TABLE: ``channel_events`` (WI-1 durability).
+:data:`KNOWN_TABLES` is the list, and it is the list every generic reader
+walks — a list of one.
 
-The single-file layout makes backup/sync trivial (one ``cp``) and
-keeps the existing ``actions.db`` table (``attempts``) co-located so
-queries can join across action history and instance lifecycle.
+The WI-2 spawn DAG, ``lineage``, and the F-CS11 registry's ``instances``
+were the other two until 2026-08-28. Both moved to the shared PostgreSQL
+store (:mod:`.state_db_lineage_store` and :mod:`.state_db_instances`), and
+for each an empty leftover would have been worse than a crash: every
+reader treats "no ``lineage`` row for this child" as ROOT, and a root MAY
+SPAWN; every reader treats an empty ``instances`` as "nothing is running",
+which is what decides whether to start a SECOND copy of a live agent. See
+the departure notes in :mod:`.state_db_schema`.
 
-NOTE: The original F-CS11 ``heartbeats`` table is renamed to
-``instance_heartbeats`` on first open (idempotent migration in
-``init_schema``) so the diary-style ``heartbeats`` can own the name.
+The F-CS11 registry was ``definitions`` / ``instances`` / ``events``, with
+``instance_heartbeats`` (the legacy ``heartbeats`` time series, tied to an
+``instances.id``) added in phase 2. ALL FOUR left on 2026-08-28:
+``definitions`` and ``instance_heartbeats`` had no writer at all, ``events``
+had no reader, and ``instances`` — the only one of the four that both a
+writer and a reader ever reached — MOVED to the shared PostgreSQL store
+(:mod:`state_db_instances`). :mod:`state_db_schema` carries a departure note
+for each.
+
+The single-file layout makes backup/sync trivial (one ``cp``). It also
+kept the legacy ``actions.db`` table (``attempts``) co-located so queries
+could join action history against instance lifecycle; that table left on
+2026-08-28 — it never had a writer, so the join it promised had nothing
+on one side. See :mod:`state_db_schema` for the departure note.
+
+THE DIARY GROUP IS GONE FROM SQLite (2026-08-28)
+================================================
+``turns`` / ``errors`` / ``heartbeats`` were a third group here: each
+agent appended rows like a journal and the lead read them back. The
+WRITERS moved to per-host PostgreSQL first; this module was the residue
+— the DDL that kept creating the three empty tables, and the
+``KNOWN_TABLES`` entries that kept ``sac db show`` and ``sac db query``
+reading them.
+
+Empty is the dangerous shape. ``sac db show`` reporting ``turns 0``
+while PostgreSQL holds the rows is not a missing feature, it is a WRONG
+ANSWER that looks like a right one — the failure the ``incarnations``
+removal named on 2026-08-19. So the names are removed rather than left
+whitelisted, and asking for one now fails loudly instead of answering
+zero. :mod:`state_db_diary` owns the trio end to end.
+
+NOTE: this docstring used to promise that the rename of the original
+F-CS11 ``heartbeats`` table to ``instance_heartbeats`` "STAYS: it is what
+an old state.db still needs". It does not stay. ``instance_heartbeats``
+itself left on 2026-08-28, so the migration's only effect on an old DB
+would have been to re-create, under a name this schema no longer defines,
+a table whose writer and reader are both deleted.
 
 Large helper groups live in sibling modules, all re-exported from THIS
 module so ``from ...state_db import X`` imports keep working:
@@ -27,9 +60,23 @@ module so ``from ...state_db import X`` imports keep working:
   * :mod:`state_db_export` — export_state / import_state / import_legacy_registry.
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
-    latest_heartbeats_per_name.
-  * :mod:`state_db_heartbeats` — update_heartbeat / latest_instance_heartbeat.
-  * :mod:`state_db_migrations` — idempotent schema migrations.
+    latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
+  * :mod:`state_db_migrations` was here until 2026-08-28 — idempotent
+    ``ALTER TABLE`` steps run on every ``init_schema``. It is DELETED, with
+    its last function: ``migrate_instances_add_family_tree_cols`` ALTERed
+    ``instances`` to add ``bound_port``/``remote``/``spawned_by``, and that
+    table moved to the shared PostgreSQL store. Its two predecessors went
+    earlier the same day with ``instance_heartbeats`` and
+    ``node_comms_policy``.
+
+    The module was kept for one commit as departure notes with no code, and
+    that is the shape this package deletes rather than preserves: it had no
+    importer, and its ``import sqlite3`` survived only to satisfy the SQLite
+    freeze list. WHAT THE NOTES SAID, kept because one of them is a real
+    ruling: the two heartbeat migrations could still FIRE on an old enough
+    database, re-creating a table the schema had just declared it does not
+    maintain — a migration whose success restores something the schema
+    deleted is not a safety net. The others were permanent no-ops.
 """
 
 from __future__ import annotations
@@ -49,16 +96,10 @@ from typing import Iterator
 # re-export here so those import sites keep resolving.
 from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
-from .state_db_migrations import (
-    migrate_instance_heartbeats_add_seq,
-    migrate_instances_add_family_tree_cols,
-    migrate_legacy_heartbeats,
-    migrate_node_comms_policy_add_group_name,
-    migrate_node_comms_policy_add_group_names,
-)
+# There is no ``state_db_migrations`` import here any more, because there is
+# no such module — see the docstring above for what it did and why it went.
 from .state_db_schema import (
-    _SCHEMA_ATTEMPTS,
-    _SCHEMA_DIARY,
+    _SCHEMA_ACL,
     _SCHEMA_REGISTRY,
 )
 
@@ -78,21 +119,112 @@ DEFAULT_DB_PATH = Path(
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
-    "definitions",
-    "instances",
-    "instance_heartbeats",
-    "events",
-    "attempts",
-    "turns",
-    "errors",
-    "heartbeats",
-    "channel_events",
-    "node_tokens",
-    "lineage",
-    "comms_grants",
-    "comms_nodes",
-    "node_comms_policy",
-    "acl_deny_notify_log",
+    # EMPTY. Every name this tuple ever carried left SQLite on 2026-08-28,
+    # and ``instances`` — the LAST one, and the only table sac owned that
+    # both a writer and a reader ever reached — was the last to go, to the
+    # shared PostgreSQL store (:mod:`.state_db_instances`).
+    #
+    # A NAME LEFT HERE WOULD BE A WRONG ANSWER, NOT AN EMPTY ONE, and for
+    # ``instances`` that reading is the worst of the set: ``sac db show``
+    # would print ``instances 0`` while PostgreSQL holds the fleet's entire
+    # lifecycle history, about the table an operator reaches for FIRST when
+    # asking what is running. ``sac agents list`` is the verb that answers
+    # that question now.
+    #
+    # AN EMPTY TUPLE IS THE HONEST SHAPE, and it is what every generic reader
+    # should see: ``table_counts`` returns ``{}``, ``export_state`` /
+    # ``import_state`` carry nothing, and ``sac db query --table`` can name
+    # nothing. ``init_schema`` issues ZERO ``CREATE TABLE`` statements, so
+    # there is no table for any of them to be right about.
+    # ``lineage`` left on 2026-08-28, when the spawn DAG moved to the
+    # shared PostgreSQL store (:mod:`.state_db_lineage_store`). Its DDL is
+    # gone from :mod:`.state_db_schema`, which carries the departure note,
+    # and its ``export_state`` filter is gone from
+    # :mod:`.state_db_export` -- so keeping the name here would aim every
+    # generic reader (``table_counts`` behind ``sac db show``,
+    # ``export_state`` / ``import_state``, and the ``click.Choice`` for
+    # ``sac db query``) at a table that no longer exists.
+    #
+    # The empty-is-dangerous argument this tuple has been shedding names
+    # over is at its sharpest here, and it is worth naming once: an empty
+    # ``lineage`` does not read as "wrong database", it reads as "every
+    # agent is a ROOT" -- and a root may spawn. ``sac db show`` answering
+    # ``lineage 0`` while the store holds the fleet's 23 edges would be a
+    # wrong answer that looks like a right one about the table the whole
+    # ACL is derived from.
+    #
+    # ``definitions``, ``instance_heartbeats`` and ``events`` left on
+    # 2026-08-28, in one change, taking this tuple from six names to three.
+    # Their DDL is gone from :mod:`.state_db_schema`, where each carries its
+    # own departure note; what the three share is that EVERY reader of them
+    # was generic — :func:`table_counts` behind ``sac db show``,
+    # ``export_state`` / ``import_state``, and the ``click.Choice`` for
+    # ``sac db query`` — i.e. every reader reached them through THIS tuple
+    # and none of them through a name. That is what made the entries
+    # load-bearing and what makes removing them the whole edit.
+    #
+    # They are not the same kind of dead, and the notes in the schema say
+    # which is which: ``definitions`` and ``instance_heartbeats`` had no
+    # writer (0 rows on every host measured), while ``events`` had two
+    # writers and 1181 rows and no READER at all. A name left here would
+    # therefore have failed differently in each case — a plausible zero for
+    # the first two, and for ``events`` a table sac exports and counts and
+    # lets an operator query while nothing in ``src/`` consults it. Both
+    # readings are the success-shaped answer this tuple has been shedding
+    # names to avoid all month.
+    # ``node_tokens`` left on 2026-08-28 with the per-node bearer feature
+    # it belonged to: ``mint_node_token`` had zero callers outside tests,
+    # so the table was empty on every host and no bearer ever resolved to
+    # a name. Its DDL is gone from :mod:`.state_db_schema`, so keeping the
+    # name here would aim every generic reader -- ``table_counts`` behind
+    # ``sac db show``, ``export_state`` / ``import_state``, and the
+    # ``click.Choice`` for ``sac db query`` -- at a table that no longer
+    # exists. It is also the entry that made ``sac db export`` ship a
+    # column of BEARER SECRETS to any peer that asked, since export takes
+    # whole tables and the MCP ``db_export`` tool cannot name a subset;
+    # dropping the entry closes that by construction rather than by
+    # remembering to filter. ``_store_plugin.NEVER_SYNCED`` deliberately
+    # KEEPS its refusal of this name -- a table leaving this tuple must
+    # not read as the refusal being withdrawn.
+    # ``comms_nodes`` left on 2026-08-28 when the ADR-0014 cross-host
+    # directory moved to the shared PostgreSQL store
+    # (:mod:`.state_db_comms_nodes`). Removed rather than whitelisted for
+    # the usual reason — a name with no table answers every generic reader
+    # with a plausible zero — and for one that is specific to this table:
+    # `sac db export --tables comms_nodes` was the transport `sac registry
+    # sync` ran over ssh, so leaving the name here would have kept an
+    # anti-entropy sweep shipping empty payloads between hosts and
+    # reporting `inserted=0` as success. The store IS the sync now.
+    # ``attempts`` left on 2026-08-28 under the same ruling, for the
+    # simplest possible version of the reason: it never had a writer. Its
+    # DDL is gone from :mod:`.state_db_schema`, so keeping the name here
+    # would point every generic reader -- ``table_counts`` behind ``sac db
+    # show``, ``export_state``/``import_state``, and the ``click.Choice``
+    # for ``sac db query`` -- at a table that no longer exists.
+    # ``comms_grants`` left on 2026-08-28 under the same ruling as
+    # ``incarnations`` below. Its CRUD had already moved to the shared
+    # PostgreSQL store (:mod:`.state_db_grants`, which resolves through
+    # ``host_store``); only the DDL and this whitelist entry were left,
+    # and the entry is what kept the GENERIC readers -- ``table_counts``
+    # behind ``sac db show``, ``export_state``/``import_state``, and the
+    # ``click.Choice`` for ``sac db query`` -- pointed at a SQLite table
+    # nothing writes. The 52 live rows were carried into PostgreSQL
+    # before this landed.
+    # ``incarnations`` was here until 2026-08-19. It now lives in per-host
+    # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
+    # through `sac db query`. Removed rather than left behind: a whitelisted
+    # name with no table returns an EMPTY result, and an empty result reads
+    # as "this agent has no incarnations" when the truth is "you are asking
+    # the wrong database". An unknown-table error is the honest answer.
+    #
+    # ``turns``, ``errors`` and ``heartbeats`` left on 2026-08-28 under the
+    # SAME ruling, and the three go together because they share
+    # :mod:`.state_db_diary` and the loops below. Every reader of this tuple
+    # is generic — :func:`table_counts`, ``export_state``, ``import_state``,
+    # and the ``--table`` choice list — so one name left behind here would
+    # have kept `sac db show` printing ``turns 0`` while the rows sat in
+    # PostgreSQL, and a half-migrated trio is a split brain that raises
+    # nothing: some readers see a row, others do not.
 )
 
 
@@ -168,41 +300,61 @@ def init_schema(db_path: Path | None = None) -> Path:
     """
     path = Path(db_path) if db_path else DEFAULT_DB_PATH
     with _connect(path) as conn:
-        migrate_legacy_heartbeats(conn)
-        migrate_instance_heartbeats_add_seq(conn)
+        # ``migrate_legacy_heartbeats`` and
+        # ``migrate_instance_heartbeats_add_seq`` ran here until 2026-08-28.
+        # ``instance_heartbeats`` left SQLite that day (zero callers on both
+        # its writer and its reader, zero rows on every host), and both
+        # migrations existed only to shepherd an old DB INTO that table —
+        # one renaming the legacy ``heartbeats`` onto the name, the other
+        # rebuilding it for a ``seq`` PK. Kept, they would have gone on
+        # re-creating a table this schema no longer defines, on exactly the
+        # old databases least able to explain where it came from.
         conn.executescript(_SCHEMA_REGISTRY)
-        # ``executescript`` above creates ``instances`` fresh on a new
-        # DB (with the family-tree columns) but is a no-op on an
-        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
-        migrate_instances_add_family_tree_cols(conn)
-        # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
-        # column on a pre-existing ``node_comms_policy`` (operator
-        # 2026-06-25). No-op on a fresh DB (DDL already has the column).
-        migrate_node_comms_policy_add_group_name(conn)
-        # Same idempotent ADD COLUMN for the MULTI-value ``group_names``
-        # column the authority gates read (incident 2026-08-10 — an agent
-        # whose spec lists several groups was reduced to its FIRST one).
-        migrate_node_comms_policy_add_group_names(conn)
-        conn.executescript(_SCHEMA_ATTEMPTS)
-        conn.executescript(_SCHEMA_DIARY)
-        # Task #27 — ACL block/unblock flow tables. Both CREATE TABLE
-        # scripts are idempotent; running them inline here means a
-        # fresh state.db carries the tables without a separate
-        # migration step. The owning modules expose the schema
-        # strings; we pull them through the same connection so
-        # ``init_schema`` stays atomic.
-        from . import state_db_acl_deny_notify as _adn
-        from . import state_db_blocks as _blocks
-        from . import state_db_pending_approval as _pp
-
-        conn.executescript(_pp._SCHEMA)
-        conn.executescript(_blocks._SCHEMA)
-        # sac-comms item D (lead a2a c42b3e3c): rate-limit log for
-        # synthetic ACL-deny notifications published at the target
-        # receiver. One row per (sender, target) pair carrying the
-        # last-notify timestamp; the check + update lives in
-        # :func:`state_db_acl_deny_notify.should_notify_acl_deny`.
-        conn.executescript(_adn._SCHEMA)
+        # ``migrate_instances_add_family_tree_cols`` ran here until
+        # 2026-08-28. ``instances`` moved to PostgreSQL, so the migration
+        # returns early on every host forever — a schema step that can never
+        # fire is not a safety net, it is a claim that one still happens.
+        # Deleted with the DDL.
+        # The two ``node_comms_policy`` ADD COLUMN migrations ran here
+        # until 2026-08-28. The table moved to PostgreSQL, so both would
+        # now be permanent no-ops against a table SQLite no longer has —
+        # dead code claiming a live purpose. Removed with the DDL.
+        # ``_SCHEMA_ATTEMPTS`` ran here until 2026-08-28. The ``attempts``
+        # table had zero writers, so issuing its DDL only produced an empty
+        # table that answered readers with a plausible zero. Existing rows
+        # are untouched — we stop issuing the CREATE, we do not DROP.
+        # ``_SCHEMA_CHANNEL_AND_ACL`` became ``_SCHEMA_ACL`` on 2026-08-28
+        # when ``channel_events`` -- the LAST SQLite table sac owned -- moved
+        # to the shared PostgreSQL as ``sac_channel_events`` /
+        # ``sac_channel_cursor`` (:mod:`.state_db_channel_store`). Same
+        # ruling as the diary and ``attempts``: we stop issuing the CREATE,
+        # we do not DROP, so an old state.db keeps its rows until
+        # ``scripts/migrate_channel_events_to_postgres.py`` carries them over.
+        conn.executescript(_SCHEMA_ACL)
+        # ``turns`` / ``errors`` / ``heartbeats`` were created by the
+        # constant above (then called ``_SCHEMA_DIARY``) until 2026-08-28.
+        # All three moved to per-host PostgreSQL; each diary store creates
+        # its own schema on first open (``state_db_diary._open``), so there
+        # is nothing to run here for them.
+        # Task #27's two ACL tables were both created here until 2026-08-20.
+        # ``pending_prompts`` and ``comms_blocks`` have BOTH moved to per-host
+        # PostgreSQL; each store creates its own schema on first open
+        # (``state_db_pending_approval.open_pending_prompt_store`` /
+        # ``state_db_blocks.open_blocks_store``), so there is nothing to run
+        # here for either. ``comms_grants`` was the last of that pair left
+        # in SQLite; it moved to the shared PostgreSQL store and its DDL
+        # was deleted on 2026-08-28, so nothing of the pair remains here.
+        # The ``incarnations`` birth-certificate table used to be created
+        # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
+        # this comment block used to make — "lives in the EXISTING sqlite
+        # factory ON PURPOSE so the separately-carded sqlite→Postgres
+        # migration carries it along" — is now kept. Its schema is created
+        # on first open by :func:`state_db_incarnations.open_incarnation_store`,
+        # so there is nothing to run here.
+        # sac-comms item D's rate-limit log (acl_deny_notify_log) was created
+        # here until 2026-08-20. It moved to per-host PostgreSQL alongside the
+        # two task-#27 tables above; its schema is created on first open by
+        # ``state_db_acl_deny_notify.open_deny_notify_store``.
         conn.commit()
     return path
 
@@ -259,10 +411,14 @@ from .state_db_gc import (  # noqa: E402,F401
     _proc_btime,
     gc_dead_instances,
 )
-from .state_db_heartbeats import (  # noqa: E402,F401
-    latest_instance_heartbeat,
-    update_heartbeat,
-)
+# ``latest_instance_heartbeat`` and ``update_heartbeat`` were re-exported
+# here from :mod:`state_db_heartbeats` until 2026-08-28. Neither had a
+# single caller in ``src/`` — the re-export lines themselves were two of
+# the three references the package held — so the module went with its
+# table. See the ``instance_heartbeats`` departure note in
+# :mod:`state_db_schema`, which also names what the deletion takes with
+# it: ``instances.last_heartbeat_at`` and the three token/iter counters
+# lose their only (already-uncalled) writer.
 from .state_db_instances import (  # noqa: E402,F401
     last_known_instance,
     list_active_instances,

@@ -107,6 +107,50 @@ class Rename:
 #: names are exactly what ``provide_jobs()`` declares, reading the REAL
 #: provider through the REAL validator. Adding a job without a row, or a
 #: row without a job, fails the build.
+#: Jobs that never had a legacy ``sac.*`` name, so there is nothing to
+#: migrate. EXPLICIT for the same reason RENAMES is: silence here would be
+#: indistinguishable from "someone added a job and forgot the row", which is
+#: exactly what `test_every_declared_job_has_a_row` exists to catch.
+#:
+#: A row cannot express this. ``Rename.__post_init__`` rejects ``old == new``
+#: ("renames nothing"), and rightly — an identity row in the migration table
+#: would tell the migrator to stop a unit, remove it, and reinstall it under
+#: the name it already has. So the fact belongs here, as its own statement,
+#: rather than as a lie in the shape of a rename.
+#:
+#: Anything listed here is asserting: this job was BORN canonical, no host
+#: carries a legacy unit for it, and `sac dev migrate-job-names` must leave
+#: it alone.
+BORN_CANONICAL: frozenset[str] = frozenset(
+    {
+        # Added 2026-08-25, after the rename had already landed — the first
+        # job in this package that never existed under the `sac.*` prefix.
+        # No host has ever carried a `sac.accounts-entitlement` unit, so
+        # there is no orphan for a migration to displace.
+        "scitex-agent-container-accounts-entitlement",
+        # Added 2026-08-26. NOT a rename, deliberately, even though
+        # laptop-01 does carry a hand-written `sac-creds-watch.service`:
+        # that unit runs the `watch-live` DAEMON, while this job is a
+        # 2-minute timer over the one-shot `sync-live`. A Rename row would
+        # tell the migrator to stop the fleet's ONLY working credential
+        # watcher and install a timer in its place, in one unsupervised
+        # step — the same stop-then-install order that took the sole OAuth
+        # refresher down for ~2 minutes on 2026-08-18. Declaring it born
+        # canonical lets both run (sync-live is a no-op when the store
+        # already matches), so laptop-01 keeps its watcher until this timer
+        # is VERIFIED firing on all seven hosts; retiring the hand-written
+        # unit is a separate, deliberate step on the migration card.
+        "scitex-agent-container-accounts-snapshot-live",
+        # Added 2026-08-28, after the incident that showed nothing owned the
+        # rate-wall shape. Born canonical in the strongest sense available:
+        # no host carries a legacy unit for it because no host has ever
+        # carried ANY unit for it — there was no predecessor doing this job,
+        # which is precisely why a rate-limited fleet stayed stopped for
+        # 1h46m. Nothing for a migration to displace.
+        "scitex-agent-container-resume-rate-limited-agents",
+    }
+)
+
 RENAMES: tuple[Rename, ...] = (
     Rename(
         old="sac.accounts-refresh",
@@ -122,15 +166,28 @@ RENAMES: tuple[Rename, ...] = (
             "run `sac dev migrate-job-names --only accounts-refresh "
             "--include-held --yes` in a watched window, then confirm "
             "`sac accounts status` still resolves every account BEFORE "
-            "walking away. Until then the spec keeps its legacy name ON "
-            "PURPOSE, so every CLI verb keeps naming the unit that is really "
-            "running — a spec renamed ahead of its unit would report the "
-            "refresher as absent while it refreshes."
+            "walking away. THE SPEC HAS ALREADY MOVED to the new name, and "
+            "it had to: `sac dev timer install` resolves only names a "
+            "JobSpec DECLARES, so install-new answered `no job named "
+            "'scitex-agent-container-accounts-refresh' here` while the spec "
+            "was held (measured 2026-08-19; attempted in the other order the "
+            "night before, which left the fleet with zero refreshers for ~2 "
+            "minutes). Until this cutover runs, `sac dev timer status "
+            "accounts-refresh` therefore names a unit the host does not "
+            "carry and reports the refresher ABSENT while "
+            "`sac.accounts-refresh.timer` keeps firing — a misreport on one "
+            "manual verb, which nothing automated can escalate, because "
+            "nothing in this repo installs or enables a timer by itself."
         ),
     ),
     Rename(
         old="sac.accounts-keepalive",
         new="scitex-agent-container-accounts-keepalive",
+        kind="timer",
+    ),
+    Rename(
+        old="sac.accounts-quota-cache",
+        new="scitex-agent-container-accounts-quota-cache",
         kind="timer",
     ),
     Rename(
@@ -141,11 +198,6 @@ RENAMES: tuple[Rename, ...] = (
     Rename(
         old="sac.freshness-refresh",
         new="scitex-agent-container-freshness-refresh",
-        kind="timer",
-    ),
-    Rename(
-        old="sac.heal-agent-auth",
-        new="scitex-agent-container-heal-agent-auth",
         kind="timer",
     ),
     Rename(

@@ -215,12 +215,36 @@ From: ./sac-base.sif
         # ecosystem system-deps`` exists and every leaf's
         # ``scitex_dev.system_deps`` entry-point is discoverable for the
         # federated install in section 3.
-        # Floors verified against live PyPI on 2026-07-13 — a floor ABOVE the
+        # Floors verified against live PyPI on 2026-07-13; scitex-dev
+        # re-verified 2026-08-28 (0.56.8 is published and unyanked, and is
+        # the NEWEST release — this floor sits exactly AT the ceiling, so a
+        # yank of 0.56.8 would brick every bake until it is lowered).
+#
+# 0.56.7 raised the floor for the store-ownership fix (scitex-dev#755):
+# opening a store demanded the right to CREATE it, because PostgreSQL
+# checks table ownership BEFORE IF NOT EXISTS short-circuits. Without
+# this floor the baked image cannot write the fleet's shared stores as a
+# non-owning role, which is half of the 08-23 state-write outage.
+#
+# 0.56.8 is the floor because 0.56.7 ALONE IS NOT ENOUGH (scitex-dev#758).
+# The probe 0.56.7 added to skip that DDL asked the catalogue without a
+# schema filter — `information_schema.columns` and `pg_indexes` both span
+# every schema the role can see — so a store's tables present in ANOTHER
+# schema read as PRESENT here, `create_sql` was skipped, and the first read
+# failed against tables that were never created:
+#
+#     psycopg.errors.UndefinedTable:
+#         relation "comms_blocks_rows" does not exist
+#
+# Both queries are now scoped to `current_schema()`. Pinning 0.56.7 here
+# would bake an image that cannot open a store in a fresh schema at all,
+# which is why this floor moves rather than staying where #755 left it.
+        # A floor ABOVE the
         # newest published version makes the build UNSATISFIABLE (uv/pip
         # resolve exit-255); that is how a >=0.7.38 scitex-todo floor bricked
         # this recipe once already. Never raise a floor without checking that
         # the version exists.
-        #   scitex-dev    >=0.29.0 — keystone aggregator (list/install/check-superset)
+        #   scitex-dev    >=0.56.8 — keystone aggregator (list/install/check-superset)
         #   scitex-writer >=2.29.0 — texlive provider (ships the soul.sty fix)
         #   scitex-audio  >=0.3.0  — ffmpeg/portaudio provider
         #   scitex-cv     >=0.2.0  — opencv-python-headless; provider declares []
@@ -268,7 +292,7 @@ From: ./sac-base.sif
         # ALREADY satisfied by the inherited base venv, so without it the
         # providers freeze at base's build and a routine rebake is a no-op.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-dev>=0.29.0" \
+            "scitex-dev>=0.56.8" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -307,7 +331,7 @@ From: ./sac-base.sif
         # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
         # occurrences of that fallback, the copy in the CURRENT image has 1.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards>=0.32.0"
+            "scitex-cards>=0.49.1"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -337,7 +361,7 @@ From: ./sac-base.sif
         # already satisfies never re-resolves, so without it these providers
         # freeze at base's build and the routine rebake ships stale.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-dev>=0.29.0" \
+            "scitex-dev>=0.56.8" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -382,7 +406,7 @@ From: ./sac-base.sif
         # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
         # was guarding against it.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards>=0.32.0"
+            "scitex-cards>=0.49.1"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
@@ -439,17 +463,59 @@ import sys
 # 2026-07-12 fleet-drift incident this gate exists to end.
 #
 # Package renamed scitex-cards (2026-07-16): the canonical module is
-# scitex_cards; the wheel ALSO ships a scitex_todo shim that must alias
-# to the SAME module objects — un-cutover fleet code imports the old
-# name, so the shim working is itself a ship-gate for this image.
+# scitex_cards. The wheel USED to ship a scitex_todo shim and this gate
+# asserted the two aliased; that shim was DELETED 2026-08-16, so there is
+# no second module tree left to disagree with and the import below is the
+# whole check.
+# noqa placement is deliberate: this import LOOKS unused and is not. The
+# probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
+# whole scitex_cards, so the bare import IS the assertion — ruff F401 reads
+# it as dead because nothing references the name, and removing it on that
+# advice blinded the gate and reddened test_probe_imports_scitex_cards.
+import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
 
-import scitex_cards
-import scitex_todo  # the transition shim — its absence breaks the fleet
+# scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
+# Through 0.48.0, comment_task / update_task rebuilt a card from the doc the
+# caller happened to hold and DROPPED every comment row that doc had not
+# seen — a peer's comment written between your read and your write was
+# destroyed silently, with a success report. 0.49.0 added this symbol to fix
+# that and indexed its rows POSITIONALLY (row[0]), which is KeyError(0) on
+# psycopg's dict_row, so on PostgreSQL every card holding comments became
+# READ-ONLY: uncommentable, unupdatable, uncompletable, undeletable. 0.49.1
+# reads row["author"]. THE FLOOR IS >=0.49.1 AND MUST NEVER BE >=0.49.0.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR, and that distinction is the
+# whole lesson of 2026-08-23: it passed on the broken 0.49.0, because the
+# function was there and wrong. Measured that day, five independent gates
+# went green on that artifact within one hour — this probe, the master-side
+# SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
+# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# So the FLOOR is what excludes the broken release; this import only catches
+# a version string that lies; and only a post-deploy write to a card that
+# ALREADY HAS a comment proves the path actually runs.
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 
-if scitex_todo is not scitex_cards:
-    print("FATAL: scitex_todo shim is not scitex_cards — two module trees baked")
-    sys.exit(1)
+# scitex-dev 0.56.6: the bounded (origin, seq) oplog-allocation retry.
+# Through 0.56.5, Store._append read MAX(seq) ONCE and then inserted, so a
+# burst of writers on a SINGLE node collided on the oplog (origin, seq)
+# primary key with no bounded retry -- 7/8 and 5/8 failures on the two
+# concurrency tests, reproduced three times. 0.56.6 adds this constant and
+# the retry loop that uses it, plus an advisory lock around table creation.
+#
+# THIS IMPORT PROVES PRESENCE, NOT BEHAVIOUR -- the same narrow job as the
+# scitex-cards import above, and the same 2026-08-23 lesson. The FLOOR is
+# what excludes the releases without the retry; this import only catches a
+# version string that lies; and only a concurrent multi-writer append after
+# deploy proves the loop actually settles under contention.
+#
+# The name is PRIVATE -- underscore-prefixed and absent from __all__ -- so
+# upstream may rename or inline it with no deprecation, and that would land
+# here as a dead bake far from scitex-dev's repo. If this line is what broke
+# the build, read scitex_dev/store/_store.py before suspecting the image.
+from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+
+
 
 # sac #633: auto-provisions a new agent's container overlay root; without
 # it every newly-created agent is stillborn on a raw apptainer FATAL.
@@ -556,7 +622,7 @@ if failures:
         print(f"  - {line}", file=sys.stderr)
     sys.exit(1)
 
-print("OK: scitex-cards WIP-gate + scitex_todo shim + sac overlay + staged-source content present and correct.")
+print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }

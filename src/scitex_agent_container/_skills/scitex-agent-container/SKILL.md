@@ -57,7 +57,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [16](16_claude-session-migration.md) — historical claude-code→SDK migration
 - [17_inbound-turn-endpoint.md](17_inbound-turn-endpoint.md) — `POST /v1/turn` wire format
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent
-- [19_full-agent-troubleshooting.md](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
+- [19](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
 - [33](33_twin-spawning.md) — context-inheriting twin
 - [34](34_spec-is-a-contract-not-state.md) — spec = contract; state = DB
 
@@ -73,7 +73,7 @@ session inside Apptainer (local or remote via SSH), observe via
 - [27_credentials-relogin.md](27_credentials-relogin.md) — verified re-login + 401 recovery
 - [28_credential-refresh.md](28_credential-refresh.md) — refresh creds without restart; agents re-read next turn
 - [29_progress-reporting-to-lead.md](29_progress-reporting-to-lead.md) — milestone push via a2a_send
-- [30_responsiveness-background-work.md](30_responsiveness-background-work.md) — short turns; long work backgrounded
+- [30](30_responsiveness-background-work.md) — short turns; long work backgrounded
 - [31_worktree-path-safety.md](31_worktree-path-safety.md) — keep worktrees outside `.claude*/`
 - [32](32_nested-apptainer-builds.md)
 
@@ -92,10 +92,12 @@ session inside Apptainer (local or remote via SSH), observe via
 
 ## Environment
 
-- [20_env-vars.md](20_env-vars.md) — `SCITEX_*` env vars read at runtime
-- [21_cli-startup-budget.md](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
-- [22_host-passthrough.md](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env` — host fs/git/gh
-- [23_telegram-integration.md](23_telegram-integration.md) — Telegram bridge; `telegram_*` MCP tools, lead-only auth
+- [20](20_env-vars.md) — `SCITEX_*` env vars read at runtime
+- [21](21_cli-startup-budget.md) — keep `sac --help` < 500 ms via LazyGroup
+- [22](22_host-passthrough.md) — `spec.mounts`/`spec.user`/`spec.env`; host fs/git/gh
+- [23](23_telegram-integration.md) — Telegram wake contract, token resolution
+- [23-rail](23_telegram-rail-verdict.md) — rail up/down/unknown; `cct-audit`
+- [23-1t1p](23_telegram-one-token-one-poller.md) — one token, one consumer
 
 ## 30-second start
 

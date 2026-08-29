@@ -8,7 +8,9 @@ the command-level real-vs-prose separation, and the half that makes the whole
 feature work: this command is the WRITER, so its verdicts must actually land in
 state.db for ``sac agents list`` to read back.
 
-No mocks: pure calls, a real Click invocation, and a real state.db in ``tmp_path``.
+No mocks: pure calls, a real Click invocation, and a real PostgreSQL schema
+via the shared ``pg_schema`` fixture (the store moved off SQLite 2026-08-24,
+so there is no ``state.db`` to point at any more).
 """
 
 from __future__ import annotations
@@ -121,29 +123,25 @@ def test_auth_status_help_renders_interval_option():
 # ---------------------------------------------------------------------------
 
 
-def test_persisted_failing_verdict_is_readable_by_the_list(tmp_path: Path):
+def test_persisted_failing_verdict_is_readable_by_the_list(pg_schema: str):
     # Arrange — the contract that makes the feature work: the watchdog writes,
     # the list reads. A real sqlite file, a real row, no mocks.
     from scitex_agent_container._state.auth_state import list_auth_states
-
-    db_path = tmp_path / "state.db"
     rows = evaluate_agents({"scitex-hpc": (_STUCK, _STUCK)})
     # Act
-    persist_verdicts(rows, db_path=db_path)
+    persist_verdicts(rows)
     # Assert
-    assert list_auth_states(db_path=db_path)["scitex-hpc"]["auth_failed"] is True
+    assert list_auth_states()["scitex-hpc"]["auth_failed"] is True
 
 
-def test_persisted_healthy_verdict_is_readable_by_the_list(tmp_path: Path):
+def test_persisted_healthy_verdict_is_readable_by_the_list(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.auth_state import list_auth_states
-
-    db_path = tmp_path / "state.db"
     rows = evaluate_agents({"figrecipe": (_OK, _OK)})
     # Act
-    persist_verdicts(rows, db_path=db_path)
+    persist_verdicts(rows)
     # Assert
-    assert list_auth_states(db_path=db_path)["figrecipe"]["auth_failed"] is False
+    assert list_auth_states()["figrecipe"]["auth_failed"] is False
 
 
 def test_uncapturable_agent_is_not_recorded_as_healthy(tmp_path: Path):
@@ -151,24 +149,20 @@ def test_uncapturable_agent_is_not_recorded_as_healthy(tmp_path: Path):
     # "auth is fine" for it would manufacture exactly the false green this
     # feature exists to abolish, so it must not be written at all.
     from scitex_agent_container._state.auth_state import list_auth_states
-
-    db_path = tmp_path / "state.db"
     rows = evaluate_agents({"gone": (None, None)})
     # Act
-    persist_verdicts(rows, db_path=db_path)
+    persist_verdicts(rows)
     # Assert
-    assert list_auth_states(db_path=db_path) == {}
+    assert list_auth_states() == {}
 
 
-def test_persist_stamps_checked_at_so_staleness_can_be_judged(tmp_path: Path):
+def test_persist_stamps_checked_at_so_staleness_can_be_judged(pg_schema: str):
     # Arrange — a verdict with no timestamp could never be aged, and a cache that
     # cannot be aged gets presented as fresh truth forever.
     from scitex_agent_container._state.auth_state import list_auth_states
-
-    db_path = tmp_path / "state.db"
     rows = evaluate_agents({"scitex-hpc": (_STUCK, _STUCK)})
-    persist_verdicts(rows, db_path=db_path)
+    persist_verdicts(rows)
     # Act
-    checked_at = list_auth_states(db_path=db_path)["scitex-hpc"]["checked_at"]
+    checked_at = list_auth_states()["scitex-hpc"]["checked_at"]
     # Assert
     assert checked_at.endswith("Z")

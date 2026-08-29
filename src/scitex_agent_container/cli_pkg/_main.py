@@ -74,10 +74,18 @@ COMMAND_CATEGORIES = [
     ("Host hygiene", ["worktree"]),
     (
         "Diagnostics",
-        ["doctor", "ports", "provenance", "freshness", "auth-events", "ci"],
+        [
+            "doctor",
+            "ports",
+            "provenance",
+            "freshness",
+            "auth-events",
+            "ci",
+            "guard",
+        ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
+    ("Introspection", ["whoami", "mcp", "list-python-apis", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -99,7 +107,10 @@ class _MainGroup(LazyGroup):
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
         "image": f"{_PKG}.image_group:image_group",
-        "skills": f"{_PKG}.skills_group:skills_group",
+        # `skills` is NOT here — it moved under `dev` (audit-cli §13:
+        # self-maintenance commands nest under the `dev` group). The legacy
+        # top-level spelling lives in LAZY_RENAMED below, so `sac skills`
+        # keeps working and tells the caller where it went.
         # Git-worktree hygiene (repo-scoped, not agent-scoped): report +
         # reap PROVABLY-safe stale worktrees, alarm on a repo still over
         # its cap. The permanent countermeasure to worktree sprawl
@@ -116,6 +127,12 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Mechanical gates over a DELEGATED code change. `guard deletions`
+        # is the standing form of the detector that judged 36 local-model
+        # trials: it names anything a change removed without being asked
+        # to, and distinguishes "clean" from "could not tell" (exit 0 / 3
+        # / 4) so an unreadable baseline can never render as a pass.
+        "guard": f"{_PKG}.guard_group:guard_group",
         # Read WHY a CI run is red as cheaply as its status word — fetch
         # the failing run's log once, print only the failing test IDs +
         # assertion lines (or the ##[error] setup annotation).
@@ -200,94 +217,14 @@ class _MainGroup(LazyGroup):
     def _install_shell_completion_cache_based(self) -> None:
         """Replace install-shell-completion with a cache-file install.
 
-        Writes generated completion scripts (one per binary) to
-        ``~/.local/share/bash-completion/scitex/<binary>`` and appends
-        ``source`` lines to ~/.bashrc. The source op is O(microseconds);
-        the eval-the-binary op was O(0.4 s).
+        Delegates to ``_completion_install``; the mechanics (two binaries,
+        the sac-owned cache dir, the XDG symlink, the rc ``source`` line)
+        live there. Imported lazily so the cold-start path never pays for
+        ``subprocess`` + ``pathlib`` on a plain ``sac --help``.
         """
-        import os
-        import subprocess
-        from pathlib import Path
+        from ._completion_install import install_completion_cache
 
-        cmd = self.commands.get("install-shell-completion")
-        if cmd is None:
-            return
-
-        BINARIES = (
-            ("scitex-agent-container", "_SCITEX_AGENT_CONTAINER_COMPLETE"),
-            ("sac", "_SAC_COMPLETE"),
-        )
-        SOURCE_MAP = {"bash": "bash_source", "zsh": "zsh_source"}
-
-        def install_cached(*args, **kwargs):
-            # Re-resolve Path.home() each call (not at attach time) so
-            # $HOME changes between invocations are honoured (matters for
-            # tests under tmp_path, and for users who run with a custom
-            # HOME via env-prefix).
-            # Primary: sac-owned, under runtime/ per local-state-directories spec §4b.
-            SAC_CACHE_DIR = (
-                Path.home() / ".scitex" / "agent-container" / "runtime" / "completion"
-            )
-            # Secondary: XDG bash-completion dir (where third-party tooling
-            # auto-discovers); kept as a symlink to the sac-owned file so
-            # both paths point at the same content.
-            XDG_CACHE_DIR = (
-                Path.home() / ".local" / "share" / "bash-completion" / "scitex"
-            )
-            shell = kwargs.get("shell", "bash")
-            dry_run = kwargs.get("dry_run", False)
-            if shell not in SOURCE_MAP:
-                click.echo(
-                    f"error: cache install supports bash/zsh; got {shell!r}", err=True
-                )
-                return
-            rc_path = Path.home() / (".bashrc" if shell == "bash" else ".zshrc")
-
-            for binary, env_var in BINARIES:
-                cache_path = SAC_CACHE_DIR / binary
-                xdg_link = XDG_CACHE_DIR / binary
-                source_line = f"[ -f {cache_path} ] && source {cache_path}"
-                marker = f"# sac-completion: {binary}"
-
-                if dry_run:
-                    click.echo(f"Would write {cache_path} ({binary} completions)")
-                    click.echo(f"Would symlink {xdg_link} -> {cache_path}")
-                    click.echo(f"Would append to {rc_path}: {source_line}  {marker}")
-                    continue
-
-                # Generate static script via the binary itself.
-                env = os.environ.copy()
-                env[env_var] = SOURCE_MAP[shell]
-                result = subprocess.run(
-                    [binary], capture_output=True, text=True, env=env
-                )
-                if result.returncode != 0 or not result.stdout.strip():
-                    click.echo(
-                        f"warn: failed to generate completion for {binary}",
-                        err=True,
-                    )
-                    continue
-                SAC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                cache_path.write_text(result.stdout)
-
-                # XDG symlink for auto-discovery (idempotent).
-                XDG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                if xdg_link.is_symlink() or xdg_link.exists():
-                    xdg_link.unlink()
-                xdg_link.symlink_to(cache_path)
-
-                # Add the source line in rc if not already present.
-                if rc_path.is_file() and marker in rc_path.read_text():
-                    continue
-                with rc_path.open("a") as fh:
-                    fh.write(f"\n{source_line}  {marker}\n")
-                click.echo(f"Tab completion installed: {cache_path}")
-                click.echo(f"  XDG symlink: {xdg_link}")
-
-            if not dry_run:
-                click.echo(f"Run: source {rc_path}")
-
-        cmd.callback = install_cached
+        install_completion_cache(self)
 
     def list_commands(self, ctx):
         names = super().list_commands(ctx)
@@ -325,9 +262,10 @@ class _MainGroup(LazyGroup):
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
-        "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
+        "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
+        "guard": "Mechanical gates a delegated change must pass.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
@@ -343,6 +281,12 @@ class _MainGroup(LazyGroup):
     # a redirect to stderr and exits with code 2). Soft warnings let
     # stale scripts persist indefinitely; hard errors force the fix.
     LAZY_RENAMED = {
+        # Self-maintenance moved under `dev` (audit-cli §13; doctrine
+        # 20_dev-commands.md). Kept as a redirect rather than deleted:
+        # `sac skills` is in operators' muscle memory and in scripts, and a
+        # bare "no such command" would teach nothing. The redirect names the
+        # new path.
+        "skills": (f"{_PKG}.skills_group:skills_group", "sac dev skills"),
         # Lifecycle
         "start": (f"{_PKG}.lifecycle:start", "sac agents start"),
         "stop": (f"{_PKG}.lifecycle:stop", "sac agents stop"),
@@ -487,6 +431,17 @@ def cli_entry_point() -> None:
     from .._freshness import warn_once
 
     warn_once()
+
+    # The fleet defaults this process hands to every container, applied to
+    # ITSELF — sac opens the same Postgres stores its agents do, and until
+    # 2026-08-28 it was the one process in the fleet launching without
+    # ``SCITEX_STORE_DSN``, and without the ``PGUSER`` that DSN is roleless
+    # in order to leave room for. A variable exported in the operator's shell
+    # still wins; see ``apply_fleet_defaults_to_process`` for both halves and
+    # the failure they close.
+    from ..runtimes._fleet_env import apply_fleet_defaults_to_process
+
+    apply_fleet_defaults_to_process()
 
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing

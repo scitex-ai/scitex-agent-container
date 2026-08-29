@@ -14,40 +14,15 @@ Operator mandate (lead a2a ``1781e82a``): "absence of the reaction
   SLO that have NOT been REACTED — the comm-miss surface. Terminal
   statuses (``reacted``, ``failed``, ``timeout``) are excluded.
 
-Conventions: AAA markers, one assertion per test (STX-TQ007), no
-mocks / no monkeypatch (real sqlite via the ``db_path`` env fixture).
+Conventions: AAA markers, one assertion per test (STX-TQ007), no mocks / no
+monkeypatch. Real PostgreSQL via ``scitex_dev.store``, isolated per test by
+the ``pg_schema`` fixture — ``db_path`` is gone, because it named a SQLite
+file and there is no file.
 """
 
 from __future__ import annotations
 
-import importlib
-import os
 import time
-from pathlib import Path
-
-import pytest
-
-
-@pytest.fixture
-def db_path(tmp_path: Path):
-    # Arrange — isolated state.db, exported via env so the ledger picks
-    # it up. Explicit save/restore (no monkeypatch on production code).
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
-
 
 # ---------------------------------------------------------------------------
 # STATUS_REACTED is a registered lifecycle status.
@@ -67,7 +42,7 @@ def test_status_reacted_is_registered_as_valid():
     assert is_valid is True
 
 
-def test_record_dispatch_accepts_status_reacted(db_path: Path):
+def test_record_dispatch_accepts_status_reacted(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import (
         STATUS_REACTED,
@@ -92,7 +67,7 @@ def test_record_dispatch_accepts_status_reacted(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_mark_dispatch_reacted_flips_status_to_reacted(db_path: Path):
+def test_mark_dispatch_reacted_flips_status_to_reacted(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import (
         STATUS_REACTED,
@@ -109,7 +84,7 @@ def test_mark_dispatch_reacted_flips_status_to_reacted(db_path: Path):
     assert rows[0]["status"] == STATUS_REACTED
 
 
-def test_mark_dispatch_reacted_returns_true_on_match(db_path: Path):
+def test_mark_dispatch_reacted_returns_true_on_match(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import (
         mark_dispatch_reacted,
@@ -123,7 +98,7 @@ def test_mark_dispatch_reacted_returns_true_on_match(db_path: Path):
     assert matched is True
 
 
-def test_mark_dispatch_reacted_returns_false_on_unknown_id(db_path: Path):
+def test_mark_dispatch_reacted_returns_false_on_unknown_id(pg_schema: str):
     # Arrange — a reaction lands for a dispatch this sender never
     # minted (out-of-order replay, wrong sender, stale ledger). The
     # return value is the audit signal.
@@ -137,7 +112,7 @@ def test_mark_dispatch_reacted_returns_false_on_unknown_id(db_path: Path):
     assert matched is False
 
 
-def test_mark_dispatch_reacted_is_idempotent(db_path: Path):
+def test_mark_dispatch_reacted_is_idempotent(pg_schema: str):
     # Arrange — a duplicate receipt (network retry) must not corrupt
     # the row. The second call still writes REACTED on REACTED.
     from scitex_agent_container._state.dispatch_ledger import (
@@ -161,7 +136,7 @@ def test_mark_dispatch_reacted_is_idempotent(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_list_unreacted_includes_old_sent_rows(db_path: Path):
+def test_list_unreacted_includes_old_sent_rows(pg_schema: str):
     # Arrange — a dispatch minted 60s ago, never REACTED.
     from scitex_agent_container._state.dispatch_ledger import (
         list_unreacted_dispatches,
@@ -180,7 +155,7 @@ def test_list_unreacted_includes_old_sent_rows(db_path: Path):
     assert len(rows) == 1
 
 
-def test_list_unreacted_excludes_fresh_rows_under_slo(db_path: Path):
+def test_list_unreacted_excludes_fresh_rows_under_slo(pg_schema: str):
     # Arrange — a dispatch minted 5s ago is NOT a miss; the receiver
     # has not had time to react yet.
     from scitex_agent_container._state.dispatch_ledger import (
@@ -200,7 +175,7 @@ def test_list_unreacted_excludes_fresh_rows_under_slo(db_path: Path):
     assert rows == []
 
 
-def test_list_unreacted_excludes_reacted_rows(db_path: Path):
+def test_list_unreacted_excludes_reacted_rows(pg_schema: str):
     # Arrange — REACTED is success; it must never appear as a miss.
     from scitex_agent_container._state.dispatch_ledger import (
         list_unreacted_dispatches,
@@ -221,7 +196,7 @@ def test_list_unreacted_excludes_reacted_rows(db_path: Path):
     assert rows == []
 
 
-def test_list_unreacted_excludes_failed_rows(db_path: Path):
+def test_list_unreacted_excludes_failed_rows(pg_schema: str):
     # Arrange — failed rows are ALREADY known not to have landed;
     # surfacing them in comm-miss is noise.
     from scitex_agent_container._state.dispatch_ledger import (
@@ -243,7 +218,7 @@ def test_list_unreacted_excludes_failed_rows(db_path: Path):
     assert rows == []
 
 
-def test_list_unreacted_narrows_by_to_agent(db_path: Path):
+def test_list_unreacted_narrows_by_to_agent(pg_schema: str):
     # Arrange — two stale rows, one to bob, one to carol. Filter to
     # bob only.
     from scitex_agent_container._state.dispatch_ledger import (

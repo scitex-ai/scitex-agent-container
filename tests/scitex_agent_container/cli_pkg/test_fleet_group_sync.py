@@ -14,6 +14,31 @@ keeps tests hermetic while exercising the full real argv-build /
 real-subprocess path through production.
 
 One assertion per test (TQ007), AAA layout (TQ002).
+
+``result.stdout`` vs ``result.output`` — read this before "simplifying"
+---------------------------------------------------------------------
+Every JSON assertion below parses ``result.stdout``, never
+``result.output``. Under click >= 8.2 the ``mix_stderr`` knob is gone and
+``result.output`` is the MERGED stdout+stderr transcript; ``result.stdout``
+is the payload stream on its own. Parsing the merged transcript asserts
+"this command emitted no diagnostics at all", which is a stricter and
+different contract from the one ``--json`` actually offers ("stdout carries
+only the JSON"). Any log record that lands on stderr while the command runs
+— scitex-logging's handler resolves ``sys.stderr`` per emit, so it follows
+click's isolated streams — then gets appended after the JSON and
+``json.loads`` raises ``Extra data`` at exactly ``len(payload)``.
+
+That is not hypothetical: develop went red on 2026-08-12 with
+``Extra data: line 45 column 1 (char 1036)`` and ``... (char 546)``, where
+1036 and 546 are the exact byte lengths of the two clean payloads. Only the
+py3.12 xdist leg failed; py3.11 and py3.13 passed the same code, because
+whether a background log record lands inside a given invoke is a race.
+
+Switching to ``result.stdout`` narrows the assertion to the real contract
+WITHOUT weakening it: a genuine stdout leak still fails here, because the
+junk would still be in ``result.stdout``. See
+``test_sync_json_stdout_stays_pure_json_when_a_log_record_is_emitted``,
+which pins that contract directly.
 """
 
 from __future__ import annotations
@@ -23,10 +48,13 @@ import os
 import sys
 from pathlib import Path
 
+import click
+import scitex_logging
 import yaml
 from click.testing import CliRunner
 
 from scitex_agent_container._state.spec_manifest import build_manifest
+from scitex_agent_container.cli_pkg._fleet_sync import fleet_sync_impl
 from scitex_agent_container.cli_pkg.fleet_group import fleet_group
 
 # ---------------------------------------------------------------------------
@@ -159,7 +187,7 @@ def test_sync_collect_emits_manifest_with_local_host_name(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--collect", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["host"] == "local"
 
@@ -173,7 +201,7 @@ def test_sync_collect_emits_spec_yaml_sha256(tmp_path: Path, env_save_restore) -
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--collect", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert "sha256" in payload["agents"]["alpha"]["files"]["spec.yaml"]
 
@@ -324,7 +352,7 @@ def test_sync_json_output_marks_overall_ok_false_on_divergence(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["ok"] is False
 
@@ -360,7 +388,7 @@ def test_sync_json_output_lists_diverged_hosts_for_conflict(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     spec_conflict = next(
         c for c in payload["agents"]["alpha"]["conflicts"] if c["file"] == "spec.yaml"
     )
@@ -481,7 +509,7 @@ def test_sync_missing_agent_on_peer_flagged_as_agent_missing_on_host(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     kinds = {c["kind"] for c in payload["agents"]["alpha"]["conflicts"]}
     # Assert
     assert "agent_missing_on_host" in kinds
@@ -522,7 +550,7 @@ def test_sync_only_flag_narrows_audit_to_named_agents(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--json", "--only", "alpha"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["ok"] is True
 
@@ -624,9 +652,115 @@ def test_sync_allow_unresolvable_downgrades_unresolvable_peer_to_warning(
     runner = CliRunner()
     # Act
     result = runner.invoke(fleet_group, ["sync", "--json", "--allow-unresolvable"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["unreachable"][0]["peer"] == "hpc"
+
+
+# ---------------------------------------------------------------------------
+# The stdout/stderr split itself — the contract `--json` actually offers.
+# ---------------------------------------------------------------------------
+
+
+def _diverged_fleet_probe(tmp_path: Path, env_save_restore) -> click.Command:
+    """Stage a one-conflict fleet and wrap the REAL impl in a click command
+    that also emits a REAL sac diagnostic while the command is running.
+
+    No mocks (PA-306): real ``fleet_sync_impl``, real ``scitex_logging``
+    logger, real handler. This is the CI failure mode in miniature — sac's
+    log handler re-resolves ``sys.stderr`` on every emit, so a record emitted
+    mid-command lands in click's isolated stderr, and therefore in the merged
+    ``result.output``, right after the JSON.
+    """
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"spartan": {"ssh": "spartan-host"}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="v1\n")
+    peer_agents = tmp_path / "spartan_agents"
+    _make_agent(peer_agents, "alpha", spec="v2\n")
+    _install_ssh_shim(
+        tmp_path,
+        mapping={"spartan-host": {"stdout": _manifest_json("spartan", peer_agents)}},
+        env_save_restore=env_save_restore,
+    )
+
+    @click.command("probe")
+    def _probe() -> None:
+        try:
+            fleet_sync_impl(
+                as_json=True,
+                only=(),
+                peer_filter=(),
+                allow_unresolvable=False,
+                collect=False,
+                agents_dir_override=None,
+            )
+        except SystemExit:
+            pass  # exit 1 is the expected divergence verdict; keep emitting.
+        scitex_logging.getLogger("scitex_agent_container").error(
+            "github_ci_poll_loop: `gh` is not installed/authenticated"
+        )
+
+    return _probe
+
+
+def test_sync_json_stdout_stays_pure_json_when_a_log_record_is_emitted(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange
+    probe = _diverged_fleet_probe(tmp_path, env_save_restore)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(probe, [])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert payload["ok"] is False
+
+
+def test_sync_diagnostic_log_record_goes_to_stderr_not_stdout(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — guards the test above against being vacuously true: if the
+    # record never reached the captured stderr, the "stdout is clean"
+    # assertion would prove nothing.
+    probe = _diverged_fleet_probe(tmp_path, env_save_restore)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(probe, [])
+    # Assert
+    assert "github_ci_poll_loop" in result.stderr
+
+
+def test_sync_text_conflict_report_keeps_stdout_empty(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — text mode exits 1; the report is a diagnostic, so stdout must
+    # stay empty rather than carrying the human report (the docstring on
+    # ``_render_text_conflicts`` has always promised stderr).
+    _write_config(
+        tmp_path,
+        env_save_restore,
+        canonical="local",
+        peers={"spartan": {"ssh": "spartan-host"}},
+    )
+    home = _redirect_home(tmp_path, env_save_restore)
+    _make_agent(home / ".scitex/agent-container/agents", "alpha", spec="v1\n")
+    peer_agents = tmp_path / "spartan_agents"
+    _make_agent(peer_agents, "alpha", spec="v2\n")
+    _install_ssh_shim(
+        tmp_path,
+        mapping={"spartan-host": {"stdout": _manifest_json("spartan", peer_agents)}},
+        env_save_restore=env_save_restore,
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(fleet_group, ["sync"])
+    # Assert
+    assert result.stdout == ""
 
 
 # EOF

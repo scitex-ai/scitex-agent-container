@@ -1,10 +1,52 @@
-"""state.db rows follow the agent — and the undo puts them back exactly.
+"""``_rename_db`` REACHES NOTHING on a state.db sac creates today.
 
-Real SQLite, real schema (``init_schema``), tmp file. The undo is
-rowid-scoped, which is the whole point: a naive
-``UPDATE … SET name = old WHERE name = new`` would also clobber rows that
-ALREADY held the new name — e.g. the history of a previously deleted agent
-that happened to be called that. The last test here is that trap.
+This file used to prove that a rename carries an agent's rows across
+``state.db`` and that the undo puts them back exactly. It cannot prove that
+any more, and pretending otherwise is the one outcome worse than saying so:
+as of 2026-08-28 sac's ``init_schema`` issues ZERO ``CREATE TABLE``
+statements, so there is no table in a fresh state.db for ``rename_rows`` to
+touch and nothing this file could seed.
+
+WHY THE ASSERTIONS BELOW ARE EMPTINESS AND NOT COVERAGE
+=======================================================
+``rename_rows`` SKIPS a table absent from ``sqlite_master`` — deliberately,
+so a fleet that has never started an agent does not block a rename. That
+skip is also what makes a stale ``NAME_COLUMNS`` pair a SILENT NO-OP rather
+than a crash, which is why every table that left SQLite had its pairs
+removed rather than left as reassuring decoration. ``instances`` was the
+last of them, and with it gone every remaining pair names a table
+``init_schema`` no longer creates.
+
+So the honest measurement is: the module is reachable, it is called, and it
+correctly finds nothing. That is asserted here, with a POSITIVE CONTROL
+(:func:`test_the_module_still_declares_pairs_to_look_for`) so an emptiness
+that came from an empty constant cannot pass as an emptiness that came from
+an empty database.
+
+RE-SEEDING WAS CONSIDERED AND REJECTED. The tables could be hand-created in
+a fixture to keep the old assertions running, and they would then be
+measuring a schema this file wrote — a legacy shape production no longer
+defines, drifting from the moment it is typed. ``make_state_db`` exists
+precisely so these suites use sac's own DDL and cannot drift; opting out of
+it here to keep a green tick would be the pretence this file is written to
+avoid.
+
+WHERE THE PROPERTIES WENT — each is measured against the store that now
+holds the rows, and each runs as its own step in ``_rename.apply_plan``
+with its own inverse on the undo stack:
+
+* identity, lineage edge and workdir path
+  ``_state/test_state_db_instances_rename.py`` (``rename_instance_rows``)
+* channel history        ``_state/test_state_db_channel_rename.py``
+* A2A directory          ``_state/test_state_db_comms_nodes.py``
+* ACL policy             ``_state/test_state_db_acl_policy.py``
+* spawn DAG              ``_state/test_state_db_lineage_rename.py``
+
+THE ROWID-SCOPED UNDO — the trap this file was built around, where a naive
+``UPDATE … SET name = old WHERE name = new`` also clobbers rows that ALREADY
+held the new name — is not lost with it. Every replacement above captures the
+identities it touched BEFORE touching them and inverts key-by-key, and each
+has its own does-not-clobber-a-stranger test.
 """
 
 from __future__ import annotations
@@ -15,71 +57,105 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._lifecycle._rename_db import (
+    NAME_COLUMNS,
+    PATH_COLUMNS,
     count_rows,
     rename_rows,
     undo_rename_rows,
 )
 from scitex_agent_container._lifecycle._rename_plan import Layout
 
-from .._helpers.fleet_root import make_state_db, seed_db_rows
+from .._helpers.fleet_root import make_state_db
 
 OLD = "scitex-todo"
 NEW = "scitex-cards"
 
 
-# The rows a real agent leaves across the identity AND history tables.
-_SEED = [
-    (
-        "INSERT INTO definitions (id, name, yaml_path, yaml_sha256, scope, "
-        "first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
-        ("d1", OLD, f"/root/agents/{OLD}/spec.yaml", "sha", "user", "t0"),
-    ),
-    (
-        "INSERT INTO instances (id, name, host, scope, started_at, workdir, "
-        "ended_at, spawned_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("i1", OLD, "h", "user", "t0", f"/home/u/proj/{OLD}", "t1", "cli"),
-    ),
-    (
-        "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?)",
-        (OLD, "h", 9001, 1.0, 1.0),
-    ),
-    (
-        "INSERT INTO node_comms_policy (name, updated_at) VALUES (?, ?)",
-        (OLD, 1.0),
-    ),
-    (
-        "INSERT INTO lineage (child_name, parent_name, created_at) "
-        "VALUES (?, ?, ?)",
-        ("child-a", OLD, 1.0),
-    ),
-    (
-        "INSERT INTO turns (turn_id, name, host, status, ts) "
-        "VALUES (?, ?, ?, ?, ?)",
-        ("t1", OLD, "h", "ok", 1.0),
-    ),
-]
-
-
 @pytest.fixture
 def db(tmp_path: Path) -> Path:
+    """A real state.db built by sac's OWN ``init_schema``.
+
+    Not a hand-rolled schema, for the reason in the module docstring: the
+    point of these tests is what PRODUCTION creates, and today production
+    creates nothing.
+    """
     layout = Layout(root=tmp_path / "fleet")
     return make_state_db(layout)
 
 
-@pytest.fixture
-def seeded(db: Path) -> Path:
-    """A DB holding rows for OLD across the identity + history tables."""
-    return seed_db_rows(db, _SEED)
-
-
-def _one(db: Path, sql: str, *args):
-    conn = sqlite3.connect(str(db))
+def _tables(db_path: Path) -> set[str]:
+    conn = sqlite3.connect(str(db_path))
     try:
-        row = conn.execute(sql, args).fetchone()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
     finally:
         conn.close()
-    return row[0] if row else None
+    return {r[0] for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# The control, first — without it every assertion below is vacuous
+# ---------------------------------------------------------------------------
+
+
+def test_the_module_still_declares_pairs_to_look_for() -> None:
+    """POSITIVE CONTROL. Empty constants would make the emptiness meaningless.
+
+    ``count_rows`` returns ``{}`` both when the DECLARED tables are missing
+    and when nothing is declared at all, and only the first is the finding
+    this file reports. If this ever fails, the module has no work left to
+    describe and should be deleted along with its ``state-db`` step rather
+    than kept as a loop over an empty tuple.
+    """
+    # Arrange
+    declared = list(NAME_COLUMNS) + list(PATH_COLUMNS)
+    # Act
+    tables = {table for table, _column in declared}
+    # Assert
+    assert tables, (
+        "NAME_COLUMNS and PATH_COLUMNS are both empty, so _rename_db can "
+        "never touch anything. Delete the module and its rename step — a "
+        "loop over an empty tuple is the reassuring decoration this package "
+        "removes everywhere else."
+    )
+
+
+def test_a_fresh_state_db_has_none_of_the_declared_tables(db: Path) -> None:
+    """THE DOCUMENTED LIMITATION, asserted rather than described.
+
+    Every ``(table, column)`` pair the module still declares names a table
+    ``init_schema`` stopped creating. This is what makes the module a no-op
+    on any database sac makes today, and stating it as an assertion is what
+    stops it being rediscovered as a bug.
+    """
+    # Arrange
+    declared = {table for table, _column in list(NAME_COLUMNS) + list(PATH_COLUMNS)}
+    # Act
+    present = _tables(db)
+    # Assert
+    assert not (declared & present), (
+        f"state.db unexpectedly holds {sorted(declared & present)}. If a "
+        "table came back, these tests should seed it and assert the real "
+        "rename behaviour again rather than its absence."
+    )
+
+
+def test_a_fresh_state_db_holds_no_tables_at_all(db: Path) -> None:
+    """``init_schema`` issues ZERO ``CREATE TABLE``, and it still opens clean.
+
+    The stronger statement behind the one above, and the one worth keeping
+    visible: the emptiness is not "these particular tables went", it is that
+    sac's SQLite schema is now empty. A future ``CREATE TABLE`` slipping back
+    in fails here as well as in
+    ``tests/develop/test_sqlite_footprint_frozen.py``.
+    """
+    # Arrange
+    expected: set[str] = set()
+    # Act
+    present = {t for t in _tables(db) if not t.startswith("sqlite_")}
+    # Assert
+    assert present == expected
 
 
 # ---------------------------------------------------------------------------
@@ -87,35 +163,26 @@ def _one(db: Path, sql: str, *args):
 # ---------------------------------------------------------------------------
 
 
-def test_count_rows_counts_the_identity_row(seeded: Path):
+def test_count_rows_reports_nothing_from_state_db(db: Path) -> None:
+    """The SQLite half of the dry-run count is permanently empty.
+
+    NOT the whole report. ``_rename_plan.build_plan`` merges
+    ``count_instance_rename_rows`` into this dict under the same
+    ``table.column`` keys, so the operator still sees a count — see
+    ``_lifecycle/test__rename.py::
+    test_the_plan_counts_the_rows_a_rename_would_touch``. Were that merge
+    ever removed, the dry run would print ``0 column(s)`` for an agent with
+    hundreds of recorded lifetimes.
+    """
     # Arrange
-    key = "comms_nodes.name"
+    expected: dict[str, int] = {}
     # Act
-    counts = count_rows(seeded, OLD)
+    counts = count_rows(db, OLD)
     # Assert
-    assert counts[key] == 1
+    assert counts == expected
 
 
-def test_count_rows_counts_the_history_row(seeded: Path):
-    """History follows the agent: a renamed agent is the SAME agent."""
-    # Arrange
-    key = "turns.name"
-    # Act
-    counts = count_rows(seeded, OLD)
-    # Assert
-    assert counts[key] == 1
-
-
-def test_count_rows_counts_the_spec_path_column(seeded: Path):
-    # Arrange
-    key = "definitions.yaml_path"
-    # Act
-    counts = count_rows(seeded, OLD)
-    # Assert
-    assert counts[key] == 1
-
-
-def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
+def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path) -> None:
     """A fleet that never started an agent has no state.db. Not an error."""
     # Arrange
     missing = tmp_path / "nope" / "state.db"
@@ -126,76 +193,26 @@ def test_count_rows_is_empty_when_the_db_does_not_exist(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# rename_rows
+# rename_rows / undo — a no-op that must stay a SAFE no-op
 # ---------------------------------------------------------------------------
 
 
-def test_rename_moves_the_comms_node_row(seeded: Path):
-    """Miss this and the A2A directory still advertises the dead name."""
+def test_rename_is_a_no_op_on_a_current_state_db(db: Path) -> None:
+    """It must find nothing, and it must not RAISE finding nothing.
+
+    ``_rename.apply_plan`` runs this as a step and any exception aborts and
+    unwinds the whole rename, so "skips an absent table" is a live
+    requirement rather than a leftover convenience.
+    """
     # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    expected = 0
     # Act
-    rename_rows(seeded, OLD, NEW)
+    undo = rename_rows(db, OLD, NEW)
     # Assert
-    assert _one(seeded, sql, NEW) == 1
+    assert undo.total == expected
 
 
-def test_rename_moves_the_acl_policy_row(seeded: Path):
-    """Miss this and the ACL gate has no policy for the live name."""
-    # Arrange
-    sql = "SELECT COUNT(*) FROM node_comms_policy WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, NEW) == 1
-
-
-def test_rename_moves_the_lineage_parent_edge(seeded: Path):
-    # Arrange
-    sql = "SELECT parent_name FROM lineage WHERE child_name = 'child-a'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == NEW
-
-
-def test_rename_moves_the_history_rows(seeded: Path):
-    # Arrange
-    sql = "SELECT COUNT(*) FROM turns WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, NEW) == 1
-
-
-def test_rename_rewrites_the_spec_path_component(seeded: Path):
-    # Arrange
-    sql = "SELECT yaml_path FROM definitions WHERE id = 'd1'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == f"/root/agents/{NEW}/spec.yaml"
-
-
-def test_rename_rewrites_the_instance_workdir_component(seeded: Path):
-    # Arrange
-    sql = "SELECT workdir FROM instances WHERE id = 'i1'"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql) == f"/home/u/proj/{NEW}"
-
-
-def test_rename_leaves_no_row_behind_under_the_old_name(seeded: Path):
-    # Arrange
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
-    # Act
-    rename_rows(seeded, OLD, NEW)
-    # Assert
-    assert _one(seeded, sql, OLD) == 0
-
-
-def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
+def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path) -> None:
     # Arrange
     missing = tmp_path / "nope" / "state.db"
     # Act
@@ -204,50 +221,12 @@ def test_rename_is_a_no_op_on_a_missing_db(tmp_path: Path):
     assert undo.total == 0
 
 
-# ---------------------------------------------------------------------------
-# undo — rowid-scoped, so it cannot clobber a pre-existing `new`
-# ---------------------------------------------------------------------------
-
-
-def test_undo_restores_the_identity_row(seeded: Path):
+def test_the_undo_of_a_no_op_is_itself_a_no_op(db: Path) -> None:
+    """The rollback path runs on EVERY failed rename, including this one."""
     # Arrange
-    undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT COUNT(*) FROM comms_nodes WHERE name = ?"
+    undo = rename_rows(db, OLD, NEW)
+    before = _tables(db)
     # Act
     undo_rename_rows(undo)
     # Assert
-    assert _one(seeded, sql, OLD) == 1
-
-
-def test_undo_restores_the_rewritten_path(seeded: Path):
-    # Arrange
-    undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT yaml_path FROM definitions WHERE id = 'd1'"
-    # Act
-    undo_rename_rows(undo)
-    # Assert
-    assert _one(seeded, sql) == f"/root/agents/{OLD}/spec.yaml"
-
-
-def test_undo_does_not_clobber_a_row_that_already_held_the_new_name(seeded: Path):
-    """The trap a `WHERE name = new` undo would fall into.
-
-    A previously deleted agent called ``scitex-cards`` can have left
-    history behind. Renaming ``scitex-todo`` -> ``scitex-cards`` and then
-    rolling back must NOT drag that stranger's row along.
-    """
-    # Arrange
-    conn = sqlite3.connect(str(seeded))
-    with conn:
-        conn.execute(
-            "INSERT INTO turns (turn_id, name, host, status, ts) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("t-stranger", NEW, "h", "ok", 0.5),
-        )
-    conn.close()
-    undo = rename_rows(seeded, OLD, NEW)
-    sql = "SELECT name FROM turns WHERE turn_id = 't-stranger'"
-    # Act
-    undo_rename_rows(undo)
-    # Assert
-    assert _one(seeded, sql) == NEW
+    assert _tables(db) == before

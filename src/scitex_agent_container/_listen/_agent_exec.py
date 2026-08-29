@@ -339,16 +339,37 @@ async def agents_start(request: Request) -> JSONResponse:
             pass
 
         from .._lifecycle._start_decline import start_was_declined
+        from ._start_failure_status import classify_start_failure
 
+        # hub, 2026-08-19: a 5xx cannot distinguish "your request was
+        # wrong" from "the server is broken", and those need opposite
+        # responses from the caller. Every non-zero child exit used to
+        # answer 502, so an UNREGISTERED NAME and a broken container
+        # were the same status. Classify instead; unmatched failures
+        # still answer 502, so this narrows the opaque case rather than
+        # trading it for a guess.
+        #
+        # ``declined`` is computed ONCE and passed in rather than being
+        # re-derived inside the classifier, so the body's field and the
+        # status code can never disagree about the same output.
+        declined = start_was_declined(proc.stdout, proc.stderr)
+        failure = classify_start_failure(
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            declined=declined,
+        )
         return JSONResponse(
             {
                 "name": name,
                 "returncode": proc.returncode,
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
-                "declined": start_was_declined(proc.stdout, proc.stderr),
+                "declined": declined,
+                "kind": failure.kind,
+                "hint": failure.hint,
             },
-            status_code=502,
+            status_code=failure.status,
         )
 
     # Layer-3 fail-loud (clew dogfood repro 2026-06-06, lead msg

@@ -46,10 +46,7 @@ def _is_loopback(host: str) -> bool:
 # ``from scitex_agent_container.cli_pkg.listen_cmds import
 # _register_self_comms_node`` (used by tests + the boot path below)
 # keeps working unchanged.
-from ._listen_registry_hooks import (  # noqa: E402
-    _maybe_sync_on_start,  # noqa: F401  (re-exported for tests / legacy callers)
-    _register_self_comms_node,
-)
+from ._listen_registry_hooks import _register_self_comms_node  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Bare-boot deprecation — scitex CLI convention §5, phase W (warn + forward)
@@ -266,21 +263,22 @@ def _do_start_listen(
     click.echo(f"# health: curl http://{host}:{port}/v1/health", err=True)
     click.echo(f"# pidfile: {lock_handle.pid_file}", err=True)
 
-    # ADR-0014 Stage 1 — register the host's operator identity into
-    # comms_nodes so cross-host peers can resolve it after a sync.
-    # Best-effort: log a warning on failure but never abort startup
-    # (a listen that won't bind because of a registry write is worse
-    # than a missing federated row).
+    # ADR-0014 — register the host's operator identity into the comms
+    # directory so cross-host peers can resolve it. Since 2026-08-28 that is
+    # a write to the SHARED PostgreSQL store, so peers see it immediately;
+    # there is no sync to wait for. Best-effort: log a warning on failure but
+    # never abort startup (a listen that won't bind because of a registry
+    # write is worse than a missing federated entry).
     _register_self_comms_node(port=port)
-    # NOTE: the ``comms_nodes`` peer-sync used to run SYNCHRONOUSLY HERE,
+    # NOTE: a ``comms_nodes`` peer-sync used to run SYNCHRONOUSLY HERE,
     # before ``uvicorn.run``. That was the live silent-bind-hang vector
     # (INCIDENT 2026-06-26): a single powered-off static peer made its
     # un-timed ssh call hang, blocking boot before 7878 ever bound, with no
-    # error logged — the whole fleet lost agent-to-agent comms. The sync now
-    # runs best-effort AFTER the bind, off the event loop, as a lifespan
-    # task (``_listen._startup_peer_sync.sync_peers_on_listen_startup``, wired
-    # in ``_lifecycle._listen_lifespan``). The bind must be impossible to
-    # block; nothing that can hang may run on this pre-bind path.
+    # error logged — the whole fleet lost agent-to-agent comms. It was moved
+    # off the pre-bind path, and on 2026-08-28 it was deleted outright: the
+    # directory is one shared store, so there is no peer to pull from. The
+    # rule that motivated the move still stands — the bind must be impossible
+    # to block; nothing that can hang may run on this pre-bind path.
 
     # Pass the bind port so the lifespan's fail-loud watchdog can probe
     # 127.0.0.1:<port>/v1/health after startup and scream if the daemon

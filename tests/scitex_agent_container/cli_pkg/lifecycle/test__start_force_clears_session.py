@@ -39,8 +39,13 @@ from scitex_agent_container.config import AgentConfig
 
 
 @pytest.fixture
-def runtime_root(tmp_path: Path) -> Iterator[Path]:
+def runtime_root(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Point sac's runtime root at ``tmp_path/runtime`` for this test.
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28: these drive a real
+    ``agent_start``, which resolves the agent's a2a port, and that ledger
+    moved to PostgreSQL — so runtime-root isolation alone no longer covers
+    everything a start writes.
 
     The lifecycle code reads ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` at
     call time (not import time), so an env-var swap is the honest
@@ -110,6 +115,49 @@ class FakeRuntime:
 
     def logs(self, config: AgentConfig, lines: int) -> str:
         return ""
+
+
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    ``_write_spec`` enables ``health``, so ``agent_start`` reaches
+    ``_start_supervision``, which does::
+
+        thread = thread_factory(target=health_monitor, ..., daemon=True)
+        thread.start()
+
+    With the real ``threading.Thread`` that daemon thread OUTLIVES the test
+    and keeps looping ``health_monitor -> restart_and_record ->
+    write_birth_certificate`` for the rest of the worker process. Its
+    ``logger.error`` then lands in whatever capture buffer happens to be open
+    -- an unrelated test's ``CliRunner`` -- ahead of that command's own
+    output, which is how a PASSING test here turns a stranger's assertion red
+    three files later. Measured on develop 2026-08-21: 31 stray certificates
+    in one run, plus ``ValueError: I/O operation on closed file`` from writing
+    into a stream pytest had already torn down.
+
+    Recording ``start()`` rather than swallowing it keeps the seam honest: a
+    test that wants to assert the monitor was launched still can. Same shape
+    as ``_RecordingThread`` in ``test__start_supervision.py`` and
+    ``_CapturingThread`` in ``test__instances_auto_grant.py``.
+
+    PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def join(self, timeout=None) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
 
 
 class FakeHandover:
@@ -187,6 +235,7 @@ def _seed_session_id(runtime_root: Path, name: str, sid: str) -> Path:
 
 
 def test_force_removes_persisted_session_id_file(
+    pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
@@ -201,6 +250,7 @@ def test_force_removes_persisted_session_id_file(
     # Act
     lc.agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -212,6 +262,7 @@ def test_force_removes_persisted_session_id_file(
 
 
 def test_force_leaves_other_runtime_state_alone(
+    pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
@@ -233,6 +284,7 @@ def test_force_leaves_other_runtime_state_alone(
     # Act
     lc.agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -247,6 +299,7 @@ def test_force_leaves_other_runtime_state_alone(
 
 
 def test_no_force_leaves_session_id(
+    pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
@@ -260,6 +313,7 @@ def test_no_force_leaves_session_id(
     # Act
     lc.agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),
@@ -271,6 +325,7 @@ def test_no_force_leaves_session_id(
 
 
 def test_missing_session_id_file_under_force_is_no_op(
+    pg_schema: str,
     tmp_path: Path,
     runtime_root: Path,
     isolated_home: Path,
@@ -282,6 +337,7 @@ def test_missing_session_id_file_under_force_is_no_op(
     # Act
     ok = lc.agent_start(
         str(spec),
+        thread_factory=FakeThread,
         registry=registry,
         runtime_factory=lambda _c: runtime,
         handover_mod=FakeHandover(),

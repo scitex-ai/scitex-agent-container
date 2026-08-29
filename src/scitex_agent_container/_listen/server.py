@@ -36,9 +36,6 @@ from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
 from ..config import load_config
 from ..config._resolve import AmbiguousRegistryScope, resolve_config
-from ._acl import (
-    NodeAuthMiddleware,
-)
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
 
@@ -172,6 +169,14 @@ async def agent_status(request: Request) -> JSONResponse:
     # running session_id + a live pid say nothing about whether this agent's
     # inbox adapter is attached; only the broker does. See ``_reachability``.
     body = await _annotate_status_reachability(request, body)
+    # …and the CAUSE behind a zero. A stopped agent's registry row outlives its
+    # process, so this route answered HTTP 200 with a full body — port, turn_url,
+    # ``inbox_reachable: unreachable`` — for an agent that had not existed for
+    # two days, with no field anywhere saying so. Measured 2026-08-12: 9 of 15
+    # rows on this host looked exactly like that. See ``_inbox_fault``.
+    from ._inbox_fault import annotate_status_fault
+
+    body = annotate_status_fault(body)
     return JSONResponse(body)
 
 
@@ -183,11 +188,15 @@ async def _annotate_status_reachability(
     Degrades to ``unknown`` (never ``unreachable``) if the broker cannot be
     read — "I could not check" must not be rendered as death.
     """
-    from ._reachability import UNKNOWN, annotate_reachability
+    from ._reachability import (
+        UNKNOWN,
+        annotate_reachability,
+        resolve_annotation_host,
+    )
 
     try:
         counts = await request.app.state.inbox.subscriber_counts()
-        local_host = getattr(request.app.state, "local_host", None)
+        local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
         import logging
 
@@ -373,19 +382,15 @@ def create_app(
     members of the comms graph. The state lives on ``app.state`` so
     every handler shares the same broker and registry instance.
 
-    WI-2 chains :class:`NodeAuthMiddleware` after
-    :class:`BearerAuthMiddleware`: the outer middleware admits any
-    request bearing a valid token (host-wide or per-node); the inner
-    one resolves that token to a node identity and attaches it to
-    ``request.state.authenticated_node`` so the ACL gate in
-    :func:`node_message_send` enforces "identity cannot be spoofed
-    via a metadata field" (handoff §4 acceptance). The spawn-gate
-    in :func:`agents_start` consumes the same body-``caller`` shape.
-
-    Middleware order matters. Starlette executes the *outermost*
-    ``add_middleware`` call first (it wraps the app last but runs
-    first on the inbound path). So the BearerAuthMiddleware call
-    below comes **last** to make it the outermost layer.
+    WI-2 chained a ``NodeAuthMiddleware`` after
+    :class:`BearerAuthMiddleware` to resolve a per-node bearer to a
+    node identity; it was removed 2026-08-28 (nothing ever minted one
+    — see the comment at the ``add_middleware`` call below).
+    :class:`BearerAuthMiddleware` and the host-wide token are the
+    whole perimeter. Sender identity for the ACL gate in
+    :func:`node_message_send` comes from ``metadata.from_agent``, and
+    the spawn-gate in :func:`agents_start` consumes the same
+    body-``caller`` shape.
 
     WI-4 (handoff §4 "Cross-host routing") adds the forwarder
     inside :func:`node_message_send`. ``local_host`` configures the
@@ -474,10 +479,16 @@ def create_app(
     # WI-4 — per-app local host name. May be ``None``; the forwarder
     # then falls back to the env-based resolver.
     app.state.local_host = local_host
-    # WI-2 — identity resolution (inner). Reads the same Bearer the
-    # outer middleware already validated; tags ``request.state`` with
-    # the resolved node name (or ``None`` for the host-wide bearer).
-    app.add_middleware(NodeAuthMiddleware, host_bearer=token)
-    # Outer perimeter — admits any valid token, rejects everything else.
+    # A second, inner ``NodeAuthMiddleware`` sat here until 2026-08-28.
+    # It re-read the Bearer the outer middleware had already validated
+    # and tagged ``request.state.authenticated_node`` with the node name
+    # that bearer resolved to in the ``node_tokens`` table. Nothing ever
+    # wrote that table, so the tag was ``None`` on every request the
+    # fleet has ever served; the handlers that read it all do so through
+    # ``getattr(request.state, "authenticated_node", None)`` and go on
+    # getting ``None`` with the layer removed. One middleware fewer per
+    # request, and no layer left claiming to establish an identity it
+    # could not establish.
+    # Perimeter — admits the host-wide token, rejects everything else.
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

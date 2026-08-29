@@ -41,6 +41,7 @@ contract downstream consumers parse.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -94,6 +95,25 @@ class AccountRow:
         ``None`` when the API did not return them (older caches /
         outages); the bars block then omits the reset hint for that
         window rather than fabricating a value.
+    usage_state
+        ``"known"`` / ``"stale"`` / ``"unknown"`` — sac's STANDING to
+        assert the percentages, decided by
+        :func:`._account_usage_state.classify_usage`. ``used_pct_*`` is
+        ``None`` whenever this is ``"unknown"``, so an unattributable
+        figure is not merely undrawn but unrepresentable.
+    usage_age_seconds, usage_reason
+        The snapshot's age, and — when the reading is not ``known`` — a
+        one-line prose statement of why, shown under the bars.
+    identity_state, verified_email
+        Whether the credential in this account's directory was CHECKED to
+        belong to this account (``verified`` / ``mismatch`` /
+        ``unverified``) and the email it actually authenticates as. The
+        store carries no identity claim inside the credential, so without
+        this check the directory name is the only thing naming the
+        account — see :mod:`.._account.account_verify`.
+    duplicate_of
+        Name of the earlier account this one resolves to the same
+        Anthropic account as, or ``None``.
     """
 
     name: str
@@ -105,6 +125,37 @@ class AccountRow:
     reset_at_5h: str | None = None
     reset_at_7d: str | None = None
     provider: str = "claude-code"
+    # Defaults to UNKNOWN, not "known", on purpose. A field that defaults to
+    # the confident value makes every forgetful caller assert something it
+    # never checked — the defect class this whole change exists to remove.
+    # Unknown-until-proven fails safe: the worst a caller who forgets can do
+    # is under-claim.
+    usage_state: str = "unknown"
+    usage_age_seconds: int | None = None
+    usage_reason: str | None = None
+    identity_state: str = "unverified"
+    verified_email: str | None = None
+    duplicate_of: str | None = None
+    # The operator's OWN reason for resting this account, and when he
+    # decided it. Empty / None means not paused — presence is the pause,
+    # exactly as it is on disk (see :mod:`.._creds._pause`). Both default,
+    # so every hand-rolled AccountRow in the existing tests still
+    # constructs, which is this dataclass's stated design.
+    #
+    # It is here at all because 「また復活させる」 — he intends to bring
+    # these accounts back. A pause that is invisible on the screen he
+    # actually reads is a trap: it never expires and nothing nags, so the
+    # listing IS the reminder.
+    pause_reason: str = ""
+    pause_since: float | None = None
+    # WHICH MACHINE this credential lives on. Empty on the single-host path,
+    # which is why the Host column only appears once something fills it in.
+    # A credential is a per-host FILE and is not on the sync rail, so the same
+    # account is routinely VALID on one machine and EXPIRED on another —
+    # measured 2026-08-14, when a restart on one host refused with "no healthy
+    # stored account" while the identical three accounts were hours-fresh on
+    # another. Without this field the fleet table cannot say which is which.
+    host: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +163,44 @@ class AccountRow:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_status(state: str, hours: float | None) -> str:
+#: How much of an operator's reason survives into the Status cell. Long
+#: enough to be recognised, short enough not to shove the columns beside
+#: it off the terminal.
+_PAUSE_REASON_CHARS = 40
+
+
+def _fmt_status(
+    state: str,
+    hours: float | None,
+    *,
+    pause_reason: str = "",
+    pause_since: float | None = None,
+    now_ts: float | None = None,
+) -> str:
+    """The Status cell: what this credential is, in one phrase.
+
+    A PAUSE OUTRANKS THE TTL AND REPLACES IT. The cell normally reads
+    ``VALID +2h26m``, and that TTL belongs to the TOKEN. Printing it
+    beside PAUSED — ``PAUSED +6.2h`` — would be read as "the pause
+    expires in 6.2 hours", which is a lie about the one property that
+    makes a pause trustworthy: it never expires. So the paused row
+    carries the age of the DECISION and the operator's own words
+    instead, and no token TTL at all. There is precedent for a
+    non-freshness value in this field (``CONFIGURED``, for the Codex
+    login, which has no TTL to show either).
+    """
+    if pause_reason:
+        from .._creds._pause import format_age
+
+        age = (
+            format_age((now_ts if now_ts is not None else time.time()) - pause_since)
+            if pause_since is not None
+            else "?"
+        )
+        reason = pause_reason.strip()
+        if len(reason) > _PAUSE_REASON_CHARS:
+            reason = reason[: _PAUSE_REASON_CHARS - 1].rstrip() + "…"
+        return f"PAUSED {age} — {reason}"
     if state == "ABSENT":
         return "ABSENT"
     if hours is None:
@@ -123,10 +211,43 @@ def _fmt_status(state: str, hours: float | None) -> str:
 def _fmt_last_update_cell(
     snapshot_as_of: str | None, *, now: datetime | None = None
 ) -> str:
-    """Combine short day+hour with age suffix: ``Sun 21h (3m)`` / ``- (?)``."""
+    """Combine short day+hour with age suffix: ``Sun 21h (3m)`` / ``- (?)``.
+
+    This is the age of the USAGE SNAPSHOT and of nothing else. The column
+    was headed ``Last Update``, which named no particular fact and sat one
+    cell away from the credential's ``VALID +7h06m``; a reader had no way
+    to tell which of the two it timestamped. The header now says so —
+    see :func:`render_stored_table`.
+    """
     if not snapshot_as_of:
         return "-"
     return f"{format_as_of_short(snapshot_as_of)} ({format_snapshot_age(snapshot_as_of, now=now)})"
+
+
+def _fmt_identity_cell(row: AccountRow) -> str:
+    """State WHO this row's credential proved to be, or that nobody asked.
+
+    Three outcomes, never collapsed into two:
+
+    * ``verified`` — the email is shown plainly (or ``ok`` when the store
+      made no claim to compare against).
+    * ``mismatch`` — the directory label is wrong; the cell NAMES the
+      account the credential really belongs to, because that is the fact
+      an operator needs in order to act on it.
+    * ``unverified`` — sac could not ask. Shown as ``unverified``, never
+      as blank and never as the label, since displaying an unchecked
+      label here is exactly how a wrong name passes for a right one.
+
+    Deliberately contains no square brackets: these cells go through
+    ``rich``, which would parse ``[...]`` as markup.
+    """
+    if row.duplicate_of:
+        return f"DUPLICATE of {row.duplicate_of}"
+    if row.identity_state == "mismatch":
+        return f"MISMATCH -> {row.verified_email or 'another account'}"
+    if row.identity_state == "verified":
+        return row.verified_email or "ok"
+    return "unverified"
 
 
 def render_stored_table(
@@ -137,7 +258,18 @@ def render_stored_table(
     """Build a ``rich.table.Table`` for the Stored-accounts block.
 
     Columns (left-to-right):
-      Provider | Account | Status | Last Update
+      Provider | Account | Status | Identity | Usage as of
+
+    ``Identity`` says whether the credential in this account's directory
+    was CHECKED to belong to this account, and names the real owner when
+    it does not (INCIDENT 2026-08-12 — one Anthropic account occupied two
+    directories and was reported as two accounts' worth of headroom).
+
+    ``Usage as of`` was headed ``Last Update``. That name asserted nothing
+    in particular while sitting beside the credential TTL, so a fresh-
+    looking age there was read as vouching for the percentage beside it.
+    The header now names the one fact the cell carries: when the USAGE
+    snapshot was taken.
 
     Operator directive 2026-07-11: the table holds ONLY what the
     usage-bars block below it cannot express — the account slug, the
@@ -151,18 +283,33 @@ def render_stored_table(
     the Last-Update cell deterministically without monkeypatching
     ``datetime.now``.
     """
+    # The Host column appears ONLY when a row carries a host — i.e. in the
+    # fleet view. Adding it unconditionally would put a column of one repeated
+    # name in front of every single-host listing, and a column that always says
+    # the same thing teaches the eye to skip the place where the answer lives.
+    with_host = any(r.host for r in rows)
     table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    if with_host:
+        table.add_column("Host", style="cyan")
     table.add_column("Provider")
     table.add_column("Account", style="bold")
     table.add_column("Status")
-    table.add_column("Last Update")
+    table.add_column("Identity")
+    table.add_column("Usage as of")
     for r in rows:
-        table.add_row(
+        cells = [
             r.provider,
             r.name,
-            _fmt_status(r.freshness_state, r.freshness_hours),
+            _fmt_status(
+                r.freshness_state,
+                r.freshness_hours,
+                pause_reason=r.pause_reason,
+                pause_since=r.pause_since,
+            ),
+            _fmt_identity_cell(r),
             _fmt_last_update_cell(r.snapshot_as_of, now=now),
-        )
+        ]
+        table.add_row(*([r.host or "—", *cells] if with_host else cells))
     return table
 
 
@@ -213,188 +360,23 @@ def render_stored_table_to_str(
     finally:
         console.file.close()
 
-
 # ---------------------------------------------------------------------------
-# Per-account usage fetch + JSON/human orchestrators
+# Re-exports — data acquisition now lives in ``_account_list_build``
 # ---------------------------------------------------------------------------
-
-
-def _per_account_usage_cache_path(name: str):
-    """Return the absolute path of the per-account ``usage.json`` cache."""
-    from pathlib import Path
-
-    from .._state.account_store import _store_path
-
-    return _store_path(None, Path.home()) / name / "usage.json"
-
-
-def usage_for_account(acct_meta: dict, *, refresh: bool = False) -> dict | None:
-    """Live PER-ACCOUNT usage fetch (5-min cache); ``--refresh`` busts it.
-
-    The snapshot lives at
-    ``~/.scitex/agent-container/accounts/<name>/.credentials.json``
-    (cascade-resolved via ``_store_path``); the fetch result is cached
-    next to that file as ``usage.json`` so the same
-    ``read_account_usage_cache`` reader sees the live value across
-    invocations. Any failure (missing snapshot, expired token, network
-    error) returns ``None`` → caller renders ``"-"`` for that row only;
-    the rest of the list keeps rendering.
-
-    When ``refresh`` is true the on-disk ``usage.json`` is removed
-    before the fetch so the API is hit even when the cache is fresh —
-    wiring for ``sac accounts list --refresh``.
-    """
-    from pathlib import Path
-
-    from .._account.claude_usage import fetch_usage_for_credentials
-    from .._state.account_store import _store_path, read_account_usage_cache
-
-    name = acct_meta.get("name")
-    if not name:
-        return None
-    store = _store_path(None, Path.home())
-    creds_path = store / name / ".credentials.json"
-    if not creds_path.is_file():
-        return read_account_usage_cache(name)
-    if refresh:
-        cache_path = _per_account_usage_cache_path(name)
-        # stx-allow: fallback (reason: best-effort cache bust; if the
-        # file is already gone or locked, the next call still re-fetches
-        # because the cache reader gracefully returns None.)
-        try:
-            cache_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-    # stx-allow: fallback (reason: fetch_usage_for_credentials is documented never-raise, but defence-in-depth so one bad row never crashes `account list`)
-    try:
-        result = fetch_usage_for_credentials(creds_path)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        return read_account_usage_cache(name)
-    if result.get("error") or result.get("used_pct_5h") is None:
-        cached = read_account_usage_cache(name)
-        return cached if cached else None
-    return result
-
-
-def build_stored_rows(
-    accounts: list[dict], *, refresh: bool = False
-) -> list[AccountRow]:
-    """Convert stored-account dicts into :class:`AccountRow` for rendering.
-
-    Pure orchestration: pulls credential freshness (live recompute from
-    ``expiresAt`` on every call) and usage% (cached or re-fetched
-    depending on ``refresh``). Also carries through the per-window
-    ``reset_at_5h`` / ``reset_at_7d`` so the usage-bars block can render
-    the inline reset hint (gripe #2 of 2026-06-09; moved from the table
-    cells onto the bars by the 2026-07-11 dedupe directive). Plan/tier
-    are no longer resolved here — no human surface renders them (the
-    JSON path keeps them via :func:`build_stored_json`).
-    """
-    from .._account.creds_sync import account_freshness
-
-    rows: list[AccountRow] = []
-    for acct in accounts:
-        name = acct["name"]
-        fresh = account_freshness(name)
-        usage = usage_for_account(acct, refresh=refresh) or {}
-        rows.append(
-            AccountRow(
-                name=name,
-                freshness_state=fresh.state,
-                freshness_hours=fresh.hours,
-                used_pct_5h=usage.get("used_pct_5h"),
-                used_pct_7d=usage.get("used_pct_7d"),
-                snapshot_as_of=usage.get("as_of") or usage.get("fetched_at"),
-                reset_at_5h=usage.get("reset_at_5h"),
-                reset_at_7d=usage.get("reset_at_7d"),
-                provider="claude-code",
-            )
-        )
-    return rows
-
-
-def build_stored_json(accounts: list[dict], *, refresh: bool = False) -> list[dict]:
-    """Enrich stored-account dicts for ``sac accounts list --json``.
-
-    Each entry carries OFFLINE plan/tier, credential FRESHNESS
-    (``state`` + signed hours), and the per-account usage payload.
-    Timestamps remain ISO-8601 for JSON consumers — only the human
-    renderer reformats. The usage dict already carries
-    ``reset_at_5h`` / ``reset_at_7d`` from the upstream API, so JSON
-    consumers can compute their own reset hints if they want one.
-    """
-    from .._account.creds_sync import account_freshness
-    from .._state.account_store import read_account_plan
-
-    stored: list[dict] = []
-    for acct in accounts:
-        entry = dict(acct)
-        entry["provider"] = "claude-code"
-        entry["qualified_id"] = f"claude-code:{acct['name']}"
-        entry.update(read_account_plan(acct["name"]))
-        fresh = account_freshness(acct["name"])
-        entry["freshness"] = fresh.state
-        entry["freshness_hours"] = fresh.hours
-        entry["usage"] = usage_for_account(acct, refresh=refresh)
-        stored.append(entry)
-    return stored
-
-
-def openai_account_name(meta: dict) -> str:
-    """Derive the stable, human account slug used in provider-qualified IDs."""
-    import re
-
-    source = (
-        meta.get("gateway_alias")
-        or meta.get("email_address")
-        or meta.get("account_id")
-        or "active"
-    )
-    slug = re.sub(r"[^a-z0-9]+", "-", str(source).lower()).strip("-")
-    return slug or "active"
-
-
-def build_openai_row(meta: dict) -> AccountRow | None:
-    """Project the active Codex login into the provider-aware account table."""
-    if not meta:
-        return None
-    return AccountRow(
-        name=openai_account_name(meta),
-        provider="openai",
-        freshness_state="CONFIGURED",
-        freshness_hours=None,
-        used_pct_5h=None,
-        used_pct_7d=None,
-        snapshot_as_of=meta.get("last_refresh"),
-    )
-
-
-def build_openai_rows(accounts: list[dict]) -> list[AccountRow]:
-    """Project all gateway-configured Codex logins into account rows."""
-    return [row for meta in accounts if (row := build_openai_row(meta)) is not None]
-
-
-def build_provider_accounts_json(
-    stored: list[dict], openai_meta: dict | list[dict]
-) -> list[dict]:
-    """Build the collision-free cross-provider identity list for JSON users."""
-    accounts = [dict(item) for item in stored]
-    openai_accounts = openai_meta if isinstance(openai_meta, list) else [openai_meta]
-    for meta in openai_accounts:
-        if not meta:
-            continue
-        name = openai_account_name(meta)
-        accounts.append(
-            {
-                "provider": "openai",
-                "name": name,
-                "qualified_id": f"openai:{name}",
-                "active": True,
-                "metadata": dict(meta),
-            }
-        )
-    return accounts
-
+# Imported at the BOTTOM, after ``AccountRow`` exists, because
+# ``_account_list_build`` constructs it. Keeping the import here (rather than
+# at the top) means this module is fully defined before the other one runs,
+# so the pair is safe to import in either order.
+from ._account_list_build import (  # noqa: E402
+    build_openai_row,
+    build_openai_rows,
+    build_provider_accounts_json,
+    build_stored_json,
+    build_stored_rows,
+    openai_account_name,
+    usage_for_account,
+    verify_stored_identities,
+)
 
 __all__ = [
     "AccountRow",
@@ -414,4 +396,5 @@ __all__ = [
     "render_stored_table_to_str",
     "rolling_legend_line",
     "usage_for_account",
+    "verify_stored_identities",
 ]

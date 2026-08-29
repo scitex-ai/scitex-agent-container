@@ -261,8 +261,17 @@ def test_forward_via_ssh_curl_502s_when_destination_body_carries_non_acl_error(
 def test_forward_via_ssh_curl_502s_when_helper_raises_value_error(
     tmp_path, env_save_restore, subprocess_shim
 ):
-    # Arrange — single-quote bearer trips the helper's input validation
+    # Arrange — a NEWLINE in the bearer trips the helper's input validation
     # before any subprocess call; mapped to 502 by the forwarder.
+    #
+    # This used to use a single-quote bearer, which the helper rejected
+    # because the value was spliced into a single-quoted shell literal. It no
+    # longer is: the token now rides ssh stdin and never reaches an argv, so a
+    # quote is harmless and refusing it would be cargo-cult. What the new
+    # transport genuinely cannot carry is a newline — the token is the FIRST
+    # LINE of the framed stdin, so one would spill into the request body.
+    # The forwarder behaviour under test (ValueError -> 502) is unchanged;
+    # only the input that legitimately provokes it moved.
     env_save_restore.set("SAC_SSH_CONTROL_DIR", str(tmp_path / "cm"))
     env_save_restore.delete("SAC_SSH_CONTROL_MASTER")
     subprocess_shim.install("ssh", exit=0, stdout="{}", stderr="")
@@ -274,7 +283,7 @@ def test_forward_via_ssh_curl_502s_when_helper_raises_value_error(
             target_port=9999,
             target_name="alice",
             body=body,
-            peer_bearer="quoted'token",
+            peer_bearer="line-one\nline-two",
             ssh_target="ssh-host-z",
         )
     )

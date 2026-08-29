@@ -13,11 +13,15 @@ of ``sac network probe`` / ``sac installation boot``.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import sys
 
 import click
 
+from .._state._peer_resolve import peers_with_registry
 from .._state.host_config import (
+    Config,
     build_ssh_argv,
     load,
     ssh_control_options_str,
@@ -63,6 +67,26 @@ def host_group() -> None:
 # probe / ssh-opts / peer CRUD).
 register_list_command(host_group)
 register_validate_command(host_group)
+
+
+def _unknown_peer_error(peer: str, cfg: Config) -> str:
+    """The message for a peer neither config.yaml nor the registry knows.
+
+    Names BOTH sources, because "not defined in config.yaml" was actively
+    misleading once the registry became a route source: on a host with no
+    config.yaml at all it pointed the operator at a file that does not
+    exist and never mentioned the registry that lists the host they asked
+    for. Ends with the one command that enumerates every name that WOULD
+    have worked.
+    """
+    where = str(cfg.source_path) if cfg.source_path else "config.yaml"
+    return (
+        f"error: peer '{peer}' is not defined in {where} and is not a "
+        f"routable host in the scitex-dev registry (a registry host is "
+        f"routable when it declares an ssh_alias).\n"
+        f"Add it under peers: in config.yaml or to the registry, then "
+        f"re-run. See: sac host list"
+    )
 
 
 def split_on_flag(argv: list[str]) -> tuple[str | None, list[str]]:
@@ -114,18 +138,15 @@ def dispatch_remote(peer: str, argv: list[str], ssh_argv0: str = "sac") -> int:
     ``remote=True``.
     """
     cfg = load()
-    if peer not in cfg.peers:
-        click.echo(
-            f"error: --on peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in config.yaml, then re-run.",
-            err=True,
-        )
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        click.echo(_unknown_peer_error(peer, cfg), err=True)
         return 2
     from ._on_start_propagate import is_agents_start_argv, propagate_remote_start
 
     if is_agents_start_argv(argv):
         return propagate_remote_start(peer, argv, ssh_argv0=ssh_argv0)
-    ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], cfg.peers)
+    ssh_argv = build_ssh_argv(peer, [ssh_argv0, *argv], peers)
     proc = subprocess.run(ssh_argv)
     return proc.returncode
 
@@ -147,26 +168,108 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
       $ sac host exec spartan -- agent list --json
       $ sac host exec bm198 -- sac db export --since 2026-05-01
 
-    PEER must be defined under config.yaml's ``peers:`` block. The peer's
-    ``via:`` chain renders into ssh's ``-J`` flag automatically; sac
-    never opens a port. Stdio is inherited so streaming output works.
+    PEER may be a ``peers:`` entry in config.yaml or any host in the
+    scitex-dev registry that declares an ``ssh_alias``; config.yaml wins
+    when both define it. The peer's ``via:`` chain renders into ssh's
+    ``-J`` flag automatically; sac never opens a port.
+
+    ON A TTY stdio is INHERITED so long-running output streams live. OFF a
+    TTY it is CAPTURED and re-emitted through click — see
+    :func:`_run_peer_command`, which explains why that difference is not
+    cosmetic.
     """
     cfg = load()
-    if peer not in cfg.peers:
-        click.echo(
-            f"error: peer '{peer}' is not defined in {cfg.source_path}.\n"
-            f"Add it under peers: in config.yaml, then re-run.",
-            err=True,
-        )
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        click.echo(_unknown_peer_error(peer, cfg), err=True)
         raise SystemExit(2)
     if not argv:
         click.echo(
             "error: no command supplied. Try: sac host exec PEER -- <cmd>", err=True
         )
         raise SystemExit(2)
-    ssh_argv = build_ssh_argv(peer, list(argv), cfg.peers)
-    proc = subprocess.run(ssh_argv)
-    raise SystemExit(proc.returncode)
+    # QUOTE HERE, NOT IN build_ssh_argv. The two have different contracts and
+    # conflating them has already caused one outage.
+    #
+    # ssh word-joins every token after the host and hands the result to the
+    # remote LOGIN SHELL, which re-parses it. So `build_ssh_argv` takes an
+    # ALREADY-QUOTED remote command — callers like `_spec_handoff.ssh_runner`
+    # deliberately pass a single element such as `sh -c 'echo REACHED'`. On
+    # 2026-08-17 a `shlex.join` was added inside that function, quoted those
+    # already-quoted elements a second time, and produced rc=127 on every
+    # preamble peer ("bash: line 1: sh -c 'echo REACHED': command not found"),
+    # taking scitex-hub down and unstartable by any path.
+    #
+    # `sac host exec` is the opposite contract: `argv` is a list of ARGV WORDS
+    # typed by a human, and nothing has quoted them. Passing them raw let the
+    # remote shell re-split on metacharacters, which is silent and wrong rather
+    # than loud and wrong. Measured 2026-08-20 by scitex-cards, then reproduced
+    # here on scitex-compute-03:
+    #
+    #   sac host exec <peer> -- echo AAA-scitex-BBB '|' grep -cE 'scitex|cards'
+    #     -> bash: line 1: cards: command not found
+    #   sac host exec <peer> -- bash -lc 'echo AAA-scitex-BBB | grep -cE "..."'
+    #     -> 0        (the answer is 1)
+    #
+    # The second is the dangerous one: a mangled command returned a plausible
+    # NUMBER. They had counted 3 cron lines on that host minutes earlier, and
+    # only that contradiction made them re-check instead of reporting "no cron
+    # lines" as a measurement. This module's own `_run_peer_command` docstring
+    # already states the rule this violates — "a transport must never render
+    # 'I could not run it' identically to 'it ran and produced nothing'". This
+    # is the same rule with a number instead of an empty string.
+    #
+    # shlex.quote is a NO-OP on any word that needs no quoting, so the rendered
+    # argv is byte-identical for every invocation that was already correct.
+    # Only arguments carrying metacharacters change — exactly the broken ones.
+    quoted = [shlex.quote(word) for word in argv]
+    ssh_argv = build_ssh_argv(peer, quoted, peers)
+    raise SystemExit(_run_peer_command(ssh_argv))
+
+
+def _run_peer_command(ssh_argv: list[str]) -> int:
+    """Run the ssh child, capturing its output when nothing is watching a TTY.
+
+    WHY THIS IS NOT COSMETIC — measured 2026-08-17, twice, by two agents.
+
+    The straightforward ``subprocess.run(ssh_argv)`` inherits the OS-LEVEL
+    file descriptors, so the child writes past any IN-PROCESS capture. That is
+    exactly right for a human at a terminal: output streams as it arrives. It
+    is silently wrong for every programmatic caller, because the MCP surface
+    invokes this command through Click's ``CliRunner``, which captures
+    Python-level streams only. The ssh child's bytes go to the real fd and the
+    caller receives EMPTY stdout and EMPTY stderr with only an exit code.
+
+    What that produced in practice:
+
+      * ``sac host exec <peer> -- agents list`` returned ``exit 127`` with BOTH
+        streams empty. 127 is command-not-found — the non-login ssh shell
+        lacked the peer's venv on PATH — but the stderr that would have said so
+        was gone. A bare 127 is indistinguishable from a dozen other failures.
+      * Worse, a command containing ``hostname`` returned ``exit_code 0`` with
+        empty stdout. ``hostname`` cannot print nothing, so the command had not
+        run — and the tool reported SUCCESS. An empty stdout with a zero exit
+        reads as "ran fine, found nothing", and the agent that hit it nearly
+        published "0 runtime homes on that host" as a finding. It would have
+        corroborated a WRONG hypothesis of mine with a fabricated measurement:
+        two agents agreeing, from one broken instrument, about something
+        neither had measured.
+
+    So the rule this encodes: a transport must never render "I could not run
+    it" identically to "it ran and produced nothing". Capturing off-TTY and
+    re-emitting through click makes the child's own words survive to whatever
+    is actually reading.
+    """
+    if sys.stdout.isatty():
+        # A human is watching: inherit, so output streams as it arrives.
+        return subprocess.run(ssh_argv).returncode
+
+    proc = subprocess.run(ssh_argv, capture_output=True, text=True)
+    if proc.stdout:
+        click.echo(proc.stdout, nl=False)
+    if proc.stderr:
+        click.echo(proc.stderr, nl=False, err=True)
+    return proc.returncode
 
 
 @host_group.command("probe")
@@ -190,8 +293,9 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     import time
 
     cfg = load()
-    if peer not in cfg.peers:
-        msg = f"peer '{peer}' is not defined in config.yaml"
+    peers = peers_with_registry(cfg.peers)
+    if peer not in peers:
+        msg = _unknown_peer_error(peer, cfg)
         if _json_flag(ctx, as_json):
             click.echo(json.dumps({"peer": peer, "reachable": False, "error": msg}))
         else:
@@ -202,7 +306,7 @@ def host_probe(ctx: click.Context, peer: str, timeout: int, as_json: bool) -> No
     ssh_argv = build_ssh_argv(
         peer,
         remote_argv,
-        cfg.peers,
+        peers,
         extra_opts=["-o", f"ConnectTimeout={timeout}"],
     )
     started = time.monotonic()

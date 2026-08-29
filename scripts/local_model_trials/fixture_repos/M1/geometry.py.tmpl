@@ -1,0 +1,13 @@
+"""Basic 2-D geometry helpers."""
+
+
+def area(width, height):
+    if width < 0 or height < 0:
+        raise ValueError("negative dimension")
+    return width * height
+
+
+def perimeter(width, height):
+    if width < 0 or height < 0:
+        raise ValueError("negative dimension")
+    return 2 * (width + height)

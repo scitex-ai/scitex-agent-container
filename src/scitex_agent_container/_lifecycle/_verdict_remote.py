@@ -27,6 +27,7 @@ from ._verdict import (
     UNKNOWN,
     Signal,
 )
+from .._runners._tmux._target import exact_target
 from ._verdict_tmux import session_name_for_config
 
 __all__ = [
@@ -146,7 +147,12 @@ def remote_process_signal(
 
         peers = _load_host_config().peers
         argv = build_ssh_argv(
-            peer, ["tmux", "has-session", "-t", session], peers, extra_opts=["-n"]
+            # EXACT-match target: a bare -t prefix-matches on the peer's tmux,
+            # so a sibling session would vouch this agent ALIVE (2026-08-14).
+            peer,
+            ["tmux", "has-session", "-t", exact_target(session)],
+            peers,
+            extra_opts=["-n"],
         )
     except (
         Exception

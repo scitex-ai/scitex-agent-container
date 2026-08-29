@@ -21,9 +21,11 @@ from scitex_agent_container.cli_pkg.lifecycle._cold_start import (
     ColdStartParseError,
     ColdStartTarget,
     parse_start_target,
+    resolve_cold_start_targets,
 )
+from scitex_agent_container.cli_pkg.lifecycle._common import _iter_agent_yamls
 
-CALLER = "ywata-note-win"
+CALLER = "scitex-laptop-01"  # retired spelling was ywata-note-win
 
 
 # --- plain agent name → not a cold-start form (existing flow) ----------------
@@ -188,3 +190,91 @@ def test_returns_cold_start_target_type():
     t = parse_start_target(arg, caller_host=CALLER)
     # Assert
     assert isinstance(t, ColdStartTarget)
+
+
+# --- an agents-root is an EXISTING bulk target, never a cold-start -----------
+#
+# REGRESSION. `sac agents start <registry>` used to inject _iter_agent_yamls as
+# the bulk-dir detector; that helper matched only <name>/<name>.yaml, so a real
+# registry of <name>/spec.yaml agents read as EMPTY and fell through to
+# cold-start. Measured 2026-08-27 before the fix: plans=1, action='would-create',
+# label = the directory's own basename, and targets=[] -- a phantom agent
+# materialised into the registry while none of the real agents started.
+
+
+def _registry(tmp_path, *names, layout="spec"):
+    """Build a registry-shaped dir.
+
+    ``layout="spec"`` -> <name>/spec.yaml, what every registry writer emits.
+    ``layout="self"`` -> <name>/<name>.yaml, what `sac fleet materialize` emits.
+    """
+    reg = tmp_path / "agents"
+    reg.mkdir()
+    for n in names:
+        (reg / n).mkdir()
+        fname = "spec.yaml" if layout == "spec" else f"{n}.yaml"
+        (reg / n / fname).write_text("x")
+    return reg
+
+
+def _resolve(reg, base):
+    """Call the resolver the way `sac agents start` actually calls it.
+
+    _start.py injects this exact detector. Using the resolver's DEFAULT here
+    instead would exercise a path production never takes -- and would pass
+    whether or not the bug is present.
+    """
+    return resolve_cold_start_targets(
+        [str(reg)],
+        caller_host=CALLER,
+        dry_run=True,
+        base_dir=base,
+        dir_has_agents=lambda p: bool(_iter_agent_yamls(p)),
+    )
+
+
+def test_a_spec_yaml_registry_dir_produces_no_cold_start_plan(tmp_path):
+    # Arrange
+    reg = _registry(tmp_path, "alpha", "beta")
+    base = tmp_path / "base"
+    base.mkdir()
+    # Act
+    _targets, plans = _resolve(reg, base)
+    # Assert
+    assert plans == []
+
+
+def test_a_spec_yaml_registry_dir_is_passed_through_as_a_target(tmp_path):
+    # Arrange
+    reg = _registry(tmp_path, "alpha", "beta")
+    base = tmp_path / "base"
+    base.mkdir()
+    # Act
+    targets, _plans = _resolve(reg, base)
+    # Assert -- the real agents must survive as a target, not be replaced by a label
+    assert targets == [str(reg)]
+
+
+def test_no_phantom_agent_dir_is_created_inside_the_registry(tmp_path):
+    # Arrange
+    reg = _registry(tmp_path, "alpha")
+    base = tmp_path / "base"
+    base.mkdir()
+    # Act
+    _resolve(reg, base)
+    # Assert -- nothing named after the directory itself appeared
+    assert not (reg / reg.name).exists()
+
+
+def test_a_self_named_registry_dir_is_also_not_cold_started(tmp_path):
+    # Arrange -- `sac fleet materialize` still writes <name>/<name>.yaml. The
+    # first attempt at this fix DELETED the detector injection, which made this
+    # layout cold-start instead: the same bug pointed the other way. Eight
+    # tests in test__start.py caught it; this one states the invariant here.
+    reg = _registry(tmp_path, "alpha", "beta", layout="self")
+    base = tmp_path / "base"
+    base.mkdir()
+    # Act
+    targets, plans = _resolve(reg, base)
+    # Assert
+    assert (plans, targets) == ([], [str(reg)])

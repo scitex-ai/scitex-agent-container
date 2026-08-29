@@ -34,14 +34,18 @@ __all__ = ["rename"]
 # The env var whose value IS the agent's identity on the board. Called out
 # explicitly in the report because it is the one whose silent breakage
 # costs real work.
-_BOARD_IDENTITY_ENV = "SCITEX_TODO_AGENT_ID"
+# Both spellings are live on disk during the rename, so the marker looks for
+# BOTH. Checking only the retired one silently drops the highlight on the
+# majority of specs -- measured 2026-08-25: 110 specs on the current name
+# vs 21 on the retired one.
+_BOARD_IDENTITY_ENVS = ("SCITEX_CARDS_AGENT_ID", "SCITEX_TODO_AGENT_ID")
 
 _MAX_LISTED_CARDS = 8
 
 
 def _mark(change: SpecChange) -> str:
     """Annotate the spec change that carries the board identity."""
-    if _BOARD_IDENTITY_ENV not in change.path:
+    if not any(env in change.path for env in _BOARD_IDENTITY_ENVS):
         return ""
     return "   " + click.style("<-- BOARD IDENTITY", fg="yellow", bold=True)
 

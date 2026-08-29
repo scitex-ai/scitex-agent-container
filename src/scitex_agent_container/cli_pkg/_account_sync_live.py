@@ -20,7 +20,17 @@ import click
     default=False,
     help="Emit a JSON object describing what happened.",
 )
-def account_sync_live(as_json: bool) -> None:
+@click.option(
+    "--poll",
+    is_flag=True,
+    default=False,
+    help=(
+        "Treat 'no snapshottable credential' as a no-op (exit 0) instead of a "
+        "failure. For scheduled callers; a hand-run invocation wants the loud "
+        "default."
+    ),
+)
+def account_sync_live(as_json: bool, poll: bool) -> None:
     """Snapshot the live credential into its matching account store.
 
     Reads the live ``~/.claude/.credentials.json`` + the active email
@@ -30,6 +40,31 @@ def account_sync_live(as_json: bool) -> None:
 
     Fails loud (non-zero exit) when the live credential is absent,
     malformed, or expired — never saves a stale token.
+
+    ``--poll`` MAKES THAT LAST CASE A NO-OP INSTEAD, and the distinction is
+    the point: "there is nothing to snapshot" is not the same event as
+    "something went wrong". A human running this by hand has just logged in
+    and wants to be told if the save failed, so the loud default is right for
+    them. A TIMER has no such context, and on a host nobody logged into today
+    the live credential is absent or expired as a matter of course.
+
+    MEASURED 2026-08-26, which is why this flag exists. The 2-minute
+    snapshot timer was armed on five hosts and only two had a usable live
+    credential:
+        compute-04  valid                 -> exit 0
+        nas-03      valid                 -> exit 0
+        compute-01  absent                -> exit 1
+        compute-03  expired ~7.9 days     -> exit 1
+        laptop-01   expired ~4.6 days     -> exit 1
+    Three hosts would have failed every two minutes forever — 720 failures a
+    day each — which does not protect anything and makes the unit's exit
+    status meaningless. A job that is always red cannot report a NEW problem.
+    The refusal itself was correct every time; wrapping a fail-loud one-shot
+    in a poll was the error.
+
+    Nothing about the SAFETY contract changes: a stale token is still never
+    written, an identity change is still refused. Only the exit code for
+    "nothing to do" moves, and only when the caller asks for it.
 
     \b
     Examples:
@@ -51,8 +86,12 @@ def account_sync_live(as_json: bool) -> None:
                 )
             )
         else:
-            click.echo(f"Error: {exc}", err=True)
-        raise SystemExit(1)
+            # "nothing to snapshot" reads as a NOTE under --poll and as an
+            # ERROR otherwise, so the log line matches the exit code rather
+            # than contradicting it.
+            label = "Nothing to snapshot" if poll else "Error"
+            click.echo(f"{label}: {exc}", err=not poll)
+        raise SystemExit(0 if poll else 1)
 
     if as_json:
         click.echo(

@@ -16,7 +16,6 @@ import click
 
 from ._helpers import HelpRecursiveGroup, renamed_redirect
 from ._registry_register import registry_register as _registry_register_cmd
-from ._registry_sync import registry_sync as _registry_sync_cmd
 from .priority_cmds import singleton_reconcile as _reconcile_impl
 
 
@@ -63,8 +62,20 @@ registry_group.add_command(
     )
 )
 registry_group.add_command(_rebind(_reconcile_impl, "reconcile"))
-# ADR-0014 Stage 1 — symmetric federated comms_nodes anti-entropy sync.
-registry_group.add_command(_registry_sync_cmd)
+# ``registry sync`` was here until 2026-08-28. It was the ADR-0014
+# anti-entropy sweep, and it existed for exactly ONE table: it ssh-ran
+# ``sac db export --tables comms_nodes`` on a peer and fed the payload to
+# ``import_state``. That table moved to the shared PostgreSQL store, where
+# every host reads and writes the SAME directory, so there is nothing left
+# to converge — and the verb could no longer even run, because
+# ``comms_nodes`` left ``KNOWN_TABLES`` and ``export_state`` now rejects the
+# name.
+#
+# DELETED rather than left as a no-op, under the ruling this repo applies to
+# a table with no writer: a verb that reports ``[ok] pull <peer> inserted=0``
+# while doing nothing is a success-shaped failure, and an operator debugging
+# a stale directory would run it, see success, and conclude the directory is
+# converged. An unknown-command error is the honest answer.
 # ADR-0014 — operator-repair: write a comms_nodes row directly without
 # requiring a process restart of the node that "owns" it. See
 # _registry_register.py for the failure modes this targets.

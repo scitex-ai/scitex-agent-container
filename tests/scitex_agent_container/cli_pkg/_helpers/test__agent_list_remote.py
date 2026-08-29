@@ -47,13 +47,27 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_discover import (
     _probe_remote_statuses,
 )
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures + seams (copied from the sibling suites — real callables, no mocks).
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (explicit save/restore).
 
     ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a
@@ -407,18 +421,38 @@ def test_reaper_leaves_remote_row_active(isolated_state_db):
 def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_state_db):
     # Arrange — force a long-stale last_heartbeat_at onto the remote row; only
     # the ``AND remote=0`` guard keeps the heartbeat sweep from reaping it.
+    from scitex_dev.store import ANY_REVISION
+
     from scitex_agent_container._state.state_db import (
         gc_dead_instances,
         list_active_instances,
-        open_db,
+    )
+    from scitex_agent_container._state.state_db_instances import read_instance
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
     )
 
     instance_id = _record_remote()
-    with open_db() as conn:
-        conn.execute(
-            "UPDATE instances SET last_heartbeat_at=? WHERE id=?",
-            ("2000-01-01T00:00:00Z", instance_id),
+    # A partial ``Store.put`` — ``instances`` moved to the shared PostgreSQL
+    # store on 2026-08-28, so there is no table to UPDATE. There is also no
+    # production writer for this field any more (``update_heartbeat`` went
+    # with ``instance_heartbeats``), which is exactly why the value has to be
+    # placed by hand: the GC branch that reads it is still live against rows
+    # migrated out of SQLite, and this is the guard that keeps it off remote
+    # rows.
+    host = read_instance(instance_id)["host"]
+    run_with_reconnect(
+        lambda store: store.put(
+            {
+                "id": instance_id,
+                "host": host,
+                "last_heartbeat_at": "2000-01-01T00:00:00Z",
+            },
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
         )
+    )
     # Act — a 1s staleness cutoff would trip the sweep but for the guard.
     gc_dead_instances(dry_run=False, heartbeat_stale_seconds=1)
     # Assert

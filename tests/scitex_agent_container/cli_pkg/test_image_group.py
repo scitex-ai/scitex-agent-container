@@ -736,11 +736,23 @@ def test_list_json_emits_kind_sif_for_sif_files(home_tmp):
     runner = CliRunner()
     # Act
     result = runner.invoke(image_group, ["list", "--json"])
-    start = result.output.index("[")
-    end = result.output.rindex("]") + 1
-    data = json.loads(result.output[start:end])
+    data = json.loads(result.stdout)
     # Assert
     assert result.exit_code == 0 and data[0]["kind"] == "sif"
+
+
+def test_list_json_stdout_holds_nothing_but_the_document(home_tmp):
+    # Arrange — `sac image list --json` used to print a human
+    # "scan root: .../*/containers/" banner to STDOUT before the payload,
+    # so `sac image list --json | jq` died on the very first byte. The
+    # tests could not see it: they parsed from `result.output.index("[")`
+    # onwards, and a prefix-skip cannot fail on a prefix.
+    ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["list", "--json"])
+    # Assert — stdout is EXACTLY the document, first byte to last.
+    assert result.stdout == "[]\n"
 
 
 # ---------------------------------------------------------------------------
@@ -812,9 +824,7 @@ def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
     # Act
     with _use_backend(backend):
         result = runner.invoke(image_group, ["status", "--json"])
-    start = result.output.index("[")
-    end = result.output.rindex("]") + 1
-    data = json.loads(result.output[start:end])
+    data = json.loads(result.stdout)
     # Assert
     assert result.exit_code == 0 and data == entries
 
@@ -922,9 +932,7 @@ def test_list_json_carries_package_field_for_each_entry(home_tmp):
     runner = CliRunner()
     # Act
     result = runner.invoke(image_group, ["list", "--json"])
-    start = result.output.index("[")
-    end = result.output.rindex("]") + 1
-    data = json.loads(result.output[start:end])
+    data = json.loads(result.stdout)
     # Assert
     assert data[0]["package"] == "writer"
 

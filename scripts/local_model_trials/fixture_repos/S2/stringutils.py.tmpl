@@ -1,0 +1,63 @@
+"""String utilities used across the project."""
+
+import re
+
+_PUNCT_RE = re.compile(r"[^\w\s-]")
+_SPACE_RE = re.compile(r"[\s_-]+")
+
+
+def slugify(text):
+    """Lower-case, strip punctuation, join words with hyphens."""
+    cleaned = _PUNCT_RE.sub("", text.lower()).strip()
+    return _SPACE_RE.sub("-", cleaned)
+
+
+def truncate(text, limit, suffix="..."):
+    """Cut text to at most `limit` characters, appending `suffix` if cut."""
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    if len(text) <= limit:
+        return text
+    if limit <= len(suffix):
+        return text[:limit]
+    return text[: limit - len(suffix)] + suffix
+
+
+def count_words(text):
+    """Number of whitespace-separated words."""
+    return len(text.split())
+
+
+def is_palindrome(text):
+    """True if letters/digits read the same both ways (case-insensitive)."""
+    core = [c.lower() for c in text if c.isalnum()]
+    return core == core[::-1]
+
+
+def capitalize_words(text):
+    """Capitalize the first letter of every word."""
+    return " ".join(w[:1].upper() + w[1:] for w in text.split(" "))
+
+
+def remove_prefix(text, prefix):
+    """Drop `prefix` from the start of text when present."""
+    if prefix and text.startswith(prefix):
+        return text[len(prefix):]
+    return text
+
+
+def wrap_lines(text, width):
+    """Greedy word-wrap to lines of at most `width` characters."""
+    if width <= 0:
+        raise ValueError("width must be positive")
+    lines, current = [], ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines

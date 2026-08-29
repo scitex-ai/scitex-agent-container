@@ -59,7 +59,6 @@ runs against a real loopback socket and the lock against a real flock.
 from __future__ import annotations
 
 import signal
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -190,8 +189,17 @@ def _default_heal_untracked_port(*, host: str, port: int, grace_secs: float) -> 
 
 
 def _default_log(message: str) -> None:
-    """Emit a transition line to stderr (→ journal / runtime/listen.log)."""
-    print(message, file=sys.stderr, flush=True)
+    """Emit a transition line (→ journal / runtime/listen.log).
+
+    Routed through scitex-logging rather than a raw stderr print so a failover
+    transition carries its origin and lands in the runtime log as well as the
+    journal. The module-level ``_log`` indirection below is untouched — tests
+    swap that callable wholesale, and that seam is the reason this function is
+    separate in the first place.
+    """
+    from .._logging import get_logger
+
+    get_logger(__name__).info(message)
 
 
 _acquire: Callable[..., LockHandle] = acquire_listen_lock

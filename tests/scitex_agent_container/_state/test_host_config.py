@@ -82,6 +82,24 @@ def cfg_path(tmp_path: Path, env_save_restore) -> Path:
     return p
 
 
+@pytest.fixture
+def empty_registry(tmp_path: Path, env_save_restore) -> Path:
+    """A real, EMPTY scitex-dev host registry at $SCITEX_DIR/dev/hosts.yaml.
+
+    ``sac host list`` reports config peers UNION the registry's routable
+    hosts, so a test that asserts on the ``peers`` list has to pin BOTH
+    sources. Leaving the registry ambient makes the assertion depend on
+    the operator's real hosts.yaml — on scitex-compute-04 that is five
+    extra rows, so the test's outcome was a property of the machine, not
+    of the code.
+    """
+    hosts_dir = tmp_path / "registry" / "dev"
+    hosts_dir.mkdir(parents=True)
+    (hosts_dir / "hosts.yaml").write_text("hosts: {}\n")
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "registry"))
+    return hosts_dir / "hosts.yaml"
+
+
 # ---------------------------------------------------------------------------
 # load()
 # ---------------------------------------------------------------------------
@@ -296,7 +314,15 @@ peers:
 # ---------------------------------------------------------------------------
 
 
-def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
+def test_host_list_returns_empty_peers_with_no_config_and_no_registry(
+    cfg_path: Path, empty_registry: Path
+):
+    """Peers is empty only when NEITHER route source offers anything.
+
+    The registry half is pinned explicitly: with a populated registry
+    this list is correctly non-empty, which is the whole point of the
+    change — a host with no config.yaml can still reach its peers.
+    """
     # Arrange
     from scitex_agent_container.cli_pkg.host_group import host_list
 
@@ -306,7 +332,7 @@ def test_host_list_returns_empty_peers_with_no_config(cfg_path: Path):
     assert json.loads(result.stdout)["peers"] == []
 
 
-def test_host_list_renders_configured_peers(cfg_path: Path):
+def test_host_list_renders_configured_peers(cfg_path: Path, empty_registry: Path):
     # Arrange
     cfg_path.write_text(
         """

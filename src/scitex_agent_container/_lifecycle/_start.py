@@ -21,7 +21,6 @@ from ._hook_runner import _fire_forget_hook, _run_hooks
 # Re-exported from _start_failure_diag for back-compat: this helper lived here
 # before the 512-line-cap split.
 from ._identity_drift import check_board_identity_at_launch
-from ._instances import make_restart_callback as _make_restart_callback
 from ._instances import record_local_instance as _record_local_instance
 from ._layers_preflight import check_to_home_layers_at_launch
 from ._runtime_select import _get_runtime
@@ -45,7 +44,7 @@ from ._start_preflight import (  # noqa: F401
     _rotate_to_healthy_account,
     _verify_real_liveness,
 )
-from .health import health_monitor
+from ._start_supervision import start_background_supervision
 
 
 def agent_start(
@@ -218,7 +217,18 @@ def agent_start(
     # becomes live without manual state.db surgery. Defaults preserve
     # pre-Phase-3 behaviour, so an existing YAML with no spec.comms /
     # spec.lineage blocks writes the all-allow / may_spawn=True row.
-    persist_acl_policy(config)
+    #
+    # NOT ON A DRY RUN. This publish was a write to the host's own
+    # state.db, where a dry run doing it was untidy but contained. The
+    # policy now lives in ONE store shared by the whole fleet, so the same
+    # line makes `sac agents start --dry-run` mutate fleet-wide ACL state
+    # for an agent it is not starting -- and makes the dry run fail
+    # outright wherever that store is unreachable, which is how CI found
+    # it: the smoke test drives the real CLI against the isolation DSN and
+    # got `exit=1 ... Cannot connect to Postgres store 'node_comms_policy'`.
+    # A dry run answers "would this start?" and must not write to do it.
+    if not dry_run:
+        persist_acl_policy(config)
 
     # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
     # gets a fresh allocator claim; an explicit int is recorded so
@@ -317,14 +327,17 @@ def agent_start(
         else:
             # INFO, not SUCC: the requested end state holds, but nothing was
             # launched — so the line must not read as an accomplishment.
-            # The verdict evidence stays: a no-op that says only "already
+            # The verdict evidence stays, and the notice NAMES the session
+            # (+ pane pid) it believed in: a no-op that says only "already
             # running" is unfalsifiable from the outside, and the operator
-            # could not tell an OBSERVED agent from a process-shaped shadow.
+            # could not tell an OBSERVED agent from a process-shaped shadow
+            # (incident 2026-08-14: a prefix-matched SIBLING session pinned
+            # this branch — see _start_noop_notice).
             from ..cli_pkg._helpers._console import system_msg
-            from ._start_noop_notice import render_already_running
+            from ._start_noop_notice import render_start_noop_notice
 
             system_msg(
-                render_already_running(config.name, verdict.render()),
+                render_start_noop_notice(config, verdict),
                 style="info",
             )
             from ._startup_failed import retract_marker_for
@@ -481,28 +494,29 @@ def agent_start(
     _run_hooks(config.hooks.get("post_start", []), extra_env=hook_env)
     _fire_forget_hook(config.name, "post_start", config.hooks.get("post_start", []))
 
-    # Restart callback re-records the row (a restart = a NEW pid) AND pins
-    # the state.db it writes to -- see ``_instances.make_restart_callback``.
-    if config.health.enabled:
-        thread = thread_factory(
-            target=health_monitor,
-            args=(
-                config.name,
-                config,
-                registry,
-                _make_restart_callback(runtime_factory),
-            ),
-            daemon=True,
-        )
-        thread.start()
+    # TELEGRAM-RAIL VERDICT (card sac-cct-rail-loud-when-no-slot-resolves-
+    # 20260812) + TOKEN-OWNERSHIP LEDGER. Both run HERE, after ``runtime.start``
+    # materialised the agent's ``$HOME/.env`` — that file is precedence #1 of
+    # the token resolution, so reading it earlier would report an agent as
+    # token-less that in fact has one. A spec that declares the telegrammer MCP
+    # but resolves NO slot has its MCP server removed (correctly, by operator
+    # ruling) and the agent then starts perfectly, reports healthy, and is MUTE
+    # and DEAF on Telegram with no signal anywhere; the ledger separately
+    # records WHICH bot this agent took, so "who holds this one?" is a query
+    # rather than a 409 from Telegram. NEITHER gates the start, and neither
+    # raises. See :mod:`..runtimes._cct_start_observers`.
+    from ..runtimes._cct_start_observers import observe_cct_at_start
 
-    # ZOO#12 FR-B — priority-failback poller. No-op when the spec lacks
-    # a ``priority_list``; otherwise polls the hub every 60 s and steps
-    # aside (snapshot push + SIGTERM) when a higher-priority host is
-    # healthy. Daemon thread, dies with the process.
-    try:
-        _h.start_failback_poller(config)
-    except Exception:
-        traceback.print_exc()
+    observe_cct_at_start(config)
+
+    # Daemon supervisors for an agent that is now up — health monitor +
+    # priority-failback poller. See :mod:`._start_supervision`.
+    start_background_supervision(
+        config,
+        registry=registry,
+        runtime_factory=runtime_factory,
+        handover=_h,
+        thread_factory=thread_factory,
+    )
 
     return True

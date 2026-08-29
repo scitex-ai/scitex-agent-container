@@ -44,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import socket
 import threading
 import time
 from typing import Any, Iterator
@@ -170,21 +171,72 @@ async def await_until_serving(
 
 @contextlib.contextmanager
 def run_loopback(
-    app: Any, port: int, *, timeout_s: float | None = None, **config_kwargs: Any
+    app: Any,
+    port: int | None = None,
+    *,
+    sock: socket.socket | None = None,
+    timeout_s: float | None = None,
+    **config_kwargs: Any,
 ) -> Iterator[int]:
     """Serve ``app`` on ``127.0.0.1:port`` for the duration of the block.
 
     Teardown flips ``should_exit`` and joins, so the ``finally`` fires even on
     test failure and a hung client never strands the server.
+
+    PASS ``sock`` (from ``_helpers.ports.reserved_port``) INSTEAD OF ``port``
+    AND THE BIND RACE DISAPPEARS. With a bare int the caller has necessarily
+    already released the port -- the ``bind(0) -> getsockname() -> close() ->
+    return int`` idiom -- so between that close and uvicorn's bind the port is
+    free for anyone, including another xdist worker running this same helper.
+    That is not hypothetical: it reddened develop on 2026-08-23 (py3.12,
+    ``[Errno 98] address already in use`` on a port this helper had just been
+    handed) and, per ``_helpers/ports.py``, on 2026-08-12 against py3.11. The
+    leg differs each time because the loser of the race does.
+
+    ``reserved_port`` narrows that window but cannot close it, and says so
+    itself: "no helper can shrink that to zero without passing the file
+    descriptor to the server ... If a server DOES accept an fd, pass it this
+    socket instead and the race disappears entirely." ``uvicorn.Config`` does
+    accept ``fd``, so here it can be closed rather than narrowed:
+
+        with reserved_port() as sock:
+            with run_loopback(app, sock=sock) as port:
+                ...
+
+    OWNERSHIP, since an fd handed across an API is where double-close bugs
+    live: uvicorn reaches the fd through ``socket.fromfd``, which DUPS it. The
+    server closes its own duplicate on shutdown and ``reserved_port`` closes
+    the original; neither touches the other's. So the socket must stay OPEN for
+    the whole block -- do not ``detach()`` it, and do not close it before this
+    contextmanager exits.
+
+    The int form is kept working for the ~14 call sites that still use it. It
+    is not deprecated-by-stealth: a caller with no socket to hand over (a port
+    read from a config file, say) is asking for something else entirely.
     """
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=port,
-        log_level="warning",
-        ws="none",
-        **config_kwargs,
-    )
+    if sock is not None:
+        if port is not None:
+            raise TypeError(
+                "run_loopback: pass EITHER port= OR sock=, not both — with a "
+                "socket the port is read from it, and a second value could "
+                "disagree with the fd actually being served"
+            )
+        port = int(sock.getsockname()[1])
+        config_kwargs["fd"] = sock.fileno()
+        config = uvicorn.Config(
+            app, log_level="warning", ws="none", **config_kwargs
+        )
+    elif port is None:
+        raise TypeError("run_loopback: one of port= or sock= is required")
+    else:
+        config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            ws="none",
+            **config_kwargs,
+        )
     server = uvicorn.Server(config)
     thread, crash = serve_in_thread(server, port)
     wait_until_serving(

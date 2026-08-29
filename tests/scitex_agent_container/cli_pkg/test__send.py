@@ -33,6 +33,20 @@ import pytest
 import scitex_agent_container.cli_pkg._send as _send_mod
 from scitex_agent_container.cli_pkg._send import send_to_agent
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Collaborator swaps (test seams — no mocks, no monkeypatch)
 # ---------------------------------------------------------------------------
@@ -518,6 +532,7 @@ def test_agent_send_not_running_diagnosis_reports_stopped(state_db_env):
 
 
 def test_agent_send_diagnosis_reports_busy_heartbeat_state(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange
@@ -542,6 +557,7 @@ def test_agent_send_diagnosis_reports_busy_heartbeat_state(
 
 
 def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange — real listener so the port is reachable and the heartbeat
@@ -568,6 +584,7 @@ def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
 
 
 def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
+    pg_schema: str,
     state_db_env, fresh_lead_creds_path
 ):
     # Arrange — real listener (port reachable) but heartbeat far older
@@ -618,17 +635,12 @@ def test_agent_send_diagnosis_dead_pid_reports_pid_not_alive(
 
 
 def test_agent_send_diagnosis_port_unreachable_when_nothing_listening(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, dead_port
 ):
-    # Arrange — a2a_port that no process is listening on. We grab a free
-    # port from the OS and immediately release it so the connect refuses.
-    import socket as _socket
-
-    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    free_port = s.getsockname()[1]
-    s.close()
-    _seed_local("alpha", a2a_port=free_port)
+    # Arrange — an a2a_port no process is listening on. The port is bound
+    # WITHOUT listening (so the connect refuses) and HELD for the test (so
+    # nothing else can bind it and make the port reachable after all).
+    _seed_local("alpha", a2a_port=dead_port())
     from scitex_agent_container._network.peer import PeerError
 
     def fake_post(url, text, *, timeout_s):
@@ -777,16 +789,11 @@ def test_agent_send_nonblocking_reports_delivered_subscriber_count(
 
 
 def test_agent_send_nonblocking_fails_loud_when_port_unreachable(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, dead_port
 ):
-    # Arrange — grab then release a port so nothing is listening on it.
-    import socket as _socket
-
-    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    dead_port = s.getsockname()[1]
-    s.close()
-    _seed_local("alpha", a2a_port=dead_port)
+    # Arrange — a port bound but never listened on, and HELD, so nothing is
+    # listening on it and nothing can start.
+    _seed_local("alpha", a2a_port=dead_port())
     # Act
     with _exploding_post_turn():
         result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
@@ -795,16 +802,10 @@ def test_agent_send_nonblocking_fails_loud_when_port_unreachable(
 
 
 def test_agent_send_nonblocking_port_unreachable_error_carries_diagnosis(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, dead_port
 ):
     # Arrange
-    import socket as _socket
-
-    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    dead_port = s.getsockname()[1]
-    s.close()
-    _seed_local("alpha", a2a_port=dead_port)
+    _seed_local("alpha", a2a_port=dead_port())
     # Act
     with _exploding_post_turn():
         result = send_to_agent("alpha", "hi", lead_creds_path=fresh_lead_creds_path)
@@ -849,6 +850,13 @@ def test_agent_send_nonblocking_not_running_still_errors(state_db_env):
 # These tests seed ONLY a real ``a2a_ports`` claim (no instances row)
 # to reproduce the split-brain, and a REAL bound listener so the
 # reachability gate sees a live sidecar — no mocks.
+#
+# They take ``pg_schema`` on top of ``state_db_env`` because the claim ledger
+# moved to PostgreSQL on 2026-08-28. It is requested on these three tests
+# rather than folded into ``state_db_env``, which the rest of this module
+# shares: those tests never touch the allocator, and making the whole module
+# depend on a database would skip all of agent_send's coverage on a host that
+# has none.
 # ---------------------------------------------------------------------------
 
 
@@ -860,7 +868,7 @@ def _seed_port_claim(name: str, port: int) -> None:
 
 
 def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only a durable allocator claim on a
     # REAL bound port (the post-restart split-brain state).
@@ -874,7 +882,7 @@ def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
 
 
 def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only an allocator claim. The blocking
     # POST must target the CLAIMED port's loopback /v1/turn.
@@ -893,20 +901,15 @@ def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
 
 
 def test_agent_send_allocator_claim_diagnosis_reports_running(
-    state_db_env, fresh_lead_creds_path
+    state_db_env, fresh_lead_creds_path, dead_port, pg_schema
 ):
     # Arrange — only an allocator claim (no row) on a port nothing is
     # listening on, so the dispatch fails its reachability gate and we
     # can inspect the attached diagnosis. The agent is RUNNING (the claim
     # proves it), so the diagnosis must NOT repeat the split-brain lie of
-    # "stopped".
-    import socket as _socket
-
-    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    dead_port = s.getsockname()[1]
-    s.close()
-    _seed_port_claim("beta", dead_port)
+    # "stopped". The port is bound-but-never-listened and HELD, so the
+    # reachability gate cannot be flipped by anything else binding it.
+    _seed_port_claim("beta", dead_port())
     # Act
     with _exploding_post_turn():
         result = send_to_agent("beta", "hi", lead_creds_path=fresh_lead_creds_path)

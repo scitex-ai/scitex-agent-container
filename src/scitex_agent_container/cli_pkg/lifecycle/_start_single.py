@@ -13,6 +13,7 @@ from __future__ import annotations
 import json as _json
 import os
 import sys
+import time
 import traceback
 from contextlib import nullcontext
 from pathlib import Path
@@ -303,6 +304,9 @@ def run_single_targets(
                         is_remote=is_remote,
                         tail_lines=tail_lines,
                     )
+                # Wall-clock stamp taken BEFORE the launch — heartbeat
+                # freshness in the launch verdict is judged against it.
+                _launched_at = time.time()
                 _outcome = agent_start(
                     config_path,
                     no_preflight=no_preflight,
@@ -316,64 +320,29 @@ def run_single_targets(
                     strict_drift=strict_drift,
                 )
                 _noop = outcome_kind(_outcome) == KIND_ALREADY_RUNNING
-                if as_json:
-                    from ..._state.port_allocator import get_port as _get_port
-                    from ..._state.state_db import now_iso as _now_iso
+                # v4 step 1 — the launch VERDICT: the launch only counts
+                # as STARTED once evidence shows the agent actually came
+                # up; never SUCC on an unverified launch. Reporting
+                # (human + --json) and the three-valued verdict live in
+                # ``_start_verify_report``; a failed / unverifiable
+                # launch flips the exit code below.
+                from ._start_verify_report import report_start_result
 
-                    _raw_port = getattr(getattr(config, "a2a", None), "port", None)
-                    _resolved_port: int | None = (
-                        None
-                        if (dry_run or _raw_port is None)
-                        else _get_port(config.name)
-                    )
-                    _emit(
-                        {
-                            "name": config.name,
-                            "status": (
-                                "dry_run_ok"
-                                if dry_run
-                                else ("already_running" if _noop else "started")
-                            ),
-                            "host": host,
-                            "host_workdir": host_workdir,
-                            "container_workdir": container_workdir,
-                            "dry_run": dry_run,
-                            "a2a_port": _resolved_port,
-                            "started_at": None if dry_run else _now_iso(),
-                        }
-                    )
-                else:
-                    if foreground and not dry_run:
-                        # Agent stdout often lacks a trailing newline.
-                        click.echo("")
-                    # The no-op branch already reported the state and the
-                    # options; a SUCC "started" after it would assert an
-                    # action that did not happen.
-                    if not _noop:
-                        verb = (
-                            "dry-run prepared the workspace for"
-                            if dry_run
-                            else "started"
-                        )
-                        tail = "" if dry_run else f" [dim]({location})[/dim]"
-                        system_msg(
-                            f"[bold]{config.name}[/bold] {verb}{tail}", style="green"
-                        )
-                    if (
-                        not dry_run
-                        and not config.claude.auto_accept
-                        and any(
-                            df in f
-                            for f in config.claude.flags
-                            for df in (
-                                "--dangerously-skip-permissions",
-                                "--dangerously-load-development-channels",
-                            )
-                        )
-                    ):
-                        console.print(
-                            f"[yellow]auto_accept: false — manual TUI acceptance required on {host}[/yellow]"
-                        )
+                if not report_start_result(
+                    config,
+                    noop=_noop,
+                    dry_run=dry_run,
+                    foreground=foreground,
+                    one_shot=one_shot,
+                    as_json=as_json,
+                    emit=_emit,
+                    launched_at=_launched_at,
+                    host=host,
+                    host_workdir=host_workdir,
+                    container_workdir=container_workdir,
+                    location=location,
+                ):
+                    any_error = True
             except ResumePreflightError as exc:
                 # Informative, operator-facing --resume miss (#192, Part B #3).
                 # The message body IS the candidate listing + next-step hint;

@@ -19,6 +19,7 @@ exception, this file goes red.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,19 @@ TWO_HOSTED_JOBS = (
 
 REUSABLE_CALLER = (
     "name: demo\non: [push]\njobs:\n  call:\n    uses: ./.github/workflows/other.yml\n"
+)
+
+# The shape PS-231 pushes a leaf into: the body is replaced by a call to the
+# org reusable, so the runner is decided by the CALLEE's input default — in
+# another repository, which this guard cannot read.
+ORG_CALLER = (
+    "name: cla\n"
+    "on: [issue_comment]\n"
+    "jobs:\n"
+    "  CLAssistant:\n"
+    "    uses: scitex-ai/.github/.github/workflows/cla.yml@main\n"
+    "    with:\n"
+    "      runs_on: '[\"ubuntu-latest\"]'\n"
 )
 
 LEGACY_NAMED = (
@@ -286,6 +300,45 @@ def test_allowlist_entry_for_missing_workflow_is_flagged(tmp_path: Path) -> None
     assert codes == [CODE_ALLOWLIST_STALE]
 
 
+def test_allowlisted_caller_is_not_reported_stale(tmp_path: Path) -> None:
+    # Arrange: cla.yml has become a CALLER (PS-231). Its runner is now decided
+    # by the callee's input default, in another repository this guard cannot
+    # read. Reporting the entry stale here would tell the reader to delete the
+    # SECURITY ARGUMENT for a workflow whose triggers are unauthenticated and
+    # which runs a third-party action — the one thing standing in front of a
+    # one-line change to a self-hosted pool. Unresolvable is not unhosted.
+    _write_repo(
+        tmp_path,
+        {"cla.yml": ORG_CALLER},
+        allowlist=_allowlist("cla.yml"),
+    )
+    # Act
+    codes = _codes(tmp_path)
+    # Assert
+    assert CODE_ALLOWLIST_STALE not in codes
+
+
+def test_caller_outside_the_job_scope_leaves_the_entry_stale(
+    tmp_path: Path,
+) -> None:
+    # Arrange: the OTHER direction, and the one that keeps the fix honest. The
+    # entry is scoped to job `CLAssistant`, but the file's only caller is named
+    # `unrelated`. Nothing the entry covers is present, so the entry really IS
+    # stale and must still be reported. A fix that marked ANY caller as "in
+    # use" would silently keep every job-scoped entry alive for ever, which is
+    # the standing-loophole this rule exists to prevent.
+    caller_named_otherwise = ORG_CALLER.replace("CLAssistant:", "unrelated:")
+    _write_repo(
+        tmp_path,
+        {"cla.yml": caller_named_otherwise},
+        allowlist=_allowlist("cla.yml", jobs="CLAssistant"),
+    )
+    # Act
+    codes = _codes(tmp_path)
+    # Assert
+    assert CODE_ALLOWLIST_STALE in codes
+
+
 def test_job_scoped_allowlist_does_not_cover_a_new_job(tmp_path: Path) -> None:
     # Arrange: entry covers CLAssistant only; `sneaky` must not ride along
     _write_repo(
@@ -457,12 +510,25 @@ def test_the_cla_allowlist_entry_carries_a_real_reason() -> None:
 
 
 def test_the_cla_job_really_is_still_hosted() -> None:
-    # Arrange: the exception must be LOAD-BEARING, not decorative. If
-    # cla.yml ever stops being hosted, the entry is stale (SAC-CI004) and
-    # must be deleted rather than left lying around as a standing loophole.
+    # Arrange: the exception must be LOAD-BEARING, not decorative — if cla.yml
+    # ever stops being hosted, the entry is a standing loophole and must go.
+    #
+    # This used to assert `classify_runs_on(...) == HOSTED`, reading a local
+    # `runs-on:`. cla.yml is now a CALLER (PS-231), so there is no local
+    # `runs-on` and that verdict is UNRESOLVABLE — which is a statement about
+    # what the guard can SEE, not about where the job runs, and so cannot
+    # carry this assertion any more.
+    #
+    # The caller passes `runs_on` EXPLICITLY, which is what makes the property
+    # locally checkable again: we assert the value this repo actually sends,
+    # rather than a remote default we would have to go and look up. If someone
+    # points this at the self-hosted pool, this test goes red — which is the
+    # whole point, because that is the change the allowlist entry exists to
+    # prevent (unauthenticated triggers, third-party action, and a $HOME
+    # holding the fleet credential).
     cla = REPO_ROOT / ".github" / "workflows" / "cla.yml"
     doc = yaml.safe_load(cla.read_text(encoding="utf-8"))
     # Act
-    verdict = classify_runs_on(doc["jobs"]["CLAssistant"])
+    labels = json.loads(doc["jobs"]["CLAssistant"]["with"]["runs_on"])
     # Assert
-    assert verdict == HOSTED
+    assert labels == ["ubuntu-latest"]

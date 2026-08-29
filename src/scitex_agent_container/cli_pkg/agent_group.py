@@ -19,6 +19,7 @@ from ._helpers import HelpRecursiveGroup
 from .agents_prune_claude import archive_claude_bloat as _archive_claude_bloat_impl
 from .build_cmds import check as _check_impl
 from .info_cmds import find as _find_impl
+from .info_cmds import roles as _roles_impl
 from .info_cmds import tail_session as _tail_impl
 from .lifecycle import attach as _attach_impl
 from .lifecycle import delete as _delete_impl
@@ -69,7 +70,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
         ("Preflight", ["check"]),
-        ("Discovery", ["find"]),
+        ("Discovery", ["find", "roles"]),
         ("Account", ["accounts"]),
         (
             "Maintenance",
@@ -136,6 +137,23 @@ from ._agents_restart_login_expired import (  # noqa: E402
 )
 
 _register_restart_login_expired(agent_group)
+# `resume-rate-limited` — the THIRD enforcer, and the shape the other two
+# divide the fleet around without covering. `reconcile` owns corpses;
+# `restart-login-expired` owns auth wedges; a provider rate wall is neither.
+# The tmux session is alive (so reconcile hands off) and the banner is not an
+# auth banner (so the auth matcher excludes it, saying "a restart does not fix
+# a rate wall" — correct, and the corollary is that it does not need fixing,
+# it needs waiting out). INCIDENT 2026-08-28: a session limit stopped agents
+# at ~17:25 UTC, the limit lifted at 19:10 UTC, and nothing resumed until the
+# operator asked at 20:56 UTC. This verb reads the reset the provider itself
+# printed, HOLDS until it passes — so it structurally cannot hammer a live
+# limit — and then CONTINUES the agent through the verified delivery path
+# rather than restarting it, because the context survived the wall.
+from ._agents_resume_rate_limited import (  # noqa: E402
+    register as _register_resume_rate_limited,
+)
+
+_register_resume_rate_limited(agent_group)
 # `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
 # pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
 # is the last thing an agent RENDERED, not proof it is broken now, so an agent
@@ -155,6 +173,17 @@ _register_restart_login_expired(agent_group)
 from ._agents_auth_audit import register as _register_auth_audit  # noqa: E402
 
 _register_auth_audit(agent_group)
+# `cct-audit` — READ-ONLY sweep of the Telegram rail: which specs DECLARE
+# `server:claude-code-telegrammer`, and which of them actually resolve a
+# CCT_BOT_TOKEN_<SLOT>. The two are chosen independently — candidates are
+# derived from the agent NAME, the pool is named by whoever wrote it — and
+# nothing checked they agree, so a mismatch made an agent start perfectly,
+# report healthy, and be MUTE and DEAF on Telegram (outage 2026-08-12). The
+# start-time alarm closes the class going forward; this answers it for the
+# agents already running, without touching one of them.
+from ._agents_cct_audit import register as _register_cct_audit  # noqa: E402
+
+_register_cct_audit(agent_group)
 # `state` — the ONE state shape, returned for every agent, always. Each signal
 # is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
 # instead of by whatever subset each call site happened to hold. It exists
@@ -223,6 +252,7 @@ agent_group.add_command(_auth_status_impl)
 
 # Verb leaves
 agent_group.add_command(_rebind(_find_impl, "find"))
+agent_group.add_command(_rebind(_roles_impl, "roles"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
 agent_group.add_command(_rebind(_send_impl, "send"))

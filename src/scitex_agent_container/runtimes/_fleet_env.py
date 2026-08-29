@@ -51,13 +51,23 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 logger = logging.getLogger(__name__)
 
 # ``config.yaml`` key (under ``spec:``) carrying the operator's host-scope
 # fleet defaults. Same file + cascade as ``spec.hostname_aliases``.
 CONFIG_SECTION = "fleet_default_env"
+
+# The agent-name slot sac's OWN host-side process occupies in the per-agent
+# PostgreSQL role scheme. It is not an agent and has no agent name, so it uses
+# the reserved name ``cli`` — the cluster holds the role, and compute-04's
+# ``.pgpass`` holds its rows. ONLY THE SLOT LIVES HERE: the role name is
+# composed by :func:`._pg_identity_env.derive_pg_role`, which is the one place
+# that knows the ``<host_user>__<name>`` shape, and the variable it lands in is
+# that module's ``PG_USER_ENV``. See
+# :func:`apply_fleet_defaults_to_process` for why the host process needs one.
+HOST_PROCESS_AGENT_NAME = "cli"
 
 # --------------------------------------------------------------------------
 # THE DATA. Fleet-wide environment defaults, declared once, inherited by every
@@ -105,14 +115,111 @@ CONFIG_SECTION = "fleet_default_env"
 # per agent until each restarts onto this cleaned environment; that is correct
 # behaviour, not a leftover. Do NOT "fix" it by reintroducing the key.
 #
-# FLEET_DEFAULT_ENV is now EMPTY, and that is a valid state — the mechanism
-# survives for operator overrides via ``config.yaml``'s ``fleet_default_env``.
-# Asserted by test_dead_read_routing_key_* in
-# tests/scitex_agent_container/runtimes/test__fleet_env.py.
+# FLEET_DEFAULT_ENV was EMPTY between 2026-07-29 and 2026-08-19, and that was
+# a valid state — the mechanism survives for operator overrides via
+# ``config.yaml``'s ``fleet_default_env``. Asserted by
+# test_an_empty_fleet_default_env_is_a_valid_state.
+#
+# SCITEX_STORE_DSN (2026-08-19, the operator's SQLite-eradication order:
+# 「sqlite 根絶をしてください」「fail fast, fail loud, no fallbacks」).
+#
+# READ THE TWO PARAGRAPHS ABOVE BEFORE ADDING ANOTHER KEY HERE. Two store
+# variables were declared here and later retired for STATING a routing policy
+# nothing enforced, and one of them cost a live diagnosis: an inert setting
+# that appears to answer the question spends the diagnostician's trust. So the
+# bar for a third store variable is not "it seems right" — it is that the
+# variable is demonstrably READ FOR BEHAVIOUR by its consumer.
+#
+# THAT BAR IS MET, AND MEASURED IN BOTH ARMS rather than argued:
+#
+#     with SCITEX_STORE_DSN set     scitex_dev.store.host_store() resolves to
+#                                   the injected DSN; Store opens; a put/get
+#                                   round trip returns typed values, and the
+#                                   row is visible in Postgres through a
+#                                   SECOND, INDEPENDENT client (raw psycopg,
+#                                   plain SQL) rather than through the library
+#                                   that chose the backend
+#     with it UNSET                 host_store() resolves to a UNIX socket and
+#                                   Store() raises StoreTargetError naming the
+#                                   missing socket path
+#
+# The unset arm is the point: the failure is LOUD and there is no SQLite path
+# to slip into. That is scitex-dev's design, in their own words at
+# ``resolve_target``: "deliberately no SQLite fallback ... a host whose
+# Postgres is down must fail loudly rather than start writing to a private
+# local file that shares nothing."
+#
+# test_store_dsn_is_read_for_behaviour_by_its_consumer asserts BOTH arms, so
+# if scitex-dev ever stops honouring the variable, sac goes RED here instead
+# of quietly injecting an inert string into every container for months. That
+# test is the guard the two retired variables never had.
+#
+# WHY THE DEFAULT IS NEEDED AT ALL — sac containers cannot use scitex-dev's
+# own default. ``host_store`` derives a socket path from ``$HOME`` and assumes
+# PostgreSQL's default port, giving
+# ``/home/agent/.scitex/pg/.s.PGSQL.5432`` inside a container. Two things are
+# wrong with that here, and only the second is sac's fault:
+#
+#   * the fleet's Postgres listens on 55432, and the port is part of the
+#     SOCKET FILENAME, so the socket that exists
+#     (``~/.scitex/pg/run/.s.PGSQL.55432``) can never be found by a resolver
+#     that has no port parameter. Reported to scitex-dev.
+#   * ``$HOME`` inside the container is ``/home/agent``, not the operator's
+#     home where the socket actually lives.
+#
+# TCP RATHER THAN THE SOCKET, deliberately: this mirrors SCITEX_CARDS_DB,
+# which is the DSN shape already proven fleet-wide in production.
+#
+# CORRECTED 2026-08-28 — THE 08-19 VALUE WAS RIGHT WHEN WRITTEN AND THE WORLD
+# MOVED UNDER IT. It was ``postgresql://scitex_cards@127.0.0.1:55432/scitex``,
+# justified here by a ``.pgpass`` entry wildcarding the database
+# (``127.0.0.1:55432:*:scitex_cards``). BOTH halves of that justification have
+# since expired, and nothing re-checked:
+#
+#   * ``127.0.0.1`` was this host's own PRIMARY on 08-19. The compute hosts are
+#     now STREAMING STANDBYS of nas-03, so the local instance answers
+#     ``pg_is_in_recovery() = t`` and refuses every write with "cannot execute
+#     ... in a read-only transaction". MEASURED on compute-04, 2026-08-28.
+#   * the ``scitex_cards`` pgpass row is GONE — compute-04 holds ZERO entries
+#     for that role, so the credential the comment relied on does not exist.
+#
+# COST: no agent birth was recorded fleet-wide between 2026-08-23 and
+# 2026-08-28. The launches happened; their RECORD failed. That history is not
+# delayed, it is gone.
+#
+# THE CORRECTED VALUE follows the working neighbour EXACTLY rather than
+# approximately — that is the whole lesson. SCITEX_CARDS_DB names the PRIMARY
+# by name and OMITS the user, letting ``PGUSER=ywatanabe__<agent>`` supply the
+# identity that ``pg_hba`` already admits over the overlay
+# (``host scitex +ywatanabe 100.64.0.0/10 scram-sha-256``). The old value
+# diverged on both axes at once — wrong host AND a hardcoded role — which is
+# why cards kept working all week while state writes died beside it.
+#
+# PROVEN END TO END from compute-04 before this edit, as the agent's own role:
+# connect -> current_user=ywatanabe__scitex-agent-container,
+# pg_is_in_recovery()=f (the PRIMARY), then a scratch table created, one row
+# inserted, that row read back, and the table dropped. A full write cycle, not
+# a connection test — the failure being fixed is precisely "connects fine,
+# cannot write".
+#
+# (Those five steps are described rather than quoted on purpose: the
+# sqlite-footprint guard flags any module carrying table-definition DDL, and it
+# reads a COMMENT the same way it reads code. It flagged this file when the
+# statements were written out literally, which is the guard being right — a
+# module that declares no tables should not contain the words for declaring
+# one.)
+#
+# HOST-SPECIFIC OVERRIDES ARE THE OPERATOR'S LAYER, not a reason to compute
+# this value: a host whose Postgres is elsewhere sets
+# ``spec.fleet_default_env`` in ``config.yaml``, and a single agent that must
+# not receive it sets the key in its own ``spec.env``. A host with no
+# Postgres at all gets a loud refusal, which is the requested behaviour.
 #
 # These are opaque strings to sac. It never reads, parses or branches on them.
 # --------------------------------------------------------------------------
-FLEET_DEFAULT_ENV: dict[str, str] = {}
+FLEET_DEFAULT_ENV: dict[str, str] = {
+    "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
+}
 
 
 def _config_path() -> Path:
@@ -244,11 +351,24 @@ def effective_env(
     being stored three layers downstream in someone else's database.
     """
     from ._board_identity_env import apply_board_identity_alias
+    from ._pg_identity_env import apply_pg_identity
 
     merged = merge_fleet_env(getattr(config, "env", None), defaults=defaults)
     apptainer = getattr(config, "apptainer", None)
     raw_args = getattr(apptainer, "raw_args", None) if apptainer is not None else None
-    return apply_board_identity_alias(merged, raw_args=raw_args)
+    # The agent's own name is passed so a spec that declares NEITHER identity
+    # spelling still launches with one. See the branch in
+    # ``apply_board_identity_alias`` for why the name is the right answer and
+    # why it cannot override a deliberate alias.
+    aliased = apply_board_identity_alias(
+        merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
+    )
+    # Same shape for the PostgreSQL login: ``PGUSER=<host_user>__<name>``
+    # unless a spec declares its own (b2 of the pg55432 role rework — see
+    # ``_pg_identity_env`` for why specs stopped carrying DSN userinfo).
+    return apply_pg_identity(
+        aliased, raw_args=raw_args, agent_name=getattr(config, "name", None)
+    )
 
 
 def fleet_env_flags(
@@ -268,9 +388,118 @@ def fleet_env_flags(
     ]
 
 
+def apply_fleet_defaults_to_process(
+    environ: "MutableMapping[str, str] | None" = None,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, str]:
+    """Give sac's OWN process the fleet defaults its containers get.
+
+    Everything above renders the defaults into an agent's ``apptainer --env``
+    flags and stops there. But the host-side ``sac`` process opens the SAME
+    stores the containers do — ``persist_acl_policy`` on every start,
+    instances, dispatches, the diary — and it received none of them. On a
+    shell with no ``SCITEX_STORE_DSN``, ``scitex_dev.store.host_store()`` fell
+    through to its UNIX-socket fallback, ``pg_hba`` asked the socket for a
+    password, and ``.pgpass`` — keyed by ``127.0.0.1`` / ``localhost`` /
+    ``scitex-primary``, never by a socket directory — had nothing to offer:
+
+        Cannot connect to Postgres store 'node_comms_policy' ...
+        socket "~/.scitex/pg/run/.s.PGSQL.55432" failed:
+        fe_sendauth: no password supplied
+
+    MEASURED on compute-04, 2026-08-28, on ``sac agents restart``. A
+    ``.pgpass`` row for the socket directory is the WRONG fix: that socket is
+    the local cluster, which is now a streaming STANDBY
+    (``pg_is_in_recovery() = t``), so the row would only trade a loud connect
+    refusal for a quiet read-only write failure. The right store is the one
+    :data:`FLEET_DEFAULT_ENV` already names — the gap was that only the
+    containers were told.
+
+    Same precedence as everything else in this module: a key already present
+    in ``environ`` wins, untouched — a default exists in order to be
+    overridden, and an operator who exported ``SCITEX_STORE_DSN`` in their
+    shell has overridden it. ``environ`` defaults to ``os.environ`` and is an
+    injection seam for tests. Returns the keys it actually set.
+
+    ``PGUSER`` — THE OTHER HALF OF THE SAME IDENTITY (2026-08-28)
+    ------------------------------------------------------------
+    The DSN above is ROLELESS on purpose. ``scitex-primary:55432/scitex``
+    names a host, a port and a database and NO user, because in this fleet the
+    login identity is per-agent and travels in a SECOND variable: containers
+    receive the roleless DSN *and* ``PGUSER=<host_user>__<agent>``, injected by
+    :mod:`._pg_identity_env` (see that module for why specs stopped carrying
+    DSN userinfo at all). Two halves, one scheme.
+
+    Giving the host process only the FIRST half fixed which server it talked
+    to and left it unable to say who it was:
+
+        Cannot connect to Postgres store 'node_comms_policy' ...
+        connection to server at "100.64.0.5", port 55432 failed:
+        fe_sendauth: no password supplied
+
+    With no ``PGUSER``, libpq falls back to the OS user — bare ``ywatanabe``
+    — and ``.pgpass`` matches on (host, port, database, USER). compute-04's
+    file holds 522 rows and NOT ONE names the bare OS user: every row is a
+    service role or a per-agent ``<host_user>__<agent>``. So the OS-user
+    fallback can never authenticate, whichever host the DSN names — the
+    password lookup fails before the server is ever asked. MEASURED on
+    compute-04 2026-08-28 against this branch: with the DSN alone, the read
+    above; with ``PGUSER=ywatanabe__cli`` beside it, the same read returns
+    the policy. COST while it was missing: every ``sac agents start`` that
+    publishes ACL policy died, taking scitex-hub (compute-03) and business
+    (compute-01) down.
+
+    THE ROLE IS DELIBERATELY NOT PUT IN THE DSN, and that constraint is the
+    whole reason this lives here rather than in :data:`FLEET_DEFAULT_ENV`.
+    That mapping is the CONTAINERS' baseline too, so userinfo in its DSN — or
+    a ``PGUSER`` key in it — would reach all 132 agent containers and override
+    every per-agent role, collapsing 132 distinct logins into one shared
+    identity and taking the per-agent audit trail and the ``pg_hba`` grant
+    structure with it. The host process gets its own half of the pair
+    injected HERE, in the one function nothing container-bound calls.
+
+    ``cli`` (:data:`HOST_PROCESS_AGENT_NAME`) is the agent-name slot; the
+    composition is :func:`._pg_identity_env.derive_pg_role`'s, so exactly one
+    module knows the ``<host_user>__<name>`` shape and the libpq variable
+    name. ``ywatanabe__cli`` is verified to authenticate against
+    scitex-primary from compute-01, compute-03, compute-04 and nas-03.
+    compute-02 was NOT tested — it carries neither psycopg nor any agent
+    specs — and is no worse off than before, where it had no host-side login
+    either.
+
+    Declared-anywhere wins here too, and the check runs AFTER the cascade
+    above so all three declaring layers are covered by one lookup: a
+    ``PGUSER`` exported in the operator's shell, one in
+    :data:`FLEET_DEFAULT_ENV`, and one in ``config.yaml``'s
+    ``spec.fleet_default_env`` each land in ``target`` first and suppress the
+    injection.
+    """
+    import os
+
+    from ._pg_identity_env import PG_USER_ENV, derive_pg_role
+
+    target = os.environ if environ is None else environ
+    injected: dict[str, str] = {}
+    for key, val in declared_fleet_defaults(config_path).items():
+        if key in target:
+            continue
+        target[key] = val
+        injected[key] = val
+    if PG_USER_ENV not in target:
+        role = derive_pg_role(HOST_PROCESS_AGENT_NAME)
+        target[PG_USER_ENV] = role
+        injected[PG_USER_ENV] = role
+    if injected:
+        logger.debug("fleet_env: process env gained %s", sorted(injected))
+    return injected
+
+
 __all__ = [
     "CONFIG_SECTION",
     "FLEET_DEFAULT_ENV",
+    "HOST_PROCESS_AGENT_NAME",
+    "apply_fleet_defaults_to_process",
     "declared_fleet_defaults",
     "effective_env",
     "fleet_env_flags",

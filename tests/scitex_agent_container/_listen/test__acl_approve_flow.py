@@ -46,7 +46,7 @@ _TOKEN = "test-token-approve-flow"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_default = state_db.DEFAULT_DB_PATH
@@ -67,7 +67,7 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # still-meaningful behaviour this file covers is the BLOCK /
         # UNBLOCK decision primitives + CLI, plus the pending-prompt clear
         # (pending seeded directly via ``record_pending_prompt``).
-        record_lineage(child="worker-a", parent="root", db_path=db)
+        record_lineage(child="worker-a", parent="root")
         yield db
     finally:
         state_db.DEFAULT_DB_PATH = saved_default
@@ -109,7 +109,7 @@ def _send_payload(sender: str, content: str = "hi") -> dict:
 
 
 def test_record_pending_prompt_first_call_returns_true(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
     from scitex_agent_container._state.state_db_pending_approval import (
@@ -118,24 +118,24 @@ def test_record_pending_prompt_first_call_returns_true(
 
     # Act
     first = record_pending_prompt(
-        sender="worker-a", target="lead", db_path=isolated_state
+        sender="worker-a", target="lead"
     )
     # Assert
     assert first is True
 
 
 def test_record_pending_prompt_dedupes_second_call(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — the second record for the same pair must NOT re-prompt.
     from scitex_agent_container._state.state_db_pending_approval import (
         record_pending_prompt,
     )
 
-    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="worker-a", target="lead")
     # Act
     second = record_pending_prompt(
-        sender="worker-a", target="lead", db_path=isolated_state
+        sender="worker-a", target="lead"
     )
     # Assert
     assert second is False
@@ -182,7 +182,7 @@ def test_approval_prompt_body_does_not_leak_message_content() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unblock_writes_comms_grants_row(isolated_state: Path) -> None:
+def test_unblock_writes_comms_grants_row(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     from scitex_agent_container._state.grant_flush import (
         unblock_and_clear_pending,
@@ -191,10 +191,10 @@ def test_unblock_writes_comms_grants_row(isolated_state: Path) -> None:
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
-def test_unblock_clears_the_pending_prompt(isolated_state: Path) -> None:
+def test_unblock_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — seed a pending row directly, then unblock.
     from scitex_agent_container._state.grant_flush import (
         unblock_and_clear_pending,
@@ -203,16 +203,16 @@ def test_unblock_clears_the_pending_prompt(isolated_state: Path) -> None:
         record_pending_prompt,
     )
 
-    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="worker-a", target="lead")
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
     assert not has_pending_prompt(
-        sender="worker-a", target="lead", db_path=isolated_state
+        sender="worker-a", target="lead"
     )
 
 
-def test_unblock_removes_existing_block_row(isolated_state: Path) -> None:
+def test_unblock_removes_existing_block_row(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — block first, then unblock. The unblock MUST remove
     # the block row (otherwise the block-precedence rule in
     # ``check_send_acl`` would still silently drop sends post-
@@ -226,7 +226,7 @@ def test_unblock_removes_existing_block_row(isolated_state: Path) -> None:
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert not has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert not has_block(sender="worker-a", target="lead")
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def test_unblock_removes_existing_block_row(isolated_state: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_block_writes_comms_blocks_row(isolated_state: Path) -> None:
+def test_block_writes_comms_blocks_row(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     from scitex_agent_container._state.grant_flush import (
         block_and_clear_pending,
@@ -243,10 +243,10 @@ def test_block_writes_comms_blocks_row(isolated_state: Path) -> None:
     # Act
     block_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_block(sender="worker-a", target="lead")
 
 
-def test_block_clears_the_pending_prompt(isolated_state: Path) -> None:
+def test_block_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — seed a pending row directly, then block.
     from scitex_agent_container._state.grant_flush import (
         block_and_clear_pending,
@@ -255,16 +255,16 @@ def test_block_clears_the_pending_prompt(isolated_state: Path) -> None:
         record_pending_prompt,
     )
 
-    record_pending_prompt(sender="worker-a", target="lead", db_path=isolated_state)
+    record_pending_prompt(sender="worker-a", target="lead")
     # Act
     block_and_clear_pending(sender="worker-a", target="lead")
     # Assert
     assert not has_pending_prompt(
-        sender="worker-a", target="lead", db_path=isolated_state
+        sender="worker-a", target="lead"
     )
 
 
-def test_blocked_send_emits_no_receiver_push(isolated_state: Path) -> None:
+def test_blocked_send_emits_no_receiver_push(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — block first, then attempt a send. The receiver
     # MUST see NOTHING (no denied_attempt, no approve-prompt, no
     # new prompt re-fire). The sender still gets 403 (next test).
@@ -281,13 +281,13 @@ def test_blocked_send_emits_no_receiver_push(isolated_state: Path) -> None:
             json=_send_payload("worker-a"),
             headers={"authorization": f"Bearer {_TOKEN}"},
         )
-    rows = list_undelivered(target="lead", db_path=isolated_state)
+    rows = list_undelivered(target="lead")
     # Assert — no rows landed for the lead from this blocked send.
     assert rows == []
 
 
 def test_blocked_send_still_returns_403_to_sender(
-    isolated_state: Path,
+    isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — sender side learns their send did not land. The
     # silence is receiver-only; we are not in the business of
@@ -314,27 +314,27 @@ def test_blocked_send_still_returns_403_to_sender(
 # ---------------------------------------------------------------------------
 
 
-def test_cli_unblock_writes_comms_grants(isolated_state: Path) -> None:
+def test_cli_unblock_writes_comms_grants(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.a2a_group import a2a
 
     # Act
     CliRunner().invoke(a2a, ["unblock", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
-def test_cli_block_writes_comms_blocks(isolated_state: Path) -> None:
+def test_cli_block_writes_comms_blocks(isolated_state: Path, pg_schema: str) -> None:
     # Arrange
     from scitex_agent_container.cli_pkg.a2a_group import a2a
 
     # Act
     CliRunner().invoke(a2a, ["block", "worker-a", "lead"])
     # Assert
-    assert has_block(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_block(sender="worker-a", target="lead")
 
 
-def test_cli_grant_alias_still_unblocks(isolated_state: Path) -> None:
+def test_cli_grant_alias_still_unblocks(isolated_state: Path, pg_schema: str) -> None:
     # Arrange — legacy `sac a2a grant` MUST behave like unblock so
     # operator muscle memory keeps working.
     from scitex_agent_container.cli_pkg.a2a_group import a2a
@@ -342,4 +342,4 @@ def test_cli_grant_alias_still_unblocks(isolated_state: Path) -> None:
     # Act
     CliRunner().invoke(a2a, ["grant", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")

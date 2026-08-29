@@ -1,7 +1,13 @@
 """Tests for scitex_agent_container._state.state_db (F-CS11).
 
 Covers:
-- init_schema: idempotent creation of all four registry tables + attempts.
+- init_schema: idempotent creation of every table in ``KNOWN_TABLES``.
+  That was "all four registry tables + attempts" until 2026-08-28; by then
+  ``attempts`` had been deleted and ``definitions`` / ``instance_heartbeats``
+  / ``events`` followed it the same day, so the registry is ``instances``
+  alone and the whitelist is three names. The tests below are parametrized
+  over the CONSTANT rather than a literal list, which is why they needed no
+  edit for any of that — the prose is what went stale.
 - table_counts: returns zero counts on a fresh db.
 - import_legacy_registry: lifts JSON shards into ``instances`` rows
   with ``exit_reason='reboot-swept'``; idempotent on re-run; tolerates
@@ -33,7 +39,7 @@ from scitex_agent_container._state.state_db import (
 
 
 @pytest.fixture
-def db_path(tmp_path: Path):
+def db_path(tmp_path: Path, pg_schema: str):
     """Isolated state.db location, exported via env so the CLI picks it up.
 
     PA-306: explicit env save/restore (no monkeypatch fixture).
@@ -144,6 +150,24 @@ def test_import_legacy_registry_returns_imported_count_for_two_shards(
     assert result == {"imported": 2, "skipped": 0}
 
 
+def _swept_rows() -> list[dict]:
+    """Every migrated legacy row, read through the PRODUCTION reader.
+
+    ``instances`` moved to the shared store on 2026-08-28, so there is no
+    table to SELECT from — and reading back through the reader the
+    application uses is the stronger check anyway: a write the store accepted
+    but cannot serve counts as absent here, which a raw SELECT could not
+    catch.
+    """
+    from scitex_agent_container._state.state_db_instances import scan_instances
+    from scitex_agent_container._state.state_db_instances_store import (
+        instance_as_dict,
+        run_with_reconnect,
+    )
+
+    return [instance_as_dict(r) for r in run_with_reconnect(scan_instances)]
+
+
 def test_import_legacy_registry_writes_one_instances_row_per_shard(
     db_path: Path, tmp_path: Path
 ):
@@ -153,9 +177,7 @@ def test_import_legacy_registry_writes_one_instances_row_per_shard(
     _write_legacy_shard(reg, "polish-sac")
     # Act
     import_legacy_registry(reg, host="ywata-note-win")
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = [dict(r) for r in conn.execute("SELECT * FROM instances").fetchall()]
+    rows = _swept_rows()
     # Assert
     assert {r["name"] for r in rows} == {"polish-clew", "polish-sac"}
 
@@ -175,9 +197,7 @@ def test_import_legacy_registry_sets_invariant_field_on_swept_rows(
     _write_legacy_shard(reg, "polish-clew")
     # Act
     import_legacy_registry(reg, host="ywata-note-win")
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = dict(conn.execute("SELECT * FROM instances").fetchone())
+    row = _swept_rows()[0]
     # Assert
     assert row[field] == expected
 
@@ -191,9 +211,7 @@ def test_import_legacy_registry_populates_timestamp_field_on_swept_rows(
     _write_legacy_shard(reg, "polish-clew")
     # Act
     import_legacy_registry(reg, host="ywata-note-win")
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = dict(conn.execute("SELECT * FROM instances").fetchone())
+    row = _swept_rows()[0]
     # Assert
     assert row[field]
 
@@ -248,7 +266,7 @@ def test_db_show_json_exposes_known_tables_set(db_path: Path):
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert set(body["known_tables"]) == set(KNOWN_TABLES)
 
@@ -263,7 +281,7 @@ def test_db_show_json_reports_zero_count_per_table_on_fresh_db(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_show, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["tables"][table] == 0
 
@@ -282,29 +300,24 @@ def test_db_migrate_via_cli_reports_one_imported_for_single_shard(
         db_migrate,
         ["--registry-dir", str(reg), "--host", "ywata-note-win", "--json"],
     )
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["imported"] == 1
 
 
-def test_db_query_via_cli_returns_imported_row_name(db_path: Path, tmp_path: Path):
-    # Arrange
-    reg = tmp_path / "registry"
-    _write_legacy_shard(reg, "diag-test")
-    import_legacy_registry(reg, host="h")
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(db_query, ["--table", "instances", "--limit", "5", "--json"])
-    rows = json.loads(result.output)
-    # Assert
-    assert [r["name"] for r in rows] == ["diag-test"]
-
-
-def test_db_query_via_cli_returns_imported_row_with_reboot_swept_exit_reason(
+def test_db_query_via_cli_refuses_instances_rather_than_answering_empty(
     db_path: Path, tmp_path: Path
 ):
+    """``--table instances`` is now a REFUSAL, and that is the whole point.
+
+    This asserted the imported row came back through ``sac db query`` until
+    2026-08-28, when the table moved to the shared PostgreSQL store and left
+    ``KNOWN_TABLES``. Had the name been left whitelisted, this command would
+    have printed ``[]`` — and an empty array here reads as "no agent has ever
+    run on this host" while PostgreSQL holds the fleet's whole lifecycle
+    history. A ``click.Choice`` rejection is the honest answer, and
+    ``sac agents list`` is the verb that answers the question.
+    """
     # Arrange
     reg = tmp_path / "registry"
     _write_legacy_shard(reg, "diag-test")
@@ -314,9 +327,29 @@ def test_db_query_via_cli_returns_imported_row_with_reboot_swept_exit_reason(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_query, ["--table", "instances", "--limit", "5", "--json"])
-    rows = json.loads(result.output)
     # Assert
-    assert rows[0]["exit_reason"] == "reboot-swept"
+    assert result.exit_code != 0
+
+
+def test_the_swept_row_is_readable_through_the_production_reader(
+    db_path: Path, tmp_path: Path
+):
+    """The other half of the refusal above: the ROW is still there.
+
+    Refusing ``--table instances`` would be worthless if the data had gone
+    with the table. It has not — ``import_legacy_registry`` writes it into
+    the store, and this reads it back through the reader the application
+    uses. Both halves are needed: the refusal alone would pass on a
+    migration that lost every row.
+    """
+    # Arrange
+    reg = tmp_path / "registry"
+    _write_legacy_shard(reg, "diag-test")
+    import_legacy_registry(reg, host="h")
+    # Act
+    rows = _swept_rows()
+    # Assert
+    assert [r["exit_reason"] for r in rows] == ["reboot-swept"]
 
 
 def test_db_query_via_cli_rejects_unknown_table_with_nonzero_exit(
@@ -409,24 +442,30 @@ def test_record_instance_start_returned_id_matches_active_instance_row(
     assert list_active_instances()[0]["id"] == iid
 
 
-def test_record_instance_start_writes_a_start_kind_event_row(db_path: Path):
+def test_record_instance_start_stamps_started_at_on_the_instances_row(
+    db_path: Path,
+):
+    """A start is RECORDED — the property, re-pointed at where it lives.
+
+    This asserted ``[e["kind"] for e in events] == ["start"]`` against the
+    ``events`` table until 2026-08-28. That table was deleted for having
+    zero readers, and the deletion argument was precisely that its row
+    carried nothing the ``instances`` row did not already carry in the same
+    transaction: the event's ``ts`` IS ``instances.started_at``. So the
+    assertion moves onto the surviving column rather than leaving with the
+    table — the behaviour is real and still worth a test.
+    """
     # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
+    from scitex_agent_container._state.state_db_instances import (
+        read_instance,
         record_instance_start,
     )
 
     # Act
     iid = record_instance_start("x", host="h")
-    with open_db() as conn:
-        events = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM events WHERE instance_id=?", (iid,)
-            ).fetchall()
-        ]
+    row = read_instance(iid)
     # Assert
-    assert [e["kind"] for e in events] == ["start"]
+    assert row["started_at"]
 
 
 def test_record_instance_stop_clears_the_active_instance_list(db_path: Path):
@@ -476,180 +515,34 @@ def test_record_instance_stop_returns_false_on_second_call_for_idempotency(
     assert second is False
 
 
-def test_update_heartbeat_collapses_two_same_second_beats_into_one_row(
-    db_path: Path,
-):
-    # Arrange — pin both beats to one ``ts`` via the now_fn seam so the
-    # same-second collapse is deterministic (not a wall-clock coincidence).
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    fixed_ts = "2026-05-22T00:00:00Z"
-    # Act
-    update_heartbeat(
-        iid, iter=1, input_tokens=10, output_tokens=20, now_fn=lambda: fixed_ts
-    )
-    update_heartbeat(
-        iid, iter=2, input_tokens=30, output_tokens=40, now_fn=lambda: fixed_ts
-    )
-    with open_db() as conn:
-        n = conn.execute(
-            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
-            (iid,),
-        ).fetchone()["n"]
-    # Assert — single row thanks to ON CONFLICT (instance_id, ts@1-sec).
-    assert n == 1
-
-
-def test_update_heartbeat_keeps_two_rows_when_beats_straddle_a_second(
-    db_path: Path,
-):
-    # Arrange — distinct ``ts`` (clock ticked between beats) → no merge.
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    # Act
-    update_heartbeat(iid, iter=1, now_fn=lambda: "2026-05-22T00:00:00Z")
-    update_heartbeat(iid, iter=2, now_fn=lambda: "2026-05-22T00:00:01Z")
-    with open_db() as conn:
-        n = conn.execute(
-            "SELECT count(*) AS n FROM instance_heartbeats WHERE instance_id=?",
-            (iid,),
-        ).fetchone()["n"]
-    # Assert — two rows; "latest" stays unambiguous via the seq PK.
-    assert n == 2
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [("iter", 2), ("input_tokens", 30), ("output_tokens", 40)],
-)
-@pytest.mark.parametrize(
-    "second_ts",
-    ["2026-05-22T00:00:00Z", "2026-05-22T00:00:01Z"],
-    ids=["same-second", "straddle-second"],
-)
-def test_update_heartbeat_latest_row_holds_latest_value(
-    db_path: Path, column: str, expected: int, second_ts: str
-):
-    # Arrange — exercise BOTH the merge path (same ts) and the straddle
-    # path (clock ticked); "latest" must resolve to the iter=2 beat in
-    # either case. ``ts`` is pinned via now_fn so the test is
-    # deterministic instead of racing the wall clock.
-    from scitex_agent_container._state.state_db import (
-        latest_instance_heartbeat,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(
-        iid,
-        iter=1,
-        input_tokens=10,
-        output_tokens=20,
-        now_fn=lambda: "2026-05-22T00:00:00Z",
-    )
-    update_heartbeat(
-        iid,
-        iter=2,
-        input_tokens=30,
-        output_tokens=40,
-        now_fn=lambda: second_ts,
-    )
-    # Act — latest is MAX(seq), not an arbitrary fetchone().
-    hb_row = latest_instance_heartbeat(iid)
-    # Assert
-    assert hb_row[column] == expected
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [
-        ("iter_count", 2),
-        ("input_tokens", 30),
-        ("output_tokens", 40),
-    ],
-)
-def test_update_heartbeat_caches_rolling_value_on_instances_row(
-    db_path: Path, column: str, expected: int
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    update_heartbeat(iid, iter=2, input_tokens=30, output_tokens=40)
-    # Act
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst[column] == expected
-
-
-def test_update_heartbeat_caches_last_heartbeat_at_timestamp_on_instance_row(
-    db_path: Path,
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=1, input_tokens=10, output_tokens=20)
-    # Act
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst["last_heartbeat_at"] is not None
-
-
-@pytest.mark.parametrize(
-    "column, expected",
-    [
-        ("iter_count", 5),
-        ("input_tokens", 100),
-        ("output_tokens", 200),
-    ],
-)
-def test_update_heartbeat_partial_update_preserves_previous_field_via_coalesce(
-    db_path: Path, column: str, expected: int
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        open_db,
-        record_instance_start,
-        update_heartbeat,
-    )
-
-    iid = record_instance_start("x", host="h")
-    update_heartbeat(iid, iter=5, input_tokens=100, output_tokens=200)
-    # Act — second call only updates pane_state; other fields must NOT reset.
-    update_heartbeat(iid, pane_state="alive")
-    with open_db() as conn:
-        inst = dict(
-            conn.execute("SELECT * FROM instances WHERE id=?", (iid,)).fetchone()
-        )
-    # Assert
-    assert inst[column] == expected
+# ---------------------------------------------------------------------------
+# ``update_heartbeat`` / ``latest_instance_heartbeat`` — SEVEN tests lived
+# here until 2026-08-28, and they were good ones: same-second collapse via
+# the ON CONFLICT upsert, the straddle-a-second path, "latest is MAX(seq)"
+# proved on BOTH of those paths, the rolling cache on the ``instances`` row,
+# and the COALESCE partial update. Every one of them pinned ``ts`` through
+# the ``now_fn`` seam so the result was deterministic rather than a race
+# with the wall clock.
+#
+# They are DELETED, NOT RE-POINTED, because their SUBJECT is gone rather
+# than merely relocated. ``instance_heartbeats`` was removed from state.db
+# together with ``state_db_heartbeats`` — the module that WAS its API — on
+# the measurement that neither ``update_heartbeat`` nor
+# ``latest_instance_heartbeat`` had a single caller anywhere in ``src/``,
+# against 0 rows on every host. There is no surviving table these
+# assertions could be aimed at and no surviving function to call: unlike
+# the ``events`` test above, whose property (a start is recorded) simply
+# moved onto ``instances.started_at``, these describe a determinism
+# contract for a write path that no longer exists.
+#
+# WHAT THE DELETION TAKES WITH IT, so nobody has to rediscover it:
+# ``update_heartbeat`` was also the only writer of
+# ``instances.last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
+# ``output_tokens``, and ``state_db_gc``'s heartbeat-staleness rule reads
+# the first of those. That branch could not fire before this change either
+# — the writer had no callers — so no test here was covering it. Restoring
+# it means deciding who beats, and that is a design change, not a test.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -721,19 +614,70 @@ def test_gc_dead_instances_persists_exit_reason_crashed_on_instance_row(
     # Arrange
     from scitex_agent_container._state.state_db import (
         gc_dead_instances,
-        open_db,
         record_instance_start,
     )
+    from scitex_agent_container._state.state_db_instances import read_instance
 
     iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
     # Act
     gc_dead_instances()
-    with open_db() as conn:
-        row = conn.execute(
-            "SELECT exit_reason FROM instances WHERE id=?", (iid,)
-        ).fetchone()
+    row = read_instance(iid)
     # Assert
-    assert row["exit_reason"] == "crashed"
+    assert row["exit_reason"] == "pid_absent_at_sweep"
+
+
+def test_sweep_writes_a_reason_naming_the_check_not_a_cause(
+    db_path: Path, dead_pid_environment
+):
+    """The value must not assert a fate the check never established.
+
+    ``os.kill(pid, 0)`` raising ESRCH supports exactly one claim: the pid was
+    absent when we looked. The old value said ``crashed``, and three readers
+    believed it — reasoning about what could kill eleven processes in one
+    second when nothing had.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import (
+        gc_dead_instances,
+        record_instance_start,
+    )
+    from scitex_agent_container._state.state_db_instances import read_instance
+
+    iid = record_instance_start("dead-agent", pid=999_999_999, host="test-host")
+    # Act
+    gc_dead_instances()
+    row = read_instance(iid)
+    # Assert
+    assert "crashed" not in row["exit_reason"]
+
+
+def test_one_sweep_stamps_every_reaped_row_with_the_same_ended_at(
+    db_path: Path, dead_pid_environment
+):
+    """THE TRAP, pinned: a shared second is the sweep's clock, not a co-death.
+
+    Measured 2026-08-12 — eleven rows shared ``17:54:26Z`` and were read as a
+    simultaneous kill. They had died 10h46m earlier, at different moments.
+    This test exists so nobody can "fix" the shared timestamp by accident and
+    so the behaviour is documented as intended rather than incidental.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import (
+        gc_dead_instances,
+        record_instance_start,
+    )
+
+    for name in ("dead-a", "dead-b", "dead-c"):
+        record_instance_start(name, pid=999_999_999, host="test-host")
+    # Act
+    gc_dead_instances()
+    stamps = [
+        r["ended_at"]
+        for r in _swept_rows()
+        if r["exit_reason"] == "pid_absent_at_sweep"
+    ]
+    # Assert
+    assert len(set(stamps)) == 1
 
 
 def test_db_clean_via_cli_reports_at_least_one_crashed_in_json_body(
@@ -747,7 +691,7 @@ def test_db_clean_via_cli_reports_at_least_one_crashed_in_json_body(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_clean, ["--json"])
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["crashed"] >= 1
 
@@ -828,43 +772,47 @@ def test_export_state_payload_tables_key_covers_all_known_tables(db_path: Path):
     assert set(payload["tables"]) == set(KNOWN_TABLES)
 
 
-def test_export_state_payload_instances_table_contains_recorded_row_name(
-    db_path: Path,
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+def test_export_state_payload_carries_an_empty_tables_map(db_path: Path):
+    """The round trip has no payload left, and that is the assertion.
 
-    record_instance_start("polish-clew", host="src-host")
+    It asserted the recorded ``instances`` row came back in
+    ``payload["tables"]["instances"]`` until 2026-08-28. That table was the
+    last name in ``KNOWN_TABLES``; the map is empty now.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
+
     # Act
     payload = export_state(host="src-host")
     # Assert
-    assert [r["name"] for r in payload["tables"]["instances"]] == ["polish-clew"]
+    assert payload["tables"] == {}
 
 
-def test_export_state_filters_out_instance_rows_older_than_since_cutoff(
+def test_export_state_with_a_since_cutoff_still_carries_an_empty_map(
     db_path: Path,
 ):
-    # Arrange — bracket the cutoff with sleeps so the second boundary is clean.
-    import datetime as _dt
-    import time as _time
+    """The ``--since`` filter has nothing to filter, and must not invent it.
 
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    It bracketed two ``instances`` rows around a cutoff and asserted only the
+    newer survived. With no table the filter's whole observable behaviour is
+    that it still produces a well-formed, EMPTY payload rather than raising
+    or omitting the key.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("old", host="h")
-    _time.sleep(1.05)
-    cut = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _time.sleep(1.05)
-    record_instance_start("new", host="h")
     # Act
-    payload = export_state(since=cut, host="h")
+    payload = export_state(since="2.0", host="h")
     # Assert
-    assert [r["name"] for r in payload["tables"]["instances"]] == ["new"]
+    assert payload["tables"] == {}
 
 
 @pytest.fixture
@@ -909,66 +857,50 @@ def switch_to_sink_db(tmp_path: Path):
             importlib.reload(mod)
 
 
-def test_import_state_into_fresh_db_inserts_each_source_instance_row(
+def test_import_state_of_an_empty_payload_inserts_nothing(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange — write 2 rows on the source db and snapshot them.
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    """The import side of the same fact.
 
-    record_instance_start("a", host="src")
-    record_instance_start("b", host="src")
+    It moved two rows into a fresh sink and asserted the count until
+    2026-08-28. With ``KNOWN_TABLES`` empty there is nothing to carry, and
+    what must still hold is that the import SUCCEEDS on a well-formed
+    payload rather than failing on the absence.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
+
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
-    # Act — import into the fresh sink (different env path).
+    # Act
     inserted = sink_mod.import_state(payload)
     # Assert
-    assert inserted["instances"] == 2
+    assert inserted == {}
 
 
-def test_import_state_replayed_on_same_payload_inserts_zero_rows(
+def test_import_state_replayed_on_the_same_payload_is_still_a_no_op(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    """Replay safety, which outlives the rows: a second import must not fail.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("a", host="src")
-    record_instance_start("b", host="src")
     payload = export_state(host="src")
     sink_mod = switch_to_sink_db()
     sink_mod.import_state(payload)
     # Act
     inserted_again = sink_mod.import_state(payload)
     # Assert
-    assert inserted_again["instances"] == 0
-
-
-def test_import_state_round_trip_lands_exactly_the_source_uuids_on_sink(
-    db_path: Path, switch_to_sink_db
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
-
-    iid1 = record_instance_start("a", host="src")
-    iid2 = record_instance_start("b", host="src")
-    payload = export_state(host="src")
-    sink_mod = switch_to_sink_db()
-    # Act
-    sink_mod.import_state(payload)
-    with sink_mod.open_db() as conn:
-        rows = sorted(
-            r["id"] for r in conn.execute("SELECT id FROM instances").fetchall()
-        )
-    # Assert
-    assert rows == sorted([iid1, iid2])
+    assert inserted_again == {}
 
 
 def test_import_state_rejects_payload_with_unknown_schema_version(db_path: Path):
@@ -983,46 +915,48 @@ def test_import_state_rejects_payload_with_unknown_schema_version(db_path: Path)
         import_state(bad_payload)
 
 
-def test_db_export_via_cli_emits_json_with_recorded_instance_for_host(
-    db_path: Path,
-):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+def test_db_export_via_cli_emits_an_empty_tables_map(db_path: Path):
+    """The CLI wrapper carries the same empty map, and still exits zero."""
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["instances"]) == 1
+    assert payload["tables"] == {}
 
 
 def test_db_export_via_cli_emits_payload_with_requested_host_key(db_path: Path):
-    # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    # Arrange — the host STAMP survives the tables going away; it is what
+    # tells a reader which machine an (empty) dump describes.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("x", host="h")
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--host", "h"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert payload["host"] == "h"
 
 
-def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
+def test_db_import_via_cli_reads_stdin_and_reports_no_inserts(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange — snapshot source, point CLI at the fresh sink db.
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    """stdin still parses and the verb still succeeds — with nothing to add.
+    """
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import
@@ -1030,21 +964,23 @@ def test_db_import_via_cli_reads_stdin_and_inserts_one_instance_row(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
-    assert body["inserted"]["instances"] == 1
+    assert body["inserted"] == {}
 
 
 def test_db_import_via_cli_echoes_payload_host_back_in_json_body(
     db_path: Path, switch_to_sink_db
 ):
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    # Arrange — the provenance stamp an operator reads to know WHOSE dump
+    # this was, which matters more now that the dump itself is empty.
+    # Arrange — there is NO table to seed. ``instances`` was the last name in
+    # ``KNOWN_TABLES`` and it moved to the shared PostgreSQL store on
+    # 2026-08-28, so the payload's ``tables`` map is empty by construction.
+    # That empty MAP is the honest wire shape and is distinguishable from
+    # ``{"instances": []}``, which would read as "this host has no history".
+    from scitex_agent_container._state.state_db import export_state
 
-    record_instance_start("x", host="h")
     payload = export_state(host="h")
     switch_to_sink_db()
     from scitex_agent_container.cli_pkg.db_group import db_import
@@ -1052,6 +988,6 @@ def test_db_import_via_cli_echoes_payload_host_back_in_json_body(
     runner = CliRunner()
     # Act
     result = runner.invoke(db_import, ["-", "--json"], input=json.dumps(payload))
-    body = json.loads(result.output)
+    body = json.loads(result.stdout)
     # Assert
     assert body["host"] == "h"

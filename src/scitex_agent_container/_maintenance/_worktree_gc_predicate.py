@@ -2,9 +2,14 @@
 
 A worktree is removable **iff ALL FOUR** legs pass:
 
-1. **CLEAN** — ``git status --porcelain`` is empty. Untracked files count
-   as DIRTY: an untracked file is work saved nowhere else, which makes it
-   the most expensive thing in the tree, not the cheapest.
+1. **CLEAN** — ``git status --porcelain --ignored`` is empty. Untracked
+   AND IGNORED files count as DIRTY: either one is work saved nowhere
+   else, which makes it the most expensive thing in the tree, not the
+   cheapest. ``--ignored`` was missing until 2026-08-20 and its absence
+   was a data-loss bug — git refuses to remove a worktree over an
+   untracked file and removes one over an ignored file without comment,
+   so ignored content had neither this guard nor git's. See
+   :func:`is_clean` for the measurement and the controls.
 2. **MERGED** — the ancestor check (``rev-list --count <base>..<head>``
    is 0 against ``develop`` or ``main``) OR a MERGED PR exists for the
    branch. BOTH styles are required: a squash-merged branch is not an
@@ -51,14 +56,46 @@ __all__ = ["is_clean", "is_idle", "is_merged", "is_old_enough", "verdict_for"]
 
 
 def is_clean(path: str) -> tuple[bool | None, str]:
-    """Leg 1 — clean tree. Untracked files count as DIRTY.
+    """Leg 1 — clean tree. Untracked AND IGNORED files count as DIRTY.
 
     An unreadable tree returns ``None`` with the ``dirty`` reason: we
-    could not prove it clean, so it is kept. ``--porcelain`` lists
-    untracked files by default (no ``-uno``), and that default is the
-    behaviour we want, not an accident.
+    could not prove it clean, so it is kept.
+
+    ``--ignored`` IS THE LOAD-BEARING FLAG, and its absence was a data-loss
+    bug. This function used to run plain ``--porcelain`` and its docstring
+    said the untracked default "is the behaviour we want, not an accident" —
+    true, and it settled only ONE of the two axes a working tree can be
+    non-empty on. Measured 2026-08-20 with a control:
+
+        worktree holding only GITIGNORED/lessons.md
+          git status --porcelain              ''              -> read CLEAN
+          git status --porcelain --ignored    '!! GITIGNORED/'
+          git worktree remove (no --force)    rc=0            -> NOTES GONE
+
+        CONTROL, same position, an UNTRACKED file instead
+          git status --porcelain              '?? scratch.txt' -> read DIRTY
+          git worktree remove (no --force)    rc=128           -> refused
+
+    So untracked content has TWO independent protections — this predicate
+    and git itself — and ignored content had NEITHER. git declines to delete
+    a worktree over an untracked file and deletes one over an ignored file
+    without comment, which is the opposite of the intuition the old docstring
+    was resting on.
+
+    That gap lands exactly where this fleet keeps its notes. CLAUDE.md
+    instructs every agent to write ``GITIGNORED/tasks/todo.md`` and
+    ``GITIGNORED/tasks/lessons.md``; ``GITIGNORED/`` is ignored by name. And
+    ``worktree-gc`` runs unattended on a timer, so the removal would be
+    reported as routine housekeeping. This module's own header states the
+    trade it exists to make — "REMOVE destroys work that exists nowhere else.
+    We pick annoying." — and ignored files were the one class where it was
+    silently picking the other way.
+
+    Found by applying dotfiles' parallel finding (git refuses to overwrite an
+    untracked file on a merge and silently overwrites an ignored one) to this
+    package rather than only acknowledging it.
     """
-    ok, out = run_git(path, "status", "--porcelain")
+    ok, out = run_git(path, "status", "--porcelain", "--ignored")
     if not ok:
         return None, KEEP_DIRTY
     return (True, "") if not out.strip() else (False, KEEP_DIRTY)

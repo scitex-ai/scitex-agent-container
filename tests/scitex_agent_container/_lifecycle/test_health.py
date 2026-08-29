@@ -159,7 +159,7 @@ def test_health_check_unknown_method_message_names_method() -> None:
     assert "Unknown health method" in msg
 
 
-def test_health_check_sdk_alive_routes_to_sdk_helper() -> None:
+def test_health_check_sdk_alive_routes_to_sdk_helper(pg_schema, ) -> None:
     # Arrange: a real fake runtime that reports healthy.
     cfg = _make_cfg(method="sdk-alive")
     runtime = FakeRuntime(running=True)
@@ -169,7 +169,7 @@ def test_health_check_sdk_alive_routes_to_sdk_helper() -> None:
     assert result == (True, "healthy")
 
 
-def test_health_check_sdk_alive_passes_config_to_runtime() -> None:
+def test_health_check_sdk_alive_passes_config_to_runtime(pg_schema, ) -> None:
     # Arrange
     cfg = _make_cfg(method="sdk-alive")
     runtime = FakeRuntime(running=True)
@@ -355,9 +355,12 @@ def test_check_a2a_card_http_error_includes_status_code(
     assert "HTTP 503" in msg
 
 
-def test_check_a2a_card_url_error_when_port_closed(tmp_path: Path) -> None:
-    # Arrange: YAML points at a guaranteed-closed port.
-    closed_port = _free_port()
+def test_check_a2a_card_url_error_when_port_closed(tmp_path: Path, dead_port) -> None:
+    # Arrange: YAML points at a port bound but never listened on, and HELD —
+    # so it is guaranteed closed for the whole test, not merely closed at the
+    # moment we looked. (`_free_port` above is the OTHER need: a port a real
+    # server is about to bind. It must not be used for a must-stay-dead port.)
+    closed_port = dead_port()
     cfg = _make_cfg(name="ag1", method="a2a-card")
     cfg.config_path = str(_write_a2a_yaml(tmp_path, port=closed_port))
     # Act
@@ -648,19 +651,20 @@ def _no_delay(_seconds: float) -> None:
     return None
 
 
-def test_sdk_alive_fails_a_live_tui_agent_whose_turn_bridge_is_dead() -> None:
+def test_sdk_alive_fails_a_live_tui_agent_whose_turn_bridge_is_dead(dead_port) -> None:
     # Arrange — the measured fault: tmux session alive, nothing bound to the
-    # a2a port. This is the case that used to report healthy.
-    cfg = _bridge_cfg(port=_free_port())
+    # a2a port. This is the case that used to report healthy. The port is HELD
+    # unbound, so no other test can bind it and make the bridge look alive.
+    cfg = _bridge_cfg(port=dead_port())
     # Act
     healthy, _message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
     # Assert
     assert healthy is False
 
 
-def test_dead_turn_bridge_message_names_the_unserved_url() -> None:
+def test_dead_turn_bridge_message_names_the_unserved_url(dead_port) -> None:
     # Arrange
-    port = _free_port()
+    port = dead_port()
     cfg = _bridge_cfg(port=port)
     # Act
     _healthy, message = health_mod.health_check(cfg, runtime=FakeRuntime(running=True))
@@ -694,10 +698,10 @@ def test_healthy_message_reports_the_turn_bridge_alongside_the_runtime() -> None
     assert "turn bridge healthy" in message
 
 
-def test_a_dead_runtime_dominates_the_bridge_verdict() -> None:
+def test_a_dead_runtime_dominates_the_bridge_verdict(dead_port) -> None:
     # Arrange — a stopped agent must be reported as a stopped RUNTIME, not as
     # a missing bridge (naming the symptom would send the reader hunting).
-    cfg = _bridge_cfg(port=_free_port())
+    cfg = _bridge_cfg(port=dead_port())
     # Act
     _healthy, message = health_mod.health_check(cfg, runtime=FakeRuntime(running=False))
     # Assert
@@ -733,9 +737,9 @@ def test_turn_bridge_method_probes_the_bridge_directly() -> None:
     assert healthy is True
 
 
-def test_turn_bridge_method_fails_when_nothing_is_bound() -> None:
+def test_turn_bridge_method_fails_when_nothing_is_bound(dead_port) -> None:
     # Arrange
-    cfg = _bridge_cfg(port=_free_port(), method="turn-bridge")
+    cfg = _bridge_cfg(port=dead_port(), method="turn-bridge")
     # Act
     healthy, _message = health_mod.health_check(cfg)
     # Assert
@@ -780,18 +784,19 @@ def test_a_bridge_that_binds_during_the_backoff_is_reported_healthy() -> None:
     assert healthy is True
 
 
-def test_a_persistently_dead_bridge_is_failed_after_every_attempt() -> None:
-    # Arrange
-    cfg = _bridge_cfg(port=_free_port())
+def test_a_persistently_dead_bridge_is_failed_after_every_attempt(dead_port) -> None:
+    # Arrange — PERSISTENTLY dead: the port is held unbound across all three
+    # probes, so "still dead on attempt 3" is a property, not a coincidence.
+    cfg = _bridge_cfg(port=dead_port())
     # Act
     healthy, _message = health_mod._check_turn_bridge(cfg, sleep_fn=_no_delay)
     # Assert
     assert healthy is False
 
 
-def test_a_failed_verdict_states_how_many_probes_confirmed_it() -> None:
+def test_a_failed_verdict_states_how_many_probes_confirmed_it(dead_port) -> None:
     # Arrange
-    cfg = _bridge_cfg(port=_free_port())
+    cfg = _bridge_cfg(port=dead_port())
     # Act
     _healthy, message = health_mod._check_turn_bridge(
         cfg, attempts=3, sleep_fn=_no_delay

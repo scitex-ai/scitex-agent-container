@@ -108,6 +108,14 @@ def _setup_mcp_from_servers(
 
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
+    # The file now holds RESOLVED secret literals (``${VAR}`` expansion above
+    # plus the spec-env bake), so it must not be world-readable — the same
+    # rule that moved the SDK's MCP config off the child argv (see
+    # runtimes/_mcp_config_file). ``write_text`` applies the ambient umask,
+    # which is commonly 0022 → 0644; tighten unconditionally.
+    from ._mcp_config_file import MCP_CONFIG_FILE_MODE
+
+    os.chmod(mcp_path, MCP_CONFIG_FILE_MODE)
 
     logger.info(
         "Generated .mcp.json for agent '%s' at %s (servers: %s)",

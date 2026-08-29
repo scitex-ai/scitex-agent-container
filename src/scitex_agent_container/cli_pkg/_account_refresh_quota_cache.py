@@ -89,7 +89,7 @@ def account_refresh_quota_cache(cache_path: str | None, as_json: bool) -> None:
             err=True,
         )
     else:
-        from .._helpers import system_msg
+        from ._helpers import system_msg
 
         results = result["results"]
         if not results:

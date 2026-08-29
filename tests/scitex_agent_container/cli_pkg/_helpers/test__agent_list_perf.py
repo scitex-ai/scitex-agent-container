@@ -24,6 +24,22 @@ import scitex_agent_container.cli_pkg._helpers._agent_list as _al
 from scitex_agent_container.cli_pkg._helpers._agent_list_probe import LocalProbe
 from scitex_agent_container.cli_pkg._helpers._agent_list import get_agent_list_data
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 
 class _FakeRegistry:
     def __init__(self, entries: list[dict]) -> None:

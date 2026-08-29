@@ -54,6 +54,75 @@ def _row(**overrides) -> dict:
     return row
 
 
+# --- the PIN: ownership is asked before liveness -----------------------------
+
+
+def _pinned_elsewhere_corpse():
+    """A PERFECT local corpse whose spec pins it somewhere else.
+
+    Deliberately every signal says "restart me": the row's host matches the
+    local host and ``ended_at`` is None. Only the pin dissents. That is the
+    exact production shape — scitex-hub was pinned to scitex-nas-03, had never
+    managed to RUN there, so its row said compute-04, the old guard read
+    row_host == local_host as "mine", and every 5-minute pass restarted it on
+    the wrong machine while rewriting the row to agree.
+    """
+    return _decide(
+        row=_row(host="host-a", ended_at=None),
+        local_host="host-a",
+        declared_host_is_local=False,
+    )
+
+
+def test_agent_pinned_to_another_host_is_skipped():
+    # Arrange
+    # Act
+    decision = _pinned_elsewhere_corpse()
+    # Assert
+    assert decision.verdict is Verdict.SKIPPED
+
+
+def test_agent_pinned_to_another_host_says_why():
+    # Arrange
+    # Act
+    decision = _pinned_elsewhere_corpse()
+    # Assert
+    assert decision.reason == "pinned-elsewhere"
+
+
+def test_a_pin_naming_this_host_still_restarts():
+    # Arrange
+    row = _row(ended_at=None)
+    # Act
+    decision = _decide(row=row, declared_host_is_local=True)
+    # Assert
+    assert decision.verdict is Verdict.RESTART
+
+
+def test_an_unresolvable_pin_is_unknown_not_a_refusal():
+    """``None`` is not ``False``.
+
+    A pin we could not resolve must leave the previous behaviour untouched.
+    Inventing a refusal from a failed lookup would stop the enforcer
+    restarting the WHOLE fleet the moment the peer registry became unreadable.
+    """
+    # Arrange
+    row = _row(ended_at=None)
+    # Act
+    decision = _decide(row=row, declared_host_is_local=None)
+    # Assert
+    assert decision.verdict is Verdict.RESTART
+
+
+def test_callers_that_omit_the_pin_are_unaffected():
+    # Arrange
+    row = _row(ended_at=None)
+    # Act
+    decision = _decide(row=row)
+    # Assert
+    assert decision.verdict is Verdict.RESTART
+
+
 # --- the promise: is this agent even ours to keep alive? --------------------
 
 
@@ -139,12 +208,31 @@ def test_ghost_active_row_names_the_corpse_signature():
     assert decision.reason == "ghost-active-row"
 
 
-@pytest.mark.parametrize("reason", ["crashed", "reboot-swept"])
+@pytest.mark.parametrize(
+    "reason", ["pid_absent_at_sweep", "crashed", "reboot-swept"]
+)
 def test_unexpected_exit_reason_is_restarted(reason):
-    # Arrange — the reaper wrote 'crashed'; the reboot sweep wrote
-    # 'reboot-swept'. Neither is a human deciding to stop the agent.
+    # Arrange — the reaper writes 'pid_absent_at_sweep' (and wrote 'crashed'
+    # before 2026-08-12); the reboot sweep wrote 'reboot-swept'. None of them
+    # is a human deciding to stop the agent.
     # Act
     decision = _decide(row=_row(ended_at="2026-07-16T00:00:00Z", exit_reason=reason))
+    # Assert
+    assert decision.verdict is Verdict.RESTART
+
+
+def test_legacy_crashed_rows_are_still_recognised_as_corpses():
+    """Rows written before the rename must not become unclassifiable.
+
+    Live databases hold them — eleven on the fleet host the day this landed.
+    Dropping the old spelling would send every one of them down the
+    "an exit_reason this rule does not know" path, which refuses to act, so
+    real corpses would silently stop being recoverable.
+    """
+    # Arrange
+    row = _row(ended_at="2026-07-16T00:00:00Z", exit_reason="crashed")
+    # Act
+    decision = _decide(row=row)
     # Assert
     assert decision.verdict is Verdict.RESTART
 

@@ -721,3 +721,86 @@ class TestOpenAgentCalls:
         out = summarize("ag-e", root=tmp_root)
         # Assert
         assert out["open_agent_calls"] == []
+
+
+# ---------------------------------------------------------------------------
+# secret redaction in the on-disk previews
+#
+# Every preview below lands in a DURABLE per-agent JSONL. Before this, an
+# agent that happened to read a credential file, or run a command that echoed
+# a token, wrote that value to disk in cleartext and kept it.
+#
+# EVERY SECRET IN THIS BLOCK IS SYNTHETIC. Never put a real credential in a
+# test: the fixture would then be the leak it exists to prevent.
+# ---------------------------------------------------------------------------
+
+# Shaped to match the third pattern in _state/_meta/secrets.py —
+# (token|secret|api_key|password|bearer) followed by = or : — with a value
+# distinctive enough that an assertion on its absence cannot pass by accident.
+FAKE_SECRET_LINE = "declare -x GITHUB_TOKEN=ZZZsyntheticNotARealTokenZZZ"
+FAKE_SECRET_VALUE = "ZZZsyntheticNotARealTokenZZZ"
+
+
+class TestPreviewsRedactSecrets:
+    def test_result_preview_masks_a_secret_value(self, tmp_root: Path):
+        # Arrange — a posttool response carrying a secret-shaped line.
+        append_event(
+            "ag-redact-1",
+            "posttool",
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "env"},
+                "tool_response": {"output": FAKE_SECRET_LINE},
+            },
+            root=tmp_root,
+        )
+        # Act
+        events = read_recent("ag-redact-1", root=tmp_root)
+        # Assert
+        assert FAKE_SECRET_VALUE not in events[-1]["result_preview"]
+
+    def test_result_preview_still_records_something(self, tmp_root: Path):
+        # Arrange — redaction must MASK, not blank the record; a preview that
+        # became empty would silently destroy the diagnostic value the log
+        # exists for, and would also pass the assertion above.
+        append_event(
+            "ag-redact-2",
+            "posttool",
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "env"},
+                "tool_response": {"output": FAKE_SECRET_LINE},
+            },
+            root=tmp_root,
+        )
+        # Act
+        preview = read_recent("ag-redact-2", root=tmp_root)[-1]["result_preview"]
+        # Assert
+        assert "GITHUB_TOKEN" in preview
+
+    def test_prompt_preview_masks_a_secret_value(self, tmp_root: Path):
+        # Arrange
+        append_event(
+            "ag-redact-3", "prompt", {"prompt": FAKE_SECRET_LINE}, root=tmp_root
+        )
+        # Act
+        events = read_recent("ag-redact-3", root=tmp_root)
+        # Assert
+        assert FAKE_SECRET_VALUE not in events[-1]["prompt_preview"]
+
+    def test_input_preview_masks_a_secret_value(self):
+        # Arrange — the tool-input path has its own preview builder.
+        # Act
+        preview = _preview_tool_input("Bash", {"command": FAKE_SECRET_LINE})
+        # Assert
+        assert FAKE_SECRET_VALUE not in preview
+
+    def test_a_benign_preview_is_left_alone(self):
+        # Arrange — POSITIVE CONTROL for the assertions above: they check for
+        # ABSENCE, which is also what a redactor that blanks everything, or a
+        # preview builder that silently returns "", would produce. This pins
+        # that ordinary text survives untouched.
+        # Act
+        preview = _preview_tool_input("Bash", {"command": "ls -la /tmp"})
+        # Assert
+        assert preview == "ls -la /tmp"

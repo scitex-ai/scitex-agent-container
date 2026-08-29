@@ -24,9 +24,7 @@ Conventions: AAA markers, one assert per test (STX-TQ007); no mocks
 from __future__ import annotations
 
 import contextlib
-import importlib
 import os
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -76,26 +74,6 @@ def _env(name: str, value: str | None):
             os.environ.pop(name, None)
         else:
             os.environ[name] = prior
-
-
-@pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db for dispatch-ledger writes during absorption."""
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +258,7 @@ async def test_inbound_reaction_does_not_post_reaction_back(fake_listen):
 
 
 @pytest.mark.asyncio
-async def test_inbound_reaction_updates_dispatch_ledger(fake_listen, db_path: Path):
+async def test_inbound_reaction_updates_dispatch_ledger(fake_listen, pg_schema: str):
     """End-to-end: alice previously sent a message, bob's adapter posts
     a structural reaction back; alice's adapter absorbs it and the
     ledger row flips to REACTED."""

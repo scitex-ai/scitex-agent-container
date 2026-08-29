@@ -58,6 +58,7 @@ jobs_mod = pytest.importorskip(
 
 import scitex_agent_container  # noqa: E402
 import scitex_agent_container.cli_pkg._dev_jobs as dj  # noqa: E402
+import scitex_agent_container.cli_pkg._dev_jobs_backend as backend  # noqa: E402
 from scitex_agent_container._jobs import _names  # noqa: E402
 from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
 from scitex_agent_container.cli_pkg import _dev_jobs_backend as _backend  # noqa: E402
@@ -543,7 +544,7 @@ def test_install_accepts_the_short_local_name() -> None:
         # Act
         runner.invoke(dev_group, ["timer", "install", "accounts-refresh", "-y"])
     # Assert
-    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+    assert [a[2] for a in captured] == ["scitex-agent-container-accounts-refresh"]
 
 
 def test_install_accepts_the_canonical_name_too() -> None:
@@ -551,9 +552,12 @@ def test_install_accepts_the_canonical_name_too() -> None:
     with _captured_delegations() as captured:
         runner = CliRunner()
         # Act
-        runner.invoke(dev_group, ["timer", "install", "sac.accounts-refresh", "-y"])
+        runner.invoke(
+            dev_group,
+            ["timer", "install", "scitex-agent-container-accounts-refresh", "-y"],
+        )
     # Assert
-    assert [a[2] for a in captured] == ["sac.accounts-refresh"]
+    assert [a[2] for a in captured] == ["scitex-agent-container-accounts-refresh"]
 
 
 def test_install_forwards_dry_run_to_the_delegation() -> None:
@@ -629,38 +633,116 @@ def test_an_unknown_job_name_lists_the_real_ones() -> None:
 
 
 # ---------------------------------------------------------------------------
-# verbs the installed scitex-dev cannot serve yet
+# a verb whose SUPPORT depends on the installed scitex-dev
 # ---------------------------------------------------------------------------
+# THESE TESTS PINNED A FACT WITH AN EXPIRY DATE, AND IT EXPIRED.
+#
+# They asserted unconditionally that `sac dev timer status` is REFUSED —
+# true only while the installed scitex-dev had no `ecosystem dev timer
+# status` to delegate to. scitex-dev 0.48.0 shipped one; the shared CI SIF
+# picked it up on 2026-08-12, and these three went red on every open PR
+# while sac itself was behaving exactly as designed: it stopped refusing
+# and started DELEGATING. The suite called that a regression. It was a
+# dependency release.
+#
+# Measured, one variable, everything else held equal:
+#     scitex-dev 0.47.0  ->  exit 4, refusal naming the systemctl command
+#     scitex-dev 0.48.0  ->  delegation; no refusal on sac's own stderr
+# (Same click 8.4.2, same sac commit, same test files.)
+#
+# THE FIX IS NOT A SKIP. Skipping when the backend serves the verb would
+# silently stop testing the REFUSAL path — which still runs against every
+# scitex-dev that lacks the verb, is the half a future change is most
+# likely to break, and would then break unwatched. A skipped test reports
+# the same green as a passing one.
+#
+# So each test asks sac's OWN probe — `_dev_jobs_backend.resolve()`, the
+# very call sac's refusal path uses to decide — and asserts the branch that
+# probe selected: refuse when the backend cannot serve the verb, delegate
+# when it can. Both behaviours stay covered under both worlds, and no
+# scitex-dev release can expire this again.
 
 
-def test_a_verb_the_backend_cannot_serve_exits_four() -> None:
-    # Arrange — `ecosystem timer` does not exist yet and `ecosystem
-    # systemd` has no `status`, so this is a REAL unsupported path today,
-    # measured rather than simulated. It must fail loudly, not pretend.
+def _timer_status_support() -> backend.Delegation:
+    """What sac's OWN probe concludes about `dev timer status` right now.
+
+    Deliberately the production call rather than a re-implementation: a
+    parallel capability check in the tests could drift from the one the
+    refusal path actually consults, and then the suite would be green
+    about a decision the product never makes. The cache is reset first so
+    the answer describes this interpreter's installed scitex-dev and not a
+    verdict some earlier test cached.
+    """
+    backend.reset_capability_cache()
+    return backend.resolve("timer", "status")
+
+
+def test_the_probe_states_its_evidence_either_way() -> None:
+    # Arrange — every assertion below branches on this probe, so a probe
+    # that answered without evidence would make all of them unreadable.
+    delegation = _timer_status_support()
+    # Act
+    evidence = delegation.evidence
+    # Assert
+    assert evidence, (
+        "sac's capability probe reached a verdict without saying how. The "
+        "tests below report 'refused' or 'delegated' on its say-so; an "
+        "unexplained verdict makes their failures undiagnosable."
+    )
+
+
+def test_the_exit_code_follows_what_the_probe_decided() -> None:
+    # Arrange — exit 4 means "the backend cannot serve this verb". It is
+    # correct exactly when the probe says the backend cannot.
+    delegation = _timer_status_support()
     runner = CliRunner()
     # Act
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
-    assert result.exit_code == 4
+    assert (result.exit_code == 4) is (not delegation.supported), (
+        f"sac exited {result.exit_code} for `dev timer status`, but its own "
+        f"probe says supported={delegation.supported} ({delegation.evidence}). "
+        "Exit 4 is the refusal code: it must appear when the backend cannot "
+        "serve the verb and must NOT appear when it can, where sac should "
+        "delegate instead."
+    )
 
 
-def test_an_unsupported_verb_states_what_it_probed() -> None:
-    # Arrange — a refusal with no evidence is a claim.
+def test_a_refusal_states_what_it_probed() -> None:
+    # Arrange — a refusal with no evidence is a claim. When the backend DOES
+    # serve the verb there is no refusal, so the evidence must not appear.
+    delegation = _timer_status_support()
     runner = CliRunner()
     # Act
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
-    assert "ecosystem dev timer status" in result.stderr
+    assert ("ecosystem dev timer status" in result.stderr) is (
+        not delegation.supported
+    ), (
+        f"probe says supported={delegation.supported}, but sac's stderr "
+        f"{'omits' if not delegation.supported else 'still carries'} the "
+        "probed-paths evidence. A refusal must name what it probed; a "
+        "delegation must not print a refusal it did not make.\n"
+        f"stderr: {result.stderr!r}"
+    )
 
 
-def test_an_unsupported_verb_offers_the_manual_command() -> None:
+def test_a_refusal_offers_the_manual_command() -> None:
     # Arrange — reporting a command is not running it; sac still does not
-    # own systemctl.
+    # own systemctl. Only meaningful while sac is the one refusing.
+    delegation = _timer_status_support()
     runner = CliRunner()
     # Act
     result = runner.invoke(dev_group, ["timer", "status", "accounts-refresh"])
     # Assert
-    assert "systemctl --user status sac.accounts-refresh.timer" in result.stderr
+    assert (
+        f"systemctl --user status {'scitex-agent-container-accounts-refresh'}.timer" in result.stderr
+    ) is (not delegation.supported), (
+        f"probe says supported={delegation.supported}. When sac refuses it "
+        "must hand the operator the manual command; when it delegates it "
+        "must not, because the verb is being served rather than declined.\n"
+        f"stderr: {result.stderr!r}"
+    )
 
 
 def test_an_unsupported_verb_writes_nothing_to_stdout() -> None:

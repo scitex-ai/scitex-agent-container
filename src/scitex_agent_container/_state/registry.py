@@ -36,12 +36,17 @@ def _default_session_probe(session: str) -> bool | None:
     """
     import subprocess
 
+    from .._runners._tmux._target import exact_target
+
     verdicts: list[bool] = []
     # stx-allow: fallback (reason: a missing/failing multiplexer binary is
     # UNKNOWN, never evidence of death -- see the docstring incident.)
     try:
+        # EXACT target: a bare -t prefix-matches, so a dead agent could be
+        # vouched alive by a sibling session (incident 2026-08-14).
         rc = subprocess.run(
-            ["tmux", "has-session", "-t", session], capture_output=True
+            ["tmux", "has-session", "-t", exact_target(session)],
+            capture_output=True,
         ).returncode
         verdicts.append(rc == 0)
     except Exception:  # stx-allow: fallback (reason: see inline comment)

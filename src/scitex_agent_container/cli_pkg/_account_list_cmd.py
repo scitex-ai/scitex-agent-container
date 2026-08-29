@@ -28,8 +28,24 @@ from __future__ import annotations
 
 import click
 
+from ._account_list_fleet import fleet_account_options, run_fleet_account_list
+
 
 @click.command("list")
+@fleet_account_options
+@click.option(
+    "--passive",
+    "passive",
+    is_flag=True,
+    default=False,
+    help=(
+        "Read ONLY: credential freshness from expiresAt and usage from the "
+        "on-disk cache, never the network. Without it, listing an account whose "
+        "token has expired REFRESHES that token — which rotates a single-use "
+        "credential every other host is still using (INCIDENT 2026-08-09). The "
+        "fleet view sets this for every host, including this one."
+    ),
+)
 @click.option(
     "--json",
     "as_json",
@@ -50,8 +66,42 @@ import click
         "column always shows the snapshot age so a stale number is obvious."
     ),
 )
-def account_list(as_json: bool, refresh: bool) -> None:
-    """List stored accounts and show the currently active one.
+@click.option(
+    "--no-refresh-quota",
+    "refresh_quota",
+    flag_value=False,
+    default=True,
+    help=(
+        "Skip the automatic quota-snapshot refresh this command performs "
+        "before rendering, and read whatever is cached. Faster and fully "
+        "offline; the bars may then be stale, and the renderer says so. "
+        "The refresh refetches USAGE ONLY — it never touches a credential."
+    ),
+)
+def account_list(
+    as_json: bool,
+    refresh: bool,
+    passive: bool,
+    hosts: tuple[str, ...],
+    no_fanout: bool,
+    host_timeout: float,
+    by_host: bool,
+    refresh_quota: bool,
+) -> None:
+    """List stored accounts across the fleet, and show this host's active one.
+
+    FLEET-WIDE by default: every host this machine can reach (``sac host
+    list``), each row naming its machine, above a MANDATORY header saying which
+    hosts answered and which did not, with the reason. A credential is a
+    per-host FILE outside the sync rail, so the same account is routinely VALID
+    here and EXPIRED there — that difference is the whole point of the Host
+    column, and a host that could not be reached is REPORTED rather than
+    dropped, because an unreachable host must never look like an empty one.
+
+    The fleet view is PASSIVE by construction: it never refreshes a token. Use
+    ``--host localhost`` for this machine's full local view (active-credential
+    blocks and the usage bars), and ``--refresh`` there to force a live
+    usage refetch.
 
     The human view splits its two surfaces without duplication
     (operator directive 2026-07-11): the accounts table is exactly
@@ -96,9 +146,45 @@ def account_list(as_json: bool, refresh: bool) -> None:
         render_stored_table,
     )
     from ._account_openai import format_openai_account_block
-    from ._account_usage_bars import render_usage_bars_block
     from ._helpers import console
     from .status_cmds import _format_claude_account_block
+
+    # REFRESH THE QUOTA SNAPSHOT BEFORE READING IT.
+    #
+    # Operator ruling 2026-08-17, second time of asking: "sac accounts list
+    # should automatically refresh the snapshot beforehand ... it is just
+    # time consuming for me to type it by myself." The first answer was a
+    # 5-minute timer (PR #1085), which fixes the host that RUNS the timer and
+    # leaves every other host rendering yesterday's numbers.
+    #
+    # WHY A STALE SNAPSHOT IS WORSE THAN NO SNAPSHOT HERE. Measured the same
+    # day, same account, two hosts:
+    #
+    #     ywata-note-win cache (1d old)   scitex-01-scitex-ai  7d = 15%
+    #     scitex-compute-03, refreshed    scitex-01-scitex-ai  7d = 100%
+    #
+    # The stale reading says the account has headroom while it is in fact
+    # capped until Aug 22 — the number is not merely old, it is INVERTED, and
+    # this is the command an operator reaches for to decide which account to
+    # use. The renderer already detects the condition and prints "! snapshot
+    # older than the refresh window"; narrating a fixable staleness instead of
+    # fixing it is what this change ends.
+    #
+    # SAFE BY CONSTRUCTION: this refetches USAGE ONLY. It does not touch a
+    # credential. A credential refresh rotates a single-use token and would
+    # revoke every other host still holding it — which is why the fleet path
+    # is passive and stays passive. `--no-refresh-quota` opts out for a fast,
+    # deliberately-offline read.
+    if refresh_quota:
+        # stx-allow: fallback (reason: a usage refetch is best-effort — no
+        # network, a 429, or an unreadable store must degrade to the cached
+        # view, never delete the operator's credential inventory mid-incident)
+        try:
+            from .._account.quota_cache_refresh import refresh_quota_cache
+
+            refresh_quota_cache()
+        except Exception:
+            pass
 
     accounts = list_accounts()
     # An UNREADABLE OpenAI store must not delete the Claude view. This command is
@@ -130,23 +216,30 @@ def account_list(as_json: bool, refresh: bool) -> None:
             active = read_credentials_metadata()
         except (OSError, _json.JSONDecodeError):
             active = {}
-        stored_json = build_stored_json(accounts, refresh=refresh)
-        click.echo(
-            _json.dumps(
-                {
-                    "active": active,
-                    "openai": openai_meta,
-                    "openai_accounts": openai_accounts,
-                    "openai_error": openai_error,
-                    "stored": stored_json,
-                    "accounts": build_provider_accounts_json(
-                        stored_json, openai_accounts
-                    ),
-                },
-                ensure_ascii=False,
-                indent=2,
+        # The five historical keys are unchanged and stay LOCAL by meaning:
+        # `active` is whoever THIS machine is logged in as, and the OpenAI
+        # block is this machine's Codex store. Only `stored` (and the new
+        # sibling `hosts`) become fleet-wide.
+        extras = {
+            "active": active,
+            "openai": openai_meta,
+            "openai_accounts": openai_accounts,
+            "openai_error": openai_error,
+        }
+        if not refresh:
+            run_fleet_account_list(
+                use_json=True,
+                hosts=hosts,
+                no_fanout=no_fanout,
+                host_timeout=host_timeout,
+                local_extras=extras,
+                openai_accounts=openai_accounts,
             )
-        )
+            return
+        stored_json = build_stored_json(accounts, refresh=refresh, passive=passive)
+        extras["stored"] = stored_json
+        extras["accounts"] = build_provider_accounts_json(stored_json, openai_accounts)
+        click.echo(_json.dumps(extras, ensure_ascii=False, indent=2))
         return
 
     # Active credentials block
@@ -176,7 +269,25 @@ def account_list(as_json: bool, refresh: bool) -> None:
         if openai_lines:
             console.print("")
 
-    rows = build_stored_rows(accounts, refresh=refresh)
+    if not refresh:
+        # FLEET view: every reachable host's credentials in one table, above
+        # the mandatory reachability header. The active-credential and OpenAI
+        # blocks above describe THIS machine and have already been printed;
+        # the usage bars below stay local for the same reason (they are this
+        # host's capacity picture, and each peer's own cache is its own).
+        run_fleet_account_list(
+            use_json=False,
+            hosts=hosts,
+            no_fanout=no_fanout,
+            host_timeout=host_timeout,
+            openai_accounts=openai_accounts,
+            by_host=by_host,
+        )
+        rows = build_stored_rows(accounts, passive=True)
+        _print_usage_bars(rows)
+        return
+
+    rows = build_stored_rows(accounts, refresh=refresh, passive=passive)
     all_rows = rows + build_openai_rows(openai_accounts)
     if not all_rows:
         click.echo(
@@ -184,16 +295,18 @@ def account_list(as_json: bool, refresh: bool) -> None:
             "scitex-agent-container account save <name>"
         )
         return
+    console.print(
+        "[dim]--refresh is LOCAL-ONLY: it refetches usage, and a refetch can "
+        "rotate an expired token. Doing that on every host at once is not "
+        "something a listing may do, so the fleet view never carries it.[/dim]"
+    )
     console.print(render_stored_table(all_rows))
     # Operator directive 2026-07-11: the bars own the percentages AND
     # their reset hints; the table above holds only what the bars
     # cannot express. Emitted via click.echo (NOT console.print) so
     # the `[..]` bar brackets render literally instead of being parsed
     # as rich markup.
-    bars_block = render_usage_bars_block(rows)
-    if bars_block:
-        click.echo("")
-        click.echo(bars_block)
+    _print_usage_bars(rows)
     # Legend and the `Fleet 7d capacity used:` line both DROPPED
     # (operator 2026-07-30). The legend explained a rolling-window
     # contract the per-line `(in ...)` hints already carry, and the fleet
@@ -204,6 +317,21 @@ def account_list(as_json: bool, refresh: bool) -> None:
     # `needs_rolling_legend` / `rolling_legend_line` are intentionally left
     # in _account_list_render for now: they are exported and separately
     # tested, and deleting them is a wider change than the display request.
+
+
+def _print_usage_bars(rows) -> None:
+    """Emit the local usage-bars block, if there is one.
+
+    ``click.echo`` (NOT ``console.print``) so the ``[..]`` bar brackets render
+    literally instead of being parsed as rich markup — the reason this was
+    always a separate call, now named so both render paths share it.
+    """
+    from ._account_usage_bars import render_usage_bars_block
+
+    bars_block = render_usage_bars_block(rows)
+    if bars_block:
+        click.echo("")
+        click.echo(bars_block)
 
 
 def register_list_command(group: click.Group) -> None:

@@ -19,16 +19,27 @@ import json
 import logging
 from typing import Any
 
+from .._listen._inbox_fault import FAULT_NOT_RUNNING
 from ._channel_send_errors import (
     SendError,
     delivery_error,
     error_result,
     lookup_error_result,
     no_subscriber_error,
+    not_running_error,
     unknown_target_error,
     unreachable_error,
 )
+from ._channel_target_lookup import (
+    fault_of,
+    is_registered,
+    names_of,
+    rows_from_agents_body,
+)
+from ._channel_tool_defs import build_tool_list
 from .channel import _recent
+
+from ..cli_pkg._send_status_code import publish_accepted_status_code
 
 log = logging.getLogger(__name__)
 
@@ -60,13 +71,20 @@ def register_tools(
     ) -> str:
         """Mint + record an outbound dispatch row; return its dispatch_id.
 
-        Ledger writes are observability — a state.db hiccup must not break
-        the actual a2a send, so failures log loudly (never silent) and the
-        send proceeds with a freshly-minted id that simply has no row.
+        Ledger writes are observability — a store hiccup must not break the
+        actual a2a send, so failures log loudly (never silent) and the send
+        proceeds with a freshly-minted id that simply has no row.
+
+        ``agent`` is the OWNING agent (this container). Since the ledger moved
+        to the fleet-wide PostgreSQL store it is what keeps a later
+        ``list_dispatches(agent=...)`` from answering with the whole fleet;
+        ``from_agent`` happens to be the same name here, but it is a different
+        question and cannot stand in for it.
         """
         did = new_dispatch_id()
         try:
             record_dispatch(
+                agent=agent_name,
                 from_agent=agent_name,
                 to_agent=to_agent,
                 text=content,
@@ -78,8 +96,10 @@ def register_tools(
         return did
 
     def _ledger_update(dispatch_id: str, status: str) -> None:
+        # Same owner _ledger_record stamped, so the keyed update addresses the
+        # row it wrote rather than scanning the fleet-wide ledger for it.
         try:
-            update_dispatch_status(dispatch_id, status)
+            update_dispatch_status(dispatch_id, status, agent=agent_name)
         except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a status-update failure must not break the a2a send — logged loudly, never silent)
             log.warning("dispatch-ledger status update (a2a_send) failed: %s", exc)
 
@@ -214,58 +234,48 @@ def register_tools(
                     "(delivered_subscriber_count=0) — NOT DELIVERED",
                     target,
                 )
-                # A 0-subscriber count has TWO causes that need OPPOSITE
-                # actions, and the count alone cannot tell them apart:
+                # A 0-subscriber count has THREE causes needing DIFFERENT
+                # actions, and the count alone tells them apart in none:
                 #
                 #   registered agent, adapter detached -> WAIT (it replays)
+                #   registered agent, NOT RUNNING      -> DO NOT WAIT; there
+                #                                         is no session left
+                #                                         to reconnect
                 #   name never registered (a typo)     -> FIX THE NAME
+                #
+                # The third was split out after the `sac-04` incident; the
+                # second after 2026-08-12, when 9 of 15 registered rows on this
+                # host were STOPPED agents whose senders were being told, in
+                # bold, to wait for a reconnect with no process to happen in.
+                # See ``._channel_target_lookup``.
                 #
                 # Only ask the registry on this failure path, so the happy
                 # path pays nothing for the distinction.
-                if not await _target_is_registered(target):
-                    raise unknown_target_error(target, await _registered_names())
+                rows = await _registered_rows()
+                if not is_registered(target, rows):
+                    raise unknown_target_error(target, names_of(rows))
+                if fault_of(target, rows) == FAULT_NOT_RUNNING:
+                    raise not_running_error(target)
                 raise no_subscriber_error(target)
         return res
 
-    async def _registered_names() -> list[str]:
-        """Registered agent names, from the same ``/agents`` view a2a_peers uses.
+    async def _registered_rows() -> list[dict[str, Any]]:
+        """Registry rows, from the same ``/agents`` view a2a_peers uses.
 
-        Returns ``[]`` when the registry cannot be read — the CALLER must
-        treat that as "could not determine", never as "no agents exist".
+        Rows rather than names, so this ONE fetch answers both questions the
+        failure path asks — is the name real, and is the agent running.
+        ``[]`` when the registry cannot be read; the caller must treat that as
+        "could not determine", never as "no agents exist".
         """
         try:
             res = await _get("/agents")
         except Exception:  # noqa: BLE001 - registry unreadable is not a send failure
             return []
-        body = res.get("body")
-        rows = body.get("agents") if isinstance(body, dict) else body
-        if not isinstance(rows, list):
-            return []
-        names: list[str] = []
-        for row in rows:
-            if isinstance(row, dict):
-                name = row.get("name") or row.get("agent")
-                if isinstance(name, str) and name:
-                    names.append(name)
-            elif isinstance(row, str) and row:
-                names.append(row)
-        return names
+        return rows_from_agents_body(res.get("body"))
 
-    async def _target_is_registered(target: str) -> bool:
-        """True unless the registry can AFFIRMATIVELY say ``target`` is absent.
-
-        Deliberately biased toward the existing behaviour. An empty list
-        means the registry was unreadable (or genuinely empty), and
-        "I could not check" is NOT evidence of a bad name — reporting an
-        unknown target on a failed lookup would invent the very false
-        certainty this whole module exists to prevent. So we downgrade to
-        the pre-existing no_subscriber_error and say less, rather than
-        saying something confident and possibly wrong.
-        """
-        names = await _registered_names()
-        if not names:
-            return True
-        return target in names
+    async def _registered_names() -> list[str]:
+        """Registered agent names — for callers outside the send failure path."""
+        return names_of(await _registered_rows())
 
     def _find(msg_id: str) -> dict[str, Any] | None:
         for ev in reversed(_recent):
@@ -311,88 +321,7 @@ def register_tools(
 
     @server.list_tools()
     async def _list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name="a2a_send",
-                description=(
-                    "Send a message to another agent on this sac listen. "
-                    "Sets from_agent automatically; mints conversation_id "
-                    "when omitted. FAILS (isError) when the message reached "
-                    "no live inbox subscriber — a peer listed as running is "
-                    "NOT necessarily subscribed. Check `inbox_subscribers` "
-                    "via a2a_peers before handing work to a peer."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["target", "content"],
-                    "properties": {
-                        "target": {"type": "string"},
-                        "content": {"type": "string"},
-                        "conversation_id": {"type": "string"},
-                        "priority": {
-                            "type": "string",
-                            "enum": ["low", "normal", "high"],
-                        },
-                        "requires_reply": {"type": "boolean"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_reply",
-                description=(
-                    "Reply to a received message. Looks up the original "
-                    "sender by msg_id; carries the same conversation_id."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["in_reply_to", "content"],
-                    "properties": {
-                        "in_reply_to": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                },
-            ),
-            Tool(
-                name="a2a_ack",
-                description=(
-                    "Acknowledge a received message without content. "
-                    "Cheap 'got it' to a sender that set requires_reply=true."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "required": ["msg_id"],
-                    "properties": {"msg_id": {"type": "string"}},
-                },
-            ),
-            Tool(
-                name="a2a_peers",
-                description=(
-                    "List agents known to this sac listen. REGISTERED IS NOT "
-                    "REACHABLE: a row can show a pid, a port and group "
-                    "'active' while having NO inbox subscriber, in which case "
-                    "a2a_send to it delivers nothing. Each row carries "
-                    "`inbox_subscribers` (live subscriber count) and "
-                    "`inbox_reachable` ('reachable' / 'unreachable' / "
-                    "'unknown' when it lives on another host and this listen "
-                    "cannot observe it). Only 'reachable' means a message "
-                    "will actually wake them."
-                ),
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            Tool(
-                name="a2a_inbox",
-                description=(
-                    "Return up to `limit` most recent received messages "
-                    "from this agent's inbox buffer (default 20)."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    },
-                },
-            ),
-        ]
+        return build_tool_list()
 
     @server.call_tool()
     async def _call_tool(
@@ -433,6 +362,15 @@ def register_tools(
                 _ledger_update(dispatch_id, STATUS_FAILED)
                 return error_result(exc)
             _ledger_update(dispatch_id, STATUS_DELIVERED)
+            # ADR-0007: attach the honest StatusCode alongside the raw
+            # response — http/202, final=False. A REAL measured count (the
+            # publish's own fan-out), never fabricated; absent for a
+            # suppressed contentless ack, which sent nothing to attach a
+            # verdict to.
+            body = res.get("body")
+            count = body.get("delivered_subscriber_count") if isinstance(body, dict) else None
+            if isinstance(count, int):
+                res["status_code"] = publish_accepted_status_code(target, count).to_dict()
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":

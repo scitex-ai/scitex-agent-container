@@ -48,6 +48,7 @@ HEALTHY = """SAC_RELOC begin
 SAC_RELOC epoch=1786246196
 SAC_RELOC image=present
 SAC_RELOC binds_checked=2
+SAC_RELOC workdirs_checked=1
 SAC_RELOC cardstore=yes
 SAC_RELOC cred=/creds/a.json|1786249796000|yes
 SAC_RELOC creds_checked=2
@@ -60,6 +61,7 @@ SAC_RELOC runtimes=apptainer,claude-agent-sdk,tui
 SAC_RELOC speckeys=apiVersion,kind,metadata,spec
 SAC_RELOC startdrift=current|0|0|/home/ywatanabe/.dotfiles|origin/main
 SAC_RELOC startdirty=0
+SAC_RELOC groups=developer
 SAC_RELOC end
 """
 
@@ -84,17 +86,21 @@ def spec():
     yield {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "metadata": {},
+        "metadata": {"labels": {"groups": ["developer"]}},
         "spec": {
             "runtime": "tui",
             "host": "ywata-note-win",
+            "workdir": "/home/ywatanabe/proj/thing",
             "apptainer": {
                 "image": "/srv/sac-base.sif",
                 "binds": ["/home/ywatanabe:/home/ywatanabe:rw", "/mnt/c:/mnt/c:rw"],
                 "env": {},
+                # 55432, not postgres's 5432: the DSN check refuses the latter
+                # outright, so a fixture carrying it would make every "healthy
+                # target" test fail for a reason unrelated to what it measures.
                 "raw_args": [
                     "--env",
-                    "SCITEX_CARDS_DB=postgresql://cards@127.0.0.1:5432/cards",
+                    "SCITEX_CARDS_DB=postgresql://cards@127.0.0.1:55432/cards",
                 ],
             },
             "claude": {"credentials_files": ["/creds/a.json"]},
@@ -352,6 +358,9 @@ def test_a_truncated_batch_still_measures_most_of_the_checks(spec) -> None:
         "supported_runtimes",
         "rejected_spec_keys",
         "spec_source_drift",
+        # asked through the target's own sac, after the validator symbols, so a
+        # cut before them takes this with it
+        "target_resolved_groups",
     }
 
 
@@ -412,7 +421,7 @@ def test_the_card_store_url_is_found_in_a_raw_env_arg(spec) -> None:
     # Act
     url = card_store_url_from_spec(spec)
     # Assert
-    assert url == "postgresql://cards@127.0.0.1:5432/cards"
+    assert url == "postgresql://cards@127.0.0.1:55432/cards"
 
 
 def test_rejected_spec_keys_are_the_ones_the_target_does_not_know(spec) -> None:

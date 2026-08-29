@@ -88,6 +88,7 @@ ERR_UNREACHABLE = "unreachable"
 ERR_DELIVERY_ERROR = "delivery_error"
 ERR_LOOKUP_FAILED = "lookup_failed"
 ERR_UNKNOWN_TARGET = "unknown_target"
+ERR_TARGET_NOT_RUNNING = "target_not_running"
 
 # What a 0-subscriber send hands the caller instead of a false success.
 #
@@ -140,6 +141,67 @@ UNKNOWN_TARGET_REMEDY: tuple[str, ...] = (
     "a dead agent — the agent you meant may be perfectly healthy under its "
     "real name.",
 )
+
+
+# What a REGISTERED BUT STOPPED target hands the caller — the third cause of a
+# 0-subscriber count, and the one whose advice was previously inverted.
+#
+# NO_SUBSCRIBER_REMEDY above says, correctly and in bold, "NOT LOST … do NOT
+# re-send … it replays on their next connect". That is right for a live agent
+# whose adapter is detached. For a STOPPED agent there is no next connect: no
+# session exists to reconnect, so the row sits in `channel_events` until someone
+# deliberately starts the agent. Handing the sender "wait, it is queued" is then
+# the same failure as the `sac-04` typo incident (see UNKNOWN_TARGET_REMEDY) —
+# a message parked forever behind reassuring advice.
+#
+# It still does NOT tell the caller to start the agent. Starting someone else's
+# agent is an operator decision — measured 2026-08-12, 9 of 15 registered rows
+# on one host were stopped, and a rail that nudges every blocked sender to start
+# them would have restarted most of a fleet overnight, unasked and unobserved.
+NOT_RUNNING_REMEDY: tuple[str, ...] = (
+    "DO NOT WAIT FOR A REPLY. Unlike a detached inbox adapter, a stopped agent "
+    "has no session that will reconnect, so the queued row will not drain on "
+    "its own. This is the opposite of the no_live_subscriber case.",
+    "The message IS durably queued (sac listen persisted it to channel_events "
+    "before publishing), so it will be delivered IF this agent is started "
+    "later. Do not re-send — that would deliver it twice.",
+    "Do NOT start the target yourself to unblock your send. Whether a stopped "
+    "agent should be running is an operator decision, not a side effect of "
+    "someone wanting to message it.",
+    "To make progress now: file a scitex-cards card assigned to the target "
+    "(durable and pull-based, so it survives the agent being down), or route "
+    "the work to a running peer, or escalate to the operator.",
+)
+
+
+def not_running_error(target: str) -> SendError:
+    """Build the loud error for a send to a REGISTERED BUT STOPPED agent.
+
+    Distinct from :func:`no_subscriber_error` because the count that produced
+    both is identical — ``delivered_subscriber_count == 0`` — while the correct
+    response is opposite. The distinguishing evidence is not the count: it is
+    the ``fault`` the listen route now publishes next to it, derived from the
+    host's tmux table (see ``_listen._inbox_fault``). Only a POSITIVELY observed
+    absence reaches here; an unobservable session falls back to
+    :func:`no_subscriber_error`, which is the safe reading.
+    """
+    return SendError(
+        f"NOT DELIVERED — send to {target!r} reached no live subscriber, and "
+        f"{target!r} IS NOT RUNNING: the listen daemon observed no live session "
+        "for it, so its registry row has outlived its process. The message is "
+        "durably queued, but NOTHING WILL DRAIN THAT QUEUE until the agent is "
+        "started — there is no adapter to reconnect. Do not wait for a reply.",
+        code=ERR_TARGET_NOT_RUNNING,
+        target=target,
+        detail={
+            "delivered": False,
+            "delivered_subscriber_count": 0,
+            "durably_queued": True,
+            "registered": True,
+            "target_running": False,
+            "what_to_do": list(NOT_RUNNING_REMEDY),
+        },
+    )
 
 
 def suggest_names(target: str, known: list[str]) -> list[str]:
@@ -282,6 +344,34 @@ def delivery_error(target: str, status: Any, body: Any) -> SendError:
     )
 
 
+#: ADR-0007: the two SendError classes this module can honestly relabel
+#: as a ``scitex_dev.status.StatusCode`` — exactly the two closed-kind
+#: ``scitex`` codes (``AGENT_UNAVAILABLE`` / ``NOT_RESOLVABLE``), matching
+#: the boundaries already declared for this package in
+#: ``scitex_dev.status``'s own ``spec/boundaries.yaml``. Every other
+#: ``ERR_*`` (no-subscriber-ambiguous, transport, 5xx) is deliberately
+#: left without a ``status_code`` here: this module cannot honestly tell
+#: "detached adapter, will replay" apart from "dead", and a parsed-then-
+#: wrong HTTP code is worse than none — see the PR body for the full
+#: account of this scope limit.
+def _status_code_for(exc: SendError) -> dict[str, Any] | None:
+    """Return the honest ``StatusCode.to_dict()`` for ``exc``, or ``None``."""
+    from ..cli_pkg._send_status_code import (
+        agent_unavailable_status_code,
+        not_resolvable_status_code,
+    )
+
+    if exc.code == ERR_TARGET_NOT_RUNNING:
+        return agent_unavailable_status_code(
+            exc.target, "the listen daemon observed no live session for it"
+        ).to_dict()
+    if exc.code == ERR_UNKNOWN_TARGET:
+        return not_resolvable_status_code(
+            exc.target, "no agent by that name is registered on this listen"
+        ).to_dict()
+    return None
+
+
 def _error_payload(exc: SendError) -> dict[str, Any]:
     """Project a :class:`SendError` onto the tool's JSON error body."""
     payload: dict[str, Any] = {
@@ -291,6 +381,9 @@ def _error_payload(exc: SendError) -> dict[str, Any]:
         "delivered": False,
     }
     payload.update(exc.detail)
+    status_code = _status_code_for(exc)
+    if status_code is not None:
+        payload["status_code"] = status_code
     return payload
 
 
@@ -334,8 +427,10 @@ __all__ = [
     "ERR_DELIVERY_ERROR",
     "ERR_LOOKUP_FAILED",
     "ERR_NO_SUBSCRIBER",
+    "ERR_TARGET_NOT_RUNNING",
     "ERR_UNKNOWN_TARGET",
     "ERR_UNREACHABLE",
+    "NOT_RUNNING_REMEDY",
     "NO_SUBSCRIBER_REMEDY",
     "UNKNOWN_TARGET_REMEDY",
     "SendError",
@@ -343,6 +438,7 @@ __all__ = [
     "error_result",
     "lookup_error_result",
     "no_subscriber_error",
+    "not_running_error",
     "suggest_names",
     "unknown_target_error",
     "unreachable_error",

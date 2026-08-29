@@ -295,13 +295,45 @@ def pick_healthy_account(
     #    read and cost the investigation hours).
     if not fresh:
         probe_ts = now if now is not None else time.time()
+        # THE REMEDY MUST MATCH THE STATE THAT BLOCKED THE BOOT.
+        # `claude /login` + `sync-live` refreshes a token; it does not
+        # lift a pause, and a paused account is out of service by the
+        # operator's own decision, not by any fault. Reviewed
+        # 2026-08-26: with everything paused this raised the sentence
+        # above, whose BRIEF — the red line `_start_single` prints, and
+        # the one actually read — never said PAUSED at all and offered
+        # a command that cannot work. That is the same two-way branch
+        # written before a new state existed which was repaired one
+        # layer down in `mint_token`; repairing it here too is the
+        # other half.
+        paused = [h for h in healths if h.state == "PAUSED"]
+        if paused and len(paused) == len(healths):
+            names = ", ".join(h.name for h in paused)
+            raise NoHealthyAccountError(
+                f"every stored account is PAUSED (probed at "
+                f"{_iso_utc(probe_ts)}): {_format_states(healths)}. Fix: "
+                f"`sac accounts resume {paused[0].name}` — this is a "
+                "decision you made, not a fault; nothing is broken and "
+                "nothing was deleted.",
+                brief=(
+                    f"every stored account is PAUSED ({names}) — run "
+                    f"`sac accounts resume {paused[0].name}`"
+                ),
+            )
         raise NoHealthyAccountError(
             f"no healthy stored account (probed at {_iso_utc(probe_ts)}): "
             f"{_format_states(healths)}. Fix: `claude /login` to one of "
-            "them, then `sac accounts sync-live`, then restart the agent.",
+            "them, then `sac accounts sync-live`, then restart the agent"
+            + (
+                f" — but note {len(paused)} of them are PAUSED and need "
+                "`sac accounts resume` instead."
+                if paused
+                else "."
+            ),
             brief=(
                 f"no fresh account among {', '.join(h.name for h in healths)}"
                 " — run `claude /login` then `sac accounts sync-live`"
+                + (f" ({len(paused)} are PAUSED — resume those)" if paused else "")
             ),
         )
 
