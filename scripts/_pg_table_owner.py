@@ -202,38 +202,92 @@ def ensure_owner(
 
 def _reference_population(
     conn: Any, *, managed: Sequence[str]
-) -> tuple[str | None, list[str]]:
-    """``(reference_table, roles)`` — who can already use the REST of the store.
+) -> tuple[str | None, list[str], dict[str, str]]:
+    """``(reference_table, roles, why)`` — who WRITES the rest of the store.
 
     The population is derived from a table this migration did NOT create, so
     it is an INDEPENDENT question from "did we set the owner we intended".
-    Deriving it from our own tables would make the check below tautological:
-    it would confirm that the roles which can use these tables can use these
+    Deriving it from our own tables would make the checks below tautological:
+    they would confirm that the roles which can use these tables can use these
     tables.
+
+    THE PREDICATE IS ``INSERT``, NOT ``SELECT``, AND THAT IS A CORRECTION
+    ====================================================================
+    The first version asked who could SELECT the reference table, which swept
+    in every member of PostgreSQL's built-in ``pg_read_all_data`` — read-only
+    auditors, monitoring roles, and the fleet's nightly-dump role
+    ``svc_backup``. Measured on the primary 2026-08-28, hours after the gate
+    shipped: ``svc_backup`` is a member of ``pg_read_all_data`` and nothing
+    else, holds SELECT and NOT INSERT/UPDATE/DELETE, has no explicit grant on
+    any store table, and cannot act as ``scitex_store_owner``. It therefore
+    failed the gate and BLOCKED compute-04's migration — on 96 of 96 candidate
+    reference tables, so it was not a fluke of which table got chosen. It was
+    a false positive on every possible run.
+
+    The refusal's own reasoning names the fix: the hazard is that a consumer
+    reaches ``init_channel_schema``, whose ``CREATE INDEX IF NOT EXISTS``
+    needs owner rights. A role that cannot WRITE the store never opens a
+    channel connection and never runs that statement, so it is not a consumer
+    in the sense this gate is about. ``INSERT`` is the crisp signal for
+    "participates in this store as a writer".
+
+    Measured with the corrected predicate on the same 96 tables: ZERO roles
+    trigger a refusal anywhere, while all 127 agent roles stay in the
+    population. The gate keeps its teeth and loses the false positive.
+
+    THIS WAS THE SAME ERROR CLASS AS THE MIGRATION GUARD IT SHIPPED WITH — a
+    predicate right about the thing it measured and wrong about which rows it
+    applied to. Worth saying out loud, because the next widening of this
+    population will be tempting for exactly the reason the last one was.
 
     Superusers are excluded. They pass every privilege test by fiat, so
     including them would let one superuser row hide every real consumer's
     failure.
+
+    ``why`` records HOW each role reaches the table — membership in its owner,
+    or an explicit grant — so a future false positive is visible IN THE
+    REFUSAL rather than only to somebody who goes and measures it.
     """
     rows = conn.execute(
-        "SELECT c.relname, r.rolname FROM pg_class c "
+        "SELECT c.relname, r.rolname, "
+        "       pg_has_role(r.oid, c.relowner, 'USAGE'), "
+        "       pg_get_userbyid(c.relowner) "
+        "FROM pg_class c "
         "JOIN pg_namespace n ON n.oid = c.relnamespace "
         "CROSS JOIN pg_roles r "
         "WHERE n.nspname = current_schema() AND c.relkind = 'r' "
         "AND c.relname <> ALL(%s) "
         "AND r.rolcanlogin AND NOT r.rolsuper "
-        "AND has_table_privilege(r.oid, c.oid, 'SELECT')",
+        "AND has_table_privilege(r.oid, c.oid, 'INSERT')",
         (list(managed),),
     ).fetchall()
     by_table: dict[str, list[str]] = {}
-    for table, role in rows:
+    reasons: dict[str, dict[str, str]] = {}
+    for table, role, by_membership, owner_name in rows:
         by_table.setdefault(str(table), []).append(str(role))
+        reasons.setdefault(str(table), {})[str(role)] = (
+            f"writes {table} as a member of {owner_name}"
+            if by_membership
+            else f"writes {table} through an explicit grant"
+        )
     if not by_table:
-        return None, []
+        return None, [], {}
     # The widest population, so the check speaks for as much of the fleet as
     # the database can attest to. Ties break by name, so two runs agree.
     reference = max(sorted(by_table), key=lambda t: len(by_table[t]))
-    return reference, sorted(by_table[reference])
+    return reference, sorted(by_table[reference]), reasons[reference]
+
+
+def _named_with_reasons(roles: Sequence[str], why: dict[str, str]) -> str:
+    """``role (why it counts as a consumer)``, comma-joined.
+
+    The reason travels WITH the name because this gate's first false positive
+    cost a blocked migration and a manual investigation the message could have
+    short-circuited: ``svc_backup`` alone says nothing, while ``svc_backup
+    (reads everything via pg_read_all_data)`` would have been self-evidently
+    wrong to the operator reading it.
+    """
+    return ", ".join(f"{r} ({why.get(r, 'no reason recorded')})" for r in roles)
 
 
 def owner_inheritance_problems(
@@ -252,27 +306,47 @@ def owner_inheritance_problems(
     naming a role this session happens to be a member of — its own leaf role,
     say — passes :func:`owner_is_reachable` and still reproduces 2026-08-28
     exactly.
+
+    WHAT THIS CAN AND CANNOT CATCH, stated rather than implied. Where the
+    store's access is by MEMBERSHIP and no ``--table-owner`` is given, the
+    intended owner is derived as the reference table's own owner, so the
+    population and the assertion collapse onto the same role and this check
+    cannot fail. That is not a defect to paper over — it is the correct answer
+    for that configuration, and pretending otherwise would make it the kind of
+    check that reassures without measuring. It has real work to do in exactly
+    three cases: an operator-supplied ``--table-owner``; a store whose access
+    is by explicit GRANT rather than membership; and a schema whose tables do
+    not all share one owner. :func:`consumer_access_problems` is the one that
+    stays sharp in the ordinary case, because it asks about the REAL tables
+    after the DDL, whose owner can differ from the reference table's.
     """
-    reference, roles = _reference_population(conn, managed=managed)
+    reference, roles, why = _reference_population(conn, managed=managed)
     if reference is None:
         return [], (
             "no other table in this schema to derive a consumer population "
             "from — consumer access UNCHECKED, not verified clean"
         )
-    short = conn.execute(
-        "SELECT r.rolname FROM pg_roles r WHERE r.rolname = ANY(%s) "
-        "AND NOT pg_has_role(r.oid, %s::regrole, 'USAGE') ORDER BY 1",
-        (roles, owner),
-    ).fetchall()
+    short = [
+        str(r[0])
+        for r in conn.execute(
+            "SELECT r.rolname FROM pg_roles r WHERE r.rolname = ANY(%s) "
+            "AND NOT pg_has_role(r.oid, %s::regrole, 'USAGE') ORDER BY 1",
+            (roles, owner),
+        ).fetchall()
+    ]
     if not short:
-        return [], f"{len(roles)} consumer role(s) inherit {owner!r}"
-    names = ", ".join(str(r[0]) for r in short)
+        return [], (
+            f"{len(roles)} writer role(s) of {reference!r} inherit {owner!r}"
+        )
     return [
-        f"{len(short)} of the {len(roles)} role(s) that can use {reference!r} "
-        f"cannot act as {owner!r}: {names}. Tables owned by it would be "
-        f"unusable to them through init_channel_schema's CREATE INDEX IF NOT "
-        f"EXISTS, which needs OWNER rights and which no GRANT supplies."
-    ], f"consumer population drawn from {reference!r}"
+        f"{len(short)} of the {len(roles)} role(s) that WRITE {reference!r} "
+        f"cannot act as {owner!r}: {_named_with_reasons(short, why)}. Tables "
+        f"owned by it would be unusable to them through init_channel_schema's "
+        f"CREATE INDEX IF NOT EXISTS, which needs OWNER rights and which no "
+        f"GRANT supplies. If a role named here does not in fact write this "
+        f"store, the POPULATION is wrong rather than the owner — see "
+        f"_reference_population."
+    ], f"consumer population drawn from writers of {reference!r}"
 
 
 def consumer_access_problems(
@@ -296,7 +370,7 @@ def consumer_access_problems(
     nothing but these tables cannot answer the question, and "nobody
     complained" from a database with nobody in it is not a pass.
     """
-    reference, roles = _reference_population(conn, managed=managed)
+    reference, roles, why = _reference_population(conn, managed=managed)
     if reference is None:
         return [], (
             "no other table in this schema to derive a consumer population "
@@ -320,15 +394,15 @@ def consumer_access_problems(
             (roles, *([table] * len(_NEEDED)), table),
         ).fetchall()
         if short:
-            names = ", ".join(str(r[0]) for r in short)
+            names = _named_with_reasons([str(r[0]) for r in short], why)
             problems.append(
                 f"{table} (owner {table_owner(conn, table)!r}) is NOT usable by "
-                f"{len(short)} of the {len(roles)} role(s) that can use "
+                f"{len(short)} of the {len(roles)} role(s) that WRITE "
                 f"{reference!r}: {names}. Those roles connect to this table "
                 f"through init_channel_schema, whose CREATE INDEX IF NOT "
                 f"EXISTS needs OWNER rights — a GRANT will not fix it."
             )
     return problems, (
-        f"consumer access checked for {len(roles)} role(s) drawn from "
+        f"consumer access checked for {len(roles)} writer role(s) of "
         f"{reference!r}"
     )

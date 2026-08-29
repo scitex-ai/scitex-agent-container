@@ -368,3 +368,113 @@ def test_an_empty_schema_reports_the_check_as_unrun(pg_schema: str) -> None:
         _problems, note = owners.consumer_access_problems(conn, managed=MANAGED)
     # Assert
     assert "UNCHECKED" in note
+
+
+# ---------------------------------------------------------------------------
+# THE POPULATION MUST BE WRITERS, NOT READERS.
+#
+# Measured on the primary 2026-08-28, hours after the gate shipped: the
+# nightly-dump role `svc_backup` is a member of PostgreSQL's built-in
+# `pg_read_all_data` and nothing else -- SELECT on everything, INSERT on
+# nothing, no explicit grant anywhere, and it cannot act as
+# scitex_store_owner. A population derived from SELECT swept it in, so the
+# gate REFUSED compute-04's migration on 96 of 96 candidate reference tables.
+# It was a false positive on every possible run, and it blocked the last host
+# of the channel_events migration.
+#
+# A role that cannot WRITE the store never opens a channel connection and
+# never reaches init_channel_schema's CREATE INDEX IF NOT EXISTS, which is
+# the whole hazard the refusal is about.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def read_only_role(store_owner: str, store_reference: str) -> str:
+    """A login role that can READ the reference table and not write it.
+
+    Derived from the catalog rather than named: on the fleet this finds
+    `svc_backup` through `pg_read_all_data`, and any cluster with an auditor
+    or monitoring role will offer its own. Skipped, loudly, where the shape
+    does not exist -- a skip that reads as a pass is how a suite reports green
+    while measuring nothing.
+    """
+    rows = raw_query(
+        "SELECT r.rolname FROM pg_roles r "
+        "WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname <> current_user "
+        "AND has_table_privilege(r.oid, %s::regclass, 'SELECT') "
+        "AND NOT has_table_privilege(r.oid, %s::regclass, 'INSERT') "
+        "AND NOT pg_has_role(r.oid, %s::regrole, 'USAGE') ORDER BY 1",
+        (store_reference, store_reference, store_owner),
+    )
+    if not rows:
+        pytest.skip(
+            "this cluster has no read-only login role that can SELECT but not "
+            "INSERT the reference table, so the svc_backup false positive "
+            "cannot be reproduced here"
+        )
+    return str(rows[0][0])
+
+
+def test_a_read_only_role_does_not_block_the_migration(
+    tmp_path: Path,
+    pg_schema: str,
+    store_owner: str,
+    store_reference: str,
+    read_only_role: str,
+) -> None:
+    """THE FALSE POSITIVE. A backup role must not refuse the whole import."""
+    # Arrange
+    db = legacy_db(tmp_path, _seed_rows())
+    # Act
+    rc = run(db, "--commit")
+    # Assert
+    assert rc == 0
+
+
+def test_a_read_only_role_is_not_in_the_consumer_population(
+    pg_schema: str, store_owner: str, store_reference: str, read_only_role: str
+) -> None:
+    """The predicate itself, asked directly: readers are not consumers here."""
+    # Arrange
+    owners = script_module("_pg_table_owner")
+    # Act
+    with raw_conn() as conn:
+        _ref, roles, _why = owners._reference_population(conn, managed=MANAGED)
+    # Assert
+    assert read_only_role not in roles
+
+
+def test_a_writer_role_is_still_in_the_consumer_population(
+    pg_schema: str, store_owner: str, store_reference: str
+) -> None:
+    """NEGATIVE CONTROL for the narrowing — it must not empty the population.
+
+    A predicate that excluded everybody would pass the test above and make the
+    gate incapable of ever refusing, which is the failure this narrowing is
+    most at risk of.
+    """
+    # Arrange
+    owners = script_module("_pg_table_owner")
+    # Act
+    with raw_conn() as conn:
+        _ref, roles, _why = owners._reference_population(conn, managed=MANAGED)
+    # Assert
+    assert roles
+
+
+def test_the_population_records_why_each_role_is_a_consumer(
+    pg_schema: str, store_owner: str, store_reference: str
+) -> None:
+    """The reason travels with the name, so the NEXT false positive is visible.
+
+    `svc_backup` on its own said nothing and cost a measurement session;
+    `svc_backup (writes ... as a member of ...)` would have been obviously
+    wrong in the refusal text itself.
+    """
+    # Arrange
+    owners = script_module("_pg_table_owner")
+    # Act
+    with raw_conn() as conn:
+        _ref, roles, why = owners._reference_population(conn, managed=MANAGED)
+    # Assert
+    assert all(why.get(role) for role in roles)
