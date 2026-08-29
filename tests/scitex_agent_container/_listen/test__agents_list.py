@@ -18,7 +18,7 @@ consumers are untouched — asserted here by
 :func:`test_agents_key_is_unchanged_for_consumers`.
 
 No mocks (PA-306): a real Starlette route driven through a real
-TestClient against a real (empty, tmp) state.db. AAA markers, one
+TestClient against an empty, isolated registry. AAA markers, one
 assertion per test.
 """
 
@@ -109,14 +109,41 @@ def _body(client) -> dict:
     return json.loads(client.get("/agents").content)
 
 
-def test_empty_result_names_the_store_it_consulted(client, empty_store):
+def test_empty_result_names_the_store_it_consulted(client):
     # Arrange: an empty registry — indistinguishable from a blind one
-    # without this field.
-    expected = str(empty_store)
+    # without this field. The store is resolved here INDEPENDENTLY of the
+    # route, so a route that reported a captured copy taken at import time
+    # (the shape that goes stale the moment anything re-resolves) would not
+    # match under the per-worker DSN this suite pins.
+    from scitex_dev.store import host_store
+
+    from scitex_agent_container._state.state_db_instances_store import (
+        INSTANCES_STORE,
+    )
+
+    expected = str(
+        host_store(pkg="scitex_agent_container", name=INSTANCES_STORE).locator
+    )
     # Act
     body = _body(client)
     # Assert
     assert body["sources"]["store"] == expected
+
+
+def test_the_named_store_is_not_the_sqlite_path_nothing_here_opens(
+    client, empty_store
+):
+    # Arrange: until 2026-08-29 this field carried
+    # ``state_db.DEFAULT_DB_PATH`` — the file the fixture pins above — while
+    # all three sources read PostgreSQL. Naming a database the route does not
+    # consult is the SAME false provenance the field exists to remove, so the
+    # regression gets its own assertion rather than being implied by the
+    # equality above: a revert would have to defeat both.
+    never_opened = str(empty_store)
+    # Act
+    body = _body(client)
+    # Assert
+    assert body["sources"]["store"] != never_opened
 
 
 def test_empty_result_reports_per_source_counts(client):
