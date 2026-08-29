@@ -30,6 +30,7 @@ STX-TQ002 AAA + STX-TQ007 one-assert per test.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,36 @@ _CONTAINERS = (
     / "scitex_agent_container"
     / "containers"
 )
+
+
+_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+
+#: Matches the ``[openai]`` extra's requirement string in pyproject.toml.
+_OPENAI_FLOOR_RE = re.compile(r'"(openai-agents>=[0-9][^"]*)"')
+
+
+def _openai_floor() -> str:
+    """The ``openai-agents`` floor as pyproject's ``[openai]`` extra declares it.
+
+    DERIVED, NEVER SPELLED OUT. This file's whole job is to assert that two
+    places agree on one version, so a test that hardcodes that version is a
+    THIRD place to forget. It then fails on a LEGITIMATE bump, and its message
+    ("the floor must be identical in both") misdescribes what it actually
+    checked ("both files contain this literal").
+
+    2026-08-30: exactly that happened. The floor moved 0.17.4 -> 0.19.0 in
+    pyproject (the PostgreSQL-backed session needs the SDK's
+    ``coerce_session_settings``, absent before 0.19.0) and this file failed
+    while pointing at the .def — which was indeed stale, but raising it alone
+    would have left the suite red with both files agreeing.
+    """
+    match = _OPENAI_FLOOR_RE.search(_PYPROJECT.read_text())
+    if match is None:
+        raise AssertionError(
+            "pyproject.toml's [openai] extra no longer declares an "
+            "openai-agents floor, so this file's contract has no subject."
+        )
+    return match.group(1)
 
 
 @pytest.fixture(scope="module")
@@ -118,7 +149,7 @@ def test_all_extra_carries_dev_test_tooling(base_def_text: str) -> None:
 
 def test_scitex_def_lists_openai_agents_floor(scitex_def_text: str) -> None:
     # Arrange
-    needle = "openai-agents>=0.17.4"
+    needle = _openai_floor()
     # Act
     present = needle in scitex_def_text
     # Assert
@@ -145,17 +176,15 @@ def test_scitex_def_floors_openai_agents_in_both_branches(
 
 
 def test_scitex_def_floor_matches_pyproject_extra(scitex_def_text: str) -> None:
-    # Arrange — the .def floor mirrors pyproject's [openai] extra; a bump
-    # in one without the other is drift this test refuses.
-    pyproject = (
-        Path(__file__).resolve().parents[2] / "pyproject.toml"
-    ).read_text()
+    # Arrange — pyproject's [openai] extra is the SSoT; the .def must echo
+    # whatever it currently says, so a bump is ONE edit and this test follows.
+    floor = _openai_floor()
     # Act
-    in_both = "openai-agents>=0.17.4" in pyproject and (
-        "openai-agents>=0.17.4" in scitex_def_text
-    )
+    echoed = floor in scitex_def_text
     # Assert
-    assert in_both, (
-        "the openai-agents floor must be identical in pyproject.toml's "
-        "[openai] extra and apptainer-scitex.def (keep in lockstep)."
+    assert echoed, (
+        f"apptainer-scitex.def must carry pyproject's openai-agents floor "
+        f"({floor!r}); a bump in one without the other is drift this test "
+        "refuses. Both resolver branches need it — see the sibling test that "
+        "counts occurrences."
     )
