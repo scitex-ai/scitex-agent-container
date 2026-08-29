@@ -19,7 +19,7 @@ sac agents restart <name>               # Stop then start, preserving session_id
 sac agents rename <old> <new> --dry-run # Show every location a rename would touch (exact; changes nothing)
 sac agents rename <old> <new> -y        # Rename EVERYWHERE, atomically (rolls back on any failure)
 sac agents delete <name> -y             # Stop, deregister, and remove the agent's dir
-sac db clean                            # Sweep dead instances from state.db (replaces legacy registry clean)
+sac db clean                            # Sweep dead instance rows (replaces legacy registry clean)
 ```
 
 ### `rename` — why it is a verb and not a `mv`
@@ -148,8 +148,7 @@ sac accounts sync-live                # Mirror the live credential into its matc
 sac accounts watch-live               # Daemon: auto-sync the moment `claude /login` rewrites the live credential
 sac accounts switch <name>            # Switch active credentials
 sac accounts watch-quota              # Monitor quota and auto-rotate credentials
-sac db clean                          # Sweep dead instances from state.db
-sac db query --table instances        # Inspect state.db rows
+sac db clean                          # Sweep dead instance rows
 sac event ingest                        # Append a Claude Code hook event to the per-agent ring buffer
 ```
 
@@ -177,7 +176,7 @@ Run `sac list-python-apis -vv` for the full signature tree.
 
 ## Conventions
 
-- **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac db query`).
+- **Noun-verb subcommand structure** for grouped operations (`sac agents start`, `sac a2a serve`, `sac db clean`).
 - **`--json` always available** on inspection commands so dashboards can consume them.
 - **Both `<name>` and `<yaml-path>` accepted** by `start`/`stop`/`restart` — the CLI resolves yaml paths to agent names internally.
 

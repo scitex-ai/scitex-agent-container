@@ -66,7 +66,7 @@ programmatic surface — BEST when the target resolves. But there is a
 | Command | Reads | Cross-agent verdict |
 |---|---|---|
 | `agent_status` | brokers to the **host listen** (`_status_via_host_listen`, `status_cmds.py`) → real fleet registry | **trustworthy** |
-| `agent_send` · `agents health` · `sac db query --agent` | the **per-agent** `state.db` bound at `/state/<name>` — only that agent's turn-bridge ledgers, NOT the fleet registry | **MIS-REPORTS** other live agents as `stopped` / `not running` / `not found` |
+| `agent_send` · `agents health` | the **per-agent** `state.db` bound at `/state/<name>` — only that agent's turn-bridge ledgers, NOT the fleet registry | **MIS-REPORTS** other live agents as `stopped` / `not running` / `not found` |
 
 Why: `agents health` builds a local `Registry()` and returns
 *"Agent '<name>' not found"* for any peer (no host-listen broker —

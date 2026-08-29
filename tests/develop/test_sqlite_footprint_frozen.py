@@ -267,7 +267,6 @@ FROZEN_SQLITE = frozenset(
         # move and named the fix (unhide); port_allocator_store.try_claim is
         # where it lives.
         "_state/state_db.py",
-        "_state/state_db_health.py",
         # _state/state_db_heartbeats.py LEFT THIS SET 2026-08-28, and it is
         # the first entry to leave by DELETION rather than by a port: its
         # table ``instance_heartbeats`` was removed from state.db, and the
@@ -406,7 +405,6 @@ FROZEN_SQLITE_TESTS = frozenset(
         "tests/scitex_agent_container/_lifecycle/test__rename_db.py",
         "tests/scitex_agent_container/_state/test_state_db.py",
         "tests/scitex_agent_container/_state/test_state_db_connect_branches.py",
-        "tests/scitex_agent_container/_state/test_state_db_health.py",
         "tests/scitex_agent_container/_state/test_state_db_instances.py",
         "tests/scitex_agent_container/_state/test_state_db_turns_errors_heartbeats.py",
     }

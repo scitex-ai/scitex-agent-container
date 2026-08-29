@@ -79,7 +79,7 @@ Get the live list any time with `sac mcp list-tools` (or, from Python,
 
 ## Mutating verbs
 
-`agent_start`, `agent_stop`, `agent_restart`, `db_clean`, `db_export`,
-`db_import` mutate state. The MCP server itself does not gate them —
+`agent_start`, `agent_stop`, `agent_restart`, `db_clean`, `db_tick`,
+`db_migrate` mutate state. The MCP server itself does not gate them —
 the host (Claude Code, custom embedder) is expected to mediate via its
 own permission flow before invoking the tool.

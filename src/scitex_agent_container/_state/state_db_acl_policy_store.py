@@ -11,8 +11,9 @@ WRITER POLICY: ``MULTI_WRITER``, DELIBERATELY
 A policy record has no single stable owner. It is written at
 ``agent_start`` on whichever host is running the agent — and the fleet
 relocates agents between hosts — re-published fleet-wide by ``sac agents
-refresh-acl`` from wherever the operator happens to be, and bulk-imported
-from peers by :func:`.state_db_export.import_state`. Under
+refresh-acl`` from wherever the operator happens to be, and — until that
+function was deleted on 2026-08-29 — bulk-imported from peers by
+``state_db_export.import_state``. Under
 ``SINGLE_WRITER`` the first refresh-acl issued from another host would be
 refused, and a refused ACL write is a STALE ACL row: the agent keeps the
 groups it used to have, or loses the ones it just gained. Both directions

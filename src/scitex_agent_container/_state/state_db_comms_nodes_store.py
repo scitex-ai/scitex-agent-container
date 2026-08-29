@@ -11,7 +11,8 @@ ON POSTGRESQL SINCE 2026-08-28, AND THAT DELETES THE SYNC LAYER
 ``comms_nodes`` was the one table sac already synced, and the sync was
 provably lossy in a way its own source admitted: ``sac registry sync``
 ssh-pulled a peer's ``sac db export --tables comms_nodes`` and fed it to
-``import_state``, which is ``INSERT OR IGNORE`` on the ``name`` primary key.
+``import_state``, which was ``INSERT OR IGNORE`` on the ``name`` primary
+key (both verbs deleted 2026-08-29).
 That statement can carry neither an UPDATE nor a deletion, so a node that
 MOVED (new port) and a node that LEFT (tombstoned) both arrived at the peer
 as ``rowcount == 0`` — the importer's success value and its did-not-happen

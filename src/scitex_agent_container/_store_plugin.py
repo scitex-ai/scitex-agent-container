@@ -46,14 +46,15 @@ point — see :data:`NEVER_SYNCED`.
 
 Why classification is the deliverable
 -------------------------------------
-sac already ships a cross-host path, and it is unsafe in a way that is
-invisible: ``state_db_export.import_state`` does
+sac shipped a cross-host path until 2026-08-29, and it was unsafe in a way
+that was invisible: ``state_db_export.import_state`` did
 ``INSERT OR IGNORE INTO <t>``. A byte-identical duplicate and a row that
-CONTRADICTS the local one both yield ``rowcount == 0``. The importer's
-success value is also its didn't-happen value, so two hosts can disagree
-permanently while every call returns 0 and reports success. That path is
-what the primitive replaces; this module is the declaration that makes
-the replacement safe rather than merely different.
+CONTRADICTED the local one both yielded ``rowcount == 0``. The importer's
+success value was also its didn't-happen value, so two hosts could disagree
+permanently while every call returned 0 and reported success. That path is
+what the primitive replaced, and it has now been DELETED; this module is
+the declaration that makes the replacement safe rather than merely
+different.
 
 Measured, not inferred (scitex-compute-04, 2026-08-12)::
 
@@ -408,7 +409,8 @@ CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
     # live store. SINGLE_WRITER modelled the record as owned by the host
     # running the agent, which it is not: ``sac agents refresh-acl``
     # re-publishes the whole fleet from wherever the operator is, agents
-    # relocate between hosts, and ``import_state`` bulk-imports peer rows.
+    # relocate between hosts, and ``import_state`` bulk-imported peer rows
+    # until it was deleted on 2026-08-29.
     # A refused ACL write is a STALE ACL row, and a stale ACL row denies
     # an agent its groups or leaves it holding groups its spec dropped.
     "sac_node_comms_policy": (

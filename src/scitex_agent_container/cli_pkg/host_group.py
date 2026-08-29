@@ -166,7 +166,7 @@ def host_exec(peer: str, argv: tuple[str, ...]) -> None:
     \b
     Example:
       $ sac host exec spartan -- agent list --json
-      $ sac host exec bm198 -- sac db export --since 2026-05-01
+      $ sac host exec bm198 -- sac db clean --json
 
     PEER may be a ``peers:`` entry in config.yaml or any host in the
     scitex-dev registry that declares an ``ssh_alias``; config.yaml wins

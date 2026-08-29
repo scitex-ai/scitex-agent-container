@@ -125,8 +125,8 @@ CONTRIBUTING, examples/, mirror tests), Python API exports.
 - **Auth**: `SAC_ANTHROPIC_API_KEY` is sac's namespaced handoff; the
   runner translates it at the SDK transport boundary. Do not synthesise
   `ANTHROPIC_API_KEY` on the host side — that's the operator's choice.
-- **State**: SQLite at `~/.scitex/agent-container/runtime/state.db`; rows
-  written through `_state/state_db.py` helpers. JSON registry support
+- **State**: per-host PostgreSQL, reached through `scitex_dev.store`; the
+  `_state/state_db*.py` modules are the accessors. JSON registry support
   exists only via `sac db migrate` for legacy import.
 - **Comments**: write *why*, never *what*. No comments on simple lines.
 

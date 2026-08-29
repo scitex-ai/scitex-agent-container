@@ -180,22 +180,6 @@ def test_the_diary_table_is_no_longer_a_sqlite_known_table(
     assert not whitelisted
 
 
-@pytest.mark.parametrize("table", ["turns", "errors", "heartbeats"])
-def test_sac_db_query_refuses_the_moved_diary_table(db_path: Path, table: str):
-    # Arrange — the end-to-end half. Removing the name from KNOWN_TABLES is
-    # only useful if the CLI turns the request into a usage ERROR; exit code 2
-    # is what click raises for a rejected ``--table`` choice.
-    from click.testing import CliRunner
-
-    from scitex_agent_container.cli_pkg.db_group import db_query
-
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(db_query, [f"--table={table}"])
-    # Assert
-    assert result.exit_code == 2, result.output
-
-
 # ---------------------------------------------------------------------------
 # Round-trip — every insert helper writes a row that SELECT can recover.
 # ---------------------------------------------------------------------------
