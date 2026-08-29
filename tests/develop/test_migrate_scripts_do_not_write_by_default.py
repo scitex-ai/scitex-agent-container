@@ -314,13 +314,36 @@ def _sqlite_with_one_instance(tmp_path) -> Path:
     return db
 
 
+@contextlib.contextmanager
+def _with_verify_role(role: str):
+    """Save/restore ``SAC_MIGRATE_VERIFY_ROLE`` around one call.
+
+    Added alongside the consumer-verify refusal (the check that names WHICH
+    relation it counted and refuses under ``--commit`` when this variable is
+    unset): without setting it here, ``test_instances_commit_does_reach_for_
+    the_store`` below would stop short at that new refusal and never reach
+    the dead DSN it exists to pin — the numeric assertion would still pass,
+    but for the wrong reason. PA-306: save/restore, no monkeypatch.
+    """
+    key = "SAC_MIGRATE_VERIFY_ROLE"
+    saved = os.environ.get(key)
+    os.environ[key] = role
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
 def _run_instances(tmp_path, capsys, extra: list[str]) -> Run:
     db = _sqlite_with_one_instance(tmp_path)
     module = _load("migrate_instances_to_postgres.py")
     argv = ["migrate", "--db-path", str(db), *extra]
     rc: int | None = None
     err: BaseException | None = None
-    with _dead_store_and_argv(argv):
+    with _with_verify_role("sac_test_consumer_20260829"), _dead_store_and_argv(argv):
         try:
             rc = module.main()
         except BaseException as exc:
@@ -393,3 +416,74 @@ def test_instances_commit_does_reach_for_the_store(tmp_path, capsys):
     run = _run_instances(target, capsys, ["--commit"])
     # Assert
     assert (run.rc, run.error) != (0, None)
+
+
+def _run_instances_no_verify_role(tmp_path, capsys, extra: list[str]) -> Run:
+    """Like :func:`_run_instances`, but with the role popped, not set.
+
+    The env var is POPPED rather than merely left alone, so the two tests
+    below fire regardless of the ambient environment they happen to run in.
+    """
+    db = _sqlite_with_one_instance(tmp_path)
+    module = _load("migrate_instances_to_postgres.py")
+    argv = ["migrate", "--db-path", str(db), *extra]
+    key = "SAC_MIGRATE_VERIFY_ROLE"
+    saved = os.environ.pop(key, None)
+    rc: int | None = None
+    err: BaseException | None = None
+    try:
+        with _dead_store_and_argv(argv):
+            try:
+                rc = module.main()
+            except BaseException as exc:
+                err = exc
+    finally:
+        if saved is not None:
+            os.environ[key] = saved
+    return Run(rc=rc, out=capsys.readouterr().out, error=err)
+
+
+def test_instances_commit_without_verify_role_refuses(tmp_path, capsys):
+    """``SAC_MIGRATE_VERIFY_ROLE`` unset must REFUSE under ``--commit``.
+
+    THE RED THIS PINS: before this refusal existed, an unset role made the
+    post-migration consumer check a WARNING that still returned success —
+    "the verification above ran as the MIGRATING role ... passed while the
+    fleet could not read the rows at all" (measured 2026-08-28).
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances_no_verify_role(target, capsys, ["--commit"])
+    # Assert
+    assert run.rc == 1
+
+
+def test_instances_commit_without_verify_role_names_the_missing_variable(
+    tmp_path, capsys
+):
+    """The refusal names ITS OWN variable, distinct from the ownership one.
+
+    So a reader — or a second assertion here, split out per STX-TQ007 — can
+    tell this refusal apart from ``_preflight_ownership``'s.
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances_no_verify_role(target, capsys, ["--commit"])
+    # Assert
+    assert "SAC_MIGRATE_VERIFY_ROLE" in run.out
+
+
+def test_instances_dry_run_ignores_a_missing_verify_role(tmp_path, capsys):
+    """NEGATIVE CONTROL — the refusal is ``--commit``-only, per the brief.
+
+    Without this, a change that made the refusal fire unconditionally would
+    still pass every test above (they only ever call the commit form).
+    """
+    # Arrange
+    target = tmp_path
+    # Act
+    run = _run_instances_no_verify_role(target, capsys, [])
+    # Assert
+    assert run.rc == 0
