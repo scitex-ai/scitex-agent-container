@@ -110,6 +110,7 @@ def refusals(
     grouped: dict[str, list[dict]],
     *,
     accepted: frozenset[str] = frozenset(),
+    accepted_replay: frozenset[str] = frozenset(),
 ) -> tuple[list[str], list[str]]:
     """``(refused, waived)`` — targets this migration MUST NOT touch.
 
@@ -143,13 +144,32 @@ def refusals(
 
     ``accepted`` is the operator asserting, PER NAMED TARGET, that the
     unattributed rows above them are an import whose ``state.db`` is gone.
-    There is deliberately no blanket ``--force``: a bypass covering every
-    target at once restores exactly the corruption this guard exists to
-    prevent, and this guard has already proved its worth by refusing rather
-    than corrupting.
+    ``accepted_replay`` is a DIFFERENT assertion for a different fact: those
+    rows really are live daemon traffic, and the operator accepts the named,
+    bounded consequence of importing anyway. There is deliberately no blanket
+    ``--force``: a bypass covering every target at once restores exactly the
+    corruption this guard exists to prevent, and this guard has already proved
+    its worth by refusing rather than corrupting.
+
+    THE TWO WAIVERS ARE NOT INTERCHANGEABLE, and keeping them apart is the
+    point of having two. They assert opposite things about the same rows —
+    "this is another host's history" versus "this is live traffic and I accept
+    a replay" — and only one of them can be true. Two flags that both mean
+    "proceed anyway" collapse into one habit, and the habit is what a guard
+    cannot survive. So each is refused when its own precondition does not
+    hold, rather than being quietly ignored.
+
+    WHY THIS STAYS CONSERVATIVE, deliberately. The guard cannot tell whether
+    a shift would actually strand anything, because that depends on where live
+    CONSUMERS sit and there is no server-side record of consumer position:
+    ``list_since_id`` takes the id from the request and ``Last-Event-ID`` is a
+    client-side variable. Do not "fix" the imprecision — the only way to make
+    this predicate exact is information the system does not have, and every
+    attempt to sharpen it ends in a guard that cannot refuse.
     """
     refused: list[str] = []
     waived: list[str] = []
+    unnecessary = set(accepted_replay) | set(accepted)
     for target in sorted(grouped):
         entries = grouped[target]
         _, already = offset_for(conn, target=target, entries=entries)
@@ -160,10 +180,35 @@ def refusals(
         )
         if not unclaimed:
             continue
+        unnecessary.discard(target)
+        if target in accepted and target in accepted_replay:
+            refused.append(
+                f"{target}: named to BOTH --accept-imported-history and "
+                f"--accept-post-cutover-replay. Those assert opposite things "
+                f"about the same {unclaimed} row(s) — another host's history, "
+                f"or live daemon traffic — and at most one can be true. "
+                f"Decide which, and pass only that one."
+            )
+            continue
         if target in accepted:
             waived.append(
                 f"{target}: {unclaimed} unattributed row(s) ACCEPTED as "
                 f"imported history on the operator's explicit assertion"
+            )
+            continue
+        if target in accepted_replay:
+            count, lo, hi, undelivered = prov.unattributed_span(
+                conn,
+                target=target,
+                newest_ts=max(float(r["ts"]) for r in entries),
+            )
+            waived.append(
+                f"{target}: ACCEPTING A REPLAY. {count} post-cutover row(s) at "
+                f"ids {lo}..{hi} ({undelivered} undelivered) stay exactly where "
+                f"they are — this host's {len(entries)} row(s) are offset ABOVE "
+                f"them, so nothing becomes unreachable. THE COST YOU ARE "
+                f"ACCEPTING: a consumer sitting at Last-Event-ID {hi} will "
+                f"receive this host's {len(entries)} row(s) as if new."
             )
             continue
         seen = (
@@ -181,16 +226,31 @@ def refusals(
             f"daemon traffic. Do ONE of: (1) if those rows came from ANOTHER "
             f"HOST's state.db, re-run this with --commit --db-path pointing at "
             f"THAT file — it moves no rows and records the window it "
-            f"recognises, after which this refusal clears; (2) if `sac listen` "
-            f"really has served {target!r} since the cutover, stop it on every "
-            f"host serving {target!r} and re-run; (3) if that state.db is gone, "
-            f"assert it per target with --accept-imported-history {target}."
+            f"recognises, after which this refusal CLEARS BY ITSELF; (2) if "
+            f"`sac listen` really has served {target!r} since the cutover, "
+            f"those rows are live traffic and STOPPING THE DAEMON WILL NOT "
+            f"CLEAR THIS — they are already written and nothing removes them; "
+            f"stopping it only prevents MORE, and you then accept the named "
+            f"consequence with --accept-post-cutover-replay {target}; (3) if "
+            f"they are an import whose state.db is GONE, assert that instead "
+            f"with --accept-imported-history {target}."
+        )
+    for target in sorted(unnecessary):
+        refused.append(
+            f"{target}: named to a waiver flag, but nothing is blocking it — "
+            f"either it has no rows newer than this state.db, or the newer "
+            f"rows it does have are already accounted for by a recorded "
+            f"import. That case has its own mechanism and needs no override. "
+            f"Drop the flag for {target!r} and re-run."
         )
     return refused, waived
 
 
 def dry_run_refusals(
-    grouped: dict[str, list[dict]], *, accepted: frozenset[str]
+    grouped: dict[str, list[dict]],
+    *,
+    accepted: frozenset[str],
+    accepted_replay: frozenset[str] = frozenset(),
 ) -> tuple[list[str], list[str]]:
     """:func:`refusals` for the dry run — READ-ONLY, and never fatal.
 
@@ -222,6 +282,8 @@ def dry_run_refusals(
         ).fetchone()[0]
         if not exists:
             return [], []
-        return refusals(conn, grouped, accepted=accepted)
+        return refusals(
+            conn, grouped, accepted=accepted, accepted_replay=accepted_replay
+        )
     finally:
         conn.close()

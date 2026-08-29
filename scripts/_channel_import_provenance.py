@@ -191,3 +191,40 @@ def newer_rows(conn: Any, *, target: str, newest_ts: float) -> tuple[int, int]:
         ).fetchone()[0]
     )
     return unattributed, total - unattributed
+
+
+def unattributed_span(
+    conn: Any, *, target: str, newest_ts: float
+) -> tuple[int, int, int, int]:
+    """``(count, lo_id, hi_id, undelivered)`` for the rows nothing accounts for.
+
+    The numbers ``--accept-post-cutover-replay`` has to PRINT before it waives
+    anything. A flag whose name is honest and whose output is silent still
+    lets the next operator use it without knowing what they bought, so the
+    caller states the target, the count, the id range and the replay risk on
+    one line at the point of use.
+
+    ``undelivered`` is the sharper half of that risk. These rows keep their
+    ids and stay reachable — the import is offset ABOVE them — so an
+    already-delivered row costs nothing but a possible duplicate on one
+    consumer's reconnect. An UNDELIVERED one is traffic still waiting to be
+    read, and an operator should see that number before deciding.
+    """
+    if not ledger_exists(conn):
+        row = conn.execute(
+            "SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0), "
+            "COUNT(*) FILTER (WHERE delivered_at IS NULL) "
+            "FROM sac_channel_events WHERE target = %s AND ts > %s",
+            (target, newest_ts),
+        ).fetchone()
+        return int(row[0]), int(row[1]), int(row[2]), int(row[3])
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(MIN(e.id), 0), COALESCE(MAX(e.id), 0), "
+        "COUNT(*) FILTER (WHERE e.delivered_at IS NULL) "
+        "FROM sac_channel_events e "
+        "WHERE e.target = %s AND e.ts > %s AND NOT EXISTS ("
+        "  SELECT 1 FROM sac_channel_import i "
+        "  WHERE i.target = e.target AND e.id BETWEEN i.lo_id AND i.hi_id)",
+        (target, newest_ts),
+    ).fetchone()
+    return int(row[0]), int(row[1]), int(row[2]), int(row[3])
