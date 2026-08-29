@@ -236,7 +236,16 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/runtimes/_apptainer_auth_bind.py:296",
         "scitex_agent_container/runtimes/_cct_rail_alarm.py:198",
         "scitex_agent_container/runtimes/_cct_rail_verdict.py:242",
-        "scitex_agent_container/runtimes/_openai_sdk_common.py:179",
+        # _openai_sdk_common.py:179 LEFT THIS SET 2026-08-29, by DELETION
+        # rather than by naming a sink. The claim was "surfaced by
+        # SQLiteSession open instead" on an `except OSError: pass` guarding
+        # the mkdir of the session-db parent directory — an honest claim while
+        # a session db was a FILE. sac's OpenAI runner now keeps conversation
+        # state in PostgreSQL (`_state/openai_session_store.py`), so there is
+        # no directory to create, no open to surface anything, and the whole
+        # helper went with the file. An entry whose line no longer exists must
+        # leave the list, or it becomes a blessed coordinate for whatever
+        # drifts into position 179.
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
         "scitex_agent_container/runtimes/_tui_inject.py:92",
         "scitex_agent_container/runtimes/_tui_turn_bridge_lifecycle.py:196",
