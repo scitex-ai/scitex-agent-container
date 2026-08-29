@@ -76,6 +76,16 @@ trusting the write count — is the part of the library's discipline that
 matters most and is kept: a put that silently no-opped would otherwise
 report as success.
 
+THE CONSUMER VERIFY NAMES WHAT IT COUNTED, AND REFUSES RATHER THAN GUESS
+==========================================================================
+``sac_instances_rows`` — the plugin's classification namespace, not the
+store's — was measured EMPTY on the primary alongside the ``instances_rows``
+this store actually opens, the night this script shipped; a bare count
+picking the wrong one prints a plausible zero on a migration that worked.
+:func:`_verify_as_consumer` never prints an unlabelled number: it enumerates
+every candidate via :mod:`_pg_relation_candidates` (see that module for the
+full measurement) and REFUSES rather than choosing when they disagree.
+
 Nothing is deleted from SQLite; the old table stays as a fallback.
 
 A DRY RUN IS THE DEFAULT and it must be RUN ON THE HOST — ``_migrate_lib``
@@ -97,6 +107,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # guard cannot even import the thing it is guarding.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _pg_relation_candidates as relations  # noqa: E402
 from _migrate_lib import SqliteSource, run_migration  # noqa: E402
 
 from scitex_agent_container._state.state_db_instances import (  # noqa: E402
@@ -108,6 +119,12 @@ from scitex_agent_container._state.state_db_instances_store import (  # noqa: E4
     new_instances_store,
     run_with_reconnect,
 )
+
+#: The physical relation production code reads: the store's bare name plus
+#: ``_rows`` (``scitex_dev.store`` renders every schema as ``<name>_rows`` +
+#: ``_oplog`` + ``_identity`` + ``_cursor``). Derived from ``INSTANCES_STORE``
+#: rather than written as a second literal, so the two cannot drift apart.
+ROWS_TABLE = f"{INSTANCES_STORE}_rows"
 
 #: The role that must OWN sac's store tables. Every agent connects as
 #: ``ywatanabe__<agent>``; only the tables' owner may ALTER or DROP them, and
@@ -249,12 +266,14 @@ def _preflight_ownership(log) -> "str | None":
 
 
 def _verify_as_consumer(role: str, log) -> bool:
-    """Read the migrated rows back as ``role``. False when it cannot.
+    """Read the migrated rows back as ``role``, through a NAMED relation.
 
-    MEASURED 2026-08-28, same incident: the post-migration check passed while
-    the fleet was broken, because it ran as the MIGRATING role — the one
-    identity guaranteed to work. A verification that uses the writer's
-    credential proves the writer can read its own writes and nothing else.
+    MEASURED 2026-08-28: the post-migration check passed while the fleet was
+    broken, because it ran as the MIGRATING role — the one identity
+    guaranteed to work. See the module docstring for the SECOND thing
+    measured here: a ``sac_``-prefixed sibling relation can exist, empty,
+    right next to the one production code reads. So this never prints a bare
+    count — see :mod:`_pg_relation_candidates` — and REFUSES on ambiguity.
     """
     dsn = os.environ.get("SCITEX_STORE_DSN", "")
     if not dsn:
@@ -264,7 +283,10 @@ def _verify_as_consumer(role: str, log) -> bool:
 
     try:
         with psycopg.connect(_with_role(dsn, role), connect_timeout=5) as conn:
-            n = conn.execute("SELECT COUNT(*) FROM instances_rows").fetchone()[0]
+            candidates = relations.candidate_relations(conn, table=ROWS_TABLE)
+            authoritative = relations.find_authoritative(
+                conn, candidates, table=ROWS_TABLE
+            )
     except Exception as exc:  # noqa: BLE001 - reported, not swallowed
         log(
             f"  CONSUMER VERIFY FAILED as {role!r}: {exc!r}\n"
@@ -272,7 +294,34 @@ def _verify_as_consumer(role: str, log) -> bool:
             f"the outage shape the ownership preflight exists to prevent."
         )
         return False
-    log(f"  consumer verify: {role} can read {n} record(s)")
+
+    log(f"  candidate relations for {ROWS_TABLE!r}:")
+    for c in candidates:
+        log(f"    {c['qualified']}  owner={c['owner']}  rows={c['count']}")
+
+    if authoritative is None:
+        log(
+            f"  CONSUMER VERIFY FAILED as {role!r}: no relation named "
+            f"{ROWS_TABLE!r} exists in this role's own schema — the "
+            f"unqualified name production code reads. Candidates found "
+            f"elsewhere: {[c['qualified'] for c in candidates] or 'none'}"
+        )
+        return False
+
+    if relations.ambiguous(authoritative, candidates):
+        log(
+            f"  CONSUMER VERIFY REFUSED as {role!r}: ambiguous for "
+            f"{ROWS_TABLE!r} — a sibling relation also holds rows, or the "
+            f"one production code reads is empty while a sibling is not "
+            f"(candidates above). Not silently picking a winner. "
+            f"Reads-through: {authoritative['qualified']}."
+        )
+        return False
+
+    log(
+        f"  consumer verify: {role} reads {authoritative['qualified']} -> "
+        f"{authoritative['count']} record(s)"
+    )
     return True
 
 SOURCE = SqliteSource(
@@ -391,11 +440,14 @@ def _verify() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Preflight ownership, migrate, then verify with a CONSUMER credential.
+    """Preflight ownership + verify-role, migrate, then verify as a CONSUMER.
 
-    The two guards around ``run_migration`` are not decoration; each is a
+    The guards around ``run_migration`` are not decoration; each is a
     measured incident from the sibling migrations run on 2026-08-28. See
-    :func:`_preflight_ownership` and :func:`_verify_as_consumer`.
+    :func:`_preflight_ownership` and :func:`_verify_as_consumer`. Unlike
+    that WARNING-only shape, an unset ``SAC_MIGRATE_VERIFY_ROLE`` now
+    REFUSES under ``--commit`` — a check that can silently downgrade to
+    "trust the writer" is not a check. A dry run never reaches it.
 
     NO CROSS-HOST ORDERING ASSUMPTION IS MADE, and that is worth stating
     because the channel_events migration's ordering guard turned out to be
@@ -409,7 +461,19 @@ def main(argv: list[str] | None = None) -> int:
     interleaved history is simply two sets of records.
     """
     committing = "--commit" in (argv if argv is not None else sys.argv[1:])
+    verify_role = os.environ.get("SAC_MIGRATE_VERIFY_ROLE", "").strip()
     if committing:
+        if not verify_role:
+            print(
+                "REFUSING: --commit with SAC_MIGRATE_VERIFY_ROLE unset. "
+                "Unset, the post-write check would run as the MIGRATING "
+                "role — the one identity guaranteed to work — and could "
+                "report success while the fleet cannot read what was just "
+                "written (measured 2026-08-28: exactly that, for six "
+                "minutes). Set SAC_MIGRATE_VERIFY_ROLE=<a consumer role> "
+                "and re-run; a dry run never reaches this check."
+            )
+            return 1
         pinned = _preflight_ownership(print)
         if pinned is None:
             return 1
@@ -435,19 +499,8 @@ def main(argv: list[str] | None = None) -> int:
         # must never be handed by mistake.
         actor=ACTOR,
     )
-    if rc == 0 and committing:
-        role = os.environ.get("SAC_MIGRATE_VERIFY_ROLE", "")
-        if role:
-            if not _verify_as_consumer(role, print):
-                return 1
-        else:
-            print(
-                "  WARNING: the verification above ran as the MIGRATING role, "
-                "which is the one identity guaranteed to work. Set "
-                "SAC_MIGRATE_VERIFY_ROLE=<an agent's role> to re-read as a "
-                "CONSUMER. Measured 2026-08-28: a writer-credential check "
-                "passed while the fleet could not read the rows at all."
-            )
+    if rc == 0 and committing and not _verify_as_consumer(verify_role, print):
+        return 1
     return rc
 
 
