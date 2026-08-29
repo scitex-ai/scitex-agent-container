@@ -81,7 +81,6 @@ def isolated_env(pg_schema: str, tmp_path: Path):
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     _state_db.DEFAULT_DB_PATH = db_path
-    _state_db.init_schema(db_path)
 
     # WI-2 ACL: register the WI-3 demo nodes as siblings under a
     # common root so they share a group. Without this the new

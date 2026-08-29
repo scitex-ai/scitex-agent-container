@@ -44,7 +44,6 @@ from scitex_agent_container._state.state_db_nodes import (
 def db_path(tmp_path: Path) -> Path:
     # Arrange
     p = tmp_path / "state.db"
-    state_db.init_schema(p)
     return p
 
 

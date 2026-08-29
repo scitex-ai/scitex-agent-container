@@ -45,7 +45,6 @@ from starlette.testclient import TestClient
 
 from scitex_agent_container._listen._acl import check_lineage_acl, deny_response
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import record_lineage
 
 HOST_TOKEN = "host-token-lineage-acl"
@@ -78,9 +77,8 @@ def isolated_env(tmp_path: Path, env_save_restore):
 
 @pytest.fixture
 def db_path(isolated_env) -> Path:
-    """The state.db ``isolated_env`` pointed the env at, schema applied."""
+    """The state.db path ``isolated_env`` pointed the env at."""
     db = isolated_env / "state.db"
-    state_db.init_schema(db)
     return db
 
 

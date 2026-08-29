@@ -299,24 +299,14 @@ class TestListAgents:
     ):
         # Arrange — Q1: when port_allocator has a claim, the row carries it.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22000, 22001))
-            r = _reg.Registry()
-            r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["a2a_port"] == 22000
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _pa.claim_port("alpha", range_=(22000, 22001))
+        r = _reg.Registry()
+        r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["a2a_port"] == 22000
 
     def test_registered_agent_row_carries_turn_url_when_allocator_claimed(
         self, client, auth_headers, isolated_env, pg_schema
@@ -324,24 +314,14 @@ class TestListAgents:
         # Arrange — Q1: turn_url ships alongside a2a_port for the
         # nudge→turn dispatcher.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22100, 22101))
-            r = _reg.Registry()
-            r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["turn_url"].endswith(":22100/v1/turn")
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _pa.claim_port("alpha", range_=(22100, 22101))
+        r = _reg.Registry()
+        r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["turn_url"].endswith(":22100/v1/turn")
 
     def test_registered_agent_row_carries_null_a2a_port_when_no_claim(
         self, client, auth_headers, isolated_env
@@ -349,46 +329,24 @@ class TestListAgents:
         # Arrange — Q1: when port_allocator has NO claim for the name,
         # the row still ships the key (= null) so consumers can branch
         # on field presence rather than key presence.
-        from scitex_agent_container._state import state_db as _state_db
-
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            r = _reg.Registry()
-            r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["a2a_port"] is None
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        r = _reg.Registry()
+        r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["a2a_port"] is None
 
     def test_registered_agent_row_carries_null_turn_url_when_no_claim(
         self, client, auth_headers, isolated_env
     ):
         # Arrange — Q1: turn_url is null when a2a_port resolves to null
         # (derive_turn_url's bothness rule).
-        from scitex_agent_container._state import state_db as _state_db
-
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            r = _reg.Registry()
-            r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["turn_url"] is None
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        r = _reg.Registry()
+        r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["turn_url"] is None
 
 
 # --- GET /agents/<name>/status -------------------------------------------
@@ -454,23 +412,13 @@ class TestAgentStatus:
         # Arrange — Q1: when port_allocator has a claim, status surfaces
         # the derived turn_url so scitex-todo's resolver can dispatch.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _write_spec(isolated_env, "beta")
-            _pa.claim_port("beta", range_=(23000, 23001))
-            # Act
-            body = client.get("/agents/beta/status", headers=auth_headers).json()
-            # Assert
-            assert body["turn_url"].endswith(":23000/v1/turn")
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _write_spec(isolated_env, "beta")
+        _pa.claim_port("beta", range_=(23000, 23001))
+        # Act
+        body = client.get("/agents/beta/status", headers=auth_headers).json()
+        # Assert
+        assert body["turn_url"].endswith(":23000/v1/turn")
 
 
 # --- POST /agents/<name>/send --------------------------------------------
@@ -849,7 +797,6 @@ def cross_host_env(tmp_path: Path):
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
     # WI-4 Q4(b): seed the per-host bearer registry. The forwarder
     # pulls ``peer-tokens/host-a.token`` to authenticate when
     # forwarding to host A. ``$HOME`` is already tmp_path so the
@@ -1086,7 +1033,6 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     state_db.record_instance_start(

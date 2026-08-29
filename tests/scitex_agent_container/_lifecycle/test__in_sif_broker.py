@@ -565,7 +565,6 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     os.environ.update(keys)
     state_db.DEFAULT_DB_PATH = db
     _session_state.DEFAULT_STATE_ROOT = runtime_dir
-    state_db.init_schema(db)
     try:
         yield db
     finally:

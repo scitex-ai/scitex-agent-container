@@ -118,7 +118,6 @@ def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = disk_tmp / "registry"
     _ss.DEFAULT_STATE_ROOT = disk_tmp / "runtime"
-    state_db.init_schema(db)
     try:
         yield {"db": db, "tmp": disk_tmp}
     finally:

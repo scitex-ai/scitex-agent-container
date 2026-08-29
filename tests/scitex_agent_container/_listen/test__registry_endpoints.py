@@ -76,7 +76,6 @@ def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
     prev_env = _swap_env(_STATE_DB_ENV, str(db))
     prev_attr = _state_db.DEFAULT_DB_PATH
     _state_db.DEFAULT_DB_PATH = db
-    _state_db.init_schema(db)
     try:
         yield db
     finally:
@@ -92,7 +91,6 @@ def isolated_host_env(tmp_path: Path) -> Iterator[Path]:
     prev_host_env = _swap_env(_SAC_HOST_ENV, "test-host")
     prev_attr = _state_db.DEFAULT_DB_PATH
     _state_db.DEFAULT_DB_PATH = db
-    _state_db.init_schema(db)
     try:
         yield db
     finally:

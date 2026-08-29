@@ -74,14 +74,16 @@ FOREIGN_HOST = f"not-{THIS_NODE}"
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
-    """A real state.db — still needed for the ``instances`` half of the resolver.
+    """A per-test state.db PATH — the file is left for the code to make.
 
-    ``resolve_node_host`` reads ``instances`` from SQLite and falls through to
-    the PostgreSQL directory, so the resolver tests below need both stores.
+    This called ``init_schema`` here until the suite stopped creating SQLite
+    files as a side effect. Nothing was lost: the only test that reads this
+    database opens it through ``state_db.open_db``, which initialises on first
+    use, so the file is still made by the production path rather than by a
+    fixture reaching for it first.
     """
     # Arrange
     p = tmp_path / "state.db"
-    state_db.init_schema(p)
     return p
 
 

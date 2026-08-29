@@ -57,7 +57,6 @@ def db_path(tmp_path: Path):
     saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:

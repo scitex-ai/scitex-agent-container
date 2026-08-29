@@ -726,9 +726,6 @@ class TestDispatchStrictHostKeyChecking:
 class TestLookupRemotePeer:
     def test_no_active_row_returns_none(self, fake_home, state_db, env_save_restore):
         # Arrange — fresh state.db with no instances row for "alpha".
-        from scitex_agent_container._state.state_db import init_schema
-
-        init_schema()
         # Act
         result = lookup_remote_peer("alpha")
         # Assert
@@ -768,9 +765,6 @@ class TestTryDispatchRemote:
 
     def test_no_active_row_returns_false(self, fake_home, state_db, env_save_restore):
         # Arrange — no row; caller proceeds local.
-        from scitex_agent_container._state.state_db import init_schema
-
-        init_schema()
         calls: list = []
         # Act
         dispatched = try_dispatch_remote(

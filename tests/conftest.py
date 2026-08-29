@@ -518,6 +518,34 @@ def _assert_state_floor_intact(request: pytest.FixtureRequest) -> Iterator[None]
         if resolved != floor and floor not in resolved.parents:
             breaches.append(f"  {module_path}.{attr}\n      -> {resolved}")
 
+    # THE ENV VAR IS PART OF THE FLOOR, AND ITS ABSENCE IS A BREACH.
+    #
+    # `$SCITEX_AGENT_CONTAINER_STATE_DB` is force-set at the top of this file
+    # so `state_db.DEFAULT_DB_PATH` is BORN inside the sandbox and every
+    # subprocess inherits the same sandbox. The loop above reads the constant,
+    # which is only half the pair: a test that DROPS the env var without
+    # restoring it leaves the constant looking perfectly correct right up until
+    # the next `importlib.reload(state_db)`, at which point the fallback
+    # (`runtime_base_dir() / "state.db"`) re-pins it at the operator's REAL
+    # runtime directory for the rest of this worker's session. That is the
+    # exact Errno-122 escape the constants check was written for, arriving one
+    # reload later through the half nothing was watching.
+    #
+    # So UNSET is NOT "nothing to assert about". It is the floor already
+    # dismantled, and reporting it as a breach is the only reading that does
+    # not depend on whether some later test happens to reload the module.
+    state_db_env = os.environ.get(_STATE_DB_KEY)
+    if state_db_env is None:
+        breaches.append(
+            f"  ${_STATE_DB_KEY}\n"
+            "      -> UNSET (dropped without restore; the next reload of\n"
+            "         state_db re-pins DEFAULT_DB_PATH outside the floor)"
+        )
+    else:
+        resolved_env = Path(state_db_env).resolve()
+        if resolved_env != floor and floor not in resolved_env.parents:
+            breaches.append(f"  ${_STATE_DB_KEY}\n      -> {resolved_env}")
+
     # The card board is checked by ASKING THE RESOLVER, not by reading a
     # constant: `scitex_cards._db.resolve_db_path()` is a function evaluated at
     # every write, so the only honest question is the one the dual-write mirror
