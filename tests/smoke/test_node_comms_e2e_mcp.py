@@ -211,11 +211,11 @@ def test_a2a_send_tool_denied_surfaces_403_with_reason(comms_env):
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_tool_cross_group_after_grant_delivers(comms_env):
+def test_a2a_send_tool_cross_group_after_grant_delivers(pg_schema: str, comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
-    grant_send(sender="alpha", target="gamma", db_path=db, note="mcp-smoke grant")
+    grant_send(sender="alpha", target="gamma", note="mcp-smoke grant")
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
@@ -256,13 +256,20 @@ def test_a2a_send_tool_cross_group_after_grant_delivers(comms_env):
 
 
 # ---------------------------------------------------------------------------
-# Case (d) — misconfigured node: claims "beta" but its bearer is alpha's.
-# The tool sets from_agent="beta"; the server's spoof gate rejects it.
+# Case (d) — misconfigured node: its bearer is not one the daemon knows.
+#
+# This case handed beta's tool surface ALPHA's per-node bearer and
+# asserted the server's spoof gate rejected the from_agent="beta" claim.
+# Per-node bearers were removed 2026-08-28 (never minted outside tests,
+# 0 rows on every fleet host), so a misconfigured node can no longer
+# hold a valid-but-wrong credential — only a wrong one. That is what is
+# asserted now, and it is the same operator symptom: a node whose token
+# is misconfigured gets a 403 from its own send tool.
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_tool_identity_spoof_returns_403(comms_env):
-    # Arrange — register beta's tool surface but hand it alpha's bearer.
+def test_a2a_send_tool_unknown_bearer_returns_403(comms_env):
+    # Arrange — register beta's tool surface but hand it a bad bearer.
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
@@ -270,7 +277,7 @@ def test_a2a_send_tool_identity_spoof_returns_403(comms_env):
     base = f"http://127.0.0.1:{port}"
 
     async def driver() -> dict:
-        rec = _tools_for("beta", base, tokens["alpha"])
+        rec = _tools_for("beta", base, "not-the-host-token")
         return await _call(rec, "a2a_send", {"target": "beta", "content": "spoofed"})
 
     # Act
@@ -278,8 +285,8 @@ def test_a2a_send_tool_identity_spoof_returns_403(comms_env):
         result = asyncio.run(driver())
     # Assert
     body = result.get("body") or {}
-    assert result.get("status") == 403 and "identity spoof" in (
-        body.get("reason") or ""
+    assert result.get("status") == 403 and body.get("error") == (
+        "invalid bearer token"
     ), f"unexpected tool result: {result!r}"
 
 

@@ -27,6 +27,7 @@ from ._verdict import (
     UNKNOWN,
     Signal,
 )
+from .._runners._tmux._target import exact_target
 from ._verdict_tmux import session_name_for_config
 
 __all__ = [
@@ -37,32 +38,38 @@ __all__ = [
 def _remote_peer_for_config(config: Any) -> str | None:
     """Return the peer name if the agent's ``spec.host`` is a remote peer.
 
-    Uses the SAME ``classify_dispatch_host`` resolver ``sac agents start`` and
-    ``sac agents attach`` route through, so "remote" means one thing across
-    the whole control plane. Best-effort — any resolution failure returns
-    ``None`` and the caller falls back to the ordinary (local) process probe.
-    Imports are LAZY to avoid a ``cli_pkg`` -> ``_lifecycle`` import cycle.
+    Uses the SAME chain resolver ``sac agents start`` and ``sac agents attach``
+    route through, so "remote" means one thing across the whole control plane
+    — including for a FALLBACK CHAIN, whose head is no longer assumed: a chain
+    led by a typo now resolves to the next usable entry rather than reporting
+    "not remote" and probing the wrong (local) tmux.
+
+    Deliberately passes NO reachability oracle. This runs once per agent per
+    listing, and an ssh probe here would double the cost of every
+    ``sac agents list`` to answer a question the caller is about to answer
+    anyway by ssh-probing the peer's tmux. Without an oracle the walk is pure
+    and its answer is the historical head-of-chain, minus the typo bug.
+
+    Best-effort — any resolution failure returns ``None`` and the caller falls
+    back to the ordinary (local) process probe. Imports are LAZY to avoid a
+    ``cli_pkg`` -> ``_lifecycle`` import cycle.
     """
     try:
-        from ..cli_pkg.lifecycle._common import (
-            _local_host_names,
-            classify_dispatch_host,
-        )
+        from ..cli_pkg.lifecycle._common import _local_host_names
+        from ..cli_pkg.lifecycle._host_chain import resolve_host_chain
         from ..config._host import resolve_hostname
 
-        spec = config.hosts_spec
-        host = spec.host
-        target = host if isinstance(host, str) else (host[0] if host else None)
-        if not target:
+        host = config.hosts_spec.host
+        if not host:
             return None
         from .._state.host_config import load as _load_host_config
 
         current = resolve_hostname()
         peers = _load_host_config().peers
-        kind, peer = classify_dispatch_host(
-            target, current, peers, local_names=_local_host_names(current)
+        route = resolve_host_chain(
+            host, current, peers, local_names=_local_host_names(current)
         )
-        return peer if kind == "remote" else None
+        return route.peer
     except Exception:  # stx-allow: fallback (unresolvable host -> treat as local; the local probe still runs)
         return None
 
@@ -140,7 +147,12 @@ def remote_process_signal(
 
         peers = _load_host_config().peers
         argv = build_ssh_argv(
-            peer, ["tmux", "has-session", "-t", session], peers, extra_opts=["-n"]
+            # EXACT-match target: a bare -t prefix-matches on the peer's tmux,
+            # so a sibling session would vouch this agent ALIVE (2026-08-14).
+            peer,
+            ["tmux", "has-session", "-t", exact_target(session)],
+            peers,
+            extra_opts=["-n"],
         )
     except (
         Exception

@@ -86,22 +86,19 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         await persist_self_peers_on_listen_startup()
         tasks: list = []
 
-        # Best-effort ``comms_nodes`` peer-sync — launched HERE (after the
-        # bind, off the event loop) rather than synchronously before
-        # ``uvicorn.run``. The pre-bind synchronous sync was the live
-        # silent-bind-hang vector (INCIDENT 2026-06-26): one powered-off
-        # static peer made its un-timed ssh call hang, blocking boot before
-        # 7878 ever bound, with no error logged. As a backgrounded task that
-        # dispatches the blocking ssh sweep via ``asyncio.to_thread`` and
-        # bounds it, it can never block the bind. Honour
-        # SAC_LISTEN_STARTUP_SYNC_DISABLED=1 to skip launching (test
-        # harnesses / single-host installs that opt out at the env level).
-        if os.environ.get("SAC_LISTEN_STARTUP_SYNC_DISABLED", "") != "1":
-            from .._listen._startup_peer_sync import sync_peers_on_listen_startup
-
-            sync_task = asyncio.create_task(sync_peers_on_listen_startup())
-            app.state.startup_peer_sync_task = sync_task
-            tasks.append(sync_task)
+        # A post-bind ``comms_nodes`` peer-sync task was launched HERE until
+        # 2026-08-28 (and, before PR #469, run synchronously PRE-bind, which
+        # was the live silent-bind-hang vector of INCIDENT 2026-06-26: one
+        # powered-off static peer made its un-timed ssh call hang, so 7878
+        # never bound and the fleet lost agent-to-agent comms).
+        #
+        # It is GONE, not merely moved again: the ADR-0014 directory is now
+        # the shared PostgreSQL store, so every host already reads the same
+        # peer view and there is nothing to fetch at boot. ``sac registry
+        # sync`` — the verb this task drove — was deleted in the same change.
+        # ``SAC_LISTEN_STARTUP_SYNC_DISABLED`` is consequently read by
+        # nothing; it is not honoured here because there is no longer
+        # anything for it to disable.
 
         # Periodic-drive listen-loop (lead a2a 7916f486, 2026-06-14).
         # Honour SAC_PERIODIC_DRIVE_DISABLED=1 to skip launching.
@@ -110,57 +107,91 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             app.state.periodic_drive_task = task
             tasks.append(task)
 
+        # GROUP SWITCH for the three loops immediately below — the GitHub-CI
+        # poller and the two heartbeat writers, and ONLY those three. They
+        # are the loops that need nothing from the host to start, so they
+        # start EVERYWHERE, including in every foreign process that merely
+        # boots this app to test something else.
+        #
+        # Each of the three also has its own `SAC_*_DISABLED` switch, and
+        # those keep their published meaning. This one exists because those
+        # three switches are ALSO read by the coroutines themselves, so a
+        # process that sets them changes how the coroutine behaves when
+        # called DIRECTLY — which is exactly what the loops' own unit tests
+        # do. A caller that wants "this app, without its pollers" needs a
+        # knob that the coroutines do not read. This is that knob.
+        _pollers_off = os.environ.get("SAC_LISTEN_POLLER_LOOPS_DISABLED", "") == "1"
+
         # GitHub-CI verdict-delivery poll loop (sac #404, feedback.pdf §3).
-        # Self-disables (fail-loud) when `gh` is unauthenticated or
-        # SAC_GITHUB_CI_POLLER_DISABLED=1, so launch unconditionally.
+        # Fail-loud when `gh` is unauthenticated, so a broken deploy is
+        # never silent — but the KILL SWITCH is honoured HERE, at the
+        # launch site, like every sibling loop above and below. It used
+        # to launch unconditionally and let the coroutine self-disable,
+        # which meant `SAC_GITHUB_CI_POLLER_DISABLED=1` still cost a task
+        # and still LOGGED A LINE. That line is written by
+        # scitex-logging's LazyStderrStreamHandler, which re-resolves
+        # `sys.stderr` at every emit — so in a test process it lands in
+        # whatever stream is installed right then, up to and including a
+        # `CliRunner.invoke` buffer, where it corrupts a `--json`
+        # assertion (card sac-clirunner-json-asserts-parse-merged-stderr).
         # Cadence override: SAC_GITHUB_CI_POLL_INTERVAL_S.
-        try:
-            _ci_interval = float(
-                os.environ.get(
-                    "SAC_GITHUB_CI_POLL_INTERVAL_S", DEFAULT_CI_POLL_INTERVAL_S
+        if not _pollers_off and os.environ.get("SAC_GITHUB_CI_POLLER_DISABLED", "") != "1":
+            try:
+                _ci_interval = float(
+                    os.environ.get(
+                        "SAC_GITHUB_CI_POLL_INTERVAL_S", DEFAULT_CI_POLL_INTERVAL_S
+                    )
                 )
+            except (TypeError, ValueError):
+                _ci_interval = DEFAULT_CI_POLL_INTERVAL_S
+            ci_task = asyncio.create_task(
+                github_ci_poll_loop(poll_interval_s=_ci_interval)
             )
-        except (TypeError, ValueError):
-            _ci_interval = DEFAULT_CI_POLL_INTERVAL_S
-        ci_task = asyncio.create_task(github_ci_poll_loop(poll_interval_s=_ci_interval))
-        app.state.github_ci_poller_task = ci_task
-        tasks.append(ci_task)
+            app.state.github_ci_poller_task = ci_task
+            tasks.append(ci_task)
 
         # TUI heartbeat writer (operator: "heartbeat must be available in
-        # tui as well"). Self-disables (fail-loud) when `tmux` is missing
-        # or SAC_TUI_HEARTBEAT_DISABLED=1, so launch unconditionally.
+        # tui as well"). Fail-loud when `tmux` is missing; kill switch
+        # honoured at the launch site for the same reason as the CI
+        # poller directly above — this loop is the 30s-periodic one, so
+        # it kept writing for as long as the process lived.
         # Cadence override: SAC_TUI_HEARTBEAT_INTERVAL_S.
-        try:
-            _tui_hb_interval = float(
-                os.environ.get(
-                    "SAC_TUI_HEARTBEAT_INTERVAL_S", DEFAULT_TUI_HEARTBEAT_INTERVAL_S
+        if not _pollers_off and os.environ.get("SAC_TUI_HEARTBEAT_DISABLED", "") != "1":
+            try:
+                _tui_hb_interval = float(
+                    os.environ.get(
+                        "SAC_TUI_HEARTBEAT_INTERVAL_S", DEFAULT_TUI_HEARTBEAT_INTERVAL_S
+                    )
                 )
+            except (TypeError, ValueError):
+                _tui_hb_interval = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
+            tui_hb_task = asyncio.create_task(
+                tui_heartbeat_loop(interval_s=_tui_hb_interval)
             )
-        except (TypeError, ValueError):
-            _tui_hb_interval = DEFAULT_TUI_HEARTBEAT_INTERVAL_S
-        tui_hb_task = asyncio.create_task(tui_heartbeat_loop(interval_s=_tui_hb_interval))
-        app.state.tui_heartbeat_task = tui_hb_task
-        tasks.append(tui_hb_task)
+            app.state.tui_heartbeat_task = tui_hb_task
+            tasks.append(tui_hb_task)
 
         # SDK/claude-session heartbeat writer (fix
         # liveness-live-agents-read-stopped): parity with the TUI writer
         # for the non-TUI runtimes, so a running-but-quiet SDK agent's
         # host-side ``heartbeat_at`` stays fresh instead of freezing at
-        # its start time. Self-disables via SAC_SDK_HEARTBEAT_DISABLED=1.
+        # its start time. Kill switch SAC_SDK_HEARTBEAT_DISABLED=1 is
+        # honoured at the launch site, same as its TUI twin above.
         # Cadence override: SAC_SDK_HEARTBEAT_INTERVAL_S.
-        try:
-            _sdk_hb_interval = float(
-                os.environ.get(
-                    "SAC_SDK_HEARTBEAT_INTERVAL_S", DEFAULT_SDK_HEARTBEAT_INTERVAL_S
+        if not _pollers_off and os.environ.get("SAC_SDK_HEARTBEAT_DISABLED", "") != "1":
+            try:
+                _sdk_hb_interval = float(
+                    os.environ.get(
+                        "SAC_SDK_HEARTBEAT_INTERVAL_S", DEFAULT_SDK_HEARTBEAT_INTERVAL_S
+                    )
                 )
+            except (TypeError, ValueError):
+                _sdk_hb_interval = DEFAULT_SDK_HEARTBEAT_INTERVAL_S
+            sdk_hb_task = asyncio.create_task(
+                sdk_heartbeat_loop(interval_s=_sdk_hb_interval)
             )
-        except (TypeError, ValueError):
-            _sdk_hb_interval = DEFAULT_SDK_HEARTBEAT_INTERVAL_S
-        sdk_hb_task = asyncio.create_task(
-            sdk_heartbeat_loop(interval_s=_sdk_hb_interval)
-        )
-        app.state.sdk_heartbeat_task = sdk_hb_task
-        tasks.append(sdk_hb_task)
+            app.state.sdk_heartbeat_task = sdk_hb_task
+            tasks.append(sdk_hb_task)
 
         # Liveness-tick reconciler (card sac-card-anchored-stop-reconciler):
         # deterministic alarm-engine producer — reads cards (truth) vs.

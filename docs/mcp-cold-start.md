@@ -1,5 +1,10 @@
 # MCP cold-start connect race — root cause + fix
 
+> **Scope: the Claude Code harness.** Everything below is a property of
+> Claude Code's stdio-MCP *client*, not of sac or of MCP generally. An
+> agent on another harness has a different MCP client and does not
+> inherit these behaviours.
+
 ## The incident (2026-07-06)
 
 Agents' `scitex-agent-container` (`sac mcp start`) and `scitex-todo`

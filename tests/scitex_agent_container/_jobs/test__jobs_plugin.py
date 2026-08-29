@@ -3,9 +3,15 @@
 Verifies the JobSpecs sac registers under the ``scitex_dev.jobs``
 entry-point group match the federated contract:
 
-* ``sac.accounts-refresh`` — a periodic systemd timer job that runs
+* ``scitex-agent-container-accounts-refresh`` — a periodic systemd timer job that runs
   ``--all --include-active --sync-active-login`` every 2h (the SOLE
   refresher; see the ``--skip-active`` note below).
+* ``sac.accounts-keepalive`` — the DISTRIBUTION half of that same
+  single-refresher model. ``accounts-refresh`` rotates the token on the
+  ONE host holding refresh material; this one copies the result out to
+  the access-only hosts every 15min and proves each accepts it. The two
+  are a pair, and the pair is why a fresh token on the master does not
+  by itself keep the followers alive.
 * ``sac.host-sync-check`` — the hourly READ-ONLY peer drift detector.
 * ``sac.spartan-sif-bake`` — the every-10-minutes remote SIF bake on the Spartan
   lease + pull/verify/atomic-swap on the master (operator directive
@@ -34,6 +40,8 @@ the provider import is lazy, so an old scitex-dev must not fail CI here.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 jobs_mod = pytest.importorskip(
@@ -43,35 +51,14 @@ jobs_mod = pytest.importorskip(
 
 from scitex_agent_container._jobs._jobs_plugin import provide_jobs  # noqa: E402
 
-
-def _job(name: str):
-    (match,) = [j for j in provide_jobs() if j.name == name]
-    return match
+from ._jobspec_helpers import _job, _split_command  # noqa: E402
 
 
-def test_provider_returns_every_expected_job() -> None:
-    # Arrange — pinned by NAME, not by count. An exact-count assertion goes
-    # red on every legitimate addition while saying nothing about WHICH job
-    # moved, so the number gets bumped reflexively and the pin quietly stops
-    # meaning anything. Membership names what actually changed.
-    #
-    # freshness-refresh is the newest: the refresher half of the
-    # version-currency check, without which the CLI's staleness banner has
-    # no cache to read and is silent forever. `sac listen` is still NOT
-    # federated (see the module docstring and the absence-pin below).
-    # Act
-    names = {job.name for job in provide_jobs()}
-    # Assert
-    assert names == {
-        "sac.accounts-refresh",
-        "sac.host-sync-check",
-        "sac.worktree-gc",
-        "sac.spartan-sif-bake",
-        "sac.fleet-reconcile",
-        "sac.restart-login-expired-agents",
-        "sac.heal-agent-auth",
-        "sac.freshness-refresh",
-    }
+
+
+
+
+
 
 
 def test_provider_jobs_are_real_jobspecs() -> None:
@@ -85,9 +72,9 @@ def test_provider_jobs_are_real_jobspecs() -> None:
 def test_provider_job_name_is_package_prefixed() -> None:
     # Arrange — call the registered provider.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
-    assert job.name == "sac.accounts-refresh"
+    assert job.name == "scitex-agent-container-accounts-refresh"
 
 
 def test_provider_job_command_includes_active_account() -> None:
@@ -102,18 +89,17 @@ def test_provider_job_command_includes_active_account() -> None:
     # Act — by NAME, not by index: this provider now returns two jobs, so
     # provide_jobs()[0] would silently start asserting against the wrong
     # JobSpec the day the list order changes.
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
-    assert job.command == (
-        "sac accounts refresh --all --include-active --sync-active-login"
-    )
+    bound, _payload, rest = _split_command(job.command)
+    assert (bound, rest) == ("/usr/bin/timeout 120", "accounts refresh --all --include-active --sync-active-login")
 
 
 def test_provider_job_command_never_skips_active() -> None:
     # Arrange — a belt-and-braces guard: --skip-active must never
     # reappear in the sole-refresher timer, however the command is spelled.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert "--skip-active" not in job.command
 
@@ -121,11 +107,11 @@ def test_provider_job_command_never_skips_active() -> None:
 def test_provider_job_kind_is_timer() -> None:
     # Arrange — call the registered provider. The legacy ``kind=
     # "systemd"`` is no longer accepted by JobSpec.validate() since
-    # scitex-dev #153; ``sac.accounts-refresh`` is a periodic
+    # scitex-dev #153; ``scitex-agent-container-accounts-refresh`` is a periodic
     # systemd --user timer (token TTL ~7h, refresh every 2h) so the
     # canonical kind is ``"timer"`` (lead msg c5212862, 2026-06-11).
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert job.kind == "timer"
 
@@ -143,9 +129,45 @@ def test_every_provided_job_uses_an_allowed_kind() -> None:
 def test_provider_job_cadence_is_two_hours() -> None:
     # Arrange — call the registered provider.
     # Act
-    job = _job("sac.accounts-refresh")
+    job = _job("scitex-agent-container-accounts-refresh")
     # Assert
     assert job.on_unit_active_sec == "2h"
+
+
+# ---------------------------------------------------------------------------
+# sac.accounts-keepalive — the DISTRIBUTION half of the single-refresher
+# model, and the SIBLING of scitex-agent-container-accounts-refresh above. That job rotates the
+# token on the ONE host holding refresh material; this one copies the result
+# out to the access-only hosts and proves each of them accepts it. Refreshing
+# the master is not enough on its own: every other host holds a copy nothing
+# on that box can renew, so without this job they 401 within one access-token
+# lifetime (measured 2026-08-10, three fleet-wide deaths in a day).
+#
+# HOST PINNING IS NOT EXPRESSIBLE IN A JobSpec — there is no host field — so
+# WHERE this runs is an operator install decision. The verb defends itself
+# instead: `--all` resolves to the accounts THIS host holds refresh material
+# for and exits non-zero when that set is empty, so an install on the wrong
+# host is loud rather than quietly inert. Nothing here arms anything; a
+# JobSpec is inert until `ecosystem up` installs it.
+# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def test_provider_does_not_federate_listen_it_would_duplicate_the_supervisor() -> None:
@@ -172,175 +194,40 @@ def test_provider_does_not_federate_listen_it_would_duplicate_the_supervisor() -
     assert "sac.listen" not in names
 
 
-def test_host_sync_check_job_name_is_package_prefixed() -> None:
-    # Arrange — the drift-alarm timer that makes the Stage-0 detector run.
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert
-    assert job.name == "sac.host-sync-check"
 
 
-def test_host_sync_check_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer (hourly), so kind="timer".
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert
-    assert job.kind == "timer"
 
 
-def test_host_sync_check_command_is_the_readonly_check() -> None:
-    # Arrange — the scheduled command MUST carry --check. A timer that could
-    # fast-forward a peer unattended is Stage 1, explicitly out of scope.
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert
-    assert "--check" in job.command
 
 
-def test_host_sync_check_command_routes_to_a_seen_card() -> None:
-    # Arrange — --alarm is what turns the exit code into a SEEN board card
-    # instead of a journald line nobody reads.
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert
-    assert "--alarm" in job.command
 
 
-def test_host_sync_check_command_never_runs_the_mutating_remedy() -> None:
-    # Arrange — belt-and-braces: the exact mutating form `sac host sync
-    # <peer>` (no --check) must never be what this timer runs. The command
-    # is the read-only detector, full stop.
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert — the command is precisely the read-only check+alarm form.
-    assert job.command == "sac host sync --check --all --alarm"
 
 
-def test_host_sync_check_cadence_is_hourly() -> None:
-    # Arrange — drift is slow-moving; hourly is ample and gentle on ssh.
-    # Act
-    job = _job("sac.host-sync-check")
-    # Assert
-    assert job.on_unit_active_sec == "1h"
 
 
-def test_worktree_gc_job_name_is_package_prefixed() -> None:
-    # Arrange — the daily GC that makes the worktree-sprawl countermeasure
-    # PERIODIC. A GC nobody schedules is a script, not a countermeasure —
-    # which is exactly how one repo reached 105 worktrees.
-    # Act
-    job = _job("sac.worktree-gc")
-    # Assert
-    assert job.name == "sac.worktree-gc"
 
 
-def test_worktree_gc_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer (daily), so kind="timer".
-    # A bad kind makes `ecosystem up` silently drop sac's WHOLE provider.
-    # Act
-    job = _job("sac.worktree-gc")
-    # Assert
-    assert job.kind == "timer"
 
 
-def test_worktree_gc_command_is_the_apply_form() -> None:
-    # Arrange — the scheduled job must ACT, not just report: a timer that
-    # only dry-runs would print a nightly report nobody reads while the
-    # sprawl kept growing. The safety lives in the predicate, not in
-    # withholding --apply.
-    # Act
-    job = _job("sac.worktree-gc")
-    # Assert
-    assert job.command == "sac worktree gc --apply --all"
 
 
-def test_worktree_gc_command_sweeps_every_declared_repo() -> None:
-    # Arrange — --all is only correct because it HAS a clean source (every
-    # agent spec.workdir that is a local git repo toplevel). If that source
-    # ever disappears, this command silently sweeps nothing.
-    # Act
-    job = _job("sac.worktree-gc")
-    # Assert
-    assert "--all" in job.command
 
 
-def test_worktree_gc_cadence_is_daily() -> None:
-    # Arrange — sprawl accumulates over days and the age gate is 24h, so a
-    # faster pass could not remove anything a daily one would miss.
-    # Act
-    job = _job("sac.worktree-gc")
-    # Assert
-    assert job.on_unit_active_sec == "1d"
 
 
-def test_fleet_reconcile_job_name_is_package_prefixed() -> None:
-    # Arrange — the enforcer of "should be running => is running".
-    # Act
-    job = _job("sac.fleet-reconcile")
-    # Assert
-    assert job.name == "sac.fleet-reconcile"
 
 
-def test_fleet_reconcile_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer, so kind="timer". A wrong
-    # kind raises at construction and `ecosystem up` then silently DROPS
-    # sac's whole provider (provider-isolated, WARN-only) — taking the OAuth
-    # refresh, the drift check and the worktree GC down with it.
-    # Act
-    job = _job("sac.fleet-reconcile")
-    # Assert
-    assert job.kind == "timer"
 
 
-def test_fleet_reconcile_command_is_the_applying_form() -> None:
-    # Arrange — THIS JOB IS THE MECHANISM. `restart.policy` in ~93 specs is
-    # dead code without it: `_lifecycle/_start.py` runs the loop that reads
-    # it on a daemon thread inside the short-lived `sac agents start` CLI, so
-    # the supervisor dies with the process that promised it. A scheduled
-    # DRY-RUN would restore nothing — the whole point is `--apply`.
-    # Act
-    job = _job("sac.fleet-reconcile")
-    # Assert
-    assert job.command == "sac agents reconcile --apply"
 
 
-def test_fleet_reconcile_cadence_is_five_minutes() -> None:
-    # Arrange — the cadence IS the window a dead agent stays dead. A no-op
-    # pass is one batched `tmux list-sessions` plus a spec read each, so it
-    # is cheap enough to run often.
-    # Act
-    job = _job("sac.fleet-reconcile")
-    # Assert
-    assert job.on_unit_active_sec == "5min"
 
 
-def test_fleet_reconcile_timeout_outlives_a_capped_pass() -> None:
-    # Arrange — the pathological pass restarts `--limit` agents, each a
-    # stop+settle+start. A pass killed at this timeout is SAFE (the restart
-    # history is persisted per restart, not at the end), but the timeout must
-    # still comfortably exceed a normal pass or the enforcer never finishes.
-    # Act
-    job = _job("sac.fleet-reconcile")
-    # Assert
-    assert job.timeout_sec == 300
 
 
-def test_spartan_sif_bake_job_name_is_package_prefixed() -> None:
-    # Arrange — the daily remote SIF bake (operator directive 2026-07-17:
-    # bake on Spartan, rsync to the master, zero master CPU).
-    # Act
-    job = _job("sac.spartan-sif-bake")
-    # Assert
-    assert job.name == "sac.spartan-sif-bake"
 
 
-def test_spartan_sif_bake_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer (*/10), so kind="timer".
-    # A bad kind makes `ecosystem up` silently drop sac's WHOLE provider.
-    # Act
-    job = _job("sac.spartan-sif-bake")
-    # Assert
-    assert job.kind == "timer"
 
 
 # ---------------------------------------------------------------------------
@@ -354,87 +241,20 @@ def test_spartan_sif_bake_job_kind_is_timer() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_restart_login_expired_job_name_is_package_prefixed() -> None:
-    # Arrange — the auto-restarter for auth-dead-but-live agents.
-    # Act
-    job = _job("sac.restart-login-expired-agents")
-    # Assert
-    assert job.name == "sac.restart-login-expired-agents"
 
 
-def test_restart_login_expired_job_kind_is_timer() -> None:
-    # Arrange — a periodic systemd --user timer, so kind="timer". A wrong kind
-    # raises at construction and `ecosystem up` then silently DROPS sac's whole
-    # provider (provider-isolated, WARN-only) — taking the OAuth refresh, the
-    # drift check, the worktree GC AND the fleet-reconcile enforcer down too.
-    # Act
-    job = _job("sac.restart-login-expired-agents")
-    # Assert
-    assert job.kind == "timer"
 
 
-def test_spartan_sif_bake_command_is_the_confirmed_form() -> None:
-    # Arrange — `sac image bake-remote` REFUSES to run without --yes
-    # (exit 2), mirroring `sac image build`'s non-interactive gate. A
-    # scheduled command missing --yes would fail every single night —
-    # a timer that fires and does nothing, the inert-feature shape.
-    # Act
-    job = _job("sac.spartan-sif-bake")
-    # Assert
-    assert job.command == "sac image bake-remote --yes"
 
 
-def test_spartan_sif_bake_cadence_is_every_10_minutes() -> None:
-    # Arrange — the SIF is a point-in-time snapshot of @develop, and at our
-    # release rate a day-old one is mostly wrong. 30min was the operator's
-    # stated FLOOR (「最低でも30分に1回」), not his target — he asked why it was
-    # only every 30 and said even 1min would be fine — so this pins the
-    # cadence he wants. skip-if-unchanged keeps a no-change tick at one ssh
-    # round-trip instead of a multi-GB transfer, and the script's `flock -n`
-    # single-flights the overlaps a 10min interval necessarily causes.
-    # Act
-    job = _job("sac.spartan-sif-bake")
-    # Assert
-    assert job.on_unit_active_sec == "10min"
 
 
-def test_spartan_sif_bake_timeout_outlives_two_bakes_and_a_pull() -> None:
-    # Arrange — two full bakes (base + scitex) plus a multi-GB pull on a
-    # slow link must fit; the per-leg ssh timeout is 7200s, so the unit
-    # cap must exceed the worst legitimate chain or the timer kills its
-    # own successful runs.
-    # Act
-    job = _job("sac.spartan-sif-bake")
-    # Assert
-    assert job.timeout_sec == 14_400
 
 
-def test_restart_login_expired_command_is_the_applying_form() -> None:
-    # Arrange — a scheduled DRY-RUN would detect wedged agents and heal none.
-    # The whole point is `--apply`. Detection stays read-only; the restart is
-    # the only mutation.
-    # Act
-    job = _job("sac.restart-login-expired-agents")
-    # Assert
-    assert job.command == "sac agents restart-login-expired --apply"
 
 
-def test_restart_login_expired_cadence_is_five_minutes() -> None:
-    # Arrange — the cadence IS the window a login-expired agent stays wedged,
-    # matched to fleet-reconcile so the two enforcers sweep on the same beat.
-    # Act
-    job = _job("sac.restart-login-expired-agents")
-    # Assert
-    assert job.on_unit_active_sec == "5min"
 
 
-def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
-    # Arrange — construction must not raise (a bad field would drop the whole
-    # provider). Assert it is the canonical contract type, not a look-alike.
-    # Act
-    job = _job("sac.restart-login-expired-agents")
-    # Assert
-    assert isinstance(job, jobs_mod.JobSpec)
 
 
 # ---------------------------------------------------------------------------
@@ -455,119 +275,186 @@ def test_restart_login_expired_constructs_as_a_real_jobspec() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_heal_agent_auth_job_name_is_package_prefixed() -> None:
-    # Arrange — the incumbent auth healer, now declared rather than hand-cronned.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# THE POPULATION INVARIANT — what lets these JobSpecs land on cron at all.
+#
+# The per-job pins above are pinned by name; these are pinned over EVERY job,
+# because the way this contract breaks is by OMISSION in a job added later,
+# which no name-based test would notice.
+#
+# The mechanism: `scitex-dev ecosystem up` lowers every kind="timer" JobSpec
+# onto the managed crontab block (operator policy 2026-06-14), and a cron line
+# is `<schedule> <command> # marker` and nothing else — there is no field a
+# `timeout_sec` could ride in. scitex-dev's guard therefore REFUSES to lower a
+# timer declaring one, and because `up` is all-or-nothing, ONE such job blocks
+# every provider on the host. Measured 2026-08-17 on scitex-compute-04: nine
+# sac jobs declared `timeout_sec`, `up` aborted, nothing could be armed.
+#
+# So the bound lives in the COMMAND, and the field that cannot travel is gone.
+# ---------------------------------------------------------------------------
+
+#: A self-bounding command: the coreutils binary, a whole-second bound, and a
+#: non-empty payload after it.
+_SELF_BOUNDING = re.compile(r"^/usr/bin/timeout (\d+) (\S.*)$")
+
+
+def test_every_command_is_self_bounding() -> None:
+    # Arrange — the bound must live in the COMMAND, the only part of a JobSpec
+    # a cron line carries. Asserted over every job rather than an enumerated
+    # set: a job added later without a bound is exactly the regression this
+    # pins, and a list would not catch it.
     # Act
-    job = _job("sac.heal-agent-auth")
+    unbounded = [
+        job.name for job in provide_jobs() if not _SELF_BOUNDING.match(job.command)
+    ]
     # Assert
-    assert job.name == "sac.heal-agent-auth"
+    assert unbounded == []
 
 
-def test_heal_agent_auth_job_kind_is_timer() -> None:
-    # Arrange — kind="timer" is what buys `Persistent=true` from scitex-dev's
-    # renderer (a missed window fires on resume — the property the swept crontab
-    # line never had). kind="cron" would materialise the very crontab line this
-    # job exists to escape, and a kind outside {"service","timer","cron"} raises
-    # at construction, silently dropping sac's WHOLE provider.
+def test_no_job_declares_timeout_sec() -> None:
+    # Arrange — NOT a style rule. scitex-dev's lowering guard fires on
+    # `timeout_sec is not None` and never inspects whether the command is
+    # actually bounded, so a job carrying BOTH a literal `timeout` and this
+    # field still refuses to lower and still aborts `ecosystem up` for the
+    # whole host. The field is therefore dropped, not kept alongside.
     # Act
-    job = _job("sac.heal-agent-auth")
+    declaring = [job.name for job in provide_jobs() if job.timeout_sec is not None]
     # Assert
-    assert job.kind == "timer"
+    assert declaring == []
 
 
-def test_heal_agent_auth_cadence_preserves_the_incumbent_ten_minutes() -> None:
-    # Arrange — 10min is the LIVE cadence, not a new choice: runtime/auth-heal.log
-    # ticks 15:20 → 15:30 → 15:40 → 15:50 → 16:00, matching the `*/10` cron line.
-    # Migrating a schedule is the wrong moment to also retune it.
+def test_no_command_is_double_bounded() -> None:
+    # Arrange — the payload after the prefix must not itself be a `timeout`
+    # invocation. Two nested bounds are not a stricter bound; they are a
+    # second number nobody maintains, and the inner one silently wins.
     # Act
-    job = _job("sac.heal-agent-auth")
+    doubled = [
+        job.name
+        for job in provide_jobs()
+        if (m := _SELF_BOUNDING.match(job.command))
+        and m.group(2).split()[0].endswith("timeout")
+    ]
     # Assert
-    assert job.on_unit_active_sec == "10min"
+    assert doubled == []
 
 
-def test_heal_agent_auth_schedule_mirrors_the_retired_cron_expression() -> None:
-    # Arrange — the cron form is kept alongside the timer cadence (as every
-    # sibling does) so the expression the crontab line used stays legible in the
-    # spec, and so `ecosystem cron` could still derive an equivalent line.
+def test_declared_bound_is_a_positive_number_of_seconds() -> None:
+    # Arrange — `timeout 0 <cmd>` means "no timeout at all" in coreutils, so a
+    # zero would read as a bound while removing one. Guard the value, not just
+    # the shape.
     # Act
-    job = _job("sac.heal-agent-auth")
+    bounds = {
+        job.name: int(m.group(1))
+        for job in provide_jobs()
+        if (m := _SELF_BOUNDING.match(job.command))
+    }
     # Assert
-    assert job.schedule == "*/10 * * * *"
+    assert all(seconds > 0 for seconds in bounds.values()), bounds
 
 
-def test_heal_agent_auth_interpreter_token_is_absolute() -> None:
-    # Arrange — scitex-dev's `resolve_execstart` passes a head starting with "/"
-    # through VERBATIM. An absolute head is therefore the only form that depends
-    # on neither the ambient PATH nor which interpreter ran `ecosystem up`.
+def test_the_prefix_wraps_something_in_every_job() -> None:
+    # Arrange — a positive control on the regex above: prove it matches a real
+    # payload in EVERY job, not merely in some. Anchoring on the job count (an
+    # identity) rather than on `> 0` (a quantity) keeps this honest when the
+    # provider list changes.
     # Act
-    job = _job("sac.heal-agent-auth")
+    payloads = [
+        m.group(2)
+        for job in provide_jobs()
+        if (m := _SELF_BOUNDING.match(job.command))
+    ]
     # Assert
-    assert job.command.split()[0].startswith("/")
+    assert len(payloads) == len(provide_jobs())
 
 
-def test_heal_agent_auth_script_token_is_absolute() -> None:
-    # Arrange — a systemd --user unit gets a MINIMAL PATH and no meaningful cwd,
-    # so the script argument must be absolute too; a relative path would exec
-    # fine under cron's $HOME cwd and fail as status=127 under systemd.
-    # Act
-    job = _job("sac.heal-agent-auth")
-    # Assert
-    assert job.command.split()[1].startswith("/")
+# ---------------------------------------------------------------------------
+# The operator-facing outcome, measured through scitex-dev's OWN guard rather
+# than restated in our words. Skips cleanly on a scitex-dev predating the
+# lowering module, so CI never reddens on a version lag.
+# ---------------------------------------------------------------------------
 
 
-def test_heal_agent_auth_runs_the_venv_python_not_the_system_one() -> None:
-    # Arrange — the script's own `#!/usr/bin/env python3` would resolve to the
-    # SYSTEM python under systemd's minimal PATH, not the 3.11 venv the fleet
-    # runs on. Naming the venv interpreter outright is what carries the "PATH
-    # prefixed with .env-3.11/bin" requirement into a unit that has no PATH.
-    # Act
-    job = _job("sac.heal-agent-auth")
-    # Assert
-    assert job.command.startswith("/home/ywatanabe/.env-3.11/bin/python ")
-
-
-def test_heal_agent_auth_targets_the_real_auth_heal_entrypoint() -> None:
-    # Arrange — the entrypoint the cron line actually invokes, per the tracked
-    # `~/.scitex/agent-container/bin/README.md` ("run from cron; cron lines live
-    # in ~/.dotfiles/.crontab_list") and corroborated by the live state/log files
-    # that script writes. It takes no arguments — its `main()` has no argparse,
-    # only a `--selftest` branch — so the bare script path is the whole command.
-    # Act
-    job = _job("sac.heal-agent-auth")
-    # Assert
-    assert job.command.endswith(
-        "/home/ywatanabe/.scitex/agent-container/bin/auth-heal.py"
+def _lowering():
+    return pytest.importorskip(
+        "scitex_dev._cli.ecosystem._cmds._up_timer_lowering",
+        reason="installed scitex-dev predates the timer-lowering guard",
     )
 
 
-def test_heal_agent_auth_timeout_outlives_a_restarting_pass() -> None:
-    # Arrange — a no-op tick takes ~2-8s; the worst observed pass (a TUI restart
-    # at 15:30:04 settling by 15:32:08) ~2min. A pass killed here is SAFE (state
-    # is persisted per restart), but the timeout must still outlive a real one.
+def test_no_job_degrades_when_lowered_onto_cron() -> None:
+    # Arrange — `degraded_job_names` is the exact predicate `ecosystem up`
+    # reports under --allow-lossy-timer-lowering. Nine sac jobs were listed
+    # there on 2026-08-17; the target is none.
+    low = _lowering()
     # Act
-    job = _job("sac.heal-agent-auth")
+    degraded = low.degraded_job_names(provide_jobs())
     # Assert
-    assert job.timeout_sec == 300
+    assert degraded == []
 
 
-def test_heal_agent_auth_constructs_as_a_real_jobspec() -> None:
-    # Arrange — construction must not raise (a bad field would drop the whole
-    # provider). Assert it is the canonical contract type, not a look-alike.
+def test_strict_lowering_does_not_abort_the_ecosystem() -> None:
+    # Arrange — this is THE blocker being fixed. `ecosystem up` calls
+    # `collect_cron_jobs` WITHOUT allow_lossy first; one raising job aborts the
+    # run before anything is written, for every provider on the host.
+    low = _lowering()
+    jobs = provide_jobs()
+    # Act — must not raise TimerLoweringError.
+    _merged, _native, lowered = low.collect_cron_jobs(jobs, allow_lossy=False)
+    # Assert
+    assert lowered == len([job for job in jobs if job.kind == "timer"])
+
+
+def test_strict_lowering_installs_every_declared_job() -> None:
+    # Arrange — the companion to the abort check: proceeding is only the right
+    # outcome if nothing was quietly dropped on the way through.
+    low = _lowering()
+    jobs = provide_jobs()
     # Act
-    job = _job("sac.heal-agent-auth")
+    merged, _native, _lowered = low.collect_cron_jobs(jobs, allow_lossy=False)
     # Assert
-    assert isinstance(job, jobs_mod.JobSpec)
+    assert len(merged) == len(jobs)
 
 
-def test_heal_agent_auth_and_restart_login_expired_are_both_declared() -> None:
-    # Arrange — declaring both is SAFE and deliberate: a JobSpec is inert until
-    # `ecosystem up` installs it, so version-controlling the incumbent does not
-    # enable it. What must never happen is both being ENABLED — they are the two
-    # implementations of the same TUI heal, with INDEPENDENT debounce state, and
-    # two restarters on one fleet is the documented double-supervisor hazard.
-    # This pins that the choice stays an operator deploy decision rather than
-    # being silently foreclosed by deleting one of them.
+def test_the_cron_line_that_lands_on_the_host_carries_the_bound() -> None:
+    # Arrange — the end-to-end check, and the one that would have caught the
+    # original defect: assert on the ARTIFACT (the crontab line) rather than on
+    # the declaration. A `timeout_sec` assertion passed throughout the
+    # 2026-07-18 incident while the deployed line was unbounded.
+    low = _lowering()
+    from scitex_dev.jobs import _cron_block as cron_block
+
+    merged, _native, _lowered = low.collect_cron_jobs(provide_jobs(), allow_lossy=False)
     # Act
-    names = {job.name for job in provide_jobs()}
+    lines = [cron_block.build_cron_line(spec) for spec in merged]
     # Assert
-    assert {"sac.heal-agent-auth", "sac.restart-login-expired-agents"} <= names
+    assert all(" /usr/bin/timeout " in line for line in lines), lines
+
+
+# The POPULATION guard over these jobs' payloads — the one that catches a
+# JobSpec added tomorrow rather than any named above — lives in
+# `test__specs_payload.py`. It needs the `executable` seam to resolve
+# deterministically, which is a different setup from every test here.

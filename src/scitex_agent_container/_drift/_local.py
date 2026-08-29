@@ -19,19 +19,30 @@ Design constraints (per the work item):
 * **RESILIENT** — never raises. A missing git binary, a
   non-repo source dir, an unreachable remote, or any subprocess error
   degrades to ``NOT_A_REPO`` / ``UNREACHABLE`` and the launch proceeds.
-* **DEFAULT = warn loud, NOT block** — hosts like spartan legitimately
-  carry local commits; a hard block would break every start there.
-  ``--strict-drift`` / ``SAC_STRICT_DRIFT=1`` escalate to a hard block.
+* **DEFAULT = REFUSE on a STALE spec** (operator ruling 2026-08-10:
+  「スペックがおかしかったら起動不可っていうのをデフォルトに」). A spec source
+  that is BEHIND / DIVERGED may launch an old spec, so the start is
+  refused and the named override ``--allow-stale-spec`` /
+  ``SAC_ALLOW_STALE_SPEC=1`` is the way past it.
+
+  AHEAD is deliberately NOT a refusal — see :attr:`DriftStatus.is_stale`.
+  Unpushed local commits mean the spec will not PROPAGATE; the spec about
+  to launch is still the newest one that exists, and hosts like spartan
+  legitimately carry local commits. AHEAD stays a loud warning.
+
+  NOT_A_REPO / UNREACHABLE never refuse: drift is *unknown* there, not
+  present, and refusing on "I could not check" would ground every agent
+  the moment the network hiccups.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import time
 from pathlib import Path
 
+from ._sibling import warn_if_newer_sibling
 from ._status import DriftState, DriftStatus
 
 # How long a successful ``git fetch`` for a given repo stays "fresh".
@@ -43,6 +54,12 @@ _FETCH_TTL_S = 60
 # unreachable remote must not hang a launch; we bound it and treat a
 # timeout as UNREACHABLE.
 _GIT_TIMEOUT_S = 15
+
+# The NAMED override for the stale-spec refusal. One flag per condition —
+# never a blanket ``--force`` / ``--ignore-warnings``, which skips every check
+# at once and leaves no record of WHICH one was bypassed.
+ALLOW_STALE_FLAG = "--allow-stale-spec"
+ALLOW_STALE_ENV = "SAC_ALLOW_STALE_SPEC"
 
 
 def _run_git(repo: Path, *args: str, timeout: int = _GIT_TIMEOUT_S):
@@ -278,13 +295,19 @@ def check_spec_source_drift(
     )
 
 
-def drift_warning_lines(status: DriftStatus, *, agent: str | None = None) -> list[str]:
-    """Build the loud stderr warning lines for a drifted spec source.
+def drift_warning_lines(
+    status: DriftStatus, *, agent: str | None = None, refusing: bool = False
+) -> list[str]:
+    """Build the loud stderr lines for a drifted spec source.
 
     Returns an empty list when ``status`` is CURRENT (nothing to warn).
     NOT_A_REPO / UNREACHABLE produce a single soft note (drift unknown).
     BEHIND / AHEAD / DIVERGED produce a prominent banner that names the
     drift and the exact fix command.
+
+    ``refusing`` switches the banner from WARNING to ERROR and adds the named
+    override, so the message the operator reads matches what actually happened.
+    A refusal that still says "WARNING" trains the reader to expect a launch.
     """
     if status.state is DriftState.CURRENT:
         return []
@@ -318,14 +341,18 @@ def drift_warning_lines(status: DriftStatus, *, agent: str | None = None) -> lis
             "stale AND unpushed."
         )
     bar = "!" * 72
-    return [
+    lines = [
         bar,
-        f"sac-drift WARNING{who}:",
+        f"sac-drift {'ERROR' if refusing else 'WARNING'}{who}:",
         f"  {why}",
         f"  repo:     {repo}",
         f"  fix:      {fix}",
-        bar,
     ]
+    if refusing:
+        lines.append("  refusing to start — resolve the drift, or start anyway with:")
+        lines.append(f"  override: {ALLOW_STALE_FLAG}   /   {ALLOW_STALE_ENV}=1")
+    lines.append(bar)
+    return lines
 
 
 def warn_if_spec_source_drifted(
@@ -336,23 +363,30 @@ def warn_if_spec_source_drifted(
     do_fetch: bool = True,
     stream=None,
 ) -> DriftStatus:
-    """Check + emit the launch-time drift warning to ``stream``.
+    """Check + emit the launch-time drift report to ``stream``.
 
     Always returns the computed :class:`DriftStatus`. When ``strict`` is
-    True AND the source is genuinely drifted (BEHIND / AHEAD / DIVERGED),
-    raises :class:`SpecSourceDriftError` so the caller can hard-block the
-    launch. NOT_A_REPO / UNREACHABLE never block, even under strict —
-    drift is *unknown* there, not present.
+    True AND the local spec is STALE (BEHIND / DIVERGED — see
+    :attr:`DriftStatus.is_stale`), raises :class:`SpecSourceDriftError` so
+    the caller hard-blocks the launch.
 
-    ``stream`` defaults to ``None`` and is resolved to ``sys.stderr`` at
-    CALL time (not import time) so a test's ``capsys`` / a runtime
-    stderr redirect is honoured. Pass an explicit stream to override.
+    AHEAD does NOT block even under strict: the spec about to launch is the
+    newest one that exists, it merely has not propagated. NOT_A_REPO /
+    UNREACHABLE never block either — drift is *unknown* there, not present.
+
+    ``stream=None`` (the default) routes the report through
+    ``scitex-logging`` — level-tagged, module-stamped, mirrored to the
+    rotating file — because a bare unprefixed line in lifecycle output is
+    exactly the no-discipline print the operator called out on 2026-08-15
+    (a ``sac-drift:`` line with no level sat between properly-tagged
+    ``WARN:`` lines in ``sac-restart``'s output). scitex-logging emits to
+    stderr, so ``capsys`` still observes it. Passing an EXPLICIT stream
+    keeps the old raw-print contract — that seam is deliberate and some
+    callers own their report's destination.
 
     NEVER raises for any reason other than the deliberate strict-mode
     block: the drift computation itself is fully guarded.
     """
-    if stream is None:
-        stream = sys.stderr
     # stx-allow: fallback (reason: the drift check is a best-effort guard;
     # an unforeseen bug in it must NEVER crash a launch — degrade to a
     # silent "unknown" status and let the agent start)
@@ -365,20 +399,62 @@ def warn_if_spec_source_drifted(
             state=DriftState.UNREACHABLE,
             detail=f"drift check raised {type(exc).__name__}: {exc}",
         )
-    lines = drift_warning_lines(status, agent=agent)
-    for line in lines:
-        print(line, file=stream, flush=True)
-    if strict and status.is_drifted:
+    refusing = bool(strict and status.is_stale)
+    lines = drift_warning_lines(status, agent=agent, refusing=refusing)
+    if lines:
+        if stream is None:
+            # scitex-logging DIRECTLY — no sac-side wrapper, no sac-side
+            # logger. Operator ruling 2026-08-15: 「use scitex-logging」/
+            # 「you must not re-create logger on your side」/「it is not
+            # ssot」. The import is inside the function, not at module
+            # scope, because scitex_logging configures handlers on first
+            # import and a launch must not pay that at import time.
+            import scitex_logging
+
+            log = scitex_logging.getLogger(__name__)
+            # A refusal is an error; EVERYTHING ELSE is a warning — including
+            # NOT_A_REPO / UNREACHABLE, where drift is merely UNKNOWN.
+            #
+            # Those two were briefly routed to ``info`` on the grounds that an
+            # unknown is not a problem. Measured against the installed sac,
+            # that made the line VANISH: the default handler level filters
+            # info, so "give this diagnostic a level" turned into "delete this
+            # diagnostic". Downgrading a line that always printed is a
+            # REGRESSION dressed as tidying — the operator loses the report
+            # and nothing announces the loss.
+            #
+            # Level is chosen by what the READER must do, not by how the
+            # emitter feels about the state: "I could not check whether your
+            # spec is stale" is a caveat on the launch that just happened, and
+            # it has to be visible for that launch to be trusted.
+            emit = log.error if refusing else log.warning
+            for line in lines:
+                emit(line)
+        else:
+            for line in lines:
+                print(line, file=stream, flush=True)
+    # Sibling-copy staleness — a DIFFERENT mechanism from git drift, and
+    # deliberately INDEPENDENT of it: it must fire even when the spec
+    # source is NOT_A_REPO (the deliberately-not-a-repo live layout is the
+    # exact incident case), and it NEVER refuses. It is advisory and
+    # degrades to silence on any internal error.
+    try:
+        warn_if_newer_sibling(spec_path, agent=agent, stream=stream)
+    except (
+        Exception
+    ):  # stx-allow: fallback (reason: the sibling check is advisory and already fully guarded inside _sibling; this second guard keeps "a warning must never crash a launch" true even if that guarantee regressed)
+        pass
+    if refusing:
         raise SpecSourceDriftError(status, agent=agent)
     return status
 
 
 class SpecSourceDriftError(RuntimeError):
-    """Raised under ``--strict-drift`` when the spec source is drifted.
+    """Raised when the spec source is STALE and the start was not overridden.
 
     Carries the offending :class:`DriftStatus` so the CLI layer can set
-    a clear non-zero exit. Only fires for BEHIND / AHEAD / DIVERGED —
-    NOT_A_REPO / UNREACHABLE never escalate.
+    a clear non-zero exit. Only fires for BEHIND / DIVERGED — AHEAD,
+    NOT_A_REPO and UNREACHABLE never escalate.
     """
 
     def __init__(self, status: DriftStatus, *, agent: str | None = None):
@@ -386,12 +462,16 @@ class SpecSourceDriftError(RuntimeError):
         self.agent = agent
         who = f" for agent '{agent}'" if agent else ""
         super().__init__(
-            f"strict-drift: spec source{who} is drifted ({status.summary()}); "
-            "refusing to launch. Resolve the drift or drop --strict-drift."
+            f"sac-drift: spec source{who} is STALE ({status.summary()}); "
+            f"refusing to launch a spec that may be out of date. Pull the "
+            f"repo, or start anyway with {ALLOW_STALE_FLAG} / "
+            f"{ALLOW_STALE_ENV}=1."
         )
 
 
 __all__ = [
+    "ALLOW_STALE_ENV",
+    "ALLOW_STALE_FLAG",
     "SpecSourceDriftError",
     "check_spec_source_drift",
     "drift_warning_lines",

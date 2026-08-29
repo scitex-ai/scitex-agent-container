@@ -14,14 +14,36 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._state.host_config import PeerSpec
+from scitex_agent_container.cli_pkg.lifecycle._host_chain import (
+    REACHABLE,
+    UNKNOWN,
+    UNREACHABLE,
+)
 from scitex_agent_container.cli_pkg.lifecycle._host_routing import (
     UnknownSpecHostError,
     classify_spec_host_route,
+    format_route_error,
     format_unknown_host_error,
     has_active_row,
     resolve_spec_host_peer,
+    resolve_spec_host_route,
+    resolve_start_dispatch_peer,
     spec_host_fallback_peer,
 )
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
 
 # ---------------------------------------------------------------------------
 # Fixtures — HOME redirect + isolated state.db (same pattern as
@@ -369,5 +391,209 @@ def test_fallback_routes_by_spec_pin_when_no_row_exists(
     _write_spec(fake_home, "hr-fallback", "peer-host")
     # Act
     peer = spec_host_fallback_peer("hr-fallback", _PEERS, verb="restart")
+    # Assert
+    assert peer == "peer-host"
+
+
+# ---------------------------------------------------------------------------
+# FALLBACK CHAIN routing — reachability decides, and a dead chain fails loud.
+#
+# ``_PEERS`` holds only ``peer-host``, so a second peer is registered where a
+# chain needs somewhere to degrade TO.
+# ---------------------------------------------------------------------------
+
+_CHAIN_PEERS = {
+    "peer-host": PeerSpec(name="peer-host", ssh="peer-host"),
+    "peer-two": PeerSpec(name="peer-two", ssh="peer-two"),
+}
+
+
+def _verdicts(**by_host: str):
+    """Injected reachability oracle; unlisted hosts answer UNKNOWN."""
+
+    def _fn(host: str) -> str:
+        return by_host.get(host.replace("-", "_"), UNKNOWN)
+
+    return _fn
+
+
+def test_classify_chain_degrades_past_an_unreachable_head():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=REACHABLE)
+    # Act
+    kind_peer = classify_spec_host_route(
+        ["peer-host", "peer-two"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert kind_peer == ("remote", "peer-two")
+
+
+def test_classify_chain_degrades_to_this_machine_when_peers_are_down():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE)
+    # Act
+    kind_peer = classify_spec_host_route(
+        ["peer-host", "this-host"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert kind_peer == ("local", None)
+
+
+def test_classify_fully_unreachable_chain_keeps_the_legacy_unknown_shape():
+    # Arrange — callers that only ask "(kind, peer)" must keep seeing the
+    # historic "unknown" for a placement they must not dispatch.
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=UNREACHABLE)
+    # Act
+    kind_peer = classify_spec_host_route(
+        ["peer-host", "peer-two"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert kind_peer == ("unknown", None)
+
+
+def test_route_exposes_the_rejected_candidates_for_the_error_message():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=UNREACHABLE)
+    # Act
+    route = resolve_spec_host_route(
+        ["peer-host", "peer-two"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert [c.host for c in route.candidates] == ["peer-host", "peer-two"]
+
+
+def test_format_route_error_uses_the_single_name_message_for_a_string():
+    # Arrange — a string placement's message is unchanged from before
+    # chains existed.
+    route = resolve_spec_host_route(
+        "spartn-typo", "this-host", _PEERS, local_names={"this-host"}
+    )
+    # Act
+    msg = format_route_error(
+        "alpha", "spartn-typo", route, _PEERS, verb="start", current_host="this-host"
+    )
+    # Assert
+    assert msg == format_unknown_host_error(
+        "alpha", "spartn-typo", _PEERS, verb="start"
+    )
+
+
+def test_format_route_error_uses_the_chain_message_for_a_list():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=UNREACHABLE)
+    spec_host = ["peer-host", "peer-two"]
+    route = resolve_spec_host_route(
+        spec_host,
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Act
+    msg = format_route_error(
+        "alpha", spec_host, route, _CHAIN_PEERS, verb="start", current_host="this-host"
+    )
+    # Assert
+    assert "Chain (priority order):" in msg
+
+
+def test_resolve_spec_chain_degrades_to_a_reachable_fallback(fake_home):
+    # Arrange
+    _write_spec(fake_home, "hr-chain", "[peer-host, peer-two]")
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=REACHABLE)
+    # Act
+    peer = resolve_spec_host_peer(
+        "hr-chain",
+        _CHAIN_PEERS,
+        verb="stop",
+        current_host="this-host",
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert peer == "peer-two"
+
+
+def test_resolve_spec_chain_with_nothing_usable_raises(fake_home):
+    # Arrange
+    _write_spec(fake_home, "hr-dead-chain", "[peer-host, peer-two]")
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=UNREACHABLE)
+
+    # Act
+    def _do() -> None:
+        resolve_spec_host_peer(
+            "hr-dead-chain",
+            _CHAIN_PEERS,
+            verb="restart",
+            current_host="this-host",
+            local_names={"this-host"},
+            reachability=oracle,
+        )
+
+    # Assert
+    with pytest.raises(UnknownSpecHostError, match="peer-two"):
+        _do()
+
+
+def test_start_dispatch_peer_degrades_past_an_unreachable_head():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE, peer_two=REACHABLE)
+    # Act
+    peer = resolve_start_dispatch_peer(
+        "alpha",
+        ["peer-host", "peer-two"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert peer == "peer-two"
+
+
+def test_start_dispatch_peer_is_none_when_the_chain_reaches_this_machine():
+    # Arrange
+    oracle = _verdicts(peer_host=UNREACHABLE)
+    # Act
+    peer = resolve_start_dispatch_peer(
+        "alpha",
+        ["peer-host", "this-host"],
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
+    # Assert
+    assert peer is None
+
+
+def test_start_dispatch_peer_with_an_unreachable_string_is_unchanged():
+    # Arrange — a string is never probed; this is the no-regression pin.
+    oracle = _verdicts(peer_host=UNREACHABLE)
+    # Act
+    peer = resolve_start_dispatch_peer(
+        "alpha",
+        "peer-host",
+        "this-host",
+        _CHAIN_PEERS,
+        local_names={"this-host"},
+        reachability=oracle,
+    )
     # Assert
     assert peer == "peer-host"

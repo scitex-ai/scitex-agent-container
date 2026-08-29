@@ -49,24 +49,38 @@ token deliberately NEVER rides an ``--env`` argv flag (visible in
 ``/proc/<pid>/cmdline``) and its VALUE is never logged — log lines carry
 only the slot NAME, the pool source path(s), and the agent name.
 
-Loud-but-honest contract: when the channel is requested and NO token
-resolves, a scitex-logging WARNING names the pool source, the tried slot
-names, and the fixes. The start itself proceeds — Telegram is a comms rail,
-not a boot dependency — so the absence is loud but never silent, and never
-DRESSED UP AS A STARTUP FAILURE. It used to log at ERROR, which made every
-brand-new agent (no bot yet, by definition) look stillborn in its boot log
-next to the genuinely fatal lines; WARNING + an explicit "the agent starts
-normally" sentence keeps the signal without the false alarm.
+Loud-but-honest contract, at TWO levels, because there are two different
+facts to report and they do not deserve the same volume:
+
+* RESOLUTION failed (:func:`ensure_cct_bot_token`) — a scitex-logging
+  WARNING names the pool source, the tried slot names, and the fixes. The
+  start itself proceeds — Telegram is a comms rail, not a boot dependency —
+  so the absence is loud but never silent, and never DRESSED UP AS A STARTUP
+  FAILURE. It used to log at ERROR, which made every brand-new agent (no bot
+  yet, by definition) look stillborn in its boot log next to the genuinely
+  fatal lines; WARNING + an explicit "the agent starts normally" sentence
+  keeps the signal without the false alarm.
+* A DECLARED mapping is broken (:func:`prune_tokenless_telegrammer_mcp`) —
+  ERROR. Different fact, rarer, severe in consequence (the rail is REMOVED,
+  not merely quiet), so it earns the loud level without reopening the
+  demotion above. Keyed on the DECLARED slot, never on the channel request —
+  see that function for the 80/14/66 measurement behind that choice.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
 from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
+from ._secret_pool import (
+    _SECRETS_ENVRC_VAR,
+    _pool_source_label,
+    _read_env_file,
+    _write_env_file,
+    read_pool,
+)
 
 # The env-var the telegrammer MCP reads its bot token from (see the shared
 # baseline ``.mcp.json``: ``"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"``).
@@ -77,8 +91,6 @@ _AGENT_ID_VAR = "CCT_AGENT_ID"
 _POOL_PREFIX = "CCT_BOT_TOKEN_"
 # Optional explicit slot override in ``spec.apptainer.env``.
 _SLOT_OVERRIDE_VAR = "CCT_BOT_TOKEN_SLOT"
-# The .envrc secrets-preamble env var (shared with :mod:`._envrc`).
-_SECRETS_ENVRC_VAR = "SAC_SECRETS_ENVRC"
 
 
 def _logger():
@@ -168,86 +180,30 @@ def _slot_candidates(name: str, workdir: str) -> list[str]:
     return candidates
 
 
-def _read_env_file(path: Path) -> dict[str, str]:
-    """Parse a plain ``KEY=VALUE``-per-line env file (the fold's format).
+def _channel_requested(config) -> bool:
+    """True iff ``spec.claude.channels`` asks for the telegrammer rail.
 
-    Tolerates blank lines and ``#`` comments; no shell semantics (the fold
-    writes raw values, no quoting/export).
+    Read by :func:`ensure_cct_bot_token` (whether to resolve at all) and by
+    :func:`prune_tokenless_telegrammer_mcp` (whether resolution was even
+    attempted, before it blames a declared slot for coming up empty).
     """
-    env: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        key, sep, val = line.partition("=")
-        if sep:
-            env[key.strip()] = val
-    return env
+    channels = list(getattr(getattr(config, "claude", None), "channels", None) or [])
+    return any(str(c).strip() == _TELEGRAMMER_CHANNEL for c in channels)
 
 
-def _pool_env() -> dict[str, str]:
-    """The pool: ``CCT_BOT_TOKEN_*`` vars from the launching env, overlaid
-    with the secret files (daemon-start path).
+def _declared_slot(config) -> str:
+    """The DECLARED slot from ``spec.apptainer.env: CCT_BOT_TOKEN_SLOT``, else "".
 
-    Resolves the secret files via :func:`._envrc.resolve_secret_files`, which
-    honours an explicit ``SAC_SECRETS_ENVRC`` AND — the 2026-07-18 class fix —
-    falls back to the canonical ``$HOME`` default pool when the var is unset, so
-    a cron / raw-ssh / federated-timer restart that never had the var exported
-    still finds the bot token instead of folding (and STRIPPING) it. Sourced in
-    a strict bash with the same ``set -a`` semantics as the ``.envrc`` fold.
-    Falls back to the plain process env when no secret file resolves, and
-    degrades to the process env (rather than failing the deploy) if a resolved
-    secret file cannot be sourced — the caller's missing-token WARNING then
-    names the pool source anyway.
+    Upper-snaked exactly as the resolution path consumes it, so a log line names
+    the slot sac really looked for rather than the spelling in the spec. It is
+    the one signal here separating "somebody mapped this agent to a bot" from "a
+    template default came along for the ride" — see
+    :func:`prune_tokenless_telegrammer_mcp` for why that, and not the channel
+    request, is what earns an ERROR.
     """
-    import shlex
-
-    from ._envrc import EnvrcEvalError, _capture_env, resolve_secret_files
-
-    files = resolve_secret_files()
-    if not files:
-        return dict(os.environ)
-    preamble = [f". {shlex.quote(str(p))}" for p in files]
-    try:
-        return _capture_env(
-            "\n".join(["set -a", *preamble, "set +a", "env -0"]), Path.cwd()
-        )
-    except EnvrcEvalError as exc:  # stx-allow: fallback (reason: pool read must not abort deploy; missing token is reported loudly by the caller)
-        _logger().warning(
-            "cct pool: failed to source %s (%s); falling back to the "
-            "launching process env only.",
-            _pool_source_label(),
-            exc,
-        )
-        return dict(os.environ)
-
-
-def _pool_source_label() -> str:
-    """Human-readable pool location for log lines (paths only, no values)."""
-    raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
-    if raw:
-        return f"{_SECRETS_ENVRC_VAR}={raw}"
-    # Class fix (2026-07-18): an unset var no longer means an empty pool — the
-    # resolver falls back to the canonical ``$HOME`` default. Report THAT so the
-    # missing-token WARN names where sac actually looked, not a pool it stopped
-    # limiting itself to.
-    from ._envrc import resolve_secret_files
-
-    defaults = resolve_secret_files()
-    if defaults:
-        joined = ":".join(str(p) for p in defaults)
-        return f"{_SECRETS_ENVRC_VAR} unset — using the canonical default pool {joined}"
-    return (
-        f"{_SECRETS_ENVRC_VAR} is UNSET and no canonical default pool files were "
-        "found — pool limited to the launching process environment"
-    )
-
-
-def _write_env_file(path: Path, env: dict[str, str]) -> None:
-    """Rewrite ``path`` as sorted ``KEY=VALUE`` lines, owner-only perms."""
-    body = "".join(f"{k}={v}\n" for k, v in sorted(env.items()))
-    path.write_text(body, encoding="utf-8")
-    os.chmod(path, 0o600)
+    spec_env = getattr(config, "env", None) or {}
+    override = str(spec_env.get(_SLOT_OVERRIDE_VAR, "") or "").strip()
+    return _upper_snake(override) if override else ""
 
 
 def ensure_cct_bot_token(config, dest: Path) -> None:
@@ -262,17 +218,42 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     agent starts normally: a missing bot token degrades one comms rail, it
     does not fail a boot. The token VALUE is never logged; only slot names,
     paths, and the agent name appear.
+
+    WHICH token is not decided here. That is
+    :func:`._cct_token_resolution.resolve_cct_token`, which this function is
+    otherwise identical to plus a file write — so the fleet-wide collision
+    census and the ownership ledger read the SAME derivation this writes,
+    and a second one cannot drift into existence beside it.
     """
-    claude_spec = getattr(config, "claude", None)
-    channels = list(getattr(claude_spec, "channels", None) or [])
-    if not any(str(c).strip() == _TELEGRAMMER_CHANNEL for c in channels):
-        return
+    # Imported inside the function on purpose: _cct_token_resolution imports
+    # this module's private helpers at module scope, and this call is the one
+    # edge that would close the cycle. The derivation module is the lower
+    # layer; the writer is the only thing above it.
+    from ._cct_token_resolution import (
+        SOURCE_ENV_FILE,
+        SOURCE_POOL,
+        TOKEN_DISABLED,
+        TOKEN_NO_CHANNEL,
+        TOKEN_RESOLVED,
+        resolve_cct_token,
+    )
+
     agent_name = getattr(config, "name", "") or ""
     workdir = getattr(config, "workdir", "") or ""
     env_file = dest / ".env"
+
+    # ONE pool read, shared with the resolution: sourcing ~28 secret files
+    # forks a bash, and doing it twice per deploy would double that cost for
+    # an answer that must be the same both times.
+    pool = read_pool()
+    resolution = resolve_cct_token(config, dest=dest, pool=pool)
+
+    if resolution.outcome in (TOKEN_NO_CHANNEL, TOKEN_DISABLED):
+        return
+
     existing = _read_env_file(env_file) if env_file.is_file() else {}
 
-    if existing.get(_TOKEN_VAR):
+    if resolution.source == SOURCE_ENV_FILE:
         # Hand-authored .envrc (or a prior deploy) already provided the
         # token — authoritative. Only backfill the identity default.
         if not existing.get(_AGENT_ID_VAR):
@@ -289,38 +270,40 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
             )
         return
 
-    spec_env = getattr(config, "env", None) or {}
-    override = str(spec_env.get(_SLOT_OVERRIDE_VAR, "") or "").strip()
-    if override:
-        candidates = [_upper_snake(override)]
-    else:
-        candidates = _slot_candidates(agent_name, workdir)
+    if resolution.outcome == TOKEN_RESOLVED:
+        if resolution.source == SOURCE_POOL:
+            value = pool.env.get(f"{_POOL_PREFIX}{resolution.slot}", "")
+            origin = f"pool slot {_POOL_PREFIX}{resolution.slot}"
+        else:  # SOURCE_SPEC_ENV — a token pinned in spec.apptainer.env.
+            value = str((getattr(config, "env", None) or {}).get(_TOKEN_VAR, "") or "")
+            origin = f"spec.apptainer.env {_TOKEN_VAR}"
+        # Mirrored into .env even for SOURCE_SPEC_ENV, where the --env flag
+        # already wins at runtime: prune_tokenless_telegrammer_mcp reads THIS
+        # file, so leaving it empty would delete the MCP server out from under
+        # an agent that does have a bot.
+        existing[_TOKEN_VAR] = value
+        existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
+        _write_env_file(env_file, existing)
+        _logger().info(
+            "cct: resolved bot token for agent %r from %s (value not logged) "
+            "-> %s; %s=%s.",
+            agent_name,
+            origin,
+            env_file,
+            _AGENT_ID_VAR,
+            existing[_AGENT_ID_VAR],
+        )
+        return
 
-    pool = _pool_env()
-    for slot in candidates:
-        value = pool.get(f"{_POOL_PREFIX}{slot}", "")
-        if value:
-            existing[_TOKEN_VAR] = value
-            existing.setdefault(_AGENT_ID_VAR, _default_agent_id(agent_name, workdir))
-            _write_env_file(env_file, existing)
-            _logger().info(
-                "cct: resolved bot token for agent %r from pool slot "
-                "%s%s (value not logged) -> %s; %s=%s.",
-                agent_name,
-                _POOL_PREFIX,
-                slot,
-                env_file,
-                _AGENT_ID_VAR,
-                existing[_AGENT_ID_VAR],
-            )
-            return
-
+    candidates = list(resolution.candidates)
     _logger().warning(
         "cct: no Telegram bot token for agent %r although spec.claude.channels "
         "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "
         "STARTS NORMALLY — this is NOT a startup failure; only the Telegram "
-        "rail is down (the telegrammer MCP comes up without a token, so the "
-        "bot stays silent until a token is provided). Expected for a "
+        "rail is down, and it is down in BOTH directions: the telegrammer MCP "
+        "entry is REMOVED from the materialised .mcp.json (a server that "
+        "cannot start is worse than an absent one), so this agent is MUTE and "
+        "DEAF on Telegram until a token is provided. Expected for a "
         "brand-new agent that has no bot yet. To wire one up, do ONE of: "
         "(1) add %s<SLOT>=<token> for slot %r to a secrets file listed in %s "
         "(canonical pool; restart `sac listen` afterwards if it provides the "
@@ -370,7 +353,7 @@ def _default_agent_id(agent_name: str, workdir: str) -> str:
     return agent_name
 
 
-def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
+def prune_tokenless_telegrammer_mcp(dest: Path, *, config=None) -> bool:
     """Drop the telegrammer MCP server from ``dest/.mcp.json`` when no token resolved.
 
     Card ``sac-omit-telegram-mcp-when-no-cct-bot-token-20260702`` (operator
@@ -383,9 +366,35 @@ def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
     forever — which is noise in the one view the operator actually checks.
 
     That fail-loud is right for a MISCONFIGURED agent and wrong for a
-    deliberately bot-less one. The two cases are indistinguishable once the
-    entry exists, so the fix is to not emit the entry: no token → no server →
-    nothing to fail. An agent WITH a token is untouched.
+    deliberately bot-less one, and the ENTRY cannot tell them apart, so the fix
+    is to not emit the entry: no token → no server → nothing to fail. An agent
+    WITH a token is untouched.
+
+    Removing it SILENTLY, however, is how a misconfigured agent hides. Measured
+    2026-08-10, card ``sac-cct-prune-hides-misconfigured-telegram-agent-20260810``:
+    four agents on a new host went MUTE **and** DEAF on Telegram behind one INFO
+    line each, and the operator — getting no answers — concluded they were
+    ignoring him. Deafness is the half that surprises: the entry's absence kills
+    inbound too, and the agent cannot even self-diagnose, because ``health`` is
+    itself a tool on the very MCP server that just went away.
+
+    So ``config`` is read and the LEVEL splits on what the spec DECLARED:
+    an explicit ``spec.apptainer.env: CCT_BOT_TOKEN_SLOT: <X>`` whose pool slot
+    is absent/empty → ERROR (a stated mapping is broken; unambiguous, and rare
+    enough that ERROR stays quiet); no declared slot → INFO, unchanged, the
+    intentional no-bot path. ``config=None`` keeps the pre-2026-08-10 blind
+    behaviour; the real call site in :func:`._to_home.deploy_to_home` passes one.
+
+    The trigger is deliberately NOT "the spec requests the channel". On
+    compute-04, 2026-08-10: 80 specs request it, 14 resolve a token, 66 do not —
+    and the 66 include ``_template_generalist``, ``_template_python_developer``
+    and ``_template_researcher``. The request is INHERITED FROM THE TEMPLATES,
+    so it measures scaffolding, not intent; keying ERROR on it would print 66
+    red lines into the one panel the operator actually checks — recreating, as
+    a "fix", the exact noise this prune was written to remove. A declared slot
+    is the one thing here that somebody had to type on purpose, and it composes
+    with the operational remedy: give an agent that SHOULD have a bot an
+    explicit override, and from then on any breakage screams.
 
     Ordering is load-bearing: this must run AFTER :func:`ensure_cct_bot_token`,
     because that is what resolves a pool token into ``dest/.env``. Running it
@@ -421,6 +430,32 @@ def prune_tokenless_telegrammer_mcp(dest: Path) -> bool:
         return False
     del servers[_TELEGRAMMER_MCP_KEY]
     mcp_path.write_text(json.dumps(doc, indent=2) + "\n")
+    declared = _declared_slot(config) if config is not None else ""
+    if declared and _channel_requested(config):
+        slot_var = f"{_POOL_PREFIX}{declared}"
+        _logger().error(
+            "cct: agent %r DECLARES pool slot %s via spec.apptainer.env %s, but "
+            "that slot is absent or empty in the pool (%s) — a declared mapping "
+            "that does not work, i.e. a MISCONFIGURATION, not the intentional "
+            "no-bot path. The %r MCP server was REMOVED from %s, so the "
+            "Telegram rail is down BOTH ways: this agent is MUTE (cannot send) "
+            "and DEAF (never receives), and it cannot even self-diagnose, "
+            "because `health` is itself a tool on the server that just went "
+            "away. Fix by EITHER adding %s=<token> to a secrets file listed in "
+            "%s (restart `sac listen` afterwards if it provides the env), OR "
+            "correcting %s to a slot that exists, OR removing the override if "
+            "this agent needs no Telegram rail.",
+            getattr(config, "name", "") or "",
+            slot_var,
+            _SLOT_OVERRIDE_VAR,
+            _pool_source_label(),
+            _TELEGRAMMER_MCP_KEY,
+            mcp_path,
+            slot_var,
+            _SECRETS_ENVRC_VAR,
+            _SLOT_OVERRIDE_VAR,
+        )
+        return True
     _logger().info(
         "cct: no %s resolved for this agent — omitted the %r MCP server from "
         "%s so it does not start and fail on an empty token. This is the "

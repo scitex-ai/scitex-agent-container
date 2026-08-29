@@ -1,0 +1,19 @@
+from cli import run_command
+from store import Store
+
+
+def test_add_then_get():
+    s = Store()
+    assert run_command(s, ["add", "apple", "2.5", "4"]) == "added apple"
+    assert run_command(s, ["get", "apple"]) == "apple x4 @ 2.5"
+
+
+def test_total():
+    s = Store()
+    run_command(s, ["add", "apple", "2.0", "3"])
+    assert run_command(s, ["total"]) == "total 6.0"
+
+
+def test_unknown():
+    s = Store()
+    assert run_command(s, ["frobnicate"]) == "unknown command: frobnicate"

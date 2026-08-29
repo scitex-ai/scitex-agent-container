@@ -270,7 +270,7 @@ def test_json_output_carries_the_exit_code(repo, worktree, event_log):
         ],
     )
     # Assert
-    assert json.loads(result.output)["exit_code"] == 1
+    assert json.loads(result.stdout)["exit_code"] == 1
 
 
 def test_json_output_reports_the_keep_reasons(repo, worktree, event_log):
@@ -283,7 +283,7 @@ def test_json_output_reports_the_keep_reasons(repo, worktree, event_log):
         ["--repo", str(repo), "--min-age-hours", "0", "--no-alarm", "--json"],
     )
     # Assert
-    assert json.loads(result.output)["repos"][0]["keep_reasons"] == {"dirty": 1}
+    assert json.loads(result.stdout)["repos"][0]["keep_reasons"] == {"dirty": 1}
 
 
 def test_json_dry_run_reports_zero_removed(repo, worktree, event_log):
@@ -295,7 +295,7 @@ def test_json_dry_run_reports_zero_removed(repo, worktree, event_log):
         ["--repo", str(repo), "--min-age-hours", "0", "--no-alarm", "--json"],
     )
     # Assert
-    assert json.loads(result.output)["removed"] == 0
+    assert json.loads(result.stdout)["removed"] == 0
 
 
 # ---------------------------------------------------------------------------

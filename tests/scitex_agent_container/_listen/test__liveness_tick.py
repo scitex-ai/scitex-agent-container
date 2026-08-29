@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -38,6 +39,20 @@ from scitex_agent_container._listen._liveness_tick import (
 # The blocking IO resolvers live beside the loop glue (``_liveness_tick`` is
 # the loop + bus emit; ``_liveness_tick_resolve`` is every FS/registry read).
 from scitex_agent_container._listen import _liveness_tick_resolve as mod
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
 
 NOW = 2_000_000.0
 STALE_S = 900.0
@@ -320,40 +335,61 @@ class TestFleetLastBeatTs:
 
 
 class TestRegistryAvailability:
-    def test_readable_but_empty_registry_is_an_empty_dict(self, tmp_path) -> None:
-        # Arrange — a REAL sqlite state.db, created empty by the real schema
-        # init. The read SUCCEEDS and lists nobody.
+    def test_readable_but_empty_registry_is_an_empty_dict(
+        self, pg_schema: str
+    ) -> None:
+        # Arrange — a REAL, empty store (the throwaway schema). The read
+        # SUCCEEDS and lists nobody. It was an empty SQLite state.db until
+        # 2026-08-28, when ``instances`` moved to the shared store.
         # Act
-        pids = mod._live_agent_pids(db_path=tmp_path / "state.db")
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_unreadable_registry_is_none(self, tmp_path) -> None:
-        # Arrange — a REAL failure, no mock: the db's parent path is a regular
-        # FILE, so the OS refuses to create the directory sqlite needs.
-        blocker = tmp_path / "not-a-dir"
-        blocker.write_text("i am a file, not a directory")
-        # Act
-        pids = mod._live_agent_pids(db_path=blocker / "state.db")
+    def test_unreadable_registry_is_none(self) -> None:
+        # Arrange — a REAL failure, no mock. It used to be a state.db whose
+        # parent path was a regular FILE, so the OS refused to create the
+        # directory sqlite needed. The registry is the shared PostgreSQL
+        # store since 2026-08-28, so the equivalent real failure is a DSN
+        # nothing answers on — port 1, refused immediately. Env is saved and
+        # restored by hand (PA-306 bans monkeypatch), and the module's own
+        # reset hook drops the cached handle so the next test reconnects.
+        import os
+
+        from scitex_agent_container._state.state_db_instances_store import (
+            reset_instances_store,
+        )
+
+        key = "SCITEX_STORE_DSN"
+        saved = os.environ.get(key)
+        os.environ[key] = "postgresql://127.0.0.1:1/nothing"
+        reset_instances_store()
+        try:
+            # Act
+            pids = mod._live_agent_pids()
+        finally:
+            if saved is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved
+            reset_instances_store()
         # Assert — distinctly "we could not read it", NOT "nobody is alive".
         assert pids is None
 
-    def test_pidless_rows_contribute_no_pid(self, tmp_path) -> None:
-        # Arrange — EXACTLY what the live fleet writes: an active instances row
-        # with pid=NULL. The read succeeds; it simply proves nothing.
-        db = tmp_path / "state.db"
-        record_instance_start("agent-x", db_path=db)
+    def test_pidless_rows_contribute_no_pid(self, pg_schema: str) -> None:
+        # Arrange — EXACTLY what the live fleet writes: an active instances
+        # record with no pid. The read succeeds; it simply proves nothing.
+        record_instance_start("agent-x")
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids == {}
 
-    def test_a_recorded_live_pid_is_returned(self, tmp_path) -> None:
-        # Arrange — a row carrying a REAL, alive pid (this test process).
-        db = tmp_path / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+    def test_a_recorded_live_pid_is_returned(self, pg_schema: str) -> None:
+        # Arrange — a record carrying a REAL, alive pid (this test process).
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        pids = mod._live_agent_pids(db_path=db)
+        pids = mod._live_agent_pids()
         # Assert
         assert pids["agent-x"] == os.getpid()
 
@@ -381,7 +417,7 @@ class TestResolveLiveness:
         late = _iso(NOW - 10.0)
         (run_dir / "session.jsonl").write_text(json.dumps({"ts": late}) + "\n")
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=home_at_tmp / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — THE regression: this used to be None (never even read).
         assert out["agent-x"].last_active_ts == pytest.approx(
             datetime.fromisoformat(late.replace("Z", "+00:00")).timestamp()
@@ -393,14 +429,14 @@ class TestResolveLiveness:
         # Arrange — the fleet's real shape: a pid-less active row + a fresh
         # heartbeat. The heartbeat is the proof of life the registry lost.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 300.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].last_beat_ts is not None
 
@@ -408,9 +444,9 @@ class TestResolveLiveness:
         # Arrange — the registry CAN still vouch for an agent; when it does,
         # that remains corroborating positive evidence.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", pid=os.getpid(), db_path=db)
+        record_instance_start("agent-x", pid=os.getpid())
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].is_live is True
 
@@ -419,7 +455,7 @@ class TestResolveLiveness:
         blocker = home_at_tmp / "not-a-dir"
         blocker.write_text("i am a file, not a directory")
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=blocker / "state.db")
+        out = mod.resolve_liveness(["agent-x"])
         # Assert — UNKNOWN, so the rule stays silent instead of guessing dead.
         assert out["agent-x"].known is False
 
@@ -431,7 +467,7 @@ class TestResolveLiveness:
         # pseudo-owners on the real board ("operator", "lead"), which are not
         # sac-managed processes at all and must never be called dead.
         db = home_at_tmp / "state.db"
-        record_instance_start("someone-else", db_path=db)
+        record_instance_start("someone-else")
         # Act
         out = mod.resolve_liveness(["operator"], db_path=db)
         # Assert
@@ -444,14 +480,14 @@ class TestResolveLiveness:
         # mtime. That is a channel that would have shown life and does not, so
         # the owner stays KNOWN and real death is still detectable.
         db = home_at_tmp / "state.db"
-        record_instance_start("agent-x", db_path=db)
+        record_instance_start("agent-x")
         run_dir = (
             home_at_tmp / ".scitex" / "agent-container" / "runtime" / "agent-x"
         )
         run_dir.mkdir(parents=True)
         (run_dir / "heartbeat.json").write_text(json.dumps({"ts": NOW - 99_999.0}))
         # Act
-        out = mod.resolve_liveness(["agent-x"], db_path=db)
+        out = mod.resolve_liveness(["agent-x"])
         # Assert
         assert out["agent-x"].known is True
 
@@ -461,23 +497,70 @@ class TestResolveLiveness:
 # ===========================================================================
 
 
-async def _run_one_tick(*, consumers, doc, liveness, **kw) -> None:
-    """Spin the loop briefly then cancel — forces ≥1 tick deterministically."""
+#: How long a barrier waits for the loop to make progress before failing.
+#: Generous on purpose: it is not a timing assertion, it is the point at
+#: which we stop believing the loop is merely slow.
+_BARRIER_TIMEOUT_S = 10.0
+
+
+async def _await_ticks(counter: "list[int]", wanted: int) -> None:
+    """Block until the loop has COMPLETED ``wanted`` ticks, or fail loudly.
+
+    ``counter[0]`` is bumped by the loop's own ``now_fn`` seam, which the
+    loop calls exactly once per tick — after the interval sleep, before
+    detection and emit. So the (N+1)-th call is proof that tick N ran all
+    the way through its emit: the loop cannot reach the next ``now_fn()``
+    without having finished the previous iteration.
+    """
+    deadline = time.monotonic() + _BARRIER_TIMEOUT_S
+    while counter[0] <= wanted:
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"loop completed {max(counter[0] - 1, 0)} of {wanted} ticks "
+                f"in {_BARRIER_TIMEOUT_S}s — it is not running, not slow"
+            )
+        await asyncio.sleep(0.001)
+
+
+async def _run_one_tick(*, consumers, doc, liveness, ticks: int = 1, **kw) -> None:
+    """Run the loop until ``ticks`` FULL ticks have completed, then cancel.
+
+    The barrier is the loop's own progress (see :func:`_await_ticks`), NOT
+    the wall clock. The previous version slept a fixed 0.15s against a
+    0.05s interval and called that "deterministic"; it is not. Wall time
+    keeps moving while the event loop is starved, so on a loaded CI runner
+    the whole budget can elapse before the loop is ever scheduled — which
+    is exactly what happened in #967: 151ms of wall time, zero ticks,
+    ``assert 0 >= 1``, on py3.12 only, while the same commit passed on
+    3.11 and 3.13.
+
+    This also makes the ``emits_nothing`` tests mean something. Under a
+    fixed sleep they passed whenever the loop had not run at all — an
+    empty list proves silence only once a tick has demonstrably happened.
+    """
+    counter = [0]
+
+    def _now() -> float:
+        counter[0] += 1
+        return NOW
+
     task = asyncio.create_task(
         liveness_tick_reconciler_loop(
-            interval_s=0.05,
+            interval_s=0.001,
             stale_s=STALE_S,
             tasks_doc_source=doc,
             liveness_source=liveness,
             consumers_source=consumers,
-            now_fn=lambda: NOW,
+            now_fn=_now,
             **kw,
         )
     )
-    await asyncio.sleep(0.15)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await _await_ticks(counter, ticks)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 @pytest.mark.asyncio
@@ -587,24 +670,16 @@ async def test_loop_dedups_within_renotify_cooldown() -> None:
     # Arrange — many ticks at fixed NOW within a long cooldown.
     events: list[dict] = []
     liveness = {"agent-x": AgentLiveness(is_live=False, last_active_ts=None)}
-    task = asyncio.create_task(
-        liveness_tick_reconciler_loop(
-            interval_s=0.02,
-            stale_s=STALE_S,
-            renotify_s=10_000.0,  # huge → never re-notify in this test
-            tasks_doc_source=_stuck_doc(),
-            liveness_source=liveness,
-            consumers_source=[events.append],
-            now_fn=lambda: NOW,  # frozen clock → all ticks share one "now"
-        )
+    # Act — let SEVERAL ticks complete. Counted, not timed: "assert it fired
+    # once" is only a dedup claim if more than one tick actually ran, and a
+    # fixed sleep cannot promise that on a loaded runner (#967).
+    await _run_one_tick(
+        consumers=[events.append],
+        doc=_stuck_doc(),
+        liveness=liveness,
+        ticks=3,
+        renotify_s=10_000.0,  # huge → never re-notify in this test
     )
-    # Act — let several ticks run.
-    await asyncio.sleep(0.2)
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
     # Assert — despite many ticks, the (agent, card) fired exactly once.
     assert len(events) == 1
 

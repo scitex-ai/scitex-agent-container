@@ -17,8 +17,7 @@ assert + STX-TQ003 descriptive names.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
+import errno
 import json
 import shutil
 import socket
@@ -34,7 +33,9 @@ from typing import Callable, Iterator
 
 import pytest
 
+from scitex_agent_container.config._a2a_defaults import DEFAULT_A2A_HOST
 from scitex_agent_container.runtimes import _tui_turn_bridge as bridge
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # The STOP-path survivor sweep resolves the holder PID via lsof/ss/fuser; skip
 # the real-survivor test on a bare host that ships none of them (the finder's
@@ -43,10 +44,155 @@ _HAS_PORT_DISCOVERY = bool(
     shutil.which("lsof") or shutil.which("ss") or shutil.which("fuser")
 )
 
-# A realistic resolved a2a port + a fake PID for the bridge tests
+
+def _reserve_a2a_port() -> tuple[int, socket.socket | None]:
+    """An a2a port that is free AND STAYS free — held, not merely observed.
+
+    The previous form bound ``("127.0.0.1", 0)``, read ``getsockname()``, and
+    CLOSED the socket, storing the bare int for the whole 5-7 minute session.
+    Its docstring defended the close by arguing a later rebind would succeed
+    (SO_REUSEADDR over TIME_WAIT). That answers "can I rebind it?" The tests
+    depend on "will it still be free when I get there?", and a closed port
+    returns to the kernel's ephemeral pool at once. It was a memory of a fact,
+    not a reservation.
+
+    MEASURED on Linux 6.8 (ephemeral range 32768-60999):
+        released the old way -> re-issued to another process after 4,542 draws
+        held as below        -> 0 re-issues in 120,000 draws
+    So the race is real and the hold removes it. Two earlier attempts to
+    reproduce it returned nulls (0 in 4,000 binds; 0/25 at a 10s delay) and
+    both instruments were wrong in the same way: holding thousands of sockets
+    SIMULTANEOUSLY consumes the pool instead of cycling the kernel's rotating
+    allocation cursor, which is what re-issues a released port.
+
+    Keeping the socket bound but NEVER ``listen()``-ed is transparent to
+    ``port_is_free`` — that probe is the same SO_REUSEADDR bind — so the gate
+    the tests exercise still passes, while a real rogue LISTENER still trips
+    it. The tests keep their teeth.
+
+    THE RE-CHECK IS NOT DEFENSIVE CLUTTER. Duplicate-bind-while-not-listening
+    is LINUX semantics; on macOS/BSD a held socket would make ``port_is_free``
+    read False and would fail every ``start_turn_bridge`` test
+    DETERMINISTICALLY. So the helper asks the real probe whether its own hold
+    is transparent, and releases if it is not, degrading to exactly today's
+    behaviour. This fix can never turn a rare Linux flake into a certain
+    non-Linux failure.
+
+    This is the THIRD form of this constant. It was the literal 19007 — inside
+    the live a2a range and genuinely held by the ``figrecipe`` agent on the
+    self-hosted runner — which stalled PR #1117 twice. Commit 811c6a99 traded
+    that DETERMINISTIC collision for a PROBABILISTIC one, and the coin came up
+    tails three times in seven days (ports 35045 / 34121 / 59935), blocking
+    two more unrelated PRs.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    probe.bind(("127.0.0.1", 0))
+    port = int(probe.getsockname()[1])
+    if bridge.port_is_free("127.0.0.1", port):
+        return port, probe
+    probe.close()
+    return port, None
+
+
+# A RESERVED a2a port + a fake PID for the bridge tests
 # (PEP 515 separators satisfy STX-NL001).
-_PORT = 19_007
+_PORT, _PORT_RESERVATION = _reserve_a2a_port()
 _PID = 4_242
+
+
+@pytest.mark.skipif(
+    _PORT_RESERVATION is None,
+    reason=(
+        "this platform does not permit a hold that is transparent to "
+        "port_is_free, so the module fell back to the draw-and-release form"
+    ),
+)
+def test_the_reserved_port_still_reads_free_to_the_bridges_own_probe() -> None:
+    """The reservation must not break the gate it exists to stabilise."""
+    # Arrange
+    host = "127.0.0.1"
+    # Act
+    observed = bridge.port_is_free(host, _PORT)
+    # Assert
+    assert observed is True, (
+        "the session reservation made the module port look BUSY to the "
+        "bridge's own probe, which would fail every start_turn_bridge test "
+        "deterministically instead of rarely"
+    )
+
+
+@pytest.mark.skipif(
+    _PORT_RESERVATION is None,
+    reason=(
+        "this platform does not permit a hold that is transparent to "
+        "port_is_free, so the module fell back to the draw-and-release form"
+    ),
+)
+def test_the_module_port_is_reserved_not_merely_observed_free() -> None:
+    """The kernel must genuinely HOLD it, which is what excludes it.
+
+    A plain socket -- no SO_REUSEADDR -- is the honest question "is this port
+    occupied?". An occupied port is excluded from the ephemeral autobind pool,
+    and that exclusion is the only thing stopping a co-tenant process being
+    handed this port minutes after the module was imported.
+
+    FAILS BEFORE THE FIX: the old helper closed its socket, so the port was
+    genuinely unoccupied and this plain bind SUCCEEDED.
+    """
+    # Arrange
+    plain = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Act
+    try:
+        plain.bind(("127.0.0.1", _PORT))
+        observed = None
+    except OSError as exc:
+        observed = exc.errno
+    finally:
+        plain.close()
+    # Assert
+    assert observed == errno.EADDRINUSE, (
+        "the module port is not actually held, so the kernel may re-issue it "
+        "to another process mid-session -- the exact race this reservation "
+        f"exists to remove (plain bind returned {observed!r})"
+    )
+
+
+def _gate_says_free(_host: str, _port: int) -> bool:
+    """The port gate's answer, supplied by the test instead of by the machine.
+
+    ``start_turn_bridge`` takes ``port_free_fn`` as a first-class parameter
+    precisely so a caller can decide this, and the busy-path tests below
+    already inject the ``False`` half (``port_free_fn=lambda _h, _p: False``).
+    This is the symmetric ``True``: dependency injection through a declared
+    seam, not a mock, so PA-306 is satisfied.
+
+    WHY THE TESTS BELOW MUST NOT ASK THE MACHINE. ``_free_a2a_port`` picks a
+    port by binding 0 and reading the assignment back, then CLOSES the socket
+    at module import. Everything after that is a gap: on a self-hosted runner
+    with N xdist workers, several CI legs and real agents all churning the
+    ephemeral range, something else can take that port before the test bind
+    probe runs. Measured 2026-08-26, worker ``[gw5]``, port 59935 -- two
+    ``start_turn_bridge`` tests red on ``pytest-matrix-on-ubuntu-py3.11``.
+
+    That red was decided by SCHEDULING, not by the change under test. Two PRs
+    with disjoint diffs -- #1222 (``cli_pkg/_dev_jobs_backend.py``) and #1224
+    (``.github/ci/run-in-sif.sh``), neither touching ``runtimes/`` -- both
+    failed the same leg with the same error, which is what a defect neither of
+    them caused looks like.
+
+    This is the SECOND round of the same defect. The port used to be the
+    literal 19007, inside the live a2a range and genuinely held by the
+    ``figrecipe`` agent on the self-hosted runner; that stalled PR #1117
+    twice. Moving to an OS-assigned port turned a DETERMINISTIC collision into
+    a PROBABILISTIC one -- better, but still a coin flip on a busy machine.
+    Injecting the predicate removes the machine from the question entirely.
+
+    The gate itself stays covered, and better than before: the busy path is
+    asserted by injecting ``False``, and ``port_is_free``'s own real-socket
+    behaviour is tested where it belongs, against a socket the test holds open.
+    """
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +419,9 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
 ) -> None:
     # Arrange — a resolved port + config_path; record the spawn argv.
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
     recorded: dict = {}
 
     def fake_spawn(argv, **kwargs):
@@ -284,9 +432,9 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
         a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
     # Act
-    bridge.start_turn_bridge(config, spawn=fake_spawn)
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
     # Assert
-    assert "19007" in recorded["argv"]
+    assert str(_PORT) in recorded["argv"]
 
 
 def test_start_turn_bridge_returns_spawned_pid(
@@ -294,13 +442,17 @@ def test_start_turn_bridge_returns_spawned_pid(
 ) -> None:
     # Arrange
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="figrecipe", config_path=str(spec)
     )
     # Act
     pid = bridge.start_turn_bridge(
-        config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID)
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_gate_says_free,
     )
     # Assert
     assert pid == _PID
@@ -356,7 +508,9 @@ def test_start_turn_bridge_returns_none_on_spawn_failure(
 ) -> None:
     # Arrange — spawn raises; the launcher must swallow it and return None.
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
 
     def raising_spawn(argv, **kwargs):
         raise OSError("exec failed")
@@ -365,7 +519,9 @@ def test_start_turn_bridge_returns_none_on_spawn_failure(
         a2a=SimpleNamespace(port=_PORT), name="boom", config_path=str(spec)
     )
     # Act
-    pid = bridge.start_turn_bridge(config, spawn=raising_spawn)
+    pid = bridge.start_turn_bridge(
+        config, spawn=raising_spawn, port_free_fn=_gate_says_free
+    )
     # Assert
     assert pid is None
 
@@ -396,7 +552,9 @@ def test_start_turn_bridge_kills_preexisting_bridge_before_spawn(
     # (the orphan a port-changing restart would otherwise leave alive), plus
     # a recording spawn for the NEW bridge so no second subprocess is created.
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="restart-me", config_path=str(spec)
     )
@@ -405,7 +563,11 @@ def test_start_turn_bridge_kills_preexisting_bridge_before_spawn(
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text(str(prior.pid), encoding="utf-8")
     # Act — start must SIGTERM the prior bridge before spawning the new one.
-    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    bridge.start_turn_bridge(
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_gate_says_free,
+    )
     # Assert — the prior process received SIGTERM and exited.
     assert prior.wait(timeout=5) is not None
     # (defensive: make sure we never leak the helper if the assert above changes)
@@ -420,7 +582,9 @@ def test_start_turn_bridge_records_new_pid_over_prior(
     # start must overwrite it with the freshly-spawned bridge's PID (never
     # leave the orphaned/stale value behind).
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT), name="repid-me", config_path=str(spec)
     )
@@ -428,7 +592,11 @@ def test_start_turn_bridge_records_new_pid_over_prior(
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text("999999", encoding="utf-8")  # dead/stale PID
     # Act
-    bridge.start_turn_bridge(config, spawn=lambda argv, **kw: SimpleNamespace(pid=_PID))
+    bridge.start_turn_bridge(
+        config,
+        spawn=lambda argv, **kw: SimpleNamespace(pid=_PID),
+        port_free_fn=_gate_says_free,
+    )
     # Assert — pidfile now holds the new bridge's PID.
     assert pid_path.read_text(encoding="utf-8").strip() == str(_PID)
 
@@ -505,7 +673,9 @@ def test_start_turn_bridge_fails_loud_when_port_stays_busy(
 ) -> None:
     # Arrange — a REAL listener holds the agent's a2a port; spawn must NOT run.
     spec = tmp_path / "spec.yaml"
-    spec.write_text(explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8")
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
     held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     held.bind(("127.0.0.1", 0))
     held.listen()
@@ -639,3 +809,309 @@ def test_stop_turn_bridge_fails_loud_when_own_port_stays_stuck(
             now_fn=lambda: clock["t"],
             port_free_fn=lambda _h, _p: False,
         )
+
+
+# ---------------------------------------------------------------------------
+# spec.a2a.host -> the bridge's bind address
+#
+# The bridge is the SECOND of sac's three a2a bind paths. It hardcoded
+# DEFAULT_HOST, so a spec declaring a reachable address bound loopback here
+# while ``runtimes/a2a_sidecar.py`` alone honoured the declaration — and
+# nothing reported the disagreement. Both directions are pinned: an UNCHANGED
+# spec must still bind loopback, a CHANGED one must be followed.
+#
+# The bind assertions below observe the address the KERNEL reports for a REAL
+# listening socket (``server_address`` after bind), not the argument passed in.
+# ---------------------------------------------------------------------------
+
+# A deliberately NON-loopback bind, the case the whole change exists for. Only
+# the wildcard is bind-tested for real: a LAN literal is not guaranteed to
+# exist on the machine running the suite.
+_WILDCARD_HOST = "0.0.0.0"
+_LAN_HOST = "192.168.11.23"
+
+
+def _cfg_with_host(host: str | None, *, port: int = _PORT) -> SimpleNamespace:
+    """A config whose ``a2a`` block declares ``host`` (or omits it for None)."""
+    a2a = (
+        SimpleNamespace(port=port)
+        if host is None
+        else SimpleNamespace(port=port, host=host)
+    )
+    return SimpleNamespace(a2a=a2a, name="figrecipe", config_path="")
+
+
+def _observed_bind_host(config: SimpleNamespace) -> str:
+    """Bind a REAL socket where the bridge resolves ``config`` to, and report it.
+
+    Port 0 lets the kernel pick, so this never collides with a live agent; the
+    returned value is ``server_address[0]`` — what the socket is ACTUALLY bound
+    to, read back from the server rather than echoed from the input.
+    """
+    server = bridge.build_server(
+        host=bridge.resolved_a2a_host(config),
+        port=0,
+        on_turn=lambda _text, **_kw: None,
+        agent_name="figrecipe",
+    )
+    try:
+        return str(server.server_address[0])
+    finally:
+        server.server_close()
+
+
+def test_resolved_a2a_host_returns_the_declared_spec_host() -> None:
+    # Arrange
+    config = _cfg_with_host(_LAN_HOST)
+    # Act
+    host = bridge.resolved_a2a_host(config)
+    # Assert
+    assert host == _LAN_HOST
+
+
+def test_resolved_a2a_host_defaults_to_loopback_when_undeclared() -> None:
+    # Arrange — CASE 1 (no-regression): a spec with no host key at all.
+    config = _cfg_with_host(None)
+    # Act
+    host = bridge.resolved_a2a_host(config)
+    # Assert
+    assert host == DEFAULT_A2A_HOST
+
+
+def test_resolved_a2a_host_defaults_to_loopback_for_a_blank_host() -> None:
+    # Arrange — a whitespace-only host states nothing and must not become an
+    # unbindable empty string.
+    config = _cfg_with_host("   ")
+    # Act
+    host = bridge.resolved_a2a_host(config)
+    # Assert
+    assert host == DEFAULT_A2A_HOST
+
+
+def test_the_bridge_default_host_agrees_with_the_fleet_wide_default() -> None:
+    # Arrange — the bridge carries its OWN "127.0.0.1" literal because the two
+    # canonical spellings live in modules over this repo's line cap and cannot
+    # be edited. Pin the agreement so a future drift breaks HERE, loudly,
+    # instead of quietly splitting the fleet's bind address in two.
+    pinned = DEFAULT_A2A_HOST
+    # Act
+    bridge_default = bridge.DEFAULT_HOST
+    # Assert
+    assert bridge_default == pinned
+
+
+def test_bridge_binds_loopback_for_an_undeclared_spec_host() -> None:
+    # Arrange — CASE 1 observed on a real socket.
+    config = _cfg_with_host(None)
+    # Act
+    bound = _observed_bind_host(config)
+    # Assert
+    assert bound == DEFAULT_A2A_HOST
+
+
+def test_bridge_binds_loopback_when_the_spec_declares_loopback() -> None:
+    # Arrange — CASE 1 as all 102 fleet specs actually spell it today.
+    config = _cfg_with_host(DEFAULT_A2A_HOST)
+    # Act
+    bound = _observed_bind_host(config)
+    # Assert
+    assert bound == DEFAULT_A2A_HOST
+
+
+def test_bridge_binds_the_wildcard_address_the_spec_declares() -> None:
+    # Arrange — CASE 2 observed on a real socket: the spec asks for every
+    # interface and the kernel confirms the socket is there, not on loopback.
+    config = _cfg_with_host(_WILDCARD_HOST)
+    # Act
+    bound = _observed_bind_host(config)
+    # Assert
+    assert bound == _WILDCARD_HOST
+
+
+def test_start_turn_bridge_spawns_with_the_declared_host(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — CASE 2 through the LAUNCHER: the spawned bridge's --host must
+    # carry the spec's value, or the subprocess binds somewhere else entirely.
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    recorded: dict = {}
+
+    def fake_spawn(argv, **_kwargs):
+        recorded["argv"] = list(argv)
+        return SimpleNamespace(pid=_PID)
+
+    config = _cfg_with_host(_WILDCARD_HOST)
+    config.config_path = str(spec)
+    # Act
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
+    # Assert
+    assert recorded["argv"][recorded["argv"].index("--host") + 1] == _WILDCARD_HOST
+
+
+def test_start_turn_bridge_spawns_with_loopback_for_an_undeclared_host(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — CASE 1 through the LAUNCHER.
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    recorded: dict = {}
+
+    def fake_spawn(argv, **_kwargs):
+        recorded["argv"] = list(argv)
+        return SimpleNamespace(pid=_PID)
+
+    config = _cfg_with_host(None)
+    config.config_path = str(spec)
+    # Act
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
+    # Assert
+    assert recorded["argv"][recorded["argv"].index("--host") + 1] == DEFAULT_A2A_HOST
+
+
+def test_start_turn_bridge_explicit_host_overrides_the_spec(
+    tmp_path: Path, isolated_home: Path
+) -> None:
+    # Arrange — the caller-supplied host is a seam and must still win over the
+    # spec, so the spec default never removes an override.
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    recorded: dict = {}
+
+    def fake_spawn(argv, **_kwargs):
+        recorded["argv"] = list(argv)
+        return SimpleNamespace(pid=_PID)
+
+    config = _cfg_with_host(_WILDCARD_HOST)
+    config.config_path = str(spec)
+    # Act
+    bridge.start_turn_bridge(
+        config,
+        spawn=fake_spawn,
+        host=DEFAULT_A2A_HOST,
+        port_free_fn=_gate_says_free,
+    )
+    # Assert
+    assert recorded["argv"][recorded["argv"].index("--host") + 1] == DEFAULT_A2A_HOST
+
+
+# ---------------------------------------------------------------------------
+# write_bridge_event — the lifecycle log (tui-turn-bridge.log was 0 bytes)
+# ---------------------------------------------------------------------------
+# Measured on the host 2026-08-11: 16 of 17 ``tui-turn-bridge.log`` files were
+# EMPTY. The launcher opens the file and hands it to the child as stdout+stderr,
+# but the bridge wrote nothing of its own, so the log only ever captured an
+# unhandled traceback — and when 14 bridges were found dead, not one death
+# could be explained. These tests pin the two lines that bracket a bridge's
+# life. Real files, real fds; no mocks.
+
+
+def test_write_bridge_event_records_the_event_name(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        line = bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert " bind " in line
+
+
+def test_write_bridge_event_records_the_bound_port(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"port={_PORT}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_records_the_pid(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"pid={_PID}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_records_the_host(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+    # Assert
+    assert f"host={DEFAULT_A2A_HOST}" in log_path.read_text(encoding="utf-8")
+
+
+def test_write_bridge_event_flushes_so_a_crash_cannot_swallow_the_line(
+    tmp_path: Path,
+) -> None:
+    # Arrange — read the file through a SEPARATE handle while the writer is
+    # still open: only a real flush makes the bytes visible, which is what
+    # keeps the bind line readable after an abrupt death.
+    log_path = tmp_path / "tui-turn-bridge.log"
+    observed = ""
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+        observed = log_path.read_text(encoding="utf-8")
+    # Assert
+    assert "tui-turn-bridge bind" in observed
+
+
+def test_write_bridge_event_appends_two_lines_for_bind_then_shutdown(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the shutdown line must BRACKET the bind line in the same log.
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh, "bind", agent="figrecipe", host=DEFAULT_A2A_HOST, port=_PORT, pid=_PID
+        )
+        bridge.write_bridge_event(
+            fh,
+            "shutdown",
+            agent="figrecipe",
+            host=DEFAULT_A2A_HOST,
+            port=_PORT,
+            pid=_PID,
+        )
+    # Assert
+    assert log_path.read_text(encoding="utf-8").count("\n") == 2
+
+
+def test_write_bridge_event_names_the_agent(tmp_path: Path) -> None:
+    # Arrange
+    log_path = tmp_path / "tui-turn-bridge.log"
+    # Act
+    with log_path.open("w", encoding="utf-8") as fh:
+        bridge.write_bridge_event(
+            fh,
+            "shutdown",
+            agent="figrecipe",
+            host=DEFAULT_A2A_HOST,
+            port=_PORT,
+            pid=_PID,
+        )
+    # Assert
+    assert "agent=figrecipe" in log_path.read_text(encoding="utf-8")

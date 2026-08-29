@@ -12,7 +12,7 @@ re-exported below so existing imports keep resolving unchanged.
 in-container agent SDK to its backend. It branches on the provider
 story, most specific first:
 
-* ``spec.provider: openai`` (TOP-LEVEL agent-SDK-family axis, or the
+* ``spec.harness: openai`` (TOP-LEVEL harness axis, or the
   ``SAC_PROVIDER`` ops-only override — openai-compat-3) → emit the
   OpenAI env columns (``SAC_OPENAI_API_KEY`` + ``OPENAI_API_KEY`` +
   optional ``OPENAI_BASE_URL`` / ``OPENAI_ORG_ID`` / ``OPENAI_PROJECT_ID``
@@ -49,7 +49,7 @@ from ._apptainer_auth_bind import (  # noqa: F401 (re-export — see module docs
 )
 from ._apptainer_provider import (
     openai_env_flags,
-    openai_provider_active,
+    openai_harness_active,
     provider_active,
     provider_env_flags,
 )
@@ -65,7 +65,7 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     launch composed with an Anthropic-compat ``spec.claude.provider``
     override.
     """
-    if openai_provider_active(config):
+    if openai_harness_active(config):
         # openai agent-SDK family (openai-compat-3): OPENAI_* columns
         # only. No Anthropic OAuth env and no credentials bind — the
         # helper owns SAC_OPENAI_API_KEY/OPENAI_API_KEY dual injection,

@@ -20,8 +20,16 @@ from scitex_agent_container.config import AgentConfig
 
 
 @pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db location, exported via env (explicit save/restore)."""
+def db_path(tmp_path: Path, pg_schema: str):
+    """Isolated state.db location, exported via env (explicit save/restore).
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28: ``record_local_instance`` reads
+    the agent's a2a claim, and that ledger moved to PostgreSQL. Isolating only
+    ``state.db`` would leave the claim read pointed at whatever store the
+    process resolves — which the suite deliberately makes unreachable, so the
+    call raises instead of quietly reading somewhere real. The cost is that
+    this module now SKIPS where there is no writable database.
+    """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)

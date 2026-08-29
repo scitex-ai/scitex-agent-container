@@ -8,7 +8,9 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from ._env_snapshot import env_snapshot_shell_line
 from ._host_cwd import resolve_host_cwd
+from ._target import exact_target
 
 # Inter-keystroke delay inside send_keys() and settle delay before
 # Enter inside send_text_and_submit(). These defeat the race where
@@ -63,9 +65,17 @@ class TmuxManager:
 
     @staticmethod
     def exists(session_name: str) -> bool:
-        """Check if a tmux session exists."""
+        """Check if a tmux session exists — by EXACT name.
+
+        The target goes through :func:`exact_target` because tmux's ``-t``
+        falls back to PREFIX matching: a bare ``has-session -t tui-foo``
+        answers 0 when only ``tui-foo-bar`` exists, which reported a dead
+        agent ALIVE off its sibling's pane and made ``sac agents start``
+        silently no-op (live incident 2026-08-14, card
+        ``sac-tmux-prefix-match-false-alive-20260814``).
+        """
         result = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
+            ["tmux", "has-session", "-t", exact_target(session_name)],
             capture_output=True,
             text=True,
         )
@@ -120,20 +130,16 @@ class TmuxManager:
                 activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
-        # Env snapshot file (lead a2a 4303f855, 2026-06-14): the
-        # /proc/<pid>/environ + ps-walk verify in TuiSessionRuntime
-        # could mis-attribute to another claude under another tmux
-        # session. Writing the env to a known per-session file
-        # IMMEDIATELY before ``exec command`` gives SAC a structural
-        # source-of-truth for verification independent of any PID
-        # hunting.
-        env_snapshot_path = f"/tmp/sac-tui-env-{session_name}.txt"
+        # Per-session env snapshot, written 0600 into a 0700 per-user dir
+        # immediately before ``exec``. It dumps the pane's WHOLE environment,
+        # so its mode and its directory are the security-relevant parts —
+        # see ``._env_snapshot`` for the two defects that shaped both.
         shell_script = (
             f"cd '{workdir}' || exit 1\n"
             f"{venv_activate}"
             f"{env_exports}\n"
             f"export CLAUDE_DISABLE_AUTO_UPDATE=1\n"
-            f"env > '{env_snapshot_path}' 2>/dev/null || true\n"
+            f"{env_snapshot_shell_line(session_name)}"
             f"exec {command}\n"
         )
 
@@ -179,7 +185,7 @@ class TmuxManager:
             return False
 
         subprocess.run(
-            ["tmux", "kill-session", "-t", session_name],
+            ["tmux", "kill-session", "-t", exact_target(session_name)],
             capture_output=True,
             check=False,
         )
@@ -231,7 +237,7 @@ class TmuxManager:
     def capture_content(session_name: str) -> str:
         """Capture current pane content via capture-pane."""
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p"],
+            ["tmux", "capture-pane", "-t", exact_target(session_name), "-p"],
             capture_output=True,
             text=True,
         )
@@ -245,7 +251,7 @@ class TmuxManager:
                 "tmux",
                 "capture-pane",
                 "-t",
-                session_name,
+                exact_target(session_name),
                 "-p",
                 "-S",
                 str(-lines),
@@ -275,7 +281,8 @@ class TmuxManager:
         Parameters
         ----------
         session_name:
-            tmux target passed verbatim to ``-t``.
+            tmux session name; targeted EXACTLY (via :func:`exact_target`)
+            so a prefix can never land keys in a sibling's pane.
         keys:
             One or more keystrokes / tmux keyword names (``"Enter"``,
             ``"C-c"``, etc.) or raw text arguments.
@@ -295,7 +302,7 @@ class TmuxManager:
         key_list = list(keys)
         for i, key in enumerate(key_list):
             subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, key],
+                ["tmux", "send-keys", "-t", exact_target(session_name), key],
                 check=False,
                 capture_output=True,
             )
@@ -323,7 +330,7 @@ class TmuxManager:
         injection seam (tests pass a recording callable — no mocks).
         """
         runner(
-            ["tmux", "send-keys", "-t", session_name, "-l", text],
+            ["tmux", "send-keys", "-t", exact_target(session_name), "-l", text],
             check=False,
             capture_output=True,
         )
@@ -355,7 +362,7 @@ class TmuxManager:
         if settle > 0:
             sleep_fn(settle)
         runner(
-            ["tmux", "send-keys", "-t", session_name, "Enter"],
+            ["tmux", "send-keys", "-t", exact_target(session_name), "Enter"],
             check=False,
             capture_output=True,
         )
@@ -454,14 +461,14 @@ class TmuxManager:
         capture = capture_fn or TmuxManager.capture_content
         send_text = send_text_fn or (
             lambda session, payload: subprocess.run(
-                ["tmux", "send-keys", "-t", session, payload],
+                ["tmux", "send-keys", "-t", exact_target(session), payload],
                 check=False,
                 capture_output=True,
             )
         )
         send_enter = send_enter_fn or (
             lambda session: subprocess.run(
-                ["tmux", "send-keys", "-t", session, "Enter"],
+                ["tmux", "send-keys", "-t", exact_target(session), "Enter"],
                 check=False,
                 capture_output=True,
             )
@@ -498,4 +505,4 @@ class TmuxManager:
     @staticmethod
     def attach(session_name: str) -> None:
         """Attach to a tmux session (replaces current process)."""
-        os.execvp("tmux", ["tmux", "attach", "-t", session_name])
+        os.execvp("tmux", ["tmux", "attach", "-t", exact_target(session_name)])

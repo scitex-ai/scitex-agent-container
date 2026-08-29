@@ -37,6 +37,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 
 # Re-exported for back-compat — extracted to _apptainer_build, still
 # imported here so existing `mod._build_sif_* / mod._safe_image_tag`
@@ -67,7 +68,6 @@ from ._apptainer_build_argv import (  # noqa: F401
 from ._apptainer_build_argv import (
     build_run_argv as _build_run_argv_impl,
 )
-from ._apptainer_argv_record import write_redacted_argv as _write_redacted_argv
 from .base import RuntimeBase
 
 DEFAULT_SIF_NAME = "scitex-agent-container.sif"
@@ -203,6 +203,44 @@ class ApptainerContainerRuntime(RuntimeBase):
         if dry_run:
             _write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
+
+        # FREE-SPACE GUARANTEE — fail loud before starting a container onto a
+        # host that cannot hold its scratch, rather than letting the agent
+        # discover the shortfall mid-run as an opaque ENOSPC.
+        #
+        # HERE, past the dry_run return, for the same reason the overlay
+        # reconcile below is here: `build_run_argv` is also called by
+        # `sac agents explain` and by the dry-run path, and a read-only
+        # command must not fail on a launch-time resource condition. It used
+        # to live inside `tmpfs_workdir_flags`, which made `explain` unusable
+        # on exactly the full host it would have helped diagnose, and wired
+        # ~21 argv-building test files to ambient free disk.
+        from ._apptainer_tmpfs import verify_tmpfs_headroom
+
+        verify_tmpfs_headroom(config, state_dir)
+
+        # OVERLAY VENV INVALIDATION CONTRACT — an image rebuild must invalidate
+        # the `venv-sac` slice of this agent's overlay, or the overlay's stale
+        # site-packages shadow the new image forever. Contract, measurement and
+        # refusal logic: `_maintenance/_overlay_venv_model.py`.
+        #
+        # HERE rather than inside `build_run_argv` for three reasons:
+        #   1. `build_run_argv` is also called by `sac agents explain` and by
+        #      the dry-run path above — a read-only command must not move files.
+        #   2. This point is PAST the `is_running` guard, so sac has just
+        #      established with its own instrument that no container of this
+        #      agent has the overlay mounted. Doing this against a live mount is
+        #      the one thing the rail must never do: from inside a container the
+        #      rename becomes an overlayfs WHITEOUT that masks the SIF's clean
+        #      files too, turning a recoverable shadow into a broken tree.
+        #   3. `sif_path` is resolved here, and the RESOLVED target — not the
+        #      stable `sac-base.sif` symlink name — is the identity key.
+        # Never raises; the in-container boot assertion is the backstop.
+        from .._maintenance._overlay_venv_invalidate import (
+            reconcile_overlay_venv_for_launch,
+        )
+
+        reconcile_overlay_venv_for_launch(config, sif_path, state_dir)
 
         # Append the host ``~/.cargo/bin`` to the CONTAINER PATH via
         # apptainer's ``APPTAINERENV_APPEND_PATH`` directive, set on the

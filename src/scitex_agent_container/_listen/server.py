@@ -35,10 +35,7 @@ from starlette.routing import Route
 from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
 from ..config import load_config
-from ..config._resolve import resolve_config
-from ._acl import (
-    NodeAuthMiddleware,
-)
+from ..config._resolve import AmbiguousRegistryScope, resolve_config
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
 
@@ -77,12 +74,63 @@ from ._agents_list import (  # noqa: E402,F401
 
 
 async def agent_status(request: Request) -> JSONResponse:
+    """GET /agents/<name>/status — the fleet's authoritative "does X exist".
+
+    SPEC-RESOLUTION FAILURES ARE TYPED, and that is load-bearing rather than
+    cosmetic. This used to answer a flat 404 for ANY exception, so three
+    different facts shared one status code:
+
+        the agent does not exist          a true NEGATIVE
+        the name is ambiguous             we CANNOT TELL (two registries claim it)
+        the spec file is unreadable       we CANNOT TELL (I/O fault)
+
+    Only the first is a negative. Collapsing the other two into 404 tells the
+    caller "no such agent" when the honest answer is "I could not determine
+    that" — the exact unknown-collapsed-into-false failure the constitution
+    names, on the route the whole fleet uses to decide whether a peer is real.
+
+    The client is ALREADY built for the distinction: `_send_broker.
+    lookup_peer_via_host` treats 404 as the one definitive negative and ANY
+    other non-2xx as `PeerLookupUnavailable`, which it renders as UNKNOWN with
+    "this is NOT evidence the agent is stopped". So the server was the only
+    side flattening the answer, and every non-404 below reaches a caller that
+    handles it correctly today.
+
+    Codes, declared:
+      404 + kind="unknown_agent"       no spec for this name (a real negative)
+      409 + kind="ambiguous_registry"  the name resolves in more than one
+                                       registry — a CONFLICT, not an absence
+      500 + kind="spec_unreadable"     the spec exists but could not be read
+    """
     name = request.path_params["name"]
     try:
         spec_path = resolve_config(name)
         cfg = load_config(spec_path)
-    except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=404)
+    except AmbiguousRegistryScope as exc:
+        # Two registries claim this name. The agent may well exist; we cannot
+        # say WHICH spec is meant, so this is UNKNOWN, never "no such agent".
+        return JSONResponse(
+            {"error": str(exc), "kind": "ambiguous_registry", "name": name},
+            status_code=409,
+        )
+    except FileNotFoundError as exc:
+        # The genuine negative: no spec for this name anywhere.
+        return JSONResponse(
+            {"error": str(exc), "kind": "unknown_agent", "name": name},
+            status_code=404,
+        )
+    except OSError as exc:
+        # The spec was found but could not be read (permissions, I/O). The
+        # agent exists as far as we know — reporting 404 would be a lie.
+        return JSONResponse(
+            {"error": str(exc), "kind": "spec_unreadable", "name": name},
+            status_code=500,
+        )
+    except Exception as exc:  # stx-allow: fallback (reason: an unclassified resolution failure is UNKNOWN, not a negative — 500 keeps the caller's UNKNOWN branch rather than asserting the agent does not exist)
+        return JSONResponse(
+            {"error": str(exc), "kind": "spec_resolution_failed", "name": name},
+            status_code=500,
+        )
     sd = state_dir_for(name)
     sid = read_session_id(sd)
     body: dict[str, Any] = {
@@ -121,6 +169,14 @@ async def agent_status(request: Request) -> JSONResponse:
     # running session_id + a live pid say nothing about whether this agent's
     # inbox adapter is attached; only the broker does. See ``_reachability``.
     body = await _annotate_status_reachability(request, body)
+    # …and the CAUSE behind a zero. A stopped agent's registry row outlives its
+    # process, so this route answered HTTP 200 with a full body — port, turn_url,
+    # ``inbox_reachable: unreachable`` — for an agent that had not existed for
+    # two days, with no field anywhere saying so. Measured 2026-08-12: 9 of 15
+    # rows on this host looked exactly like that. See ``_inbox_fault``.
+    from ._inbox_fault import annotate_status_fault
+
+    body = annotate_status_fault(body)
     return JSONResponse(body)
 
 
@@ -132,11 +188,15 @@ async def _annotate_status_reachability(
     Degrades to ``unknown`` (never ``unreachable``) if the broker cannot be
     read — "I could not check" must not be rendered as death.
     """
-    from ._reachability import UNKNOWN, annotate_reachability
+    from ._reachability import (
+        UNKNOWN,
+        annotate_reachability,
+        resolve_annotation_host,
+    )
 
     try:
         counts = await request.app.state.inbox.subscriber_counts()
-        local_host = getattr(request.app.state, "local_host", None)
+        local_host = resolve_annotation_host(request.app.state)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable broker must degrade to UNKNOWN, never to a false 'unreachable' verdict)
         import logging
 
@@ -322,19 +382,15 @@ def create_app(
     members of the comms graph. The state lives on ``app.state`` so
     every handler shares the same broker and registry instance.
 
-    WI-2 chains :class:`NodeAuthMiddleware` after
-    :class:`BearerAuthMiddleware`: the outer middleware admits any
-    request bearing a valid token (host-wide or per-node); the inner
-    one resolves that token to a node identity and attaches it to
-    ``request.state.authenticated_node`` so the ACL gate in
-    :func:`node_message_send` enforces "identity cannot be spoofed
-    via a metadata field" (handoff §4 acceptance). The spawn-gate
-    in :func:`agents_start` consumes the same body-``caller`` shape.
-
-    Middleware order matters. Starlette executes the *outermost*
-    ``add_middleware`` call first (it wraps the app last but runs
-    first on the inbound path). So the BearerAuthMiddleware call
-    below comes **last** to make it the outermost layer.
+    WI-2 chained a ``NodeAuthMiddleware`` after
+    :class:`BearerAuthMiddleware` to resolve a per-node bearer to a
+    node identity; it was removed 2026-08-28 (nothing ever minted one
+    — see the comment at the ``add_middleware`` call below).
+    :class:`BearerAuthMiddleware` and the host-wide token are the
+    whole perimeter. Sender identity for the ACL gate in
+    :func:`node_message_send` comes from ``metadata.from_agent``, and
+    the spawn-gate in :func:`agents_start` consumes the same
+    body-``caller`` shape.
 
     WI-4 (handoff §4 "Cross-host routing") adds the forwarder
     inside :func:`node_message_send`. ``local_host`` configures the
@@ -423,10 +479,16 @@ def create_app(
     # WI-4 — per-app local host name. May be ``None``; the forwarder
     # then falls back to the env-based resolver.
     app.state.local_host = local_host
-    # WI-2 — identity resolution (inner). Reads the same Bearer the
-    # outer middleware already validated; tags ``request.state`` with
-    # the resolved node name (or ``None`` for the host-wide bearer).
-    app.add_middleware(NodeAuthMiddleware, host_bearer=token)
-    # Outer perimeter — admits any valid token, rejects everything else.
+    # A second, inner ``NodeAuthMiddleware`` sat here until 2026-08-28.
+    # It re-read the Bearer the outer middleware had already validated
+    # and tagged ``request.state.authenticated_node`` with the node name
+    # that bearer resolved to in the ``node_tokens`` table. Nothing ever
+    # wrote that table, so the tag was ``None`` on every request the
+    # fleet has ever served; the handlers that read it all do so through
+    # ``getattr(request.state, "authenticated_node", None)`` and go on
+    # getting ``None`` with the layer removed. One middleware fewer per
+    # request, and no layer left claiming to establish an identity it
+    # could not establish.
+    # Perimeter — admits the host-wide token, rejects everything else.
     app.add_middleware(BearerAuthMiddleware, token=token)
     return app

@@ -25,7 +25,6 @@ from ._types import (
     AgentConfig,
     ClaudeSpec,
     ContainerSpec,
-    ContextManagementConfig,
     HealthSpec,
     HookSpec,
     HostsSpec,
@@ -42,7 +41,6 @@ __all__ = [
     "AgentConfig",
     "ClaudeSpec",
     "ContainerSpec",
-    "ContextManagementConfig",
     "HealthSpec",
     "HookSpec",
     "HostsSpec",
@@ -63,15 +61,37 @@ __all__ = [
 ]
 
 
-def load_config(path: str | Path) -> AgentConfig:
+def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
     """Load and validate a YAML config, returning an AgentConfig.
 
     Only ``scitex-agent-container/v3`` is accepted. Older apiVersions
     (v1, v2) raise loud validation errors — no backward compatibility.
+
+    ``advise`` turns on the STYLE advisories (long startup_prompts, and
+    similar authoring lints). It defaults to OFF, and that default is the
+    point: these are lints about how a spec is WRITTEN, not about whether it
+    LOADS, so they must not fire on every command that happens to read specs.
+
+    `sac agents list` loads all ~110 definitions, so a load-time advisory
+    printed 18 WARN lines above the table on every invocation. A warning that
+    appears when you did not ask a question about spec style is one the reader
+    learns to scroll past -- which also blinds them to the ones that matter.
+    Advisories therefore surface where they are actionable: `sac agents check`.
     """
     path = Path(path).resolve()
-    with open(path) as f:
-        raw = yaml.safe_load(f)
+
+    # Parsed-spec cache, keyed on (size, mtime_ns). `sac agents list` parses
+    # every definition on the host and spent ~4.5s of ~9.4s doing exactly this;
+    # `watch -n 10 sac agents list` re-pays it on every tick because each tick
+    # is a fresh process. Any doubt is a MISS that falls through to a real
+    # parse, so the cache can only change SPEED, never the answer.
+    from . import _spec_cache
+
+    raw = _spec_cache.get(path)
+    if raw is None:
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+        _spec_cache.put(path, raw)
 
     errors = validate_raw(raw, str(path))
     if errors:
@@ -81,8 +101,11 @@ def load_config(path: str | Path) -> AgentConfig:
         )
 
     config = load_v3(raw, path)
+    # NOT gated: a missing assigned account is a CORRECTNESS problem that makes
+    # the agent fail to start, so it belongs on every load.
     _warn_if_assigned_account_missing(config)
-    _warn_if_startup_prompt_long(config)
+    if advise:
+        _warn_if_startup_prompt_long(config)
     return config
 
 

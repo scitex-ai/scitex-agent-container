@@ -66,7 +66,7 @@ def test_json_emits_flat_contract_rows(containers_dir: Path):
     result = runner.invoke(
         versions, ["--json", "--live", "--base-only", "--containers-dir", str(containers_dir)]
     )
-    rows = json.loads(result.output)
+    rows = json.loads(result.stdout)
     # Assert
     assert all(
         set(r) == {"agent", "layer", "image", "package", "version", "source"}
@@ -81,7 +81,7 @@ def test_json_base_rows_are_scitex_only(containers_dir: Path):
     result = runner.invoke(
         versions, ["--live", "--base-only", "--containers-dir", str(containers_dir)]
     )
-    packages = {r["package"] for r in json.loads(result.output)}
+    packages = {r["package"] for r in json.loads(result.stdout)}
     # Assert
     assert packages == {"scitex", "scitex-io"}
 
@@ -93,7 +93,7 @@ def test_live_flag_tags_source_live(containers_dir: Path):
     result = runner.invoke(
         versions, ["--live", "--base-only", "--containers-dir", str(containers_dir)]
     )
-    sources = {r["source"] for r in json.loads(result.output)}
+    sources = {r["source"] for r in json.loads(result.stdout)}
     # Assert
     assert sources == {"live"}
 
@@ -118,4 +118,4 @@ def test_versions_registered_on_main_group(containers_dir: Path):
         ["versions", "--live", "--base-only", "--containers-dir", str(containers_dir)],
     )
     # Assert
-    assert result.exit_code == 0 and json.loads(result.output)
+    assert result.exit_code == 0 and json.loads(result.stdout)

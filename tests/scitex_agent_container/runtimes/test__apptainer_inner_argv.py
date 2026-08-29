@@ -15,7 +15,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config import AgentConfig, ProxySpec
+from scitex_agent_container.config._a2a_defaults import DEFAULT_A2A_HOST
+from scitex_agent_container.config._harness_types import (
+    V4_HARNESS_DISPATCH_CARD,
+    HarnessRuntimeMismatchError,
+)
 from scitex_agent_container.config._types import (
     A2ASpec,
     ClaudeSpec,
@@ -28,6 +33,7 @@ from scitex_agent_container.runtimes._apptainer_inner_argv import (
     _agent_runner_argv,
     _format_shell_steps,
     _home_has_resumable_conversation,
+    _proxy_runner_argv,
     _resolve_max_restarts,
     _resolve_restart_backoff_s,
     build_inner_argv,
@@ -36,6 +42,11 @@ from scitex_agent_container.runtimes._apptainer_inner_argv import (
 
 def _mk_cfg(**kwargs):
     return AgentConfig(name="t", runtime="apptainer", **kwargs)
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    """Value following ``flag`` in ``argv``, or None when the flag is absent."""
+    return argv[argv.index(flag) + 1] if flag in argv else None
 
 
 # ---------------------------------------------------------------------------
@@ -266,9 +277,7 @@ def test_git_alias_mirrors_value_when_source_var_set():
     # Arrange — real bash execution proving the mechanism end-to-end.
     env = dict(os.environ)
     env["SAC_GIT_AUTHOR_NAME"] = "Test Author"
-    script = (
-        "; ".join(_GIT_ENV_ALIAS_STEPS) + '; printf "%s" "$GIT_AUTHOR_NAME"'
-    )
+    script = "; ".join(_GIT_ENV_ALIAS_STEPS) + '; printf "%s" "$GIT_AUTHOR_NAME"'
     # Act
     result = subprocess.run(
         ["/bin/bash", "-c", script],
@@ -594,3 +603,232 @@ def test_tui_inner_argv_default_claudespec_is_fresh_no_continue_flag():
     argv = build_inner_argv(cfg, tui=True)
     # Assert
     assert "-c" not in _exec_tail_tokens(argv)
+
+
+# ---------------------------------------------------------------------------
+# spec.a2a.host -> --a2a-host  (the SDK runner's uvicorn bind address)
+#
+# This builder is the THIRD of sac's three a2a bind paths. Until it was
+# threaded it emitted --a2a-port alone, so the SDK runner fell back to its own
+# separate "127.0.0.1" flag default and a spec's declared host reached exactly
+# one path (runtimes/a2a_sidecar.py). The value declared in the spec and the
+# address actually bound could therefore disagree with nothing reporting it.
+#
+# Both directions are pinned here, because a threading change earns trust only
+# by proving BOTH:
+#   1. an UNCHANGED spec (host 127.0.0.1, as all 102 fleet specs declare)
+#      still yields loopback — no silent widening;
+#   2. a CHANGED spec is FOLLOWED verbatim.
+# The value flows on from here: --a2a-host -> _session_cli.main ->
+# claude_session.run(a2a_host=) -> _session_http.serve_inbound(host=) ->
+# uvicorn.Config(host=).
+# ---------------------------------------------------------------------------
+
+# A resolved (non-"auto") a2a port; PEP 515 separators satisfy STX-NL001.
+_A2A_PORT = 7_901
+# A deliberately NON-loopback bind, the case the whole change exists for.
+_WILDCARD_HOST = "0.0.0.0"
+_LAN_HOST = "192.168.11.23"
+
+
+def test_agent_runner_argv_emits_a2a_host_alongside_the_port():
+    # Arrange — a spec with a resolved port and the default declared host.
+    cfg = _mk_cfg(a2a=A2ASpec(port=_A2A_PORT))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--a2a-host" in argv
+
+
+def test_agent_runner_argv_a2a_host_is_loopback_for_an_undeclared_host():
+    # Arrange — CASE 1 (no-regression): a spec that names no host must still
+    # produce the loopback bind it produced before this flag existed.
+    cfg = _mk_cfg(a2a=A2ASpec(port=_A2A_PORT))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert _flag_value(argv, "--a2a-host") == DEFAULT_A2A_HOST
+
+
+def test_agent_runner_argv_a2a_host_follows_a_wildcard_spec_host():
+    # Arrange — CASE 2: the spec asks for every interface.
+    cfg = _mk_cfg(a2a=A2ASpec(host=_WILDCARD_HOST, port=_A2A_PORT))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert _flag_value(argv, "--a2a-host") == _WILDCARD_HOST
+
+
+def test_agent_runner_argv_a2a_host_follows_a_lan_spec_host():
+    # Arrange — CASE 2 again, with the shape an ssh-reachable fleet would use.
+    cfg = _mk_cfg(a2a=A2ASpec(host=_LAN_HOST, port=_A2A_PORT))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert _flag_value(argv, "--a2a-host") == _LAN_HOST
+
+
+def test_agent_runner_argv_omits_a2a_host_without_a_resolved_port():
+    # Arrange — an unresolved "auto" port wires up no sidecar at this layer,
+    # so a bind ADDRESS would be meaningless (nothing binds).
+    cfg = _mk_cfg(a2a=A2ASpec(host=_WILDCARD_HOST, port="auto"))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--a2a-host" not in argv
+
+
+def test_agent_runner_argv_omits_a2a_host_for_a_blank_declared_host():
+    # Arrange — a whitespace-only host states nothing; leave the runner's own
+    # flag default in charge rather than passing an unbindable empty string.
+    cfg = _mk_cfg(a2a=A2ASpec(host="   ", port=_A2A_PORT))
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert "--a2a-host" not in argv
+
+
+def test_agent_runner_argv_still_carries_the_card_yaml_after_the_host():
+    # Arrange — the port/host/card-yaml block was factored into one helper;
+    # guard that the card path did not get lost in the move.
+    cfg = _mk_cfg(a2a=A2ASpec(port=_A2A_PORT), config_path="/spec.yaml")
+    # Act
+    argv = _agent_runner_argv(cfg, one_shot=False)
+    # Assert
+    assert _flag_value(argv, "--a2a-card-yaml") == "/spec.yaml"
+
+
+def test_proxy_runner_argv_a2a_host_is_loopback_for_an_undeclared_host():
+    # Arrange — CASE 1 for kind: AgentProxy, which shares the same builder.
+    cfg = _mk_cfg(
+        kind="AgentProxy",
+        proxy=ProxySpec(upstream="http://u"),
+        a2a=A2ASpec(port=_A2A_PORT),
+    )
+    # Act
+    argv = _proxy_runner_argv(cfg)
+    # Assert
+    assert _flag_value(argv, "--a2a-host") == DEFAULT_A2A_HOST
+
+
+def test_proxy_runner_argv_a2a_host_follows_the_declared_spec_host():
+    # Arrange — CASE 2 for kind: AgentProxy.
+    cfg = _mk_cfg(
+        kind="AgentProxy",
+        proxy=ProxySpec(upstream="http://u"),
+        a2a=A2ASpec(host=_WILDCARD_HOST, port=_A2A_PORT),
+    )
+    # Act
+    argv = _proxy_runner_argv(cfg)
+    # Assert
+    assert _flag_value(argv, "--a2a-host") == _WILDCARD_HOST
+
+
+def test_build_inner_argv_carries_the_declared_a2a_host_into_the_exec_line():
+    # Arrange — end of the builder: the flag must survive the bash -lc wrap
+    # and shlex quoting, not just exist in the intermediate list.
+    cfg = _mk_cfg(a2a=A2ASpec(host=_WILDCARD_HOST, port=_A2A_PORT))
+    # Act
+    tokens = _exec_tail_tokens(build_inner_argv(cfg))
+    # Assert
+    assert _flag_value(tokens, "--a2a-host") == _WILDCARD_HOST
+
+
+# ---------------------------------------------------------------------------
+# v4 step-2 harness guard — a non-Anthropic harness must never silently get
+# the Claude runner module (card
+# sac-v4-layering-refactor-harness-runtime-inference-20260813). The old
+# dispatch read ``getattr(config, "provider", None)`` — a field the harness
+# rename removed from AgentConfig — so ``harness: openai`` specs silently
+# got RUNNER_MODULE_AGENT (verified pre-fix 2026-08-14).
+# ---------------------------------------------------------------------------
+
+
+def test_build_inner_argv_never_emits_the_claude_runner_for_openai_harness():
+    # Arrange — the pre-fix bug verbatim: the argv carried
+    # scitex_agent_container._runners.claude_session for an openai harness.
+    cfg = _mk_cfg(harness="openai")
+    argv: list[str] = []
+    # Act
+    try:
+        argv = build_inner_argv(cfg)
+    except Exception:  # stx-allow: test-capture (reason: STX-TQ002; a raise is a PASS for this pin — only a silently built Claude argv fails it.)
+        pass
+    # Assert
+    assert "claude_session" not in " ".join(argv)
+
+
+def test_build_inner_argv_raises_harness_mismatch_for_openai_harness():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_inner_argv_openai_harness_refusal_names_the_runner_module():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert — names what was actually about to launch.
+    assert raised is not None and "claude_session" in str(raised)
+
+
+def test_build_inner_argv_openai_harness_refusal_covers_the_tui_branch():
+    # Arrange — the TUI branch never had even the dead provider check;
+    # the interactive claude TUI is just as wrong a vendor.
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg, tui=True)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
+
+
+def test_build_inner_argv_openai_harness_refusal_names_the_v4_card():
+    # Arrange
+    cfg = _mk_cfg(harness="openai")
+    raised: BaseException | None = None
+    # Act
+    try:
+        build_inner_argv(cfg)
+    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+        raised = exc
+    # Assert
+    assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
+
+
+def test_build_inner_argv_proxy_kind_is_exempt_from_the_harness_guard():
+    # Arrange — the a2a proxy runner is vendor-neutral: a harness value on
+    # a proxy spec mismatches nothing the guard protects.
+    cfg = _mk_cfg(
+        kind="AgentProxy",
+        proxy=ProxySpec(upstream="http://u"),
+        harness="openai",
+    )
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "a2a_proxy" in " ".join(argv)
+
+
+def test_build_inner_argv_anthropic_harness_still_gets_the_claude_runner():
+    # Arrange — byte-identical selection for the fleet's real specs.
+    cfg = _mk_cfg(harness="anthropic")
+    # Act
+    argv = build_inner_argv(cfg)
+    # Assert
+    assert "claude_session" in " ".join(argv)

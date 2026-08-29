@@ -220,7 +220,9 @@ async def _push_channel_event(
     # can audit that the receipt landed.
     if is_reaction_event(event):
         _recent.append(event)
-        absorb_reaction_ack(event)
+        # ``agent_name`` is US — the sender that minted the row being marked,
+        # and half of its identity in the fleet-wide ledger store.
+        absorb_reaction_ack(event, agent=agent_name)
         return
 
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.

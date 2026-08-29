@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .._runners._tmux._target import exact_target
+
 __all__ = [
     "Specimen",
     "capture_specimen",
@@ -107,7 +109,14 @@ def _run(argv: list[str]) -> str:
 
 def _pane_pid(agent: str) -> str:
     return _run(
-        ["tmux", "list-panes", "-t", f"{_TUI_PREFIX}{agent}", "-F", "#{pane_pid}"]
+        [
+            "tmux",
+            "list-panes",
+            "-t",
+            exact_target(f"{_TUI_PREFIX}{agent}"),
+            "-F",
+            "#{pane_pid}",
+        ]
     ).strip()
 
 
@@ -129,24 +138,41 @@ def _auth_status_table(sac_bin: str) -> str:
 
 def _state_db_row(agent: str) -> str:
     """The ``agent_auth_state`` row, pipe-separated as in the operator's example."""
-    # stx-allow: fallback (reason: the cache is one of four readings; a missing
-    # or unreadable state.db must be RECORDED in the specimen, not abort it)
+    # READ THROUGH THE OWNING MODULE, not through its storage. This used to
+    # open ``state.db`` directly and SELECT from ``agent_auth_state``. The same
+    # PR that moved that table to PostgreSQL would have left this raw SQLite
+    # read behind — and because the read is wrapped in the deliberate fallback
+    # below, it would not have failed: it would have returned
+    # "<state.db unreadable>" forever, a MISSING reading rendered as a reading.
+    # The specimen exists to explain auth failures; degrading silently is the
+    # one thing it must not do. Going through ``get_auth_state`` means the next
+    # backend move carries this caller along automatically.
+    #
+    # stx-allow: fallback (reason: the cache is one of four readings; an
+    # unreachable store must be RECORDED in the specimen, not abort it)
     try:
-        import sqlite3
+        from .._state.auth_state import get_auth_state
 
-        from .._state.state_db import DEFAULT_DB_PATH
-
-        with sqlite3.connect(f"file:{DEFAULT_DB_PATH}?mode=ro", uri=True) as conn:
-            row = conn.execute(
-                "SELECT name, auth_failed, checked_at, banner, reason, note "
-                "FROM agent_auth_state WHERE name=?",
-                (agent,),
-            ).fetchone()
+        state = get_auth_state(agent)
     except Exception as exc:  # stx-allow: fallback (reason: see comment above)
-        return f"<state.db unreadable: {exc.__class__.__name__}: {exc}>"
-    if row is None:
+        return f"<auth state unreadable: {exc.__class__.__name__}: {exc}>"
+    if state is None:
         return f"<no agent_auth_state row for {agent}>"
-    return "|".join("" if v is None else str(v) for v in row)
+    # Column order and rendering are preserved verbatim — the operator reads
+    # this line. ``auth_failed`` is written back as 0/1 rather than
+    # True/False: the store normalises it to a bool, and letting that through
+    # would silently reformat an operator-facing artifact inside a backend
+    # change, which is the class of drive-by breakage this migration is
+    # otherwise being careful to avoid.
+    ordered = (
+        state.get("name"),
+        int(bool(state.get("auth_failed"))),
+        state.get("checked_at"),
+        state.get("banner"),
+        state.get("reason"),
+        state.get("note"),
+    )
+    return "|".join("" if v is None else str(v) for v in ordered)
 
 
 def capture_specimen(
@@ -168,7 +194,7 @@ def capture_specimen(
         f"--- auth-status (full) ---\n{_auth_status_table(sac_bin)}\n"
         f"--- pane pid ---\n{pid}\n{_ps_line(pid)}\n"
         f"--- pane capture (full scrollback tail {_SCROLLBACK_LINES}) ---\n"
-        f"{_run(['tmux', 'capture-pane', '-t', f'{_TUI_PREFIX}{agent}', '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
+        f"{_run(['tmux', 'capture-pane', '-t', exact_target(f'{_TUI_PREFIX}{agent}'), '-p', '-S', f'-{_SCROLLBACK_LINES}'])}\n"
         f"--- state.db row ---\n{_state_db_row(agent)}\n"
     )
     target = specimen_path(agent, now=now, root=root)

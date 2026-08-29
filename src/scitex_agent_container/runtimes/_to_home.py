@@ -63,6 +63,8 @@ from pathlib import Path
 from ..config import AgentConfig
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
+from ._github_token import ensure_github_token
+from ._hook_origin_manifest import write_hook_manifest
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
@@ -308,13 +310,34 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # shipping one that starts, finds an empty token and fails on every boot.
     # MUST run after ensure_cct_bot_token — that call is what populates the
     # token this reads. See prune_tokenless_telegrammer_mcp (card
-    # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702).
-    prune_tokenless_telegrammer_mcp(dest)
+    # sac-omit-telegram-mcp-when-no-cct-bot-token-20260702). `config` is passed
+    # so the prune can tell a DESIGNED bot-less agent (INFO) from one whose
+    # spec DECLARES a CCT_BOT_TOKEN_SLOT that does not resolve (ERROR — the
+    # removed entry leaves it mute AND deaf; card
+    # sac-cct-prune-hides-misconfigured-telegram-agent-20260810).
+    prune_tokenless_telegrammer_mcp(dest, config=config)
+    # GITHUB_TOKEN, same pool and the same ordering rationale: the fleet
+    # secrets live in ~/.bash.d/secrets, which only a LOGIN shell sources,
+    # and sac starts containers without one — so the token was present and
+    # correct on the host and simply never crossed the boundary. Measured
+    # 2026-08-09: `gh` inside every container reported "not logged into any
+    # GitHub hosts", three agents finished tested work, and NOT ONE could
+    # open a pull request. Unlike the CCT rail this is not gated on a spec
+    # opt-in: any agent that can push can need to open a PR, and an opt-in
+    # would reproduce the failure (you find out at PR time). Missing token
+    # => LOUD warning naming `gh pr create`; never fatal, value never logged.
+    ensure_github_token(config, dest)
     # settings.json CASCADE (same precedence order as .envrc): deep-merge each
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
-    deploy_settings_cascade(dest, settings_layer_dirs(config))
+    settings_provenance = deploy_settings_cascade(dest, settings_layer_dirs(config))
+    # ...then record WHICH layer armed each hook, to runtime (not to the home
+    # we just wrote). The deployed settings.json is the flattened result, so it
+    # cannot answer "where is this hook coming from?" — the origin only exists
+    # here, while the cascade is still un-flattened. Best-effort by design: an
+    # observability file must never be the reason a deploy fails.
+    write_hook_manifest(getattr(config, "name", "") or "unknown", settings_provenance)
     # HOST DEEP-MERGE (developer agents only). For a FULL-DEVELOPER agent
     # (metadata.labels.group==developer, or group-unset + a developer role),
     # overlay the host operator's ~/.claude/{commands,skills,hooks} as per-file

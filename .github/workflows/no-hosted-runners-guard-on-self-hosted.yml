@@ -1,11 +1,65 @@
 name: no-hosted-runners
 
+# TWO GUARDS, ONE JOB. The workflow name and the check name are kept
+# byte-identical (a required context that stops reporting has held a release
+# hostage here before), but this job now runs a SECOND guard alongside the
+# first. They answer different questions about the same line:
+#
+#   _hosted_runner_guard  — does this job land on GitHub's hardware?  (below)
+#   _runner_pool_guard    — does this job name a POOL as a literal instead of
+#                           reading it from a repo variable?
+#
+# The second one exists because the first one's own limitation note (further
+# down, "it cannot see which self-hosted POOL a job reaches") described a real
+# hole that then cost us a day: five light-lane jobs were pinned to a literal
+# `spartan-cpu`, those runners went offline, and the five checks queued
+# forever on every PR while four org runners sat idle. Fifteen PRs could not
+# merge. See docs/ci-runner-routing.md.
+#
+# They share this job on purpose: no new queued check on a contended pool, and
+# the second guard reuses the first's `runs-on` parser rather than re-writing
+# it.
+
 # THE GUARD FOR THE RULE THAT HAS NO OTHER GUARD.
 #
 # Operator directive 2026-07-14 (absolute, no exceptions): NO GitHub-hosted
-# runners anywhere in this repo. Every job runs on the self-hosted Spartan
-# pool. If Spartan misbehaves, that is OURS to fix — never fall back to a
-# hosted runner.
+# runners anywhere in this repo. If a self-hosted runner misbehaves, that is
+# OURS to fix — never fall back to a hosted runner.
+#
+# "Every job runs on the self-hosted SPARTAN pool" is what this comment used to
+# say, and it is now wrong twice over. Correcting it, because a stale comment
+# about WHICH pool is the one thing that would send someone re-pointing
+# CI_RUNS_ON back at Spartan while "fixing" something else:
+#
+#   * FACTUALLY: `vars.CI_RUNS_ON` for this repo is
+#     ["self-hosted","Linux","X64","scitex-org-cpu"] (set 2026-08-12T02:27:58Z),
+#     which resolves to the four scitex-0{1..4}-org-cpu-01 runners. No job here
+#     has run on Spartan since that variable was narrowed.
+#   * BY RULING — AND THE RULING CHANGED. The 2026-08-11 ban
+#     (「spartan を CI に使うのは全面禁止です」) was WITHDRAWN on 2026-08-13:
+#     「あー憲法が古い、スパルタンのciを使ってください、圧倒的に早いので」.
+#     This comment said "Do not widen it" for a week after the reason to
+#     narrow it had gone, and that sentence was still here on 2026-08-20 with
+#     22 PRs queued behind four saturated `scitex-org-cpu` runners while four
+#     Spartan runners sat online and idle. A withdrawn ruling was doing the
+#     routing, in writing, unchallenged.
+#
+#     So: Spartan is ALLOWED, and preferred where it is faster. Whether to
+#     widen `CI_RUNS_ON` is a capacity decision for the fleet — the two pools
+#     are label-disjoint (`scitex-org-cpu` vs `spartan-cpu`+`scitex-ci`), so
+#     switching the variable TRADES pools rather than adding to them; reaching
+#     all of them needs a shared label on the runners themselves. What is NOT
+#     open is leaving a repealed prohibition standing as guidance.
+#
+# NOTE WHAT THIS GUARD DOES AND DOES NOT COVER: it proves no job lands on a
+# GitHub-HOSTED image. It cannot see which self-hosted POOL a job reaches,
+# because that is decided by a repository variable this workflow cannot read at
+# parse time. That remains true — and is exactly why the SECOND guard in this
+# job does not try to resolve the variable either. It enforces the weaker,
+# statically-decidable property that makes the pool REDIRECTABLE AT ALL: the
+# destination must be named by a variable, not frozen into the YAML. Which pool
+# that variable points at is a settings question, and settings are where a dead
+# pool should be routed around.
 #
 # PR #694 migrated the 11 jobs. It did NOT build the guard. So until this
 # workflow existed, nothing stopped the next PR from quietly landing on
@@ -34,10 +88,32 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+# Cancel a PR's superseded runs; strict no-op everywhere else. Argued once, in
+# pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   no-hosted-runners:
     name: no-hosted-runners-guard-on-self-hosted
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    # LIGHT LANE — see docs/ci-runner-routing.md for the full argument.
+    #
+    # 13s median, single-core, needs nothing but PyYAML, and never enters the
+    # CI SIF. It was holding one of four 32-core machines per run on a pool at
+    # 93-94% utilisation, then queueing 289s median (p90 902s) — a 13-second
+    # job waiting twenty times its own runtime for a machine it used 1/32 of.
+    # #1006 routed it away for that reason, and that intent is UNCHANGED —
+    # only the SEAM changed, from a literal label list to a repo variable, so
+    # a dead pool is a settings change rather than a code change.
+    #
+    # NOTE THE SELF-REFERENCE, TWICE OVER. This job now runs BOTH guards, and
+    # both of them read this very line. The hosted guard resolves the inline
+    # default below, sees `self-hosted`, and passes. The pool guard sees the
+    # `vars.` seam and passes. A literal `["self-hosted","Linux","X64",
+    # "<pool>"]` here would satisfy the first and FAIL the second — verified by
+    # running both against this tree before committing, not assumed.
+    runs-on: ${{ fromJSON(vars.LIGHT_RUNS_ON || vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -52,14 +128,42 @@ jobs:
           version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
-      - name: Guard — no GitHub-hosted runners
+      # Split out of the guard step so BOTH guards below can run even when the
+      # first of them fails: an `if: always()` step that also owned the venv
+      # creation would be reporting a missing interpreter instead of a
+      # violation whenever setup broke.
+      - name: Prepare interpreter (the guards need only PyYAML)
+        id: prepare
         run: |
           set -euo pipefail
           uv venv --python 3.12 .venv
           uv pip install --python .venv/bin/python pyyaml
+
+      - name: Guard — no GitHub-hosted runners
+        run: |
+          set -euo pipefail
           # 2>&1 on purpose: the guard prints its FAILURE report to stderr.
           # Without the merge, the one thing a reader needs would be missing
           # from the step summary. pipefail keeps the non-zero exit intact.
           PYTHONPATH=src .venv/bin/python \
             -m scitex_agent_container._hosted_runner_guard . 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Runs even when the guard above failed, so two independent faults are
+      # both reported in ONE run. Otherwise fixing the first only reveals the
+      # second on the next round trip — and a round trip through this queue is
+      # exactly what this change exists to stop paying for.
+      #
+      # `always() &&` IS LOad-BEARING, not belt-and-braces: a step whose `if:`
+      # contains no status-check function gets an implicit `success()` ANDed
+      # in, so the bare `steps.prepare.outcome == 'success'` would be SKIPPED
+      # by the very failure it is written to survive. The second conjunct then
+      # narrows `always()` back down — with no interpreter there is nothing
+      # this step could say.
+      - name: Guard — no hardcoded runner pool
+        if: always() && steps.prepare.outcome == 'success'
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src .venv/bin/python \
+            -m scitex_agent_container._runner_pool_guard . 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"

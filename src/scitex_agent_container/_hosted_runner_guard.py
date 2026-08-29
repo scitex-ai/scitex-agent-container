@@ -19,7 +19,7 @@ Three ways the naive grep is wrong, all of them live in this repo today:
    the runner-image FAMILY (``ubuntu-`` / ``macos-`` / ``windows-``), not
    one literal.
 2. It FALSE-FLAGS our own migrated files. Both the workflow FILENAMES
-   (``quality-audit-on-ubuntu-latest.yml``) and the job ``name:`` fields
+   (``rtd-sphinx-build-on-ubuntu-latest.yml``) and the job ``name:`` fields
    (``ruff-on-ubuntu-latest``) still carry the legacy string. Only a job's
    ``runs-on:`` decides where it executes, so we parse YAML and read
    ``runs-on`` — nothing else.
@@ -417,9 +417,34 @@ def check_repo(repo: Path) -> list[Violation]:
         exempt_jobs = _allowed_jobs(entry) if entry is not None else set()
 
         for job_id, job in _iter_jobs(doc):
-            # A `uses:` job calls a reusable workflow and declares no runner
-            # of its own — there is no runs-on decision to police here.
+            # A `uses:` job calls a reusable workflow and declares no runner of
+            # its own, so there is no LOCAL runs-on decision to police. But
+            # "no local decision" is not "not hosted": the runner is chosen by
+            # the callee's input default, in another repository this guard
+            # cannot read. The honest verdict is UNRESOLVABLE.
+            #
+            # THAT DISTINCTION IS LOAD-BEARING FOR THE ALLOWLIST. A bare
+            # `continue` contributes nothing to `used`, so _stale_violations
+            # then reports the entry as "no hosted job left in it — delete the
+            # entry" for a workflow it was never able to assess. Measured
+            # 2026-08-18 on cla.yml: converting it to a caller (PS-231) made
+            # the guard recommend deleting the one entry that documents WHY it
+            # must stay hosted — unauthenticated `issue_comment` /
+            # `pull_request_target` triggers running a third-party action,
+            # where the self-hosted $HOME holds the fleet's live credential.
+            # Following that advice would leave the next one-line
+            # `runs_on: '["self-hosted",...]'` with nothing in front of it.
+            #
+            # A guard must never recommend destroying a documented exception it
+            # could not evaluate. So an allowlisted caller KEEPS its entry
+            # alive; job scoping is still honoured, because "convert it to a
+            # caller" must not become a way to launder a new job into someone
+            # else's exception.
             if "runs-on" not in job and job.get("uses"):
+                if entry is not None and (
+                    exempt_jobs is None or job_id in exempt_jobs
+                ):
+                    used.add((path.name, job_id))
                 continue
 
             verdict = classify_runs_on(job)

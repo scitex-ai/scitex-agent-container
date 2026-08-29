@@ -8,12 +8,64 @@ from __future__ import annotations
 
 import click
 
+from ._helpers import HelpRecursiveGroup
+
 # ---------------------------------------------------------------------------
 # account group
 # ---------------------------------------------------------------------------
 
 
-@click.group("account")
+class _AccountsGroup(HelpRecursiveGroup):
+    """Render ``sac accounts --help`` under named sections.
+
+    Fifteen verbs in one alphabetical column made ``list`` / ``status`` /
+    ``quota`` look interchangeable and hid which of them WRITE. The
+    sections say what each verb is FOR; the interface spec
+    (general/03_interface_02_cli §6) asks for this and ``sac agents``
+    already does it. Anything not listed here still renders, under
+    ``Other`` — a new verb is never silently dropped from ``--help``.
+    """
+
+    COMMAND_CATEGORIES = [
+        ("Inspect (read-only)", ["list", "status", "quota"]),
+        (
+            "Stored accounts",
+            [
+                "save",
+                "delete",
+                "switch",
+                "login",
+                # Beside `delete` on purpose: both take an account out of
+                # service, and a reader deciding between them should see them
+                # together. The pair exists so that choice is available at
+                # all — before it, stopping an account meant deleting it.
+                "pause",
+                "resume",
+            ],
+        ),
+        (
+            "Credential material",
+            ["refresh", "mint-token", "sync-live", "sync-openai"],
+        ),
+        ("Distribute to peers", ["send-credentials"]),
+        (
+            "Watch continuously",
+            [
+                "watch-live",
+                "watch-quota",
+                "refresh-quota-cache",
+                # Sits beside refresh-quota-cache because it has the same
+                # shape: a timer-driven PRODUCER whose output the boot picker
+                # reads from cache. Neither is something an operator runs by
+                # hand in the normal case, and both are inert if their timer
+                # is not running.
+                "probe-entitlement",
+            ],
+        ),
+    ]
+
+
+@click.group("account", cls=_AccountsGroup)
 def account() -> None:
     """Inspect provider accounts and manage Claude credential rotation."""
 
@@ -216,6 +268,17 @@ register_mint_token_command(account)
 
 
 # ---------------------------------------------------------------------------
+# keepalive — DELIVER that access-only artifact to peers and prove the far
+# side accepts it. `mint-token` produces the shape; this is what keeps the
+# access-only hosts from silently expiring. Own module (per-file line cap);
+# attached at import time like mint-token / refresh.
+# ---------------------------------------------------------------------------
+from ._account_keepalive import register_keepalive_command
+
+register_keepalive_command(account)
+
+
+# ---------------------------------------------------------------------------
 # login — semi-automated `claude /login` re-auth. Drives claude in a tmux
 # pane, extracts + delivers the OAuth URL to the operator, awaits the
 # browser/code step, then reuses `account save`. Lives in its own module
@@ -311,6 +374,39 @@ register_refresh_command(account)
 from ._account_refresh_quota_cache import register_refresh_quota_cache_command
 
 register_refresh_quota_cache_command(account)
+
+
+# ---------------------------------------------------------------------------
+# probe-entitlement — the PRODUCER for the per-account entitlement verdicts
+# the boot picker reads. Same relationship as refresh-quota-cache above: the
+# picker is cache-only by contract, so without a periodic run of this every
+# account reads UNKNOWN and the gate is inert. A host timer runs it.
+#
+# INCIDENT 2026-08-25: a cancelled subscription refreshed its OAuth token
+# successfully and so passed every FRESHNESS gate, while every real turn on
+# it returned 403. Freshness is not entitlement; this asks the second
+# question. Separate verb from `refresh` on purpose — this rotates nothing.
+# ---------------------------------------------------------------------------
+from ._account_probe_entitlement import register_probe_entitlement_command
+
+register_probe_entitlement_command(account)
+
+
+# ---------------------------------------------------------------------------
+# pause / resume — the OPERATOR's own switch, and the counterpart to
+# probe-entitlement above. That verb records what Anthropic MEASURED about an
+# account; these two record what the operator DECIDED about it. Separate
+# files, disjoint writers: no probe can lift a pause, and no pause can be
+# discovered.
+#
+# OPERATOR REQUEST 2026-08-26: he stops and restarts subscriptions while
+# watching quota, and asked that nothing fail during the rest. Before this,
+# one rested account exited `sac accounts send-credentials` non-zero on every
+# pass, pinning the credential alarm red permanently.
+# ---------------------------------------------------------------------------
+from ._account_pause import register_pause_commands
+
+register_pause_commands(account)
 
 
 # ---------------------------------------------------------------------------

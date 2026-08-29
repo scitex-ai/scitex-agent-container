@@ -98,7 +98,6 @@ def _safe_probe(probe: Callable[[str, int], bool], host: str, port: int) -> bool
 
 def collect_ports_data(
     *,
-    db_path: Path | None = None,
     listen_host: str | None = None,
     listen_port: int | None = None,
     probe: Callable[[str, int], bool] | None = None,
@@ -107,9 +106,12 @@ def collect_ports_data(
 ) -> dict:
     """Assemble the port inventory as a plain dict (JSON-ready).
 
+    ``db_path`` IS GONE (2026-08-28). It overrode the state.db location for
+    tests, and the a2a claims it addressed now live in per-host PostgreSQL —
+    there is no file to point at. Tests isolate with the ``pg_schema``
+    fixture instead, which points the REAL resolver at a throwaway schema.
+
     Args:
-        db_path: Override the state.db location (tests). ``None`` uses
-            the default ``~/.scitex/agent-container/runtime/state.db``.
         listen_host / listen_port: Override the resolved listen bind
             (tests). ``None`` reads ``_listen._config`` (config.yaml >
             built-in ``127.0.0.1:7878``).
@@ -140,8 +142,8 @@ def collect_ports_data(
         def probe(h: str, p: int) -> bool:  # noqa: A001 — local shadow is intentional
             return port_is_bound(h, p, timeout=probe_timeout)
 
-    # a2a claims — ONE db read (same API ``sac agents list`` uses).
-    claims = port_allocator.list_claims(db_path=db_path)
+    # a2a claims — ONE store read (same API ``sac agents list`` uses).
+    claims = port_allocator.list_claims()
 
     # Bounded liveness probes for listen + every claim, run concurrently
     # so N dead claims cost ~one timeout, not N. Each probe is already

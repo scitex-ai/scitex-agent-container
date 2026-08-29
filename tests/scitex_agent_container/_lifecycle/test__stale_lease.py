@@ -27,14 +27,36 @@ from typing import Iterator
 import pytest
 
 
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    This file's spec enables ``health``, so the start path spawns the
+    health monitor. With the real ``threading.Thread`` that daemon thread
+    OUTLIVES the test and, ~90 s later, writes a birth certificate and logs
+    an ERROR into whatever test is running then (develop red, 2026-08-24;
+    measured with a capture-immune probe). Same shape as ``FakeThread`` in
+    ``test_lifecycle.py``. PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
 @pytest.fixture
-def db_path(tmp_path: Path) -> Iterator[Path]:
+def db_path(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
 
-    ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into
-    a module-level ``DEFAULT_DB_PATH``; reload after setting the env so
-    the helper's ``list_active_instances`` / ``record_instance_stop``
-    writes land in the temp DB.
+    ``instances`` MOVED to the shared PostgreSQL store on 2026-08-28, so this
+    fixture now takes ``pg_schema`` as well: the lease helper's
+    ``list_active_instances`` / ``record_instance_stop`` writes land there,
+    not in the temp file. The SQLite half is kept because the start path this
+    file drives still opens state.db for its other tables — and because a
+    temp path is what keeps THIS test's rows out of the host's real database.
     """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
@@ -88,8 +110,8 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
         clear_stale_instance_lease,
     )
     from scitex_agent_container._state.state_db import (
+        last_known_instance,
         list_active_instances,
-        open_db,
         record_instance_start,
     )
 
@@ -97,12 +119,11 @@ def _drive_clear_dead_pid_scenario(name: str) -> tuple[int, list[dict], dict]:
     record_instance_start(name=name, host="h", pid=dead_pid)
     cleared = clear_stale_instance_lease(name)
     active = [r for r in list_active_instances() if r["name"] == name]
-    with open_db() as conn:
-        cur = conn.execute(
-            "SELECT exit_reason, ended_at FROM instances WHERE name=?",
-            (name,),
-        )
-        raw = dict(cur.fetchone())
+    # Read the tombstone back through the PRODUCTION reader rather than with
+    # a raw SELECT: since 2026-08-28 there is no ``instances`` table to
+    # SELECT from, and reading through the reader is the stronger check
+    # anyway — a write the store accepted but cannot serve would be caught.
+    raw = last_known_instance(name)
     return cleared, active, raw
 
 
@@ -427,12 +448,14 @@ def _drive_dead_runtime_start_scenario(
         runtime_factory=lambda _c: runtime,
         handover_mod=_Handover(),
         sleep_fn=lambda _s: None,
+        thread_factory=FakeThread,
     )
     rows = [r for r in list_active_instances() if r["name"] == "zombie"]
     return runtime, rows, dead_pid
 
 
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
+    pg_schema: str,
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
@@ -447,6 +470,7 @@ def test_agent_start_clears_dead_pid_from_active_zombie_rows(
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
+    pg_schema: str,
     db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange

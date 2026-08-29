@@ -85,41 +85,15 @@ def list_providers() -> list[str]:
     return sorted(PROVIDERS)
 
 
-# ---------------------------------------------------------------------------
-# Agent SDK family registry — spec.provider (TOP-LEVEL; openai-compat-1
-# foundation)
-# ---------------------------------------------------------------------------
-#
-# Deliberately a SEPARATE, flat constant from :data:`PROVIDERS` above:
-# ``PROVIDERS`` resolves a vendor BACKEND (base_url + auth_token_env) that
-# the Claude Agent SDK talks to; :data:`AGENT_SDK_PROVIDERS` is the closed
-# set of AGENT SDK FAMILIES sac knows how to run a session through at all
-# (see the naming-collision note in ``config._provider_types.AgentProvider``
-# for why these are two different axes sharing an unfortunately similar
-# name). Landed foundation-only — ``"openai"`` validates but has no runner
-# implementation until openai-compat-2.
-AGENT_SDK_PROVIDERS: tuple[str, ...] = ("anthropic", "openai")
-
-
-def is_known_agent_provider(name: str) -> bool:
-    """True when ``name`` is a recognized ``spec.provider`` SDK family."""
-    return name in AGENT_SDK_PROVIDERS
-
-
-def list_agent_providers() -> list[str]:
-    """Return the recognized ``spec.provider`` SDK families, sorted.
-
-    Used by the spec validator's "unknown provider" error message —
-    mirrors :func:`list_providers` for the (distinct) vendor-backend axis.
-    """
-    return sorted(AGENT_SDK_PROVIDERS)
-
+# The HARNESS registry (``spec.harness`` — which agent SDK runs the
+# session) used to live here as ``AGENT_SDK_PROVIDERS``, a second flat
+# constant sharing this module's "provider" word with :data:`PROVIDERS`
+# while meaning something unrelated. It now lives in
+# ``config._harness_types`` as ``AGENT_HARNESSES``; this module is the
+# INFERENCE-backend registry only.
 
 __all__ = [
     "PROVIDERS",
     "resolve_provider",
     "list_providers",
-    "AGENT_SDK_PROVIDERS",
-    "is_known_agent_provider",
-    "list_agent_providers",
 ]

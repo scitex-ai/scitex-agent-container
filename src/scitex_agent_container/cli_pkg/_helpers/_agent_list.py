@@ -147,6 +147,55 @@ def _label_group_matches(labels: dict, wanted: str) -> bool:
     return bool(have & want)
 
 
+def _label_capability_matches(labels: dict, wanted: str) -> bool:
+    """True iff ``wanted`` names a CAPABILITY, a PURPOSE, or a ROLE.
+
+    Written 2026-08-18 after ``--capability handyman`` returned ZERO while
+    eight handymen were running and registered. Two agents hit it
+    independently within the hour and both nearly reported "no handymen
+    available" to the operator -- in the same hour he told the fleet to keep
+    them busy because they cost no Anthropic quota. A discovery surface that
+    silently answers "none" is worse than one that errors, because nobody
+    investigates a zero.
+
+    THE CAUSE was a field mismatch, not a matching bug. Those agents carry::
+
+        purpose:      general-handyman
+        capabilities: edit, refactor, read, test, investigate, cleanup
+
+    The word people search for lives in ``purpose``; ``capabilities`` holds
+    VERBS. So the old filter was correct about the field it read and wrong
+    about the question anyone was asking it.
+
+    MATCHING IS DELIBERATELY ASYMMETRIC, because the fields are:
+
+    * ``capabilities`` is a comma-separated list of DISCRETE TOKENS, so it
+      matches EXACTLY. Substring matching there would make ``read`` match
+      ``spread`` and quietly widen every existing query.
+    * ``purpose`` and ``role`` are descriptive PHRASES ("general-handyman",
+      "product-lead-orchestrator"), so they match by SUBSTRING -- otherwise
+      nobody finds a handyman without typing the whole compound.
+
+    Case-insensitive and whitespace-trimmed, mirroring
+    :func:`_label_group_matches`.
+    """
+    want = wanted.strip().lower()
+    if not want:
+        return False
+    caps = {
+        c.strip().lower()
+        for c in str(labels.get("capabilities", "") or "").split(",")
+        if c.strip()
+    }
+    if want in caps:
+        return True
+    for field in ("purpose", "role"):
+        value = str(labels.get(field, "") or "").strip().lower()
+        if value and want in value:
+            return True
+    return False
+
+
 def get_agent_list_data(
     registry: Registry,
     capability: str | None = None,
@@ -256,14 +305,8 @@ def get_agent_list_data(
 
         if machine and labels.get("machine") != machine:
             continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
+        if capability and not _label_capability_matches(labels, capability):
+            continue
         if group and not _label_group_matches(labels, group):
             continue
 
@@ -305,14 +348,25 @@ def get_agent_list_data(
             future_to_idx = {
                 pool.submit(_probe_fn, cfg): idx for idx, cfg in probe_targets
             }
+            # ONE shared wall-clock budget for the batch. Calling
+            # future.result(timeout=T) in submission order restarts the deadline
+            # per future, so n stalled probes cost about ceil(n/workers)*T even
+            # though the pool is parallel. Same defect, same fix, as
+            # _agent_list_discover._probe_remote_statuses. The abstention
+            # semantics below are unchanged: a probe that could not run stays an
+            # abstention that says HOW it abstained, never a "stopped".
+            import time as _time
+
+            _deadline = _time.monotonic() + remote_probe_timeout_s
             for future in list(future_to_idx):
                 idx = future_to_idx[future]
+                _remaining = max(0.0, _deadline - _time.monotonic())
                 # stx-allow: fallback (reason: an abstention, NOT a "stopped" —
                 # and it says which of the two ways it abstained, because a
                 # verdict that cannot explain itself is what made the third
                 # "live agent reads stopped" report undiagnosable.)
                 try:
-                    probe_results[idx] = future.result(timeout=remote_probe_timeout_s)
+                    probe_results[idx] = future.result(timeout=_remaining)
                 except _FuturesTimeout:  # stx-allow: fallback (reason: expected failure — see inline comment)
                     probe_results[idx] = LocalProbe(
                         running=None,
@@ -486,6 +540,16 @@ def get_agent_list_data(
             running_only=running_only,
         )
     )
+    # Persist the parsed-spec cache once, after every definition has been
+    # loaded. Writing per-load would turn one atomic replace into ~100.
+    # stx-allow: fallback (reason: a cache that fails to persist costs one slow
+    # run; it must never fail the listing that produced it)
+    try:
+        from ...config import _spec_cache
+
+        _spec_cache.flush()
+    except Exception:
+        pass
     return results
 
 

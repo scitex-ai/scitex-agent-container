@@ -4,31 +4,45 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
 2026-05-21 directive (RESTORED the authenticated-identity criterion
 the prior limited scope had deferred):
 
-  * **Authenticated identity** — per-node bearer tokens minted at
-    registration (:func:`mint_node_token`). The listen server resolves
-    an incoming ``Authorization: Bearer <token>`` to a node name
-    (:func:`resolve_node_token`). With this in place,
-    ``check_send_acl`` enforces "identity cannot be spoofed via a
-    metadata field" — when a per-node bearer is presented,
-    ``params.metadata.from_agent`` MUST match the bearer's resolved
-    name; mismatch → 403.
+  * **Authenticated identity** — ``mint_node_token`` /
+    ``resolve_node_token`` / ``list_node_tokens`` were re-exported here
+    (from ``state_db_node_tokens``) until 2026-08-28, when the per-node
+    bearer feature was removed: it had ZERO production callers, so the
+    ``node_tokens`` table held 0 rows on every host and no bearer ever
+    resolved to a name. The identity that actually gates today is the
+    HOST-WIDE bearer plus the name-based ACL below. Names removed rather
+    than left re-exported, for this module's usual reason: an importable
+    ``mint_node_token`` promises a credential a caller could authenticate
+    with, and nothing on the serving side would ever accept it.
 
   * **Group-based default ACL** — intra-group bidirectional,
     cross-group denied. Group is *derived from lineage*; see
     :func:`derive_group`.
 
-  * **Cross-group grants** — accepted, keyed on the *resolved*
-    sender identity (per-node bearer authenticates the sender; the
-    host-wide bearer is the administrative / cross-host-forwarder
-    path, which honours ``metadata.from_agent`` verbatim). See
+  * **Cross-group grants** — accepted, keyed on the sender identity
+    the caller claims in ``metadata.from_agent`` (the host-wide bearer
+    is the only bearer there is; it is the administrative /
+    cross-host-forwarder path and honours the claim verbatim). See
     :func:`grant_send`.
 
   * **Spawn permission** — a node with no parent may call
-    ``sac agents start``; so may a child whose resolved NAMED group
-    is ``developer`` or ``researcher`` (operator ruling 2026-07-05:
-    "dev agents and research agents MUST have full permissions —
-    including the ability to start/stop peer agents"). Any other
-    child is denied. See :func:`spawn_allowed`.
+    ``sac agents start``; so may a child whose NAMED GROUPS INCLUDE
+    ``developer``, ``researcher`` or ``privileged`` (operator ruling
+    2026-07-05: "dev agents and research agents MUST have full
+    permissions — including the ability to start/stop peer agents").
+    Any other child is denied. See :func:`spawn_allowed`.
+
+  * **Two group projections, one source.** ``group_name`` is the
+    PRIMARY group — the single bucket the default-ACL mesh resolves
+    through (:func:`resolve_group_name` / :func:`same_named_group`).
+    ``group_names`` is the FULL set the spec authored, and it is what
+    the AUTHORITY predicates read (:func:`is_developer` /
+    :func:`is_researcher` / :func:`is_privileged`, in
+    :mod:`.state_db_groups`). Both are written from the same
+    ``metadata.labels`` at ``agent_start``. Collapsing authority onto
+    the primary is what made ``grant`` — ``groups: [generalist,
+    privileged, developer, researcher, active]`` — a non-developer to
+    every gate while ``a2a_peers`` listed all five (2026-08-10).
 
 The N-level structural capability of ``lineage`` is preserved —
 nothing here hard-codes "2" or assumes fixed depth.
@@ -38,48 +52,41 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
-import logging
-import time
-from pathlib import Path
 from typing import Any
 
 from .state_db_acl_policy import (
     DEFAULT_COMMS_POLICY,
     apply_may_spawn_gate,
+    comms_policy_row_exists,
     read_comms_policy,
     record_comms_policy,
     sender_target_relationship,
 )
-from .state_db_node_tokens import (
-    list_node_tokens,
-    mint_node_token,
-    resolve_node_token,
-)
-
-_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
     "DEFAULT_COMMS_POLICY",
     "apply_may_spawn_gate",
+    "comms_policy_row_exists",
     "derive_group",
     "grant_send",
     "has_grant",
+    "in_named_group",
     "is_developer",
     "is_local_node",
+    "is_privileged",
     "is_researcher",
     "list_comms_grants",
     "list_comms_nodes",
-    "list_node_tokens",
     "lookup_comms_node",
-    "mint_node_token",
     "read_comms_policy",
     "record_comms_policy",
     "record_lineage",
     "register_comms_node",
+    "rename_comms_node",
     "resolve_group_name",
+    "resolve_group_names",
     "resolve_node_host",
-    "resolve_node_token",
     "revoke_send",
     "same_named_group",
     "sender_target_relationship",
@@ -93,107 +100,19 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def record_lineage(
-    *,
-    child: str,
-    parent: str,
-    db_path: Path | None = None,
-) -> None:
-    """Record ``parent`` as ``child``'s parent (keep-first-parent).
-
-    Idempotent; a child's parent is set once and immutable. A DIFFERENT
-    parent KEEPS the existing one (logged, not raised) so a restart by a
-    non-original-parent caller works in-place without re-parenting;
-    identity drift stays impossible. Permission is gated upstream by
-    ``check_spawn``.
-    """
-    if not child or not parent:
-        raise ValueError("record_lineage: child and parent must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (child,)
-        ).fetchone()
-        if existing is not None:
-            if existing["parent_name"] == parent:
-                return  # idempotent no-op
-            _logger.warning(
-                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
-                child,
-                existing["parent_name"],
-                parent,
-            )
-            return
-        conn.execute(
-            "INSERT INTO lineage (child_name, parent_name, created_at) "
-            "VALUES (?, ?, ?)",
-            (child, parent, time.time()),
-        )
-
-
-def derive_group(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> set[str]:
-    """Return the set of nodes inside ``name``'s default-ACL group.
-
-    A *group* is a parent together with its direct children
-    (handoff §2). Concretely:
-
-    * If ``name`` is a parent (any rows in ``lineage`` with
-      ``parent_name = name``): group = {name} ∪ {its direct children}.
-    * If ``name`` is a child (row in ``lineage`` with
-      ``child_name = name``): group = {its parent} ∪ {parent's other
-      children}.
-    * If ``name`` has no edges at all: group = {name} (singleton —
-      a fresh registration starts unattached).
-
-    The derivation is intentionally local — it never walks the full
-    lineage tree. That keeps the default-ACL semantics simple and
-    matches handoff §2: "the group is the unit of default ACL" (one
-    parent + its direct children, not the entire ancestry).
-
-    Phase-3 (ADR-0010 Step 2): if ``name``'s ``node_comms_policy`` row
-    sets ``lineage_group = 'solitary'``, the group is forced to
-    ``{name}`` and the lineage-table walk is skipped. That isolates a
-    capsule from its siblings AND its parent without depending on the
-    lineage table being empty — clew capsule children adopt this so a
-    sibling capsule can never address them through the group-default
-    ACL even though they share a parent edge.
-    """
-    if not name:
-        raise ValueError("derive_group: name must be non-empty")
-    # Phase-3 solitary override — short-circuits to the singleton group
-    # without touching the lineage table.
-    policy = read_comms_policy(name=name, db_path=db_path)
-    if policy["lineage_group"] == "solitary":
-        return {name}
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        children_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (name,)
-        ).fetchall()
-        if children_rows:
-            group: set[str] = {name}
-            for r in children_rows:
-                group.add(str(r["child_name"]))
-            return group
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (name,)
-        ).fetchone()
-        if parent_row is None:
-            return {name}
-        parent = str(parent_row["parent_name"])
-        sibling_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (parent,)
-        ).fetchall()
-        group = {parent}
-        for r in sibling_rows:
-            group.add(str(r["child_name"]))
-        return group
+# ``record_lineage`` (the WRITER) and ``derive_group`` (the reader that
+# turns edges into the default-ACL unit) moved into
+# :mod:`.state_db_lineage_group` on 2026-08-28, when ``lineage`` left
+# SQLite. The store-shaped writer — a get, a conditional unhide, a put
+# whose ``PutResult.conflicts`` must be inspected because IMMUTABLE keeps
+# the first value WITHOUT raising — does not fit under this module's line
+# cap beside everything else it carries. Same split, same reason, as
+# :mod:`.state_db_lineage_rel`. Re-exported here so every existing
+# ``from ..._state.state_db_nodes import record_lineage`` keeps resolving.
+from .state_db_lineage_group import (  # noqa: E402
+    derive_group,
+    record_lineage,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -206,84 +125,29 @@ def derive_group(
 # ---------------------------------------------------------------------------
 
 
-def resolve_group_name(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> str:
-    """Return ``name``'s persisted NAMED group, or ``""`` if ungrouped.
-
-    Reads ``node_comms_policy.group_name`` (written at ``agent_start``
-    from the resolved ``metadata.labels.group`` / role default). An
-    agent with no policy row, or a row with an empty ``group_name``,
-    is "ungrouped" and shares a named group with no one.
-    """
-    if not name:
-        return ""
-    policy = read_comms_policy(name=name, db_path=db_path)
-    return str(policy.get("group_name", "") or "")
+# ``resolve_group_name`` (the PRIMARY / mesh projection) and
+# ``same_named_group`` moved into the sibling group module alongside the
+# MULTI-value readers: both projections now resolve through the SPEC
+# first (operator 2026-08-12, "configuration → files under git"), and
+# keeping the two in one file is what stops them drifting onto different
+# sources again. Re-exported here so the long-standing import path
+# ``from ..._state.state_db_nodes import resolve_group_name`` keeps working.
 
 
-def same_named_group(
-    *,
-    sender: str,
-    target: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
-
-    Both groups must be NON-EMPTY and equal. Two ungrouped agents
-    (empty group) do NOT match — that keeps absence byte-equivalent to
-    the pre-group-name behaviour (an ungrouped fleet falls through to
-    the lineage-mesh + explicit-grant ACL exactly as before).
-    """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
-    if not sender_group:
-        return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
-    return target_group == sender_group
-
-
-def is_developer(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``developer``.
-
-    The developer group has FULL AUTHORITY (operator 2026-06-25):
-    members may CRUD agents (spawn / start / stop / restart / delete)
-    and CRUD the ACL (grant / revoke). The spawn + lineage ACL gates
-    consult this to short-circuit their default (root-only / lineage-
-    descendant) checks.
-    """
-    from ..config._group_resolver import is_developer_group
-
-    return is_developer_group(resolve_group_name(name=name, db_path=db_path))
-
-
-def is_researcher(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> bool:
-    """Return ``True`` iff ``name``'s resolved NAMED group is ``researcher``.
-
-    Mirrors :func:`is_developer` for the research-role group
-    (:data:`scitex_agent_container.config._group_resolver.RESEARCHER_GROUP`).
-    Per the operator's 2026-07-05 ruling ("dev agents and research
-    agents MUST have full permissions — including the ability to
-    start/stop peer agents"), a researcher-group member gets the same
-    spawn authority as a developer-group member; see
-    :func:`spawn_allowed`.
-    """
-    from ..config._group_resolver import RESEARCHER_GROUP
-
-    group = resolve_group_name(name=name, db_path=db_path)
-    if not group:
-        return False
-    return group.strip().lower() == RESEARCHER_GROUP.lower()
-
+# The AUTHORITY predicates (``is_developer`` / ``is_researcher`` /
+# ``is_privileged``) are MULTI-value and live in a sibling module under
+# the per-file line cap. They ask "is <group> among this agent's named
+# groups", NOT "is it the primary group" — see state_db_groups for why
+# that distinction is the whole point (incident 2026-08-10, grant).
+from .state_db_groups import (  # noqa: E402
+    in_named_group,
+    is_developer,
+    is_privileged,
+    is_researcher,
+    resolve_group_name,
+    resolve_group_names,
+    same_named_group,
+)
 
 # ---------------------------------------------------------------------------
 # spawn permission — root nodes, plus dev/research-role children
@@ -293,24 +157,33 @@ def is_researcher(
 def spawn_allowed(
     *,
     caller: str | None,
-    db_path: Path | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether ``caller`` is allowed to call ``sac agents start``.
 
+    ``db_path`` is GONE (2026-08-28): the parent lookup this makes is a
+    read of the shared PostgreSQL lineage store, not of a SQLite file.
+
     Current policy (handoff §4 / WI-2, relaxed per operator ruling
     2026-07-05): a *root* node (no parent) is allowed to spawn.
-    A *child* is ALSO allowed when its resolved NAMED group is
+    A *child* is ALSO allowed when its named groups INCLUDE
     ``developer`` or ``researcher`` (:func:`is_developer` /
     :func:`is_researcher`) — the operator's exact words: "Dev agents
     and research agents MUST have full permissions — including the
     ability to start/stop peer agents." The ``privileged`` group is
     allowed on the same footing (operator ruling 2026-07-16: denying
-    a privileged-group agent — dotfiles — "is a sac bug"; checked in
-    the group fallthrough below, which every named path also reaches).
+    a privileged-group agent — dotfiles — "is a sac bug").
     Any other child is denied.
     ``caller=None`` means the administrative / human-operator path
     (e.g., a shell invocation from outside any sac-managed agent) —
     allowed.
+
+    INCLUDE, not "equals the primary group" (incident 2026-08-10):
+    every one of these three checks is a MEMBERSHIP test over the FULL
+    set the spec authored, so authority never depends on where a group
+    sits in a YAML list. ``grant``, whose spec says
+    ``groups: [generalist, privileged, developer, researcher, active]``,
+    was refused here for months because only ``generalist`` — the first
+    element — ever reached the DB.
 
     Returns ``(True, None)`` on allow or ``(False, reason)`` on
     deny. The reason is suitable for inclusion in a 403 body and a
@@ -324,48 +197,71 @@ def spawn_allowed(
     if caller is None or caller == "":
         # Admin / human operator. Skips the global root-only check;
         # per-spec may_spawn (Phase-3 Gap-5) layers on top.
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    if is_developer(name=caller, db_path=db_path) or is_researcher(
-        name=caller, db_path=db_path
-    ):
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
-        ).fetchone()
-    if parent_row is None:
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    # Child node: denied by default, EXCEPT a developer- or research-group
-    # member may spawn / restart a peer regardless of parent/child lineage
-    # (operator 2026-07-06 ACL incident — a research child such as neurovista
-    # must be able to self-heal a DOWN peer like scitex-clew without waiting
-    # on the operator). The per-spec may_spawn gate still layers on top,
-    # exactly like the root path above.
-    from ..config._group_resolver import (
-        is_developer_group,
-        is_privileged_group,
-        is_research_group,
-    )
-
-    group = resolve_group_name(name=caller, db_path=db_path)
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    # The three spawn-authorised groups, checked as MEMBERSHIP over the
+    # caller's whole named-group set. Hoisted above the lineage lookup
+    # because the authority is lineage-independent: a developer- /
+    # research- / privileged-group member may spawn or restart a peer to
+    # self-heal a DOWN agent without waiting on the operator (operator
+    # 2026-07-06 ACL incident). The per-spec may_spawn gate still layers
+    # on top, exactly like the root path above.
     if (
-        is_developer_group(group)
-        or is_research_group(group)
-        or is_privileged_group(group)
+        is_developer(name=caller)
+        or is_researcher(name=caller)
+        or is_privileged(name=caller)
     ):
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    # One indexed point read: ``child_name`` is the store's identity, so
+    # "who is my parent" is a ``get``, not a scan.
+    from .state_db_lineage_store import parent_name_of
+
+    parent = parent_name_of(caller)
+    if parent is None:
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    return (False, _spawn_denied_reason(caller, parent))
+
+
+def _spawn_denied_reason(caller: str, parent: str) -> str:
+    """Compose the spawn-deny reason, naming the groups ACTUALLY resolved.
+
+    The message this replaces asserted the caller "is in none of the
+    developer, research, or privileged groups" — a claim about the
+    AGENT. When the underlying bug made ``grant``'s ``developer`` label
+    unreadable, that sentence was flatly false against the same server's
+    own ``a2a_peers`` output, and it sent the reader after their group
+    labels (which were correct) instead of after the reduction that
+    dropped them. A denial must report what the GATE SAW, never assert
+    what the agent is.
+
+    So this states the resolved set verbatim, distinguishes "no policy
+    row in this store at all" from "registered and ungrouped" (the
+    2026-08-09 host_exec lesson — both produce an empty set and they are
+    different facts), and names the command that re-publishes a stale
+    row. Same decision, honest evidence.
+    """
+    from .state_db_acl_policy import comms_policy_row_exists
+
+    groups = sorted(resolve_group_names(name=caller))
+    if groups:
+        seen = (
+            f"the groups this host resolved for it are {groups}, none of "
+            "which grant spawn authority"
+        )
+    elif comms_policy_row_exists(name=caller):
+        seen = "it IS registered on this host but resolved to NO named group at all"
+    else:
+        seen = (
+            "this host holds NO node_comms_policy row for it, so its groups "
+            "could not be determined at all — which is not the same as being "
+            "denied groups you hold; check WHICH state.db was consulted"
+        )
     return (
-        False,
-        (
-            f"spawn denied: caller {caller!r} is a child of "
-            f"{parent_row['parent_name']!r} and is in none of the developer, "
-            "research, or privileged groups. Current policy: only root "
-            "nodes, or developer/research/privileged group members, may "
-            "spawn (handoff §4 'lift-able policy' — a single edit to "
-            "spawn_allowed())."
-        ),
+        f"spawn denied: caller {caller!r} is a child of {parent!r} and "
+        f"{seen}. Spawn requires one of: developer, researcher, privileged "
+        "(membership — naming the group anywhere in metadata.labels.groups "
+        "is enough), or being a root node. If the groups above disagree "
+        "with the agent's spec.yaml, this host's row is STALE: run "
+        "'sac agents refresh-acl' to re-publish it from the spec."
     )
 
 
@@ -390,58 +286,66 @@ from .state_db_grants import (  # noqa: E402, F401
 # ---------------------------------------------------------------------------
 
 
-def resolve_node_host(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> dict[str, Any] | None:
+def resolve_node_host(*, name: str) -> dict[str, Any] | None:
     """Map a node ``name`` to ``{host, a2a_port}``.
 
     Resolution order (ADR-0014):
 
-    1. ``instances`` table — the canonical "live agent" registry. Picks
-       the most recently started live (``ended_at IS NULL``) row.
-    2. ``comms_nodes`` table (ADR-0014 federated comms graph) — used
-       for nodes that are NOT sac-managed agents (operator identities
-       like ``lead``, peer hosts' listen-targets, cross-host
-       registrations sync'd via ``sac registry sync``).
+    1. ``instances`` — the canonical "live agent" registry. Picks the most
+       recently started live (no ``ended_at``) record, breaking a
+       same-second tie on the time-ordered uuid7 ``id``. On the shared
+       PostgreSQL store since 2026-08-28.
+    2. the ADR-0014 ``comms_nodes`` directory — used for nodes that are
+       NOT sac-managed agents (operator identities like ``lead``, peer
+       hosts' listen-targets) and for agents registered on OTHER hosts.
+       Also a read of the shared store rather than of a local copy some
+       earlier ``sac registry sync`` may or may not have pulled.
 
-    Returns ``None`` only when neither table knows the name. Callers
+    Returns ``None`` only when neither source knows the name. Callers
     treat ``None`` as "this is a local-only/unknown node; do not
     cross-host forward" — the ``NodeRegistry`` implicit-registration
     path in ``_listen/_node_channel.py`` handles that case.
+
+    ``db_path`` IS GONE: both sources are PostgreSQL now, so there is no
+    SQLite file for it to name.
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import live_instance_for_name
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    row = live_instance_for_name(name)
     if row is not None:
+        # ONE port field, mirrored out under both keys. Reading only
+        # ``a2a_port`` used to discard a usable address sitting in the same
+        # row: `_send_resolve` preferred ``bound_port`` while this preferred
+        # the legacy column, and the writers populated BOTH from one value —
+        # so a row where only one survived resolved to "no port" here and
+        # 502'd at the forwarder while the sibling resolver reached it. Same
+        # row, same moment, two answers. The store keeps one field, so the
+        # asymmetry has nowhere left to live.
+        port = row.get("a2a_port")
+        if port is None:
+            port = row.get("bound_port")
         return {
             "host": str(row["host"]),
-            "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+            "a2a_port": int(port) if port is not None else None,
         }
     # Fall through to comms_nodes (ADR-0014).
-    return resolve_comms_node_host(name=name, db_path=db_path)
+    #
+    # NOT ALSO FALLING THROUGH WHEN THE RECORD EXISTS BUT CARRIES NO PORT,
+    # and the reason is that this function answers TWO questions with one
+    # value. `is_local_node` consults it and reads ONLY ``host``: a live
+    # record means "the agent is on that host", which stays true whether or
+    # not a port was recorded. Falling through on a portless record would
+    # hand the locality decision to ``comms_nodes``, which may name a
+    # DIFFERENT host — so an agent that is genuinely local could start being
+    # forwarded away, and a routing repair would have silently changed what
+    # "local" means. ``resolve_forward_target`` is the addressability half.
+    return resolve_comms_node_host(name=name)
 
 
-def is_local_node(
-    *,
-    name: str,
-    local_host: str,
-    db_path: Path | None = None,
-) -> bool:
+def is_local_node(*, name: str, local_host: str) -> bool:
     """Return ``True`` if ``name`` should be served locally.
 
     Local cases:
@@ -459,7 +363,7 @@ def is_local_node(
     on a Spartan host are now correctly forwarded instead of being
     treated as local).
     """
-    info = resolve_node_host(name=name, db_path=db_path)
+    info = resolve_node_host(name=name)
     if info is None:
         return True
     return info["host"] == local_host
@@ -477,5 +381,6 @@ from .state_db_comms_nodes import (  # noqa: E402, F401
     list_comms_nodes,
     lookup_comms_node,
     register_comms_node,
+    rename_comms_node,
     unregister_comms_node,
 )

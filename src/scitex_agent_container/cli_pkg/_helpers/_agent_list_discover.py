@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from . import _agent_list_roots
+
 
 def _is_self_peer_marker(spec_path: Path) -> bool:
     """Return True iff ``spec_path`` is a self-peer registration marker.
@@ -44,8 +46,19 @@ def _is_self_peer_marker(spec_path: Path) -> bool:
 
         from ..._listen._self_peers import is_self_peer_spec
 
-        blob = yaml.safe_load(spec_path.read_text())
-        return is_self_peer_spec(blob)
+        text = spec_path.read_text()
+        # Cheap NECESSARY condition before the expensive parse.
+        # is_self_peer_spec requires a `listen_url` key, and a YAML key is
+        # written literally in the document defining it -- so text without
+        # "listen_url" cannot parse into a mapping that has it. Absence is
+        # conclusive, so skipping the parse cannot change the answer.
+        # NOT a path check: _self_peers.py says an external orchestrator may
+        # drop a self-peer spec anywhere in an agents dir, so keying on the
+        # directory name WOULD change behaviour. This keys on content.
+        # Measured 2026-08-06: this parsed all ~105 specs to find one marker.
+        if "listen_url" not in text:
+            return False
+        return is_self_peer_spec(yaml.safe_load(text))
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return False
 
@@ -72,7 +85,7 @@ def _discover_defined_agents() -> list[tuple[str, Path]]:
             roots.append(project / "agents")
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         pass
-    roots.append(Path.home() / ".scitex" / "agent-container" / "agents")
+    roots.extend(_agent_list_roots.user_scope_roots())
 
     for root in roots:
         if not root.is_dir():
@@ -151,14 +164,8 @@ def defined_agent_rows(
             pass
         if machine and labels.get("machine") != machine:
             continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
+        if capability and not _al._label_capability_matches(labels, capability):
+            continue
         if group and not _al._label_group_matches(labels, group):
             continue
         # FIX (no double-parse): a spec that ``load_config`` accepted is
@@ -253,249 +260,19 @@ def _load_or_synthesize_config(spec_path: Path | None, name: str) -> Any:
         return None
 
 
-def _default_remote_status_probe(
-    specs: dict[str, Path],
-    run_ssh: Callable[[list[str]], int] | None,
-) -> Callable[[str, str], str]:
-    """The production status probe: ssh the peer's tmux, map the verdict.
-
-    Returns a ``(name, host) -> status`` callable. It routes through the
-    ALREADY-deployed :func:`_lifecycle._verdict_resolve.remote_process_signal`
-    (ssh ``tmux has-session`` on the peer) and maps its TERNARY verdict:
-
-        ALIVE -> "running", DEAD -> "stopped", UNKNOWN -> "unknown".
-
-    UNKNOWN maps to "unknown" — hidden from the default view but COUNTED in the
-    footer and shown in ``-v`` (the render layer's non-live handling). A wedged
-    ssh / bare-PATH / auth / ProxyJump hiccup did not OBSERVE the peer, so it
-    must not masquerade as "running" — the ~17 stale ``spartan-bmNNN`` rows that
-    rendered as a comforting green were exactly this lie. "Never hide" always
-    meant "do not DELETE a live agent", not "report an un-probed one as up":
-    only a POSITIVE remote absence (the peer's own ``tmux has-session`` rc=1)
-    reads "stopped". ``run_ssh`` is threaded straight into
-    ``remote_process_signal`` so tests inject a real rc-returning callable and
-    never shell out.
-    """
-
-    def _probe(name: str, host: str) -> str:
-        from ..._lifecycle._verdict import ALIVE, DEAD
-        from ..._lifecycle._verdict_resolve import remote_process_signal
-
-        config = _load_or_synthesize_config(specs.get(name), name)
-        if config is None:
-            return "unknown"
-        # stx-allow: fallback (a probe that blew up observed NOTHING — "unknown"
-        # (hidden + footer-counted), never a false "running" that would slander
-        # an un-probed peer as up)
-        try:
-            signal = remote_process_signal(config, host, run_ssh=run_ssh)
-        except Exception:  # stx-allow: fallback (reason: see inline comment)
-            return "unknown"
-        return {ALIVE: "running", DEAD: "stopped"}.get(signal.verdict, "unknown")
-
-    return _probe
-
-
-def _probe_remote_statuses(
-    candidates: list[dict],
-    probe: Callable[[str, str], str],
-    max_parallel_probes: int,
-    probe_timeout_s: float,
-) -> dict[str, str]:
-    """``{name: status}`` from ``probe`` over a bounded pool with a hard timeout.
-
-    Mirrors the local liveness pass in :func:`_agent_list.get_agent_list_data`:
-    a dedicated ``ThreadPoolExecutor`` with a per-future timeout and
-    ``shutdown(wait=False)`` so one wedged peer cannot serialize (or hang) the
-    whole ``sac agents list``. A timed-out / raised probe maps to "unknown" —
-    hidden from the default view but COUNTED in the footer: a probe that could
-    not run is not evidence a remote agent died, but neither is it evidence it
-    is running, so it must not render as a comforting green.
-    """
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as _FuturesTimeout
-
-    statuses: dict[str, str] = {}
-    if not candidates:
-        return statuses
-    workers = max(1, min(max_parallel_probes, len(candidates)))
-    pool = ThreadPoolExecutor(max_workers=workers)
-    try:
-        future_to_name = {
-            pool.submit(probe, c["name"], c["host"]): c["name"] for c in candidates
-        }
-        for future in list(future_to_name):
-            name = future_to_name[future]
-            # stx-allow: fallback (a per-probe timeout/exception is "unknown" —
-            # hidden from the default view + counted in the footer; a probe that
-            # could not run must not masquerade as a running remote row)
-            try:
-                statuses[name] = future.result(timeout=probe_timeout_s)
-            except _FuturesTimeout:  # stx-allow: fallback (reason: see inline comment)
-                statuses[name] = "unknown"
-                future.cancel()
-            except Exception:  # stx-allow: fallback (reason: see inline comment)
-                statuses[name] = "unknown"
-    finally:
-        pool.shutdown(wait=False)
-    return statuses
-
-
-def remote_instance_rows(
-    *,
-    registered: set[str],
-    display_host: str,
-    port_claims: dict[str, int],
-    running_only: bool = False,
-    capability: str | None = None,
-    machine: str | None = None,
-    group: str | None = None,
-    instances_oracle: Callable[[], list[dict]] | None = None,
-    status_probe: Callable[[str, str], str] | None = None,
-    run_ssh: Callable[[list[str]], int] | None = None,
-    max_parallel_probes: int = 8,
-    probe_timeout_s: float = 12.0,
-) -> list[dict]:
-    """Rows for agents recorded as running on a REMOTE peer (master-authoritative).
-
-    THE READ-SIDE the fleet view was missing. On dispatch, the master already
-    records an ``instances`` row (``host=<peer>``, ``remote=1``, ``pid=NULL``;
-    see ``_dispatch.try_dispatch_remote``) and tombstones it on stop — but
-    :func:`get_agent_list_data` only ever read the JSON ``Registry`` (local,
-    hostless) and the on-disk spec walk, so a spartan-dispatched agent fell
-    through to a misleading ``defined`` / ``local`` row. This reads the active
-    ``remote=1`` rows and emits a proper ``host=<peer>`` row per remote agent.
-
-    Precedence: a LOCAL ``Registry`` row wins (its name is in ``registered``,
-    so it is skipped here) and this in turn suppresses the defined-on-disk row
-    (the caller feeds the union of covered names into
-    :func:`defined_agent_rows`). Keyed on the authoritative ``remote`` flag, NOT
-    a hostname compare, so a same-host-named local start is never mistaken for a
-    cross-host one.
-
-    STATUS IS LIVE, never a trusted stale row: each remote row's status comes
-    from an ssh probe of the peer's own tmux (see
-    :func:`_default_remote_status_probe`), so an agent that died on a
-    login-node reboot reads ``stopped`` rather than a comforting ``running`` —
-    and a peer the probe could NOT reach (wedged ssh, a broken ProxyJump to a
-    compute node, auth) reads ``unknown`` (hidden from the default view but
-    counted in the footer), NOT a false ``running``. Probes run through a
-    bounded pool (:func:`_probe_remote_statuses`) to keep list latency bounded.
-    Both the ``status_probe`` and the underlying ``run_ssh`` are injection seams
-    so tests never shell out.
-
-    The Account column is derived from the agent's on-disk spec (which lives on
-    the master's disk — that is how it was dispatched) via
-    :func:`_safe_account_for`, exactly like :func:`defined_agent_rows`, so a
-    remote row no longer shows a bare ``—``.
-
-    These agents are never locally LIVE, so — exactly like
-    :func:`defined_agent_rows` — they carry the never-checked auth shape
-    (``verdict_for(None)``) and the empty movement trio, keeping the ``--json``
-    row shape uniform. Helpers resolve through the ``_agent_list`` module
-    namespace so the suite's real-attribute seams keep working.
-    """
-    from ..._state.auth_state import verdict_for
-    from ..._state.state_db import list_active_instances
-    from ...config import load_config
-    from . import _agent_list as _al
-
-    del running_only  # accepted for signature-parity; remote status is always
-    # probed (a remote row's whole value is its live status), and the render
-    # layer — not this builder — hides non-running rows in the default view.
-
-    oracle = instances_oracle or (lambda: list_active_instances(host=None))
-    discover = getattr(_al, "_discover_defined_agents", _discover_defined_agents)
-    specs: dict[str, Path] = {name: path for name, path in discover()}
-
-    # First pass: keep only the active REMOTE rows, apply the label filters
-    # (loading the agent's on-disk spec for its labels), collect candidates.
-    candidates: list[dict] = []
-    for entry in oracle():
-        name = entry.get("name")
-        if not name or name in registered:  # a local Registry row wins
-            continue
-        if not entry.get("remote"):  # key on the authoritative flag
-            continue
-        spec_path = specs.get(name)
-        labels: dict[str, str] = {}
-        # stx-allow: fallback (label filtering is best-effort; an unreadable
-        # spec yields empty labels, never a crash of the list)
-        try:
-            if spec_path is not None:
-                labels = load_config(str(spec_path)).labels
-        except Exception:  # stx-allow: fallback (reason: see inline comment)
-            labels = {}
-        if machine and labels.get("machine") != machine:
-            continue
-        if capability:
-            caps = [
-                c.strip()
-                for c in labels.get("capabilities", "").split(",")
-                if c.strip()
-            ]
-            if capability not in caps:
-                continue
-        if group and not _al._label_group_matches(labels, group):
-            continue
-        candidates.append(
-            {
-                "name": name,
-                "host": entry.get("host") or "",
-                "started_at": entry.get("started_at") or "-",
-                "a2a_port": entry.get("a2a_port")
-                or entry.get("bound_port")
-                or port_claims.get(name),
-                "spec_path": spec_path,
-                "labels": labels,
-            }
-        )
-
-    # Second pass: LIVE status via the injected (or default ssh) probe.
-    probe = status_probe or _default_remote_status_probe(specs, run_ssh)
-    statuses = _probe_remote_statuses(
-        candidates, probe, max_parallel_probes, probe_timeout_s
-    )
-
-    # Third pass: build the rows (mirrors ``defined_agent_rows``' shape).
-    rows: list[dict] = []
-    for cand in candidates:
-        name = cand["name"]
-        host = cand["host"]
-        spec_path = cand["spec_path"]
-        # Account from the on-disk spec — the SAME spec-derived label
-        # ``defined_agent_rows`` uses. The remote agent's spec DOES live on the
-        # master's disk (that is how it was ssh-dispatched), so this kills the
-        # bare "—" the Account column showed for every remote row. (This is the
-        # spec-derived label, NOT the exact runtime pool pick — that accurate
-        # value needs a DB column and is a separate follow-up.) Best-effort: an
-        # unreadable spec yields "" so the list never crashes on it.
-        account = ""
-        if spec_path is not None:
-            # stx-allow: fallback (a broken/unreadable spec must not crash the
-            # list; "" is the honest empty, exactly as before this change)
-            try:
-                account = _al._safe_account_for(load_config(str(spec_path)))
-            except Exception:  # stx-allow: fallback (reason: see inline comment)
-                account = ""
-        row: dict = {
-            "name": name,
-            # A probe that could not OBSERVE the peer is "unknown" (hidden from
-            # the default view, counted in the footer), never a false "running".
-            "status": statuses.get(name, "unknown"),
-            "screen": "-",
-            "multiplexer": None,
-            "started_at": cand["started_at"],
-            "host": host,
-            "host_display": _al._host_display_for(host, display_host),
-            "path": str(spec_path or ""),
-            "a2a_port": cand["a2a_port"],
-            "account": account,
-            "remote": True,
-        }
-        row.update(dict(_al._MOVEMENT_DEFAULTS))
-        row.update(verdict_for(None))
-        if cand["labels"]:
-            row["labels"] = cand["labels"]
-        rows.append(row)
-    return rows
+# Remote-instance probing moved to ``_agent_list_remote_rows`` (2026-08-23,
+# 512-line cap). Re-exported here so ``_agent_list`` and the
+# ``_al.remote_instance_rows`` test seam keep resolving unchanged — the same
+# re-export convention this module's header already documents.
+#
+# The two underscore-prefixed probes are re-exported too, deliberately: the
+# suite imports them from HERE (test__agent_list_remote.py:45-48), so they are
+# part of this module's de-facto contract regardless of the leading underscore.
+# Exporting only the public name broke collection outright — which is the
+# useful kind of failure, since it named the contract instead of leaving it to
+# be discovered later.
+from ._agent_list_remote_rows import (  # noqa: E402,F401
+    _default_remote_status_probe,
+    _probe_remote_statuses,
+    remote_instance_rows,
+)

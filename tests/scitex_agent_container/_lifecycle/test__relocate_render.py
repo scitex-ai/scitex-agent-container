@@ -1,0 +1,417 @@
+#!/usr/bin/env python3
+"""A dry run must not let DECLARED and OBSERVED share a column.
+
+Operator, 2026-08-08: 「定義されているのと、今動いているのって違うんで」. The
+fleet listing collapses "a spec exists" and "a process is alive" into one word,
+which is how a running agent reads as `defined`. This renderer is the place that
+mistake would repeat for relocation, so the separation is pinned by test.
+
+The other property under test is that UNKNOWN survives to the last line. The
+preflight is three-valued so "I could not tell" reaches the operator; a renderer
+that prints it as a failure, or omits it, throws that away at the final step.
+
+Real dataclasses throughout — the preflight types validate themselves, so
+constructing them IS the check that the shapes are right. No mocks.
+"""
+
+from __future__ import annotations
+
+from scitex_agent_container._lifecycle._relocate_origin import RepoWork
+from scitex_agent_container._lifecycle._relocate_preflight import (
+    Check,
+    LeaseFacts,
+    PreflightReport,
+    SourceFacts,
+    SpecSourceDrift,
+    TargetFacts,
+    preflight,
+)
+from scitex_agent_container._lifecycle._relocate_render import (
+    VERDICT_GO,
+    VERDICT_REFUSED,
+    VERDICT_UNKNOWN,
+    render_coordinator_env,
+    render_declared,
+    render_dry_run,
+    render_observed,
+    verdict_line,
+)
+
+AGENT = "scitex-dev"
+HOST = "scitex-compute-03"
+
+ALL_GOOD = TargetFacts(
+    reachable=True,
+    image_present=True,
+    missing_bind_sources=(),
+    missing_workdir_paths=(),
+    target_resolved_groups=("developer",),
+    # 55432 — the fleet's port. 5432 is refused outright by the DSN check, so a
+    # fixture naming it would make "ALL_GOOD" mean "one guaranteed failure".
+    card_store_url="postgresql://localhost:55432/cards",
+    card_store_reachable=True,
+    credential_expires_in_s=3600.0,
+    credential_refresh_token_present=True,
+    supported_runtimes=("apptainer", "tui"),
+    rejected_spec_keys=(),
+    ports_in_use=(),
+    hub_reachable_from_target=True,
+    sac_on_path=True,
+    sac_resolved_path="/usr/local/bin/sac",
+    sac_usable_path="/usr/local/bin/sac",
+    preamble_declared=False,
+    spec_source_drift=SpecSourceDrift(state="current", upstream="origin/main"),
+)
+
+#: The lease store READ and holding no row — a real answer that bootstraps, as
+#: distinct from "nobody opened the db", which refuses. Supplied on every render
+#: for the same reason CLEAN_SOURCE is: the RENDERING is what is under test.
+CLEAN_LEASE = LeaseFacts(
+    read=True, lease=None, store="/state/state.db", now=1_786_500_000.0
+)
+
+#: A coordinator whose own environment is complete, so the dry run renders the
+#: report rather than an explanation of what is missing from this container.
+FULL_ENV = {
+    "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
+    "SAC_LISTEN_BEARER": "x",
+    "SAC_NAME": "scitex-agent-container",
+    "SAC_RELOCATE_HUB_ADDR": "hub.example:7878",
+}
+
+#: The source scanned and clean. Supplied on every render so the rendering
+#: itself is what is under test — a report that refuses because nobody scanned
+#: the source would exercise the renderer's refusal path in every case. The
+#: transcripts and marker are part of "scanned" since the session check reads
+#: them; three transcripts rather than one, because that is the ordinary shape
+#: (every agent measured on 2026-08-12 held between two and five).
+CLEAN_SOURCE = SourceFacts(
+    repos=(RepoWork(path="/proj/x", branch="develop", uncommitted=0, unpushed=0),),
+    transcripts=(("aaa1.jsonl", 1000), ("bbb2.jsonl", 3000)),
+    session_marker="bbb2",
+)
+
+
+def _report(facts: TargetFacts, runtime: str = "tui") -> PreflightReport:
+    return preflight(
+        agent=AGENT,
+        to_host=HOST,
+        facts=facts,
+        runtime=runtime,
+        source_facts=CLEAN_SOURCE,
+        from_host="ywata-note-win",
+        lease_facts=CLEAN_LEASE,
+    )
+
+
+def _text(lines: list[str]) -> str:
+    return "\n".join(lines)
+
+
+def test_declared_section_says_it_is_unverified() -> None:
+    # Arrange: the spec's own claims are inputs to the checks, not evidence.
+    declared = {"runtime": "tui", "ports": (19013,)}  # stx-allow: STX-NL001
+    # Act
+    lines = render_declared(declared)
+    # Assert
+    assert "not verified" in lines[0]
+
+
+def test_declared_and_observed_are_separate_sections() -> None:
+    # Arrange: collapsing them is the `agents list` defect this guards against.
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), declared={"runtime": "tui"}, env=FULL_ENV))
+    # Assert
+    assert text.index("DECLARED") < text.index("OBSERVED")
+
+
+def test_a_clean_target_reports_go() -> None:
+    # Arrange: positive control. Without it, the refusal tests below could pass
+    # because the fixture is malformed rather than because refusal works.
+    # Act
+    line = verdict_line(_report(ALL_GOOD))
+    # Assert
+    assert VERDICT_GO in line
+
+
+def test_a_failed_check_refuses() -> None:
+    # Arrange: /mnt/c is a Windows drive absent on the nas — the 2026-08-07 case.
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "missing_bind_sources": ("/mnt/c",)})
+    # Act
+    line = verdict_line(_report(facts))
+    # Assert
+    assert line.startswith(f"VERDICT  {VERDICT_REFUSED}")
+
+
+def test_an_unknown_refuses() -> None:
+    # Arrange: nothing failed; one fact was never observed.
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "credential_expires_in_s": None})
+    # Act
+    line = verdict_line(_report(facts))
+    # Assert
+    assert "could not be determined" in line
+
+
+def test_an_unknown_is_labelled_undetermined_not_plainly_refused() -> None:
+    # Arrange: same state, opposite half of the contract. A FAIL is something to
+    # fix; an UNKNOWN is something to go and measure, so the two verdicts must
+    # not share a label. (Asserting the word "failed" is absent would be the
+    # wrong test — the honest sentence "nothing failed" contains it.)
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "credential_expires_in_s": None})
+    # Act
+    line = verdict_line(_report(facts))
+    # Assert
+    assert VERDICT_UNKNOWN in line
+
+
+def test_unknown_is_labelled_unknown_not_fail() -> None:
+    # Arrange: the label is what a skimming reader acts on.
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "image_present": None})
+    # Act
+    lines = render_observed(_report(facts))
+    row = next(ln for ln in lines if "image_present" in ln)
+    # Assert
+    assert "UNKNOWN" in row and "FAIL" not in row
+
+
+def test_the_probe_error_is_printed_beside_the_unknown() -> None:
+    # Arrange: "missing" without "why" turns a 5-second fix into an investigation.
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "credential_expires_in_s": None})
+    errors = {"credentials_valid": "SSHTimeout: no route to host"}
+    # Act
+    text = _text(render_observed(_report(facts), errors))
+    # Assert
+    assert "SSHTimeout: no route to host" in text
+
+
+def test_a_probe_error_keyed_by_fact_still_reaches_the_reader() -> None:
+    # Arrange: `gather_target_facts` keys its failures by FACT name, and four
+    # checks are named differently from the fact behind them. Looking up by
+    # check name alone drops exactly those four reasons — present, correct, and
+    # never shown (measured 2026-08-09 against a busybox NAS).
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "supported_runtimes": None})
+    errors = {"supported_runtimes": "FactUnavailable: sac is not importable there"}
+    # Act
+    text = _text(render_observed(_report(facts), errors))
+    # Assert
+    assert "sac is not importable there" in text
+
+
+def test_passing_checks_are_printed_too() -> None:
+    # Arrange: showing only problems makes "passed" and "never ran"
+    # indistinguishable — the ambiguity the three outcomes exist to remove.
+    # Act
+    text = _text(render_observed(_report(ALL_GOOD)))
+    # Assert
+    assert text.count("PASS") == len(_report(ALL_GOOD).checks)
+
+
+THREE_BROKEN = TargetFacts(
+    **{
+        **ALL_GOOD.__dict__,
+        "missing_bind_sources": ("/mnt/c",),
+        "card_store_reachable": False,
+        "hub_reachable_from_target": False,
+    }
+)
+
+
+def test_every_problem_is_listed_not_just_the_first() -> None:
+    # Arrange: the operator asked for a dry run that does not need N runs to
+    # find N problems. Counted in the OBSERVED section alone — the BLOCKING
+    # summary repeats each one by design, so counting the whole document would
+    # measure the repetition rather than the coverage.
+    # Act
+    text = _text(render_observed(_report(THREE_BROKEN)))
+    # Assert
+    assert text.count("FAIL") == 3
+
+
+def test_multiple_failures_produce_a_blocking_section() -> None:
+    # Arrange: the summary at the end is what gets pasted into chat.
+    # Act
+    text = _text(render_dry_run(_report(THREE_BROKEN), env=FULL_ENV))
+    # Assert
+    assert "BLOCKING" in text
+
+
+def test_a_clean_run_has_no_blocking_section() -> None:
+    # Arrange: a GO must not print an empty scary heading.
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=FULL_ENV))
+    # Assert
+    assert "BLOCKING" not in text
+
+
+def test_the_header_names_both_agent_and_target() -> None:
+    # Arrange: a dry run pasted into chat must be unambiguous on its own.
+    # Act
+    head = render_dry_run(_report(ALL_GOOD), env=FULL_ENV)[0]
+    # Assert
+    assert AGENT in head and HOST in head
+
+
+def test_the_header_says_nothing_was_touched() -> None:
+    # Arrange: the whole point of the verb is that it is safe to run.
+    # Act
+    head = render_dry_run(_report(ALL_GOOD), env=FULL_ENV)[0]
+    # Assert
+    assert "nothing was touched" in head
+
+
+def test_a_hint_follows_every_non_passing_check() -> None:
+    # Arrange: the preflight validator already refuses a hintless failure; this
+    # asserts the renderer actually SHOWS it, which is a separate thing.
+    facts = TargetFacts(**{**ALL_GOOD.__dict__, "card_store_reachable": False})
+    # Act
+    lines = render_observed(_report(facts))
+    idx = next(i for i, ln in enumerate(lines) if "card_store_reachable" in ln)
+    # Assert
+    assert lines[idx + 1].lstrip().startswith("->")
+
+
+def test_empty_declared_says_so_rather_than_printing_a_bare_heading() -> None:
+    # Arrange: a heading with nothing under it reads as a rendering bug.
+    # Act
+    lines = render_declared({})
+    # Assert
+    assert any("nothing declared" in ln for ln in lines)
+
+
+def test_render_observed_tolerates_a_report_with_one_check() -> None:
+    # Arrange: the column width is computed from the checks; a single short
+    # name must not break the formatting path.
+    report = PreflightReport(
+        agent=AGENT,
+        to_host=HOST,
+        checks=(Check(name="x", ok=True, detail="fine"),),
+    )
+    # Act
+    lines = render_observed(report)
+    # Assert
+    assert any("PASS" in ln and "fine" in ln for ln in lines)
+
+
+def test_the_executing_header_does_not_claim_nothing_was_touched() -> None:
+    # Arrange: THE lie, measured 2026-08-11 on the canary run. The header was
+    # unconditional, so the first real relocation printed "(nothing was touched)"
+    # above a report of 3.6 MB moved between two hosts.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False, env=FULL_ENV)[0]
+    # Assert
+    assert "nothing was touched" not in head
+
+
+def test_the_executing_header_says_both_hosts_change() -> None:
+    # Arrange: the reader needs to know, from the first line, which of the two
+    # modes they are looking at.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, dry_run=False, env=FULL_ENV)[0]
+    # Assert
+    assert "EXECUTING" in head
+
+
+def test_the_header_still_defaults_to_the_dry_run_wording() -> None:
+    # Arrange: a caller that forgets the flag must OVER-warn, not under-warn.
+    report = _report(ALL_GOOD)
+    # Act
+    head = render_dry_run(report, env=FULL_ENV)[0]
+    # Assert
+    assert "DRY RUN" in head
+
+
+# ---------------------------------------------------------------------------
+# COORDINATOR ENVIRONMENT — nine unknowns that are not about the target at all
+#
+# Measured 2026-08-12: a coordinator container started without these four
+# variables cannot reach the listen daemon, so every target fact comes back
+# unobserved at once. An UNKNOWN refuses exactly as hard as a FAIL, so the
+# report reads as a broken relocation rather than a missing environment.
+# ---------------------------------------------------------------------------
+
+
+def test_a_complete_coordinator_environment_prints_nothing() -> None:
+    # Arrange: four lines saying "fine" on every run train the reader to skip
+    # the section on the run where it matters.
+    env = FULL_ENV
+    # Act
+    lines = render_coordinator_env(env)
+    # Assert
+    assert lines == []
+
+
+def test_a_missing_listen_url_is_named() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "UNSET    SAC_LISTEN_BASE_URL" in text
+
+
+def test_a_missing_variable_says_what_it_costs() -> None:
+    # Arrange: naming the variable without naming the consequence leaves the
+    # reader unable to connect it to the unknowns further down the report.
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "NO target fact can be measured" in text
+
+
+def test_the_section_says_an_unmeasured_check_still_refuses() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_NAME": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "REFUSES exactly as firmly" in text
+
+
+def test_a_set_variable_is_not_listed() -> None:
+    # Arrange: only what is missing, so the section is short enough to read.
+    env = {**FULL_ENV, "SAC_RELOCATE_HUB_ADDR": ""}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "SAC_LISTEN_BASE_URL" not in text
+
+
+def test_the_bearer_value_is_never_printed() -> None:
+    # Arrange: a dry run gets pasted into chat windows. Whether it is SET is the
+    # measurement; the token itself must not travel.
+    env = {**FULL_ENV, "SAC_NAME": "", "SAC_LISTEN_BEARER": "s3cret-token-value"}
+    # Act
+    text = _text(render_coordinator_env(env))
+    # Assert
+    assert "s3cret-token-value" not in text
+
+
+def test_the_dry_run_carries_the_section_when_something_is_missing() -> None:
+    # Arrange
+    env = {**FULL_ENV, "SAC_LISTEN_BEARER": ""}
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert "COORDINATOR ENVIRONMENT" in text
+
+
+def test_the_dry_run_omits_the_section_when_nothing_is_missing() -> None:
+    # Arrange
+    env = FULL_ENV
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert "COORDINATOR ENVIRONMENT" not in text
+
+
+def test_the_section_is_printed_before_the_observations_it_explains() -> None:
+    # Arrange: a reader hitting nine unknowns needs the cause above them, not
+    # after they have already concluded the target is broken.
+    env = {**FULL_ENV, "SAC_LISTEN_BASE_URL": ""}
+    # Act
+    text = _text(render_dry_run(_report(ALL_GOOD), env=env))
+    # Assert
+    assert text.index("COORDINATOR ENVIRONMENT") < text.index("OBSERVED")

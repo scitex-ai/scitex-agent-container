@@ -19,7 +19,7 @@ network-shape-independent: any failure must surface as a turn-ending
 ``kind="error"`` event, never an exception mid-iteration).
 
 STX-TQ002 AAA + STX-TQ007 one-assert-per-test; async via
-``asyncio.run(_go())`` (the ``test__provider_session.py`` convention).
+``asyncio.run(_go())`` (the ``test__harness_session.py`` convention).
 """
 
 from __future__ import annotations
@@ -35,14 +35,14 @@ from typing import Any
 
 import pytest
 
-from scitex_agent_container._runners._provider_session import (
+from scitex_agent_container._runners._harness_session import (
     Message,
     NormalizedEvent,
-    ProviderSession,
+    HarnessSession,
     ToolSpec,
 )
 from scitex_agent_container._runners.openai_session import (
-    OpenAISession,
+    OpenAIAgentsSession,
     OpenAISessionError,
     _run_result_from_streamed,
     normalize_stream_event,
@@ -407,15 +407,15 @@ def test_run_result_stop_reason_complete_when_stream_finished():
 
 
 # ---------------------------------------------------------------------------
-# OpenAISession — Protocol conformance + lazy-import contract (SDK-free)
+# OpenAIAgentsSession — Protocol conformance + lazy-import contract (SDK-free)
 # ---------------------------------------------------------------------------
 
 
-def test_openai_session_satisfies_provider_session_protocol():
+def test_openai_session_satisfies_harness_session_protocol():
     # Arrange
-    session = OpenAISession("alpha")
+    session = OpenAIAgentsSession("alpha")
     # Act
-    conforms = isinstance(session, ProviderSession)
+    conforms = isinstance(session, HarnessSession)
     # Assert
     assert conforms is True
 
@@ -423,7 +423,7 @@ def test_openai_session_satisfies_provider_session_protocol():
 def test_openai_session_tracing_defaults_off():
     # Arrange: sac must not POST trace payloads to OpenAI by default.
     # Act
-    session = OpenAISession("alpha")
+    session = OpenAIAgentsSession("alpha")
     # Assert
     assert session.tracing is False
 
@@ -445,7 +445,7 @@ def test_start_with_agents_blocked_raises_with_install_hint(
     block_agents_import, openai_env
 ):
     # Arrange
-    session = OpenAISession("alpha")
+    session = OpenAIAgentsSession("alpha")
 
     async def _go() -> str:
         try:
@@ -477,7 +477,7 @@ def test_tool_conversion_with_agents_blocked_raises_openai_session_error(
 
 def test_send_before_start_raises():
     # Arrange
-    session = OpenAISession("alpha")
+    session = OpenAIAgentsSession("alpha")
 
     async def _go() -> Exception | None:
         try:
@@ -649,7 +649,7 @@ def test_start_builds_sqlite_session_state(openai_env: Path):
     # Arrange
     agents = pytest.importorskip("agents")
     db_path = openai_env / "state.sqlite3"
-    session = OpenAISession("alpha", model="gpt-4o-mini", db_path=db_path)
+    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini", db_path=db_path)
 
     async def _go() -> Any:
         await session.start()
@@ -667,7 +667,7 @@ def test_start_creates_the_state_db_file(openai_env: Path):
     # Arrange
     pytest.importorskip("agents")
     db_path = openai_env / "state.sqlite3"
-    session = OpenAISession("alpha", model="gpt-4o-mini", db_path=db_path)
+    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini", db_path=db_path)
 
     async def _go() -> None:
         await session.start()
@@ -682,7 +682,7 @@ def test_start_creates_the_state_db_file(openai_env: Path):
 def test_close_resets_started_flag(openai_env: Path):
     # Arrange
     pytest.importorskip("agents")
-    session = OpenAISession(
+    session = OpenAIAgentsSession(
         "alpha", model="gpt-4o-mini", db_path=openai_env / "s.sqlite3"
     )
 
@@ -702,7 +702,7 @@ def test_send_failure_surfaces_as_turn_ending_error_event(openai_env: Path):
     yield a terminal ``kind="error"`` event, never leak an exception."""
     # Arrange
     pytest.importorskip("agents")
-    session = OpenAISession(
+    session = OpenAIAgentsSession(
         "alpha",
         model="gpt-4o-mini",
         db_path=openai_env / "s.sqlite3",

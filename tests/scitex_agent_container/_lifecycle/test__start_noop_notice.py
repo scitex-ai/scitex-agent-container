@@ -86,3 +86,78 @@ def test_offers_the_force_escape_hatch(notice):
     actual = notice
     # Assert
     assert expected in actual
+
+
+# ---------------------------------------------------------------------------
+# The notice NAMES what it found (incident 2026-08-14, card
+# sac-tmux-prefix-match-false-alive-20260814): tmux prefix matching let a
+# SIBLING session pin the no-op branch, and a notice that does not say WHICH
+# session it believed in cannot be caught lying.
+# ---------------------------------------------------------------------------
+
+
+def test_names_the_session_it_believed_in():
+    # Arrange
+    expected = "(tmux session tui-dotfiles)"
+    # Act
+    actual = render_already_running(
+        "dotfiles", "ALIVE (process: session up)", session="tui-dotfiles"
+    )
+    # Assert
+    assert expected in actual
+
+
+def test_names_the_pane_pid_when_resolvable():
+    # Arrange
+    expected = "(tmux session tui-dotfiles, pane pid 12345)"
+    # Act
+    actual = render_already_running(
+        "dotfiles",
+        "ALIVE (process: session up)",
+        session="tui-dotfiles",
+        pane_pid=12345,
+    )
+    # Assert
+    assert expected in actual
+
+
+def test_omits_the_pid_clause_when_the_pid_is_unresolvable():
+    # Arrange — an honest notice folds an unknown away rather than printing
+    # a fabricated placeholder.
+    forbidden = "pane pid"
+    # Act
+    actual = render_already_running(
+        "dotfiles", "ALIVE (process: session up)", session="tui-dotfiles"
+    )
+    # Assert
+    assert forbidden not in actual
+
+
+def test_omits_the_found_clause_entirely_without_a_session(notice):
+    # Arrange — the plain two-arg call keeps its original first line.
+    forbidden = "tmux session"
+    # Act
+    actual = notice
+    # Assert
+    assert forbidden not in actual
+
+
+def test_render_start_noop_notice_names_the_agents_tui_session():
+    # Arrange — real config/verdict shapes (name attr; verdict.render()),
+    # a session name that cannot be running here.
+    from scitex_agent_container._lifecycle._start_noop_notice import (
+        render_start_noop_notice,
+    )
+
+    class _Cfg:
+        name = "zz-noop-notice-zz"
+
+    class _Verdict:
+        @staticmethod
+        def render() -> str:
+            return "ALIVE (delivery: 1 subscriber)"
+
+    # Act
+    actual = render_start_noop_notice(_Cfg(), _Verdict())
+    # Assert — the session sac owns for this agent is named on the first line.
+    assert "(tmux session tui-zz-noop-notice-zz)" in actual

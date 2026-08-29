@@ -22,8 +22,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .._runtime_paths import runtime_base_dir
 from ..config import AgentConfig
-from ._apptainer_argv_guard import validate_flag_argv
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    HARNESS_DESCRIPTORS,
+    OPENAI_AGENTS,
+)
 from ._apptainer_overlay import ensure_overlay_dirs, overlay_flags
 from ._apptainer_quota_cache import (
     QUOTA_CACHE_CONTAINER_PATH,
@@ -34,9 +39,20 @@ from ._apptainer_quota_cache import (
 
 # ----------------------------------------------------------------------
 # Module-level constants (moved from _apptainer_runtime, re-exported
-# there for back-compat).
+# there for back-compat). DERIVED from the harness registry (v4 step 4,
+# ``config._harness_registry``) — the registry entry is the single
+# source for each runner-module path.
 # ----------------------------------------------------------------------
-RUNNER_MODULE = "scitex_agent_container._runners.claude_session"
+RUNNER_MODULE = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].runner_module
+
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED from here YET: the v4 step-2 refusal at the top of
+# ``build_run_argv`` guards every shape of this argv, so a non-Anthropic
+# harness raises instead of dispatching. The registry's ``openai-agents``
+# entry carries the real module + argv builder; key-based launch is
+# migration step 7
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
+RUNNER_MODULE_OPENAI = HARNESS_DESCRIPTORS[OPENAI_AGENTS].runner_module
 
 # Quota-cache constants + resolver now live in _apptainer_quota_cache (this
 # file sat at the 512-line cap); imported below and re-exported via __all__ so
@@ -66,6 +82,28 @@ def build_run_argv(
     process differs). The caller (``TuiSessionRuntime``) launches the
     returned argv inside a tmux PTY rather than backgrounding it.
     """
+    # v4 STEP-2 LOUDNESS (card sac-v4-layering-refactor-harness-runtime-
+    # inference-20260813): every shape of this argv launches the CLAUDE
+    # harness (TUI, SDK runner, pre-built runner_argv), so a
+    # non-Anthropic ``config.harness`` refuses HERE — before any side
+    # effect (home mkdir, overlay provisioning, auth provisioning).
+    # The old check sat in the pre-built runner_argv branch below and
+    # read ``getattr(config, "provider", None)`` — a field the harness
+    # rename removed — so it was DEAD, while the auth step later in this
+    # function reads ``config.harness`` CORRECTLY. That split-brain is
+    # exactly the bug this guard retires: OPENAI_* auth env provisioned,
+    # Claude runner launched, no error anywhere.
+    from ..config._harness_types import ensure_harness_matches_claude_launch
+
+    ensure_harness_matches_claude_launch(
+        config,
+        launching=(
+            "the interactive claude TUI"
+            if tui
+            else f"runner module {RUNNER_MODULE!r}"
+        ),
+    )
+
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
     # overlay/writable-tmpfs incompatibility) and docs/isolation.md.
@@ -188,6 +226,30 @@ def build_run_argv(
         # writable home automatically.
         "--env",
         "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
+        # AND ITS SIBLING, which was missing and blinded fleet liveness.
+        #
+        # `beat_is_recent(name)` resolves `runtime_base_dir() / name /
+        # heartbeat.json`, and `runtime_base_dir()` honours this env var
+        # before falling back to `~/.scitex/agent-container/runtime`. Inside a
+        # container `~` is /home/agent — ephemeral, and no agent ever writes a
+        # beat there — so the fallback made the lookup answer None for EVERY
+        # name. Measured 2026-08-27 from a live container: a beat file 30
+        # seconds old, and beat_is_recent returning None for this agent, for a
+        # real peer, and for a name that does not exist alike. Live, dead and
+        # nonexistent were indistinguishable, which is
+        # `sac-agent-liveness-undetectable-and-no-autoheal-20260823`.
+        #
+        # The HOST runtime root, not /state: /state binds THIS agent only
+        # (measured: 1 entry), so it answers self-liveness and nothing else.
+        # The host root carries every agent (measured: 79 dirs, 29 with a live
+        # beat) and is already reachable wherever the spec declares a
+        # whole-home bind.
+        #
+        # Setting it where that bind is ABSENT costs nothing: the reader then
+        # finds no file and returns None, which is what it returns today. This
+        # can make the answer better and cannot make it worse.
+        "--env",
+        f"SCITEX_AGENT_CONTAINER_RUNTIME_DIR={runtime_base_dir()}",
         "--pwd",
         str(Path(config.workdir).expanduser()),
     ]
@@ -218,15 +280,15 @@ def build_run_argv(
     # agent inherits the store mount even when its spec doesn't carry
     # the explicit line. Explicit spec entries to the same destination
     # override the default — see ``_p3a_default_binds``.
+    # 2026-08-09 gh-hosts.yml incident: a spec bind reached the argv with NO
+    # check, so a credential dir that EXISTED but was EMPTY mounted fine and
+    # delivered nothing — 12 agents spent hours believing they had no GitHub
+    # token. spec_binds_checked is the gate: a credential bind that cannot
+    # deliver REFUSES the start, any other absent source logs ERROR.
+    from ._apptainer_bind_guard import spec_binds_checked
     from ._p3a_default_binds import apply_default_binds
 
-    ap_for_binds = getattr(config, "apptainer", None)
-    spec_binds = (
-        [str(b) for b in getattr(ap_for_binds, "binds", None) or []]
-        if ap_for_binds is not None
-        else []
-    )
-    for bs in apply_default_binds(spec_binds):
+    for bs in apply_default_binds(spec_binds_checked(config)):
         if ":" in bs:
             _, _, rest = bs.partition(":")
             dst = rest.split(":", 1)[0]
@@ -332,68 +394,21 @@ def build_run_argv(
     spec_raw_args = [str(a) for a in (getattr(_ap_raw, "raw_args", None) or [])]
     argv += spec_raw_args
 
-    # Relaxed + directory-overlay + explicit ``--home`` shadows the
-    # to_home tree. ``deploy_to_home_overlay`` materialises the tree
-    # into ``<overlay>/upper/<container_home>/``, but a raw-arg
-    # ``--home /home/agent`` makes apptainer mount a FRESH tmpfs at
-    # that path (verified via `mount`: ``tmpfs on /home/agent``),
-    # which shadows the overlay's upper-home — so $HOME/.mcp.json,
-    # $HOME/CLAUDE.md, $HOME/.claude/ are all silently absent in the
-    # container. The SDK runner's ``merge_home_mcp_servers`` then
-    # reads an empty ``$HOME/.mcp.json`` and a per-agent MCP (e.g. an
-    # agent's own telegrammer bot) never reaches the SDK.
-    #
-    # Fix: bind the materialised upper-home OVER the container HOME,
-    # appended AFTER raw_args so it wins over the ``--home`` tmpfs
-    # (apptainer applies user binds after home setup). No-op for
-    # non-relaxed / non-directory-overlay specs (resolver returns
-    # None) and when the upper-home wasn't materialised.
-    # resolve_container_home / resolve_overlay_upper_home already imported at
-    # the top of this function; reuse the up-front resolution.
-    upper_home = _upper_home
-    if upper_home is not None and upper_home.is_dir():
-        container_home = resolve_container_home(config)
-        argv += ["--bind", f"{upper_home}:{container_home}"]
+    # Every flag contributor has now run. The ordering-sensitive tail
+    # passes — duplicate-``--env`` collapse, the banned-port refusal, the
+    # overlay-upper-home bind, the secret lift, the last-wins credentials
+    # bind and the malformed-flag guard — live in _apptainer_argv_finalize,
+    # which documents why each one has to see the COMPLETE flag region.
+    # resolve_overlay_upper_home was already resolved up-front; reuse it.
+    from ._apptainer_argv_finalize import finalize_flag_argv
 
-    # SECURITY (P1 credential fix): lift secret-shaped ``--env KEY=VALUE``
-    # pairs out of the WORLD-READABLE argv (it becomes a tmux ``bash -c``
-    # pane cmd; /proc/<pid>/cmdline leaks it to any local process) into a
-    # per-agent 0600 ``--env-file``. AFTER every ``--env`` source
-    # (auth/provider/listen/spec.env/raw_args) so any secret is caught, but
-    # BEFORE the creds bind below so that bind stays LAST (its last-wins
-    # shadowing invariant). apptainer still delivers every value; see
-    # _apptainer_secret_env.
-    from ._apptainer_secret_env import redact_secret_env_to_file
-
-    argv = redact_secret_env_to_file(argv, state_dir=state_dir)
-
-    # Designated credentials file (spec.claude.credentials_file) — bound
-    # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
-    # binds (after the overlay-upper-home bind) so the relaxed ``--home``
-    # tmpfs / upper-home bind cannot shadow it; last bind to a path wins.
-    # apptainer FILE binds need the in-container destination to pre-exist,
-    # so first ensure an empty placeholder at the host path backing the
-    # container $HOME (overlay upper-home when relaxed-directory-overlay,
-    # else the workspace-home bind). Without it a fresh overlay agent FATALs
-    # at boot: "destination doesn't exist in container". The placeholder
-    # goes in the bind DESTINATION backing, never to_home (whose
-    # credential-leak guard refuses .credentials.json). No-op w/o a creds bind.
-    from ._apptainer_auth import credentials_file_bind, ensure_credentials_bind_target
-
-    creds_bind = credentials_file_bind(config)
-    ensure_credentials_bind_target(
+    argv = finalize_flag_argv(
+        argv,
         config,
+        state_dir=state_dir,
         home_host=home_host,
-        overlay_upper_home=upper_home,
-        bind_flags=creds_bind,
-    )
-    argv += creds_bind
-
-    # Root-cause guard for the stray ``--fakeroot`` file in the project root
-    # (see _apptainer_argv_guard): a value-taking flag missing its value.
-    # raw_args + name let the message attribute the fault and name the spec.
-    validate_flag_argv(
-        argv, raw_args=spec_raw_args, agent=getattr(config, "name", None)
+        upper_home=_upper_home,
+        spec_raw_args=spec_raw_args,
     )
 
     argv.append(str(sif_path))
@@ -420,7 +435,7 @@ def build_run_argv(
     if tui:
         ch = resolve_container_home(config).rstrip("/")
         has_mcp = (home_host / ".mcp.json").is_file() or (
-            upper_home is not None and (upper_home / ".mcp.json").is_file()
+            _upper_home is not None and (_upper_home / ".mcp.json").is_file()
         )
         if has_mcp:
             tui_mcp_config = f"{ch}/.mcp.json"
@@ -445,7 +460,7 @@ def build_run_argv(
         # settings.json at materialize time).
         for _rel in (".claude/settings.json", ".claude/settings.local.json"):
             if (home_host / _rel).is_file() or (
-                upper_home is not None and (upper_home / _rel).is_file()
+                _upper_home is not None and (_upper_home / _rel).is_file()
             ):
                 tui_settings = f"{ch}/{_rel}"
                 break
@@ -467,7 +482,17 @@ def build_run_argv(
         )
     else:
         kind = getattr(config, "kind", "Agent")
-        module = RUNNER_MODULE_PROXY if kind == "AgentProxy" else RUNNER_MODULE
+        if kind == "AgentProxy":
+            module = RUNNER_MODULE_PROXY
+        else:
+            # Claude runner unconditionally: the top-of-function harness
+            # guard already refused any non-Anthropic spec (v4 step 2 —
+            # the old ``getattr(config, "provider", None)`` read here
+            # was DEAD, so ``RUNNER_MODULE_OPENAI`` was never actually
+            # dispatched). ``RUNNER_MODULE`` is now DERIVED from the
+            # harness registry's SDK entry (v4 step 4); dispatching
+            # OTHER entries' modules here is migration step 7.
+            module = RUNNER_MODULE
         inner_argv = [
             "/usr/bin/tini",
             "-s",

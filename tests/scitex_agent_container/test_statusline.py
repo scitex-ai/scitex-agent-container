@@ -3,9 +3,9 @@
 No-mocks pattern (PA-306):
 - ``$SAC_STATUSLINE_STATE_DIR`` env override redirects the persist dir
   (no module-attribute swap of ``_STATE_DIR``).
-- ``main(stdin=, runner=)`` accepts injection seams for the stdin
-  bytes-stream and the subprocess runner; tests pass real ``io.BytesIO``
-  and hand-rolled callables.
+- ``main(stdin=)`` accepts an injection seam for the stdin bytes-stream;
+  tests pass a real ``io.BytesIO``. There is no runner seam: sac renders
+  the line itself and never shells out.
 - ``_persist`` OSError path tested by writing to a real read-only
   directory (chmod 0o555).
 """
@@ -146,20 +146,20 @@ def test_agent_name_returns_unknown_with_no_env_set(env_save_restore):
 
 
 # ---------------------------------------------------------------------------
-# _fallback_display
+# _display
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_display_renders_context_percent(capsys):
+def test_display_renders_context_percent(capsys):
     # Arrange
     payload = json.dumps({"context_window": {"used_percentage": 42.0}}).encode()
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert "ctx:42%" in capsys.readouterr().out
 
 
-def test_fallback_display_includes_model_display_name(capsys):
+def test_display_includes_model_display_name(capsys):
     # Arrange
     payload = json.dumps(
         {
@@ -168,12 +168,12 @@ def test_fallback_display_includes_model_display_name(capsys):
         }
     ).encode()
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert "claude-opus-4-7" in capsys.readouterr().out
 
 
-def test_fallback_display_includes_five_hour_used_pct(capsys):
+def test_display_includes_five_hour_used_pct(capsys):
     # Arrange
     payload = json.dumps(
         {
@@ -182,36 +182,36 @@ def test_fallback_display_includes_five_hour_used_pct(capsys):
         }
     ).encode()
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert "5h:22%" in capsys.readouterr().out
 
 
-def test_fallback_display_omits_five_hour_when_pct_absent(capsys):
+def test_display_omits_five_hour_when_pct_absent(capsys):
     # Arrange
     payload = json.dumps(
         {"context_window": {"used_percentage": 1.0}, "rate_limits": {"five_hour": {}}}
     ).encode()
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert "5h" not in capsys.readouterr().out
 
 
-def test_fallback_display_silent_on_garbage_input(capsys):
+def test_display_silent_on_garbage_input(capsys):
     # Arrange
     payload = b"not json"
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert capsys.readouterr().out == ""
 
 
-def test_fallback_display_defaults_ctx_to_zero_when_missing(capsys):
+def test_display_defaults_ctx_to_zero_when_missing(capsys):
     # Arrange
     payload = json.dumps({"other": "fields"}).encode()
     # Act
-    sl_mod._fallback_display(payload)
+    sl_mod._display(payload)
     # Assert
     assert "ctx:0%" in capsys.readouterr().out
 
@@ -228,99 +228,64 @@ class _Stdin:
         self.buffer = io.BytesIO(raw)
 
 
-def _run_main_capturing_systemexit(stdin_bytes, runner_fn):
-    """Run sl_mod.main and return the SystemExit, or None if not raised."""
-    try:
-        sl_mod.main(stdin=_Stdin(stdin_bytes), runner=runner_fn)
-        return None
-    except SystemExit as exc:
-        return exc
+def test_statusline_module_never_shells_out():
+    """Operator ruling 2026-08-17: delete the delegation, do not hide it.
 
+    An earlier revision kept the mechanism behind an opt-in env var. That left
+    a second way for the pane to be rendered by something other than sac, which
+    is exactly the variance the ruling removes: the same agent showed different
+    information on two hosts depending on what happened to be installed.
 
-def test_main_propagates_claude_hud_exit_code(state_dir, env_save_restore):
+    Asserted against the real production source rather than a patched
+    collaborator, so it stays true no matter how a future shell-out is spelled
+    (``subprocess.run``, ``Popen``, ``os.system``, a lazy import inside main).
+    """
     # Arrange
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud")
-    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
-
-    class _Result:
-        returncode = 7
-
+    source = Path(sl_mod.__file__).read_text()
     # Act
-    exc = _run_main_capturing_systemexit(payload, lambda argv, input=None: _Result())
+    spawn_tokens = [t for t in ("subprocess", "os.system", "Popen") if t in source]
     # Assert
-    assert exc is not None and exc.code == 7
+    assert spawn_tokens == []
 
 
-def test_main_forwards_payload_to_claude_hud_stdin(state_dir, env_save_restore):
+def test_main_does_not_exit(state_dir, env_save_restore):
+    """main() renders and returns; it no longer carries another tool's rc."""
     # Arrange
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-hud2")
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-no-exit")
     payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
-    captured: dict = {}
-
-    class _Result:
-        returncode = 0
-
-    def runner(argv, input=None):
-        captured["input"] = input
-        return _Result()
-
-    # Act
-    _run_main_capturing_systemexit(payload, runner)
+    # Act — a SystemExit raised here propagates and fails the test.
+    returned = sl_mod.main(stdin=_Stdin(payload))
     # Assert
-    assert captured["input"] == payload
+    assert returned is None
 
 
-def test_main_persists_payload_before_delegating(state_dir, env_save_restore):
+def test_main_renders_the_payload(state_dir, env_save_restore, capsys):
     # Arrange
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-persist")
-    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
-
-    class _Result:
-        returncode = 0
-
-    # Act
-    _run_main_capturing_systemexit(payload, lambda argv, input=None: _Result())
-    # Assert
-    assert (state_dir / "agent-persist.json").exists()
-
-
-def test_main_falls_back_to_local_display_when_claude_hud_missing(
-    state_dir, env_save_restore, capsys
-):
-    # Arrange
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-fb")
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-render")
     payload = json.dumps(
         {
             "context_window": {"used_percentage": 88},
             "model": {"display_name": "M"},
         }
     ).encode()
-
-    def runner(argv, input=None):
-        raise FileNotFoundError("no claude-hud")
-
     # Act
-    sl_mod.main(stdin=_Stdin(payload), runner=runner)
+    sl_mod.main(stdin=_Stdin(payload))
     # Assert
     assert "ctx:88%" in capsys.readouterr().out
 
 
-def test_main_fallback_path_persists_payload(state_dir, env_save_restore):
+def test_main_persists_payload(state_dir, env_save_restore):
     # Arrange
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-fb-persist")
-    payload = json.dumps({"context_window": {"used_percentage": 88}}).encode()
-
-    def runner(argv, input=None):
-        raise FileNotFoundError("no claude-hud")
-
+    env_save_restore.set("CLAUDE_AGENT_ID", "agent-persist")
+    payload = json.dumps({"context_window": {"used_percentage": 50}}).encode()
     # Act
-    sl_mod.main(stdin=_Stdin(payload), runner=runner)
+    sl_mod.main(stdin=_Stdin(payload))
     # Assert
-    assert (state_dir / "agent-fb-persist.json").exists()
+    assert (state_dir / "agent-persist.json").exists()
 
 
 # ---------------------------------------------------------------------------
-# main() default-argument branches (stdin=None, runner=None, str raw)
+# main() default-argument branches (stdin=None, str raw)
 # ---------------------------------------------------------------------------
 
 
@@ -342,33 +307,11 @@ def test_main_default_stdin_reads_from_sys_stdin(state_dir, env_save_restore):
     sys.stdin = _Stdin(payload)
     try:
         # Act
-        sl_mod.main(runner=lambda argv, input=None: _R0())
-    except SystemExit:
-        pass
+        sl_mod.main()
     finally:
         sys.stdin = saved
     # Assert default-stdin branch persisted the payload from sys.stdin.
     assert (state_dir / "agent-default-stdin.json").exists()
-
-
-class _R0:
-    returncode = 0
-
-
-def test_main_default_runner_uses_subprocess_run(
-    state_dir, env_save_restore, subprocess_shim
-):
-    # Arrange real claude-hud shim on PATH so default runner finds it.
-    env_save_restore.set("CLAUDE_AGENT_ID", "agent-default-runner")
-    subprocess_shim.install("claude-hud", exit=0)
-    payload = json.dumps({"context_window": {"used_percentage": 12}}).encode()
-    # Act invoke without runner so subprocess.run default fires.
-    try:
-        sl_mod.main(stdin=_Stdin(payload))
-    except SystemExit:
-        pass
-    # Assert the real subprocess.run reached the shim.
-    assert subprocess_shim.call_count("claude-hud") == 1
 
 
 def test_main_encodes_str_stdin_to_bytes_before_persist(state_dir, env_save_restore):
@@ -376,13 +319,7 @@ def test_main_encodes_str_stdin_to_bytes_before_persist(state_dir, env_save_rest
     env_save_restore.set("CLAUDE_AGENT_ID", "agent-str-stdin")
     payload_text = json.dumps({"context_window": {"used_percentage": 7}})
     # Act
-    try:
-        sl_mod.main(
-            stdin=_StrStdin(payload_text),
-            runner=lambda argv, input=None: _R0(),
-        )
-    except SystemExit:
-        pass
+    sl_mod.main(stdin=_StrStdin(payload_text))
     # Assert persisted file contains the UTF-8 encoded payload.
     stored = (state_dir / "agent-str-stdin.json").read_bytes()
     assert stored == payload_text.encode()

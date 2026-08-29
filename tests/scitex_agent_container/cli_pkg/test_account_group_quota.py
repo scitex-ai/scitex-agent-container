@@ -89,7 +89,7 @@ def test_account_quota_json_emits_deterministic_shape(
     runner = CliRunner()
     # Act
     result = runner.invoke(account, ["quota", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert — exact keys the in-agent consumer can rely on.
     assert payload == {
         "account": "alpha",

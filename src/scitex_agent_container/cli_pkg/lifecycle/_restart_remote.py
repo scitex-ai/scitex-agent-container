@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.state_db import record_instance_start, record_instance_stop
 
@@ -119,6 +120,7 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
             f"argv: {' '.join(shlex.quote(a) for a in ssh_argv)}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
+            + remote_sac_not_found_hint(peer, result.returncode, result.stderr, peers)
         )
     try:
         envelope = _json.loads(result.stdout)

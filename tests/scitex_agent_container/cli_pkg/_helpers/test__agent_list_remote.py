@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -42,7 +44,22 @@ from scitex_agent_container.cli_pkg._helpers._agent_list import (
 )
 from scitex_agent_container.cli_pkg._helpers._agent_list_discover import (
     _default_remote_status_probe,
+    _probe_remote_statuses,
 )
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
 
 # ---------------------------------------------------------------------------
 # Fixtures + seams (copied from the sibling suites — real callables, no mocks).
@@ -50,7 +67,7 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_discover import (
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (explicit save/restore).
 
     ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a
@@ -404,18 +421,38 @@ def test_reaper_leaves_remote_row_active(isolated_state_db):
 def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_state_db):
     # Arrange — force a long-stale last_heartbeat_at onto the remote row; only
     # the ``AND remote=0`` guard keeps the heartbeat sweep from reaping it.
+    from scitex_dev.store import ANY_REVISION
+
     from scitex_agent_container._state.state_db import (
         gc_dead_instances,
         list_active_instances,
-        open_db,
+    )
+    from scitex_agent_container._state.state_db_instances import read_instance
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
     )
 
     instance_id = _record_remote()
-    with open_db() as conn:
-        conn.execute(
-            "UPDATE instances SET last_heartbeat_at=? WHERE id=?",
-            ("2000-01-01T00:00:00Z", instance_id),
+    # A partial ``Store.put`` — ``instances`` moved to the shared PostgreSQL
+    # store on 2026-08-28, so there is no table to UPDATE. There is also no
+    # production writer for this field any more (``update_heartbeat`` went
+    # with ``instance_heartbeats``), which is exactly why the value has to be
+    # placed by hand: the GC branch that reads it is still live against rows
+    # migrated out of SQLite, and this is the guard that keeps it off remote
+    # rows.
+    host = read_instance(instance_id)["host"]
+    run_with_reconnect(
+        lambda store: store.put(
+            {
+                "id": instance_id,
+                "host": host,
+                "last_heartbeat_at": "2000-01-01T00:00:00Z",
+            },
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
         )
+    )
     # Act — a 1s staleness cutoff would trip the sweep but for the guard.
     gc_dead_instances(dry_run=False, heartbeat_stale_seconds=1)
     # Assert
@@ -560,3 +597,74 @@ def test_remote_row_account_is_spec_derived(isolated_state_db, tmp_path):
     rows = _remote_rows_direct(run_ssh=lambda argv: 0, discover=_disc)
     # Assert — same spec-derived label, and demonstrably non-empty (not "").
     assert _spartan_row(rows)["account"] == expected != ""
+
+
+# ---------------------------------------------------------------------------
+# 11. The remote probe pass spends ONE budget for the whole batch, not one per
+#     probe. `future.result(timeout=T)` called once per future in submission
+#     order hands each future the FULL budget, so n wedged peers cost about
+#     ceil(n/workers)*T -- exactly the serialization _probe_remote_statuses'
+#     own docstring promises cannot happen.
+#
+#     ASSERTED AS A RATIO, DELIBERATELY. The absolute-bound form of this
+#     assertion already exists (test_cli.py: `elapsed < 3.0` against a 1s
+#     budget) and it is the assertion that goes red under 32-way xdist load --
+#     load inflates the measurement while the bound stays put, so the test
+#     reports a defect that is not there. A ratio moves both arms together: a
+#     loaded machine makes the baseline slow too, and the comparison survives.
+#     The two implementations stay far apart either way -- a shared budget puts
+#     the batch at ~1x the single-probe cost, a per-future budget at ~16x.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _wedged_probe() -> Iterator[Callable[[str, str], str]]:
+    """A real probe callable that blocks until the context exits.
+
+    No mock: this is an ordinary function that waits on a real Event, which is
+    what a peer whose ssh never answers looks like from the pool's side.
+    """
+    release = threading.Event()
+
+    def probe(name: str, host: str) -> str:
+        release.wait(30)
+        return "running"
+
+    try:
+        yield probe
+    finally:
+        release.set()
+
+
+def _batch_seconds(
+    probe: Callable[[str, str], str], n_peers: int, budget_s: float
+) -> float:
+    """Wall-clock cost of probing ``n_peers`` wedged peers under one budget."""
+    peers = [{"name": f"peer-{i}", "host": "unreachable"} for i in range(n_peers)]
+    started = time.monotonic()
+    # max_parallel_probes=1 on purpose: a pool wide enough to run the whole
+    # batch at once would hide the defect, because the WAITING is what
+    # serializes, not the work.
+    _probe_remote_statuses(peers, probe, 1, budget_s)
+    return time.monotonic() - started
+
+
+def test_remote_probe_batch_spends_one_budget_not_one_per_peer():
+    # Arrange — every probe wedges, so every future must be cut off by the
+    # budget rather than by finishing.
+    budget_s = 0.3
+    n_peers = 16
+    with _wedged_probe() as probe:
+        # Act — one peer establishes what a single budget costs ON THIS
+        # MACHINE, RIGHT NOW; sixteen peers must not cost sixteen of them.
+        one_peer = _batch_seconds(probe, 1, budget_s)
+        many_peers = _batch_seconds(probe, n_peers, budget_s)
+    # Assert
+    ratio = many_peers / max(one_peer, 1e-9)
+    assert ratio < 5.0, (
+        f"{n_peers} wedged peers cost {many_peers:.2f}s against a "
+        f"{one_peer:.2f}s single-peer baseline ({ratio:.1f}x). One shared "
+        f"batch budget is ~1x; ~{n_peers}x means future.result(timeout=...) "
+        "restarts the deadline per future, so the pool's parallelism never "
+        "reaches the waiting -- todo#254, remote half."
+    )

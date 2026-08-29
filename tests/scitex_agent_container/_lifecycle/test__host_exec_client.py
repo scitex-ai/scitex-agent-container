@@ -35,6 +35,7 @@ def _env(name: str, value: str):
         else:
             os.environ[name] = prev
 
+
 from scitex_agent_container._lifecycle._host_exec_client import (
     HostExecRequestError,
     request_host_exec,
@@ -85,9 +86,7 @@ def _opener_raising_http(code: int, body: dict[str, Any]):
             def close(self_inner) -> None:  # noqa: N805
                 return None
 
-        exc = urlerror.HTTPError(
-            req.full_url, code, "reason", hdrs=None, fp=_ErrBody()
-        )
+        exc = urlerror.HTTPError(req.full_url, code, "reason", hdrs=None, fp=_ErrBody())
         raise exc
 
     return _opener
@@ -244,11 +243,13 @@ def test_request_host_exec_returns_parsed_server_body():
 def test_request_host_exec_raises_on_403_from_server():
     # Arrange — group gate refused (real deny shape from the endpoint).
     opener = _opener_raising_http(403, {"error": "group not eligible"})
+
     # Act
     def _call() -> None:
         request_host_exec(
             ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
         )
+
     # Assert
     with pytest.raises(HostExecRequestError):
         _call()
@@ -272,11 +273,13 @@ def test_request_host_exec_exception_populates_status_on_http_error():
 def test_request_host_exec_raises_on_transport_error():
     # Arrange — listen daemon down / connection refused.
     opener = _opener_raising_url("connection refused")
+
     # Act
     def _call() -> None:
         request_host_exec(
             ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
         )
+
     # Assert
     with pytest.raises(HostExecRequestError):
         _call()
@@ -380,3 +383,65 @@ def test_invalid_env_override_falls_back_to_derived():
         )
     # Assert
     assert opener.last_timeout == pytest.approx(330.0)
+
+
+# ---------------------------------------------------------------------------
+# Caller identity is AUTO-RESOLVED from SAC_NAME
+#
+# Omitting `caller` used to send a body with no identity at all. On the
+# host-wide bearer path the server has no per-node identity either, so it
+# refused with 403 "host_exec requires a resolvable caller" — even though
+# SAC_NAME was set in that container. Reported by scitex-storage 2026-07-28,
+# hit again 2026-08-09. The tool's docstring had promised this defaulting all
+# along while no layer implemented it.
+# ---------------------------------------------------------------------------
+
+
+def test_caller_is_auto_resolved_from_sac_name_when_omitted():
+    """The regression: no `caller` argument must still send an identity."""
+    # Arrange
+    opener = _opener_returning({"exit_code": 0})
+    # Act
+    with _env("SAC_NAME", "agent-under-test"):
+        request_host_exec(
+            ["true"], base_url="http://127.0.0.1:7878", bearer="tok", opener=opener
+        )
+    body = json.loads(opener.last_request.data.decode("utf-8"))
+    # Assert
+    assert body["caller"] == "agent-under-test"
+
+
+def test_an_explicit_caller_is_not_overridden_by_sac_name():
+    """Auto-resolution fills a gap; it must never override a caller's choice."""
+    # Arrange
+    opener = _opener_returning({"exit_code": 0})
+    # Act
+    with _env("SAC_NAME", "agent-under-test"):
+        request_host_exec(
+            ["true"],
+            caller="explicit-caller",
+            base_url="http://127.0.0.1:7878",
+            bearer="tok",
+            opener=opener,
+        )
+    body = json.loads(opener.last_request.data.decode("utf-8"))
+    # Assert
+    assert body["caller"] == "explicit-caller"
+
+
+def test_an_empty_caller_opts_out_and_sends_no_identity():
+    """`caller=""` is the deliberate admin/host-wide path — keep it working."""
+    # Arrange
+    opener = _opener_returning({"exit_code": 0})
+    # Act
+    with _env("SAC_NAME", "agent-under-test"):
+        request_host_exec(
+            ["true"],
+            caller="",
+            base_url="http://127.0.0.1:7878",
+            bearer="tok",
+            opener=opener,
+        )
+    body = json.loads(opener.last_request.data.decode("utf-8"))
+    # Assert
+    assert "caller" not in body

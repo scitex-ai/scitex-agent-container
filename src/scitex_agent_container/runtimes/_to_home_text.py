@@ -83,9 +83,99 @@ _LEGACY_IDENTITY_VARS = frozenset(
     }
 )
 
+# STORE IDENTITY — the scitex-cards entries below, and WHY a name is being
+# ADDED to a list the paragraph above says is shrinking.
+#
+# WHY (INCIDENT 2026-08-12, card
+# sac-cards-db-store-identity-not-baked-20260812): this is the 2026-07-02
+# incident again, one variable over. An agent's own container shell and the
+# scitex-cards MCP server it talks to disagreed about which database they
+# were using — the container env and the agent's ``spec.yaml`` both said
+# ``postgresql://scitex_cards@127.0.0.1:55432/scitex_cards`` while the MCP
+# server had ``...:5442``. The agent WROTE cards to one postgres database and
+# READ them from another; three databases ended up holding fragments of one
+# board under a single ``store_uuid``.
+#
+# MECHANISM: the operator-authored shared template
+# ``agents/_shared/to_home/.mcp.json`` carries
+# ``"SCITEX_CARDS_DB": "${SCITEX_CARDS_DB}"``, and ``interpolate_env`` runs
+# HOST-SIDE inside ``sac agents start`` — so it substituted from the
+# LAUNCHING SHELL's environ. The operator's ``~/.bashrc`` exports
+# ``SCITEX_CARDS_DB=...:5442``, so starting an agent from that shell baked the
+# literal ``:5442`` into the materialized ``runtime/<agent>/home/.mcp.json``.
+# Claude Code spreads a server entry's ``env`` block LAST over the inherited
+# process env (see :mod:`._mcp_spec_env`), so the baked value WON inside the
+# MCP server even though the container env said ``:55432``.
+#
+# The measured tell was a clean natural experiment: of 19 materialized
+# ``.mcp.json`` files under ``runtime/``, 18 still held the literal
+# ``${SCITEX_CARDS_DB}`` (those agents were started from shells that did not
+# export it, so the ``os.environ.get(name, m.group(0))`` default kept the ref
+# intact) and exactly ONE held a hardcoded DSN — the agent that happened to be
+# started from the operator's interactive shell. Restated as the invariant it
+# violates: WHICHEVER SHELL THE OPERATOR HAPPENED TO TYPE ``sac agents start``
+# IN SILENTLY DECIDED WHICH DATABASE THAT AGENT'S MCP SERVER WROTE TO, AND A
+# RESTART FROM A DIFFERENT SHELL SILENTLY MOVED THE AGENT TO A DIFFERENT
+# STORE. A store target is per-agent IDENTITY in exactly the sense the module
+# header means it, so it must come from the agent's OWN runtime env.
+#
+# ``SCITEX_CARDS_STORE_UUID`` is included for the same reason and is if
+# anything sharper: scitex-cards reads it ONLY from the environment — never
+# from the database, never derived from a path, deliberately, so the
+# store-identity check cannot go circular — and it is the pin that decides
+# that check's ACCEPT / ADOPT / REFUSE verdict. A host-baked pin would let a
+# launching shell silently declare which store an agent considers legitimate,
+# turning a wrong-store launch into an *authorized* one.
+#
+# WHY NAME-BASED AND NOT ``${RUNTIME:VAR}``: the syntax-based escape is the
+# preferred mechanism and would be the right home for these, but it is the
+# TEMPLATE AUTHOR's to apply, and the scitex-cards ``.mcp.json`` template has
+# NOT migrated — it still writes a plain ``${SCITEX_CARDS_DB}``. Until it
+# does, this deprecated name-based fallback is the ONLY mechanism that can
+# protect the ref, which is precisely the "kept running IN PARALLEL ... until
+# downstream packages have migrated their OWN templates" case the paragraph
+# above describes. Adding here is therefore consistent with that paragraph,
+# not a reversal of it: the list shrinks by MIGRATION, not by leaving a known
+# live identity var unprotected.
+#
+# REMOVAL CONDITION: delete these two entries once the scitex-cards-authored
+# template references ``${RUNTIME:SCITEX_CARDS_DB}`` (and
+# ``${RUNTIME:SCITEX_CARDS_STORE_UUID}`` if it ever references the pin) —
+# same bar as the scitex-todo / claude-code-telegrammer entries above, and not
+# one moment sooner, since removing them first re-bakes the DSN.
+#
+# NOT in :data:`_LEGACY_IDENTITY_VARS`, deliberately: that subset is what the
+# ``.env`` fold in :mod:`._envrc` DROPS. ``SCITEX_CARDS_DB`` must REMAIN in
+# the container's ``--env-file`` — it is the value the materialized
+# ``.mcp.json``'s surviving ``${SCITEX_CARDS_DB}`` ref expands FROM at
+# runtime. Dropping it there would leave the ref unexpanded and take the
+# agent's store away entirely.
+_CARDS_STORE_IDENTITY_VARS = frozenset(
+    {
+        "SCITEX_CARDS_DB",
+        "SCITEX_CARDS_STORE_UUID",
+    }
+)
+
 _RUNTIME_ONLY_VARS = (
     frozenset(
         {
+            # The CURRENT board identity. Its retired predecessor
+            # ``SCITEX_TODO_AGENT_ID`` was listed here from the start and this
+            # one never was, so the canonical name was the ONE identity var
+            # this guard did not cover (measured 2026-08-22:
+            # ``_is_runtime_only_var("SCITEX_CARDS_AGENT_ID")`` was False while
+            # the legacy name, SAC_NAME and SCITEX_CARDS_DB were all True).
+            #
+            # It is a LATENT trap, not a live bug: no template references
+            # ``${SCITEX_CARDS_AGENT_ID}`` today, so nothing has been baked. The
+            # moment one does — and retiring the legacy key from the baseline
+            # ``.mcp.json`` requires exactly that — deploy-time interpolation
+            # would substitute the DEPLOYING process's identity into every
+            # agent's materialized file. That is the 2026-07-02 wrong-identity
+            # incident this whole mechanism exists to prevent, re-entered
+            # through the migration meant to close it.
+            "SCITEX_CARDS_AGENT_ID",
             # scitex-todo >= 0.7.30 names
             "SCITEX_TODO_AGENT_ID",
             "SCITEX_TODO_TASKS_YAML_SHARED",
@@ -94,6 +184,9 @@ _RUNTIME_ONLY_VARS = (
             "CLAUDE_AGENT_ROLE",
         }
     )
+    # scitex-cards store identity (INCIDENT 2026-08-12) — see the comment on
+    # :data:`_CARDS_STORE_IDENTITY_VARS` above.
+    | _CARDS_STORE_IDENTITY_VARS
     # Legacy pre-0.7.30 names — kept as a GUARD only (never injected by sac
     # anymore): a stale deployer shell exporting the old names must still not
     # bake them into materialized files.

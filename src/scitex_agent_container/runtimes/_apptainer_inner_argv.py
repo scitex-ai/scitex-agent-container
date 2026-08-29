@@ -19,6 +19,14 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
+from ..config._harness_registry import (
+    CLAUDE_AGENT_SDK,
+    CLAUDE_CODE_TUI,
+    HARNESS_DESCRIPTORS,
+    OPENAI_AGENTS,
+)
+from ..config._harness_types import ensure_harness_matches_claude_launch
+from ..config._residency_types import DEFAULT_AGENT_RESIDENCY
 from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
     _home_has_resumable_conversation,
     _tui_runner_argv,
@@ -30,9 +38,21 @@ from ._apptainer_inner_argv_tui import (  # noqa: F401 (re-export)
 if TYPE_CHECKING:
     from ..config import AgentConfig
 
-# Runner-module dispatch by ``config.kind``. Kept here so the parent
-# orchestrator doesn't need to know either runner's module path.
-RUNNER_MODULE_AGENT = "scitex_agent_container._runners.claude_session"
+# Runner-module names, DERIVED from the harness registry (v4 step 4,
+# ``config._harness_registry``) — the registry entry is the single
+# source for each module path; these constants remain because they are
+# imported by tests and sibling modules.
+RUNNER_MODULE_AGENT = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].runner_module
+
+# OpenAI harness runner module (scitex-todo card ``openai-compat-2``).
+# NOT DISPATCHED from here YET: the v4 step-2 refusal
+# (``ensure_harness_matches_claude_launch``) guards every branch below,
+# so a non-Anthropic harness raises instead of dispatching. The
+# registry's ``openai-agents`` entry carries the REAL argv builder;
+# key-based launch is migration step 7
+# (card ``sac-v4-layering-refactor-harness-runtime-inference-20260813``).
+RUNNER_MODULE_OPENAI = HARNESS_DESCRIPTORS[OPENAI_AGENTS].runner_module
+
 RUNNER_MODULE_PROXY = "scitex_agent_container._runners.a2a_proxy"
 
 _TINI_PREFIX = ["/usr/bin/tini", "-s", "--", "python3", "-m"]
@@ -116,7 +136,7 @@ def build_inner_argv(
     exec <tini ...>"]`` — never returned bare. The first steps are the
     fixed, unconditional :data:`_GIT_ENV_ALIAS_STEPS` (see there); when
     ``spec.startup_commands`` is also non-empty those follow next, run as
-    container-internal shell BEFORE the claude SDK process starts. ``exec``
+    container-internal shell BEFORE the SDK process starts. ``exec``
     replaces bash with tini, keeping PID 1 clean. NOT a claude prompt — see
     ``spec.startup_prompts``.
 
@@ -135,23 +155,53 @@ def build_inner_argv(
     belt-and-suspenders (the flag is a no-op for the interactive TUI, which
     is why the file MUST be ``settings.json``, not ``settings.local.json``:
     there is no ``.local.json`` at user scope).
+
+    Harness guard (v4 step 2, card ``sac-v4-layering-refactor-harness-
+    runtime-inference-20260813``): both the TUI and SDK branches launch
+    the CLAUDE harness, so a non-Anthropic ``config.harness`` REFUSES
+    loudly instead of dispatching. The old ``getattr(config, "provider",
+    None)`` selector here was DEAD (the harness rename removed the
+    field), so ``harness: openai`` specs silently got the Claude runner;
+    dispatching ``RUNNER_MODULE_OPENAI`` for real is step 4 (the
+    descriptor registry). ``kind: AgentProxy`` is exempt — the a2a proxy
+    runner is vendor-neutral.
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
-        runner_tail = _tui_runner_argv(
+        # Same v4 step-2 guard as the SDK branch below: the interactive
+        # claude TUI is just as wrong a vendor for a non-Anthropic
+        # harness (and this branch never had even the dead check).
+        ensure_harness_matches_claude_launch(
+            config, launching="the interactive claude TUI"
+        )
+        # v4 step 4: the registry entry owns the argv shape. The entry is
+        # keyed by the caller's already-decided launch mode (``tui=True``
+        # came from TuiSessionRuntime), never re-derived from the config —
+        # direct/dry-run callers pass configs whose ``runtime`` field this
+        # builder must not second-guess.
+        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
             config,
-            mcp_config=tui_mcp_config,
-            channel_mcp=tui_channel_mcp,
-            dev_channels=tui_dev_channels,
-            settings=tui_settings,
+            {
+                "tui_mcp_config": tui_mcp_config,
+                "tui_channel_mcp": tui_channel_mcp,
+                "tui_dev_channels": tui_dev_channels,
+                "tui_settings": tui_settings,
+            },
         )
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
-        runner_tail = (
-            _TINI_PREFIX
-            + [RUNNER_MODULE_AGENT]
-            + _agent_runner_argv(config, one_shot=one_shot)
+        # v4 step-2 loudness: refuse a wrong-vendor launch on the REAL
+        # field (the dead ``config.provider`` read used to sit here and
+        # silently fell through to the Claude runner). Post-guard the
+        # harness is Anthropic-family, so the SDK entry is the only
+        # runner-hosted candidate; key-based launch of other entries is
+        # migration step 7.
+        ensure_harness_matches_claude_launch(
+            config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
+        )
+        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
+            config, {"one_shot": one_shot}
         )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
@@ -200,6 +250,51 @@ def _resolve_restart_backoff_s(config: "AgentConfig") -> float:
     return 1.0
 
 
+def _a2a_argv(config: "AgentConfig") -> list[str]:
+    """``spec.a2a`` -> the session runner's ``--a2a-*`` flags.
+
+    Shared by both ``kind`` branches so the two can never drift apart.
+
+    ``--a2a-port`` is the port the runner's inbound-turn server listens on;
+    without it the sidecar never binds and POST /v1/turn is unreachable.
+    ``--a2a-host`` is that server's BIND ADDRESS, threaded from
+    ``spec.a2a.host``. Until this was added the builder emitted only the port,
+    so the runner fell back to its own ``--a2a-host`` default and the address
+    the spec declared reached exactly one of the three bind paths
+    (``runtimes/a2a_sidecar.py``). A spec asking for a reachable address
+    therefore produced an agent whose spec and runtime disagreed, with nothing
+    reporting the disagreement. The value flows
+    ``--a2a-host`` -> ``_session_cli.main`` -> ``claude_session.run(a2a_host=)``
+    -> ``_session_http.serve_inbound(host=)`` -> ``uvicorn.Config(host=)``.
+
+    Resolved-int port only: ``"auto"`` strings or None mean no sidecar arg at
+    this layer. The lifecycle resolves ``"auto"`` -> int via port_allocator
+    BEFORE we get here; if a string slipped through, it's a config that
+    bypassed agent_start (e.g. dry-run inspection) and the sidecar simply
+    won't be wired up. The host rides WITH the port for that same reason: a
+    bind address without a port binds nothing.
+
+    A blank / missing / non-string host emits NO ``--a2a-host`` at all, leaving
+    the runner's own flag default in charge — so a spec that declares nothing
+    binds exactly where it bound before.
+    """
+    a2a_spec = getattr(config, "a2a", None)
+    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
+    if not (isinstance(a2a_port, int) and a2a_port > 0):
+        return []
+    argv = ["--a2a-port", str(a2a_port)]
+    a2a_host = getattr(a2a_spec, "host", None)
+    if isinstance(a2a_host, str) and a2a_host.strip():
+        argv += ["--a2a-host", a2a_host.strip()]
+    cfg_path = getattr(config, "config_path", "")
+    if cfg_path:
+        # Spec path is host-side; apptainer auto-binds /home so the
+        # in-container path is the same string. Used to publish
+        # /.well-known/agent-card.json.
+        argv += ["--a2a-card-yaml", str(cfg_path)]
+    return argv
+
+
 def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
     """Argv tail for ``kind: Agent`` (claude_session)."""
     runner_argv: list[str] = [
@@ -216,6 +311,16 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         "--restart-backoff-s",
         str(_resolve_restart_backoff_s(config)),
     ]
+    # spec.residency (v4 step 6) → --residency. Emitted only when the
+    # compiled spec declares the NON-default ("one-shot"): an agent that
+    # declares nothing keeps a byte-identical argv, so a container whose
+    # installed runner predates the flag still boots — an opt-in one-shot
+    # agent needs the new runner anyway for the behaviour to exist, and
+    # the runner's argparse refuses the flag loudly on an old build
+    # instead of silently staying resident.
+    residency = str(getattr(config, "residency", "") or "").strip()
+    if residency and residency != DEFAULT_AGENT_RESIDENCY:
+        runner_argv += ["--residency", residency]
     # startup_prompts -> claude SDK mission via --mission. NO fallback
     # from startup_commands; that field is shell-exec only (see
     # build_inner_argv wrapper).
@@ -226,23 +331,8 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
         if one_shot:
             # one-shot semantics → exit after the first SDK turn.
             runner_argv.append("--print-stream")
-    # spec.a2a.port → --a2a-port (sidecar bind). Without this the
-    # sidecar never binds and POST /v1/turn is unreachable.
-    a2a_spec = getattr(config, "a2a", None)
-    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    # Resolved-int only: ``"auto"`` strings or None mean no sidecar
-    # arg at this layer. The lifecycle resolves ``"auto"`` → int via
-    # port_allocator BEFORE we get here; if a string slipped through,
-    # it's a config that bypassed agent_start (e.g. dry-run inspection)
-    # and the sidecar simply won't be wired up.
-    if isinstance(a2a_port, int) and a2a_port > 0:
-        runner_argv += ["--a2a-port", str(a2a_port)]
-        cfg_path = getattr(config, "config_path", "")
-        if cfg_path:
-            # Spec path is host-side; apptainer auto-binds /home so
-            # the in-container path is the same string. Used to
-            # publish /.well-known/agent-card.json.
-            runner_argv += ["--a2a-card-yaml", str(cfg_path)]
+    # spec.a2a.{port,host} → --a2a-port / --a2a-host (the sidecar bind).
+    runner_argv += _a2a_argv(config)
     # spec.claude.channels → one --channels arg per entry. When the set
     # contains 'server:sac', the daemon runner threads it into
     # build_sdk_options, which auto-registers the 'sac mcp channel' stdio
@@ -273,8 +363,8 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
     """Argv tail for ``kind: AgentProxy`` (a2a_proxy).
 
     Reads spec.proxy.* (upstream / trust / redact / timeout_s) and
-    spec.a2a.port (sidecar bind). No --mission / autonomous — the
-    proxy has no SDK conversation.
+    spec.a2a.{port,host} (the sidecar bind). No --mission / autonomous —
+    the proxy has no SDK conversation.
     """
     proxy = getattr(config, "proxy", None)
     upstream = getattr(proxy, "upstream", "") if proxy else ""
@@ -296,19 +386,13 @@ def _proxy_runner_argv(config: "AgentConfig") -> list[str]:
         "--timeout-s",
         str(timeout_s),
     ]
-    a2a_spec = getattr(config, "a2a", None)
-    a2a_port = getattr(a2a_spec, "port", None) if a2a_spec else None
-    # See _agent_runner_argv for resolved-int rationale.
-    if isinstance(a2a_port, int) and a2a_port > 0:
-        runner_argv += ["--a2a-port", str(a2a_port)]
-        cfg_path = getattr(config, "config_path", "")
-        if cfg_path:
-            runner_argv += ["--a2a-card-yaml", str(cfg_path)]
+    runner_argv += _a2a_argv(config)
     return runner_argv
 
 
 __all__ = [
     "RUNNER_MODULE_AGENT",
+    "RUNNER_MODULE_OPENAI",
     "RUNNER_MODULE_PROXY",
     "build_inner_argv",
 ]

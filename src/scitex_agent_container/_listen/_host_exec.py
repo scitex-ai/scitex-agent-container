@@ -8,12 +8,14 @@ in-container image builds (``sac image build``), cron/systemd apply
 otherwise require the operator's shell.
 
 FLOW:
-1. Bearer-authed by the outer middleware; the inner identity resolver has
-   already populated ``request.state.authenticated_node`` (per-node bearer) or
-   left it None (host-wide bearer / admin path).
-2. Caller identity: prefer the authenticated node; fall back to an optional
-   body ``caller`` claim (host-wide bearer path only — same caveat as the
-   ``agents_start``/``agent_restart`` handlers).
+1. Bearer-authed by the outer middleware. An inner identity resolver used to
+   populate ``request.state.authenticated_node`` from a per-node bearer; it
+   was removed 2026-08-28 (nothing ever minted one), so that attribute is
+   absent and reads ``None`` — the host-wide bearer / admin path.
+2. Caller identity: prefer the authenticated node — which no longer arrives —
+   so in practice the optional body ``caller`` claim, self-asserted (same
+   caveat as the ``agents_start``/``agent_restart`` handlers). NOTE this is
+   what the GROUP GATE below is applied to.
 3. GROUP GATE: resolve the caller's group via
    ``resolve_group_name`` and refuse with 403 unless it is one of
    ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator
@@ -108,7 +110,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
-from ._acl import deny_response, resolve_group_name
+from .._logging import get_logger
+from .._state import state_db as _state_db
+from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
+from ..config._group_resolver import groups_intersect
+from ._acl import deny_response
 from ._host_exec_child import (
     _POST_KILL_DRAIN_S,
     _TERM_GRACE_S,
@@ -123,6 +129,12 @@ from ._host_exec_inflight import (
     register_inflight,
     unregister_inflight,
 )
+from ._plane_restart_detach import (
+    PLANE_RESTART_DELAY_S,
+    plane_restart_log_path,
+    spawn_detached_plane_command,
+)
+from ._plane_targeting_argv import targets_listen_plane
 
 # Operator-scoped groups (2026-07-01 Q1a + researcher; ``privileged`` added
 # 2026-07-02 per operator request). Members of these groups are permitted to
@@ -168,20 +180,22 @@ def _append_audit(entry: dict[str, Any]) -> None:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
     except Exception as exc:  # stx-allow: fallback (best-effort audit; must not shadow the real exec result)
-        # Log to stderr so the miss is visible in the listen journal, then
-        # continue — the exec's real result still returns to the caller.
-        import sys
-
-        print(
-            f"host_exec: audit log append failed at {path}: {exc}",
-            file=sys.stderr,
+        # Log so the miss is visible in the listen journal, then continue —
+        # the exec's real result still returns to the caller. Routed through
+        # scitex-logging rather than a raw stderr print: this is the sole
+        # account of a LOST AUDIT RECORD, so it must carry its origin and
+        # survive in the runtime log rather than only in whatever journal
+        # happened to be capturing the daemon's stderr.
+        get_logger(__name__).error(
+            f"audit log append failed at {path}: {exc}"
         )
 
 
 async def host_exec(
     request: Request,
     *,
-    group_resolver=resolve_group_name,
+    group_resolver=resolve_group_names,
+    registration_probe=comms_policy_row_exists,
     audit_writer=_append_audit,
 ) -> JSONResponse:
     """``POST /v1/host_exec`` — see module docstring for the full contract.
@@ -269,12 +283,48 @@ async def host_exec(
             reason="host_exec requires a resolvable caller (per-node bearer or 'caller' body claim)"
         )
 
-    group = group_resolver(name=caller)
-    if group not in ELIGIBLE_GROUPS:
+    # MEMBERSHIP over the caller's WHOLE named-group set, not equality
+    # against its primary group (incident 2026-08-10): eligibility is a
+    # capability the operator grants by naming the group anywhere in
+    # ``metadata.labels.groups``. Resolving only the FIRST element made
+    # ``grant`` — whose spec lists privileged AND developer — ineligible
+    # here for the same reason it could not spawn.
+    groups = group_resolver(name=caller)
+    # The eligible group(s) this caller actually holds — what AUTHORISED the
+    # exec, and what the audit line records. Sorted so the value is stable.
+    authorised = sorted(ELIGIBLE_GROUPS & {str(g).strip().lower() for g in groups})
+    if not groups_intersect(groups, ELIGIBLE_GROUPS):
+        # SAME DECISION, HONEST MESSAGE. An empty group set means one of
+        # two things, and the old message asserted the first while the
+        # truth was often the second:
+        #   (a) registered here, genuinely ungrouped -> denial is correct
+        #   (b) NOT IN THIS STORE AT ALL            -> we cannot decide,
+        #       we are simply refusing, which is the right SAFE action
+        #       but a different FACT.
+        # INCIDENT 2026-08-09: three agents were refused with "resolves to
+        # group ''" and went looking at their group labels, when the real
+        # question was WHICH DATABASE was consulted. ~15 minutes lost.
+        # Both cases still deny and still fail CLOSED — this is
+        # observability, not a permissions change.
+        registered = registration_probe(name=caller)
+        if registered:
+            cause = (
+                f"caller {caller!r} IS registered here but resolves to groups "
+                f"{sorted(groups)}, none of which is eligible"
+            )
+        else:
+            cause = (
+                f"caller {caller!r} has NO policy row in this store, so its "
+                "group could not be determined at all — this is NOT the same "
+                "as being denied a group you hold. If the caller is a live "
+                "agent, the likely causes are that the listen daemon restarted "
+                "and has not yet replayed registrations, or that it resolved a "
+                "DIFFERENT store than the agents register into"
+            )
         return deny_response(
             reason=(
                 f"host_exec is restricted to groups {sorted(ELIGIBLE_GROUPS)}; "
-                f"caller {caller!r} resolves to group {group!r}"
+                f"{cause}. Store consulted: {_state_db.DEFAULT_DB_PATH}"
             )
         )
 
@@ -285,6 +335,57 @@ async def host_exec(
         merged_env.update(extra_env)
     else:
         merged_env = None  # inherit parent env
+
+    # DON'T RUN A COMMAND THAT WOULD KILL THIS REQUEST'S OWN SERVER.
+    #
+    # This endpoint is served BY the sac listen daemon, so `systemctl restart
+    # sac-listen` (or `sac listen restart`) run INLINE kills the process group
+    # answering the call. Measured 2026-08-09: exit_code -15, empty stdout, no
+    # status — while the restart had actually SUCCEEDED. The caller cannot tell
+    # "succeeded and killed my reporter" from "failed", so it retries, and a
+    # retry restarts a healthy plane. scitex-storage reported the CLI form of
+    # this on 2026-07-28: such a restart "must report ACCEPTED, else callers
+    # retry and STACK restarts."
+    #
+    # So schedule it DETACHED and answer 202 — the same mechanism
+    # `_agent_restart.py` already uses for agent self-restart (setsid + a short
+    # delay so THIS response flushes before the bounce), rather than inventing a
+    # third variant of "don't decapitate yourself".
+    verdict = targets_listen_plane(argv)
+    if verdict.targets_plane:
+        log_path = plane_restart_log_path()
+        try:
+            spawn_detached_plane_command(argv, env=merged_env, log_path=log_path)
+        except OSError as exc:
+            # Launch failure of the detached child itself — surface it typed,
+            # never a fake "scheduled".
+            return JSONResponse(
+                {
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "argv": argv,
+                    "detached": False,
+                },
+                status_code=500,
+            )
+        return JSONResponse(
+            {
+                "status": "scheduled",
+                "argv": argv,
+                "caller": caller,
+                "reason": verdict.reason,
+                "delay_s": PLANE_RESTART_DELAY_S,
+                "log": log_path,
+                "detail": (
+                    "This command would restart the listen daemon that is serving "
+                    "the request, so it was NOT run inline — running it inline "
+                    "returns exit_code -15 with no output and no way to tell "
+                    f"success from failure. It is scheduled detached in "
+                    f"~{PLANE_RESTART_DELAY_S}s. Verify with an INDEPENDENT probe "
+                    "(e.g. GET /v1/health) rather than by re-running this command."
+                ),
+            },
+            status_code=202,
+        )
 
     started = time.monotonic()
     timed_out = False
@@ -361,7 +462,8 @@ async def host_exec(
         {
             "ts": time.time(),
             "caller": caller,
-            "caller_group": group,
+            "caller_group": ",".join(authorised),
+            "caller_groups": sorted(str(g).strip() for g in groups),
             "argv": argv,
             "cwd": cwd_raw,
             "timeout_s": timeout_s,

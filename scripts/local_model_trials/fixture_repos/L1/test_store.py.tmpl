@@ -1,0 +1,29 @@
+import pytest
+
+from store import Store
+
+
+def test_add_and_get():
+    s = Store()
+    s.add_item("apple", 2.5, 4)
+    assert s.get_item("apple").quantity == 4
+
+
+def test_duplicate_add():
+    s = Store()
+    s.add_item("apple", 2.5, 4)
+    with pytest.raises(ValueError):
+        s.add_item("apple", 1.0, 1)
+
+
+def test_missing_get():
+    s = Store()
+    with pytest.raises(KeyError):
+        s.get_item("pear")
+
+
+def test_total_value():
+    s = Store()
+    s.add_item("apple", 2.0, 3)
+    s.add_item("pear", 1.5, 2)
+    assert s.total_value() == 9.0

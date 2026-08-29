@@ -17,6 +17,11 @@ from pathlib import Path
 
 import click
 
+from ._account_refresh_gate import (
+    iso_ms,
+    needs_refresh,
+    refusal_message,
+)
 from ._account_refresh_skip import (
     _collect_pinned_running_accounts,
     _resolve_active_account_name,
@@ -64,12 +69,13 @@ from ._account_refresh_skip import (
     default=2.0,
     show_default=True,
     help=(
-        "With --all, refresh a snapshot ONLY when its access token has less "
-        "than this many hours of life remaining (a token with unknown/absent "
-        "expiry is always refreshed). Fresh tokens are left untouched — this "
-        "is the daemon's rotate-only-when-stale gate, which also avoids "
-        "needlessly rotating a single-use refresh_token. Ignored for a "
-        "single named account (an explicit request always refreshes)."
+        "Refresh a snapshot ONLY when its access token has less than this "
+        "many hours of life remaining (a token with unknown/absent expiry is "
+        "always refreshed). Fresh tokens are left untouched — this is the "
+        "rotate-only-when-stale gate, which avoids needlessly rotating a "
+        "single-use refresh_token and stranding every agent holding the "
+        "current access token. Applies to a single named account too; use "
+        "--force to rotate a still-fresh one deliberately."
     ),
 )
 @click.option(
@@ -77,7 +83,12 @@ from ._account_refresh_skip import (
     "force",
     is_flag=True,
     default=False,
-    help="With --all, ignore --min-ttl-hours and refresh every account.",
+    help=(
+        "Ignore --min-ttl-hours and refresh even a still-fresh token. "
+        "Required to rotate a single named account before its TTL gate "
+        "opens — rotation invalidates the access token every running agent "
+        "pinned to that account is currently using."
+    ),
 )
 @click.option(
     "--sync-active-login",
@@ -151,12 +162,25 @@ def account_refresh(
     agents die when its access_token expires. The timer's ExecStart uses
     this flag. Mutually exclusive with ``--skip-active``.
 
-    ``--min-ttl-hours`` (with --all) makes the refresh a rotate-only-when-
-    stale gate: an account whose snapshot access token still has more than
-    the threshold left is skipped (no network call, no refresh_token
-    rotation), a token with unknown/absent expiry is always refreshed. A
-    single named account ignores the gate (an explicit request always
-    refreshes). ``--force`` bypasses the gate under --all.
+    ``--min-ttl-hours`` makes the refresh a rotate-only-when-stale gate: an
+    account whose snapshot access token still has more than the threshold
+    left is skipped (no network call, no refresh_token rotation), a token
+    with unknown/absent expiry is always refreshed. ``--force`` bypasses
+    the gate.
+
+    The gate applies to a SINGLE NAMED ACCOUNT exactly as it does under
+    ``--all`` (INCIDENT 2026-08-09). It used to be ignored there, on the
+    reasoning that an explicit request should always refresh — but a
+    refresh is not a read: it rotates the single-use refresh_token, which
+    invalidates the access token EVERY running agent pinned to that
+    account is holding, on every host that binds the snapshot. On
+    2026-08-09 one `sac accounts refresh <name>`, run as a diagnostic on
+    the master, stranded a whole host's agents with 401s while the timer's
+    ``--all`` path had been correctly skipping that same account as still
+    fresh. The safe default belonged on both paths, and the DEBUGGING path
+    is the one a human reaches for under pressure. A named account whose
+    token is still fresh is now REFUSED with exit code 2 and a message
+    naming what the rotation would strand; ``--force`` is the way past.
 
     ``--sync-active-login`` (with --all) additionally keeps the operator's
     live ``~/.claude/.credentials.json`` in sync: before refreshing, the
@@ -283,6 +307,19 @@ def account_refresh(
     else:
         targets = [name]  # type: ignore[list-item]
 
+    # THE OTHER ACCOUNT TIMER HONOURS THE PAUSE TOO. `send-credentials`
+    # distributes a credential and `refresh` renews one; a pause the operator
+    # set must reach both, or the half that ignores it keeps failing about a
+    # rested account and keeps spending its quota to do so. See
+    # :func:`._account_keepalive_pause.refresh_targets_and_notes`.
+    from . import _account_keepalive_pause as _kp
+
+    targets, pause_notes = _kp.refresh_targets_and_notes(
+        list(targets), all_accounts=bool(do_all), home=home
+    )
+    for pause_note in pause_notes:
+        click.echo(pause_note, err=True)
+
     # Active-login family detection (for --sync-active-login). Read the live
     # ~/.claude login's refresh_token ONCE (realpath, symlinks followed) and
     # find the target account whose snapshot refresh_token EQUALS it —
@@ -312,25 +349,10 @@ def account_refresh(
                 err=True,
             )
 
-    import time as _time
-    from datetime import datetime as _dt
-    from datetime import timezone as _tz
-
     def _needs_refresh(expires_ms: int | None) -> bool:
-        """Rotate-only-when-stale gate. A single named account or --force
-        always refreshes; under --all a token with more than
-        ``min_ttl_hours`` left is left untouched (unknown expiry -> refresh)."""
-        if force or not do_all:
-            return True
-        if expires_ms is None:
-            return True
-        hours_left = (expires_ms / 1000.0 - _time.time()) / 3600.0
-        return hours_left < min_ttl_hours
-
-    def _iso_ms(expires_ms: int | None) -> str | None:
-        if not isinstance(expires_ms, int):
-            return None
-        return _dt.fromtimestamp(expires_ms / 1000, tz=_tz.utc).isoformat()
+        return needs_refresh(
+            expires_ms, force=force, min_ttl_hours=min_ttl_hours
+        )
 
     results: list[dict] = []
     sync_failed = False
@@ -347,7 +369,7 @@ def account_refresh(
                     "name": acct_name,
                     "success": None,
                     "skipped": True,
-                    "expires_at": _iso_ms(old_expires),
+                    "expires_at": iso_ms(old_expires),
                     "error": None,
                     "credentials_path": str(creds_path),
                 }
@@ -454,6 +476,24 @@ def account_refresh(
     # the peer's agents running on a snapshot nothing refreshes — the exact
     # invisible-staleness bug the flag exists to kill — so it is loud.
     # --all with mixed results is still a useful partial success.
+    # A NAMED account held back by the TTL gate is a REFUSAL TO ACT, not a
+    # quiet no-op: the caller asked for a rotation and got none, so saying
+    # nothing would read as success. Exit 2 — the remedy is a flag, not a
+    # retry, which is this file's existing meaning for 2 (usage), while 1
+    # stays "the refresh was attempted and failed".
+    if not do_all and results and results[0].get("skipped"):
+        refused = results[0]
+        click.echo(
+            refusal_message(
+                refused["name"],
+                refused.get("expires_at"),
+                min_ttl_hours,
+                is_pinned=refused["name"] in _collect_pinned_running_accounts(home),
+            ),
+            err=True,
+        )
+        raise SystemExit(2)
+
     attempted = [r for r in results if not r.get("skipped")]
     all_attempted_failed = bool(attempted) and not any(
         r.get("success") for r in attempted

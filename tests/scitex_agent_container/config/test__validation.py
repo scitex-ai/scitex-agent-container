@@ -246,15 +246,15 @@ def test_validate_raw_accepts_runtime_apptainer_for_backcompat():
 
 
 # ---------------------------------------------------------------------------
-# spec.provider — agent SDK family selector (openai-compat-1 foundation).
-# Distinct from spec.claude.provider (vendor backend override, tested in
-# test__validation_provider.py) — see the naming-collision note in
-# config._provider_types.AgentProvider.
+# spec.harness — which agent SDK runs the session, plus its DEPRECATED
+# alias spec.provider. Distinct from spec.claude.provider (vendor backend
+# override, tested in test__validation_provider.py); the full migration
+# contract lives in test__harness_types.py.
 # ---------------------------------------------------------------------------
 
 
-def test_validate_raw_absent_provider_adds_no_value_error():
-    # Arrange — the VALUE check stays a no-op when spec.provider is absent
+def test_validate_raw_absent_harness_adds_no_value_error():
+    # Arrange — the VALUE check stays a no-op when the key is absent
     # (the red-start ruling flags the MISSING field separately; the
     # "must be one of" value diagnostic must not fire on absence).
     raw = {
@@ -265,10 +265,10 @@ def test_validate_raw_absent_provider_adds_no_value_error():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "spec.provider must be one of" in e]
+    assert not [e for e in errors if "must be one of" in e and "harness" in e]
 
 
-def test_validate_raw_absent_provider_is_flagged_missing():
+def test_validate_raw_absent_harness_is_flagged_missing():
     # Arrange — red-start ruling 2026-07-21: every field explicit.
     raw = {
         "apiVersion": "scitex-agent-container/v3",
@@ -278,7 +278,20 @@ def test_validate_raw_absent_provider_is_flagged_missing():
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert [e for e in errors if "spec.provider" in e]
+    assert [e for e in errors if "spec.harness" in e]
+
+
+def test_validate_raw_legacy_provider_key_satisfies_the_missing_check():
+    # Arrange — a spec written before the rename HAS declared the field.
+    raw = {
+        "apiVersion": "scitex-agent-container/v3",
+        "kind": "Agent",
+        "spec": {"runtime": "tui", "provider": "anthropic"},
+    }
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "spec.harness —" in e]
 
 
 def test_validate_raw_accepts_provider_anthropic():
@@ -782,12 +795,26 @@ def test_host_local_passes_validation():
     assert not [e for e in errors if "host" in e.lower()]
 
 
-def test_complete_spec_with_explicit_provider_openai_has_no_errors():
-    # Arrange — a fully-valid spec that ALSO opts into the (not-yet-
-    # runnable) openai SDK family must still validate clean.
+def test_complete_spec_with_explicit_harness_openai_has_no_errors():
+    # Arrange — a fully-valid spec that ALSO opts into the openai
+    # harness must still validate clean.
     import copy
 
     raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"]["harness"] = "openai"
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert errors == []
+
+
+def test_complete_spec_reaching_openai_through_the_legacy_key_has_no_errors():
+    # Arrange — the deprecated alias, written INSTEAD of the canonical
+    # key (writing both with different values is the conflict case).
+    import copy
+
+    raw = copy.deepcopy(_COMPLETE_SPEC)
+    raw["spec"].pop("harness", None)
     raw["spec"]["provider"] = "openai"
     # Act
     errors = validate_raw(raw, path="<test>")
@@ -1153,3 +1180,94 @@ def test_labels_groups_only_is_accepted():
     errors = validate_raw(raw, path="<test>")
     # Assert
     assert not [e for e in errors if "metadata.labels" in e]
+
+
+# ---------------------------------------------------------------------------
+# spec.to_home_layers — the field must be PERMITTED, and must stay OPTIONAL
+# ---------------------------------------------------------------------------
+#
+# ``config._types`` / ``config._loaders`` gained ``to_home_layers``, but
+# ``_KNOWN_SPEC_KEYS`` did not — so every spec that declared it failed to load
+# with "Unknown spec field 'to_home_layers'". That made the whole declaration
+# mechanism unreachable, and would have had the fleet-wide migration sweep
+# write the key into ~101 specs that could then no longer be parsed at all.
+
+
+def _layers_spec(spec_extra: dict) -> dict:
+    return {**_BASE, "spec": {**_BASE["spec"], **spec_extra}}
+
+
+def test_to_home_layers_is_an_accepted_spec_field():
+    # Arrange — a spec declaring the cascade it inherits.
+    raw = _layers_spec({"to_home_layers": ["user-shared", "per-agent"]})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "to_home_layers" in e]
+
+
+def test_a_misspelt_layers_field_is_still_rejected():
+    # Arrange — CONTROL: the acceptance above must not come from the
+    # unknown-field check having stopped rejecting anything.
+    raw = _layers_spec({"to_home_layerz": ["user-shared"]})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert [e for e in errors if "to_home_layerz" in e]
+
+
+def test_omitting_to_home_layers_is_not_an_error():
+    # Arrange — it stays OPTIONAL: an undeclared spec still loads and still
+    # inherits the implicit cascade. Requiring it is a separate, later step.
+    raw = _layers_spec({})
+    # Act
+    errors = validate_raw(raw, path="<test>")
+    # Assert
+    assert not [e for e in errors if "to_home_layers" in e]
+
+
+# ---------------------------------------------------------------------------
+# Reserved agent names — dir-as-SSoT means the name arrives via the PATH,
+# never via the YAML body: a spec at .../<reserved>/spec.yaml declares the
+# host-process role slot by position alone. validate_raw is the chokepoint
+# both `sac agents check` / validate_config AND every load_config run
+# through, so this refusal also gates agent START for a hand-written or
+# host-broker-materialised spec (audit of #1250, 2026-08-28).
+# ---------------------------------------------------------------------------
+
+
+def test_reserved_dir_name_is_refused_at_validation():
+    # Arrange — legal YAML content; only the PATH carries the reserved name
+    # (SSOT constant, not a restated literal).
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    path = f"/agents/{HOST_PROCESS_AGENT_NAME}/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    bad = [e for e in errors if "reserved" in e]
+    # Assert — the refusal names the offending value (the role collision
+    # message quotes the name itself).
+    assert HOST_PROCESS_AGENT_NAME in bad[0]
+
+
+def test_reserved_name_refusal_states_the_role_collision():
+    # Arrange — the message must carry the REASON, not just "reserved":
+    # the derived Postgres role is the host process's own.
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    path = f"/agents/{HOST_PROCESS_AGENT_NAME}/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    bad = [e for e in errors if "reserved" in e]
+    # Assert
+    assert "PGUSER" in bad[0]
+
+
+def test_normal_dir_name_gets_no_reserved_error():
+    # Arrange — CONTROL: the refusal keys on the dir name alone; a normal
+    # agent path must not trip it (else the check rejects every spec).
+    path = "/agents/figrecipe/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    # Assert
+    assert not [e for e in errors if "reserved" in e]

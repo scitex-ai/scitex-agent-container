@@ -20,7 +20,8 @@ Both directions are bugs. These tests pin BOTH:
 
 No mocks (STX-NM002). Every case drives the REAL probe script against a REAL
 HTTP server on a REAL ephemeral loopback socket — slow, refusing, 5xx-ing,
-401-ing, dying. The "refused" case points at a genuinely closed port. Nothing
+401-ing, dying. The "refused" case points at a port that is bound but never
+listened on, so it refuses for the whole test AND cannot be stolen. Nothing
 here ever touches port 7878: that is the live control plane the whole fleet
 depends on, and a test that restarts it would repeat the incident.
 
@@ -32,9 +33,10 @@ from __future__ import annotations
 import http.server
 import os
 import shutil
-import socket
 import subprocess
+import sys
 import threading
+import traceback
 from pathlib import Path
 
 import pytest
@@ -56,21 +58,42 @@ _FAKE_UNIT = "sac-listen-watchdog-pytest-nonexistent.service"
 # --- real servers ---------------------------------------------------------
 
 
-def _handler(status: int, delay: float):
-    """A REAL handler answering `status` after `delay` seconds."""
+def _handler(status: int, delay: float, stopping: threading.Event):
+    """A REAL handler answering `status` after `delay` seconds.
+
+    ``stopping`` is this server's shutdown latch. A handler that is still
+    serving out its ``delay`` when the test ends returns IMMEDIATELY and
+    writes nothing — see ``_QuietThreadingHTTPServer`` for why a write
+    after the test has moved on is a cross-test defect, not a detail.
+    """
 
     class _H(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # A per-connection socket deadline so a handler thread can never
+        # park forever in the keep-alive read and outlive its test.
+        timeout = 10
 
         def do_GET(self):  # noqa: N802 (http.server API)
-            if delay:
-                # A HEALTHY daemon that is merely BUSY: it does answer.
-                threading.Event().wait(delay)
+            if delay and stopping.wait(delay):
+                # The test finished while we were "busy". Its client is
+                # gone; say nothing and let this thread die.
+                self.close_connection = True
+                return
             body = b'{"ok": true, "service": "sac-listen"}'
-            self.send_response(status)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # EXPECTED BY DESIGN: several tests here drive curl past
+                # its own deadline on purpose, so curl has hung up long
+                # before this write. Nothing to report.
+                pass
+            # No keep-alive: the probe is one request per invocation, and
+            # a lingering connection only keeps a thread alive past the
+            # test that owns it.
+            self.close_connection = True
 
         def log_message(self, *_a):
             return
@@ -78,12 +101,68 @@ def _handler(status: int, delay: float):
     return _H
 
 
+class _QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """A threading server that never writes to the CAPTURED stderr.
+
+    ``socketserver.BaseServer.handle_error`` prints a full traceback with
+    ``traceback.print_exc()``, which resolves ``sys.stderr`` AT CALL TIME,
+    from a request thread. Under pytest-xdist every test in this worker
+    shares that process, so a traceback printed from here lands in
+    whatever stream the test running AT THAT MOMENT has installed. When
+    that test is a ``CliRunner.invoke`` of a ``--json`` command, click
+    8.2+ appends it to the captured buffer and the JSON assertion dies
+    with ``JSONDecodeError: Extra data`` — a test in an unrelated file
+    failing because of a thread in this one (develop 312975ec, py3.11,
+    run 31867365078).
+
+    Two rules follow. A client that hung up is EXPECTED here (the probe
+    tests time curl out deliberately), so it is silent. Anything else is
+    a real bug and stays loud, but goes to ``sys.__stderr__`` — the
+    process's own stderr, which no in-process capture can be corrupted
+    by.
+
+    The stock ``server_close()`` looks like it joins the request threads
+    and does not: ``socketserver._Threads.append`` DROPS any thread whose
+    ``daemon`` is set, and ``ThreadingHTTPServer`` sets
+    ``daemon_threads = True``. So a handler serving out a 30s delay
+    really does outlive the test that started it. Threads are tracked
+    here explicitly and joined by ``_Server.kill``; they stay daemons so
+    a wedged one can never block interpreter exit.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._handler_threads: list[threading.Thread] = []
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):  # noqa: D102 (stdlib API)
+        thread = threading.Thread(
+            target=self.process_request_thread,
+            args=(request, client_address),
+            name="watchdog-probe-handler",
+            daemon=True,
+        )
+        self._handler_threads.append(thread)
+        thread.start()
+
+    def join_handlers(self, timeout: float) -> None:
+        """Wait for every request thread this server started."""
+        for thread in self._handler_threads:
+            thread.join(timeout=timeout)
+
+    def handle_error(self, request, client_address):  # noqa: D102 (stdlib API)
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+            return
+        traceback.print_exc(file=sys.__stderr__)
+
+
 class _Server:
     """A real HTTP server on a real ephemeral loopback port (never 7878)."""
 
     def __init__(self, status: int = 200, delay: float = 0.0):
-        self._srv = http.server.ThreadingHTTPServer(
-            ("127.0.0.1", 0), _handler(status, delay)
+        self._stopping = threading.Event()
+        self._srv = _QuietThreadingHTTPServer(
+            ("127.0.0.1", 0), _handler(status, delay, self._stopping)
         )
         self.port = self._srv.server_address[1]
         self._t = threading.Thread(target=self._srv.serve_forever, daemon=True)
@@ -94,18 +173,28 @@ class _Server:
         return f"http://127.0.0.1:{self.port}/v1/health"
 
     def kill(self) -> None:
-        """Really stop serving — the port goes to connection-refused."""
+        """Really stop serving — the port goes to connection-refused.
+
+        The latch is set FIRST so a handler still sleeping out its delay
+        wakes and returns instead of being joined for the full delay.
+        """
+        self._stopping.set()
         self._srv.shutdown()
         self._srv.server_close()
+        self._t.join(timeout=10)
+        self._srv.join_handlers(timeout=10)
 
 
-def _closed_port() -> int:
-    """Bind then release a port, so nothing is listening on it."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+# A port that refuses connections comes from the shared ``dead_port`` fixture
+# (tests/scitex_agent_container/_helpers/ports.py), wired suite-wide in
+# tests/conftest.py. It binds WITHOUT listening and HOLDS the socket, so the
+# port both refuses and cannot be taken by anything else mid-test.
+#
+# What used to be here bound a port, closed it, and returned the number. That
+# released the port back into the ephemeral pool before the probe ever ran, so
+# any other test or xdist worker could bind it — and then the URL this file
+# calls "dead" ANSWERED. That is how ``test_one_success_does_not_wipe_failure_
+# streak`` inverted and reddened the py3.11 leg alone on develop d21cb5f6.
 
 
 # --- driving the real probe -----------------------------------------------
@@ -218,9 +307,9 @@ def test_timeout_reports_tcp_did_connect(tmp_path):
     assert "the port IS bound" in result.stderr
 
 
-def test_refused_is_reported_as_down(tmp_path):
+def test_refused_is_reported_as_down(tmp_path, dead_port):
     # Arrange — a genuinely closed port: the kernel sends RST.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     result = probe.run("--check-only")
     # Assert
@@ -307,19 +396,19 @@ def test_single_server_error_does_not_restart(tmp_path):
 # ==========================================================================
 
 
-def test_first_refusal_does_not_restart(tmp_path):
+def test_first_refusal_does_not_restart(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     decided = probe.restarted()
     # Assert — even a HARD down (weight 2) is below the threshold (3) alone.
     assert decided is False
 
 
-def test_second_refusal_restarts_dead_listen(tmp_path):
+def test_second_refusal_restarts_dead_listen(tmp_path, dead_port):
     # Arrange — a genuinely dead listen MUST still come back
     # (incident 2026-06-26). Crash coverage is not weakened.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     first = probe.restarted()
     second = probe.restarted()
@@ -355,9 +444,9 @@ def test_two_timeouts_do_not_yet_restart(tmp_path):
     assert decisions == [False, False]
 
 
-def test_uncorroborated_failure_says_not_restarting(tmp_path):
+def test_uncorroborated_failure_says_not_restarting(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     result = probe.run()
     # Assert — it must SAY it saw a failure and chose not to act.
@@ -370,11 +459,11 @@ def test_uncorroborated_failure_says_not_restarting(tmp_path):
 # ==========================================================================
 
 
-def test_one_success_does_not_wipe_failure_streak(tmp_path):
+def test_one_success_does_not_wipe_failure_streak(tmp_path, dead_port):
     # Arrange — the bug PR #673 fixed in sac listen's own holder check: a
     # single reply reset `consecutive_unhealthy = 0`, so a FLAPPING daemon
     # oscillated 1/2 -> "healthy" -> 1/2 forever and was NEVER acted on.
-    dead = f"http://127.0.0.1:{_closed_port()}/v1/health"
+    dead = dead_port.url("/v1/health")
     srv = _Server(status=200)
     live = srv.url
     probe = _Probe(tmp_path, dead)
@@ -391,9 +480,9 @@ def test_one_success_does_not_wipe_failure_streak(tmp_path):
     assert (first, third) == (False, True)
 
 
-def test_single_success_keeps_ledger_standing(tmp_path):
+def test_single_success_keeps_ledger_standing(tmp_path, dead_port):
     # Arrange
-    dead = f"http://127.0.0.1:{_closed_port()}/v1/health"
+    dead = dead_port.url("/v1/health")
     srv = _Server(status=200)
     probe = _Probe(tmp_path, dead)
     try:
@@ -407,10 +496,10 @@ def test_single_success_keeps_ledger_standing(tmp_path):
     assert "still stands" in result.stderr
 
 
-def test_sustained_recovery_clears_the_ledger(tmp_path):
+def test_sustained_recovery_clears_the_ledger(tmp_path, dead_port):
     # Arrange — a daemon that blips once and then genuinely recovers must NOT
     # be destroyed. Two consecutive answers clear it.
-    dead = f"http://127.0.0.1:{_closed_port()}/v1/health"
+    dead = dead_port.url("/v1/health")
     srv = _Server(status=200)
     probe = _Probe(tmp_path, dead)
     try:
@@ -426,10 +515,10 @@ def test_sustained_recovery_clears_the_ledger(tmp_path):
     assert "RECOVERED" in result.stderr
 
 
-def test_recovered_daemon_survives_a_later_blip(tmp_path):
+def test_recovered_daemon_survives_a_later_blip(tmp_path, dead_port):
     # Arrange — after a genuine recovery the ledger is clean, so a single
     # later failure is once again just a blip, not a death sentence.
-    dead = f"http://127.0.0.1:{_closed_port()}/v1/health"
+    dead = dead_port.url("/v1/health")
     srv = _Server(status=200)
     probe = _Probe(tmp_path, dead)
     try:
@@ -462,12 +551,12 @@ def _drive_to_restart(probe: _Probe) -> None:
     probe.run()
 
 
-def test_backoff_blocks_the_second_restart(tmp_path):
+def test_backoff_blocks_the_second_restart(tmp_path, dead_port):
     # Arrange — THE incident. The old probe restarted, then re-probed 26s
     # later DURING its own restart, saw a genuinely-down daemon, and
     # restarted AGAIN. Drive it to a real restart, then keep probing a
     # still-dead port.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     _drive_to_restart(probe)
     # Act — the timer keeps firing while the daemon is coming back up.
     followups = [probe.restarted() for _ in range(3)]
@@ -475,9 +564,9 @@ def test_backoff_blocks_the_second_restart(tmp_path):
     assert followups == [False, False, False]
 
 
-def test_backoff_refuses_to_even_probe(tmp_path):
+def test_backoff_refuses_to_even_probe(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.run()
     probe.run()  # restart issued
     # Act
@@ -486,10 +575,10 @@ def test_backoff_refuses_to_even_probe(tmp_path):
     assert "post-restart backoff" in result.stderr and "NOT probing" in result.stderr
 
 
-def test_backoff_expiry_allows_healing_again(tmp_path):
+def test_backoff_expiry_allows_healing_again(tmp_path, dead_port):
     # Arrange — the backoff must not be a permanent gag: once it lapses, a
     # still-dead listen is healed again.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.run()
     probe.run()  # restart #1
     # Act — a 0s backoff is the expiry, exactly as the timer would see it.
@@ -505,12 +594,12 @@ def test_backoff_expiry_allows_healing_again(tmp_path):
 # ==========================================================================
 
 
-def test_restarts_are_capped_per_window(tmp_path):
+def test_restarts_are_capped_per_window(tmp_path, dead_port):
     # Arrange — a listen that never comes back. Backoff off so we can reach
     # the cap; the cap is the thing under test.
     probe = _Probe(
         tmp_path,
-        f"http://127.0.0.1:{_closed_port()}/v1/health",
+        dead_port.url("/v1/health"),
         SAC_LISTEN_RESTART_BACKOFF=0,
     )
     # Act — six probes; each pair corroborates into one restart attempt.
@@ -520,11 +609,11 @@ def test_restarts_are_capped_per_window(tmp_path):
 
 
 @pytest.fixture()
-def exhausted_probe(tmp_path):
+def exhausted_probe(tmp_path, dead_port):
     """A watchdog that has spent its restart budget on a listen still dead."""
     probe = _Probe(
         tmp_path,
-        f"http://127.0.0.1:{_closed_port()}/v1/health",
+        dead_port.url("/v1/health"),
         SAC_LISTEN_RESTART_BACKOFF=0,
     )
     for _ in range(5):  # 2 restarts issued; the cap (2) is now reached
@@ -574,9 +663,9 @@ def test_giving_up_still_exits_nonzero(exhausted_probe):
 # ==========================================================================
 
 
-def test_check_only_writes_no_state(tmp_path):
+def test_check_only_writes_no_state(tmp_path, dead_port):
     # Arrange — a probe that mutates is not a probe.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     for _ in range(5):
         probe.run("--check-only")
@@ -584,9 +673,9 @@ def test_check_only_writes_no_state(tmp_path):
     assert not probe.state.exists()
 
 
-def test_check_only_never_restarts(tmp_path):
+def test_check_only_never_restarts(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     # Act
     outs = [probe.run("--check-only").stderr for _ in range(5)]
     # Assert
@@ -598,9 +687,9 @@ def test_check_only_never_restarts(tmp_path):
 # ==========================================================================
 
 
-def test_corrupt_ledger_does_not_restart(tmp_path):
+def test_corrupt_ledger_does_not_restart(tmp_path, dead_port):
     # Arrange — garbage (and a shell injection attempt) in the state file.
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.state.write_text(
         "failures=$(touch /tmp/sac-pwned)\n"
         "serving_streak=../../etc\n"
@@ -613,10 +702,10 @@ def test_corrupt_ledger_does_not_restart(tmp_path):
     assert decided is False
 
 
-def test_corrupt_ledger_is_not_executed(tmp_path):
+def test_corrupt_ledger_is_not_executed(tmp_path, dead_port):
     # Arrange — the state file must never be `source`d.
     canary = tmp_path / "pwned"
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.state.write_text(f"failures=9\nrestarts=$(touch {canary})\n")
     # Act
     probe.run()
@@ -624,9 +713,9 @@ def test_corrupt_ledger_is_not_executed(tmp_path):
     assert not canary.exists()
 
 
-def test_status_reports_the_ledger(tmp_path):
+def test_status_reports_the_ledger(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.run()  # accrue a real failure
     # Act
     result = probe.run("--status")
@@ -634,9 +723,9 @@ def test_status_reports_the_ledger(tmp_path):
     assert "failure_weight:  2 / 3" in result.stdout
 
 
-def test_reset_clears_the_ledger(tmp_path):
+def test_reset_clears_the_ledger(tmp_path, dead_port):
     # Arrange
-    probe = _Probe(tmp_path, f"http://127.0.0.1:{_closed_port()}/v1/health")
+    probe = _Probe(tmp_path, dead_port.url("/v1/health"))
     probe.run()
     # Act
     probe.run("--reset")

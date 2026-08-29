@@ -101,7 +101,8 @@ def _run_until_done(sdk_mod, writer, *, build_options_fn, max_restarts=0):
     async def _go():
         inbox = make_inbox()
         loop = asyncio.get_running_loop()
-        await inbox.put(TurnEnvelope(text="go", response=loop.create_future()))
+        response = loop.create_future()
+        await inbox.put(TurnEnvelope(text="go", response=response))
         await runner._run_conversation(
             "agent-x",
             Path("/tmp"),  # state_dir not asserted on; writes go via db_writer
@@ -115,6 +116,12 @@ def _run_until_done(sdk_mod, writer, *, build_options_fn, max_restarts=0):
             db_writer=writer,
             max_restarts=max_restarts,
         )
+        # The supervisor parks the injected turn failure on this future.
+        # Retrieve it here; otherwise asyncio logs "Future exception was
+        # never retrieved" at GC time — into whatever unrelated test is
+        # running on the worker by then (broke CI's db-export JSON parse).
+        if response.done() and not response.cancelled():
+            response.exception()
 
     asyncio.run(_go())
 

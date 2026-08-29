@@ -49,10 +49,36 @@ enforced by nothing — which is why the CI ruff job exists at all
 - `main` — release-only; tags cut from here.
 - `develop` — default integration branch; PRs from feature branches land here.
 - `feat/<short-name>` / `fix/<short-name>` — feature branches; merge into
-  `develop` once tests are green and reviewer-approved.
+  `develop` once tests are green.
 
 The release flow `develop → main` is gated by CI (Test, SciTeX Quality,
 Docs, SDK runtime smoke). See `.github/workflows/`.
+
+### A robot merges your PR. Nobody reviews it.
+
+Say it plainly, because this document used to say "reviewer-approved" and no
+reviewer exists: `.github/workflows/auto-merge-to-develop.yaml` is a cron sweep
+that runs about every 15 minutes and merges green PRs targeting `develop` with
+`gh pr merge --admin`. There is no human in that loop. A PR that goes green at
+02:00 is typically merged by 02:15 by a workflow, not a person.
+
+**To stop that, put a hold on the PR — a hold the automation can actually read:**
+
+- add a **`hold`** or **`do-not-merge`** label (one click in the GitHub UI), or
+- convert the PR to a **draft**.
+
+The sweep refuses a held PR on every tick and says so in its run log, naming the
+PR and the marker. A hold spends no merge budget, so holding one PR never delays
+anyone else's. Remove the marker and it merges on the next tick — nothing else to
+do. Deciding not to merge something and telling only your teammates is not a
+hold; on 2026-08-12 a PR held exactly that way was merged anyway, because nothing
+in the repository knew.
+
+**Every automated merge leaves a comment on the PR before it merges**, naming the
+workflow and its reasons. That comment is the audit trail: every agent, workflow
+and human here acts through the same GitHub account, so the `merged_by` name on a
+merged PR cannot tell you whether anybody read the diff. If you find such a
+comment, the answer is that nobody did.
 
 ## Running tests
 

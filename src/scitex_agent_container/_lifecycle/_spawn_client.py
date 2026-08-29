@@ -55,151 +55,48 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["SpawnRequestError", "request_spawn"]
 
-_DEFAULT_TIMEOUT_S = 30.0
+# DERIVED from the server's DECLARED answer-by deadline, never hand-picked.
+# ``agents_start`` now GUARANTEES an answer within ``AGENT_START_DEADLINE_S``:
+# 200/502 when the outcome is known, 202 when the spawn is still in flight — so
+# a client only has to outlive that deadline plus transport, and
+# ``client_timeout_for`` owns the margin. One constant, one derivation.
+#
+# This replaces TWO independently-picked constants (grace 20s there, budget 30s
+# here) that had to stay ordered with no reviewer of either file able to see the
+# other. Measured 2026-08-09: observed POST 21.97s — eight seconds of headroom
+# on a host the server's own comment describes as idling at load 60-70. When
+# that flips, the caller gets a TIMEOUT, which carries no status, so "slow" /
+# "dead" / "already succeeded" become indistinguishable on a MUTATING route:
+# that day the spawn had SUCCEEDED and was reported failed, and the natural
+# retry can start a SECOND agent. Raising this number could not have fixed it —
+# the server's wait is unbounded by construction (the OAuth settle window is
+# held INSIDE an exclusive flock), so the fix had to be the server learning to
+# SAY "still in flight". ``_handler_deadline`` is import-free (stdlib only).
+#
+# Resolved per CALL (see ``request_spawn``), not once into a module constant.
+# ``_DEFAULT_TIMEOUT_S = client_timeout_for()`` used to live here and it read as
+# a derivation, but a module constant is computed at import and then holds still
+# — move ``AGENT_START_DEADLINE_S`` and the server follows it (it reads the name
+# inside the handler) while this snapshot does not. The ordering client > server
+# would invert silently, which is the bug this comment is about, arriving by way
+# of its own fix.
+from .._listen._handler_deadline import client_timeout_for
 
-
-class SpawnRequestError(RuntimeError):
-    """Raised when the host-side spawn POST cannot be completed.
-
-    Carries the structured failure information so the caller (CLI / MCP
-    tool / log line) can show *why* the spawn failed without re-parsing
-    a free-text message:
-
-    * ``status`` — HTTP status code returned by the listen server
-      (``None`` for transport errors before any HTTP exchange happened
-      or for missing-env failures).
-    * ``body`` — parsed response dict, or the raw text fallback if the
-      body was not JSON, or ``None`` when no body was received.
-
-    The fail-loud invariants this class encodes (ADR-0010 + handoff §0):
-
-    * A 403 ACL deny is an ERROR for the caller — never silently
-      swallowed. The reason from the server is forwarded verbatim in
-      ``body``.
-    * A transport error (host listen unreachable, refused, timed out)
-      is an ERROR — never converted to "ok with empty result".
-    * A missing ``SAC_LISTEN_BASE_URL`` is an ERROR — the container is
-      misconfigured (the apptainer runtime forgot to inject it), and
-      pretending the spawn succeeded would leave the lineage row
-      unwritten on the host.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status: int | None = None,
-        body: Any = None,
-    ) -> None:
-        super().__init__(message)
-        self.status = status
-        self.body = body
-
-
-def _resolve_base_url(explicit: str | None) -> str:
-    """Return the listen-server base URL or raise loudly.
-
-    Resolution order: explicit argument → ``SAC_LISTEN_BASE_URL``
-    (via :func:`_env.getenv` so the long-form alias also works).
-    Trailing slash is stripped so callers can safely concatenate
-    ``/agents``.
-    """
-    if explicit:
-        return explicit.rstrip("/")
-    from .._env import getenv
-
-    raw = getenv("LISTEN_BASE_URL", "") or ""
-    raw = raw.strip()
-    if not raw:
-        raise SpawnRequestError(
-            "spawn request requires SAC_LISTEN_BASE_URL (the host-stable "
-            "`sac listen` URL injected into the container by the apptainer "
-            "runtime). Got empty/unset."
-        )
-    return raw.rstrip("/")
-
-
-def _resolve_bearer(explicit: str | None) -> str | None:
-    """Return the listen-server bearer token, or ``None`` if unset.
-
-    Resolution order:
-
-    1. ``explicit`` argument (tests pass a value, or ``""`` to force the
-       unauthenticated branch).
-    2. ``SAC_LISTEN_BEARER`` env var — injected by the apptainer runtime
-       (:mod:`runtimes._apptainer_listen_env`) for agents whose spec
-       registers the ``server:sac`` channel.
-    3. The host bearer **token file** at
-       ``~/.scitex/agent-container/tokens/listen-<host>.token`` — the
-       same credential the listen server validates against
-       (:func:`_listen.tokens.default_token_path`). This fallback is
-       what makes :func:`request_spawn` authenticate even when the
-       spawning agent's spec did NOT include ``server:sac`` (so the
-       runtime injected only ``SAC_LISTEN_BASE_URL``, not the bearer).
-       Without it, the spawn POST goes out unauthenticated and the
-       listen server rejects it with 401 — the bug this resolver path
-       closes (card sac-agent-cannot-spawn-agents-listen-7878-...).
-
-    Unlike ``SAC_LISTEN_BASE_URL``, an absent bearer is NOT fatal here:
-    the listen server may have been started with bearer auth disabled,
-    in which case the request still goes through unauthenticated. The
-    server enforces its own auth contract; we just forward whatever
-    credential we can resolve.
-    """
-    if explicit is not None:
-        return explicit or None
-    from .._env import getenv
-
-    raw = getenv("LISTEN_BEARER", "") or ""
-    tok = raw.strip()
-    if tok:
-        return tok
-    # Env unset/empty — fall back to the on-disk host token file, the
-    # same path the listen server reads its accepted token from. The
-    # bind that exposes ``~/.scitex/agent-container`` into the container
-    # makes this readable from inside the SIF.
-    return _read_bearer_token_file()
-
-
-def _read_bearer_token_file() -> str | None:
-    """Return the host listen bearer from its token file, or ``None``.
-
-    Never raises — a missing/unreadable token file yields ``None`` so
-    the caller proceeds (and the server's 401 then surfaces as a clear
-    auth error via :func:`request_spawn`).
-    """
-    from .._listen.tokens import default_token_path, read_token
-
-    return read_token(default_token_path())
-
-
-def _resolve_caller(explicit: str | None) -> str | None:
-    """Return the spawning agent's identity, or ``None`` for the admin path.
-
-    Reuses the same resolution rule as the in-process
-    :func:`_lifecycle._spawn_gate.resolve_spawn_caller`: read ``SAC_NAME``
-    from the parent container's env. An empty string is normalised to
-    ``None`` (admin / human-operator launch — always allowed by the
-    server's current root-only ``check_spawn`` policy).
-    """
-    if explicit is not None:
-        return explicit or None
-    from ._spawn_gate import resolve_spawn_caller
-
-    return resolve_spawn_caller()
-
-
-def _parse_body(raw: bytes) -> Any:
-    """Return JSON-parsed body or raw text fallback."""
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except ValueError:
-        # stx-allow: fallback (reason: non-JSON body surfaced verbatim
-        # to the caller via SpawnRequestError.body — never silently
-        # dropped or converted into a fake success).
-        return raw.decode("utf-8", errors="replace")
+# Request-construction plumbing — where do I send this, and as whom — now lives
+# in ._listen_client_resolve. It was never spawn-specific: _host_exec_client
+# already imported _parse_body / _resolve_base_url / _resolve_bearer FROM HERE,
+# which is a module borrowing plumbing from a sibling because that is where it
+# happened to get written down first. Re-exported so every existing import path
+# (_host_exec_client, the MCP tools, _in_sif_broker, cli_pkg/lifecycle/_twin and
+# the tests) keeps working byte-identically.
+from ._listen_client_resolve import (  # noqa: F401
+    SpawnRequestError,
+    _parse_body,
+    _read_bearer_token_file,
+    _resolve_base_url,
+    _resolve_bearer,
+    _resolve_caller,
+)
 
 
 def _http_error_message(child_name: str, status: int, parsed: Any) -> str:
@@ -240,7 +137,7 @@ def request_spawn(
     overwrite: bool = False,
     base_url: str | None = None,
     bearer: str | None = None,
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
     opener: Callable | None = None,
     foreground: bool = False,
     one_shot: bool = False,
@@ -273,8 +170,11 @@ def request_spawn(
         Override ``SAC_LISTEN_BEARER``. Tests pass either an explicit
         value or ``""`` to force the unauthenticated branch.
     timeout_s
-        Per-request HTTP timeout (seconds). Defaults to 30 — long enough
-        for the server's ``sac agent start`` subprocess to return.
+        Per-request HTTP timeout (seconds). ``None`` (the default)
+        DERIVES it from the server's declared answer-by deadline via
+        ``client_timeout_for()`` — that deadline plus ``CLIENT_MARGIN_S``,
+        resolved on every call so it can never fall behind the deadline
+        it is supposed to outlive.
     opener
         Optional ``urllib.request.urlopen``-shaped callable. Default
         ``urlrequest.urlopen``; tests inject a fake opener that returns
@@ -348,6 +248,9 @@ def request_spawn(
         (including 403 ACL deny), or malformed-but-otherwise-OK body
         the server itself would reject.
     """
+    if timeout_s is None:
+        timeout_s = client_timeout_for()
+
     if not isinstance(child_name, str) or not child_name:
         raise SpawnRequestError("child_name must be a non-empty string")
 
@@ -487,5 +390,20 @@ def request_spawn(
             f"listen response was not a JSON object: {parsed!r}",
             status=status,
             body=parsed,
+        )
+    if status == 202:
+        # ACCEPTED, not completed: the server reached its declared deadline with
+        # the spawn STILL IN FLIGHT, and said so. This is the honest answer that
+        # REPLACES a client-side timeout, so two things must not happen to it.
+        # It is not "the agent is running" — the outcome is genuinely unknown and
+        # ``parsed["poll"]`` carries the route that will know. And it must NOT be
+        # retried: a retry on a MUTATING route is exactly what starts a SECOND
+        # agent, which is the damage the old timeout-as-error-channel caused.
+        logger.info(
+            "spawn_client: POST %s -> 202 accepted (phase=%s); spawn in flight, "
+            "poll %s",
+            url,
+            parsed.get("phase"),
+            parsed.get("poll"),
         )
     return parsed

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from typing import Any
 
 import pytest
@@ -41,7 +40,11 @@ pytest.importorskip("mcp.types")  # gates the module on `mcp`
 
 from scitex_agent_container._mcp._channel_send_errors import (  # noqa: E402
     ERR_NO_SUBSCRIBER,
+    ERR_UNKNOWN_TARGET,
     ERR_UNREACHABLE,
+    no_subscriber_error,
+    suggest_names,
+    unknown_target_error,
 )
 from scitex_agent_container._mcp._channel_tools import register_tools  # noqa: E402
 
@@ -141,12 +144,10 @@ def _body(result) -> dict[str, Any]:
     return json.loads(result.content[0].text)
 
 
-def _refused_port() -> int:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = int(s.getsockname()[1])
-    s.close()
-    return port
+# A refusing port comes from the shared ``dead_port`` fixture
+# (tests/scitex_agent_container/_helpers/ports.py, wired in tests/conftest.py):
+# bound WITHOUT listening so a connect is refused, and HELD so nothing else can
+# bind it mid-test. The helper that used to live here released the port first.
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +199,12 @@ async def test_absent_subscriber_count_is_not_an_mcp_error(listen):
 
 
 @pytest.mark.asyncio
-async def test_unreachable_listen_is_an_mcp_error():
+async def test_unreachable_listen_is_an_mcp_error(dead_port):
     """Connection refused is a demonstrable non-delivery — also a caller-
     visible failure, not a quietly-swallowed one."""
-    # Arrange — nothing is listening on this port.
-    url = f"http://127.0.0.1:{_refused_port()}"
+    # Arrange — nothing is listening on this port, and it is HELD so nothing
+    # can start.
+    url = dead_port.url("")
     # Act
     result = await _call(url, "a2a_send", {"target": "bob", "content": "hi"})
     # Assert
@@ -308,10 +310,186 @@ async def test_no_subscriber_error_does_not_prescribe_a_restart(listen):
 
 
 @pytest.mark.asyncio
-async def test_unreachable_error_carries_machine_readable_code():
+async def test_unreachable_error_carries_machine_readable_code(dead_port):
     # Arrange
-    url = f"http://127.0.0.1:{_refused_port()}"
+    url = dead_port.url("")
     # Act
     result = await _call(url, "a2a_send", {"target": "bob", "content": "hi"})
     # Assert
     assert _body(result)["code"] == ERR_UNREACHABLE
+
+_KNOWN = [
+    "scitex-agent-container-04",
+    "scitex-dev",
+    "scitex-hub",
+    "scitex-storage",
+]
+
+
+def test_unknown_target_carries_its_own_failure_code():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    code = err.code
+    # Assert — a caller must branch on the CLASS, not string-match prose.
+    assert code == ERR_UNKNOWN_TARGET
+
+
+def test_unknown_target_is_not_the_no_subscriber_code():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    code = err.code
+    # Assert — collapsing these two is the entire bug.
+    assert code != ERR_NO_SUBSCRIBER
+
+
+def test_unknown_target_does_not_claim_the_message_is_queued():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    queued = err.detail["durably_queued"]
+    # Assert — the load-bearing field. Claiming True is what made a real
+    # message wait forever.
+    assert queued is False
+
+
+def test_detached_adapter_still_claims_durable_queueing():
+    # Arrange — the OTHER case must keep its existing promise.
+    err = no_subscriber_error("scitex-dev")
+    # Act
+    queued = err.detail["durably_queued"]
+    # Assert
+    assert queued is True
+
+
+def test_unknown_target_suggests_the_real_name():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    suggestions = err.detail["suggestions"]
+    # Assert — a typo should cost seconds, not an indefinite wait.
+    assert "scitex-agent-container-04" in suggestions
+
+
+def test_unknown_target_names_the_real_name_in_the_message():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    text = str(err)
+    # Assert — the human sentence must carry it too; not every caller
+    # reads `detail`.
+    assert "scitex-agent-container-04" in text
+
+
+def test_unknown_target_tells_the_caller_to_re_send():
+    # Arrange
+    err = unknown_target_error("sac-04", _KNOWN)
+    # Act
+    advice = " ".join(err.detail["what_to_do"]).lower()
+    # Assert — the exact inversion of the no_subscriber advice.
+    assert "re-send" in advice
+
+
+def test_detached_adapter_tells_the_caller_not_to_re_send():
+    # Arrange
+    err = no_subscriber_error("scitex-dev")
+    # Act
+    advice = " ".join(err.detail["what_to_do"]).lower()
+    # Assert
+    assert "do not re-send" in advice
+
+
+def test_plain_difflib_would_have_missed_the_real_case():
+    # Arrange — the reason suggest_names exists rather than a one-liner.
+    import difflib
+
+    # Act
+    naive = difflib.get_close_matches("sac-04", _KNOWN, n=3, cutoff=0.4)
+    # Assert — character similarity calls these unrelated strings. A future
+    # refactor back to plain difflib silently reintroduces the miss, so pin
+    # the inadequacy itself.
+    assert "scitex-agent-container-04" not in naive
+
+
+def test_acronym_of_a_registered_name_is_suggested():
+    # Arrange — 'sac' is the initials of scitex-agent-container; this is the
+    # house naming convention and the most likely way a name goes wrong.
+    # Act
+    suggestions = suggest_names("sac", _KNOWN)
+    # Assert
+    assert "scitex-agent-container-04" in suggestions
+
+
+def test_a_shared_instance_suffix_is_suggested():
+    # Arrange — right instance, wrong package name.
+    # Act
+    suggestions = suggest_names("wrongname-04", _KNOWN)
+    # Assert
+    assert "scitex-agent-container-04" in suggestions
+
+
+def test_an_ordinary_typo_is_still_suggested():
+    # Arrange — character similarity must keep working.
+    # Act
+    suggestions = suggest_names("scitex-hubb", _KNOWN)
+    # Assert
+    assert "scitex-hub" in suggestions
+
+
+def test_an_unrelated_name_is_not_suggested():
+    # Arrange — a suggester that matches everything is noise.
+    # Act
+    suggestions = suggest_names("zzzzzz", _KNOWN)
+    # Assert
+    assert suggestions == []
+
+
+def test_a_name_resembling_nothing_yields_no_suggestions():
+    # Arrange — nothing in the registry resembles this.
+    err = unknown_target_error("zzzzzz", _KNOWN)
+    # Act
+    suggestions = err.detail["suggestions"]
+    # Assert — a bad guess would be worse than none.
+    assert suggestions == []
+
+
+def test_a_name_resembling_nothing_still_points_at_the_registry():
+    # Arrange
+    err = unknown_target_error("zzzzzz", _KNOWN)
+    # Act
+    text = str(err)
+    # Assert — with no suggestion to offer, say where to look instead.
+    assert "a2a_peers" in text or "registered" in text
+
+
+def test_an_empty_registry_yields_no_suggestions():
+    # Arrange — the registry read came back with nothing at all.
+    err = unknown_target_error("sac-04", [])
+    # Act
+    suggestions = err.detail["suggestions"]
+    # Assert
+    assert suggestions == []
+
+
+def test_an_empty_registry_still_produces_a_message():
+    # Arrange
+    err = unknown_target_error("sac-04", [])
+    # Act
+    text = str(err)
+    # Assert — must degrade to a sentence, not an exception.
+    assert text
+
+
+@pytest.mark.parametrize("code", [ERR_UNKNOWN_TARGET, ERR_NO_SUBSCRIBER])
+def test_both_failure_modes_report_not_delivered(code):
+    # Arrange
+    err = (
+        unknown_target_error("sac-04", _KNOWN)
+        if code == ERR_UNKNOWN_TARGET
+        else no_subscriber_error("scitex-dev")
+    )
+    # Act
+    delivered = err.detail["delivered"]
+    # Assert — they differ on recoverability, never on delivery.
+    assert delivered is False

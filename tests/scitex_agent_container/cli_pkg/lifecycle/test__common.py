@@ -34,6 +34,20 @@ from scitex_agent_container.config._types import HostsSpec, SchedulingSpec
 
 
 @pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_home(tmp_path: Path, env_save_restore):
     # Redirect $HOME so Path.home() returns tmp_path naturally — no
     # module-attribute swap required.
@@ -86,6 +100,39 @@ class TestSingletonSkipReason:
         msg = _singleton_skip_reason(cfg, "beta")
         # Assert
         assert msg and "alpha" in msg and "beta" in msg
+
+    def test_v3_host_pin_naming_this_machine_by_another_name_returns_none(self):
+        # Arrange — the nas-03 shape: the pin IS this machine, spelled the way
+        # the fleet spells it, while `hostname -s` is the appliance's factory
+        # name. A skip here would be a SILENT no-start on the agent's own host.
+        cfg = _cfg(host="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(
+            cfg, "DXP480TPLUS-994", local_names={"scitex-nas-03"}
+        )
+        # Assert
+        assert msg is None
+
+    def test_v3_host_pin_naming_a_different_machine_still_returns_reason(self):
+        # Arrange — the case that must KEEP skipping: the pin names a machine
+        # this one is not, under any of its spellings.
+        cfg = _cfg(host="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(cfg, "DXP480TPLUS-994", local_names={"nas-99"})
+        # Assert
+        assert msg and "scitex-nas-03" in msg
+
+    def test_v2_preferred_host_naming_this_machine_by_another_name_returns_none(
+        self,
+    ):
+        # Arrange — same identity question on the v2 scheduling spec.
+        cfg = _cfg(sched_mode="singleton", pref="scitex-nas-03")
+        # Act
+        msg = _singleton_skip_reason(
+            cfg, "DXP480TPLUS-994", local_names={"scitex-nas-03"}
+        )
+        # Assert
+        assert msg is None
 
     def test_v3_host_chain_primary_match_returns_none(self):
         # Arrange
@@ -500,6 +547,71 @@ class TestIterAgentYamls:
         result = _iter_agent_yamls(tmp_path)
         # Assert
         assert [n for n, _ in result] == ["bar", "foo"]
+
+    # -- the layout that actually exists on every host ----------------------
+    #
+    # Until 2026-08-27 this helper matched ONLY <name>/<name>.yaml, so it
+    # returned 0 against a registry holding 122 <name>/spec.yaml agents. Every
+    # fixture above uses the self-named layout, which is why the suite stayed
+    # green over a shape no host produces. These tests pin the real one.
+
+    def test_discovers_the_spec_yaml_layout_every_host_uses(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha"]
+
+    def test_returns_the_spec_yaml_path_not_a_self_named_guess(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert result[0][1].endswith("/alpha/spec.yaml")
+
+    def test_prefers_spec_yaml_when_both_layouts_are_present(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        (tmp_path / "alpha" / "alpha.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert result[0][1].endswith("/alpha/spec.yaml")
+
+    def test_still_finds_the_self_named_layout_the_materializers_write(
+        self, tmp_path
+    ):
+        # Arrange -- `sac fleet materialize` and render_contributor_spec still
+        # emit <name>/<name>.yaml; the fallback is the alias half of the
+        # migration and must not regress while they do.
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        (tmp_path / "beta").mkdir()
+        (tmp_path / "beta" / "beta.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha", "beta"]
+
+    def test_skips_the_self_peer_marker(self, tmp_path):
+        # Arrange -- agents/self/spec.yaml registers the running listen's own
+        # identity and is NOT a launchable agent. It was invisible here only
+        # because this helper could not see spec.yaml at all.
+        (tmp_path / "self").mkdir()
+        (tmp_path / "self" / "spec.yaml").write_text(
+            "name: scitex-compute-04\nlisten_url: http://127.0.0.1:7878\n"
+        )
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha"]
 
 
 # ---------------------------------------------------------------------------

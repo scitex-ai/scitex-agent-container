@@ -220,7 +220,9 @@ def post_turn(
 
     Records a dispatch-ledger row with ``to_agent=agent_name`` so a later
     ``list_dispatches(to_agent=...)`` can recall every turn sent to a
-    given agent.
+    given agent. Pair it with ``agent=`` — the ledger is one fleet-wide
+    table since 2026-08-28, so an unscoped recall answers for every agent
+    on every host, not just this one.
     """
     url = resolve_peer_url(agent_name)
     return post_turn_to_url(

@@ -5,21 +5,30 @@
 Holds module-level helpers used by more than one verb in the
 ``lifecycle/`` package — agent discovery, singleton host-skip logic,
 and the foreground-tail multiplexer.
+
+HOST IDENTITY LIVES IN :mod:`._host_identity` (``classify_dispatch_host`` /
+``_resolve_dispatch_peer`` / ``_local_host_names``), extracted when this
+file reached its per-file cap. It is re-exported below so every existing
+``from ._common import ...`` keeps resolving — the same pattern
+``_state/host_config`` uses for its own extractions.
 """
 
 from __future__ import annotations
 
-import socket
-from collections.abc import Collection, Mapping
+from collections.abc import Collection
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
 import click
 
 from ...config import AgentConfig
 
-if TYPE_CHECKING:
-    from ..._state.host_config import PeerSpec
+# Re-export (see the module docstring): identity is defined ONCE, next door.
+from ._host_identity import (  # noqa: F401
+    _local_host_names,
+    _resolve_dispatch_peer,
+    classify_dispatch_host,
+)
 
 # (name, host) -> True iff the registry holds an active instances row
 # for ``name`` on ``host``. Used by :func:`_resolve_singleton_skip` to
@@ -29,144 +38,38 @@ BoundHostLivenessOracle = Callable[[str, str], bool]
 _SKIP_DIR_NAMES = {"legacy-agents", "shared", "GITIGNORED"}
 
 
-def classify_dispatch_host(
-    target_host: str | None,
-    current_host: str,
-    peers: Mapping[str, "PeerSpec"],
-    *,
-    local_names: Collection[str] = (),
-) -> tuple[str, str | None]:
-    """Classify a concrete ``spec.host`` into local / remote / unknown.
+def _bound_hosts(config: AgentConfig) -> list[str]:
+    """Return EVERY host a singleton config is bound to, in priority order.
 
-    Pure resolver — never raises, never logs, never reads files (the
-    caller supplies ``local_names`` and ``peers``). This is the operator's
-    "resolution layer": a concrete canonical hostname is mapped to WHERE
-    that host is, so ``host: <this-machine>`` launches locally and
-    ``host: <peer>`` dispatches over ssh.
+    The v3 ``spec.host`` chain wins (a string is a one-entry chain), then the
+    v2 ``scheduling.preferred_host`` fallback. Empty when the config is
+    multi-instance or unpinned — no skip would fire, so no liveness check is
+    meaningful.
 
-    Returns a ``(kind, peer)`` tuple:
-
-    * ``("local", None)``  — run on the caller. Fires when ``target_host``
-      is unset (empty ``host:`` / absent, normalized to ``""`` → ``None``),
-      equals ``current_host``, or is any spelling in ``local_names``
-      (the canonical name + aliases that denote THIS machine per
-      ``host_config``). LOCAL is checked BEFORE the peer table so a machine
-      that is ALSO registered as a peer (e.g. ``ywata-note-win: {ssh:
-      localhost}`` so remote hosts can reach it) is never ssh-dispatched
-      to itself.
-    * ``("remote", <peer>)`` — dispatch to that peer over ssh. Fires when
-      ``target_host`` is a known peer key distinct from the local machine
-      (glob peer entries like ``spartan-*`` match here via ``PeersMap``).
-    * ``("unknown", None)`` — ``target_host`` names neither the local
-      machine nor a peer. This classifier stays a PURE resolver and never
-      raises; the REACTION is the caller's. Since operator directive
-      2026-07-10 the lifecycle dispatchers fail LOUD on it
-      (``_host_routing.format_unknown_host_error`` — peer list + fixes)
-      instead of silently falling through to a local start; either way an
-      unknown host is never routed to ssh.
-    """
-    if target_host is None:
-        return ("local", None)
-    if target_host == current_host or target_host in local_names:
-        return ("local", None)
-    if target_host in peers:
-        return ("remote", target_host)
-    return ("unknown", None)
-
-
-def _resolve_dispatch_peer(
-    target_host: str | None,
-    current_host: str,
-    peers: Mapping[str, "PeerSpec"],
-    *,
-    local_names: Collection[str] = (),
-) -> str | None:
-    """Return the peer name to dispatch to, or None for local execution.
-
-    Thin wrapper over :func:`classify_dispatch_host` preserving the historic
-    "peer-name-or-None" contract used by :func:`try_dispatch`. Returns a peer
-    name only for a ``remote`` classification; both ``local`` and ``unknown``
-    yield ``None`` (the caller decides what an unknown host means). With the
-    default empty ``local_names`` the behaviour is byte-identical to the
-    pre-hardening resolver — the alias-of-self short-circuit only engages
-    when the caller passes the machine's local spellings.
-    """
-    _kind, peer = classify_dispatch_host(
-        target_host, current_host, peers, local_names=local_names
-    )
-    return peer
-
-
-def _local_host_names(current_host: str | None = None) -> set[str]:
-    """Return every host spelling that denotes THIS machine.
-
-    Unions the two hostname authorities so ``host: <canonical-or-alias>``
-    resolves to a LOCAL launch regardless of which registry the operator
-    configured, and — critically — regardless of drift between them:
-
-      * ``host_config`` (F-CS12 ``~/.scitex/agent-container/config.yaml``):
-        ``canonical_host()`` plus the ``host.aliases`` entry keyed by this
-        machine's short hostname.
-      * ``config/_host.resolve_hostname()`` (the value dispatch already
-        passes as ``current_host``) and the bare ``socket`` short hostname.
-
-    Only the alias entry for THIS machine's short hostname is included, so a
-    peer machine's alias is never mistaken for local. Best-effort — a
-    missing / broken config degrades to the short hostname (plus
-    ``current_host`` when supplied); it never raises.
-    """
-    names: set[str] = set()
-    if current_host:
-        names.add(current_host)
-    short = socket.gethostname().split(".")[0]
-    if short:
-        names.add(short)
-    # config/_host resolver (env override → spec.hostname_aliases → short).
-    try:
-        from ...config._host import resolve_hostname
-
-        rn = resolve_hostname()
-        if rn:
-            names.add(rn)
-    except Exception:  # stx-allow: fallback (reason: hostname resolution must never block dispatch; short hostname already captured)
-        pass
-    # host_config F-CS12 registry (env override → host.canonical → aliases).
-    try:
-        from ..._state.host_config import load as _load_host_config
-
-        cfg = _load_host_config()
-        canonical = cfg.canonical_host()
-        if canonical:
-            names.add(canonical)
-        alias = cfg.host.aliases.get(short)
-        if alias:
-            names.add(alias)
-    except Exception:  # stx-allow: fallback (reason: absent/malformed config.yaml must not break the local-vs-remote decision; the two hostname sources above suffice)
-        pass
-    return {n for n in names if n}
-
-
-def _bound_host(config: AgentConfig) -> str | None:
-    """Return the spec-bound preferred host for a singleton config.
-
-    Mirrors :func:`_singleton_skip_reason`'s head-of-chain selection —
-    the v3 ``spec.host`` (str or first element of list) wins, then the
-    v2 ``scheduling.preferred_host`` fallback. Returns None when the
-    config is multi-instance or unpinned (no skip would fire and no
-    liveness check is meaningful).
+    Plural on purpose. :func:`_resolve_singleton_skip` asks "is this agent
+    already running on the host it is bound to?", and for a fallback chain the
+    honest question is "on ANY host it is bound to" — the whole point of the
+    chain is that the agent may legitimately be on entry 2. Asking only about
+    the head answers "no", releases the pin, and starts a SECOND copy beside
+    the one already running down-chain.
     """
     spec = config.hosts_spec
     if spec.hosts:
-        return None
-    host = spec.host
-    if host:
-        if isinstance(host, str):
-            return host or None
-        return host[0] if host else None
+        return []
+    if spec.host:
+        from ._host_chain import chain_hosts
+
+        return chain_hosts(spec.host)
     sched = config.scheduling
     if sched.mode != "singleton":
-        return None
-    return sched.preferred_host or None
+        return []
+    return [sched.preferred_host] if sched.preferred_host else []
+
+
+def _bound_host(config: AgentConfig) -> str | None:
+    """Head of :func:`_bound_hosts` — the single highest-priority pin."""
+    hosts = _bound_hosts(config)
+    return hosts[0] if hosts else None
 
 
 def _registry_active_on(name: str, host: str) -> bool:
@@ -203,6 +106,7 @@ def _resolve_singleton_skip(
     *,
     no_redispatch: bool,
     liveness_oracle: BoundHostLivenessOracle | None = None,
+    local_names: Collection[str] | None = None,
 ) -> str | None:
     """Liveness-gated wrapper around :func:`_singleton_skip_reason`.
 
@@ -217,7 +121,8 @@ def _resolve_singleton_skip(
       2. The singleton check itself yields no skip (host matches, or
          multi-instance config).
       3. The singleton check WOULD fire, but the liveness oracle reports
-         no active instance row on the bound host — the spec-host pin
+         no active instance row on ANY bound host (the whole ``host:``
+         chain, not just its head) — the spec-host pin
          is stale. The lead's bm025 repro (clew pinned to a dead prior
          host with no live row + ``pam_slurm_adopt`` rejecting any ssh
          to it) hung clew because the skip kept deferring to a host
@@ -237,35 +142,59 @@ def _resolve_singleton_skip(
             checking whether the agent is already active on its bound
             host. Defaults to :func:`_registry_active_on` (real state.db
             read).
+        local_names: Every OTHER spelling that denotes THIS machine, so a
+            pin naming this machine under a different name is not read as
+            "the wrong host". Defaults to
+            :func:`._host_identity._local_host_names` — the SAME default
+            ``_dispatch.try_dispatch`` uses, so the skip and the routing
+            decision can never disagree about who this machine is.
     """
     if no_redispatch:
         return None
-    reason = _singleton_skip_reason(config, hostname)
+    if local_names is None:
+        local_names = _local_host_names(hostname)
+    reason = _singleton_skip_reason(config, hostname, local_names=local_names)
     if reason is None:
         return None
-    bound = _bound_host(config)
-    if bound is None:
+    bound = _bound_hosts(config)
+    if not bound:
         # No explicit pin → no liveness check can apply; preserve
         # behaviour.
         return reason
     oracle = liveness_oracle if liveness_oracle is not None else _registry_active_on
-    if not oracle(config.name, bound):
+    if not any(oracle(config.name, host) for host in bound):
         # Spec says "should be on X" but the registry has no live row
-        # on X. Skipping would leave the agent unlaunched anywhere —
+        # on X — nor, for a fallback chain, on any other host X falls
+        # back to. Skipping would leave the agent unlaunched anywhere —
         # fall through and start locally instead. This is the lead's
         # bm025 stale-binding repro.
         return None
     return reason
 
 
-def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
+def _singleton_skip_reason(
+    config: AgentConfig,
+    hostname: str,
+    *,
+    local_names: Collection[str] = (),
+) -> str | None:
     """Return a human-readable skip reason if ``config`` is a singleton on
     the wrong host, else None.
 
     Multi-instance (``hosts:`` set or per-host scheduling) never skips.
     Singleton with no host preference launches anywhere. Singleton with
     ``host:``/``preferred-host`` set skips when the current host doesn't match.
+
+    Pure — ``local_names`` (the machine's OTHER spellings, from
+    :func:`._host_identity._local_host_names`) arrives from the caller, the
+    same seam :func:`classify_dispatch_host` uses. It is load-bearing because
+    "the wrong host" is an IDENTITY question that this function answered by
+    string equality: on ``scitex-nas-03`` (``hostname -s`` =
+    ``DXP480TPLUS-994``) a spec pinned to its own fleet name read as
+    pinned-elsewhere, and a skip here is a SILENT no-start. With the empty
+    default the comparison is byte-identical to the historical one.
     """
+    local = {hostname, *local_names}
     # v3 config: use hosts_spec
     spec = config.hosts_spec
     if spec.hosts:  # multi-instance
@@ -273,9 +202,9 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
     host = spec.host
     if host:
         chain = [host] if isinstance(host, str) else list(host)
-        if not chain or hostname == chain[0]:
+        if not chain or chain[0] in local:
             return None
-        if hostname in chain[1:]:
+        if any(entry in local for entry in chain[1:]):
             return None
         fallback_str = (
             f" (fallback-hosts: {', '.join(chain[1:])})" if len(chain) > 1 else ""
@@ -287,7 +216,7 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
         return None
     if not sched.preferred_host:
         return None
-    if sched.preferred_host == hostname:
+    if sched.preferred_host in local:
         return None
     fallback = (
         f" (fallback-hosts: {', '.join(sched.fallback_hosts)})"
@@ -298,6 +227,22 @@ def _singleton_skip_reason(config: AgentConfig, hostname: str) -> str | None:
         f"singleton pinned to '{sched.preferred_host}', "
         f"current host is '{hostname}'{fallback}"
     )
+
+
+def _is_self_peer_spec(spec_path: "Path") -> bool:
+    """Reuse the canonical self-peer-marker predicate.
+
+    Imported lazily: the list-view helpers pull in the click surface, and
+    a module-level import here would close a cycle. Tolerant by design --
+    if the predicate cannot be reached, treat the file as a normal spec
+    rather than silently dropping an agent from a start/stop expansion.
+    """
+    # stx-allow: fallback (reason: an unavailable predicate must not drop an agent from a bulk start/stop; the miscount is reported on this command's own stdout as the agent simply appearing, never as a silent omission)
+    try:
+        from .._helpers._agent_list_discover import _is_self_peer_marker
+    except Exception:  # stx-allow: fallback (reason: see comment above)
+        return False
+    return bool(_is_self_peer_marker(spec_path))
 
 
 def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
@@ -316,11 +261,24 @@ def _iter_agent_yamls(agents_dir: "Path") -> "list[tuple[str, str]]":
             continue
         if d.name in _SKIP_DIR_NAMES:
             continue
-        for ext in (".yaml", ".yml"):
-            candidate = d / f"{d.name}{ext}"
-            if candidate.exists():
-                results.append((d.name, str(candidate)))
+        # ``<name>/spec.yaml`` FIRST: that is what every registry writer
+        # emits, and reading only ``<name>/<name>.yaml`` made this helper
+        # return 0 against a registry holding 122 specs. ``<name>/<name>.yaml``
+        # stays as a fallback because `sac fleet materialize` and
+        # render_contributor_spec still write it -- alias first, remove after
+        # those writers move (see the follow-up card).
+        for candidate in (d / "spec.yaml", d / f"{d.name}.yaml", d / f"{d.name}.yml"):
+            if not candidate.exists():
+                continue
+            # ``agents/self/spec.yaml`` registers the running listen's own
+            # identity and is deliberately NOT a launchable Agent. It was
+            # invisible here only by accident, because this helper could not
+            # see spec.yaml at all; now that it can, skip it explicitly using
+            # the SAME predicate the listen merge and the list view use.
+            if _is_self_peer_spec(candidate):
                 break
+            results.append((d.name, str(candidate)))
+            break
     return results
 
 
@@ -457,6 +415,7 @@ __all__ = [
     "classify_dispatch_host",
     "_local_host_names",
     "_bound_host",
+    "_bound_hosts",
     "_registry_active_on",
     "_resolve_dispatch_peer",
     "_resolve_singleton_skip",

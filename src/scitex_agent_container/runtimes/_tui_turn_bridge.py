@@ -31,9 +31,16 @@ the public ``_tui_turn_bridge.start_turn_bridge`` / ``stop_turn_bridge`` /
 THIS module as ``python -m`` (see :func:`main`), and :func:`stop_turn_bridge`
 SIGTERMs it, waits for the port to release, and force-kills any own-port
 survivor (the restart port-collision fix). Both are best-effort — a failed
-bridge must never block agent start/stop. Bound to ``127.0.0.1`` (loopback
-wake POST; the bind is the security boundary, matching the SDK runner's
-unauthed endpoint).
+bridge must never block agent start/stop.
+
+BIND ADDRESS: ``spec.a2a.host``, resolved by
+:func:`_tui_turn_bridge_lifecycle.resolved_a2a_host` and threaded through the
+launcher's ``--host`` into :func:`serve`. It defaults to ``127.0.0.1``
+(loopback wake POST; the bind is the security boundary, matching the SDK
+runner's unauthed endpoint), which is what every fleet spec declares today —
+so an unmodified spec binds loopback exactly as before. A spec that names a
+different address now MOVES this bind with it, instead of leaving the bridge
+on loopback while ``a2a_sidecar`` alone honoured the declaration.
 """
 
 from __future__ import annotations
@@ -41,9 +48,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
+import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import IO, Any, Callable
 
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
@@ -53,6 +63,7 @@ from ._tui_turn_bridge_lifecycle import (
     PID_FILENAME,
     _pid_path,
     _state_dir,
+    resolved_a2a_host,
     resolved_a2a_port,
     start_turn_bridge,
     stop_turn_bridge,
@@ -186,6 +197,64 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         )
 
 
+# ---------------------------------------------------------------------------
+# Lifecycle log
+# ---------------------------------------------------------------------------
+def write_bridge_event(
+    stream: IO[str],
+    event: str,
+    *,
+    agent: str,
+    host: str,
+    port: int,
+    pid: int,
+    now_fn: Callable[[], float] = time.time,
+) -> str:
+    """Write ONE lifecycle line to ``stream``, flush it, and return it.
+
+    WHY THIS EXISTS: ``tui-turn-bridge.log`` was 0 bytes for 16 of the 17
+    agents on the host. The launcher opens it (``open(..., "ab")`` in
+    ``_tui_turn_bridge_lifecycle``) and hands it to the child as BOTH stdout
+    and stderr — but the bridge never wrote a single line of its own, so the
+    file only ever captured an UNHANDLED traceback. When 14 bridges were found
+    dead on 2026-08-11, the cause of not one of those deaths could be
+    recovered: no bind line to prove it ever served, no shutdown line to say
+    whether it exited on a signal or vanished. A log that is empty on the happy
+    path cannot bracket a failure.
+
+    Two lines is the whole contract — one after the bind, one on the way out —
+    so an operator reading the file can always answer "did it serve, and did it
+    leave cleanly?". The flush is load-bearing: the child's stdio is a
+    block-buffered pipe onto a file, so an unflushed bind line would be lost
+    in exactly the crash it is meant to explain.
+    """
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now_fn()))
+    line = (
+        f"{stamp} tui-turn-bridge {event} "
+        f"agent={agent} host={host} port={port} pid={pid}\n"
+    )
+    stream.write(line)
+    stream.flush()
+    return line
+
+
+def _emit(
+    event: str, *, agent: str, host: str, port: int
+) -> None:  # pragma: no cover - thin best-effort wrapper over write_bridge_event, which is unit-tested directly
+    """Best-effort :func:`write_bridge_event` onto the launcher's log fd.
+
+    Swallows deliberately: the log is a DIAGNOSTIC, and a bridge that cannot
+    write its own log line must still serve turns — degrading wake-on-push to
+    restore a log file would trade the incident for a worse one.
+    """
+    try:
+        write_bridge_event(
+            sys.stderr, event, agent=agent, host=host, port=port, pid=os.getpid()
+        )
+    except Exception as exc:  # stx-allow: fallback (reason: the lifecycle log is diagnostic only — an unwritable log fd must never stop the bridge from serving /v1/turn, which is the whole point of the process)
+        log.warning("tui-turn-bridge: could not write %s log line: %s", event, exc)
+
+
 def build_server(
     *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
 ) -> _TurnBridgeServer:
@@ -217,10 +286,17 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
     signal.signal(signal.SIGTERM, _graceful)
     signal.signal(signal.SIGINT, _graceful)
     log.info("tui-turn-bridge: serving %s on %s:%d", agent_name, host, port)
+    # The bind SUCCEEDED — record it in the durable per-agent log. Emitted here
+    # rather than before ``build_server`` so the line is proof the socket is
+    # actually held, not merely that the process started.
+    _emit("bind", agent=agent_name, host=host, port=port)
     try:
         server.serve_forever()
     finally:
         server.server_close()
+        # Brackets the bind line: its ABSENCE next to a bind line is itself the
+        # diagnosis (the process was killed rather than signalled).
+        _emit("shutdown", agent=agent_name, host=host, port=port)
 
 
 # ---------------------------------------------------------------------------
@@ -256,31 +332,58 @@ def _build_on_turn(
         if from_agent:
             try:
                 from ._tui_outbound import record_dispatch
-                from .tui_session import state_dir_for_config
 
+                # No state.db path any more: the inbound ledger is PostgreSQL.
+                # `state_dir_for_config` is no longer imported here because it
+                # was imported ONLY to build that path — and an import kept for
+                # a vanished use is how a module keeps a dependency nobody can
+                # see the reason for.
                 record_dispatch(
-                    db_path=state_dir_for_config(config) / "state.db",
                     agent=config.name,
                     from_agent=from_agent,
                     dispatch_id=dispatch_id,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged for the operator)
+            except Exception as exc:  # stx-allow: fallback (reason: a ledger-write failure must not block delivering the wake — the agent still processes the turn; only the auto-completion-report is lost, logged at WARNING to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log via scitex-logging)
                 logging.getLogger(__name__).warning(
                     "tui-outbound: failed to record inbound dispatch for %s: %s",
                     config.name,
                     exc,
                 )
-        # ``wait_ready=False`` → the bare send_text_and_submit primitive
-        # (text + Enter). The full ``wait_until_input_ready`` drain blocks up
+        # ``wait_ready=False`` → skip the blocking modal DRAIN, which waits up
         # to 60s on a "? for shortcuts" marker an idle autonomous pane may
-        # never render — fatal for a wake POST; boot modals are already
-        # drained by ``start()._drain_at_boot`` and claude queues keystrokes
-        # typed mid-turn, so a live wake needs no drain and is never dropped.
+        # never render — fatal for a wake POST. Boot modals are already drained
+        # by ``start()._drain_at_boot``, so a live wake needs no drain.
+        #
+        # THE ACCEPTANCE CHECK STILL RUNS. It is a separate flag precisely
+        # because it must survive ``wait_ready=False``: this is the path
+        # dispatch actually takes, so gating acceptance on the drain flag would
+        # have left the real route unchecked. It costs one capture, not 60s.
+        #
+        # THE SENTENCE THAT USED TO END THIS COMMENT — "claude queues
+        # keystrokes typed mid-turn, so a live wake ... is never dropped" — IS
+        # FALSE and is why this bug survived. Measured 2026-08-18: four
+        # dispatches to live agents across four pane states produced zero
+        # completed tasks, one over a 35-minute window with no restart in it.
+        # Claude does queue them; the queue does not reliably drain.
         delivered = runtime.send_turn(config, text, wait_ready=False)
         if not delivered:
+            # Name the ACTUAL cause. This used to assert the session did not
+            # exist, which was true when absence was the only cause and became
+            # a misdiagnosis the moment a busy pane could also refuse — it sent
+            # the reader hunting a dead agent that was in fact working.
+            #
+            # getattr-guarded because the REASON is enrichment and the RAISE is
+            # the contract. A runtime seam that cannot explain itself must
+            # still fail loudly; making the failure depend on the explainer
+            # would let a missing method turn a refusal into a crash, or worse
+            # into a silent success in some future caller that catches it.
+            explain = getattr(runtime, "why_not_deliverable", None)
+            why = (explain(config) if callable(explain) else None) or (
+                "no reason available from this runtime — the session is absent, "
+                "or the pane would park the turn rather than run it"
+            )
             raise RuntimeError(
-                f"TUI session for agent {config.name!r} does not exist; "
-                "cannot deliver the pushed turn."
+                f"turn NOT delivered to agent {config.name!r}: {why}"
             )
 
     return on_turn
@@ -292,14 +395,18 @@ def main(
     parser = argparse.ArgumentParser(prog="tui-turn-bridge")
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--host", default=DEFAULT_HOST)
+    # No literal default: an omitted --host resolves from the spec the bridge
+    # is about to serve (``resolved_a2a_host``), which itself falls back to
+    # DEFAULT_HOST. The launcher always passes --host explicitly; this keeps a
+    # hand-run bridge on the SAME address as its spec instead of loopback.
+    parser.add_argument("--host", default=None)
     args = parser.parse_args(argv)
 
     from ..config import load_config
 
     config = load_config(args.config_path)
     serve(
-        host=args.host,
+        host=args.host or resolved_a2a_host(config),
         port=args.port,
         on_turn=_build_on_turn(config),
         agent_name=config.name,
@@ -312,6 +419,7 @@ if __name__ == "__main__":  # pragma: no cover -- exercised as a subprocess
 
 
 __all__ = [
+    "resolved_a2a_host",
     "resolved_a2a_port",
     "is_turn_route",
     "build_server",

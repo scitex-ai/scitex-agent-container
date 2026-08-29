@@ -65,6 +65,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from .._lifecycle._off_loop import run_blocking
 from .._state.state_db_channel import persist_event
 from ..a2a._inbox_bus import Broker, mint_event
 
@@ -123,7 +124,13 @@ async def publish_to_agent(
     )
     # Durability first (handoff §0): persist BEFORE publish so a
     # not-yet-connected container still receives the event on reconnect.
-    row_id = persist_event(target=agent, event=event)
+    #
+    # OFF THE EVENT LOOP: ``persist_event`` is a PostgreSQL round trip
+    # since 2026-08-28, and this coroutine runs inside the ``sac listen``
+    # daemon, where a blocking network call blocks EVERY request the
+    # daemon is serving. Same fix as the SSE generators and the
+    # ``is_local_node`` hop in ``_node_channel``.
+    row_id = await run_blocking(persist_event, target=agent, event=event)
     event["_row_id"] = row_id
     delivered = await broker.publish(agent, event)
     return {"msg_id": event["msg_id"], "delivered_subscriber_count": delivered}

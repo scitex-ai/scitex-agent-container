@@ -147,11 +147,16 @@ def _default_notify(account: str, summary: str, detail: str) -> None:
     try:
         _notify_lead_blocker(summary, detail)
     except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
-        print(
+        # Hard stderr, no caller seam (the alert_failed_refreshes err_stream
+        # report below is a separate channel), so this is routed through
+        # scitex-logging: NOBODY WAS PAGED is exactly the kind of fact that
+        # must not evaporate with the process's stderr.
+        from .._logging import get_logger
+
+        get_logger(__name__).error(
             f"[refresh-alarm] {account}: recorded in sac's event log, but the "
             f"lead blocker push FAILED — {exc}. Nobody has been paged; the "
-            f"failure is durable in the event log only.",
-            file=sys.stderr,
+            f"failure is durable in the event log only."
         )
 
 

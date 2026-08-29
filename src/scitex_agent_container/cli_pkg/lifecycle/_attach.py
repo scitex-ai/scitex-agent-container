@@ -28,6 +28,7 @@ import subprocess
 
 import click
 
+from ..._runners._tmux._target import exact_target
 from .._helpers._completion import agent_name_complete
 from .._helpers._console import system_msg
 
@@ -54,9 +55,19 @@ def _classify_agent_host(name: str) -> tuple[str, str | None]:
     """Return ``(kind, peer)`` for the agent's ``spec.host``.
 
     ``kind`` is ``"local"`` / ``"remote"`` / ``"unknown"`` per
-    :func:`._common.classify_dispatch_host` — the SAME resolver
+    :func:`._host_chain.resolve_host_chain` — the SAME reducer
     ``sac agents start`` uses, so attach and start agree on where an agent
-    lives. Best-effort: an unresolvable spec (moved / deleted) degrades to
+    lives. That agreement is the point of routing through the shared
+    resolver rather than re-deriving a target here: once start began walking
+    a FALLBACK CHAIN, a head-only reduction in attach would send the operator
+    to a different machine than the one the agent was launched on.
+
+    Deliberately passes NO reachability oracle. Attach is interactive and
+    already about to open an ssh session that will report its own failure far
+    better than a pre-probe would; without an oracle the walk is pure and
+    answers the historical head-of-chain, minus the unroutable-head bug.
+
+    Best-effort: an unresolvable spec (moved / deleted) degrades to
     ``("local", None)`` so attach still tries the local tmux, preserving the
     historic single-host behaviour.
     """
@@ -65,18 +76,21 @@ def _classify_agent_host(name: str) -> tuple[str, str | None]:
         from ...config import load_config
         from ...config._host import resolve_hostname
         from ...config._resolve import resolve_with_prefix
-        from ._common import _local_host_names, classify_dispatch_host
+        from ._common import _local_host_names
+        from ._host_chain import UNROUTABLE, resolve_host_chain
 
         config = load_config(resolve_with_prefix(name))
         bound = config.hosts_spec.host
-        target = bound if isinstance(bound, str) else (bound[0] if bound else None)
-        if not target:
+        if not bound:
             return ("local", None)
         current = resolve_hostname()
         peers = _load_host_config().peers
-        return classify_dispatch_host(
-            target, current, peers, local_names=_local_host_names(current)
+        route = resolve_host_chain(
+            bound, current, peers, local_names=_local_host_names(current)
         )
+        if route.kind == UNROUTABLE:
+            return ("unknown", None)
+        return (route.kind, route.peer)
     except Exception:  # stx-allow: fallback (unresolved spec/config → local attach)
         return ("local", None)
 
@@ -112,7 +126,10 @@ def _remote_attach_argv(session: str, peer: str) -> list[str]:
         "tmux",
         "attach",
         "-t",
-        session,
+        # EXACT session target: a bare name prefix-matches on the peer, which
+        # would hand the operator a SIBLING agent's TUI when the named session
+        # is gone (incident 2026-08-14).
+        exact_target(session),
     ]
 
 
@@ -149,7 +166,7 @@ def attach(name: str) -> None:
     try:
         exists = (
             subprocess.run(
-                ["tmux", "has-session", "-t", session],
+                ["tmux", "has-session", "-t", exact_target(session)],
                 capture_output=True,
                 text=True,
             ).returncode
@@ -166,4 +183,4 @@ def attach(name: str) -> None:
         raise SystemExit(1)
 
     # Hand the terminal to tmux (replaces this process; detach with Ctrl-b d).
-    os.execvp("tmux", ["tmux", "attach", "-t", session])
+    os.execvp("tmux", ["tmux", "attach", "-t", exact_target(session)])

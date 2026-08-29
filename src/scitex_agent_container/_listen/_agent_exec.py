@@ -15,6 +15,7 @@ import path keeps working unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from starlette.requests import Request
@@ -254,13 +255,48 @@ async def agents_start(request: Request) -> JSONResponse:
     # it (single, interactive, long-lived — a fleet-wide lock held that long
     # would serialize everything for no safety gain).
     from ._credential_refresh_lock import run_brokered_launch
+    from ._handler_deadline import AGENT_START_DEADLINE_S, Deadline, accepted_payload
+    from ._spawn_detach import detach_launch
 
-    try:
-        proc = await run_brokered_launch(
+    # DECLARED answer-by budget for the whole handler (see _handler_deadline).
+    # Before this, the handler could block for as long as the credential boot
+    # gate made it: the OAuth settle window is held INSIDE an exclusive flock,
+    # so waiter N pays N-1 predecessors x (launch + up to 20s) before its own
+    # launch begins. The caller had no way to learn it was QUEUED — from
+    # outside, a queue and a dead host are the same silence — so its socket
+    # timeout became the error channel and a SUCCEEDING spawn was reported as
+    # a failure. Bounding the handler is what makes "still in flight" sayable.
+    #
+    # foreground / one_shot are EXEMPT: they block for a whole interactive
+    # session by construction, so that caller explicitly asked to wait and a
+    # 202 would be an unhelpful answer to a question it did not ask.
+    bounded = not (foreground or one_shot)
+    deadline = Deadline(AGENT_START_DEADLINE_S)
+    launch = asyncio.ensure_future(
+        run_brokered_launch(
             inner_argv,
             child_env,
             foreground=bool(foreground),
             one_shot=bool(one_shot),
+        )
+    )
+    try:
+        if bounded:
+            # shield() is load-bearing: wait_for CANCELS its inner awaitable on
+            # timeout, which is the exact opposite of what the 202 promises.
+            # The spawn keeps running and detach_launch adopts it below.
+            proc = await asyncio.wait_for(
+                asyncio.shield(launch), timeout=deadline.remaining()
+            )
+        else:
+            proc = await launch
+    except asyncio.TimeoutError:
+        # Still queued behind the boot gate, or the start subprocess is still
+        # running. ACCEPTED, outcome unknown — never a failure code.
+        detach_launch(launch, name=name, started_at=started_at)
+        return JSONResponse(
+            accepted_payload(name, phase="launch", deadline_s=AGENT_START_DEADLINE_S),
+            status_code=202,
         )
     except OSError as exc:
         # Launch-time failure (e.g. the resolved sac_bin vanished between
@@ -303,16 +339,37 @@ async def agents_start(request: Request) -> JSONResponse:
             pass
 
         from .._lifecycle._start_decline import start_was_declined
+        from ._start_failure_status import classify_start_failure
 
+        # hub, 2026-08-19: a 5xx cannot distinguish "your request was
+        # wrong" from "the server is broken", and those need opposite
+        # responses from the caller. Every non-zero child exit used to
+        # answer 502, so an UNREGISTERED NAME and a broken container
+        # were the same status. Classify instead; unmatched failures
+        # still answer 502, so this narrows the opaque case rather than
+        # trading it for a guess.
+        #
+        # ``declined`` is computed ONCE and passed in rather than being
+        # re-derived inside the classifier, so the body's field and the
+        # status code can never disagree about the same output.
+        declined = start_was_declined(proc.stdout, proc.stderr)
+        failure = classify_start_failure(
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            declined=declined,
+        )
         return JSONResponse(
             {
                 "name": name,
                 "returncode": proc.returncode,
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
-                "declined": start_was_declined(proc.stdout, proc.stderr),
+                "declined": declined,
+                "kind": failure.kind,
+                "hint": failure.hint,
             },
-            status_code=502,
+            status_code=failure.status,
         )
 
     # Layer-3 fail-loud (clew dogfood repro 2026-06-06, lead msg
@@ -379,11 +436,28 @@ async def agents_start(request: Request) -> JSONResponse:
     # ``apptainer_pid`` file that a ``tui`` agent — the fleet's DEFAULT runtime —
     # never writes, and then stamps ``startup_failed`` on a perfectly healthy
     # agent. See :mod:`._agent_exec_liveness`.
+    # Truncate the grace window to what remains of the handler's budget — and
+    # then REFUSE TO CONVICT on the truncated result. A probe that ran out of
+    # budget has not observed a failure, it ran out of time; that is UNKNOWN,
+    # and UNKNOWN answers 202, never 502. Convicting on a short probe is the
+    # precise mistake this module's own docstring records: a 5s window "was not
+    # a probe, it was a coin toss", and a lost toss stamps ``startup_failed`` on
+    # a healthy agent, whose remedy is destructive.
+    probe_budget = env_timeout
+    truncated = False
+    if bounded and deadline.remaining() < env_timeout:
+        probe_budget = deadline.remaining()
+        truncated = True
     liveness_failure = _probe_post_ack_liveness(
         runtime_dir,
         name=name,
-        timeout_s=env_timeout,
+        timeout_s=probe_budget,
     )
+    if liveness_failure is not None and truncated:
+        return JSONResponse(
+            accepted_payload(name, phase="liveness", deadline_s=AGENT_START_DEADLINE_S),
+            status_code=202,
+        )
     if liveness_failure is not None:
         kind, hint = liveness_failure
         # stx-allow: fallback (reason: marker write is observability;

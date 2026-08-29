@@ -26,8 +26,6 @@ markers (TQ002), one assertion (TQ007), 3+-word name.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import json
 import os
 from pathlib import Path
@@ -41,9 +39,15 @@ from scitex_agent_container._lifecycle._in_sif_broker import (
     is_in_sif,
 )
 from scitex_agent_container._lifecycle._start import agent_start
+from scitex_agent_container._listen._handler_deadline import (
+    AGENT_START_DEADLINE_S,
+    client_timeout_for,
+)
+from scitex_agent_container._runners import _session_state
 from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Real (non-mock) fake response + opener (urllib protocol)
@@ -286,6 +290,59 @@ def test_broker_raises_on_host_listen_acl_deny(listen_env) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The client must OUTLIVE the server's declared deadline (incident 2026-08-11)
+#
+# ``broker_start_to_host`` hardcoded ``timeout_s=30.0`` — the SAME number as
+# ``AGENT_START_DEADLINE_S``, which is the budget the handler is ENTITLED to
+# spend before it answers. Equal is not enough. ``client_timeout_for`` adds
+# ``CLIENT_MARGIN_S`` precisely so the answer can still reach a client that is
+# listening — including the ``202`` "accepted, still in flight" the server sends
+# so a slow spawn is not mistaken for a dead host. Landing the client on the
+# deadline cancelled that margin and made the client give up at the exact moment
+# the server was still legitimately working.
+#
+# Measured that day: a spawn over this path was reported as "no response" while
+# the host had ACCEPTED it and worked for 5m12s (started_at 06:15:08Z,
+# failed_at 06:20:20Z, phase container_creation). A healthy route was escalated
+# as wedged on the strength of that false timeout.
+#
+# These assert the ORDERING against the real derivation, never a literal 40.0 —
+# pinning the number would re-freeze the same coupling one layer up and would
+# stay green through exactly the next drift it is meant to catch.
+# ---------------------------------------------------------------------------
+
+
+def test_broker_client_timeout_outlives_server_deadline(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener)
+    # Assert — STRICTLY greater. The old 30.0 sat exactly on the deadline.
+    assert captured["timeout"] > AGENT_START_DEADLINE_S
+
+
+def test_broker_client_timeout_equals_the_one_derivation(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener)
+    # Assert — derived from the server's deadline, not picked a third time.
+    assert captured["timeout"] == pytest.approx(client_timeout_for())
+
+
+def test_broker_honours_an_explicit_timeout_override(listen_env) -> None:
+    # Arrange — the derivation is the DEFAULT, not a lock; callers may override.
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"child","returncode":0}')
+    # Act
+    broker_start_to_host("child", opener=opener, timeout_s=1.5)
+    # Assert
+    assert captured["timeout"] == pytest.approx(1.5)
+
+
+# ---------------------------------------------------------------------------
 # PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic chain.
 # ``broker_start_to_host`` and ``maybe_broker_in_sif_spawn`` forward
 # ``foreground`` / ``one_shot`` to ``request_spawn`` → body fields → host
@@ -370,6 +427,79 @@ def test_maybe_broker_in_sif_forwards_foreground_to_body(sif_env, listen_env) ->
 
 
 # ---------------------------------------------------------------------------
+# HTTP 202 accepted-but-in-flight is UNKNOWN, not failure
+#
+# Measured 2026-08-15: starting a stopped `scitex-dev` raised RuntimeError and
+# reported exit 1 while the agent came up fine and answered on its a2a port
+# seconds later. The old code read `if rc != 0: raise`, and a 202 body carries
+# no `returncode` at all — so `None != 0` sent the UNKNOWN case down the
+# failure branch. These three pin all three arms of the signal.
+# ---------------------------------------------------------------------------
+
+_ACCEPTED_202 = (
+    b'{"name":"child","status":"accepted","phase":"launch","deadline_s":30.0,'
+    b'"poll":"/agents/child/status",'
+    b'"detail":"still in flight at the 30s server deadline. This is NOT a '
+    b'failure: the spawn is running."}'
+)
+
+
+def test_in_flight_spawn_does_not_raise(sif_env, listen_env) -> None:
+    # Arrange
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(_ACCEPTED_202, status=202)
+    # Act — must not raise; the host said the spawn is still running.
+    result = maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+    # Assert
+    assert result is True
+
+
+def test_in_flight_spawn_returns_true_so_caller_skips_local_start(
+    sif_env, listen_env
+) -> None:
+    # Arrange — False would send the caller down the LOCAL start path against
+    # an agent that is already launching, i.e. start a SECOND one. That is the
+    # damage `_spawn_client` warns about on this exact 202 branch.
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(_ACCEPTED_202, status=202)
+    # Act
+    brokered = maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+    # Assert
+    assert brokered is True, "in-flight must count as brokered, never as 'do it locally'"
+
+
+def test_a_genuine_nonzero_returncode_still_raises(sif_env, listen_env) -> None:
+    # Arrange — the failure arm must survive the fix; this is the control that
+    # proves the new branch did not simply swallow every bad outcome.
+    from scitex_agent_container._lifecycle._in_sif_broker import (
+        maybe_broker_in_sif_spawn,
+    )
+
+    sif_env("/path/to/parent.sif", key="APPTAINER_CONTAINER")
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, _ = _opener_returning(b'{"name":"child","returncode":3}')
+
+    def _act():
+        return maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
+
+    # Act
+    raised = pytest.raises(RuntimeError, match="returncode=3")
+    # Assert
+    with raised:
+        _act()
+
+
+# ---------------------------------------------------------------------------
 # agent_start integration — in-SIF detection redirects to broker
 # ---------------------------------------------------------------------------
 
@@ -419,12 +549,27 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     }
     saved = {k: os.environ.get(k) for k in keys}
     saved_default = state_db.DEFAULT_DB_PATH
+    # ``_session_state.DEFAULT_STATE_ROOT`` is bound ONCE, at import time, from
+    # ``runtime_base_dir()`` (_session_state.py:76). Restoring the env var is
+    # therefore NOT enough: whichever test first drags that module into the
+    # interpreter decides the constant for the whole worker, and if that happens
+    # while this fixture's redirect is live the constant keeps pointing into a
+    # tmp_path that pytest then deletes. conftest's autouse
+    # ``_assert_state_floor_intact`` catches it at teardown, and everything
+    # after it in the worker ERRORs -- measured 2026-08-24: this file alone,
+    # then tests/scitex_agent_container/runtimes/test__cct_token_pool.py, gave
+    # 89 passed / 61 errors in one process purely from this leak.
+    # Rebinding it explicitly (same shape as ``state_db.DEFAULT_DB_PATH`` above)
+    # makes the redirect deliberate and, crucially, UNDOES it.
+    saved_state_root = _session_state.DEFAULT_STATE_ROOT
     os.environ.update(keys)
     state_db.DEFAULT_DB_PATH = db
+    _session_state.DEFAULT_STATE_ROOT = runtime_dir
     state_db.init_schema(db)
     try:
         yield db
     finally:
+        _session_state.DEFAULT_STATE_ROOT = saved_state_root
         state_db.DEFAULT_DB_PATH = saved_default
         for k, prev in saved.items():
             if prev is None:
@@ -438,19 +583,21 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {yaml_root / (name + '-work')}\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n"
-        "    model: sonnet\n"
-        "  health:\n"
-        "    enabled: false\n"
-        "    interval: 60\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {yaml_root / (name + '-work')}\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: false\n"
+            "    interval: 60\n"
+        )
     )
     return spec
 
@@ -550,6 +697,7 @@ def test_agent_start_forwards_assume_yes_to_broker_body(
 
 
 def test_agent_start_not_in_sif_uses_local_runtime(
+    pg_schema: str,
     isolated_state, sif_env, listen_env, tmp_path
 ) -> None:
     # Arrange — NO in-SIF env vars set → regression guard: local flow intact.

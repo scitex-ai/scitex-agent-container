@@ -19,7 +19,6 @@ TQ: AAA marker triple (TQ002), one asserted fact per test (TQ007).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -193,25 +192,29 @@ def test_verdict_from_before_the_current_start_does_not_relabel_the_row(
 # ---------------------------------------------------------------------------
 
 
-def test_cache_read_survives_a_host_with_no_state_db(tmp_path: Path) -> None:
+def test_cache_read_survives_a_host_with_no_auth_cache() -> None:
     # Arrange — `sac agents list` must never crash (or stall) on an auth-cache
-    # miss; a fresh host simply has nobody checked yet.
+    # miss; a fresh host simply has nobody checked yet. The INTENT is
+    # unchanged by the PostgreSQL port; only the way a host says "I have no
+    # cache" moved. It used to be an absent state.db FILE, which this test
+    # named directly. There is no file now, so the condition is an
+    # unreachable/empty store — which is exactly what the autouse isolation
+    # guard supplies to every test, so calling with no arguments exercises the
+    # real thing rather than a path that no longer means anything.
     from scitex_agent_container._state import auth_state as aus
 
     # Act
-    states = aus.list_auth_states(db_path=tmp_path / "absent.db")
+    states = aus.list_auth_states()
     # Assert
     assert states == {}
 
 
-def test_watchdog_write_is_visible_to_the_list_read(tmp_path: Path) -> None:
+def test_watchdog_write_is_visible_to_the_list_read(pg_schema: str) -> None:
     # Arrange — the real contract between the two halves of this feature: the
-    # watchdog persists, the list reads. Real sqlite file, real row, no mocks.
+    # watchdog persists, the list reads. Real PostgreSQL schema, real row, no mocks.
     from scitex_agent_container._state import auth_state as aus
-
-    db_path = tmp_path / "state.db"
-    aus.record_auth_check("figrecipe", True, reason="revoked", db_path=db_path)
+    aus.record_auth_check("figrecipe", True, reason="revoked")
     # Act
-    states = aus.list_auth_states(db_path=db_path)
+    states = aus.list_auth_states()
     # Assert
     assert states["figrecipe"]["auth_failed"] is True

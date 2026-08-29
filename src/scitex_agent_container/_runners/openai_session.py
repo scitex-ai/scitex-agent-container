@@ -1,31 +1,28 @@
-"""Concrete :class:`ProviderSession` backed by the ``openai-agents`` SDK.
+"""Concrete :class:`HarnessSession` backed by the ``openai-agents`` SDK.
 
 scitex-todo card ``openai-compat-2`` — the first concrete implementation
-of the openai-compat-1 Protocol (see :mod:`_runners._provider_session`
+of the openai-compat-1 Protocol (see :mod:`_runners._harness_session`
 for the shape rationale). Wires:
 
-* :class:`~._provider_session.ToolSpec` → ``agents.FunctionTool``
-  (:func:`tool_spec_to_function_tool` — a near-direct field mapping, as
-  the ToolSpec docstring predicted).
+* :class:`~._harness_session.ToolSpec` → ``agents.FunctionTool`` via
+  :func:`tool_spec_to_function_tool` — a near-direct field mapping.
 * ``Runner.run_streamed()`` → an async generator of
-  :class:`~._provider_session.NormalizedEvent`
-  (:func:`normalize_stream_event` + :meth:`OpenAISession.send`).
+  :class:`~._harness_session.NormalizedEvent`
+  (:func:`normalize_stream_event` + :meth:`OpenAIAgentsSession.send`).
 * ``SQLiteSession`` for conversation state (multi-turn memory across
-  :meth:`OpenAISession.send` calls; placement via
+  :meth:`OpenAIAgentsSession.send` calls; placement via
   :func:`runtimes._openai_sdk_common.resolve_state_db_path`).
-* Per-turn spend recording into the ledger of
-  :mod:`_account.openai_usage` (spend-based tracking — best-effort,
-  never fails the turn).
+* Per-turn spend recording into :mod:`_account.openai_usage`'s ledger
+  (best-effort; never fails the turn).
 
 The ``openai-agents`` dependency is OPTIONAL (``pip install
 scitex-agent-container[openai]``). This module imports it LAZILY inside
-:meth:`OpenAISession.start` / :func:`tool_spec_to_function_tool` —
-importing the module (and constructing :class:`OpenAISession`) works on
+:meth:`OpenAIAgentsSession.start` / :func:`tool_spec_to_function_tool` —
+importing the module (and constructing :class:`OpenAIAgentsSession`) works on
 Claude-only deployments; only actually OPENING a session requires the
-SDK. :func:`normalize_stream_event` is deliberately duck-typed on the
-SDK's own ``type`` / ``name`` string discriminators (stable public
-Literal fields) so event normalization is pure and testable without a
-network connection.
+SDK. :func:`normalize_stream_event` is duck-typed on the SDK's own
+``type`` / ``name`` string discriminators (stable public Literal fields)
+so event normalization is pure and testable offline.
 
 Vocabulary mapping (openai-agents → NormalizedEvent.kind)
 ----------------------------------------------------------
@@ -48,16 +45,23 @@ import asyncio
 import inspect
 import json
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence
+from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ._provider_session import Message, NormalizedEvent, RunResult, ToolSpec
+from ._harness_session import Message, NormalizedEvent, RunResult, ToolSpec
+# Re-exported so callers have ONE import site for the harness, regardless of
+# which module the transport logic happens to live in.
+from ._openai_mcp import McpConfigError, build_mcp_server
 
 __all__ = [
     "OpenAISessionError",
-    "OpenAISession",
+    "OpenAIAgentsSession",
     "tool_spec_to_function_tool",
     "normalize_stream_event",
     "usage_as_dict",
+    "build_mcp_server",
+    "McpConfigError",
+    "_parse_argv",
+    "main",
 ]
 
 _INSTALL_HINT = (
@@ -100,7 +104,7 @@ def _import_agents() -> Any:
 
 
 def tool_spec_to_function_tool(spec: ToolSpec) -> Any:
-    """Convert a provider-agnostic :class:`ToolSpec` into ``agents.FunctionTool``.
+    """Convert a harness-agnostic :class:`ToolSpec` into ``agents.FunctionTool``.
 
     Field mapping: ``name`` → ``name``, ``description`` → ``description``,
     ``parameters`` → ``params_json_schema`` (defaulted to an empty object
@@ -178,7 +182,7 @@ def _reasoning_text(item: Any) -> str:
 def normalize_stream_event(event: Any) -> NormalizedEvent | None:
     """Map one ``openai-agents`` stream event to a :class:`NormalizedEvent`.
 
-    Returns ``None`` for events with no provider-agnostic meaning (raw
+    Returns ``None`` for events with no harness-agnostic meaning (raw
     protocol deltas other than text, assembled-message duplicates,
     unknown future kinds) — callers drop those. Pure and duck-typed on
     the SDK's own ``type`` / ``name`` Literal discriminators, so it
@@ -277,8 +281,8 @@ def _run_result_from_streamed(
 # ---------------------------------------------------------------------------
 
 
-class OpenAISession:
-    """:class:`ProviderSession` implementation over ``openai-agents``.
+class OpenAIAgentsSession:
+    """:class:`HarnessSession` implementation over ``openai-agents``.
 
     Lifecycle mirrors the Protocol (and the production ``ClaudeSDKClient``
     loop it was modelled on): one :meth:`start` (auth + ``Agent`` +
@@ -296,6 +300,23 @@ class OpenAISession:
             the SDK default).
         tools: :class:`ToolSpec` items converted via
             :func:`tool_spec_to_function_tool` at :meth:`start`.
+        mcp_servers: Declarative MCP server map in the SAME shape as the
+            ``mcpServers`` object of ``.mcp.json`` (``{name: {command,
+            args, env}}`` for stdio, or ``{url}`` / ``{type: sse|http,
+            url}`` for the network transports). Connected at
+            :meth:`start` and disconnected at :meth:`close`.
+
+            This is what gives an OpenAI-family agent the same tool rail
+            a Claude-backed one gets. Without it the session is
+            conversational only — it can reason about a task and cannot
+            touch a file, which measured 2026-08-12 as the reason a
+            locally-served model could not do agent work through sac even
+            though the model itself tool-calls correctly.
+
+            Declarative rather than pre-built server objects on purpose:
+            the callers that need this (the a2a handler, the runtime) read
+            a spec, and handing them a constructor would push SDK imports
+            and async connection management into every call site.
         session_id: Logical conversation key inside the state db.
             Defaults to ``agent_name``.
         db_path: SQLite file override (``":memory:"`` for ephemeral
@@ -317,6 +338,7 @@ class OpenAISession:
         model: str | None = None,
         instructions: str | None = None,
         tools: Sequence[ToolSpec] = (),
+        mcp_servers: Mapping[str, Any] | None = None,
         session_id: str | None = None,
         db_path: str | Path | None = None,
         max_turns: int | None = None,
@@ -327,6 +349,7 @@ class OpenAISession:
         self.model = model
         self.instructions = instructions
         self.tools = tuple(tools)
+        self.mcp_servers = dict(mcp_servers or {})
         self.session_id = session_id or agent_name
         self.db_path = db_path
         self.max_turns = max_turns
@@ -335,8 +358,9 @@ class OpenAISession:
         self._agent: Any = None
         self._session: Any = None
         self._started = False
+        self._connected_mcp: list[Any] = []
 
-    # -- ProviderSession surface ----------------------------------------
+    # -- HarnessSession surface ----------------------------------------
 
     async def start(self) -> None:
         """Open the session: auth, tool conversion, ``Agent`` + ``SQLiteSession``.
@@ -361,6 +385,21 @@ class OpenAISession:
             "name": self.agent_name,
             "tools": function_tools,
         }
+        # MCP servers must be CONNECTED before the Agent is built: the SDK
+        # lists their tools at construction, so a server attached unconnected
+        # contributes nothing and the agent simply behaves as if those tools
+        # did not exist — the silent-degradation shape this whole path exists
+        # to avoid. Any failure here is left to propagate: an agent that comes
+        # up believing it has tools it cannot reach is worse than one that
+        # refuses to start.
+        if self.mcp_servers:
+            servers = [
+                build_mcp_server(name, cfg) for name, cfg in self.mcp_servers.items()
+            ]
+            for server in servers:
+                await server.connect()
+                self._connected_mcp.append(server)
+            agent_kwargs["mcp_servers"] = servers
         if self.instructions is not None:
             agent_kwargs["instructions"] = self.instructions
         if model:
@@ -382,7 +421,7 @@ class OpenAISession:
         instead (per the Protocol docstring both are turn-ending).
         """
         if not self._started:
-            raise OpenAISessionError("OpenAISession.send() called before start().")
+            raise OpenAISessionError("OpenAIAgentsSession.send() called before start().")
         agents = _import_agents()
 
         joined: list[str] = []
@@ -414,13 +453,33 @@ class OpenAISession:
         yield NormalizedEvent(kind="result", result=result, raw=streamed)
 
     async def close(self) -> None:
-        """Tear down the session (closes the ``SQLiteSession`` db handle)."""
+        """Tear down the session: MCP connections, then the state db handle.
+
+        Every connected MCP server is cleaned up even if one raises —
+        a stdio server left connected is an orphaned SUBPROCESS, and one
+        failing teardown must not strand the rest. The first error is
+        re-raised after the sweep so the failure is still visible.
+        """
+        servers, self._connected_mcp = self._connected_mcp, []
+        first_error: Exception | None = None
+        for server in servers:
+            cleanup = getattr(server, "cleanup", None)
+            if cleanup is None:
+                continue
+            try:
+                await cleanup()
+            except Exception as exc:  # stx-allow: fallback (reason: one server's teardown must not strand the others; re-raised below)
+                first_error = first_error or exc
+
         session, self._session = self._session, None
         self._agent = None
         self._started = False
         close = getattr(session, "close", None)
         if callable(close):
             close()
+
+        if first_error is not None:
+            raise first_error
 
     # -- internals -------------------------------------------------------
 
@@ -437,3 +496,17 @@ class OpenAISession:
             )
         except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
             pass
+
+
+# CLI entry — it mirrors the claude-session argument parser so the runtime
+# adapter's fixed argv lands without ``ArgumentError`` on extra flags, and it
+# lives in _openai_session_cli because this module crossed the 512-line cap
+# when the entrypoint landed. Re-exported so `python -m
+# scitex_agent_container._runners.openai_session` — the module name the
+# apptainer argv builder emits — still resolves.
+from ._openai_session_cli import _parse_argv, main  # noqa: E402
+
+if __name__ == "__main__":  # pragma: no cover — exercised by the adapter
+    raise SystemExit(main())
+
+# EOF

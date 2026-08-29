@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from ._claude_flags_validation import validate_claude_flags
 from ._provider_validation import provider_is_active, validate_provider
 
 # Accepted shapes for ``spec.claude.model`` (F-CS7).
@@ -167,6 +168,9 @@ def validate_claude(spec: dict) -> list[str]:
                     "malformed id is silently discarded to a fresh session by "
                     "the SDK/CLI, so the pin would be lost without this check."
                 )
+
+    # spec.claude.flags — raw argv tokens forwarded to the claude CLI.
+    errors.extend(validate_claude_flags(claude_block))
 
     return errors
 
