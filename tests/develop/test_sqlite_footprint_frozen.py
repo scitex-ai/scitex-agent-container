@@ -89,6 +89,69 @@ The migration shrinks the second faster than the first, and a reader watching
 only the first would conclude SQLite was gone from sac while fifteen table
 definitions remained. Keeping them separate is what stops one number being
 read as an answer to the other question.
+
+src/ WAS NEVER THE WHOLE FOOTPRINT
+==================================
+Measured 2026-08-29: ten files under ``scripts/`` and eleven under ``tests/``
+carry an ``import sqlite3``, and none of them were visible to any gate here,
+because every scan hard-coded ``SRC.rglob``. That is not a rounding error
+next to the handful left under ``src/`` — it is the bulk of what remains,
+and a migration carrier is exactly the kind of file that gets copied into a
+new one. ``FROZEN_SQLITE_SCRIPTS`` and ``FROZEN_SQLITE_TESTS`` freeze those
+two populations under the same two-directional rule as ``FROZEN_SQLITE``.
+
+The docstring above says this gate "does not police test code". That was true
+of the ORIGINAL predicate and is now narrower than it reads: what the gate
+still does not do is forbid a test from touching SQLite — a ``:memory:``
+fixture creates nothing durable. What it does now is COUNT them, so the set
+can only shrink. The migration carriers under ``scripts/`` are temporary by
+construction and their tests go with them; freezing both is what makes their
+eventual removal show up as a deletion here rather than as nothing at all.
+
+WIDENING THE DDL SCAN MADE THE GATE MATCH ITS OWN SOURCE
+========================================================
+``_DEFINES_A_TABLE`` is an unanchored ``\\bCREATE\\s+TABLE\\b`` over file TEXT,
+so pointing it at ``tests/`` matches THIS FILE, whose prose says "CREATE
+TABLE" a dozen times while explaining the rule. It also matches PostgreSQL
+DDL in migration tests, and three modules that merely quote the phrase in a
+docstring to say the schema issues ZERO of them. ``SCAN_EXEMPT`` carries
+those, each with a written reason, and is itself under a staleness gate — an
+exemption that stops matching must leave, or it becomes a blessed filename.
+
+THE IMPORT SCAN CANNOT SEE A VENDORED SQLite, AND THAT IS THE LIVE HOLE
+=======================================================================
+``agents.SQLiteSession(...)`` opens a real SQLite file on disk, per agent, and
+NOTHING in that call chain imports sqlite3 in this repo — the ``openai-agents``
+package does it. An import-based scan is structurally blind to it, and it was
+blind to it for the whole life of this file. ``FROZEN_VENDOR_SQLITE`` freezes
+the constructs instead of the import: ``SQLiteSession(``, ``SqliteDict(``,
+``create_engine("sqlite...``, ``aiosqlite``, ``apsw``, ``libsql``,
+``sqlite:///`` and ``.sqlite``/``.sqlite3`` path literals.
+
+``sqlite3.connect(`` is deliberately NOT among them. Any module calling it has
+already imported sqlite3 and is therefore covered by ``FROZEN_SQLITE``; adding
+it would only duplicate that coverage under a second name.
+
+WHEN THE FOOTPRINT REACHES ZERO, DELETE THE SETS — NOT THIS FILE
+================================================================
+The terminal action for the import ratchet is to delete ``FROZEN_SQLITE`` and
+its two tests (``test_no_module_outside_the_frozen_list_imports_sqlite`` and
+``test_the_frozen_list_has_no_stale_entries``), and likewise for each sibling
+set as its population empties. It is NOT to delete this file. The vendor scan
+must outlive them: ``SQLiteSession`` is the shape SQLite comes back in once
+nobody writes ``import sqlite3`` any more, and a repo with an empty
+``FROZEN_SQLITE`` and no vendor scan is precisely the six-months-later state
+the operator's instruction is about.
+
+THE POSITIVE CONTROLS ARE PLANTED FILES, NOT THE LIVE TREE
+==========================================================
+They used to assert that the live tree still contained something to find. At
+the end state of this migration the live tree is EMPTY BY DESIGN, so those
+controls would have passed forever without ever being able to fail — an
+unfailable control is worse than none, because the file still lists it. Each
+control now writes a known-positive file into ``tmp_path`` and asserts the
+scanner finds it there. The control exercises the SCANNER; the gates exercise
+the tree.
 """
 
 from __future__ import annotations
@@ -96,7 +159,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "scitex_agent_container"
+REPO = Path(__file__).resolve().parents[2]
+SRC = REPO / "src" / "scitex_agent_container"
+SCRIPTS = REPO / "scripts"
+TESTS = REPO / "tests"
+
+#: The three scanned populations, and the anchor each set's paths are written
+#: against. ``FROZEN_SQLITE`` / ``FROZEN_SQLITE_DDL`` / ``POSTGRES_DDL`` /
+#: ``FROZEN_VENDOR_SQLITE`` are SRC-relative, the convention this file started
+#: with and which is worth keeping because those entries are import paths a
+#: reader recognises. Everything added for ``scripts/`` and ``tests/`` is
+#: REPO-relative instead: ``SCAN_EXEMPT`` spans both roots, so a bare
+#: ``test_state_db.py`` would be ambiguous, and a repo-relative path pastes
+#: straight out of ``rg -l`` without a mental prefix step.
 
 #: The measured SQLite footprint on 2026-08-19, as repo-relative paths under
 #: ``src/scitex_agent_container/``. THIS LIST MAY ONLY SHRINK.
@@ -246,6 +321,91 @@ _IMPORTS_SQLITE = re.compile(
 )
 
 
+#: The measured SQLite footprint under ``scripts/`` on 2026-08-29, as
+#: REPO-relative paths. THIS LIST MAY ONLY SHRINK.
+#:
+#: Every one of these is a MIGRATION CARRIER: it reads a table out of a
+#: per-host ``state.db`` and writes it into PostgreSQL. They are the one place
+#: in the repo where opening SQLite is the whole point of the file, and they
+#: are temporary by construction — each one retires when its table's rows have
+#: landed everywhere. Freezing them is what makes that retirement visible: a
+#: carrier deleted without its entry deleted fails the staleness gate below.
+#:
+#: A NEW ENTRY HERE IS NOT AUTOMATICALLY FINE just because migrations are
+#: expected. The shape to refuse is a carrier copied to move a table that is
+#: already on PostgreSQL, or a script that opens ``state.db`` to ANSWER a
+#: question rather than to drain it — the second is sac reading SQLite at
+#: runtime wearing a script's filename.
+#:
+#: NOT IN THIS SET, and worth recording because the obvious guess is wrong:
+#: ``scripts/migrate_inbound_dispatches_to_postgres.py`` (added 2026-08-29 in
+#: #1267) does NOT import sqlite3. It reaches its source rows through
+#: ``_migrate_lib``, and its only mention of the engine is the string
+#: ``sqlite_id=`` in an operator-facing progress line. Its TEST does import
+#: sqlite3 — to build the source database the carrier reads — so the entry
+#: that exists for it lives in ``FROZEN_SQLITE_TESTS``, not here.
+FROZEN_SQLITE_SCRIPTS = frozenset(
+    {
+        # The shared carrier library: opens the source ``state.db`` read-only
+        # and hands rows to whichever migration imported it. Every entry below
+        # depends on this one, so it is the LAST to leave, not the first.
+        "scripts/_migrate_lib.py",
+        "scripts/migrate_a2a_ports_to_postgres.py",
+        "scripts/migrate_auth_state_to_postgres.py",
+        "scripts/migrate_comms_grants_to_postgres.py",
+        "scripts/migrate_diary_to_postgres.py",
+        "scripts/migrate_dispatches_to_postgres.py",
+        "scripts/migrate_incarnations_to_postgres.py",
+        "scripts/migrate_node_comms_policy_to_postgres.py",
+        "scripts/migrate_relocation_to_postgres.py",
+        "scripts/migrate_verdict_delivered_to_postgres.py",
+    }
+)
+
+
+#: The measured SQLite footprint under ``tests/`` on 2026-08-29, as
+#: REPO-relative paths. THIS LIST MAY ONLY SHRINK.
+#:
+#: WHY POLICE TESTS AT ALL, given the docstring's "a ``:memory:`` fixture
+#: creates nothing durable"? Because the two claims are different. Nothing
+#: here forbids a test from touching SQLite; this set COUNTS the tests that
+#: do, so the count cannot quietly go up. Two shapes make that worth doing:
+#: a test is the easiest place to reintroduce an engine assumption after the
+#: production code has left it, and a test file is the usual thing copied when
+#: a new module is written in the old style.
+#:
+#: The split by root mirrors the two reasons a test is in here at all. The
+#: ``develop/`` entries build a SQLite source database so a migration carrier
+#: has something to drain — they retire with their carrier. The
+#: ``scitex_agent_container/`` entries test code that still speaks SQLite —
+#: they retire when that code does.
+FROZEN_SQLITE_TESTS = frozenset(
+    {
+        # --- carrier tests: they CREATE a source state.db to be drained ---
+        # The shared fixture kit behind the channel-migration tests.
+        "tests/develop/_channel_migration_kit.py",
+        "tests/develop/test_migrate_channel_events.py",
+        "tests/develop/test_migrate_channel_events_overlap.py",
+        # Added 2026-08-29 with the carrier from #1267. The carrier itself
+        # does not import sqlite3 (see FROZEN_SQLITE_SCRIPTS); its test does,
+        # because something has to write the rows the carrier then reads.
+        "tests/develop/test_migrate_inbound_dispatches.py",
+        # The cross-carrier guard that every migration is dry-run by default:
+        # it opens the source db afterwards to prove nothing was written.
+        "tests/develop/test_migrate_scripts_do_not_write_by_default.py",
+        # --- tests of production code that still speaks SQLite ---
+        # Pairs with src ``_lifecycle/_rename_db.py``, which enumerates
+        # sqlite_master and is SQLite-ENGINE code rather than SQLite-backed.
+        "tests/scitex_agent_container/_lifecycle/test__rename_db.py",
+        "tests/scitex_agent_container/_state/test_state_db.py",
+        "tests/scitex_agent_container/_state/test_state_db_connect_branches.py",
+        "tests/scitex_agent_container/_state/test_state_db_health.py",
+        "tests/scitex_agent_container/_state/test_state_db_instances.py",
+        "tests/scitex_agent_container/_state/test_state_db_turns_errors_heartbeats.py",
+    }
+)
+
+
 #: Modules that DEFINE SQLite tables without opening a connection themselves —
 #: they hand their DDL to ``state_db.open_db``. Invisible to FROZEN_SQLITE by
 #: construction; see the module docstring. THIS LIST MAY ONLY SHRINK.
@@ -337,18 +497,115 @@ POSTGRES_DDL = frozenset(
 )
 
 
-def _modules_defining_tables() -> set[str]:
-    """Every module under src/ carrying CREATE TABLE DDL, as relative paths.
+#: DDL matches under ``scripts/`` and ``tests/`` that are not SQLite growth,
+#: as REPO-relative paths. Under the SAME staleness gate as the frozen sets:
+#: an entry that stops matching must be deleted, or the exemption decays into
+#: a blessed filename that a future file inherits.
+#:
+#: EVERY ENTRY CARRIES ITS REASON, and the reasons are not interchangeable —
+#: "it is PostgreSQL DDL" and "it only says the words in a docstring" fail in
+#: different directions, and a reader deciding whether a NEW entry belongs
+#: needs to know which case they are looking at.
+#:
+#: Files already in ``FROZEN_SQLITE_SCRIPTS`` / ``FROZEN_SQLITE_TESTS`` are
+#: NOT repeated here. They are unioned in by the gate, exactly as
+#: ``FROZEN_SQLITE`` is unioned into the ``src/`` DDL gate: a file already
+#: frozen as a SQLite opener is allowed to define the tables it opens.
+SCAN_EXEMPT = frozenset(
+    {
+        # POSTGRESQL DDL. ``CREATE TABLE IF NOT EXISTS sac_channel_import`` —
+        # the provenance ledger recording which id windows of
+        # ``sac_channel_events`` came from an import. BIGINT / DOUBLE
+        # PRECISION columns, created in the store this fleet is migrating TO.
+        # Freezing it as SQLite would put a falsehood in an inventory.
+        "scripts/_channel_import_provenance.py",
+        # POSTGRESQL DDL. Creates ``store_reference`` and
+        # ``sac_channel_events`` through psycopg against a live cluster to
+        # test who ends up OWNING a migrated table.
+        "tests/develop/test_migrate_channel_events_ownership.py",
+        # POSTGRESQL DDL. ``_make_table`` builds throwaway relations in a
+        # temporary schema via psycopg + ``generate_series`` — PostgreSQL-only
+        # syntax, and the fixture for a bug about counting relations by name.
+        "tests/develop/test_migrate_instances_verify_named_relation.py",
+        # PROSE ONLY. The docstring says sac's ``init_schema`` now issues ZERO
+        # ``CREATE TABLE``. A comment describing the ABSENCE of DDL is DDL to
+        # an unanchored regex — the same trap that once made a ``host_store``
+        # heuristic excuse ``_state/state_db_schema.py``.
+        "tests/scitex_agent_container/_helpers/fleet_root.py",
+        # PROSE ONLY. Same sentence, same reason: it explains why a SELECT
+        # against a freshly created state.db cannot find a table.
+        "tests/scitex_agent_container/_lifecycle/test__rename.py",
+        # PROSE ONLY. Names ``CREATE TABLE lineage`` in a docstring to say
+        # that a stray one sneaking back into the schema is what this test
+        # exists to catch. The gate must not read a guard as the thing it
+        # guards against.
+        "tests/scitex_agent_container/_state/test_state_db_nodes.py",
+        # THIS FILE. Widening the DDL scan to ``tests/`` makes the gate match
+        # its own source, twice over: the prose above says "CREATE TABLE" a
+        # dozen times while explaining the rule, and the planted-file control
+        # writes a literal ``CREATE TABLE`` into tmp_path to prove the scanner
+        # works. Listed EXPLICITLY rather than special-cased inside the
+        # scanner, because a scanner that silently skips one path is a scanner
+        # nobody can audit — and the one path it would skip is the gate.
+        "tests/develop/test_sqlite_footprint_frozen.py",
+    }
+)
+
+
+# A SQLite database opened WITHOUT importing sqlite3 — the hole the import
+# scan cannot see by construction, and the one that was live for the whole
+# life of this file. ``agents.SQLiteSession(...)`` writes a real per-agent
+# database under ~/.scitex/agent-container/runtime/openai-sessions/; the
+# sqlite3 import happens inside ``openai-agents``, not here.
+#
+# ``sqlite3.connect(`` is deliberately absent: it is not a VENDOR construct,
+# and every module that calls it necessarily imports sqlite3, so
+# FROZEN_SQLITE already holds it. Adding it here would double-count the
+# modules the import scan already covers without catching anything new.
+_CONSTRUCTS_VENDOR_SQLITE = re.compile(
+    r"SQLiteSession\s*\(|"
+    r"SqliteDict\s*\(|"
+    r"create_engine\s*\(\s*.{0,3}sqlite|"
+    r"aiosqlite|"
+    r"\bapsw\b|"
+    r"\blibsql\b|"
+    r"sqlite:///|"
+    r"\.sqlite3?\b"
+)
+
+#: Modules under ``src/`` that open SQLite through a VENDOR library rather
+#: than through sqlite3, as SRC-relative paths. THIS LIST MAY ONLY SHRINK.
+#:
+#: Measured 2026-08-29 — and the measurement is the point. Both entries were
+#: invisible to every gate in this file until the scan existed, which is the
+#: concrete evidence that "no module imports sqlite3" was never the same
+#: statement as "no module opens SQLite".
+FROZEN_VENDOR_SQLITE = frozenset(
+    {
+        # ``agents.SQLiteSession(self.session_id, db_path=str(db_path))`` —
+        # conversation state for the OpenAI runner. The database is real and
+        # per-agent; only the sqlite3 import is somebody else's.
+        "_runners/openai_session.py",
+        # Resolves WHERE that database lives: builds ``<agent>.sqlite3`` under
+        # the runtime state dir, and documents the ``:memory:`` sentinel that
+        # opts out of a file entirely.
+        "runtimes/_openai_sdk_common.py",
+    }
+)
+
+
+def _modules_defining_tables(root: Path) -> set[str]:
+    """Every file under ``root`` carrying CREATE TABLE DDL, ``root``-relative.
 
     Deliberately NOT excluding modules that also import sqlite3 — a module can
     legitimately be in both sets, and subtracting one from the other would
     make each list depend on the other's accuracy.
+
+    ``root`` is a PARAMETER rather than the hard-coded ``SRC`` it used to be:
+    the same rule has to reach ``scripts/`` and ``tests/``, and a second
+    copy of the walk would be a second thing to keep in step.
     """
-    found: set[str] = set()
-    for path in SRC.rglob("*.py"):
-        if _DEFINES_A_TABLE.search(path.read_text(encoding="utf-8", errors="replace")):
-            found.add(path.relative_to(SRC).as_posix())
-    return found
+    return _scan(root, _DEFINES_A_TABLE)
 
 
 def _modules_defining_postgres_tables() -> set[str]:
@@ -357,41 +614,82 @@ def _modules_defining_postgres_tables() -> set[str]:
     Intersected with the scan rather than returned raw, so an entry that
     stops defining a table cannot go on excusing the file it names.
     """
-    return POSTGRES_DDL & _modules_defining_tables()
+    return POSTGRES_DDL & _modules_defining_tables(SRC)
 
 
-def _modules_importing_sqlite() -> set[str]:
-    """Every module under src/ that imports sqlite3, as relative paths."""
+def _modules_importing_sqlite(root: Path) -> set[str]:
+    """Every file under ``root`` that imports sqlite3, ``root``-relative."""
+    return _scan(root, _IMPORTS_SQLITE)
+
+
+def _modules_constructing_vendor_sqlite(root: Path) -> set[str]:
+    """Every file under ``root`` opening SQLite via a vendor library."""
+    return _scan(root, _CONSTRUCTS_VENDOR_SQLITE)
+
+
+def _scan(root: Path, pattern: re.Pattern[str]) -> set[str]:
+    """Paths under ``root`` whose SOURCE TEXT matches ``pattern``.
+
+    Text, not AST, and that is deliberate in both directions. It is why a
+    docstring quoting ``CREATE TABLE`` matches (hence ``SCAN_EXEMPT``), and it
+    is also why the vendor scan can see ``agents.SQLiteSession(`` without
+    resolving what ``agents`` is bound to at runtime.
+    """
     found: set[str] = set()
-    for path in SRC.rglob("*.py"):
-        if _IMPORTS_SQLITE.search(path.read_text(encoding="utf-8", errors="replace")):
-            found.add(path.relative_to(SRC).as_posix())
+    for path in root.rglob("*.py"):
+        if pattern.search(path.read_text(encoding="utf-8", errors="replace")):
+            found.add(path.relative_to(root).as_posix())
     return found
 
 
-def test_the_scan_actually_finds_something() -> None:
-    """POSITIVE CONTROL — a zero here would make both gates below vacuous.
+def _repo_relative(root: Path, names: set[str]) -> set[str]:
+    """Re-anchor ``root``-relative scan output at the repository root."""
+    prefix = root.relative_to(REPO).as_posix()
+    return {f"{prefix}/{name}" for name in names}
 
-    An empty result and a healthy codebase produce the same PASS in the two
-    tests that follow, so without this the whole file could go green because
-    the glob broke rather than because the rule holds.
+
+def _files_outside_src_defining_tables() -> set[str]:
+    """CREATE TABLE matches under ``scripts/`` and ``tests/``, repo-relative."""
+    found: set[str] = set()
+    for root in (SCRIPTS, TESTS):
+        found |= _repo_relative(root, _modules_defining_tables(root))
+    return found
+
+
+def test_the_import_scan_finds_a_planted_import(tmp_path: Path) -> None:
+    """POSITIVE CONTROL — the SCANNER works, proved on a file we planted.
+
+    THIS USED TO ASSERT AGAINST THE LIVE TREE, and that was a control with an
+    expiry date. Its message even said so: "either every SQLite user was
+    removed (delete this file) or the scan is broken". At the end state of
+    this migration the first branch is the DESIGNED outcome, so a live-tree
+    control passes forever and can no longer fail — an unfailable check that
+    the config still lists, which is worse than no check because it reads as
+    coverage.
+
+    A planted file separates the two questions the old control conflated. This
+    one asks "does the scanner find what is there", which stays answerable at
+    zero. The gates below ask "what is there", which is allowed to reach zero.
     """
-    # Arrange
-    scanned_root = SRC
+    # Arrange — a subdirectory too, so a broken rglob cannot pass by luck.
+    planted = tmp_path / "pkg" / "planted.py"
+    planted.parent.mkdir(parents=True)
+    planted.write_text("import sqlite3\n", encoding="utf-8")
+    (tmp_path / "innocent.py").write_text("x = 1\n", encoding="utf-8")
     # Act
-    found = _modules_importing_sqlite()
+    found = _modules_importing_sqlite(tmp_path)
     # Assert
-    assert found, (
-        f"scanned {scanned_root} for sqlite3 imports and found NONE. Either every "
-        "SQLite user was removed (delete this file and FROZEN_SQLITE with it) "
-        "or the scan is broken. Do not assume the former."
+    assert found == {"pkg/planted.py"}, (
+        "the sqlite3 import scan did not find a planted `import sqlite3` at "
+        f"pkg/planted.py; it returned {sorted(found)}. Every gate below is "
+        "vacuous until this passes."
     )
 
 
 def test_no_module_outside_the_frozen_list_imports_sqlite() -> None:
     """The operator's rule: SQLite must not grow back."""
     # Arrange
-    found = _modules_importing_sqlite()
+    found = _modules_importing_sqlite(SRC)
     # Act
     new = sorted(found - FROZEN_SQLITE)
     # Assert
@@ -411,7 +709,7 @@ def test_the_frozen_list_has_no_stale_entries() -> None:
     and a later module reusing that path inherits permission silently.
     """
     # Arrange
-    found = _modules_importing_sqlite()
+    found = _modules_importing_sqlite(SRC)
     # Act
     stale = sorted(FROZEN_SQLITE - found)
     # Assert
@@ -419,7 +717,77 @@ def test_the_frozen_list_has_no_stale_entries() -> None:
         "FROZEN_SQLITE lists modules that no longer import sqlite3: "
         f"{stale}. Good news — the footprint shrank. Delete these entries so "
         "the list keeps describing reality; a stale allowlist re-opens the "
-        "door it was written to close."
+        "door it was written to close. When the set empties, delete "
+        "FROZEN_SQLITE and its two import tests — NOT this file, which still "
+        "owns the vendor scan."
+    )
+
+
+# ----------------------------------------------------------------------
+# The same rule over scripts/ and tests/ — populations no gate could see
+# until 2026-08-29, and together larger than what remains under src/.
+# ----------------------------------------------------------------------
+
+
+def test_no_script_outside_the_frozen_list_imports_sqlite() -> None:
+    """A migration carrier is expected. A NEW one is a decision."""
+    # Arrange
+    found = _repo_relative(SCRIPTS, _modules_importing_sqlite(SCRIPTS))
+    # Act
+    new = sorted(found - FROZEN_SQLITE_SCRIPTS)
+    # Assert
+    assert not new, (
+        "NEW SQLITE UNDER scripts/. These scripts import sqlite3 and are not "
+        f"in the frozen footprint: {new}. The legitimate shape is a carrier "
+        "that DRAINS a state.db table into PostgreSQL and then retires. A "
+        "script that opens state.db to ANSWER a question is sac reading "
+        "SQLite at runtime wearing a script's filename — raise it."
+    )
+
+
+def test_the_frozen_script_list_has_no_stale_entries() -> None:
+    """A retired carrier must take its entry with it."""
+    # Arrange
+    found = _repo_relative(SCRIPTS, _modules_importing_sqlite(SCRIPTS))
+    # Act
+    stale = sorted(FROZEN_SQLITE_SCRIPTS - found)
+    # Assert
+    assert not stale, (
+        "FROZEN_SQLITE_SCRIPTS lists scripts that no longer import sqlite3: "
+        f"{stale}. These carriers are meant to retire — delete the entries so "
+        "the deletion is recorded rather than leaving a blessed filename a "
+        "future script can inherit."
+    )
+
+
+def test_no_test_outside_the_frozen_list_imports_sqlite() -> None:
+    """Counting the tests that touch SQLite, not forbidding them."""
+    # Arrange
+    found = _repo_relative(TESTS, _modules_importing_sqlite(TESTS))
+    # Act
+    new = sorted(found - FROZEN_SQLITE_TESTS)
+    # Assert
+    assert not new, (
+        "NEW SQLITE UNDER tests/. These tests import sqlite3 and are not in "
+        f"the frozen footprint: {new}. This set does not forbid a test from "
+        "touching SQLite — it stops the count going up quietly. If the test "
+        "covers a carrier, it retires with the carrier; if it covers "
+        "production code that still speaks SQLite, that code is the thing to "
+        "raise."
+    )
+
+
+def test_the_frozen_test_list_has_no_stale_entries() -> None:
+    """A test that stopped using SQLite must leave the list."""
+    # Arrange
+    found = _repo_relative(TESTS, _modules_importing_sqlite(TESTS))
+    # Act
+    stale = sorted(FROZEN_SQLITE_TESTS - found)
+    # Assert
+    assert not stale, (
+        "FROZEN_SQLITE_TESTS lists tests that no longer import sqlite3: "
+        f"{stale}. Delete the entries — the list is an inventory, not a set "
+        "of blessed filenames."
     )
 
 
@@ -428,19 +796,26 @@ def test_the_frozen_list_has_no_stale_entries() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_the_ddl_scan_actually_finds_something() -> None:
-    """POSITIVE CONTROL — a zero here would make both DDL gates vacuous.
+def test_the_ddl_scan_finds_a_planted_table(tmp_path: Path) -> None:
+    """POSITIVE CONTROL — the DDL SCANNER works, on a file we planted.
 
-    Same reasoning as the import scan's control: an empty result and a
-    SQLite-free codebase produce the same PASS below, so without this the
-    whole section could go green because the glob broke.
+    Same correction as the import control above, for the same reason: the live
+    tree is allowed to reach zero CREATE TABLE, so a live-tree assertion here
+    would stop being able to fail exactly when the migration succeeded.
     """
     # Arrange
-    scanned_root = SRC
+    planted = tmp_path / "pkg" / "planted.py"
+    planted.parent.mkdir(parents=True)
+    planted.write_text('DDL = "CREATE TABLE t (a int);"\n', encoding="utf-8")
+    (tmp_path / "innocent.py").write_text("x = 1\n", encoding="utf-8")
     # Act
-    found = _modules_defining_tables()
+    found = _modules_defining_tables(tmp_path)
     # Assert
-    assert found, f"no CREATE TABLE found anywhere under {scanned_root}"
+    assert found == {"pkg/planted.py"}, (
+        "the DDL scan did not find a planted CREATE TABLE at pkg/planted.py; "
+        f"it returned {sorted(found)}. Every DDL gate below is vacuous until "
+        "this passes."
+    )
 
 
 def test_no_module_defines_a_new_sqlite_table() -> None:
@@ -453,7 +828,7 @@ def test_no_module_defines_a_new_sqlite_table() -> None:
     # Arrange
     frozen = FROZEN_SQLITE_DDL | FROZEN_SQLITE | _modules_defining_postgres_tables()
     # Act
-    new = sorted(_modules_defining_tables() - frozen)
+    new = sorted(_modules_defining_tables(SRC) - frozen)
     # Assert
     assert not new, (
         "these modules define SQLite tables and are not frozen: "
@@ -513,7 +888,7 @@ def test_the_ddl_freeze_list_has_no_stale_entries() -> None:
     allowlist rots into blessed filenames that a future module inherits.
     """
     # Arrange
-    defining = _modules_defining_tables()
+    defining = _modules_defining_tables(SRC)
     # Act
     stale = sorted(FROZEN_SQLITE_DDL - defining)
     # Assert
@@ -521,4 +896,177 @@ def test_the_ddl_freeze_list_has_no_stale_entries() -> None:
         "FROZEN_SQLITE_DDL lists modules that no longer define a table: "
         f"{stale}. Delete the entries — the list is an inventory, not a "
         "set of blessed filenames."
+    )
+
+
+# ----------------------------------------------------------------------
+# The DDL scan over scripts/ and tests/ — where it matches PostgreSQL,
+# matches prose about the absence of DDL, and matches this file.
+# ----------------------------------------------------------------------
+
+
+def test_no_file_outside_src_defines_an_unfrozen_table() -> None:
+    """CREATE TABLE under scripts/ or tests/ must be accounted for.
+
+    A migration carrier's test writes SQLite DDL because it has to build the
+    database the carrier drains — legitimate, and already frozen by its import
+    entry. What must not pass silently is a NEW file defining a SQLite table
+    outside src/, which is the same growth the src/ gate refuses, one
+    directory across.
+    """
+    # Arrange
+    frozen = SCAN_EXEMPT | FROZEN_SQLITE_SCRIPTS | FROZEN_SQLITE_TESTS
+    # Act
+    new = sorted(_files_outside_src_defining_tables() - frozen)
+    # Assert
+    assert not new, (
+        "these files under scripts/ or tests/ contain CREATE TABLE and are "
+        f"not accounted for: {new}. If it is SQLite growth, that is a "
+        "decision to raise. If it is PostgreSQL DDL, or a docstring merely "
+        "quoting the phrase, add it to SCAN_EXEMPT WITH THE REASON — an "
+        "exemption whose reason nobody wrote down cannot be re-checked."
+    )
+
+
+def test_the_scan_exemptions_have_no_stale_entries() -> None:
+    """An exemption that stops matching must leave.
+
+    Held to the SAME standard as the freeze lists, and for a sharper reason:
+    a stale freeze entry permits a filename, and a stale exemption permits a
+    filename that the gate has already been told to ignore. Both rot into
+    blessed names; the exemption rots faster, because it is the list a reader
+    skims past.
+    """
+    # Arrange
+    defining = _files_outside_src_defining_tables()
+    # Act
+    stale = sorted(SCAN_EXEMPT - defining)
+    # Assert
+    assert not stale, (
+        "SCAN_EXEMPT excuses files that no longer contain CREATE TABLE: "
+        f"{stale}. Delete the entries; each one is now permission granted to "
+        "a path rather than to a reason."
+    )
+
+
+def test_the_exemptions_never_overlap_the_frozen_sets() -> None:
+    """NEGATIVE CONTROL — SCAN_EXEMPT must not swallow a real SQLite user.
+
+    The sibling of ``test_the_postgres_exemption_does_not_excuse_the_sqlite_
+    schema``, and the same failure shape: an exemption list that grows to
+    cover the files being policed turns the gate green while the footprint
+    grows. ``tests/develop/_channel_migration_kit.py`` is the concrete case —
+    it really does CREATE SQLite tables, and it is accounted for by its
+    ``FROZEN_SQLITE_TESTS`` entry, which shrinks under a staleness gate, not
+    by an exemption, which is a standing pass.
+
+    Stated as DISJOINTNESS rather than as a list of files to keep out, so it
+    keeps meaning something as the frozen sets change. A named-file assertion
+    would go quietly vacuous the day that file is deleted; this one holds for
+    whatever is in the sets at the time.
+    """
+    # Arrange
+    frozen = FROZEN_SQLITE_SCRIPTS | FROZEN_SQLITE_TESTS
+    # Act
+    overlap = sorted(frozen & SCAN_EXEMPT)
+    # Assert
+    assert not overlap, (
+        "SCAN_EXEMPT excuses files that are also frozen SQLite users: "
+        f"{overlap}. A file cannot be both — the frozen entry is an inventory "
+        "line that must shrink, and the exemption is a standing pass that "
+        "would outlive it."
+    )
+
+
+# ----------------------------------------------------------------------
+# The vendor footprint — SQLite opened without importing sqlite3.
+# ----------------------------------------------------------------------
+
+
+def test_the_vendor_scan_finds_a_planted_construction(tmp_path: Path) -> None:
+    """POSITIVE CONTROL (walk) — the vendor scanner reaches nested files."""
+    # Arrange
+    planted = tmp_path / "pkg" / "planted.py"
+    planted.parent.mkdir(parents=True)
+    planted.write_text("s = agents.SQLiteSession('x')\n", encoding="utf-8")
+    (tmp_path / "innocent.py").write_text("x = 1\n", encoding="utf-8")
+    # Act
+    found = _modules_constructing_vendor_sqlite(tmp_path)
+    # Assert
+    assert found == {"pkg/planted.py"}, (
+        "the vendor scan did not find a planted SQLiteSession construction at "
+        f"pkg/planted.py; it returned {sorted(found)}."
+    )
+
+
+def test_the_vendor_regex_matches_the_real_construction() -> None:
+    """POSITIVE CONTROL (regex) — against the live call, character for
+    character.
+
+    Separate from the walk control on purpose. The walk proves the scanner
+    visits files; this proves the PATTERN matches the thing it was written
+    for. A regex can be narrowed by a well-meant edit — an anchor, a word
+    boundary — and still walk the whole tree finding nothing.
+    """
+    # Arrange — src/scitex_agent_container/_runners/openai_session.py:413
+    the_live_call = "agents.SQLiteSession(self.session_id, db_path=str(db_path))"
+    # Act
+    hit = _CONSTRUCTS_VENDOR_SQLITE.search(the_live_call)
+    # Assert
+    assert hit is not None, (
+        "the vendor pattern no longer matches the construction it exists to "
+        f"catch: {the_live_call!r}. The gate below is vacuous."
+    )
+
+
+def test_the_vendor_regex_does_not_match_a_docstring_mention() -> None:
+    """NEGATIVE CONTROL — prose ABOUT SQLiteSession must not match.
+
+    Measured 2026-08-29: SEVEN files under src/ name ``SQLiteSession`` and
+    exactly ONE constructs it. If the pattern dropped the ``\\(`` and matched
+    the bare name, the frozen set would have to grow sevenfold to hold every
+    module that merely DOCUMENTS the session db — and a list of documenters
+    is not an inventory of databases. This is the same inversion that once let
+    a ``host_store`` heuristic excuse the real SQLite schema module: a comment
+    describing a thing is that thing, to a regex.
+    """
+    # Arrange — src/scitex_agent_container/_runners/_openai_session_cli.py:21
+    the_prose = "(the ``SQLiteSession`` db persists turns under the agent's own name,"
+    # Act
+    hit = _CONSTRUCTS_VENDOR_SQLITE.search(the_prose)
+    # Assert
+    assert hit is None, (
+        f"the vendor pattern matched PROSE, at {hit.group(0)!r} in "
+        f"{the_prose!r}. A scan that reads documentation as usage inverts: "
+        "the set stops being an inventory of who opens a database."
+    )
+
+
+def test_no_module_outside_the_vendor_list_opens_sqlite() -> None:
+    """SQLite through a vendor library is still SQLite."""
+    # Arrange
+    found = _modules_constructing_vendor_sqlite(SRC)
+    # Act
+    new = sorted(found - FROZEN_VENDOR_SQLITE)
+    # Assert
+    assert not new, (
+        "NEW VENDORED SQLITE. These modules open a SQLite database through a "
+        f"third-party library rather than through sqlite3: {new}. No import "
+        "check can see this — the sqlite3 import happens inside the vendor "
+        "package — which is exactly why it is frozen separately. A new "
+        "per-agent SQLite file is the same decision as a new state.db, "
+        "whoever writes the connect()."
+    )
+
+
+def test_the_vendor_list_has_no_stale_entries() -> None:
+    """The vendor list is an inventory too."""
+    # Arrange
+    found = _modules_constructing_vendor_sqlite(SRC)
+    # Act
+    stale = sorted(FROZEN_VENDOR_SQLITE - found)
+    # Assert
+    assert not stale, (
+        "FROZEN_VENDOR_SQLITE lists modules that no longer construct a vendor "
+        f"SQLite database: {stale}. Delete the entries."
     )
