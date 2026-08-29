@@ -24,6 +24,24 @@ versioning follows [SemVer](https://semver.org/).
   Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
 
 ### Fixed
+- **`agent_send`'s non-blocking dispatch reported `delivered_subscriber_count:
+  1` for an agent that had NEVER been started.** Three task cards were routed
+  to `scitex-hpc` (`status=defined`, zero tmux sessions) on 2026-08-29; every
+  `agent_send` call reported `status="dispatched"` with a hardcoded literal
+  `1`, never a measurement — on the cross-host / in-container BROKERED path
+  neither loud-failure gate (`pid_alive is False` / `port_reachable is
+  False`) can ever fire, because `pid_alive` is always `None` there by design
+  and `port_reachable` is `None` for any non-local target. `agent_send` and
+  `a2a_send` now attach a `status_code` field (`scitex_dev.status.StatusCode`,
+  ADR-0007) alongside the existing string `status`: `http/202 final=False`
+  for a genuinely-accepted-but-unverified dispatch (naming the probe to
+  confirm it), `scitex/AGENT_UNAVAILABLE final=True` for a registered agent
+  demonstrably not running, and `scitex/NOT_RESOLVABLE final=True` for a name
+  that does not resolve to a registered agent. `delivered_subscriber_count`
+  is now `1` only when a local probe actually confirmed the sidecar is
+  listening — `None`, never a fabricated `1`, when reachability could not be
+  verified from here. Backward compatible: every existing string `status`
+  value is unchanged, `status_code` is additive.
 - **`sac.fleet-reconcile`'s liveness was being read from the wrong
   instrument.** Hosts still carry ORPHAN per-leaf `<job>.timer` /
   `<job>.service` units from the retired lowering model, and on
