@@ -26,6 +26,20 @@ from scitex_agent_container._state import port_allocator as _pa
 from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state import state_db_instances as _instances
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -109,7 +123,7 @@ def test_resolve_a2a_port_falls_back_to_instance_when_allocator_empty(
 ) -> None:
     # Arrange — no port_allocator claim; an instance row holds the port.
     _instances.record_instance_start(
-        name="beta", host="other-host", a2a_port=31337, db_path=isolated_state_db
+        name="beta", host="other-host", a2a_port=31337
     )
     # Act
     result = _re.resolve_a2a_port("beta")
@@ -141,7 +155,6 @@ def test_resolve_a2a_host_returns_instance_host_when_set(
         name="gamma",
         host="other-host",
         a2a_port=40404,
-        db_path=isolated_state_db,
     )
     # Act
     result = _re.resolve_a2a_host("gamma")

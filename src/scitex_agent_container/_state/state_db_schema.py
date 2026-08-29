@@ -28,12 +28,18 @@ writer AND a live reader.
 
 from __future__ import annotations
 
-# Registry tables (F-CS11) — ``instances``, and nothing else.
+# Registry tables (F-CS11) — NONE. The block below is departure notes only.
 #
 # It was ``definitions``, ``instances``, ``events`` plus the renamed
-# ``instance_heartbeats`` until 2026-08-28. The three departure notes
-# below say what left and why; the short version is that ``instances`` is
-# the only one of the four that both a writer and a reader ever reached.
+# ``instance_heartbeats``. All four left on 2026-08-28: three because
+# nothing read them, and ``instances`` — the last one standing, and the
+# only one of the four that both a writer and a reader ever reached —
+# because it moved to the SHARED PostgreSQL store
+# (:mod:`.state_db_instances`).
+#
+# A ``_SCHEMA_REGISTRY`` that creates no table is kept rather than deleted
+# because the notes ARE the deliverable: each one records what left, what
+# it cost, and why the empty table would have been worse than none.
 _SCHEMA_REGISTRY = """
 -- ``definitions`` (id / name / yaml_path / yaml_sha256 / scope / runtime /
 -- first_seen_at, UNIQUE(yaml_path, yaml_sha256)) was defined here until
@@ -59,64 +65,34 @@ _SCHEMA_REGISTRY = """
 -- raise. Dropping the column is a separate change with a separate
 -- argument, and it is not this one.
 
-CREATE TABLE IF NOT EXISTS instances (
-    id                  TEXT PRIMARY KEY,
-    definition_id       TEXT,
-    name                TEXT NOT NULL,
-    host                TEXT NOT NULL,
-    scope               TEXT NOT NULL,
-    pid                 INTEGER,
-    ppid                INTEGER,
-    screen              TEXT,
-    workdir             TEXT,
-    a2a_port            INTEGER,
-    started_at          TEXT NOT NULL,
-    last_heartbeat_at   TEXT,
-    ended_at            TEXT,
-    exit_reason         TEXT,
-    iter_count          INTEGER DEFAULT 0,
-    input_tokens        INTEGER DEFAULT 0,
-    output_tokens       INTEGER DEFAULT 0,
-    -- Family-tree / cross-host columns (sac-agent-spawn design, Rule
-    -- B/D). ``bound_port`` mirrors ``a2a_port`` for new readers (both
-    -- written together so legacy ``a2a_port`` callers keep working);
-    -- ``remote`` is 1 for a cross-host-dispatched agent; ``spawned_by``
-    -- is the launching identity ("cli"/parent-agent-name) — the lineage
-    -- edge the spawn DAG is reconstructed from.
-    bound_port          INTEGER,
-    remote              INTEGER DEFAULT 0,
-    spawned_by          TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_instances_active
-    ON instances(name, host, scope) WHERE ended_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_instances_host
-    ON instances(host);
-
--- ``instance_heartbeats`` (seq AUTOINCREMENT / instance_id REFERENCES
--- instances(id) / ts / iter / input_tokens / output_tokens / pane_state)
--- was defined here until 2026-08-28, with a long note about ``seq`` being
--- what makes "latest heartbeat" MAX(seq) rather than an arbitrary tie on a
--- second-resolution ``ts``. That determinism argument was correct and it
--- was never once exercised: its writer ``update_heartbeat`` and its reader
--- ``latest_instance_heartbeat`` had ZERO callers anywhere in ``src/`` —
--- tests only — and the table held 0 rows on compute-01, compute-03,
--- compute-04 and nas-03. :mod:`.state_db_heartbeats` is deleted with it.
+-- ``instances`` (id / definition_id / name / host / scope / pid / ppid /
+-- screen / workdir / a2a_port / started_at / last_heartbeat_at / ended_at /
+-- exit_reason / iter_count / input_tokens / output_tokens / bound_port /
+-- remote / spawned_by, plus idx_instances_active and idx_instances_host)
+-- was defined here until 2026-08-28. It was the LARGEST table in this file
+-- — 603 rows on compute-04, nine caller modules — and unlike the three that
+-- left beside it, it left because it MOVED: :mod:`.state_db_instances` now
+-- reads and writes it in the shared PostgreSQL store.
 --
--- REMOVED rather than left behind, under the ``attempts`` ruling below,
--- and it had to go BEFORE ``definitions`` could: its FK named
--- ``instances(id)``, so it was a child row a reader could believe in.
+-- FOUR COLUMNS DID NOT MAKE THE TRIP, and each is named here rather than
+-- quietly dropped, because each is a real (accepted) change:
+--   ``definition_id``  a FK to ``definitions`` — a table nothing ever
+--                      INSERTed into, and now gone from this file too.
+--                      NULL on every row ever written.
+--   ``scope``          written as the literal 'global' by both writers and
+--                      read by nobody; it lived only inside
+--                      idx_instances_active(name, host, scope).
+--   ``ppid``           a parameter with no call site. NULL on every row.
+--   ``bound_port``     FOLDED into ``a2a_port`` rather than dropped. Both
+--                      columns always carried ONE value written twice, and
+--                      the split is what let two routing readers answer
+--                      "where do I send this" differently from the same
+--                      row. The store keeps one port and mirrors both KEYS
+--                      back out, so the readers cannot diverge again.
 --
--- WHAT THIS TAKES WITH IT, said out loud rather than discovered later:
--- ``update_heartbeat`` was ALSO the only writer of
--- ``instances.last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
--- ``output_tokens``. Those four columns had no live writer before this
--- change either — the function had no callers — so nothing that worked
--- stops working. But ``state_db_gc``'s heartbeat-staleness rule reads
--- ``last_heartbeat_at``, and with no writer it is a branch that cannot
--- fire. That is a pre-existing fact this change makes visible; repairing
--- it means deciding who beats, which is not a schema edit.
+-- Deleting this DDL drops NO existing rows: ``CREATE TABLE IF NOT EXISTS``
+-- simply stops being issued, so an old state.db keeps whatever it holds and
+-- ``scripts/migrate_instances_to_postgres.py`` is what carries it across.
 
 -- ``events`` (id AUTOINCREMENT / ts / instance_id / definition_id / kind /
 -- actor / payload_json, plus idx_events_instance) was defined here until

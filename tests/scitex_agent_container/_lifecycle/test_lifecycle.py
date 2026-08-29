@@ -35,6 +35,20 @@ from scitex_agent_container._lifecycle._start_outcome import (
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, real YAML on disk
 # ---------------------------------------------------------------------------

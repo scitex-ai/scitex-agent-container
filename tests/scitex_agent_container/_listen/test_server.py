@@ -40,6 +40,49 @@ from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
 from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
+
+def _bind_instance_port(name: str, port: int) -> None:
+    """Point ``name``'s live instances record at ``port``.
+
+    A partial ``Store.put`` — ``instances`` moved to the shared PostgreSQL
+    store on 2026-08-28, so there is no table to ``UPDATE``. The record was
+    just written by ``record_instance_start`` with ``a2a_port=0``; this binds
+    the loopback port the test actually listens on, which is what the
+    forwarder resolves.
+    """
+    from scitex_dev.store import ANY_REVISION
+
+    from scitex_agent_container._state.state_db_instances import (
+        live_instance_for_name,
+    )
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
+    )
+
+    row = live_instance_for_name(name)
+    run_with_reconnect(
+        lambda store: store.put(
+            {"id": row["id"], "host": row["host"], "a2a_port": port},
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 TOKEN = "test-token-abc123"
 
 # WI-4 cross-host forwarder: both apps in the loopback tests run
@@ -886,7 +929,7 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     # Arrange
     db = cross_host_env["db"]
     # Register the target as a live instance on host-a.
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
     # Permitted-peer is registered as a child of root, so is alice;
     # they share a group and ACL allows the send.
     record_lineage(child="permitted-peer", parent="root")
@@ -895,13 +938,9 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     host_a_port = _free_port()
     host_b_port = _free_port()
 
-    # Bind the actual port for host A onto the instances row so the
+    # Bind the actual port for host A onto the instances record so the
     # resolver routes to the right loopback.
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -968,16 +1007,12 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
     """
     # Arrange
     db = cross_host_env["db"]
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     host_a_port = _free_port()
     host_b_port = _free_port()
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1055,7 +1090,7 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     state_db.record_instance_start(
-        name="alice", host="host-z", a2a_port=9999, db_path=db
+        name="alice", host="host-z", a2a_port=9999
     )
     app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1213,12 +1248,8 @@ def _drive_ssh_cross_host_send(
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
 
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1359,12 +1390,8 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     state_db_nodes_grant.record_comms_policy(
         name="alice", inbound_siblings="deny"
     )
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 

@@ -4,8 +4,15 @@ The filter was added for ``sac registry sync``, which shipped only the
 ``comms_nodes`` delta. Both are gone as of 2026-08-28 — the directory moved
 to the shared PostgreSQL store, so there is no slice to ship and no verb to
 ship it. The filter itself stays useful for any subset of the tables that
-remain, and these tests now exercise it with ``instances`` — THE ONLY ONE
-LEFT, as of ``channel_events`` moving to the shared PostgreSQL (ADR-0023).
+remain — and as of 2026-08-28 NONE do. ``instances`` was the last name in
+``KNOWN_TABLES``, and it moved to the shared PostgreSQL store; the tuple is
+EMPTY.
+
+That is why every ACCEPTANCE case below became a REFUSAL case. The filter
+still has to behave correctly, and with nothing to accept its whole
+observable behaviour is what it rejects and how loudly — which is the half
+that protects an operator, because an accepted-but-empty export is the
+answer that reads as "this host has no history".
 
 They exercised it with ``lineage`` until 2026-08-28, then ``channel_events``
 / ``instances`` for the rest of that day. The subject of these tests is the
@@ -87,20 +94,28 @@ def test_export_state_no_tables_filter_includes_table(
     assert table in payload["tables"]
 
 
-def test_export_state_tables_filter_emits_the_named_tables_rows(
+def test_export_state_tables_filter_has_no_name_left_to_accept(
     db_path: Path,
 ) -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db import (
-        export_state,
-        record_instance_start,
-    )
+    """The acceptance case, inverted — there is nothing left to name.
 
-    record_instance_start("agent-a", host="h1")
+    It emitted ``instances`` rows until 2026-08-28. With ``KNOWN_TABLES``
+    empty the filter can only reject, and rejecting is the behaviour worth
+    protecting: an ACCEPTED name would produce ``{"instances": []}``, which
+    an operator reads as "this host has no lifecycle history" while
+    PostgreSQL holds all of it.
+    """
+    # Arrange
+    from scitex_agent_container._state.state_db import export_state
+
+    raised = False
     # Act
-    payload = export_state(tables=["instances"])
+    try:
+        export_state(tables=["instances"])
+    except ValueError:
+        raised = True
     # Assert
-    assert len(payload["tables"]["instances"]) == 1
+    assert raised is True
 
 
 def test_export_state_rejects_channel_events_now_that_it_moved(
@@ -151,31 +166,44 @@ def test_export_state_tables_filter_unknown_table_raises(
 # ---------------------------------------------------------------------------
 
 
-def test_db_export_tables_flag_exits_zero(db_path: Path) -> None:
+def test_db_export_tables_flag_exits_zero_with_no_filter(db_path: Path) -> None:
+    """The happy path is now the UNFILTERED export.
+
+    ``--tables instances`` exited zero until 2026-08-28. No name is
+    acceptable any more, so the zero-exit case this file needs as a control
+    — otherwise every assertion below is "it fails", which a totally broken
+    command also satisfies — is the export with no ``--tables`` at all.
+    """
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "instances"])
+    result = runner.invoke(db_export, [])
     # Assert
     assert result.exit_code == 0, result.output
 
 
-def test_db_export_tables_flag_emits_only_named_table(db_path: Path) -> None:
+def test_db_export_with_no_filter_emits_an_empty_tables_map(
+    db_path: Path,
+) -> None:
+    """The unfiltered export carries NOTHING, and says so structurally.
+
+    It emitted the named table's rows until 2026-08-28. With
+    ``KNOWN_TABLES`` empty the payload's ``tables`` map is empty — which is
+    the honest wire shape for "sac owns no SQLite tables" and is
+    distinguishable from ``{"instances": []}``, the shape that would have
+    read as "this host has no history".
+    """
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container.cli_pkg.db_group import db_export
 
-    record_instance_start("agent-a", host="h1")
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "instances"])
+    result = runner.invoke(db_export, [])
     payload = json.loads(result.stdout)
     # Assert
-    assert len(payload["tables"]["instances"]) == 1
+    assert payload["tables"] == {}
 
 
 def test_db_export_tables_flag_unknown_name_exits_two(
@@ -218,7 +246,7 @@ def test_db_export_tables_flag_rejects_channel_events(
 
     runner = CliRunner()
     # Act
-    result = runner.invoke(db_export, ["--tables", "channel_events,instances"])
+    result = runner.invoke(db_export, ["--tables", "channel_events"])
     # Assert
     assert result.exit_code == 2
 
@@ -254,18 +282,43 @@ def test_export_state_rejects_lineage_now_that_it_moved(
         export_state(tables=["lineage"])
 
 
-def test_db_export_tables_flag_csv_includes_instances(
+def test_db_export_tables_flag_rejects_instances_now_that_it_moved(
     db_path: Path,
 ) -> None:
-    # Arrange
+    # Arrange — this was ``..._csv_includes_instances`` until 2026-08-28,
+    # asserting that a two-name CSV carried both. ``instances`` moved to the
+    # shared store and left KNOWN_TABLES, which leaves NO known table — so
+    # there is no CSV to carry and the honest assertion is the refusal. It is
+    # also the refusal with the widest blast radius: an empty ``instances``
+    # array in an export reads as "no agent has ever run on this host" while
+    # PostgreSQL holds the fleet's whole lifecycle history.
+    #
+    # ``result.stdout`` is NOT parsed: a BadParameter writes the message to
+    # stderr and prints no JSON, so parsing it would fail for a reason that
+    # has nothing to do with the property under test.
     from scitex_agent_container.cli_pkg.db_group import db_export
 
     runner = CliRunner()
     # Act
     result = runner.invoke(db_export, ["--tables", "instances"])
-    payload = json.loads(result.stdout)
     # Assert
-    assert "instances" in payload["tables"]
+    assert result.exit_code != 0
+
+
+def test_export_state_rejects_instances_now_that_it_moved(
+    db_path: Path,
+) -> None:
+    # Arrange — the library-level half of the refusal above.
+    from scitex_agent_container._state.state_db import export_state
+
+    raised = False
+    # Act
+    try:
+        export_state(tables=["instances"])
+    except ValueError:
+        raised = True
+    # Assert
+    assert raised is True
 
 
 def test_db_export_tables_flag_rejects_comms_nodes(

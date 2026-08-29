@@ -1,129 +1,148 @@
-"""``resolve_node_host`` must not discard a usable port sitting in its own row.
+"""``a2a_port``/``bound_port`` — the split is GONE, and this file says how.
 
-The instances row carries BOTH ``a2a_port`` and ``bound_port`` — the writers
-populate them together (``record_instance_start(a2a_port=b, bound_port=b)``).
-``resolve_node_host`` selected only ``a2a_port``, so a row where just
-``bound_port`` survived resolved to "no port" and 502'd at the forwarder, while
-the sibling resolver ``_send_resolve`` — which has preferred ``bound_port`` over
-the legacy column since it was introduced — would have reached the same agent
-from the same row. Two resolvers, one row, one moment, two answers.
+WHAT THIS FILE USED TO TEST
+===========================
+The instances row carried BOTH columns and the writers populated them
+together, so a row where only ``bound_port`` survived resolved to "no port"
+in ``resolve_node_host`` and 502'd at the forwarder, while ``_send_resolve``
+— which preferred ``bound_port`` — reached the same agent from the same row.
+Two resolvers, one row, one moment, two answers. These tests pinned a
+FALLBACK that papered over that.
 
-The controls matter more than the fix here: preferring bound_port must not
-change WHICH HOST a name resolves to, and must not disturb the tombstone and
-fallback semantics that ``is_local_node`` and the comms_nodes fall-through
-depend on.
+WHAT IT TESTS NOW, AND WHY THE CHANGE IS NOT A COVERAGE LOSS
+============================================================
+The 2026-08-28 move to the shared store FOLDED the two columns into one
+field: ``COALESCE(a2a_port, bound_port)`` on the way in,
+``instance_as_dict`` mirroring the value back out under both KEYS on the way
+out. The state the fallback existed for — one column set, the other NULL —
+is no longer expressible, so a test that constructed it would be testing a
+shape the schema cannot produce.
 
-PA-306: no mocks; real on-disk SQLite under ``tmp_path``.
+Deleting the file would have been the wrong trade: the PROPERTY the fallback
+protected is still load-bearing, and it is now stronger. So each test is
+re-pointed at the property rather than at the mechanism:
 
-ONE TEST HERE TAKES ``pg_schema``, AND WHICH ONE IS THE POINT. Since
-2026-08-28 the comms_nodes fall-through is a read of the shared PostgreSQL
-store, so only the case that REACHES the fall-through — an unknown name,
-where the instances lookup misses — needs a database. Every test above it
-is answered by the instances row and never gets that far, which is itself
-the guarantee this file exists to protect: the port preference must not
-push a resolvable name into the fall-through.
+* "bound_port is used when a2a_port is NULL"  →  the two keys always AGREE.
+* "a2a_port wins when both are set"           →  they cannot differ.
+* the locality controls                       →  unchanged, and still the
+  weight-bearing half: the port must never decide WHICH HOST a name resolves
+  to.
+
+PA-306: no mocks. Records are written through the production ``Store.put``
+with the production schema, so every test needs ``pg_schema``.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
-from scitex_agent_container._state import state_db
+from scitex_agent_container._state.state_db_instances import live_instance_for_name
+from scitex_agent_container._state.state_db_instances_store import (
+    ACTOR,
+    instances_schema,
+    run_with_reconnect,
+    strip_unset,
+)
 from scitex_agent_container._state.state_db_nodes import (
     is_local_node,
     resolve_node_host,
 )
 
 
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    # Arrange
-    p = tmp_path / "state.db"
-    state_db.init_schema(p)
-    return p
+def _record(*, a2a_port) -> None:
+    """One live instances record for 'peer' with the given port.
 
-
-def _row(db_path: Path, *, a2a_port, bound_port) -> None:
-    """Insert one live instances row with the given port columns.
-
-    Written directly rather than through ``record_instance_start`` on
-    purpose: that writer sets ``a2a_port`` and ``bound_port`` from ONE
-    argument, so it cannot express the very state under test — a row
-    where only ``bound_port`` survives.
+    ``None`` is STRIPPED rather than written, which is how the production
+    writer records "no port". A field written as None is a stamp, and for the
+    IMMUTABLE fields that stamp is permanent.
     """
-    with state_db.open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO instances (id, name, host, scope, a2a_port, "
-            " bound_port, started_at, ended_at) "
-            "VALUES ('id-1', 'peer', 'host-a', 'global', ?, ?, "
-            "        '2026-08-20T00:00:00Z', NULL)",
-            (a2a_port, bound_port),
-        )
+    from scitex_dev.store import NEW_RECORD
+
+    values = strip_unset(
+        {
+            "name": "peer",
+            "a2a_port": a2a_port,
+            "started_at": "2026-08-20T00:00:00Z",
+        }
+    )
+    values.update({"id": "id-1", "host": "host-a", "remote": False})
+    run_with_reconnect(
+        lambda store: store.put(values, expected_revision=NEW_RECORD, actor=ACTOR)
+    )
 
 
 # ---------------------------------------------------------------------------
-# The defect: a usable bound_port was thrown away
+# The defect's root cause, removed rather than handled
 # ---------------------------------------------------------------------------
 
 
-def test_bound_port_is_used_when_a2a_port_is_null(db_path: Path) -> None:
-    # Arrange — only bound_port survived on this row
-    _row(db_path, a2a_port=None, bound_port=19012)
+def test_the_schema_declares_only_one_port_field() -> None:
+    # Arrange — two columns holding one fact is how the two drift, and they
+    # had. A fallback treats the drift; one field prevents it.
+    fields = set(instances_schema().fields)
     # Act
-    info = resolve_node_host(name="peer", db_path=db_path)
-    # Assert — resolved to 'no port' before the fix, then 502'd downstream
-    assert info is not None and info["a2a_port"] == 19012
+    duplicated = {"a2a_port", "bound_port"} <= fields
+    # Assert
+    assert duplicated is False
+
+
+def test_the_two_port_keys_always_agree(pg_schema: str) -> None:
+    # Arrange — the successor to "bound_port is used when a2a_port is NULL".
+    # Seven readers prefer ``bound_port`` and two prefer ``a2a_port``; they
+    # can no longer be pointed at different values.
+    _record(a2a_port=19012)
+    # Act
+    row = live_instance_for_name("peer")
+    # Assert
+    assert row["a2a_port"] == row["bound_port"] == 19012
+
+
+def test_a_record_with_no_port_reports_none_under_both_keys(
+    pg_schema: str,
+) -> None:
+    # Arrange — the state that 502s; still reported, never invented.
+    _record(a2a_port=None)
+    # Act
+    row = live_instance_for_name("peer")
+    # Assert
+    assert row["a2a_port"] is None and row["bound_port"] is None
 
 
 # ---------------------------------------------------------------------------
-# Controls — the preference must change the PORT and nothing else
+# Controls — locality must be untouched by any of this
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_port_still_wins_when_both_are_set(db_path: Path) -> None:
-    # Arrange — both populated and deliberately different
-    _row(db_path, a2a_port=19001, bound_port=19999)
+def test_the_host_is_unchanged_by_the_port(pg_schema: str) -> None:
+    # Arrange
+    _record(a2a_port=19012)
     # Act
-    info = resolve_node_host(name="peer", db_path=db_path)
-    # Assert — the legacy column keeps precedence; this is a fallback, not a swap
-    assert info is not None and info["a2a_port"] == 19001
+    info = resolve_node_host(name="peer")
+    # Assert — locality must not move when only the port changes
+    assert info is not None and info["host"] == "host-a"
 
 
-def test_a_row_with_neither_port_still_resolves_to_none_port(db_path: Path) -> None:
-    # Arrange — the state that 502s; still reported, not invented
-    _row(db_path, a2a_port=None, bound_port=None)
+def test_a_portless_record_still_resolves_to_a_host(pg_schema: str) -> None:
+    # Arrange — the case deliberately NOT given a fall-through: a live record
+    # means "the agent is on that host", port or no port.
+    _record(a2a_port=None)
     # Act
-    info = resolve_node_host(name="peer", db_path=db_path)
+    info = resolve_node_host(name="peer")
     # Assert
     assert info is not None and info["a2a_port"] is None
 
 
-def test_the_host_is_unchanged_by_the_port_preference(db_path: Path) -> None:
+def test_locality_is_unchanged_for_a_portless_record(pg_schema: str) -> None:
     # Arrange
-    _row(db_path, a2a_port=None, bound_port=19012)
+    _record(a2a_port=None)
     # Act
-    info = resolve_node_host(name="peer", db_path=db_path)
-    # Assert — locality must not move when only the port source changes
-    assert info is not None and info["host"] == "host-a"
-
-
-def test_locality_is_unchanged_for_a_portless_row(db_path: Path) -> None:
-    # Arrange — the case deliberately NOT given a fall-through
-    _row(db_path, a2a_port=None, bound_port=None)
-    # Act
-    local = is_local_node(name="peer", local_host="host-a", db_path=db_path)
-    # Assert — a live row still means "the agent is on that host"
+    local = is_local_node(name="peer", local_host="host-a")
+    # Assert
     assert local is True
 
 
-def test_an_unknown_name_still_resolves_to_none(
-    db_path: Path, pg_schema: str
-) -> None:
-    # Arrange — no row at all
+def test_an_unknown_name_still_resolves_to_none(pg_schema: str) -> None:
+    # Arrange — no record at all, so the comms_nodes fall-through runs.
     unknown = "never-registered"
     # Act
-    info = resolve_node_host(name=unknown, db_path=db_path)
+    info = resolve_node_host(name=unknown)
     # Assert — the fall-through must still return None, not a fabricated host
     assert info is None

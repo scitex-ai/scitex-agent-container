@@ -105,16 +105,27 @@ def test_dry_run_reports_the_board_identity_change(dry_run):
     assert needle in output
 
 
-def test_dry_run_reports_the_state_db_rows(dry_run):
-    # Arrange — ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL),
-    # then ``definitions.name`` for the rest of that day (deleted: no
-    # writer). Neither is among the state.db counts the dry run prints any
-    # more; ``instances.name`` is.
+def test_dry_run_reports_the_rows_it_would_carry(dry_run):
+    """The operator must see the count, wherever the rows now live.
+
+    ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL), then
+    ``definitions.name`` for the rest of that day (deleted: no writer), then
+    ``instances.name`` — which moved to the shared store as well. Every
+    remaining ``NAME_COLUMNS`` pair names a table ``init_schema`` no longer
+    creates, so the SQLite half of this report is now permanently empty and
+    ``build_plan`` merges ``count_instance_rename_rows`` into it under the
+    same ``table.column`` keys.
+
+    A needle that had followed the SQLite half down would have gone green on
+    an empty section, which is the failure this assertion exists to catch:
+    ``0 column(s)`` printed for an agent with hundreds of lifetime records.
+    """
+    # Arrange
     needle = "instances.name"
     # Act
     output = dry_run.output
     # Assert
-    assert needle in output
+    assert needle in output, output
 
 
 def test_dry_run_reports_the_overlay_move(dry_run):

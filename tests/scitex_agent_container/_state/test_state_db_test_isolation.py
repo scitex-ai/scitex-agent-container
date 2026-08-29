@@ -24,7 +24,10 @@ on passing while measuring a DIFFERENT database's isolation — which is the
 precise shape of the vacuous test this file exists to prevent, one level up.
 
 THE CANARY THEREFORE MOVES, AND STAYS ON SQLite. ``record_instance_start``
-writes the ``instances`` table, which is still in ``state.db``, so the
+writes the ``instances`` table, which moved to the shared PostgreSQL
+store on 2026-08-28 — so these two take ``pg_schema``, whose throwaway
+schema is what now supplies the isolation the temp file used to. The
+claim is unchanged and so is the hazard: a leaked row costs a wrong count,
 property under test is unchanged: a SECOND test seeing ZERO rows can only
 happen if it received a database of its own. The exhaustible-range argument
 above does not carry over — a leaked ``instances`` row costs a wrong count
@@ -71,7 +74,9 @@ def test_state_db_env_var_is_not_the_real_state_db() -> None:
     assert env_value != real
 
 
-def test_a_fresh_state_db_starts_with_an_empty_instances_table() -> None:
+def test_a_fresh_state_db_starts_with_an_empty_instances_table(
+    pg_schema: str,
+) -> None:
     """A fresh state.db holds no rows, so this test's own write is the only one."""
     # Arrange
     record_instance_start("isolation-probe-a", host="isolation-host")
@@ -81,7 +86,9 @@ def test_a_fresh_state_db_starts_with_an_empty_instances_table() -> None:
     assert len(active) == 1
 
 
-def test_a_second_test_also_starts_from_an_empty_instances_table() -> None:
+def test_a_second_test_also_starts_from_an_empty_instances_table(
+    pg_schema: str,
+) -> None:
     """FUNCTION-scope canary — the whole release fix rests on this.
 
     A DIFFERENT agent name in a DIFFERENT test still sees exactly ONE active

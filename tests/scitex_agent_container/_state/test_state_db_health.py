@@ -13,6 +13,8 @@ claim about fleet contents.
 
 from __future__ import annotations
 
+import pathlib
+
 import sqlite3
 
 import pytest
@@ -106,13 +108,28 @@ def test_a_zero_byte_file_is_distinguishable_from_a_missing_one(
     assert present.state != gone.state
 
 
-def test_a_foreign_sqlite_file_is_schemaless(other_database):
+def test_a_foreign_sqlite_file_can_no_longer_be_told_apart(other_database):
+    """``schemaless`` is RETIRED, and this test records why rather than going.
+
+    It asserted ``schemaless`` — "a real database, just not ours" — until
+    2026-08-28, when ``instances`` left SQLite as the last table
+    ``init_schema`` created. ``CORE_TABLES`` is empty, so there is no
+    signature left to fail; the probe can no longer distinguish somebody
+    else's database from ours BECAUSE OURS NO LONGER HAS ONE.
+
+    Reporting ``schemaless`` anyway would be the probe asserting "this is a
+    DIFFERENT database" from evidence it stopped collecting — a verdict our
+    own migration manufactured. So a readable SQLite file classifies as
+    ``populated``, which is the weaker but TRUE statement that the file is
+    readable, and the ``absent``/``empty`` verdicts (which still carry real
+    information about a path) are untouched.
+    """
     # Arrange
     path = other_database
     # Act
     result = inspect_store(path)
-    # Assert — a real database, just not ours.
-    assert result.state == "schemaless"
+    # Assert
+    assert result.state == "populated"
 
 
 def test_a_store_with_core_tables_is_populated(real_store):
@@ -178,11 +195,21 @@ def test_empty_advice_names_the_silent_schema_build(zero_byte):
     assert "empty tables" in described or "schema-init" in described
 
 
-def test_schemaless_advice_says_verify_the_path(other_database):
+def test_the_schemaless_remedy_clause_survives_for_when_a_table_returns():
+    """The clause is UNREACHABLE now; it must not be silently lost.
+
+    ``inspect_store`` can no longer produce ``schemaless`` (see
+    ``CORE_TABLES``), so this constructs the state directly rather than
+    driving the classifier. The message is the remedy an operator needs the
+    moment ``init_schema`` creates a table again, and deleting it would make
+    that day a silent regression instead of a one-line change.
+    """
     # Arrange
-    result = inspect_store(other_database)
+    from scitex_agent_container._state.state_db_health import StoreState
+
+    state = StoreState(path=pathlib.Path("/tmp/x.db"), state="schemaless")
     # Act
-    described = result.describe()
+    described = state.describe()
     # Assert
     assert "verify the path" in described.lower()
 
@@ -242,20 +269,31 @@ def test_the_core_tables_are_all_created_by_init_schema(tmp_path):
     assert missing_from_schema == []
 
 
-def test_the_core_is_not_empty(tmp_path):
-    """POSITIVE CONTROL — an empty core would make the test above vacuous.
+def test_an_empty_core_does_not_classify_every_file_as_ours_by_vacuous_truth(
+    other_database,
+):
+    """The POSITIVE CONTROL, inverted — because the core IS empty now.
 
-    ``all(... in tables)`` over an empty tuple is True, so a core that lost
-    its last name would pass the check above while
-    :func:`inspect_store` classified every SQLite file on the machine as
-    ours.
+    It used to assert ``len(CORE_TABLES) >= 1``, and it was right to: a
+    membership test over an empty tuple is vacuously true, so a core that
+    lost its last name would have made every SQLite file on the machine
+    classify as ours WITHOUT anything failing. That control did its job —
+    it is what caught this when ``instances``, the last table
+    ``init_schema`` created, left on 2026-08-28.
+
+    The core cannot be refilled: there is no table to name. So the guard
+    moves from the CONSTANT to the CLASSIFIER, which now checks
+    ``if CORE_TABLES and ...`` — an empty core means "no signature to
+    check", not "everything matches". The observable difference is in the
+    DESCRIPTION: a vacuous match would claim the file carries our tables,
+    and this asserts it does not say that.
     """
     # Arrange
-    declared = CORE_TABLES
+    result = inspect_store(other_database)
     # Act
-    count = len(declared)
+    described = result.describe()
     # Assert
-    assert count >= 1
+    assert "carries 0 table(s)" not in described
 
 
 def _table_names(path):

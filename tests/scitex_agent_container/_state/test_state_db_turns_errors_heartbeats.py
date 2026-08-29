@@ -112,9 +112,14 @@ def sqlite_table_names(db_path: Path) -> set[str]:
 
     init_schema()
     names = _table_names(db_path)
-    if "instances" not in names:
+    # The canary was a TABLE NAME until 2026-08-28 — ``instances``,
+    # then ``channel_events``. ``init_schema`` now creates NO table, so
+    # no name can stand for "the schema ran". The FILE existing is what
+    # is left, and it is still a real control: without it an absent
+    # diary table would prove nothing.
+    if not db_path.is_file():
         raise RuntimeError(
-            f"init_schema() left no `instances` table in {db_path}; the schema "
+            f"init_schema() created no database file at {db_path}; the schema "
             "never ran, so an absent diary table would prove nothing."
         )
     return names
@@ -124,17 +129,27 @@ def sqlite_table_names(db_path: Path) -> set[str]:
 def known_tables() -> set[str]:
     """``KNOWN_TABLES`` as a set, with the same control applied to it.
 
-    ``instances`` must be in there for this to be the whitelist the tests below
-    mean to inspect; an empty or wrong tuple would otherwise make every
-    "not whitelisted" assertion pass on its own.
+    ``channel_events`` must be in there for this to be the whitelist the tests
+    below mean to inspect; an empty or wrong tuple would otherwise make every
+    "not whitelisted" assertion pass on its own. The canary was ``instances``
+    until 2026-08-28, when that name left the tuple for the shared PostgreSQL
+    store — a control that has itself become false is worse than no control.
     """
     from scitex_agent_container._state.state_db import KNOWN_TABLES
 
     known = set(KNOWN_TABLES)
-    if "instances" not in known:
+    # The control was "``channel_events`` must be in there, or this is not
+    # the whitelist we mean" until 2026-08-28. KNOWN_TABLES is EMPTY now —
+    # ``instances`` was the last name and it moved to the shared store — so
+    # membership can no longer identify the tuple, and every "X is not
+    # whitelisted" assertion below is vacuously true. Asserting the tuple is
+    # EMPTY is the stronger statement that subsumes all of them: not "the
+    # diary is not exposed" but "NOTHING is".
+    if known:
         raise RuntimeError(
-            "KNOWN_TABLES does not contain `instances`; it is not the "
-            "whitelist these tests mean to inspect."
+            f"KNOWN_TABLES is expected to be EMPTY and holds {sorted(known)}; "
+            "the assertions below are about a whitelist that no longer has "
+            "members."
         )
     return known
 

@@ -3,22 +3,27 @@
 Replaces the per-agent JSON files under
 ``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``.
 
-WHAT IT HOLDS TODAY IS TWO TABLES: ``instances`` (the F-CS11 registry)
-plus ``channel_events`` (WI-1 durability). :data:`KNOWN_TABLES` is the
-list, and it is the list every generic reader walks.
+WHAT IT HOLDS TODAY IS ONE TABLE: ``channel_events`` (WI-1 durability).
+:data:`KNOWN_TABLES` is the list, and it is the list every generic reader
+walks — a list of one.
 
-The WI-2 spawn DAG, ``lineage``, was the third until 2026-08-28. It moved
-to the shared PostgreSQL store (:mod:`.state_db_lineage_store`), which is
-the one departure from this file where an empty leftover would have been
-worse than a crash: every reader treats "no row for this child" as ROOT,
-and a root MAY SPAWN. See the departure note in :mod:`.state_db_schema`.
+The WI-2 spawn DAG, ``lineage``, and the F-CS11 registry's ``instances``
+were the other two until 2026-08-28. Both moved to the shared PostgreSQL
+store (:mod:`.state_db_lineage_store` and :mod:`.state_db_instances`), and
+for each an empty leftover would have been worse than a crash: every
+reader treats "no ``lineage`` row for this child" as ROOT, and a root MAY
+SPAWN; every reader treats an empty ``instances`` as "nothing is running",
+which is what decides whether to start a SECOND copy of a live agent. See
+the departure notes in :mod:`.state_db_schema`.
 
 The F-CS11 registry was ``definitions`` / ``instances`` / ``events``, with
 ``instance_heartbeats`` (the legacy ``heartbeats`` time series, tied to an
-``instances.id``) added in phase 2. Three of those four left on
-2026-08-28: ``definitions`` and ``instance_heartbeats`` had no writer at
-all, and ``events`` had no reader. :mod:`state_db_schema` carries a
-departure note for each.
+``instances.id``) added in phase 2. ALL FOUR left on 2026-08-28:
+``definitions`` and ``instance_heartbeats`` had no writer at all, ``events``
+had no reader, and ``instances`` — the only one of the four that both a
+writer and a reader ever reached — MOVED to the shared PostgreSQL store
+(:mod:`state_db_instances`). :mod:`state_db_schema` carries a departure note
+for each.
 
 The single-file layout makes backup/sync trivial (one ``cp``). It also
 kept the legacy ``actions.db`` table (``attempts``) co-located so queries
@@ -56,7 +61,22 @@ module so ``from ...state_db import X`` imports keep working:
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
     latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
-  * :mod:`state_db_migrations` — idempotent schema migrations.
+  * :mod:`state_db_migrations` was here until 2026-08-28 — idempotent
+    ``ALTER TABLE`` steps run on every ``init_schema``. It is DELETED, with
+    its last function: ``migrate_instances_add_family_tree_cols`` ALTERed
+    ``instances`` to add ``bound_port``/``remote``/``spawned_by``, and that
+    table moved to the shared PostgreSQL store. Its two predecessors went
+    earlier the same day with ``instance_heartbeats`` and
+    ``node_comms_policy``.
+
+    The module was kept for one commit as departure notes with no code, and
+    that is the shape this package deletes rather than preserves: it had no
+    importer, and its ``import sqlite3`` survived only to satisfy the SQLite
+    freeze list. WHAT THE NOTES SAID, kept because one of them is a real
+    ruling: the two heartbeat migrations could still FIRE on an old enough
+    database, re-creating a table the schema had just declared it does not
+    maintain — a migration whose success restores something the schema
+    deleted is not a safety net. The others were permanent no-ops.
 """
 
 from __future__ import annotations
@@ -76,9 +96,8 @@ from typing import Iterator
 # re-export here so those import sites keep resolving.
 from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
-from .state_db_migrations import (
-    migrate_instances_add_family_tree_cols,
-)
+# There is no ``state_db_migrations`` import here any more, because there is
+# no such module — see the docstring above for what it did and why it went.
 from .state_db_schema import (
     _SCHEMA_ACL,
     _SCHEMA_REGISTRY,
@@ -100,23 +119,23 @@ DEFAULT_DB_PATH = Path(
 # Tables exposed by `sac db query --table=<t>`. Whitelisted so users
 # can't pass arbitrary identifiers through str-format SQL.
 KNOWN_TABLES = (
-    "instances",
-    # ``channel_events`` left on 2026-08-28 -- the LAST SQLite table sac
-    # owned. It is now ``sac_channel_events`` / ``sac_channel_cursor`` in the
-    # shared PostgreSQL (:mod:`.state_db_channel_store`). Removed rather than
-    # whitelisted for the usual reason -- a name with no table answers every
-    # generic reader (``table_counts`` behind ``sac db show``, ``export_state``
-    # / ``import_state``, the ``click.Choice`` for ``sac db query``) with a
-    # plausible ZERO -- and for one specific to this table: zero channel
-    # events reads as "this agent has no waiting messages", which is exactly
-    # what an undelivered inbox looks like when it is fine. It is also the
-    # entry that made ``sac db export`` ship every agent's full MESSAGE
-    # CONTENT to any peer that asked, since export takes whole tables and the
-    # MCP ``db_export`` tool cannot name a subset. ``_store_plugin.NEVER_SYNCED``
-    # deliberately KEEPS its refusal of this name -- a table leaving this
-    # tuple must not read as the refusal being withdrawn.
+    # EMPTY. Every name this tuple ever carried left SQLite on 2026-08-28,
+    # and ``instances`` — the LAST one, and the only table sac owned that
+    # both a writer and a reader ever reached — was the last to go, to the
+    # shared PostgreSQL store (:mod:`.state_db_instances`).
     #
+    # A NAME LEFT HERE WOULD BE A WRONG ANSWER, NOT AN EMPTY ONE, and for
+    # ``instances`` that reading is the worst of the set: ``sac db show``
+    # would print ``instances 0`` while PostgreSQL holds the fleet's entire
+    # lifecycle history, about the table an operator reaches for FIRST when
+    # asking what is running. ``sac agents list`` is the verb that answers
+    # that question now.
     #
+    # AN EMPTY TUPLE IS THE HONEST SHAPE, and it is what every generic reader
+    # should see: ``table_counts`` returns ``{}``, ``export_state`` /
+    # ``import_state`` carry nothing, and ``sac db query --table`` can name
+    # nothing. ``init_schema`` issues ZERO ``CREATE TABLE`` statements, so
+    # there is no table for any of them to be right about.
     # ``lineage`` left on 2026-08-28, when the spawn DAG moved to the
     # shared PostgreSQL store (:mod:`.state_db_lineage_store`). Its DDL is
     # gone from :mod:`.state_db_schema`, which carries the departure note,
@@ -291,10 +310,11 @@ def init_schema(db_path: Path | None = None) -> Path:
         # re-creating a table this schema no longer defines, on exactly the
         # old databases least able to explain where it came from.
         conn.executescript(_SCHEMA_REGISTRY)
-        # ``executescript`` above creates ``instances`` fresh on a new
-        # DB (with the family-tree columns) but is a no-op on an
-        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
-        migrate_instances_add_family_tree_cols(conn)
+        # ``migrate_instances_add_family_tree_cols`` ran here until
+        # 2026-08-28. ``instances`` moved to PostgreSQL, so the migration
+        # returns early on every host forever — a schema step that can never
+        # fire is not a safety net, it is a claim that one still happens.
+        # Deleted with the DDL.
         # The two ``node_comms_policy`` ADD COLUMN migrations ran here
         # until 2026-08-28. The table moved to PostgreSQL, so both would
         # now be permanent no-ops against a table SQLite no longer has —

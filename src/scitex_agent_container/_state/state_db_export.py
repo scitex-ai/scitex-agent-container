@@ -57,19 +57,19 @@ def _table_filter_clauses(
     if since is None:
         return {t: ("", ()) for t in known_tables}
     explicit = {
-        "instances": (
-            "WHERE started_at >= ? OR ended_at >= ?",
-            (since, since),
-        ),
-        # ``definitions`` had a ``WHERE first_seen_at >= ?`` entry here, and
+        # ``instances`` had a ``WHERE started_at >= ? OR ended_at >= ?``
+        # entry here, ``definitions`` a ``WHERE first_seen_at >= ?``, and
         # ``instance_heartbeats`` and ``events`` a ``WHERE ts >= ?`` each,
-        # until 2026-08-28. All three left KNOWN_TABLES that day, so none of
-        # the three mappings could ever be selected again — and a WHERE
+        # until 2026-08-28. All four left KNOWN_TABLES that day, so none of
+        # the four mappings could ever be selected again — and a WHERE
         # clause naming a table SQLite no longer has reads as "sac still
-        # exports this", which for ``events`` in particular would be the
-        # wrong promise twice over: the rows still sit on old databases, and
-        # this filter is exactly what would have kept shipping them to a
-        # peer as though something on the far side read them.
+        # exports this". For ``events`` that would be the wrong promise
+        # twice over: the rows still sit on old databases, and this filter
+        # is exactly what would have kept shipping them to a peer as though
+        # something on the far side read them. For ``instances`` it would be
+        # wrong in the other direction — the rows moved to the shared store,
+        # so an export naming it would ship an empty array while the data is
+        # somewhere every host can already read.
         # ``attempts`` had a ``WHERE ts >= ?`` entry here until 2026-08-28.
         # It left KNOWN_TABLES that day -- zero writers, DDL deleted -- so
         # this mapping could never be selected again, and a WHERE clause
@@ -234,13 +234,37 @@ def import_legacy_registry(
 ) -> dict[str, int]:
     """Lift the JSON files under ``registry_dir`` into ``instances``.
 
-    Each JSON shard becomes one ``instances`` row marked
+    Each JSON shard becomes one ``instances`` record marked
     ``exit_reason='reboot-swept'`` with ``ended_at`` = now. Idempotent:
-    existing rows matched by ``(name, host, started_at)`` are skipped.
+    shards matching an existing record on ``(name, host, started_at)`` are
+    skipped.
 
     Returns ``{"imported": N, "skipped": M}``.
+
+    ``db_path`` IS ACCEPTED AND IGNORED, deliberately. ``instances`` moved to
+    the shared PostgreSQL store on 2026-08-28 and this writer moved with it,
+    but the parameter stays in the signature because ``sac db
+    import-legacy-registry`` still threads a ``--db-path`` through and a
+    ``TypeError`` at the CLI boundary would be a worse answer than a
+    parameter that no longer selects anything. It is named here rather than
+    left as a silent no-op.
+
+    THE DEDUPE KEY IS ``(name, host, started_at)``, NOT the record identity.
+    That is unchanged from the SQLite version and it has to be: the identity
+    is ``(id, host)`` and ``id`` is MINTED here, so every re-run would mint a
+    fresh one and every re-run would import everything again. The natural key
+    is what makes this idempotent; the surrogate id never could.
+
+    ``ended_at``/``exit_reason`` are written IN THE SAME PUT as the rest.
+    They are IMMUTABLE fields and the store freezes such a field at its first
+    stamped value, so a two-step "insert then tombstone" would work exactly
+    once and then be unrepeatable. One put, one stamp.
     """
-    from .state_db import new_uuid7, now_iso, open_db
+    from scitex_dev.store import NEW_RECORD
+
+    from .state_db import new_uuid7, now_iso
+    from .state_db_instances import scan_instances
+    from .state_db_instances_store import ACTOR, run_with_reconnect, strip_unset
 
     if host is None:
         host = _sac_env("HOST") or socket.gethostname().split(".")[0]
@@ -251,51 +275,62 @@ def import_legacy_registry(
         return {"imported": 0, "skipped": 0}
 
     swept_at = now_iso()
-    with open_db(db_path) as conn:
-        for path in sorted(registry_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text())
-            except (
-                json.JSONDecodeError,
-                OSError,
-            ):  # stx-allow: fallback (reason: malformed shard tolerated)
-                skipped += 1
-                continue
-            name = data.get("name")
-            started_at = data.get("started_at")
-            if not (name and started_at):
-                skipped += 1
-                continue
-            existing = conn.execute(
-                "SELECT id FROM instances WHERE name=? AND host=? AND started_at=?",
-                (name, host, started_at),
-            ).fetchone()
-            if existing:
-                skipped += 1
-                continue
-            conn.execute(
-                """
-                INSERT INTO instances (
-                    id, name, host, scope, pid, screen, workdir,
-                    started_at, ended_at, exit_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_uuid7(),
-                    name,
-                    host,
-                    "global",
-                    data.get("pid"),
-                    data.get("screen"),
-                    data.get("workdir"),
-                    started_at,
-                    swept_at,
-                    "reboot-swept",
-                ),
+    shards: list[dict] = []
+    for path in sorted(registry_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (
+            json.JSONDecodeError,
+            OSError,
+        ):  # stx-allow: fallback (reason: malformed shard tolerated)
+            skipped += 1
+            continue
+        if not (data.get("name") and data.get("started_at")):
+            skipped += 1
+            continue
+        shards.append(data)
+
+    if not shards:
+        return {"imported": imported, "skipped": skipped}
+
+    def _import(store) -> tuple[int, int]:
+        seen = {
+            (
+                str(row.values.get("name")),
+                str(row.values.get("host")),
+                str(row.values.get("started_at")),
             )
-            imported += 1
-    return {"imported": imported, "skipped": skipped}
+            for row in scan_instances(store)
+        }
+        added = 0
+        ignored = 0
+        for data in shards:
+            name = str(data["name"])
+            started_at = str(data["started_at"])
+            if (name, str(host), started_at) in seen:
+                ignored += 1
+                continue
+            values = strip_unset(
+                {
+                    "name": name,
+                    "pid": data.get("pid"),
+                    "screen": data.get("screen"),
+                    "workdir": data.get("workdir"),
+                    "started_at": started_at,
+                    "ended_at": swept_at,
+                    "exit_reason": "reboot-swept",
+                }
+            )
+            values["remote"] = False
+            values["id"] = new_uuid7()
+            values["host"] = str(host)
+            store.put(values, expected_revision=NEW_RECORD, actor=ACTOR)
+            seen.add((name, str(host), started_at))
+            added += 1
+        return added, ignored
+
+    added, ignored = run_with_reconnect(_import)
+    return {"imported": imported + added, "skipped": skipped + ignored}
 
 
 __all__ = [

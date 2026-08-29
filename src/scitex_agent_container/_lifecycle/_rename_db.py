@@ -74,8 +74,17 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
     # no-op over a table that has never held a row misses nothing. Removed
     # regardless: a pair here ASSERTS that a rename must carry an agent's
     # spec cache across, and there is no spec cache.
-    ("instances", "name"),
-    ("instances", "spawned_by"),
+    # ("instances", "name") and ("instances", "spawned_by") left the SAME
+    # day, and they are the OPPOSITE case — the table moved to the shared
+    # PostgreSQL store with 603 live rows on compute-04, so the silent no-op
+    # would have missed all of them. ``list_active_instances`` is the oracle
+    # behind ``sac agents list``, the start preflight, the stale-lease sweep,
+    # the reconciler and the restart verifier, so a renamed agent would have
+    # started under the new name while all five kept answering about the old
+    # one — and the preflight, seeing no live record for the new name, would
+    # happily start a SECOND copy. The move is done by
+    # ``state_db_instances_rename.rename_instance_rows``, called as its own
+    # step in :mod:`._rename` with its own key-scoped inverse.
     # ("attempts", "agent") was here until 2026-08-28 — the table itself is
     # gone (zero writers), so the pair named something this code cannot
     # reach. Same ruling as the trio below; see the module docstring.
@@ -143,11 +152,18 @@ NAME_COLUMNS: tuple[tuple[str, str], ...] = (
 # component (``…/agents/<name>/spec.yaml``, ``…/proj/<name>``).
 PATH_COLUMNS: tuple[tuple[str, str], ...] = (
     # ("definitions", "yaml_path") was here until 2026-08-28 — same table,
-    # same ruling as the ``NAME_COLUMNS`` entry above. ``instances.workdir``
-    # is now the only path column a rename rewrites inside state.db, and the
-    # authoritative spec path is the file on disk, which
+    # same ruling as the ``NAME_COLUMNS`` entry above.
+    # ("instances", "workdir") left the same day with its two NAME_COLUMNS
+    # siblings: same table, same move, same silent-no-op hazard. It is
+    # rewritten component-wise by ``rename_instance_rows``, which uses the
+    # SAME :func:`._rename_spec.sub_path` this loop does — so the two halves
+    # of a rename cannot disagree about what a path component is.
+    #
+    # PATH_COLUMNS IS NOW EMPTY, and that is the honest state rather than a
+    # gap: the only two paths a rename ever rewrote inside state.db were a
+    # spec cache that never had a row and a workdir that now lives in the
+    # store. The authoritative spec path is the file on disk, which
     # :mod:`._rename` moves as its own step.
-    ("instances", "workdir"),
 )
 
 

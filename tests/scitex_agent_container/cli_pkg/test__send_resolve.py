@@ -30,6 +30,20 @@ import pytest
 
 from scitex_agent_container.cli_pkg._send_resolve import resolve_send_endpoint
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 _LOCAL_HOST = "lead-host"
 
 
@@ -104,9 +118,20 @@ def test_resolve_instance_row_source_label(state_db_env):
     assert ep.source == "instance_row"
 
 
-def test_resolve_prefers_bound_port_over_legacy_a2a_port(state_db_env):
-    # Arrange — both columns set to different values; bound_port must win.
-    _seed_row("alpha", a2a_port=11111, bound_port=22222)
+def test_resolve_reads_the_one_stored_port_under_the_bound_port_key(
+    state_db_env,
+):
+    """The two columns are ONE field now, so there is nothing to prefer.
+
+    This asserted ``bound_port`` beat a differing ``a2a_port`` until
+    2026-08-28. The store keeps a single port and the row codec mirrors it
+    under both keys, so "both columns set to different values" is a state the
+    schema can no longer produce — which is this resolver's split-answer bug
+    removed at the root rather than arbitrated. What still matters, and is
+    what this asserts, is that the key THIS resolver reads carries the value.
+    """
+    # Arrange
+    _seed_row("alpha", a2a_port=22222)
     # Act
     ep = resolve_send_endpoint("alpha", current_host=_LOCAL_HOST)
     # Assert

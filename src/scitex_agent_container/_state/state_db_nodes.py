@@ -52,7 +52,6 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from .state_db_acl_policy import (
@@ -287,86 +286,66 @@ from .state_db_grants import (  # noqa: E402, F401
 # ---------------------------------------------------------------------------
 
 
-def resolve_node_host(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> dict[str, Any] | None:
+def resolve_node_host(*, name: str) -> dict[str, Any] | None:
     """Map a node ``name`` to ``{host, a2a_port}``.
 
     Resolution order (ADR-0014):
 
-    1. ``instances`` table — the canonical "live agent" registry. Picks
-       the most recently started live (``ended_at IS NULL``) row.
+    1. ``instances`` — the canonical "live agent" registry. Picks the most
+       recently started live (no ``ended_at``) record, breaking a
+       same-second tie on the time-ordered uuid7 ``id``. On the shared
+       PostgreSQL store since 2026-08-28.
     2. the ADR-0014 ``comms_nodes`` directory — used for nodes that are
        NOT sac-managed agents (operator identities like ``lead``, peer
        hosts' listen-targets) and for agents registered on OTHER hosts.
-       Since 2026-08-28 that is a read of the shared PostgreSQL store
-       rather than of a local copy some earlier ``sac registry sync``
-       may or may not have pulled.
+       Also a read of the shared store rather than of a local copy some
+       earlier ``sac registry sync`` may or may not have pulled.
 
-    Returns ``None`` only when neither table knows the name. Callers
+    Returns ``None`` only when neither source knows the name. Callers
     treat ``None`` as "this is a local-only/unknown node; do not
     cross-host forward" — the ``NodeRegistry`` implicit-registration
     path in ``_listen/_node_channel.py`` handles that case.
+
+    ``db_path`` IS GONE: both sources are PostgreSQL now, so there is no
+    SQLite file for it to name.
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import live_instance_for_name
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port, bound_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    row = live_instance_for_name(name)
     if row is not None:
-        # PREFER bound_port, fall back to the legacy a2a_port. Reading only
-        # a2a_port discarded a usable address that was sitting in the same
-        # row: `_send_resolve` has preferred bound_port over the legacy
-        # column since it was introduced, and the writers populate BOTH
-        # (`record_instance_start(a2a_port=bound, bound_port=bound)`), so a
-        # row where only bound_port survived resolved to "no port" here and
-        # 502'd at the forwarder while the sibling resolver would have
-        # reached it. Same row, same moment, two answers — the asymmetry was
-        # the defect, not the null.
-        port = row["a2a_port"]
+        # ONE port field, mirrored out under both keys. Reading only
+        # ``a2a_port`` used to discard a usable address sitting in the same
+        # row: `_send_resolve` preferred ``bound_port`` while this preferred
+        # the legacy column, and the writers populated BOTH from one value —
+        # so a row where only one survived resolved to "no port" here and
+        # 502'd at the forwarder while the sibling resolver reached it. Same
+        # row, same moment, two answers. The store keeps one field, so the
+        # asymmetry has nowhere left to live.
+        port = row.get("a2a_port")
         if port is None:
-            port = row["bound_port"]
+            port = row.get("bound_port")
         return {
             "host": str(row["host"]),
             "a2a_port": int(port) if port is not None else None,
         }
     # Fall through to comms_nodes (ADR-0014).
     #
-    # NOT ALSO FALLING THROUGH WHEN THE ROW EXISTS BUT CARRIES NO PORT, and
-    # the reason is that this function answers TWO questions with one value.
-    # `is_local_node` consults it and reads ONLY ``host``: a live row means
-    # "the agent is on that host", which stays true whether or not a port is
-    # recorded. Falling through on a portless row would hand the locality
-    # decision to ``comms_nodes``, which may name a DIFFERENT host — so an
-    # agent that is genuinely local could start being forwarded away, and a
-    # routing repair would have silently changed what "local" means.
-    # Splitting locality from addressability is the real fix and it is a
-    # bigger change than this one; see the a2a card.
-    # No ``db_path``: since 2026-08-28 the directory is the shared PostgreSQL
-    # store, not a table in this file. ``db_path`` still selects the SQLite
-    # ``instances`` lookup above, which has not moved.
+    # NOT ALSO FALLING THROUGH WHEN THE RECORD EXISTS BUT CARRIES NO PORT,
+    # and the reason is that this function answers TWO questions with one
+    # value. `is_local_node` consults it and reads ONLY ``host``: a live
+    # record means "the agent is on that host", which stays true whether or
+    # not a port was recorded. Falling through on a portless record would
+    # hand the locality decision to ``comms_nodes``, which may name a
+    # DIFFERENT host — so an agent that is genuinely local could start being
+    # forwarded away, and a routing repair would have silently changed what
+    # "local" means. ``resolve_forward_target`` is the addressability half.
     return resolve_comms_node_host(name=name)
 
 
-def is_local_node(
-    *,
-    name: str,
-    local_host: str,
-    db_path: Path | None = None,
-) -> bool:
+def is_local_node(*, name: str, local_host: str) -> bool:
     """Return ``True`` if ``name`` should be served locally.
 
     Local cases:
@@ -384,7 +363,7 @@ def is_local_node(
     on a Spartan host are now correctly forwarded instead of being
     treated as local).
     """
-    info = resolve_node_host(name=name, db_path=db_path)
+    info = resolve_node_host(name=name)
     if info is None:
         return True
     return info["host"] == local_host

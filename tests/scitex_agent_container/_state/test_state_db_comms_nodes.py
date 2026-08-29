@@ -537,62 +537,70 @@ def test_rename_is_its_own_inverse(pg_schema: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_node_host_returns_none_for_unknown_name(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_resolve_node_host_returns_none_for_unknown_name(pg_schema: str) -> None:
     # Arrange
-    target_db = db_path
+    unknown = "ghost"
     # Act
-    info = resolve_node_host(name="ghost", db_path=target_db)
+    info = resolve_node_host(name=unknown)
     # Assert
     assert info is None
 
 
 def test_resolve_node_host_finds_the_directory_when_no_instance(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     # Act
-    info = resolve_node_host(name="lead", db_path=db_path)
+    info = resolve_node_host(name="lead")
     # Assert
     assert info == {"host": "mba", "a2a_port": 8642}
 
 
 def test_resolve_node_host_prefers_instances_when_both_answer(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
-    # Arrange
-    import time as _time
+    # Arrange — ``instances`` moved to the shared store on 2026-08-28 too, so
+    # this is now one database rather than two. ``db_path`` is gone from the
+    # resolver; the PRECEDENCE it tests is unchanged and is the point.
+    from scitex_agent_container._state.state_db_instances import (
+        record_instance_start,
+    )
 
-    with state_db.open_db(db_path) as conn:
-        conn.execute(
-            "INSERT INTO instances (id, name, host, scope, a2a_port, "
-            "started_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "inst-1",
-                "lead",
-                "instances-host",
-                "global",
-                9000,
-                _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
-            ),
-        )
+    record_instance_start("lead", host="instances-host", a2a_port=9000)
     register_comms_node(name="lead", host="comms-host", a2a_port=8642)
     # Act
-    info = resolve_node_host(name="lead", db_path=db_path)
+    info = resolve_node_host(name="lead")
     # Assert
     assert info["host"] == "instances-host"
 
 
+def test_resolve_node_host_ignores_an_ended_instance(pg_schema: str) -> None:
+    # Arrange — an ENDED record is evidence, not an address. It must not keep
+    # winning over a live directory entry; routing to it sends messages
+    # nowhere while the directory holds a working target.
+    from scitex_agent_container._state.state_db_instances import (
+        record_instance_start,
+        record_instance_stop,
+    )
+
+    instance_id = record_instance_start("lead", host="instances-host", a2a_port=9000)
+    record_instance_stop(instance_id)
+    register_comms_node(name="lead", host="comms-host", a2a_port=8642)
+    # Act
+    info = resolve_node_host(name="lead")
+    # Assert
+    assert info["host"] == "comms-host"
+
+
 def test_resolve_node_host_skips_a_withdrawn_directory_entry(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     unregister_comms_node(name="lead")
     # Act
-    info = resolve_node_host(name="lead", db_path=db_path)
+    info = resolve_node_host(name="lead")
     # Assert
     assert info is None
 
@@ -603,33 +611,31 @@ def test_resolve_node_host_skips_a_withdrawn_directory_entry(
 
 
 def test_is_local_node_true_when_the_entry_names_the_local_host(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     # Act
-    local = is_local_node(name="lead", local_host="mba", db_path=db_path)
+    local = is_local_node(name="lead", local_host="mba")
     # Assert
     assert local
 
 
 def test_is_local_node_false_when_the_entry_lives_elsewhere(
-    db_path: Path, pg_schema: str
+    pg_schema: str,
 ) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     # Act
-    local = is_local_node(name="lead", local_host="spartan", db_path=db_path)
+    local = is_local_node(name="lead", local_host="spartan")
     # Assert
     assert not local
 
 
-def test_is_local_node_true_for_an_unknown_name(
-    db_path: Path, pg_schema: str
-) -> None:
+def test_is_local_node_true_for_an_unknown_name(pg_schema: str) -> None:
     # Arrange
-    target_db = db_path
+    unknown = "ghost"
     # Act
-    local = is_local_node(name="ghost", local_host="mba", db_path=target_db)
+    local = is_local_node(name=unknown, local_host="mba")
     # Assert
     assert local

@@ -52,38 +52,34 @@ STORE_STATES = ("absent", "empty", "schemaless", "populated")
 #: SMALL core rather than the full schema: a store mid-migration may lack a
 #: newer table without being a different database.
 #:
-#: IT IS ONE NAME NOW, AND THAT IS A LOSS RATHER THAN A SIMPLIFICATION.
+#: IT IS EMPTY NOW, AND THAT RETIRES THE CHECK RATHER THAN SHRINKING IT.
 #:
-#: It was ``("instances", "definitions")`` until 2026-08-28, when
-#: ``definitions`` left SQLite for having no writer. ``channel_events``
-#: replaced it *specifically* to avoid a one-element core: the predicate is
-#: ANY, so the core should hold the tables an initialised store reliably
-#: HAS, and a core of two is what keeps the ``schemaless`` verdict
-#: meaningful — a real state.db that happened to predate one of them still
-#: classifies as ours.
+#: It was ``("instances", "definitions")`` until 2026-08-28. ``definitions``
+#: left SQLite that day for having no writer; ``channel_events`` replaced it
+#: *specifically* to avoid a one-element core, then left itself (ADR-0023);
+#: ``lineage`` — the only other candidate — left in the same window; and
+#: ``instances``, the last table ``init_schema`` created, left for the shared
+#: PostgreSQL store. ``init_schema`` now issues ZERO ``CREATE TABLE``
+#: statements, so there is no name a store could carry.
 #:
-#: That second name is gone anyway. ``channel_events`` left SQLite later the
-#: same day (ADR-0023: it is ``sac_channel_events`` in the shared
-#: PostgreSQL), so NO store initialised after that change can ever hold it,
-#: and ``lineage`` — the only other candidate — left in the same window.
-#: ``instances`` is the last table ``init_schema`` still creates, so the
-#: core is one name whether or not that is desirable.
+#: WHAT THIS COSTS, stated rather than discovered later. The probe's whole
+#: premise was "this file is OURS, identified by the tables it carries", and
+#: that premise no longer has a referent. Padding the tuple with a name
+#: nothing creates would be worse than emptying it: ``any()`` over such a
+#: name is false for EVERY store, so every healthy state.db would classify
+#: ``schemaless`` — the probe's own "this is a DIFFERENT database" verdict,
+#: produced by our own migration, and :meth:`StoreState.describe` would send
+#: an operator looking for a table that cannot exist.
 #:
-#: WHAT THIS COSTS, stated rather than discovered later. There is no false
-#: alarm: ``any()`` over one name is still true for every initialised store,
-#: so nothing that used to classify as ours stops doing so. What is lost is
-#: the REDUNDANCY: a store that somehow carried ``instances`` under a
-#: different schema, or a future change that renames or moves it, now flips
-#: the whole verdict to ``schemaless`` with nothing to cross-check against.
-#: The constant is left honest at one name rather than padded with a table
-#: that does not exist — a core naming a table nothing creates would send an
-#: operator looking for it (see :meth:`StoreState.describe`), which is worse
-#: than a small core.
+#: So :func:`inspect_store` treats an EMPTY core as "no signature to check"
+#: and does not claim ``schemaless``: a readable SQLite file classifies as
+#: ``populated``, which is the weaker but true statement that the file is
+#: readable. ``absent`` and ``empty`` are unaffected and are the two verdicts
+#: that still carry real information about a path.
 #:
 #: Adding a name back is a real option the moment ``init_schema`` creates a
-#: second table; until then this is the truthful list.
-CORE_TABLES = ("instances",)
-
+#: table again; until then this is the truthful list.
+CORE_TABLES: tuple[str, ...] = ()
 #: The 16-byte magic every SQLite file starts with.
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
@@ -132,6 +128,10 @@ class StoreState:
             "never been initialised. Verify the path before reading anything "
             "from it as fleet state"
         )
+        # UNREACHABLE while CORE_TABLES is empty — see the constant. It is
+        # kept rather than deleted because it is the message the moment a
+        # table is added back, and deleting it would make re-adding one a
+        # silent loss of the remedy clause.
 
 
 def _table_names(path: Path) -> tuple[str, ...]:
@@ -171,7 +171,12 @@ def inspect_store(db_path: Path) -> StoreState:
         return StoreState(path=path, state="empty", size_bytes=size)
 
     tables = _table_names(path)
-    if not any(core in tables for core in CORE_TABLES):
+    # An EMPTY core means there is NO signature to check — ``init_schema``
+    # creates no table. Claiming ``schemaless`` on that basis would be the
+    # probe asserting "this is somebody else's database" from evidence it no
+    # longer collects, so the file is reported as readable instead. See
+    # CORE_TABLES.
+    if CORE_TABLES and not any(core in tables for core in CORE_TABLES):
         return StoreState(
             path=path, state="schemaless", tables=tables, size_bytes=size
         )

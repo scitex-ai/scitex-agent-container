@@ -55,6 +55,11 @@ from .._state.state_db_channel import (
 )
 from .._state.state_db_comms_nodes import rename_comms_node
 from .._state.state_db_lineage_rename import rename_lineage
+from .._state.state_db_instances_rename import (
+    InstancesRenameUndo,
+    rename_instance_rows,
+    undo_rename_instance_rows,
+)
 from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
 from ._rename_cards import migrate_cards, undo_migrate_cards
 from ._rename_db import DbUndo, count_rows, rename_rows, undo_rename_rows
@@ -77,6 +82,7 @@ STEP_OVERLAY_DIR = "overlay-dir"
 STEP_RUNTIME_DIR = "runtime-dir"
 STEP_REGISTRY = "registry"
 STEP_STATE_DB = "state-db"
+STEP_INSTANCES = "instances"
 STEP_ACL = "acl-policy"
 STEP_DIRECTORY = "comms-directory"
 STEP_LINEAGE = "lineage"
@@ -91,6 +97,7 @@ STEPS: tuple[str, ...] = (
     STEP_RUNTIME_DIR,
     STEP_REGISTRY,
     STEP_STATE_DB,
+    STEP_INSTANCES,
     STEP_ACL,
     STEP_DIRECTORY,
     STEP_LINEAGE,
@@ -160,6 +167,31 @@ def apply_plan(
         _step(STEP_STATE_DB)
         db_undo: DbUndo = rename_rows(layout.state_db, old, new)
         undo.append((STEP_STATE_DB, lambda: undo_rename_rows(db_undo)))
+
+        # 6b. The ``instances`` records — PostgreSQL since 2026-08-28, so
+        # their own step for exactly the reason steps 7 and 8 are their own.
+        #
+        # Three fields carried the name (``name``, ``spawned_by``, and
+        # ``workdir`` as a path component) and all three were pairs in
+        # ``_rename_db``'s tables until the move. ``rename_rows`` skips a
+        # table absent from ``sqlite_master``, so leaving them would have
+        # made this a SILENT no-op: the rename reports success while every
+        # lifecycle record still names the old agent. That is worse than the
+        # ACL and routing versions of the same bug, because the start
+        # PREFLIGHT reads these records — seeing no live record under the new
+        # name, it would start a SECOND copy of a running agent.
+        #
+        # ``id``/``host`` are the record identity and are untouched: a
+        # renamed agent is the SAME agent and its recorded lifetimes are the
+        # same lifetimes. So this is an UPDATE, not the copy-and-retire that
+        # steps 7 and 8 must perform — and the inverse is correspondingly
+        # key-scoped rather than "the same verb with the arguments swapped".
+        _step(STEP_INSTANCES)
+        instances_undo: InstancesRenameUndo = rename_instance_rows(old=old, new=new)
+        if instances_undo.total:
+            undo.append(
+                (STEP_INSTANCES, lambda: undo_rename_instance_rows(instances_undo))
+            )
 
         # 7. The ACL policy record — PostgreSQL, so its own step.
         #

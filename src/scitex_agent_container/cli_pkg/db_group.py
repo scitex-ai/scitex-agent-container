@@ -44,7 +44,7 @@ def db_group() -> None:
     \b
     Examples:
       $ sac db show
-      $ sac db query --table=instances --limit=20
+      $ sac db query --table=events --limit=20
       $ sac db migrate
     """
 
@@ -138,16 +138,23 @@ def db_query(
 
     \b
     Example:
-      $ sac db query --table=instances --limit=20
-      $ sac db query --table=instances --where="ended_at IS NULL" --json
+      (no example: ``KNOWN_TABLES`` is EMPTY, so no value parses)
 
     \b
-    The second example named ``--table=channel_events`` until 2026-08-28.
-    ``--table`` is a ``click.Choice(KNOWN_TABLES)``, so the documented
-    command did not merely return nothing — it FAILED to parse, which is a
-    worse kind of stale help. The channel history is ``sac_channel_events``
-    in the shared PostgreSQL now (ADR-0023) and this SQLite-only verb cannot
-    read it at all.
+    THIS VERB HAS NOTHING LEFT TO READ. The examples named
+    ``--table=channel_events`` and then ``--table=instances`` on 2026-08-28;
+    both tables moved to the shared PostgreSQL store that day, and
+    ``instances`` was the last one ``init_schema`` created. ``--table`` is a
+    ``click.Choice(KNOWN_TABLES)``, so a stale example did not merely return
+    nothing — it FAILED to parse, which is the worse kind of stale help, and
+    with an empty choice list EVERY value now fails to parse.
+
+    \b
+    That refusal is the intended end state rather than an oversight: an
+    empty result would read as "this agent has no rows", when the truth is
+    "you are asking the wrong database". ``sac agents list`` answers what is
+    running; the channel history is ``sac_channel_events`` in the shared
+    store (ADR-0023).
     """
     sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
     if where:
@@ -155,11 +162,12 @@ def db_query(
     # Order by a sensible default per table; no-op for tables without
     # a recognisable timestamp column.
     order_by = {
-        "instances": "started_at DESC",
-        # ``definitions`` (``first_seen_at DESC``), ``instance_heartbeats``
-        # and ``events`` (``ts DESC`` each) had entries here until
-        # 2026-08-28. All three left KNOWN_TABLES that day, so ``--table``
-        # can no longer name them and these keys could only ever be dead.
+        # ``instances`` (``started_at DESC``), ``definitions``
+        # (``first_seen_at DESC``), ``instance_heartbeats`` and ``events``
+        # (``ts DESC`` each) had entries here until 2026-08-28. All four
+        # left KNOWN_TABLES that day, so ``--table`` can no longer name them
+        # and these keys could only ever be dead. For ``instances`` the verb
+        # that answers the question it used to is ``sac agents list``.
         # ``attempts`` had a ``ts DESC`` entry here until 2026-08-28. It
         # left KNOWN_TABLES, so ``--table`` can no longer name it and this
         # key could only ever be dead.

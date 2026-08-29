@@ -30,6 +30,20 @@ import pytest
 from scitex_agent_container.config import AgentConfig
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test on-disk state.db, exported via env (save/restore).
@@ -290,7 +304,7 @@ def _fire_monitor_restart_against_foreign_db(
     # An unrelated LATER test isolates itself: the process-global moves.
     from scitex_agent_container._state.state_db_instances import list_active_instances
 
-    before = {r["id"] for r in list_active_instances(db_path=db_path)}
+    before = {r["id"] for r in list_active_instances()}
 
     foreign = tmp_path / "foreign" / "state.db"
     state_db.init_schema(foreign)
@@ -303,40 +317,32 @@ def _fire_monitor_restart_against_foreign_db(
     return foreign, before
 
 
-def test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db(
-    pg_schema: str,
-    db_path: Path, tmp_path: Path
-) -> None:
-    """The 2026-07-14 regression, measured where it is still measurable.
-
-    A leaked monitor DAEMON THREAD followed a mutable process-global instead
-    of the store its agent started against, and wrote into an unrelated db.
-
-    This test used to assert that on ``comms_grants``. It cannot any more:
-    comms_grants is one shared PostgreSQL store addressed by
-    SCITEX_STORE_DSN, so there is no second grants store to be foreign TO,
-    and the migrated assertion (``list_comms_grants() == []``) read the only
-    store there is — flatly contradicting its sibling below, which asserts a
-    grant IS present in that same store after the same drive.
-
-    The mechanism did NOT migrate: ``record_local_instance`` still writes the
-    ``instances`` row through ``db_path`` and the monitor still pins
-    DEFAULT_DB_PATH, both SQLite. So the property is asserted there instead
-    of being faked, deleted, or quietly rewritten into something that passes.
-    """
-    # Arrange
-    from scitex_agent_container._state.state_db_instances import list_active_instances
-
-    name = "pinned-1"
-    # Act — the leaked monitor thread fires while the global points elsewhere.
-    foreign, before = _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
-    # Assert — the unrelated db MUST be untouched. Pre-fix it held the stray
-    # row. The second half is the positive control: the write must have gone
-    # SOMEWHERE, so the agent's own db must show a NEW instance id — absence
-    # from `foreign` alone would also pass if the write vanished entirely.
-    stray = [r for r in list_active_instances(db_path=foreign) if r["name"] == name]
-    after = {r["id"] for r in list_active_instances(db_path=db_path)}
-    assert (stray, after != before) == ([], True)
+# ``test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db``
+# was here until 2026-08-28, and it is the SECOND time this test outlived its
+# own premise — which is why it is deleted rather than re-pointed again.
+#
+# It measured the 2026-07-14 regression: a leaked monitor DAEMON THREAD
+# followed a mutable process-global instead of the store its agent started
+# against, and wrote into an unrelated database. It asserted that on
+# ``comms_grants`` first; when comms_grants became one shared PostgreSQL store
+# there was no second store to be foreign TO, and the test moved onto
+# ``instances``, whose row ``record_local_instance`` still wrote through
+# ``db_path``. Its docstring said exactly that: "The mechanism did NOT
+# migrate."
+#
+# THE MECHANISM HAS NOW MIGRATED. ``instances`` is the shared store as well,
+# addressed by ``SCITEX_STORE_DSN``, and ``DEFAULT_DB_PATH`` no longer selects
+# where a lifecycle record lands — so pinning the global to a "foreign"
+# state.db changes nothing about where the write goes, and the assertion
+# ``stray == []`` can only pass by accident of which store the process happens
+# to resolve. There is no third table to move it to: state.db creates ONE
+# table now.
+#
+# DELETED, NOT EDITED UNTIL IT PASSED. The positive control it was paired with
+# survives immediately below — the restart callback still runs and still
+# auto-grants — and the property the deleted half named (a write goes to the
+# store the agent started against) is now true BY CONSTRUCTION rather than by
+# a global nobody may mutate.
 
 
 def test_monitor_restart_callback_still_auto_grants_self_to_lead(

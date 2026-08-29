@@ -268,28 +268,15 @@ def make_state_db(layout: Layout) -> Path:
     return db_path
 
 
-def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
-    """Execute seeding INSERTs against a real state.db, committing once.
-
-    Lives HERE rather than inline in a fixture on purpose. STX-TQ005 (the
-    ecosystem test-quality rule) forbids a fixture that opens an external
-    resource — ``sqlite3.connect(...)`` — and hands it back with ``return``
-    instead of ``yield``, because a returned connection is never closed.
-    These fixtures never hand the connection back at all; they open it,
-    write, and close it. Extracting that into a plain helper keeps the
-    fixture bodies resource-free and the rule satisfied for the right
-    reason rather than by suppression.
-    """
-    import sqlite3
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        with conn:
-            for sql, args in statements:
-                conn.execute(sql, args)
-    finally:
-        conn.close()
-    return db_path
+# ``seed_db_rows`` was here until 2026-08-28. It executed raw INSERTs against
+# a real ``state.db`` and carried a long note explaining why it was a plain
+# helper rather than a fixture (STX-TQ005 forbids a fixture that opens an
+# external resource and hands it back with ``return``). Both the helper and
+# that argument went with its last caller, for the reason recorded below:
+# ``init_schema`` creates NO TABLES at all any more, so there is nothing in
+# state.db to INSERT into. A seeding helper for an empty schema can only
+# raise, and a helper kept for a rule it no longer has occasion to satisfy is
+# the reassuring decoration this package keeps deleting elsewhere.
 
 
 # ``COMMS_NODE_SQL`` was here until 2026-08-28. The ADR-0014 directory moved
@@ -298,66 +285,66 @@ def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
 # rest of that day and then went the same way: ``definitions`` was deleted
 # from state.db for having no writer in any code path, ever.
 #
-# ``instances`` is the identity table a rename carries inside state.db now,
-# and it is the one that should have been used all along — it is the only
-# one of the three that a running agent actually WRITES a row to. It also
-# carries the PATH column (``workdir``), so one seeded row now covers both
-# ``NAME_COLUMNS`` and ``PATH_COLUMNS``.
-INSTANCE_SQL = (
-    "INSERT INTO instances (id, name, host, scope, started_at, workdir) "
-    "VALUES (?, ?, ?, ?, ?, ?)"
-)
-# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28. ``channel_events`` — the
-# LAST SQLite table sac owned — moved to the shared PostgreSQL as
-# ``sac_channel_events`` (ADR-0023), so the INSERT would raise on every
-# fixture that used it. The history half is now seeded through the real
-# ``persist_event`` writer below, which is a better seed anyway: it exercises
-# the production allocation rather than hand-writing a row.
+# ``INSTANCE_SQL`` replaced BOTH of them for the remainder of that day, and
+# then went the same way for the third time. ``instances`` moved to the
+# shared PostgreSQL store, so ``INSERT INTO instances`` raises ``no such
+# table`` — which is exactly how this file announced the move: 147 setup
+# ERRORs across three rename suites, every one of them here.
+#
+# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28 too. ``channel_events``
+# moved to the shared PostgreSQL as ``sac_channel_events`` (ADR-0023), so
+# that INSERT would raise as well. Both halves are now seeded through their
+# REAL production writers below, which is a better seed than either INSERT
+# was: it exercises the production id allocation and the production merge
+# rules rather than hand-writing a row into a shape the code never uses.
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Identity row (SQLite ``instances``) + history row (PostgreSQL).
+    """Identity record + history row — BOTH in PostgreSQL now, and neither
+    in ``state.db``.
 
-    Both halves a rename must carry — and they no longer live in the same
-    database, which is the point. The identity half is still a
-    ``_rename_db.NAME_COLUMNS`` pair in ``state.db``; the history half is
-    carried by ``state_db_channel.rename_channel_events`` as its own step in
-    ``_rename.apply_plan``. A seed that named only one of them would silently
-    stop proving the other.
+    Both halves a rename must carry. They stopped sharing a database on
+    2026-08-28 and then, later the same day, stopped being in SQLite at all:
+    ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Reading and
+    writing both here is what keeps either half from going unnoticed when it
+    moves again.
 
-    Both halves have moved, and each has moved more than once. The identity
-    half was ``comms_nodes.name`` until 2026-08-28, when the ADR-0014
-    directory left SQLite for the shared PostgreSQL store;
-    ``definitions.name`` replaced it, and lasted until ``definitions`` was
-    itself deleted later the same day for having no writer.
-    ``instances.name`` is the third and the sturdiest: it is the one identity
-    column in state.db that production code actually INSERTs.
+    The identity half has moved three times. It was ``comms_nodes.name``
+    until the ADR-0014 directory left SQLite for the shared store, then
+    ``definitions.name`` until that table was deleted for having no writer,
+    then ``instances.name`` — which left the same day for the shared store
+    as well. It is written here through ``record_instance_start``, the same
+    verb ``sac agents start`` uses, and carried by
+    ``state_db_instances_rename.rename_instance_rows`` as its own step in
+    ``_rename.apply_plan``.
 
-    The history half was ``turns`` until the diary trio left the same day,
-    then ``attempts`` for part of it (deleted, zero writers), then
-    ``channel_events.target`` — and that table has now left SQLite too, as
-    ``sac_channel_events`` in the shared PostgreSQL (ADR-0023). It is seeded
-    through the real ``persist_event`` writer, which is a better seed than the
-    INSERT it replaces: it exercises the production id allocation.
+    The history half moved four times: ``turns`` (the diary trio, to
+    per-host PostgreSQL), then ``attempts`` (deleted, zero writers), then
+    ``channel_events.target``, now ``sac_channel_events`` in the shared
+    PostgreSQL (ADR-0023). It is written through the real ``persist_event``
+    and carried by ``state_db_channel.rename_channel_events``.
 
-    CALLERS MUST TAKE ``pg_schema``: the history half writes to a real
-    PostgreSQL schema, so a caller without that fixture resolves the
+    ``state.db`` IS STILL CREATED, and deliberately: ``Layout.state_db`` is a
+    real path the rename still touches, and calling the production
+    ``init_schema`` on it is the one place these suites prove that a fresh
+    database still opens cleanly now that it defines nothing.
+
+    CALLERS MUST TAKE ``pg_schema``: both halves write to a real PostgreSQL
+    schema, so a caller without that fixture resolves the
     deliberately-unreachable DSN and fails.
     """
     from scitex_agent_container._state.state_db_channel import persist_event
+    from scitex_agent_container._state.state_db_instances import (
+        record_instance_start,
+    )
 
     db_path = make_state_db(layout)
-    seeded = seed_db_rows(
-        db_path,
-        [
-            (
-                INSTANCE_SQL,
-                (f"inst-{name}", name, "h", "user", "t0", f"/home/u/proj/{name}"),
-            ),
-        ],
-    )
+    # ``workdir`` carries the name as a whole path component on purpose: it is
+    # the PATH half of the rename, rewritten component-wise by
+    # ``rename_instance_rows``, and the only seeded field that proves it.
+    record_instance_start(name, workdir=f"/home/u/proj/{name}")
     persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
-    return seeded
+    return db_path
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:

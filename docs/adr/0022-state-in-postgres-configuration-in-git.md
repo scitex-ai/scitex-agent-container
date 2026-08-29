@@ -137,8 +137,10 @@ classification was right and it was the classification that condemned it:
 a cache of something git already holds is only worth carrying if somebody
 fills it, and no code path has ever INSERTed a row (0 rows on every
 state.db measured; `_store_plugin.NEVER_SYNCED` had recorded the finding
-before this ADR was written). `instances.definition_id` keeps its
-all-NULL column; only the table and the `REFERENCES` clause are gone.
+before this ADR was written). The `REFERENCES` clause went with it, and
+the all-NULL `instances.definition_id` followed hours later when
+`instances` moved to the store: an FK to a table nobody fills is not a
+column worth carrying into a new schema.
 
 ### STATE → PostgreSQL, single-writer per row
 

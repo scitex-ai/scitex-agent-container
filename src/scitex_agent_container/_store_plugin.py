@@ -230,32 +230,47 @@ LINEAGE = Schema.build(
 # PER_HOST — each host is right about itself.
 # ---------------------------------------------------------------------------
 # ``host`` is an IDENTITY field, and that is the entire per-host-truth
-# mechanism: it makes compute-04's row and spartan's row DIFFERENT
-# RECORDS, so a merge between them is not resolved-in-favour-of-one, it
-# never occurs. ``id`` (uuid7, minted at the origin) is also identity, so
-# even repeated observations of one agent name stay separate lifetimes.
+# mechanism: it makes compute-04's row and spartan's row DIFFERENT RECORDS,
+# so a merge between them is not resolved-in-favour-of-one, it never occurs.
+# ``id`` (uuid7, minted at the origin) is also identity, so even repeated
+# observations of one agent name stay separate lifetimes. SINGLE_WRITER:
+# only the observing host writes its own telemetry, and an agent RELOCATION
+# is then an explicit ownership handover() rather than an illegal write.
 #
-# The merge rules on the mutable fields are chosen so a STALE replica can
-# never move a live host's truth backwards:
-#   * last_heartbeat_at → MAX. An ISO-8601 UTC string sorts lexicographically,
-#     so MAX is a high-water mark: an old sample arriving late cannot
-#     resurrect a dead agent or rewind a live one. LAST_WRITER_WINS would
-#     let a delayed delivery do exactly that.
-#   * iter_count / input_tokens / output_tokens → MAX. Monotone counters.
-#   * ended_at / exit_reason → IMMUTABLE. A process ends ONCE. A second,
-#     different end time is not a later opinion, it is a contradiction —
-#     and sac has already been burned by believing one: on 2026-08-11
-#     eleven rows shared ended_at=2026-08-11T17:54:26Z and three readers
-#     independently read that as a simultaneous mass kill. It was one
-#     now_iso() evaluated once per GC sweep and stamped on every reaped
-#     row; the agents had died 10h46m earlier. IMMUTABLE makes the second
-#     stamp a reported conflict instead of a believed fact.
-#   * started_at → IMMUTABLE for the same reason, in the other direction.
+# The mutable rules keep a STALE replica from moving a live host's truth
+# backwards. ``last_heartbeat_at`` and the counters take MAX — an ISO-8601
+# UTC string sorts lexicographically, so MAX is a high-water mark a late
+# delivery cannot rewind. ``started_at``/``ended_at``/``exit_reason`` are
+# IMMUTABLE because a process starts once and ends once; a second, different
+# end time is a contradiction, not a later opinion, and sac has been burned
+# by believing one (2026-08-11: eleven rows sharing one ended_at read as a
+# mass kill; it was one now_iso() per GC sweep, and they had died 10h46m
+# apart). MEASURED TRAP: immutability starts at the FIRST STAMPED VALUE and
+# writing None counts, so every writer strips unset fields from its payload
+# (``state_db_instances_store.strip_unset``) or the tombstone never lands.
 #
-# SINGLE_WRITER: only the observing host may write its own telemetry. An
-# agent RELOCATION (sac moves a running agent between hosts) is then not
-# an illegal cross-host write but an explicit ownership handover() — which
-# is the honest shape, because relocation already carries a fencing lease.
+# LIVE ON POSTGRESQL SINCE 2026-08-28, opened field for field by
+# ``_state.state_db_instances_store``. Checking this declaration against the
+# real DDL and against every reader in ``src/`` found gaps BOTH ways, and
+# closing them HERE is the point of this module: the declaration is what
+# says what sac's rows mean.
+#
+# DROPPED, none of them ever read and none ever set: ``definition_id`` (a FK
+# to ``definitions``, a table nothing has INSERTed into), ``scope`` (the
+# literal 'global', read by nobody, alive only inside idx_instances_active)
+# and ``ppid`` (a parameter with no call site).
+#
+# ADDED, because production code reads them: ``screen`` (``_restart_verify``
+# takes the tmux handle off an ENDED row), ``workdir`` (never read back, but
+# the rename verb REWRITES it — dropping it retires live coverage) and
+# ``remote`` (the authoritative locality flag, deliberately not a hostname
+# compare; five readers plus the GC branch on it).
+#
+# ``bound_port`` is a FOLD, not a drop: the DDL had it beside ``a2a_port``
+# and every writer set both from ONE value. Two columns holding one fact is
+# how the two drift, and they had — ``state_db_forward`` records a live row
+# where the split answered "where do I send this" two ways. One field here;
+# the row codec mirrors it out under both KEYS so no reader changes shape.
 INSTANCES = Schema.build(
     "sac_instances",
     {
@@ -264,7 +279,19 @@ INSTANCES = Schema.build(
         "name": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS, required=True, indexed=True),
         "pid": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "a2a_port": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
-        "spawned_by": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "screen": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "workdir": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "remote": _data(FieldKind.BOOL, MergeRule.LAST_WRITER_WINS),
+        # LAST_WRITER_WINS since 2026-08-28; IMMUTABLE while this was a PLAN.
+        # Measured against the real rename path, IMMUTABLE is not
+        # implementable: it freezes the field and reports a MergeConflict
+        # WITHOUT raising, so renaming a parent would leave every child's
+        # ``spawned_by`` on the dead name while the rename reported success.
+        # It bought no replication safety here — ``host`` is in the identity
+        # and the policy is SINGLE_WRITER, so this rule can only ever decide
+        # a SAME-HOST rewrite, which is exactly the rename. ``sac_lineage``
+        # is where a contradicted parent still surfaces as a MergeConflict.
+        "spawned_by": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "started_at": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
         "last_heartbeat_at": _data(FieldKind.TEXT, MergeRule.MAX),
         "iter_count": _data(FieldKind.INTEGER, MergeRule.MAX),

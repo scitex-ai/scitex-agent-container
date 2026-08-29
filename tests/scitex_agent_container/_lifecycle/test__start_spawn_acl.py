@@ -78,7 +78,7 @@ class _FakeHandover:
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Isolated state.db + runtime dir + HOME, all under tmp_path.
 
     No mocks — real sqlite, real dirs; env + module constants saved and
