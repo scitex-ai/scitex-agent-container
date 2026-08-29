@@ -159,7 +159,7 @@ def test_health_check_unknown_method_message_names_method() -> None:
     assert "Unknown health method" in msg
 
 
-def test_health_check_sdk_alive_routes_to_sdk_helper() -> None:
+def test_health_check_sdk_alive_routes_to_sdk_helper(pg_schema, ) -> None:
     # Arrange: a real fake runtime that reports healthy.
     cfg = _make_cfg(method="sdk-alive")
     runtime = FakeRuntime(running=True)
@@ -169,7 +169,7 @@ def test_health_check_sdk_alive_routes_to_sdk_helper() -> None:
     assert result == (True, "healthy")
 
 
-def test_health_check_sdk_alive_passes_config_to_runtime() -> None:
+def test_health_check_sdk_alive_passes_config_to_runtime(pg_schema, ) -> None:
     # Arrange
     cfg = _make_cfg(method="sdk-alive")
     runtime = FakeRuntime(running=True)

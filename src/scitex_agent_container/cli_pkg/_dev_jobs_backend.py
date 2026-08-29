@@ -95,7 +95,10 @@ and ``--dry-run`` is offered on every mutating verb sac exposes.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
+from pathlib import Path
 import subprocess
 from dataclasses import dataclass
 
@@ -299,6 +302,8 @@ def build_argv(
     name: str | None,
     yes: bool,
     dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
     exe: str = "scitex-dev",
     leaf: object | None = None,
 ) -> list[str]:
@@ -317,6 +322,20 @@ def build_argv(
     refresher; a pass-through that dropped either flag would convert a
     guarded command into an unguarded one, which is strictly worse than
     not offering the verb.
+
+    ``--adopt`` and ``--force`` are forwarded for the same reason, and the
+    argument is not hypothetical. MEASURED 2026-08-20 on scitex-compute-04:
+    ``sac dev timer install host-sync-check -y`` refused because a unit
+    already existed, and printed scitex-dev's own remedy — "Use --adopt to
+    keep the existing supervisor (writes nothing), or --force to overwrite."
+    Both flags are real options on ``scitex-dev ecosystem timer install``;
+    neither existed on the wrapper, so the command answered its own advice
+    with ``Error: No such option '--force'``.
+
+    A dropped flag is worse there than a missing verb, in the same way and
+    for a sharper reason: the reader meets that text while repairing a unit,
+    trusts it, and the failure it produces looks like a broken CLI rather
+    than a message describing a command that is not the one they ran.
 
     The job NAME follows :func:`name_style_for` — ``--name X`` or a bare
     positional, as the INSTALLED scitex-dev actually declares it. It was
@@ -339,7 +358,33 @@ def build_argv(
         argv.append("--dry-run")
     if yes:
         argv.append("--yes")
+    if adopt:
+        argv.append("--adopt")
+    if force:
+        argv.append("--force")
     return argv
+
+
+def resolve_scitex_dev(
+    *, executable: str | None = None, path: str | None = None
+) -> str | None:
+    """The ``scitex-dev`` that belongs to the interpreter we are running in.
+
+    SIBLING OF ``sys.executable`` FIRST, then PATH. Returns ``None`` when
+    neither resolves, so the caller can raise a clean ClickException.
+
+    ``executable`` and ``path`` default to ``sys.executable`` and ``$PATH``
+    and exist so this can be TESTED WITHOUT PATCHING ANYTHING. PA-306 forbids
+    mocks, and it counts the ``monkeypatch`` fixture itself — correctly: a
+    test that reaches in and rewrites ``sys.executable`` is asserting on a
+    world it invented. Taking both as arguments lets a test lay down two real
+    binaries and ask which one this function picks, which is the actual
+    question.
+    """
+    sibling = Path(executable or sys.executable).with_name("scitex-dev")
+    if sibling.exists():
+        return str(sibling)
+    return shutil.which("scitex-dev", path=path or os.environ.get("PATH"))
 
 
 def invoke(
@@ -348,23 +393,65 @@ def invoke(
     name: str | None,
     yes: bool,
     dry_run: bool = False,
+    adopt: bool = False,
+    force: bool = False,
 ) -> int:
     """Run the resolved ``scitex-dev ecosystem`` command; return its exit code.
 
-    ``scitex-dev`` is a hard dependency of this package, so the console
-    script is expected on PATH; a missing binary is a clean
-    ClickException rather than a stack trace.
+    RESOLVED AS A SIBLING OF ``sys.executable`` FIRST, then PATH.
+
+    The invariant this order exists to keep: **execute the verb in the same
+    interpreter that answered the questions leading up to it.** Three reads
+    precede this one write, and all three are in-process --
+    :func:`_dev_jobs_capability.ecosystem_verbs` imports scitex-dev's Click
+    tree to ask whether the verb exists, and ``_dev_jobs._resolve_one``
+    resolves the short name against ``scitex_dev.jobs`` entry points. If the
+    write then lands in a DIFFERENT installation, sac has asked A and acted
+    on B, and the failure is silent and confusing rather than loud.
+
+    MEASURED 2026-08-26, which is why this is no longer a PATH lookup. In an
+    agent container, ``shutil.which("scitex-dev")`` resolved to
+    ``/uvwork/bin/scitex-dev`` -- a hand-added shim whose last line execs a
+    DIFFERENT package's venv. That venv's ``scitex_dev.jobs`` group contains
+    ``scitex-cards`` and not ``scitex-agent-container``, so::
+
+        sac dev timer list                      -> all 11 sac timers (in-process)
+        sac dev timer status accounts-snapshot-live
+            Error: no kind='timer' job named 'scitex-agent-container-...'
+            Discovered: <the other package's 6 timers>
+
+    Same host, same venv, seconds apart. scitex-dev was not wrong: it
+    answered truthfully about the environment it was pointed at.
+
+    ORDER IS THE INVERSE OF :mod:`.._sac_binary`, DELIBERATELY. That module
+    tries PATH first so a test which prepends a fake binary gets exactly what
+    it asked for. Here PATH-first would still find the shim and fix nothing,
+    and no test shims ``scitex-dev`` (checked: the only ``shutil.which``
+    reference to it under ``tests/`` is a comment in ``test_audit.py``
+    recording a check that was REMOVED). Sibling-first also degrades
+    correctly: when sac is not in a venv, the sibling does not exist and PATH
+    still answers.
+
+    A missing binary stays a clean ClickException rather than a stack trace.
     """
     if not delegation.supported:
         raise ValueError("refusing to invoke an unsupported delegation")
-    exe = shutil.which("scitex-dev")
+    exe = resolve_scitex_dev()
     if exe is None:
         raise click.ClickException(
             "`scitex-dev` console script not found on PATH; install "
             "scitex-dev to use `sac dev` job verbs"
         )
     return subprocess.call(
-        build_argv(delegation, name=name, yes=yes, dry_run=dry_run, exe=exe)
+        build_argv(
+            delegation,
+            name=name,
+            yes=yes,
+            dry_run=dry_run,
+            adopt=adopt,
+            force=force,
+            exe=exe,
+        )
     )
 
 

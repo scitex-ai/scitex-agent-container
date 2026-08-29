@@ -298,11 +298,21 @@ def maybe_broker_in_sif_spawn(
       planned LOCAL workspace argv / files, never the host's — so we
       leave it alone.
     * In a SIF — POSTs the spawn RPC to host listen via
-      :func:`broker_start_to_host`. On host-accepted + ``returncode==0``
-      returns ``True`` (caller MUST return True and skip the local
-      runtime). On host-accepted + ``returncode!=0``, raises
-      :class:`RuntimeError` with the host's response embedded. On any
-      transport / 4xx / 5xx failure, the underlying
+      :func:`broker_start_to_host`, then reads the host's answer as the
+      THREE-valued signal it is:
+
+      - ``returncode == 0`` — started. Returns ``True`` (caller MUST
+        return True and skip the local runtime).
+      - ``returncode`` ABSENT with ``status == "accepted"`` — HTTP 202:
+        accepted and still in flight at the server's declared deadline.
+        The outcome is UNKNOWN, which is **not** a failure. Returns
+        ``True`` (still brokered, so the caller must still skip the local
+        runtime — returning ``False`` here would start a SECOND agent)
+        and logs the ``poll`` route that will know the outcome.
+      - ``returncode != 0`` — genuinely failed. Raises
+        :class:`RuntimeError` with the host's response embedded.
+
+      On any transport / 4xx / 5xx failure, the underlying
       :class:`InSifBrokerError` propagates unchanged.
 
     Fail-loud invariants:
@@ -370,7 +380,53 @@ def maybe_broker_in_sif_spawn(
         assume_yes=assume_yes,
         force=force,
     )
-    rc = result.get("returncode") if isinstance(result, dict) else None
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"sac-from-sac broker: host listen returned a non-object "
+            f"response for the spawn of {name!r}: {result!r}"
+        )
+
+    # THREE-VALUED, and the middle value is the entire point of this block.
+    # The host answers a brokered spawn in one of three ways, and only ONE
+    # of them is a failure:
+    #
+    #   returncode == 0     the host ran `sac agents start` and it succeeded
+    #   returncode ABSENT   HTTP 202 — accepted, still in flight at the
+    #                       server's declared deadline. The outcome is
+    #                       genuinely UNKNOWN, which is not the same as bad.
+    #   returncode != 0     the host ran it and it genuinely failed
+    #
+    # This used to read `rc = result.get("returncode") ...; if rc != 0: raise`,
+    # which collapsed the middle case into the failure pole — the bug shape
+    # §2 calls "the most common bug we ship". Measured 2026-08-15: starting a
+    # stopped `scitex-dev` raised RuntimeError and reported exit 1 while the
+    # agent came up perfectly and was answering on its a2a port seconds later.
+    # The raised message even carried the host's own sentence, verbatim:
+    # "This is NOT a failure: the spawn is running."
+    #
+    # It is DANGEROUS rather than merely wrong. The obvious response to
+    # "start failed" is to start it again — and `_spawn_client` warns, on the
+    # very 202 branch that hands us this body, that the response "must NOT be
+    # retried: a retry on a MUTATING route is exactly what starts a SECOND
+    # agent". Raising here is what manufactures that retry.
+    #
+    # In-flight returns True, never False: True means "brokered, caller MUST
+    # skip the local runtime". Returning False would send the caller down the
+    # local start path against an agent that is already launching — the exact
+    # double-spawn this guards against.
+    rc = result.get("returncode")
+    if rc is None and str(result.get("status", "")).lower() == "accepted":
+        logger.info(
+            "in-sif broker: spawn of %r was ACCEPTED and is still in flight "
+            "at the host's %ss deadline (phase=%s). This is not a failure and "
+            "must not be retried — poll %s for the outcome; a genuine failure "
+            "carries a startup_failed marker.",
+            name,
+            result.get("deadline_s"),
+            result.get("phase"),
+            result.get("poll"),
+        )
+        return True
     if rc != 0:
         raise RuntimeError(
             f"sac-from-sac broker: host listen accepted the spawn of "

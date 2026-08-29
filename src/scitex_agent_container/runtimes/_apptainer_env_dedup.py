@@ -85,7 +85,7 @@ class ForbiddenScitexDsnError(ValueError):
     """
 
 
-def _env_pair_at(argv: list[str], index: int) -> tuple[str, str, int] | None:
+def env_pair_at(argv: list[str], index: int) -> tuple[str, str, int] | None:
     """``(key, value, width)`` for the ``--env`` pair starting at ``index``.
 
     ``width`` is how many argv tokens the pair occupies (2 for the split
@@ -95,6 +95,18 @@ def _env_pair_at(argv: list[str], index: int) -> tuple[str, str, int] | None:
     where they are for :mod:`._apptainer_argv_guard` to report.
 
     ``--env-file`` is NOT an ``--env`` pair and never matches here.
+
+    THE SINGLE RECOGNISER, and public for that reason. Every pass that
+    walks this argv asking "is this an ``--env`` pair, and which one?"
+    must ask HERE — because a pass that answers it independently answers
+    it DIFFERENTLY, and the fleet has already paid for that:
+    :func:`._apptainer_secret_env.redact_secret_env_to_file` used to
+    match only the split spelling, so a spec writing the glued
+    ``--env=ANTHROPIC_API_KEY=…`` (a form live in real specs — see
+    ``raw_args`` across the fleet) walked straight past the secret sweep
+    and into the world-readable launcher argv. Two modules disagreeing
+    about what counts as the same flag IS the vulnerability; sharing this
+    function is what makes them unable to disagree.
     """
     token = argv[index]
     if token == _ENV_FLAG and index + 1 < len(argv):
@@ -116,7 +128,7 @@ def _env_pair_spans(argv: list[str]) -> list[tuple[int, int, str, str]]:
     spans: list[tuple[int, int, str, str]] = []
     index = 0
     while index < len(argv):
-        found = _env_pair_at(argv, index)
+        found = env_pair_at(argv, index)
         if found is None:
             index += 1
             continue
@@ -165,7 +177,7 @@ def collapse_duplicate_env(
     kept: list[str] = []
     index = 0
     while index < len(argv):
-        found = _env_pair_at(argv, index)
+        found = env_pair_at(argv, index)
         if found is None:
             kept.append(argv[index])
             index += 1
@@ -273,4 +285,5 @@ __all__ = [
     "ForbiddenScitexDsnError",
     "assert_no_forbidden_scitex_dsn",
     "collapse_duplicate_env",
+    "env_pair_at",
 ]

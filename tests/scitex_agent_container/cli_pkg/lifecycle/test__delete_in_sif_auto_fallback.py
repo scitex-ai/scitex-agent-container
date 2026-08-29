@@ -28,6 +28,20 @@ from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.lifecycle._delete import delete
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Test-double opener used to redirect the in-SIF HTTP path
 # ---------------------------------------------------------------------------
@@ -155,7 +169,7 @@ def test_in_sif_delete_emits_outcome_json_to_stdout(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["ok"] is True
 
@@ -166,7 +180,7 @@ def test_in_sif_delete_emits_http_status_in_outcome(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["http_status"] == 200
 
@@ -196,7 +210,7 @@ def test_in_sif_delete_emits_kind_acl_deny_in_outcome(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["unrelated-target"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "acl_deny"
 
@@ -279,7 +293,7 @@ def test_in_sif_delete_emits_kind_transport_on_transport_error(env_save_restore)
     runner = CliRunner()
     # Act
     result = runner.invoke(delete, ["any-name"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "transport"
 

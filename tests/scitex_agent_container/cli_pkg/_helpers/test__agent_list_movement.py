@@ -23,7 +23,7 @@ import pytest
 
 
 @pytest.fixture
-def isolated_runtime(tmp_path: Path, env_save_restore):
+def isolated_runtime(tmp_path: Path, env_save_restore, pg_schema: str):
     """Redirect the runtime root + reload ``_session_state`` so
     ``DEFAULT_STATE_ROOT`` picks up the redirected value. Real reload,
     no monkeypatch.

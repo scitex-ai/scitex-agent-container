@@ -258,9 +258,44 @@ def test_build_ssh_argv_inner_string_appends_user_command_after_preamble(
     assert final.endswith("which apptainer'")
 
 
-def test_build_ssh_argv_shell_quotes_command_inside_bash_wrapper():
-    # Arrange: a command argument with whitespace must survive the
-    # `bash -c '<...>'` round-trip exactly, not reflow the parser.
+def test_build_ssh_argv_joins_the_command_the_same_way_both_branches_do():
+    """The preamble branch must treat ``command`` exactly as the bare one does.
+
+    CHANGED 2026-08-17, and the previous assertion here was the reason a P1
+    outage existed. It pinned the preamble branch to ``shlex.join``, i.e. to
+    ``command`` being a REAL ARGV LIST — while the bare branch appends raw
+    tokens for ssh to word-join, i.e. ``command`` being ALREADY SHELL-QUOTED.
+
+    Two incompatible meanings for one parameter, selected by a branch the
+    caller cannot see. NO CALLER COULD SATISFY BOTH: ``_spec_handoff``
+    pre-quoted its script to make the bare branch work, the preamble branch
+    quoted that a second time, and the remote bash looked for a FILE named
+    ``sh -c '...'`` — rc=127 on every preamble peer, which is what made
+    scitex-hub unstartable by any path (measured on compute-02 and -03, with
+    the bare peer nas-03 returning 0 as the control).
+
+    So the contract is now stateable in one sentence, and it is the bare
+    branch's: ``command`` is a token list that will be SPACE-JOINED, and a
+    caller wanting one remote token pre-quotes it. Every caller in the repo
+    already satisfies that.
+
+    THE COST, stated rather than hidden: an argument containing whitespace
+    reflows into two on a preamble peer, where it previously survived. That is
+    not a new hazard — it is what the bare branch has always done to the same
+    input — but it IS a behaviour change for preamble peers, and the property
+    this test used to guarantee is genuinely gone.
+
+    Preserving quoting on BOTH branches is strictly better and is the
+    follow-up: make the bare branch emit one ``shlex.join``ed element too.
+    That is not bundled here because it changes the rendered argv SHAPE and
+    breaks 13 tests that deliberately pin it (including
+    ``test_build_ssh_argv_without_preamble_is_unchanged`` and
+    ``test_home_rooted_peer_argv_is_byte_identical``, which exist to prove
+    registry pinning leaves an unpinned peer's argv untouched). Rewriting a
+    documented byte-identity invariant deserves its own review, not a hurried
+    edit while an agent is down.
+    """
+    # Arrange
     peers = {
         "spartan-bm152": PeerSpec(
             name="spartan-bm152",
@@ -269,18 +304,9 @@ def test_build_ssh_argv_shell_quotes_command_inside_bash_wrapper():
         )
     }
     # Act
-    argv = build_ssh_argv(
-        "spartan-bm152",
-        ["echo", "hello world"],
-        peers,
-    )
-    # Assert: shlex.join keeps `hello world` as one token in the inner
-    # CMD, and the outer shlex.quote wraps the whole blob for ssh's
-    # word-join. The remote login shell sees `bash -c 'CMD'` with
-    # CMD = `module load Apptainer/1.3.3 && echo 'hello world'`.
-    assert argv[-1] == (
-        "bash -c 'module load Apptainer/1.3.3 && echo '\"'\"'hello world'\"'\"''"
-    )
+    argv = build_ssh_argv("spartan-bm152", ["echo", "hello world"], peers)
+    # Assert
+    assert argv[-1] == "bash -c 'module load Apptainer/1.3.3 && echo hello world'"
 
 
 @pytest.fixture

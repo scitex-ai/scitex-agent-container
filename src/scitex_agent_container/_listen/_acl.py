@@ -8,17 +8,21 @@ the prior limited scope had deferred):
   allowed — parent↔child *and* sibling↔sibling, bidirectional.
   Everything cross-group is denied until an explicit grant is added."
 
-* **Authenticated sender identity** — per-node bearer tokens
-  resolved by :class:`NodeAuthMiddleware`. ``check_send_acl``
-  enforces "identity cannot be spoofed via a metadata field": when
-  a per-node bearer is presented, ``params.metadata.from_agent``
-  MUST match the bearer's resolved name; mismatch → 403.
+* **Authenticated sender identity** — REMOVED 2026-08-28. A
+  ``NodeAuthMiddleware`` here resolved per-node bearer tokens out of
+  the ``node_tokens`` table and pinned ``params.metadata.from_agent``
+  against the resolved name. Nothing in ``src/`` ever minted such a
+  token, so the table held 0 rows on every fleet host, no bearer ever
+  resolved, and the anti-spoof branch in ``check_send_acl`` never
+  once fired. Middleware, branch and table are gone together. What
+  gates a send today — and did all along — is the host-wide bearer at
+  the perimeter (:class:`_listen.auth.BearerAuthMiddleware`) plus the
+  NAME-based predicates below.
 
 * Cross-group grants are accepted (see :mod:`_state.state_db_nodes`
-  ``grant_send`` / ``has_grant``); the sender for the grant check
-  is the resolved-from-bearer name when a per-node bearer is
-  presented, else (administrative / host-bearer caller) the
-  ``metadata.from_agent`` claim.
+  ``grant_send`` / ``has_grant``); the sender for the grant check is
+  the ``metadata.from_agent`` claim, honoured verbatim on the
+  administrative / host-bearer path — which is every path.
 
 * "Denial is **explicit**: a denied send returns a clear ``403`` to
   the sender and is logged."
@@ -33,11 +37,9 @@ forwarder's side — see :mod:`_listen.peer_tokens`).
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Literal
 
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .._state.state_db_nodes import (
     derive_group,
@@ -45,7 +47,6 @@ from .._state.state_db_nodes import (
     is_developer,
     read_comms_policy,
     resolve_group_name,
-    resolve_node_token,
     same_named_group,
     sender_target_relationship,
     spawn_allowed,
@@ -56,7 +57,6 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "AclDecision",
-    "NodeAuthMiddleware",
     "check_lineage_acl",
     "check_send_acl",
     "check_spawn",
@@ -68,7 +68,6 @@ def check_lineage_acl(
     *,
     caller: str | None,
     target: str,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Decide whether ``caller`` may operate on ``target`` via lineage.
 
@@ -80,8 +79,19 @@ def check_lineage_acl(
     Policy:
 
       * ``caller is None`` (or empty string) — administrative /
-        operator path (host-wide bearer, not a per-node token).
-        Always allowed. Mirrors the spawn-gate's admin treatment.
+        operator path (the host-wide bearer). Always allowed. Mirrors
+        the spawn-gate's admin treatment. Read that literally when
+        reasoning about the HTTP surfaces: the DELETE and tail
+        handlers derive ``caller`` ONLY from
+        ``request.state.authenticated_node``, which the removed
+        per-node-bearer middleware was the only thing that ever set,
+        so those two routes pass ``None`` here on every request and
+        this gate admits them. It was already so before the removal —
+        the table had no rows — and this docstring now says it out
+        loud instead of implying a second, non-admin caller shape
+        that never arrived. The restart and host_exec handlers do
+        still produce a non-``None`` caller, from the request body's
+        ``caller`` field.
       * ``caller == target`` — self-management. A SAC agent
         managing its OWN runtime (e.g. ``sac agents status`` on
         itself) is always allowed regardless of lineage.
@@ -108,8 +118,13 @@ def check_lineage_acl(
     suitable for inclusion in :func:`deny_response` (which now
     wraps it with ``kind="acl_deny"`` per the 5-kind contract).
 
-    ``db_path`` is exposed so tests can isolate from the global
-    state.db.
+    ``db_path`` is GONE (2026-08-28). It was "exposed so tests can
+    isolate from the global state.db", and after the ``lineage`` move
+    there is no state.db behind this gate to isolate from: the descendant
+    walk reads the shared PostgreSQL store, which isolates via
+    ``SCITEX_STORE_DSN`` (the ``pg_schema`` fixture). A parameter that
+    still promised SQLite isolation would promise something no lookup
+    under it can deliver.
     """
     if caller is None or caller == "":
         return ("allow", None)
@@ -120,11 +135,11 @@ def check_lineage_acl(
     # delete / status / tail), not just its lineage descendants. Checked
     # before the descendant walk so developer-group CRUD never depends on
     # a lineage edge to the target.
-    if is_developer(name=caller, db_path=db_path):
+    if is_developer(name=caller):
         return ("allow", None)
     from .._state._lineage import descendants_of
 
-    descendants = descendants_of(name=caller, db_path=db_path)
+    descendants = descendants_of(name=caller)
     if target in descendants:
         return ("allow", None)
     # Standard-fleet manage mesh (operator 2026-06-29: "agents manage
@@ -138,8 +153,8 @@ def check_lineage_acl(
     # is NOT meshed and stays unmanageable cross-group, preserving the
     # solid isolation scientific rigor requires.
     if groups_mesh(
-        resolve_group_name(name=caller, db_path=db_path),
-        resolve_group_name(name=target, db_path=db_path),
+        resolve_group_name(name=caller),
+        resolve_group_name(name=target),
     ):
         return ("allow", None)
     return (
@@ -159,83 +174,34 @@ def check_lineage_acl(
 AclDecision = tuple[Literal["allow", "deny", "block"], str | None]
 
 
-class NodeAuthMiddleware:
-    """Resolve the incoming Bearer token to a node identity, if any.
-
-    Sits **after** the outer
-    :class:`scitex_agent_container._listen.auth.BearerAuthMiddleware`
-    — that middleware enforces *some* valid bearer was presented;
-    this one resolves it to an identity:
-
-    * If the bearer equals the host-wide token, attach
-      ``request.state.authenticated_node = None`` to mark it as the
-      administrative caller (cross-host forwarding path: the
-      caller is a peer sac listen acting on behalf of a remote
-      node; ``metadata.from_agent`` is honoured verbatim).
-    * If the bearer matches a row in ``node_tokens``, attach the
-      resolved node name.
-    * Otherwise leave ``authenticated_node = None``. The outer
-      middleware would already have rejected an unknown bearer, so
-      this branch is defence-in-depth.
-
-    ``db_path`` is exposed so tests can drop in an isolated
-    state.db without touching ``$SCITEX_AGENT_CONTAINER_STATE_DB``.
-    """
-
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        host_bearer: str,
-        db_path: Path | None = None,
-    ) -> None:
-        self.app = app
-        self.host_bearer = host_bearer
-        self.db_path = db_path
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        headers = dict(scope.get("headers") or [])
-        auth = headers.get(b"authorization", b"").decode("ascii", "replace")
-        bearer = ""
-        if auth.startswith("Bearer "):
-            bearer = auth[len("Bearer ") :].strip()
-        scope.setdefault("state", {})
-        if bearer and bearer != self.host_bearer:
-            resolved = resolve_node_token(token=bearer, db_path=self.db_path)
-            scope["state"]["authenticated_node"] = resolved
-        else:
-            scope["state"]["authenticated_node"] = None
-        await self.app(scope, receive, send)
-
-
 def check_send_acl(
     *,
-    authenticated_node: str | None,
     claimed_from_agent: str | None,
     target: str,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Decide whether a ``message:send`` should be admitted.
 
     Inputs:
 
-    * ``authenticated_node`` — resolved from the Bearer token by
-      :class:`NodeAuthMiddleware`. ``None`` means the host-wide
-      bearer was used (administrative / cross-host forwarding) — the
-      caller is trusted to honour ``claimed_from_agent`` verbatim.
     * ``claimed_from_agent`` — what ``params.metadata.from_agent``
-      said. May be missing.
+      said. May be missing. Every caller reaching here holds the
+      host-wide bearer (administrative / cross-host forwarding), so
+      the claim is honoured verbatim — see item 1 below.
     * ``target`` — the ``<name>`` in
       ``POST /agents/<name>/message:send``.
 
-    Decision logic (handoff §4 acceptance):
+    Decision logic:
 
-    1. **Identity cannot be spoofed via a metadata field.** When a
-       per-node bearer is presented, ``claimed_from_agent`` (if
-       present) MUST match ``authenticated_node``; mismatch → deny.
+    1. **There is no per-request identity to pin the claim against.**
+       An ``authenticated_node`` parameter and the anti-spoof branch it
+       fed lived here until 2026-08-28: when a per-node bearer was
+       presented, ``claimed_from_agent`` had to match the name that
+       bearer resolved to. Nothing ever minted a per-node bearer, so
+       that parameter was ``None`` on every real call and the branch
+       never fired; it is deleted rather than kept, because a
+       signature promising spoof-proof identity is a promise this
+       function cannot keep. The host-wide bearer at the perimeter is
+       what authenticates a caller today.
     2. **Messaging is DEFAULT-ALLOW cross-group (operator 2026-07-03).**
        a2a messaging is collaboration, not a security boundary, so any
        working group may address any other. The same-group / mesh / grant
@@ -251,9 +217,8 @@ def check_send_acl(
        and a per-spec ``spec.comms`` parent/siblings=deny
        (:func:`_phase3_relationship_deny` → "deny"). An explicit
        ``grant_send`` remains a no-op-compatible allow.
-    4. The empty-sender case (no authenticated node AND no claimed
-       from_agent) is denied — there is no identity to gate on. Identity
-       spoof + missing target are denied likewise.
+    4. The empty-sender case (no claimed from_agent) is denied — there
+       is no identity to gate on. A missing target is denied likewise.
 
     Returns ``("allow", None)``, ``("deny", reason)``, or ``("block",
     reason)``. The reason is suitable for a 403 body and a host log line.
@@ -261,32 +226,18 @@ def check_send_acl(
     if not target:
         return ("deny", "missing target")
 
-    # Determine the *effective* sender identity for the ACL check.
-    if authenticated_node is not None:
-        # Per-node bearer was presented.
-        if claimed_from_agent is not None and claimed_from_agent != authenticated_node:
-            return (
-                "deny",
-                (
-                    f"identity spoof: bearer authenticates "
-                    f"{authenticated_node!r} but metadata.from_agent "
-                    f"claims {claimed_from_agent!r}"
-                ),
-            )
-        sender = authenticated_node
-    else:
-        # Administrative / cross-host forwarding path. The caller
-        # passed the host-wide bearer; we honour
-        # metadata.from_agent verbatim — but it must be present.
-        if not claimed_from_agent:
-            return (
-                "deny",
-                (
-                    "no authenticated identity and no metadata.from_agent — "
-                    "cannot determine sender for ACL"
-                ),
-            )
-        sender = claimed_from_agent
+    # Administrative / cross-host forwarding path — the only path. The
+    # caller passed the host-wide bearer; we honour metadata.from_agent
+    # verbatim — but it must be present.
+    if not claimed_from_agent:
+        return (
+            "deny",
+            (
+                "no authenticated identity and no metadata.from_agent — "
+                "cannot determine sender for ACL"
+            ),
+        )
+    sender = claimed_from_agent
 
     if sender == target:
         return ("allow", None)
@@ -301,7 +252,7 @@ def check_send_acl(
     # cross-group deny that does push.
     from .._state.state_db_blocks import has_block as _has_block
 
-    if _has_block(sender=sender, target=target, db_path=db_path):
+    if _has_block(sender=sender, target=target):
         return ("block", f"blocked: {sender!r} → {target!r}")
 
     # Phase-3 (ADR-0010 Step 2) — per-spec outbound/inbound deny layered
@@ -310,13 +261,11 @@ def check_send_acl(
     # BEFORE the group check so a sibling-deny on either side fires even
     # when sender and target share a group. Default policies (everything
     # ``allow``) leave the legacy group ACL semantics untouched.
-    phase3_decision = _phase3_relationship_deny(
-        sender=sender, target=target, db_path=db_path
-    )
+    phase3_decision = _phase3_relationship_deny(sender=sender, target=target)
     if phase3_decision is not None:
         return phase3_decision
 
-    sender_group = derive_group(name=sender, db_path=db_path)
+    sender_group = derive_group(name=sender)
     if target in sender_group:
         return ("allow", None)
 
@@ -328,7 +277,7 @@ def check_send_acl(
     # address every other ``developer``-group agent with no per-pair
     # grant. Additive: an ungrouped fleet shares no named group and
     # falls through to the explicit-grant check below, unchanged.
-    if same_named_group(sender=sender, target=target, db_path=db_path):
+    if same_named_group(sender=sender, target=target):
         return ("allow", None)
 
     # Cross-group mesh (operator 2026-06-27): the three STANDARD fleet
@@ -341,12 +290,18 @@ def check_send_acl(
     # NOT meshed and falls through to the grant check below, preserving
     # the solid isolation scientific rigor requires.
     if groups_mesh(
-        resolve_group_name(name=sender, db_path=db_path),
-        resolve_group_name(name=target, db_path=db_path),
+        resolve_group_name(name=sender),
+        resolve_group_name(name=target),
     ):
         return ("allow", None)
 
-    if has_grant(sender=sender, target=target, db_path=db_path):
+    # Every lookup this function makes is now a PostgreSQL store read
+    # isolating via SCITEX_STORE_DSN — the grants primitives since their
+    # own move, and the lineage ones since 2026-08-28. The sentence that
+    # stood here ("the other lookups in this function still take it, so
+    # the parameter stays") was the last thing keeping ``db_path`` alive;
+    # with it false, the parameter went too.
+    if has_grant(sender=sender, target=target):
         return ("allow", None)
 
     # DEFAULT-ALLOW for cross-group a2a MESSAGING (operator 2026-07-03):
@@ -366,7 +321,6 @@ def _phase3_relationship_deny(
     *,
     sender: str,
     target: str,
-    db_path: Path | None,
 ) -> AclDecision | None:
     """Per-spec ACL deny based on the sender↔target lineage relationship.
 
@@ -395,9 +349,9 @@ def _phase3_relationship_deny(
     Defaults preserve current behaviour: every comb in the matrix
     starts ``"allow"`` so absence of ``spec.comms`` is a no-op here.
     """
-    rel = sender_target_relationship(sender=sender, target=target, db_path=db_path)
+    rel = sender_target_relationship(sender=sender, target=target)
     if rel in ("parent", "sibling"):
-        sender_policy = read_comms_policy(name=sender, db_path=db_path)
+        sender_policy = read_comms_policy(name=sender)
         if rel == "parent" and sender_policy["outbound_parent"] == "deny":
             return (
                 "deny",
@@ -417,7 +371,7 @@ def _phase3_relationship_deny(
                 ),
             )
     if rel in ("child", "sibling"):
-        target_policy = read_comms_policy(name=target, db_path=db_path)
+        target_policy = read_comms_policy(name=target)
         if rel == "child" and target_policy["inbound_parent"] == "deny":
             return (
                 "deny",
@@ -442,7 +396,6 @@ def _phase3_relationship_deny(
 def check_spawn(
     *,
     caller: str | None,
-    db_path: Path | None = None,
 ) -> AclDecision:
     """Wrap :func:`spawn_allowed` in the same allow/deny tuple shape
     as :func:`check_send_acl` so the listen-server handler can branch
@@ -473,9 +426,9 @@ def check_spawn(
     named-group set, never primary-group equality — see
     :mod:`..._state.state_db_groups` (incident 2026-08-10, grant).
     """
-    if caller and is_developer(name=caller, db_path=db_path):
+    if caller and is_developer(name=caller):
         return ("allow", None)
-    allowed, reason = spawn_allowed(caller=caller, db_path=db_path)
+    allowed, reason = spawn_allowed(caller=caller)
     if allowed:
         return ("allow", None)
     return ("deny", reason)

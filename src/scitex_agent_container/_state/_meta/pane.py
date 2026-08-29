@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import subprocess
 
+from ..._runners._tmux._target import exact_target
+
 _SUBAGENT_MARKER_RE = re.compile(
     r"(\d+)\s+local\s+agents?(?:\s+still)?\s+running",
     re.IGNORECASE,
@@ -45,7 +47,7 @@ def _subagent_count_from_pane(session: str, multiplexer: str) -> int:
     # correct "unknown" sentinel — never block a heartbeat on tmux error)
     try:
         pane = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p"],
+            ["tmux", "capture-pane", "-t", exact_target(session), "-p"],
             capture_output=True,
             text=True,
         ).stdout
@@ -63,7 +65,7 @@ def _capture_pane(session: str, multiplexer: str, max_chars: int = 10_000) -> st
     try:
         out = (
             subprocess.run(
-                ["tmux", "capture-pane", "-t", session, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", exact_target(session), "-p", "-J"],
                 capture_output=True,
                 text=True,
             ).stdout
@@ -148,9 +150,9 @@ def _classify_pane_state(pane_text: str) -> tuple[str, str]:
     return "unknown", ""
 
     # Note: "waiting" (freshly booted, never received work) is intentionally
-    # NOT detected here. The earlier draft relied on the claude-hud
-    # statusline `Context ░░░░░░░░░░ 0%` marker, but claude-hud is an
-    # external tool not present in every install. The dashboard derives
+    # NOT detected here. An earlier draft read a `Context ░░░░░░░░░░ 0%`
+    # marker off the pane's statusline, which made pane classification depend
+    # on how the status line happens to be rendered. The dashboard derives
     # "waiting" instead from the hub-side `last_tool_at` field — an agent
     # that is connected but has never recorded a tool call is waiting,
     # regardless of what its pane statusline looks like.

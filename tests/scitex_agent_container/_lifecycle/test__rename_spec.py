@@ -105,6 +105,39 @@ def test_sub_env_value_rewrites_the_board_identity():
     assert result == NEW
 
 
+def test_sub_env_value_rewrites_the_CURRENT_board_identity():
+    """The spelling 108 specs already use, and it was not in ENV_RULES.
+
+    Measured 2026-08-19 on compute-04: 108 specs declare
+    ``SCITEX_CARDS_AGENT_ID`` and 193 still declare the old
+    ``SCITEX_TODO_AGENT_ID``. Only the old key was listed, so renaming any of
+    those 108 agents left the board identity pointing at the agent's FORMER
+    name, and every card it then wrote was attributed to an agent that no
+    longer exists -- the damage this module's own docstring warns about.
+    """
+    # Arrange
+    key = "SCITEX_CARDS_AGENT_ID"
+    # Act
+    result = sub_env_value(key, OLD, OLD, NEW)
+    # Assert
+    assert result == NEW
+
+
+def test_sub_env_value_still_rewrites_the_legacy_board_identity():
+    """Both spellings, on purpose, while both populations exist.
+
+    Not a compatibility fallback to be tidied away: the rename tool has to
+    recognise what is ACTUALLY IN THE SPECS. Dropping this one early breaks
+    renames for the 193 specs that still carry it.
+    """
+    # Arrange
+    key = "SCITEX_TODO_AGENT_ID"
+    # Act
+    result = sub_env_value(key, OLD, OLD, NEW)
+    # Assert
+    assert result == NEW
+
+
 def test_sub_env_value_rewrites_the_state_db_path_component():
     # Arrange
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"

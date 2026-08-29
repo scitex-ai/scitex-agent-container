@@ -1,0 +1,40 @@
+from stringutils import (
+    capitalize_words,
+    count_words,
+    is_palindrome,
+    remove_prefix,
+    slugify,
+    truncate,
+    wrap_lines,
+)
+
+
+def test_slugify():
+    assert slugify("Hello, World!") == "hello-world"
+
+
+def test_truncate():
+    assert truncate("abcdef", 4) == "a..."
+    assert truncate("abc", 10) == "abc"
+
+
+def test_count_words():
+    assert count_words("one two  three") == 3
+
+
+def test_is_palindrome():
+    assert is_palindrome("A man, a plan, a canal: Panama")
+    assert not is_palindrome("hello")
+
+
+def test_capitalize_words():
+    assert capitalize_words("hello world") == "Hello World"
+
+
+def test_remove_prefix():
+    assert remove_prefix("foobar", "foo") == "bar"
+    assert remove_prefix("bar", "foo") == "bar"
+
+
+def test_wrap_lines():
+    assert wrap_lines("aa bb cc", 5) == ["aa bb", "cc"]

@@ -78,8 +78,13 @@ def broker_env() -> Iterator[Any]:
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
-    """Real isolated state.db + runtime dir + HOME (mirrors test__in_sif_broker)."""
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
+    """Real isolated state.db + runtime dir + HOME (mirrors test__in_sif_broker).
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28: ``agent_start`` resolves the
+    agent's a2a port, and that ledger moved to PostgreSQL, so an isolated
+    state.db is no longer the whole isolation a start needs.
+    """
     db = tmp_path / "state.db"
     runtime_dir = tmp_path / "runtime"
     home = tmp_path / "home"

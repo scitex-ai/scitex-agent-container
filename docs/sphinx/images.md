@@ -9,6 +9,12 @@ Two `.def` recipes, layered:
 | `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | **Default** when `spec.image` is unset |
 | `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
 
+**Neither layer is harness-complete on its own.** `:base` ships no agent
+SDK at all; `:scitex` adds `claude-agent-sdk` only. Whichever harness your
+specs select has to be present in the image you point them at — an
+`openai` agent needs the `openai-agents` SDK on top, a `codex` agent needs
+`openai-codex` plus its ~285 MB pinned CLI-binary wheel.
+
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`.
 Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
 

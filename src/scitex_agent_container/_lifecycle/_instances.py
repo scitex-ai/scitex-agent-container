@@ -20,10 +20,13 @@ without rescanning by name+host.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _spawned_by() -> str:
@@ -82,6 +85,47 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return None
     return pid
+
+
+def _runtime_session_name(config: AgentConfig, runtime: Any) -> str | None:
+    """Resolve the multiplexer session the runtime just launched into.
+
+    Asks the runtime itself (:meth:`runtimes.base.RuntimeBase.session_name`)
+    rather than re-deriving the name from a convention, so the string
+    landing in ``instances.screen`` is THE SAME one the runtime passed to
+    ``tmux new-session -s`` — a re-derivation is free to drift from what
+    was actually created, and a drifted name probes an empty answer that
+    reads exactly like a dead agent.
+
+    Why the column must be filled at all: ``screen`` is the only column in
+    ``instances`` naming something the OS can be asked about independently
+    of sac's own bookkeeping. Nothing wrote it, so every "did this agent
+    cycle?" question could only be answered from the rows sac itself had
+    just written — an echo, not evidence. MEASURED 2026-08-14 on
+    scitex-compute-04: three ``instances`` rows for one agent, all with
+    ``screen`` NULL and pids matching no live process, while the ONE real
+    tmux session (``tui-scitex-agent-container``) had been alive since the
+    previous day. ``sac agents stop`` / ``restart`` reported success over
+    it every time.
+
+    Returns ``None`` (honestly "this runtime has no session to name") for
+    a runtime without the seam, a runtime that has no multiplexer at all
+    (SDK / apptainer / docker), or a probe that failed. ``None`` is SAFE
+    by construction: the restart postcondition reads a NULL ``screen`` as
+    "cannot verify" rather than as "verified", so an absent name costs an
+    abstention — whereas a GUESSED name would buy a false verification,
+    which is the very failure this exists to kill.
+    """
+    getter = getattr(runtime, "session_name", None)
+    if not callable(getter):
+        return None
+    try:
+        session = getter(config)
+    except Exception:  # stx-allow: fallback (reason: a session-name probe hiccup must never block an agent start; NULL is the honest "unknown" and downstream reads it as "cannot verify" — see docstring)
+        return None
+    if not isinstance(session, str) or not session.strip():
+        return None
+    return session
 
 
 def _state_dir_for(config: AgentConfig, runtime: Any):
@@ -143,13 +187,17 @@ def record_local_instance(
     host = _resolve_host(None)
     # End stale active rows for this name+host (e.g. a previous crash
     # that never reached agent_stop) so the unique index stays clear.
-    for row in list_active_instances(host=host, db_path=db_path):
+    for row in list_active_instances(host=host):
         if row.get("name") == config.name:
-            record_instance_stop(
-                str(row["id"]), exit_reason="superseded", db_path=db_path
-            )
+            record_instance_stop(str(row["id"]), exit_reason="superseded")
 
-    a2a_port = get_port(config.name, db_path=db_path)
+    # NO ``db_path`` anywhere on this path any more. The a2a claim ledger
+    # moved to per-host PostgreSQL (``_state/port_allocator_store``) on
+    # 2026-08-20 and ``instances`` moved to the SHARED store on 2026-08-28,
+    # so the parameter this function still accepts no longer selects
+    # anything either side of this line — it survives only for the
+    # registry/spec paths its callers thread it through.
+    a2a_port = get_port(config.name)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
@@ -170,27 +218,41 @@ def record_local_instance(
     # ``os.kill``, so a peer's pid could collide with an unrelated local
     # process and vouch for a dead agent as alive). Those correctly stay
     # NULL.
+    #
+    # ``screen`` is the same story one column over: the runtime names the
+    # multiplexer session it just created (see
+    # :func:`_runtime_session_name`), so the row carries a handle the OS
+    # can be asked about WITHOUT re-reading sac's own bookkeeping. The
+    # three remote call sites leave it NULL for the same reason they leave
+    # ``pid`` NULL — a peer's tmux session is not in this host's namespace,
+    # so a name recorded here could only ever be probed against the wrong
+    # server.
     instance_id = record_instance_start(
         name=config.name,
         host=host,
         pid=_runtime_pid(config, runtime),
+        screen=_runtime_session_name(config, runtime),
         a2a_port=a2a_port,
         bound_port=a2a_port,
         remote=False,
         spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
-        db_path=db_path,
     )
 
-    # ADR-0014 Stage 1 — paired comms_nodes write so cross-host peers
-    # can resolve this agent after a `sac registry sync`. The instances
-    # table is local; comms_nodes is the federated layer. Best-effort:
-    # any error here is logged but does not abort the agent start (a
-    # missing comms_nodes row degrades to "peers can't see this agent
-    # via the federated graph until next sync" — not a startup blocker).
+    # ADR-0014 — paired comms_nodes write so cross-host peers can resolve
+    # this agent. The instances table is per-host SQLite; comms_nodes is the
+    # federated layer, and since 2026-08-28 that is the SHARED PostgreSQL
+    # store, so peers see this entry immediately — there is no sync to wait
+    # for. Best-effort: any error here is logged but does not abort the agent
+    # start (a missing entry degrades to "peers can't see this agent via the
+    # federated graph" — not a startup blocker, and PostgreSQL being briefly
+    # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
-            from .._state.state_db_nodes import register_comms_node
+            from .._state.state_db_nodes import (
+                CommsNodeConflictError,
+                register_comms_node,
+            )
 
             register_comms_node(
                 name=config.name,
@@ -207,10 +269,36 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
-                db_path=db_path,
             )
-        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
-            pass
+        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            logger.warning(
+                "comms_nodes registration REFUSED for %r: %s. The agent IS "
+                "running; peers cannot resolve it by name until the "
+                "collision is resolved (`sac registry register --name %s "
+                "--host %s --a2a-port %d` once the other claimant is gone).",
+                config.name,
+                exc,
+                config.name,
+                host,
+                int(a2a_port),
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            # NOT a bare pass. It was one until 2026-08-28, and it swallowed a
+            # TypeError from a stale ``db_path=`` kwarg on EVERY spec-driven
+            # start — invisibly, because the stop-side unregister still
+            # worked, so a restart moved an agent from visible to permanently
+            # withdrawn in the directory with nothing logged anywhere. A
+            # swallow that cannot be seen is indistinguishable from a call
+            # that never ran.
+            logger.error(
+                "comms_nodes registration FAILED for %r at %s:%d (%r). The "
+                "agent IS running but peers cannot resolve it by name; "
+                "`sac registry register` is the manual repair.",
+                config.name,
+                host,
+                int(a2a_port),
+                exc,
+            )
 
     # OP-PRIO-1 (split from #343) — refresh the ACL grant ``<self> →
     # lead`` on EVERY successful start. Without this, a previous
@@ -228,7 +316,6 @@ def record_local_instance(
             sender=config.name,
             target="lead",
             note="auto-grant on agent_start (op-2026-06-09)",
-            db_path=db_path,
         )
     except Exception:  # stx-allow: fallback (reason: never block agent start on grant write; missing grant degrades to operator running `sac a2a grant <name> lead` manually until next start)
         pass
@@ -236,6 +323,24 @@ def record_local_instance(
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         write_instance_id(state_dir, instance_id)
+
+    # v4 step 5 — THE BIRTH CERTIFICATE (operator requirement 2026-08-14:
+    # 「起動した後にコンパイルされた最終的なスペックをエージェントが持つ
+    # ようにしてください…状態なのでdb に入れるのがよさそうですよね」).
+    # This is the one point where the COMPILED config and the freshly
+    # minted incarnation id are both in hand, so the fully-resolved spec
+    # (secrets referenced by slot/source name, never by value) is
+    # recorded here, keyed by the same id the beats and the ExitRecord
+    # carry. Best-effort with a LOGGED origin, same contract as the
+    # sibling side-writes above — see ``_birth_certificate``.
+    from ._birth_certificate import write_birth_certificate
+
+    # No ``db_path``: the certificate went to per-host PostgreSQL on
+    # 2026-08-19. This function's own ``db_path`` still names the SQLite
+    # state.db that ``record_local_instance`` above writes to — the two
+    # records now live in two different databases, which is exactly what
+    # the migration is doing, one table at a time.
+    write_birth_certificate(config, instance_id)
     return instance_id
 
 
@@ -362,7 +467,9 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
                 updated = record_instance_stop(str(row["id"]), exit_reason="stopped")
                 break
 
-    # ADR-0014 Stage 1 — paired tombstone in comms_nodes. Best-effort.
+    # ADR-0014 — paired withdrawal from comms_nodes. It is a hide() now,
+    # not an ``ended_at`` column, so it reaches every host by the same path
+    # the registration did. Best-effort.
     if updated:
         try:
             from .._state.state_db_nodes import unregister_comms_node

@@ -104,7 +104,7 @@ def test_in_sif_status_emits_outcome_json(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["ok"] is True
 
@@ -128,7 +128,7 @@ def test_in_sif_status_passes_through_host_body_in_details(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["alice"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["details"]["status"] == "startup_failed"
 
@@ -161,7 +161,7 @@ def test_in_sif_status_emits_kind_acl_deny(fake_host_listen):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["unrelated"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "acl_deny"
 
@@ -191,7 +191,7 @@ def test_in_sif_status_emits_kind_transport(env_save_restore):
     runner = CliRunner()
     # Act
     result = runner.invoke(status, ["any-name"])
-    parsed = json.loads(result.output.strip())
+    parsed = json.loads(result.stdout)
     # Assert
     assert parsed["kind"] == "transport"
 

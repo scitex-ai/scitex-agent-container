@@ -353,7 +353,21 @@ jobs:
       # even though it is on the operator's interactive PATH.
       - name: Write the CI verdict to the card and notify the pushing agent
         env:
-          SCITEX_CARDS_DB: ${{ vars.SCITEX_CARDS_DB || 'postgresql://scitex_cards@127.0.0.1:55432/scitex_cards' }}
+          # THE FALLBACK NAMES A LOGIN ROLE, and that is the whole fix here.
+          # It used to be `postgresql://scitex_cards@...`. `scitex_cards` was
+          # the cluster's shared superuser and was demoted to NOLOGIN on
+          # 2026-08-24 with its password removed from every ~/.pgpass, so this
+          # step began failing on EVERY push with
+          #   fe_sendauth: no password supplied
+          # while the test legs themselves passed — a green suite reported as
+          # a red run, on develop and on every open PR at once.
+          #
+          # `ywatanabe__cli` is the interactive/tooling login leaf. libpq
+          # matches it in the runner user's ~/.pgpass, so no credential
+          # appears here. Verified from the runner's own host both with and
+          # without PGPASSFILE exported, because this step runs in a
+          # non-interactive shell that sources no profile.
+          SCITEX_CARDS_DB: ${{ vars.SCITEX_CARDS_DB || 'postgresql://ywatanabe__cli@127.0.0.1:55432/scitex_cards' }}
           TEST_RESULT: ${{ needs.test.result }}
           # Reads the FAILED JOBS' logs so a red verdict names the failing
           # test. Deliberately the per-JOB log endpoint: this job is itself

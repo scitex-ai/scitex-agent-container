@@ -16,6 +16,7 @@ from typing import Any, Callable
 __all__ = [
     "_format_boot_stderr_section",
     "capture_pane_diag",
+    "fresh_retry_hint",
     "raise_start_failure",
 ]
 
@@ -54,6 +55,48 @@ def _format_boot_stderr_section(log: Path) -> str:
 
 
 _NO_PANE = "\n  (no pane diagnostics available)"
+
+
+def fresh_retry_hint(config: Any) -> str:
+    """The one-shot ``--fresh`` escape hatch, as a message section.
+
+    Operator 2026-08-18: 「フレッシュは基本的に使いません、最初の起動に必要な
+    時だけで、スタートした時に失敗したら --fresh を今回だけはつけろ的なヒント
+    をだしてください、スペックは全てレジュームで」 — every spec resumes; a
+    start failure is the one moment where a single fresh retry is the right
+    move, so the failure report is where that hint belongs.
+
+    WHY IT IS CONDITIONAL. A start that was ALREADY fresh cannot be wedged on a
+    resumed session, so naming ``--fresh`` there would be an error asserting a
+    cause it did not observe — the same disease :func:`raise_start_failure`
+    exists to kill. Emitted only when the resolved ``claude.session`` is
+    something other than ``fresh``.
+
+    WHY IT SAYS "ONCE". ``--fresh`` is a per-invocation override, not a spec
+    edit, and the difference matters: the spec must stay on resume, because a
+    fresh start DISCARDS that agent's working memory. Naming the boundary in
+    the hint is the whole point — an unqualified "try --fresh" is how a
+    one-shot recovery becomes a habit that quietly erases the fleet's memory.
+
+    Never raises: ``config`` is whatever the caller had when the start blew up,
+    and a diagnostic must not fail on a stub. An unreadable mode is treated as
+    "not fresh" — the hint is advice, and printing it needlessly costs a line
+    while withholding it costs the operator the recovery.
+    """
+    try:
+        mode = str(getattr(getattr(config, "claude", None), "session", "") or "")
+    except Exception:  # stx-allow: fallback (reason: a diagnostic must never raise over the failure it is describing)
+        mode = ""
+    if mode.strip().lower() == "fresh":
+        return ""
+    name = getattr(config, "name", "<name>")
+    return (
+        "\n  if this start was RESUMING a prior session: a session wedged on a "
+        f"queued\n  boot prompt comes back on every plain restart. Retry ONCE "
+        f"with\n    sac agents start {name} --fresh\n  ONCE — as a per-start "
+        "override, not a spec edit. The spec stays on resume;\n  a fresh start "
+        "discards this agent's working memory."
+    )
 
 
 def raise_start_failure(
@@ -102,10 +145,14 @@ def raise_start_failure(
     # a message blaming the PANE CAPTURE for a failure it never observed (it was
     # a missing directory). That is the same disease the liveness verdict next
     # door exists to kill — an error asserting a cause it did not see.
-    _persist_diag(config, diag)
+    # The recovery hint rides on the SAME suffix as the diagnostics so the
+    # persisted record and the raised error carry it identically — a remedy
+    # only the live terminal saw is lost to whoever reads the log tomorrow.
+    suffix = f"{diag}{fresh_retry_hint(config)}"
+    _persist_diag(config, suffix)
 
     raise RuntimeError(
-        f"Failed to start agent '{config.name}': runtime.start() returned False.{diag}"
+        f"Failed to start agent '{config.name}': runtime.start() returned False.{suffix}"
     )
 
 

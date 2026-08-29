@@ -74,10 +74,18 @@ COMMAND_CATEGORIES = [
     ("Host hygiene", ["worktree"]),
     (
         "Diagnostics",
-        ["doctor", "ports", "provenance", "freshness", "auth-events", "ci"],
+        [
+            "doctor",
+            "ports",
+            "provenance",
+            "freshness",
+            "auth-events",
+            "ci",
+            "guard",
+        ],
     ),
     ("Remote testing", ["pytest"]),
-    ("Introspection", ["whoami", "mcp", "list-python-apis", "skills", "versions"]),
+    ("Introspection", ["whoami", "mcp", "list-python-apis", "versions"]),
     ("Developer", ["dev"]),
 ]
 
@@ -99,7 +107,10 @@ class _MainGroup(LazyGroup):
         "registry": f"{_PKG}.registry_group:registry_group",
         "event": f"{_PKG}.event_group:event_group",
         "image": f"{_PKG}.image_group:image_group",
-        "skills": f"{_PKG}.skills_group:skills_group",
+        # `skills` is NOT here — it moved under `dev` (audit-cli §13:
+        # self-maintenance commands nest under the `dev` group). The legacy
+        # top-level spelling lives in LAZY_RENAMED below, so `sac skills`
+        # keeps working and tells the caller where it went.
         # Git-worktree hygiene (repo-scoped, not agent-scoped): report +
         # reap PROVABLY-safe stale worktrees, alarm on a repo still over
         # its cap. The permanent countermeasure to worktree sprawl
@@ -122,6 +133,12 @@ class _MainGroup(LazyGroup):
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
+        # Mechanical gates over a DELEGATED code change. `guard deletions`
+        # is the standing form of the detector that judged 36 local-model
+        # trials: it names anything a change removed without being asked
+        # to, and distinguishes "clean" from "could not tell" (exit 0 / 3
+        # / 4) so an unreadable baseline can never render as a pass.
+        "guard": f"{_PKG}.guard_group:guard_group",
         # Read WHY a CI run is red as cheaply as its status word — fetch
         # the failing run's log once, print only the failing test IDs +
         # assertion lines (or the ##[error] setup annotation).
@@ -178,19 +195,42 @@ class _MainGroup(LazyGroup):
     _COMPLETION_NAMES = ("install-shell-completion", "print-shell-completion")
 
     def _attach_completion(self) -> None:
-        """Attach the completion commands once. Mechanics live next door.
-
-        The cache-file install and its two-binary handling are a
-        self-contained responsibility with their own dependencies
-        (``subprocess``, ``os``, the user's rc file), so they live in
-        :mod:`._main_completion`; this class only decides WHEN.
-        """
         if self._completion_attached:
             return
         self._completion_attached = True
-        from ._main_completion import attach_completion
+        try:
+            from scitex_dev._cli._completion import attach_shell_completion
+        except Exception:  # stx-allow: fallback (reason: scitex-dev[cli-audit] is optional; broaden beyond ImportError so a misbuilt transitive dep can't break CLI startup)
+            # scitex-dev[cli-audit] not installed (or its import chain
+            # raised something other than ImportError); completion
+            # commands stay missing — non-fatal for the CLI itself.
+            return
+        attach_shell_completion(self, prog_name="scitex-agent-container")
+        # The upstream helper writes an ``eval "$(_NAME_COMPLETE=...)"``
+        # line in ~/.bashrc for ONE binary. Two problems for sac:
+        #   1. We ship TWO binaries (``scitex-agent-container`` and ``sac``);
+        #      Click's completion is keyed on argv[0], so each name needs
+        #      its own registration.
+        #   2. The eval line invokes the binary on every shell start
+        #      (~0.4 s per binary; 9 scitex eval lines = ~3.6 s of source
+        #      ~/.bashrc latency).
+        # Replace the upstream behaviour with a cache-file install: write
+        # the static completion script once to
+        # ``~/.local/share/bash-completion/scitex/<binary>`` and let
+        # ~/.bashrc just ``source`` that file (microseconds).
+        self._install_shell_completion_cache_based()
 
-        attach_completion(self)
+    def _install_shell_completion_cache_based(self) -> None:
+        """Replace install-shell-completion with a cache-file install.
+
+        Delegates to ``_completion_install``; the mechanics (two binaries,
+        the sac-owned cache dir, the XDG symlink, the rc ``source`` line)
+        live there. Imported lazily so the cold-start path never pays for
+        ``subprocess`` + ``pathlib`` on a plain ``sac --help``.
+        """
+        from ._completion_install import install_completion_cache
+
+        install_completion_cache(self)
 
     def list_commands(self, ctx):
         names = super().list_commands(ctx)
@@ -229,9 +269,10 @@ class _MainGroup(LazyGroup):
         "list-python-apis": "List all public Python APIs of scitex-agent-container.",
         "installation": "Bootstrap and install helpers for a new fleet host.",
         "fleet": "Peer-aware multi-agent orchestration across hosts.",
-        "doctor": "Diagnose agent-spec source drift (local, or --fleet across hosts).",
+        "doctor": "Diagnose spec-source drift and duplicate Telegram pollers.",
         "provenance": "Prove which code is actually loaded (commit, origin, fossil installs).",
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
+        "guard": "Mechanical gates a delegated change must pass.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
@@ -247,6 +288,12 @@ class _MainGroup(LazyGroup):
     # a redirect to stderr and exits with code 2). Soft warnings let
     # stale scripts persist indefinitely; hard errors force the fix.
     LAZY_RENAMED = {
+        # Self-maintenance moved under `dev` (audit-cli §13; doctrine
+        # 20_dev-commands.md). Kept as a redirect rather than deleted:
+        # `sac skills` is in operators' muscle memory and in scripts, and a
+        # bare "no such command" would teach nothing. The redirect names the
+        # new path.
+        "skills": (f"{_PKG}.skills_group:skills_group", "sac dev skills"),
         # Lifecycle
         "start": (f"{_PKG}.lifecycle:start", "sac agents start"),
         "stop": (f"{_PKG}.lifecycle:stop", "sac agents stop"),
@@ -391,6 +438,17 @@ def cli_entry_point() -> None:
     from .._freshness import warn_once
 
     warn_once()
+
+    # The fleet defaults this process hands to every container, applied to
+    # ITSELF — sac opens the same Postgres stores its agents do, and until
+    # 2026-08-28 it was the one process in the fleet launching without
+    # ``SCITEX_STORE_DSN``, and without the ``PGUSER`` that DSN is roleless
+    # in order to leave room for. A variable exported in the operator's shell
+    # still wins; see ``apply_fleet_defaults_to_process`` for both halves and
+    # the failure they close.
+    from ..runtimes._fleet_env import apply_fleet_defaults_to_process
+
+    apply_fleet_defaults_to_process()
 
     # Cheap pre-scan: don't import the heavy ``host_group`` module
     # unless ``--on`` is actually present on the command line. Importing

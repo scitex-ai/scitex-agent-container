@@ -52,9 +52,17 @@ def make_preflight_runner(
     had lapsed, every declared pool credential was fresh, and every start
     on the host was refused anyway.
 
-    A spec that will not load is gated on the lead file, keeping the old
-    defensive default — better to ask for creds and let the dispatch loop
-    surface the real spec error than to skip the gate on a broken spec.
+    A spec that will not load is REFUSED HERE, naming the load error. It
+    is no longer gated on the lead's ``~/.claude/.credentials.json``, and
+    nothing in this path reads that file any more (operator ruling,
+    2026-08-19: 「勝手にデフォルトのクレデンシャルズを使わない」 — a silent
+    fall back to a default is exactly what the constitution forbids).
+
+    The old behaviour asked the lead file whenever a spec would not load,
+    which meant an UNREGISTERED NAME was reported as an EXPIRED TOKEN: two
+    unrelated faults printing the same sentence, and only one of them
+    fixable by the caller. Refusing early with the load error is both the
+    louder failure and the more honest one.
     """
     ran = {"done": False}
 
@@ -64,16 +72,18 @@ def make_preflight_runner(
         ran["done"] = True
         if broker_self:
             return
-        from ..._state._preflight_creds import (
-            check_oauth_token_expiry,
-            check_spec_oauth_credentials,
-        )
+        from ..._state._preflight_creds import check_spec_oauth_credentials
 
         try:
-            for cfg in _iter_target_configs(single_targets, bulk_yamls):
+            for raw, cfg, err in _iter_target_configs(single_targets, bulk_yamls):
                 if cfg is None:
-                    check_oauth_token_expiry()
-                    continue
+                    raise RuntimeError(
+                        f"cannot start {raw!r}: its spec could not be loaded "
+                        f"({type(err).__name__}: {err}). Check that the agent "
+                        "name is registered on this host and that its spec "
+                        "parses. This is NOT a credential fault — sac does not "
+                        "read ~/.claude/.credentials.json for agent starts."
+                    )
                 if getattr(getattr(cfg, "claude", None), "provider", None) is not None:
                     continue
                 check_spec_oauth_credentials(cfg)
@@ -86,12 +96,20 @@ def make_preflight_runner(
 
 def _iter_target_configs(
     single_targets: list[str], bulk_yamls: list[str]
-) -> Iterator[object | None]:
-    """Yield each target's loaded ``AgentConfig``, or ``None`` when it won't load.
+) -> Iterator[tuple[str, object | None, Exception | None]]:
+    """Yield ``(raw_target, AgentConfig | None, load error | None)`` per target.
 
     One resolve+load per target, shared by the preflight runner and
     :func:`any_target_needs_anthropic_oauth` so the two can never disagree
     about what a target's spec says.
+
+    The load error is CARRIED rather than discarded. Discarding it is what
+    made an unregistered agent name indistinguishable from a credential
+    fault: the caller received a bare ``None``, had nothing to report but
+    the lead credential's state, and so reported THAT. Measured 2026-08-19
+    — ``POST /agents`` for a name with no spec answered 502 carrying
+    "OAuth token in ~/.claude/.credentials.json expired 257594 seconds
+    ago", which is true about the file and says nothing about the request.
     """
     from ...config import load_config
     from ...config._resolve import resolve_with_prefix
@@ -99,9 +117,10 @@ def _iter_target_configs(
     for raw in list(single_targets) + list(bulk_yamls):
         try:
             cfg: object | None = load_config(resolve_with_prefix(raw))
-        except Exception:  # stx-allow: fallback (reason: defensive — an unloadable spec must not skip the gate; see make_preflight_runner)
-            cfg = None
-        yield cfg
+        except Exception as exc:  # stx-allow: fallback (reason: the error is CARRIED to the caller, not swallowed; see docstring)
+            yield raw, None, exc
+            continue
+        yield raw, cfg, None
 
 
 def any_target_needs_anthropic_oauth(
@@ -121,7 +140,7 @@ def any_target_needs_anthropic_oauth(
     actual dispatch loop than to skip the gate silently on a broken
     spec the operator hasn't noticed yet.
     """
-    for cfg in _iter_target_configs(single_targets, bulk_yamls):
+    for _raw, cfg, _err in _iter_target_configs(single_targets, bulk_yamls):
         if cfg is None:
             return True
         if getattr(getattr(cfg, "claude", None), "provider", None) is None:

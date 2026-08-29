@@ -21,7 +21,7 @@ from ..._lifecycle.lifecycle import agent_start
 from ...config import load_config
 from ...config._host import resolve_hostname
 from .._helpers import console
-from ._common import _singleton_skip_reason
+from ._common import _local_host_names, _singleton_skip_reason
 
 
 def run_bulk_path(
@@ -61,6 +61,9 @@ def run_bulk_path(
         current_host = resolve_hostname()
     except RuntimeError:
         current_host = ""
+    # Resolved ONCE for the whole bulk run: this machine's identity cannot
+    # change mid-loop, and each call reads the fleet host registry off disk.
+    local_names = _local_host_names(current_host)
     console.print(f"=== [blue]Starting {len(yamls)} agents...[/blue] ===")
     for yaml_path in yamls:
         # stx-allow: fallback (reason: one agent's config parse or
@@ -69,7 +72,9 @@ def run_bulk_path(
         # bulk-safe behavior)
         try:
             config = load_config(yaml_path)
-            skip = _singleton_skip_reason(config, current_host)
+            skip = _singleton_skip_reason(
+                config, current_host, local_names=local_names
+            )
             if skip:
                 console.print(f"  [yellow]SKIP[/yellow] {config.name}: {skip}")
                 continue

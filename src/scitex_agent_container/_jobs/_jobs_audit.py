@@ -24,10 +24,14 @@ Why the checker lives in the test suite, not in a new mechanism
 A checker THAT NOBODY RUNS is the fifth instance of the very disease. So
 this module is consumed by ``tests/scitex_agent_container/
 test__jobs_audit.py``, which runs in ``pytest-matrix-on-ubuntu-py*`` — a
-REQUIRED status check on both ``develop`` and ``main``. It is deliberately
-NOT wired into ``quality-audit-on-ubuntu-latest.yml``: every step there is
-``continue-on-error: true``, so a checker hung off it could never go red,
-which is precisely how you ship instance #5 with a straight face.
+REQUIRED status check on both ``develop`` and ``main``. It was deliberately
+NOT wired into the old ``quality-audit-on-ubuntu-latest.yml``: every step
+there was ``continue-on-error: true``, so a checker hung off it could never
+go red, which is precisely how you ship instance #5 with a straight face.
+That workflow was the disease it warns about and has since been DELETED —
+its five audit steps called pre-0.11 verb spellings that all exited 2, so
+it reported green while measuring nothing (instance #6). The choice of host
+stands regardless: a checker belongs on a check that can fail.
 
 Three states, never two
 =======================
@@ -384,11 +388,12 @@ def _discovered_sac_names(prefix: str | None) -> frozenset[str] | None:
     """Names sac owns among everything scitex-dev discovers.
 
     ``prefix=None`` — the default — asks :func:`_names.is_ours`, which
-    knows BOTH live prefixes. A single prefix string cannot express the
-    transition state: while ``sac.accounts-refresh`` is held at the legacy
-    name and the other eight carry ``scitex-agent-container-``, filtering
-    on either one alone silently drops the other set, and a job that
-    vanishes from the audit reads as "not declared" rather than "not
+    knows BOTH live prefixes. A single prefix string cannot express a
+    transition state, and one is still live: every DECLARED name now
+    carries ``scitex-agent-container-``, but a host mid-cutover still has
+    ``sac.*`` UNITS on disk, so discovery can legitimately return either.
+    Filtering on one prefix alone silently drops the other set, and a job
+    that vanishes from the audit reads as "not declared" rather than "not
     looked for". An explicit string is still accepted so a test can pin
     one side deliberately.
     """

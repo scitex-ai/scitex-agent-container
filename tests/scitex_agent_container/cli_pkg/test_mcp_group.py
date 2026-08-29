@@ -291,7 +291,7 @@ def test_list_tools_json_emits_count_and_sorted_tool_names():
     # Act
     with _use_get_server(server):
         result = runner.invoke(mcp, ["list-tools", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert (
         result.exit_code == 0
@@ -306,7 +306,7 @@ def test_list_tools_import_error_json_payload_reports_zero_and_error():
     # Act
     with _use_get_server_import_error():
         result = runner.invoke(mcp, ["list-tools", "--json"])
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Assert
     assert (
         result.exit_code == 0

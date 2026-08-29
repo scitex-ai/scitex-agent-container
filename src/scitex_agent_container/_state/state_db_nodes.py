@@ -4,23 +4,25 @@ Per HANDOFF_AGENT_COMMS_2026-05-19.md §4 (WI-2) and the lead's
 2026-05-21 directive (RESTORED the authenticated-identity criterion
 the prior limited scope had deferred):
 
-  * **Authenticated identity** — per-node bearer tokens minted at
-    registration (:func:`mint_node_token`). The listen server resolves
-    an incoming ``Authorization: Bearer <token>`` to a node name
-    (:func:`resolve_node_token`). With this in place,
-    ``check_send_acl`` enforces "identity cannot be spoofed via a
-    metadata field" — when a per-node bearer is presented,
-    ``params.metadata.from_agent`` MUST match the bearer's resolved
-    name; mismatch → 403.
+  * **Authenticated identity** — ``mint_node_token`` /
+    ``resolve_node_token`` / ``list_node_tokens`` were re-exported here
+    (from ``state_db_node_tokens``) until 2026-08-28, when the per-node
+    bearer feature was removed: it had ZERO production callers, so the
+    ``node_tokens`` table held 0 rows on every host and no bearer ever
+    resolved to a name. The identity that actually gates today is the
+    HOST-WIDE bearer plus the name-based ACL below. Names removed rather
+    than left re-exported, for this module's usual reason: an importable
+    ``mint_node_token`` promises a credential a caller could authenticate
+    with, and nothing on the serving side would ever accept it.
 
   * **Group-based default ACL** — intra-group bidirectional,
     cross-group denied. Group is *derived from lineage*; see
     :func:`derive_group`.
 
-  * **Cross-group grants** — accepted, keyed on the *resolved*
-    sender identity (per-node bearer authenticates the sender; the
-    host-wide bearer is the administrative / cross-host-forwarder
-    path, which honours ``metadata.from_agent`` verbatim). See
+  * **Cross-group grants** — accepted, keyed on the sender identity
+    the caller claims in ``metadata.from_agent`` (the host-wide bearer
+    is the only bearer there is; it is the administrative /
+    cross-host-forwarder path and honours the claim verbatim). See
     :func:`grant_send`.
 
   * **Spawn permission** — a node with no parent may call
@@ -50,9 +52,6 @@ All times stored as ``REAL`` unix-seconds (float).
 
 from __future__ import annotations
 
-import logging
-import time
-from pathlib import Path
 from typing import Any
 
 from .state_db_acl_policy import (
@@ -63,13 +62,6 @@ from .state_db_acl_policy import (
     record_comms_policy,
     sender_target_relationship,
 )
-from .state_db_node_tokens import (
-    list_node_tokens,
-    mint_node_token,
-    resolve_node_token,
-)
-
-_logger = logging.getLogger(__name__)
 
 __all__ = [
     "CommsNodeConflictError",
@@ -86,17 +78,15 @@ __all__ = [
     "is_researcher",
     "list_comms_grants",
     "list_comms_nodes",
-    "list_node_tokens",
     "lookup_comms_node",
-    "mint_node_token",
     "read_comms_policy",
     "record_comms_policy",
     "record_lineage",
     "register_comms_node",
+    "rename_comms_node",
     "resolve_group_name",
     "resolve_group_names",
     "resolve_node_host",
-    "resolve_node_token",
     "revoke_send",
     "same_named_group",
     "sender_target_relationship",
@@ -110,107 +100,19 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def record_lineage(
-    *,
-    child: str,
-    parent: str,
-    db_path: Path | None = None,
-) -> None:
-    """Record ``parent`` as ``child``'s parent (keep-first-parent).
-
-    Idempotent; a child's parent is set once and immutable. A DIFFERENT
-    parent KEEPS the existing one (logged, not raised) so a restart by a
-    non-original-parent caller works in-place without re-parenting;
-    identity drift stays impossible. Permission is gated upstream by
-    ``check_spawn``.
-    """
-    if not child or not parent:
-        raise ValueError("record_lineage: child and parent must be non-empty")
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        existing = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (child,)
-        ).fetchone()
-        if existing is not None:
-            if existing["parent_name"] == parent:
-                return  # idempotent no-op
-            _logger.warning(
-                "record_lineage: child %r keeps parent %r (ignored re-parent to %r)",
-                child,
-                existing["parent_name"],
-                parent,
-            )
-            return
-        conn.execute(
-            "INSERT INTO lineage (child_name, parent_name, created_at) "
-            "VALUES (?, ?, ?)",
-            (child, parent, time.time()),
-        )
-
-
-def derive_group(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> set[str]:
-    """Return the set of nodes inside ``name``'s default-ACL group.
-
-    A *group* is a parent together with its direct children
-    (handoff §2). Concretely:
-
-    * If ``name`` is a parent (any rows in ``lineage`` with
-      ``parent_name = name``): group = {name} ∪ {its direct children}.
-    * If ``name`` is a child (row in ``lineage`` with
-      ``child_name = name``): group = {its parent} ∪ {parent's other
-      children}.
-    * If ``name`` has no edges at all: group = {name} (singleton —
-      a fresh registration starts unattached).
-
-    The derivation is intentionally local — it never walks the full
-    lineage tree. That keeps the default-ACL semantics simple and
-    matches handoff §2: "the group is the unit of default ACL" (one
-    parent + its direct children, not the entire ancestry).
-
-    Phase-3 (ADR-0010 Step 2): if ``name``'s ``node_comms_policy`` row
-    sets ``lineage_group = 'solitary'``, the group is forced to
-    ``{name}`` and the lineage-table walk is skipped. That isolates a
-    capsule from its siblings AND its parent without depending on the
-    lineage table being empty — clew capsule children adopt this so a
-    sibling capsule can never address them through the group-default
-    ACL even though they share a parent edge.
-    """
-    if not name:
-        raise ValueError("derive_group: name must be non-empty")
-    # Phase-3 solitary override — short-circuits to the singleton group
-    # without touching the lineage table.
-    policy = read_comms_policy(name=name, db_path=db_path)
-    if policy["lineage_group"] == "solitary":
-        return {name}
-    from .state_db import open_db
-
-    with open_db(db_path) as conn:
-        children_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (name,)
-        ).fetchall()
-        if children_rows:
-            group: set[str] = {name}
-            for r in children_rows:
-                group.add(str(r["child_name"]))
-            return group
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (name,)
-        ).fetchone()
-        if parent_row is None:
-            return {name}
-        parent = str(parent_row["parent_name"])
-        sibling_rows = conn.execute(
-            "SELECT child_name FROM lineage WHERE parent_name = ?", (parent,)
-        ).fetchall()
-        group = {parent}
-        for r in sibling_rows:
-            group.add(str(r["child_name"]))
-        return group
+# ``record_lineage`` (the WRITER) and ``derive_group`` (the reader that
+# turns edges into the default-ACL unit) moved into
+# :mod:`.state_db_lineage_group` on 2026-08-28, when ``lineage`` left
+# SQLite. The store-shaped writer — a get, a conditional unhide, a put
+# whose ``PutResult.conflicts`` must be inspected because IMMUTABLE keeps
+# the first value WITHOUT raising — does not fit under this module's line
+# cap beside everything else it carries. Same split, same reason, as
+# :mod:`.state_db_lineage_rel`. Re-exported here so every existing
+# ``from ..._state.state_db_nodes import record_lineage`` keeps resolving.
+from .state_db_lineage_group import (  # noqa: E402
+    derive_group,
+    record_lineage,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -255,9 +157,11 @@ from .state_db_groups import (  # noqa: E402
 def spawn_allowed(
     *,
     caller: str | None,
-    db_path: Path | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether ``caller`` is allowed to call ``sac agents start``.
+
+    ``db_path`` is GONE (2026-08-28): the parent lookup this makes is a
+    read of the shared PostgreSQL lineage store, not of a SQLite file.
 
     Current policy (handoff §4 / WI-2, relaxed per operator ruling
     2026-07-05): a *root* node (no parent) is allowed to spawn.
@@ -293,7 +197,7 @@ def spawn_allowed(
     if caller is None or caller == "":
         # Admin / human operator. Skips the global root-only check;
         # per-spec may_spawn (Phase-3 Gap-5) layers on top.
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
     # The three spawn-authorised groups, checked as MEMBERSHIP over the
     # caller's whole named-group set. Hoisted above the lineage lookup
     # because the authority is lineage-independent: a developer- /
@@ -302,27 +206,22 @@ def spawn_allowed(
     # 2026-07-06 ACL incident). The per-spec may_spawn gate still layers
     # on top, exactly like the root path above.
     if (
-        is_developer(name=caller, db_path=db_path)
-        or is_researcher(name=caller, db_path=db_path)
-        or is_privileged(name=caller, db_path=db_path)
+        is_developer(name=caller)
+        or is_researcher(name=caller)
+        or is_privileged(name=caller)
     ):
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    from .state_db import open_db
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    # One indexed point read: ``child_name`` is the store's identity, so
+    # "who is my parent" is a ``get``, not a scan.
+    from .state_db_lineage_store import parent_name_of
 
-    with open_db(db_path) as conn:
-        parent_row = conn.execute(
-            "SELECT parent_name FROM lineage WHERE child_name = ?", (caller,)
-        ).fetchone()
-    if parent_row is None:
-        return apply_may_spawn_gate(caller=caller, base=(True, None), db_path=db_path)
-    return (False, _spawn_denied_reason(caller, parent_row["parent_name"], db_path))
+    parent = parent_name_of(caller)
+    if parent is None:
+        return apply_may_spawn_gate(caller=caller, base=(True, None))
+    return (False, _spawn_denied_reason(caller, parent))
 
 
-def _spawn_denied_reason(
-    caller: str,
-    parent: str,
-    db_path: Path | None,
-) -> str:
+def _spawn_denied_reason(caller: str, parent: str) -> str:
     """Compose the spawn-deny reason, naming the groups ACTUALLY resolved.
 
     The message this replaces asserted the caller "is in none of the
@@ -342,13 +241,13 @@ def _spawn_denied_reason(
     """
     from .state_db_acl_policy import comms_policy_row_exists
 
-    groups = sorted(resolve_group_names(name=caller, db_path=db_path))
+    groups = sorted(resolve_group_names(name=caller))
     if groups:
         seen = (
             f"the groups this host resolved for it are {groups}, none of "
             "which grant spawn authority"
         )
-    elif comms_policy_row_exists(name=caller, db_path=db_path):
+    elif comms_policy_row_exists(name=caller):
         seen = "it IS registered on this host but resolved to NO named group at all"
     else:
         seen = (
@@ -387,58 +286,66 @@ from .state_db_grants import (  # noqa: E402, F401
 # ---------------------------------------------------------------------------
 
 
-def resolve_node_host(
-    *,
-    name: str,
-    db_path: Path | None = None,
-) -> dict[str, Any] | None:
+def resolve_node_host(*, name: str) -> dict[str, Any] | None:
     """Map a node ``name`` to ``{host, a2a_port}``.
 
     Resolution order (ADR-0014):
 
-    1. ``instances`` table — the canonical "live agent" registry. Picks
-       the most recently started live (``ended_at IS NULL``) row.
-    2. ``comms_nodes`` table (ADR-0014 federated comms graph) — used
-       for nodes that are NOT sac-managed agents (operator identities
-       like ``lead``, peer hosts' listen-targets, cross-host
-       registrations sync'd via ``sac registry sync``).
+    1. ``instances`` — the canonical "live agent" registry. Picks the most
+       recently started live (no ``ended_at``) record, breaking a
+       same-second tie on the time-ordered uuid7 ``id``. On the shared
+       PostgreSQL store since 2026-08-28.
+    2. the ADR-0014 ``comms_nodes`` directory — used for nodes that are
+       NOT sac-managed agents (operator identities like ``lead``, peer
+       hosts' listen-targets) and for agents registered on OTHER hosts.
+       Also a read of the shared store rather than of a local copy some
+       earlier ``sac registry sync`` may or may not have pulled.
 
-    Returns ``None`` only when neither table knows the name. Callers
+    Returns ``None`` only when neither source knows the name. Callers
     treat ``None`` as "this is a local-only/unknown node; do not
     cross-host forward" — the ``NodeRegistry`` implicit-registration
     path in ``_listen/_node_channel.py`` handles that case.
+
+    ``db_path`` IS GONE: both sources are PostgreSQL now, so there is no
+    SQLite file for it to name.
     """
     if not name:
         return None
-    from .state_db import open_db
     from .state_db_comms_nodes import resolve_comms_node_host
+    from .state_db_instances import live_instance_for_name
 
-    with open_db(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT host, a2a_port
-              FROM instances
-             WHERE name = ? AND ended_at IS NULL
-             ORDER BY started_at DESC, id DESC
-             LIMIT 1
-            """,
-            (name,),
-        ).fetchone()
+    row = live_instance_for_name(name)
     if row is not None:
+        # ONE port field, mirrored out under both keys. Reading only
+        # ``a2a_port`` used to discard a usable address sitting in the same
+        # row: `_send_resolve` preferred ``bound_port`` while this preferred
+        # the legacy column, and the writers populated BOTH from one value —
+        # so a row where only one survived resolved to "no port" here and
+        # 502'd at the forwarder while the sibling resolver reached it. Same
+        # row, same moment, two answers. The store keeps one field, so the
+        # asymmetry has nowhere left to live.
+        port = row.get("a2a_port")
+        if port is None:
+            port = row.get("bound_port")
         return {
             "host": str(row["host"]),
-            "a2a_port": int(row["a2a_port"]) if row["a2a_port"] is not None else None,
+            "a2a_port": int(port) if port is not None else None,
         }
     # Fall through to comms_nodes (ADR-0014).
-    return resolve_comms_node_host(name=name, db_path=db_path)
+    #
+    # NOT ALSO FALLING THROUGH WHEN THE RECORD EXISTS BUT CARRIES NO PORT,
+    # and the reason is that this function answers TWO questions with one
+    # value. `is_local_node` consults it and reads ONLY ``host``: a live
+    # record means "the agent is on that host", which stays true whether or
+    # not a port was recorded. Falling through on a portless record would
+    # hand the locality decision to ``comms_nodes``, which may name a
+    # DIFFERENT host — so an agent that is genuinely local could start being
+    # forwarded away, and a routing repair would have silently changed what
+    # "local" means. ``resolve_forward_target`` is the addressability half.
+    return resolve_comms_node_host(name=name)
 
 
-def is_local_node(
-    *,
-    name: str,
-    local_host: str,
-    db_path: Path | None = None,
-) -> bool:
+def is_local_node(*, name: str, local_host: str) -> bool:
     """Return ``True`` if ``name`` should be served locally.
 
     Local cases:
@@ -456,7 +363,7 @@ def is_local_node(
     on a Spartan host are now correctly forwarded instead of being
     treated as local).
     """
-    info = resolve_node_host(name=name, db_path=db_path)
+    info = resolve_node_host(name=name)
     if info is None:
         return True
     return info["host"] == local_host
@@ -474,5 +381,6 @@ from .state_db_comms_nodes import (  # noqa: E402, F401
     list_comms_nodes,
     lookup_comms_node,
     register_comms_node,
+    rename_comms_node,
     unregister_comms_node,
 )

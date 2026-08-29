@@ -207,6 +207,58 @@ def _real_restart(name: str) -> bool:
     return agent_restart(name) is not False
 
 
+def _declared_host_is_local(config: Any) -> bool | None:
+    """Does ``spec.host`` — the host the operator PINNED — name this machine?
+
+    Three-valued, and the ``None`` matters: no pin, or a pin we could not
+    resolve, must behave exactly as before rather than inventing a refusal.
+    Only a CONFIDENT "the pin names somewhere else" stops a restart.
+
+    The pin lives at ``config.hosts_spec.host``. There is no ``config.host``;
+    reaching for one returns ``None`` and reads as "no pin", which is how a
+    pinned agent gets silently restarted on the wrong machine.
+
+    This asks the SAME question the interactive start path asks, via the same
+    routing helper, so the enforcer and the CLI cannot drift into disagreeing
+    about who owns an agent.
+    """
+    # stx-allow: fallback (reason: an unresolvable route must degrade to
+    # "unknown" (None), never to a refusal — a reconciler that stops restarting
+    # the whole fleet because one lookup raised is worse than one that keeps
+    # the previous behaviour for that agent.)
+    try:
+        declared = getattr(getattr(config, "hosts_spec", None), "host", None)
+        if not declared:
+            return None
+        from ..cli_pkg.lifecycle._host_routing import classify_spec_host_route
+
+        route, _ = classify_spec_host_route(declared, _local_host(), _peers())
+        return route == "local"
+    except Exception:
+        return None
+
+
+def _peers() -> dict[str, Any]:
+    """Registered peers, or none — only used to resolve a pin to local/remote.
+
+    Built exactly as the CLI builds it (``cli_pkg/host_group.py``): the config
+    file's peers, widened by the host registry. Deliberately the same two calls
+    rather than a private reimplementation, so the enforcer and the CLI cannot
+    disagree about which names are peers.
+    """
+    # stx-allow: fallback (reason: see _declared_host_is_local — an unreadable
+    # peer registry must not manufacture a refusal, so it degrades to "no peers
+    # known", which makes an unresolvable pin read as UNKNOWN rather than as
+    # "pinned elsewhere".)
+    try:
+        from .._state._peer_resolve import peers_with_registry
+        from .._state.host_config import load as load_host_config
+
+        return dict(peers_with_registry(load_host_config().peers))
+    except Exception:
+        return {}
+
+
 def _local_host() -> str:
     """This machine's name AS ``instances.host`` records it.
 
@@ -329,7 +381,7 @@ def reconcile_pass(
         if policy in MANAGED_POLICIES:
             from .._state.state_db_instances import last_known_instance
 
-            row = last_known_instance(name, db_path=db_path)
+            row = last_known_instance(name)
 
         decision = decide(
             name=name,
@@ -338,6 +390,7 @@ def reconcile_pass(
             session_present=present,
             row=row,
             local_host=local_host,
+            declared_host_is_local=_declared_host_is_local(config),
         )
         if decision.verdict is not Verdict.RESTART:
             reports.append(

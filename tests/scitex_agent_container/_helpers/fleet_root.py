@@ -14,11 +14,21 @@ Two escape routes exist and both are closed:
    time, so a fixture that only sets ``$HOME`` CANNOT redirect them — it
    would read and write the live fleet while looking isolated.
 
-2. **The board.** Every scitex-todo call takes an explicit ``store=``.
+2. **The board.** Every scitex-cards call takes an explicit ``store=``.
+   That explicit argument is the PRIMARY isolation and it is what these
+   tests actually rely on.
+
    Belt and braces, :func:`isolated_board` ALSO points
-   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so even a call
-   that forgot to pass ``store=`` lands in the tmp file rather than on the
-   real 1,400-card board.
+   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so a call that
+   forgot to pass ``store=`` would land in the tmp file rather than on the
+   real board. WARNING, 2026-08-16: that second net is now INERT —
+   scitex_cards does not read ``SCITEX_TODO_TASKS_YAML_SHARED`` (its axis
+   is ``SCITEX_CARDS_DB``), so a forgotten ``store=`` would no longer be
+   caught. The env var is left as-is rather than renamed on a guess:
+   pointing it at the right variable without checking what scitex_cards
+   actually resolves would restore the APPEARANCE of a safety net while a
+   forgotten ``store=`` reached the live board. Verify the resolution
+   first, then re-arm it.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
 and writes, and the state.db is a real SQLite file with the real schema.
@@ -73,9 +83,16 @@ spec:
       - --env
       - SCITEX_AGENT_CONTAINER_STATE_DB=/state/{name}/state.db
       # The board identity. Change this without migrating the cards and
-      # every card the agent owns is orphaned.
+      # every card the agent owns is orphaned. BOTH spellings are seeded
+      # because both are on disk: the var was renamed to
+      # SCITEX_CARDS_AGENT_ID and the fleet is half migrated (measured
+      # 2026-08-25 on compute-04: 110 specs current, 21 retired). A
+      # fixture carrying only the retired name tests the minority and
+      # let a current-name blindness ship unnoticed.
       - --env
       - SCITEX_TODO_AGENT_ID={name}
+      - --env
+      - SCITEX_CARDS_AGENT_ID={name}
       - --env
       - GIT_AUTHOR_NAME=Yusuke Watanabe
     env: {{}}
@@ -135,7 +152,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -164,13 +180,6 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
-
-  context_management:
-    trigger_at_percent: 70.0
-    strategy: noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
-    state_file: ~/.scitex/agent-container/state/<agent>.json
 
   a2a:
     host: 127.0.0.1
@@ -259,51 +268,83 @@ def make_state_db(layout: Layout) -> Path:
     return db_path
 
 
-def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
-    """Execute seeding INSERTs against a real state.db, committing once.
-
-    Lives HERE rather than inline in a fixture on purpose. STX-TQ005 (the
-    ecosystem test-quality rule) forbids a fixture that opens an external
-    resource — ``sqlite3.connect(...)`` — and hands it back with ``return``
-    instead of ``yield``, because a returned connection is never closed.
-    These fixtures never hand the connection back at all; they open it,
-    write, and close it. Extracting that into a plain helper keeps the
-    fixture bodies resource-free and the rule satisfied for the right
-    reason rather than by suppression.
-    """
-    import sqlite3
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        with conn:
-            for sql, args in statements:
-                conn.execute(sql, args)
-    finally:
-        conn.close()
-    return db_path
+# ``seed_db_rows`` was here until 2026-08-28. It executed raw INSERTs against
+# a real ``state.db`` and carried a long note explaining why it was a plain
+# helper rather than a fixture (STX-TQ005 forbids a fixture that opens an
+# external resource and hands it back with ``return``). Both the helper and
+# that argument went with its last caller, for the reason recorded below:
+# ``init_schema`` creates NO TABLES at all any more, so there is nothing in
+# state.db to INSERT into. A seeding helper for an empty schema can only
+# raise, and a helper kept for a rule it no longer has occasion to satisfy is
+# the reassuring decoration this package keeps deleting elsewhere.
 
 
-COMMS_NODE_SQL = (
-    "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
-    "VALUES (?, ?, ?, ?, ?)"
-)
-TURN_SQL = "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
+# ``COMMS_NODE_SQL`` was here until 2026-08-28. The ADR-0014 directory moved
+# to PostgreSQL, so SQLite has no ``comms_nodes`` table and the INSERT would
+# raise on every fixture that used it. ``DEFINITION_SQL`` replaced it for the
+# rest of that day and then went the same way: ``definitions`` was deleted
+# from state.db for having no writer in any code path, ever.
+#
+# ``INSTANCE_SQL`` replaced BOTH of them for the remainder of that day, and
+# then went the same way for the third time. ``instances`` moved to the
+# shared PostgreSQL store, so ``INSERT INTO instances`` raises ``no such
+# table`` — which is exactly how this file announced the move: 147 setup
+# ERRORs across three rename suites, every one of them here.
+#
+# ``CHANNEL_EVENT_SQL`` was here until 2026-08-28 too. ``channel_events``
+# moved to the shared PostgreSQL as ``sac_channel_events`` (ADR-0023), so
+# that INSERT would raise as well. Both halves are now seeded through their
+# REAL production writers below, which is a better seed than either INSERT
+# was: it exercises the production id allocation and the production merge
+# rules rather than hand-writing a row into a shape the code never uses.
 
 
 def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Give ``name`` one identity row (comms_nodes) and one history row (turns).
+    """Identity record + history row — BOTH in PostgreSQL now, and neither
+    in ``state.db``.
 
-    The two halves the rename must both carry: the live A2A directory entry,
-    and the agent's past.
+    Both halves a rename must carry. They stopped sharing a database on
+    2026-08-28 and then, later the same day, stopped being in SQLite at all:
+    ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Reading and
+    writing both here is what keeps either half from going unnoticed when it
+    moves again.
+
+    The identity half has moved three times. It was ``comms_nodes.name``
+    until the ADR-0014 directory left SQLite for the shared store, then
+    ``definitions.name`` until that table was deleted for having no writer,
+    then ``instances.name`` — which left the same day for the shared store
+    as well. It is written here through ``record_instance_start``, the same
+    verb ``sac agents start`` uses, and carried by
+    ``state_db_instances_rename.rename_instance_rows`` as its own step in
+    ``_rename.apply_plan``.
+
+    The history half moved four times: ``turns`` (the diary trio, to
+    per-host PostgreSQL), then ``attempts`` (deleted, zero writers), then
+    ``channel_events.target``, now ``sac_channel_events`` in the shared
+    PostgreSQL (ADR-0023). It is written through the real ``persist_event``
+    and carried by ``state_db_channel.rename_channel_events``.
+
+    ``state.db`` IS STILL CREATED, and deliberately: ``Layout.state_db`` is a
+    real path the rename still touches, and calling the production
+    ``init_schema`` on it is the one place these suites prove that a fresh
+    database still opens cleanly now that it defines nothing.
+
+    CALLERS MUST TAKE ``pg_schema``: both halves write to a real PostgreSQL
+    schema, so a caller without that fixture resolves the
+    deliberately-unreachable DSN and fails.
     """
-    db_path = make_state_db(layout)
-    return seed_db_rows(
-        db_path,
-        [
-            (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
-            (TURN_SQL, ("t1", name, "h", "ok", 1.0)),
-        ],
+    from scitex_agent_container._state.state_db_channel import persist_event
+    from scitex_agent_container._state.state_db_instances import (
+        record_instance_start,
     )
+
+    db_path = make_state_db(layout)
+    # ``workdir`` carries the name as a whole path component on purpose: it is
+    # the PATH half of the rename, rewritten component-wise by
+    # ``rename_instance_rows``, and the only seeded field that proves it.
+    record_instance_start(name, workdir=f"/home/u/proj/{name}")
+    persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
+    return db_path
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:
@@ -501,7 +542,12 @@ def add_card(
     ``scitex-todo`` rejects an owner-less card outright ("creator+assignee
     are mandatory ... no silent fallback"), so ``owner`` is required.
     """
-    from scitex_todo import _store
+    # scitex_cards, not scitex_todo: v0.41.0 deleted that module outright.
+    # This is a HARD import on purpose — the callers guard with
+    # importorskip("scitex_cards"), so reaching here means the package IS
+    # installed and a failure here is a real broken path, not an absent
+    # optional peer.
+    from scitex_cards import _store
 
     _store.add_task(
         store,

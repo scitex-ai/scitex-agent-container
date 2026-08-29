@@ -28,6 +28,7 @@ import subprocess
 
 import click
 
+from ..._runners._tmux._target import exact_target
 from .._helpers._completion import agent_name_complete
 from .._helpers._console import system_msg
 
@@ -125,7 +126,10 @@ def _remote_attach_argv(session: str, peer: str) -> list[str]:
         "tmux",
         "attach",
         "-t",
-        session,
+        # EXACT session target: a bare name prefix-matches on the peer, which
+        # would hand the operator a SIBLING agent's TUI when the named session
+        # is gone (incident 2026-08-14).
+        exact_target(session),
     ]
 
 
@@ -162,7 +166,7 @@ def attach(name: str) -> None:
     try:
         exists = (
             subprocess.run(
-                ["tmux", "has-session", "-t", session],
+                ["tmux", "has-session", "-t", exact_target(session)],
                 capture_output=True,
                 text=True,
             ).returncode
@@ -179,4 +183,4 @@ def attach(name: str) -> None:
         raise SystemExit(1)
 
     # Hand the terminal to tmux (replaces this process; detach with Ctrl-b d).
-    os.execvp("tmux", ["tmux", "attach", "-t", session])
+    os.execvp("tmux", ["tmux", "attach", "-t", exact_target(session)])

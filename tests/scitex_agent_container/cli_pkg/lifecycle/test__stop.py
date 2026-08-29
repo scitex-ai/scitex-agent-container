@@ -19,6 +19,20 @@ from scitex_agent_container.cli_pkg.lifecycle._stop import stop
 
 
 @pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_home(tmp_path):
     saved = os.environ.get("HOME")
     os.environ["HOME"] = str(tmp_path)
@@ -39,6 +53,28 @@ def _swap(name: str, fn: Callable) -> Iterator[None]:
         yield
     finally:
         setattr(stop_mod, name, saved)
+
+
+#: Fixture agent names. The prefix is LOAD-BEARING — do not shorten these.
+#:
+#: They used to be "a" and "b", and that reached the REAL FLEET. Measured
+#: 2026-08-19: `_stop` resolves each target name through
+#: `config._resolve.resolve_with_prefix`, which PREFIX-MATCHED "b" to the
+#: live agent "business", decided it was REMOTE, and issued
+#:
+#:     ssh ywata-note-win-net -- 'sac agents stop b --json'
+#:
+#: The `_swap("agent_stop", ...)` above does not cover that path — a remote
+#: target never calls the local function — so the swap gave the APPEARANCE
+#: of isolation while a production stop went out over SSH. It failed only
+#: because this container could not resolve that hostname; anywhere DNS
+#: works, the test would have stopped a real agent AND THEN PASSED, since
+#: `exit_code == 0` is what it asserts.
+#:
+#: A `tmp_path` fixture bounds what the test SETS UP, never what the code
+#: under test REACHES FOR. These names are chosen so that no real agent can
+#: ever be a prefix-extension of them.
+FIXTURE_AGENTS = ("pytest-fixture-a", "pytest-fixture-b")
 
 
 def _seed(tmp_path: Path, names) -> Path:
@@ -64,7 +100,7 @@ class _FakeCfg:
 @pytest.fixture
 def dry_run_result(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, [str(root), "extra", "--dry-run"])
@@ -107,7 +143,7 @@ def test_dry_run_lists_targets_mentions_bulk_yaml(dry_run_result):
 @pytest.fixture
 def bulk_no_yes_result(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, [str(root)])
@@ -141,7 +177,7 @@ def test_bulk_without_yes_refuses_prints_message(bulk_no_yes_result):
 @pytest.fixture
 def bulk_with_yes_run(tmp_path):
     # Arrange
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     stopped: list = []
     # Act
     with (
@@ -172,7 +208,7 @@ def test_bulk_with_yes_stops_all_invokes_agent_stop_per_agent(bulk_with_yes_run)
     # Act
     names = sorted(s[0] for s in stopped)
     # Assert
-    assert names == ["a", "b"]
+    assert names == sorted(FIXTURE_AGENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +222,7 @@ def bulk_failure_result(tmp_path):
     def _boom(_name, _force, *, prune_runtime=False):
         raise RuntimeError("boom")
 
-    root = _seed(tmp_path, ["a", "b"])
+    root = _seed(tmp_path, FIXTURE_AGENTS)
     # Act
     with (
         _swap("load_config", lambda p: _FakeCfg(Path(p).stem)),
@@ -519,7 +555,7 @@ def test_cross_host_stop_json_envelope_marks_dispatched(remote_row_for_zeta, ssh
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["zeta", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("dispatched") is True
 
@@ -568,10 +604,15 @@ def ssh_shim_unreachable(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_clew(cross_host_state_db):
+def remote_row_for_clew(cross_host_state_db, pg_schema: str):
     """Seed an active singleton row for ``clew`` on the unreachable
     peer ``peer-x`` AND the matching comms_nodes pin so the test can
-    verify BOTH stores are cleared on force-release."""
+    verify BOTH stores are cleared on force-release.
+
+    ``pg_schema`` because "both stores" is now literal: the instances row is
+    SQLite and the directory entry is PostgreSQL. Without it the directory
+    write would resolve the unreachable guard DSN and raise.
+    """
     from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container._state.state_db_comms_nodes import register_comms_node
 
@@ -631,7 +672,7 @@ def test_force_release_json_envelope_carries_force_released_flag(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("force_released") is True
 
@@ -645,7 +686,7 @@ def test_force_release_json_envelope_carries_release_exit_reason(
     runner = CliRunner()
     # Act
     result = runner.invoke(stop, ["clew", "--force", "--json"])
-    envelope = _json.loads(result.output.strip().splitlines()[-1])
+    envelope = _json.loads(result.stdout)
     # Assert
     assert envelope.get("exit_reason") == "peer-unreachable-force-released"
 

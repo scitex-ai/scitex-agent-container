@@ -28,7 +28,7 @@ kind: Agent
 
 spec:
   runtime: apptainer
-  provider: anthropic
+  harness: anthropic
   # Placement: the RESOLVED hostname of the machine this agent runs on
   # (filled with the creating host at render time; `host: local` is
   # banned). Edit to a `sac host list` peer name to pin it elsewhere,
@@ -45,7 +45,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -76,8 +75,18 @@ spec:
       - --dangerously-skip-permissions
     channels: []
     raw_options: {{}}
-    # null = role-derived (continue for coordinator roles, fresh otherwise)
-    session: null
+    # resume, always. OPERATOR RULING 2026-08-28: fresh is wrong, continue is
+    # wrong, resume-with-an-id is the only correct value — an agent that
+    # restarts must continue the SAME conversation, not a fresh one and not
+    # merely the latest one. `null` used to role-derive to continue-or-fresh,
+    # which is how 374 live specs across the fleet ended up losing every
+    # agent's memory on every restart.
+    #
+    # Safe with an empty resume_id: the runner warns and falls back to
+    # --continue (_runners/_tmux/claude_code.py), so a brand-new agent with no
+    # session yet is never blocked — and it upgrades itself the moment an id
+    # is pinned below.
+    session: resume
     continue_max_age_minutes: null
     resume_id: ""
     auto_accept: true
@@ -130,13 +139,6 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
-
-  context_management:
-    trigger_at_percent: 70.0
-    strategy: noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
-    state_file: ~/.scitex/agent-container/state/<agent>.json
 
   a2a:
     host: 127.0.0.1
@@ -198,7 +200,7 @@ metadata:
 
 spec:
   runtime: tui
-  provider: anthropic
+  harness: anthropic
   # RESOLVED placement (creating host at render time; `local` is banned).
   host: {host}
 
@@ -217,7 +219,6 @@ spec:
   mcp_servers: {{}}
 
   container:
-    runtime: none
     image: scitex-agent-container:latest
     volumes: []
     network: host
@@ -277,7 +278,8 @@ spec:
     model: opus[1m]
     flags:
       - --dangerously-skip-permissions
-    session: continue
+    # resume, always — see the note on the other template above.
+    session: resume
     auto_accept: true
 
     # Fleet push channels: sac control bus + shared scitex-todo store + the
@@ -354,13 +356,6 @@ spec:
     on_compact: []
     on_restart: []
     on_diff: []
-
-  context_management:
-    trigger_at_percent: 70.0
-    strategy: noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
-    state_file: ~/.scitex/agent-container/state/<agent>.json
 
   a2a:
     host: 127.0.0.1

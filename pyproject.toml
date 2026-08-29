@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.25.0"
+version = "0.28.0"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -103,7 +103,23 @@ dependencies = [
 mcp = [
     # F-CS15: sac MCP server. fastmcp 2.x and 3.x both supported via
     # the safe_mount shim (matches scitex-* package convention).
-    "fastmcp>=2.0",
+    #
+    # 2.x SUPPORT IS SHIM-BACKED BUT UNTESTED, and saying so is the honest
+    # form of this claim. The suite installs [dev], which floors fastmcp at
+    # >=3.0 (see the note there and the measurement behind it), so nothing
+    # in CI ever exercises the 2.x branch of `mcp_group._list_tools`. The
+    # floor stays at 2.0 because the runtime shim really does handle both
+    # and narrowing it would break the scitex-* convention for consumers
+    # who only want the server — but a 2.x regression here would reach a
+    # user before it reached a test.
+    #
+    # `mcp<2` is NOT an untested claim like the fastmcp floor above: mcp
+    # 2.0.0 removes `Server.list_tools`, which `mcp_group._list_tools`
+    # probes for and the whole `_mcp` suite calls. Until the 2.x API is
+    # supported, admitting it here would ship a server that cannot list
+    # its own tools.
+    "fastmcp>=2.0,<4",
+    "mcp>=1.29,<2",
 ]
 telegram = [
     "claude-code-telegrammer>=0.1.0",
@@ -124,7 +140,7 @@ slurm = [
     "scitex-hpc>=0.6.2",
 ]
 openai = [
-    # openai-compat-2: the `openai` agent-SDK family (spec.provider:
+    # openai-compat-2: the `openai` harness (spec.harness:
     # openai). Backs `_runners/openai_session.py` (OpenAIAgentsSession — the
     # concrete HarnessSession over Runner.run_streamed + SQLiteSession)
     # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
@@ -138,6 +154,7 @@ codex = [
     # Anthropic Messages -> ChatGPT Codex subscription bridge selected by
     # `spec.claude.provider: codex`; this is intentionally separate from the
     # `openai` extra above, which replaces the harness with openai-agents.
+    # NOT the same thing as `codex-sdk` below — see that extra's comment.
     "scitex-genai[gateway]>=0.1.4",
 ]
 state = [
@@ -153,7 +170,58 @@ state = [
     # put a database driver in the path of `sac agents start`.
     "psycopg[binary]>=3.1",
 ]
+codex-sdk = [
+    # sac's FOURTH harness (card sac-codex-python-sdk-harness-20260814):
+    # `spec.harness: codex`, backing `_runners/codex_session.py`
+    # (CodexSession -- the concrete HarnessSession over AsyncCodex).
+    #
+    # DELIBERATELY NOT NAMED `codex`: that extra is TAKEN, and by the OTHER
+    # axis. `codex` installs scitex-genai for `spec.claude.provider: codex`,
+    # an INFERENCE backend with Claude Code still running the loop. THIS
+    # extra replaces the HARNESS -- the codex agent program runs the loop
+    # and brings its own file-edit/exec/apply_patch tooling. `codex` is the
+    # first value to land on both axes, so the two extras are spelled
+    # differently rather than one silently shadowing the other.
+    #
+    # WEIGHT WARNING: openai-codex pins `openai-codex-cli-bin`, a wheel-only
+    # package shipping a ~285 MB native `codex` binary (plus rg, bwrap, zsh).
+    # OPTIONAL so a BARE install stays Claude-only -- every import is lazy and
+    # CodexSession raises CodexSessionError with this install hint when absent.
+    # It IS still reachable from `[all]`, as PS-221 §3 requires of every public
+    # extra; see the note there. 0.144.4 floor: the first release carrying the
+    # AsyncCodex/thread_resume surface the runner is written against.
+    "openai-codex>=0.144.4",
+]
 dev = [
+    # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
+    # openai-codex, `src/.../_runners/codex_session.py` imports the
+    # `openai_codex` module, and the tests import `scitex_agent_container`
+    # — the rule's TRANSITIVE arm — so `[dev]` must carry it too. The
+    # rule's contract is that a fresh `pip install -e .[dev]` runs the
+    # FULL suite with nothing skipped.
+    #
+    # NAMED DIRECTLY, NOT AS `scitex-agent-container[codex-sdk]`. That
+    # self-referential form is what pip would resolve, but PS-210 reads
+    # `[dev]`'s entries as DISTRIBUTION NAMES — `_strip_version` truncates
+    # each one at the first `[`, so the self-extra registers as
+    # `scitex_agent_container` and the auditor never resolves the extra to
+    # `openai_codex`. It was tried (25fe8a37) and the rule still fired.
+    # Spelling the distribution out is both what the rule asks for and
+    # what the `scitex-hpc` entry below already does for the same reason.
+    #
+    # The rule's other remedy — `pytest.importorskip("openai_codex")` —
+    # is WRONG here and must not be substituted: the tests that mention
+    # the module assert the SDK-ABSENT behaviour (CodexSession must be
+    # constructible without it, and start() must raise CodexSessionError
+    # carrying the pip hint) by forcing `sys.modules["openai_codex"] =
+    # None`. importorskip would skip exactly the tests whose whole subject
+    # is the absence, i.e. delete the coverage instead of enabling it.
+    #
+    # Costs nothing in CI, which installs `[all,dev]` and already gets
+    # this via `all` (PS-221 §3). It does add openai-codex-cli-bin's
+    # ~285 MB native wheel to a bare `[dev]` install. Floor kept in step
+    # with the `[codex-sdk]` extra above.
+    "openai-codex>=0.144.4",
     # 0.31.1 floor — LOAD-BEARING, do not lower. `audit_all_for_package`
     # first gained its `path=` parameter in 0.31.1 (verified against the
     # published wheels: 0.31.0 has NEITHER `path=` NOR the CWD-git-root
@@ -238,7 +306,54 @@ dev = [
     # by widening the specifier. A specifier stretched until the red goes
     # away is a gate configured so it cannot fail, which is worse than no
     # gate, because the config still lists it and everyone believes it.
-    "scitex-dev>=0.31.1,<0.48",
+    # CEILING LIFTED 2026-08-13, operator authorised ("ガンガンいってください",
+    # "遅い方が罪"). Read the block above before widening this further.
+    #
+    # What the ceiling was NOT protecting against: lifting it does not touch
+    # the OAuth refresher. The credential danger the block describes comes
+    # ONLY from performing the PS-226 RENAME, which installs a second unit
+    # beside the live sac.accounts-refresh.timer and races a single-use
+    # refresh token. THAT RENAME IS STILL DELIBERATELY NOT DONE and must not
+    # be done as a side effect of this bump.
+    #
+    # What lifting it costs, all of it red-not-broken: (1) and (2) are the two
+    # tests named above, fixed in this same change; (3) was upstream
+    # scitex-ai/scitex-dev#590 — a declared skip rule suppresses the report but
+    # not the exit status. The block itself ruled that survivable: "A red audit
+    # rule is survivable; a revoked fleet credential is not."
+    #
+    # (3) IS NO LONGER OWED. #590 was root-caused and fixed upstream on
+    # 2026-08-13: `fully_masked` tested `not self.unmasked`, which counts
+    # WARN-tier findings that provably fail nothing, so warnings vetoed the
+    # downgrade and audit-all printed "0 unmasked error(s)" beside exit=1. It
+    # now gates on `unmasked_error_count`. Shipped in 0.49.2.
+    #
+    # Why now: scitex_dev.store ships after 0.48, and sac cannot adopt the
+    # fleet store primitive — the whole point of moving state off SQLite —
+    # while this specifier excludes it.
+    #
+    # THE FLOOR IS 0.49.2, NOT 0.31.1, and the difference is not cosmetic.
+    # 0.49.0 shipped `scitex_dev.store` with a Postgres backend nothing could
+    # use: psycopg appeared in its pyproject only as a COMMENT, and every
+    # Postgres READ crashed because the dialect set no row factory while
+    # `row_from_db` addresses columns by name. Writes were unaffected — they
+    # bind parameters — which is exactly why it survived: the Postgres path had
+    # been written to and never read from. A floor that admits 0.49.0 admits a
+    # store this package cannot read, so the version that first WORKS is the
+    # version this package may depend on.
+    #
+    # RAISED TO 0.56.6 on 2026-08-25, and the difference is again not
+    # cosmetic. Through 0.56.5, Store._append read MAX(seq) ONCE and then
+    # inserted, so concurrent writers on a SINGLE node collided on the oplog
+    # (origin, seq) primary key with no bounded retry — measured 7/8 and 5/8
+    # failures on the two concurrency tests, reproduced three times. The same
+    # release also takes a Postgres advisory lock around CREATE TABLE, which
+    # races pg_type when several Store() constructors start together. sac has
+    # now moved its own state onto this store, so a floor that admits 0.56.5
+    # admits silent write loss on exactly the path the migration depends on.
+    # The container recipes gate this BY SYMBOL (_SEQ_ALLOCATION_ATTEMPTS) —
+    # see apptainer-scitex.def; this specifier is the base layer's half.
+    "scitex-dev>=0.56.6",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",
@@ -272,7 +387,32 @@ dev = [
     # collection-skipped on dev boxes. Keeping fastmcp also as a [mcp]
     # extra so runtime installs that only need the MCP server can
     # opt-in without pulling the rest of [dev].
-    "fastmcp>=2.0",
+    #
+    # PINNED, AND THE PIN THAT MATTERS IS `mcp`, NOT `fastmcp`.
+    #
+    # `Server.list_tools` is an API of the `mcp` python-sdk, which fastmcp
+    # pulls transitively. Neither was pinned, there is no lockfile, and
+    # `uv pip install -e .[dev]` re-resolves on every CI run — so the suite
+    # was running against whatever the index served that minute. Measured
+    # across three runs of the SAME workflow on the same py3.11:
+    #
+    #   run 32184153812  fastmcp==3.4.7    mcp==1.29.0  ->  17094 passed
+    #   run 32185071483  fastmcp==2.14.1   mcp==2.0.0   ->     29 failed
+    #   run 32185515... fastmcp==4.0.0b3  mcp==2.0.0   ->     26 failed
+    #
+    # `fastmcp` moves in both directions across those rows and the outcome
+    # does not follow it; `mcp` does. mcp 2.0.0 (2026-07-28) removed
+    # `Server.list_tools`, and every failure is that attribute. So the
+    # first version of this pin — a `fastmcp>=3.0` floor — named the wrong
+    # package: it let 4.0.0b3 in and changed nothing about the failure.
+    #
+    # `<2` on mcp is the bound the code is actually written against. `<4`
+    # on fastmcp keeps the pre-release out of a resolution that has already
+    # been observed reaching for one; the floor stays at 3.0 because the
+    # TESTS call `server.list_tools()` outright while the SOURCE tolerates
+    # more (`cli_pkg/mcp_group._list_tools` branches on hasattr).
+    "fastmcp>=3.0,<4",
+    "mcp>=1.29,<2",
 ]
 docs = [
     "sphinx>=7.0",
@@ -294,6 +434,24 @@ all = [
     "scitex-agent-container[openai]",
     "scitex-agent-container[codex]",
     "scitex-agent-container[state]",
+    # PRESENT BECAUSE THE POLICY REQUIRES IT, not because the tests need
+    # it. PS-221 §3 (public-extra-not-closed-under-all): every PUBLIC
+    # extra must be a subset of `all`, so `pip install <pkg>[all]` really
+    # does pull everything public — an extra missing here silently
+    # under-installs for anyone who ran the documented "give me
+    # everything" install.
+    #
+    # The cost is real and worth stating: this drags openai-codex, which
+    # pins openai-codex-cli-bin — a wheel-only package shipping a ~285 MB
+    # native binary — into every `[all,dev]` CI job, and the codex
+    # harness's own tests need none of it (they drive hand-rolled
+    # HarnessSession stand-ins and assert the missing-SDK path with a
+    # sys.modules sentinel). Omitting it was tried and is WRONG: it makes
+    # `[all]` a lie. If the CI weight ever needs solving, solve it in the
+    # CI install (a narrower extra set for the test job), not by
+    # un-closing `all`. Do NOT try a leading-underscore "private extra"
+    # either — PEP 508/685 forbids the name outright.
+    "scitex-agent-container[codex-sdk]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]
@@ -377,6 +535,62 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # filters for the card-event kinds and ignores everything else, incl.
 # sac's OWN liveness-tick anomaly events on the same bus. Bus-only
 # contract: no import of scitex_todo.
+# DECLARED IN BOTH GROUPS, and the duplication is the correct migration
+# state — not an oversight to tidy up later.
+#
+# MEASURED 2026-08-20 by scitex-cards: this consumer has NEVER been invoked in
+# production. The running notify daemon executes scitex-cards 0.42.0, whose
+# `_hooks/_plugins.py` reads `scitex_cards.hooks` and has ZERO references to
+# the retired group. sac was registered only under the retired name, so every
+# card event was dispatched to an EMPTY SET — succeeded, reported success,
+# called nobody. Corroborating symptoms, all explained by that one fact:
+#
+#     notifyd-liveness.json  last_delivery_at: null   never delivered, ever
+#     local inbox            150 rows, all unseen     enqueued, never pushed
+#     agents still get cards                          the PULL rail is separate
+#
+# Nothing anywhere reported a failure. That is the signature of this defect
+# class, and scitex-cards' own docstring recorded the identical state on
+# 2026-08-17 — the fix shipped in 0.48.0 and has never executed, because the
+# unit whose Description reads "supervised so a package upgrade actually
+# reaches it" points ExecStart at a hand-made venv that `pip install -U` never
+# touches.
+#
+# WHY BOTH RATHER THAN A MOVE. 0.42.0 (running now) reads only the new group,
+# so adding it revives delivery immediately. 0.48.0 reads both and dedupes, so
+# nothing double-fires. And leaving the retired entry in place preserves the
+# fleet's only registration under that name, which is what lets scitex-cards
+# verify the alias actually works when 0.48.0 finally runs — deleting it would
+# make "the alias works" indistinguishable from "nobody was left".
+#
+# THE NAME AND THE DOTTED PATH MUST STAY BYTE-IDENTICAL between the two
+# blocks. 0.48.0 dedupes on the tuple `(ep.name, ep.value)`:
+#
+#     seen  = {(ep.name, ep.value) for ep in current}
+#     extra = [ep for ep in retired if (ep.name, ep.value) not in seen]
+#
+# so renaming the entry or moving the callable on one side only turns the
+# alias meant to FIX delivery into a double-delivery bug. A migration is
+# exactly when tidying a name is tempting; do not, until the retired block
+# goes away entirely.
+#
+# C10 — sac's consumer on the shared card-event bus. When the board emits a
+# card-event (commented / created / reassigned / status_changed / completed /
+# committed / pushed / merged), this callable is invoked in the board's
+# process; it resolves the card's owner + collaborators + subscribers and
+# delivers the notification to each via the local ``sac listen`` daemon's
+# ``/v1/notify`` router endpoint — so a CONTAINERIZED owner-agent (whose a2a
+# port is unreachable inbound) still receives it. The consumer filters for the
+# card-event kinds and ignores everything else, incl. sac's OWN liveness-tick
+# anomaly events on the same bus. Bus-only contract: no import of the board
+# package.
+[project.entry-points."scitex_cards.hooks"]
+scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
+
+# The retired spelling, kept deliberately. See the note above: it is the
+# fleet's only registration under this group and therefore the only way to
+# verify the 0.48.0 alias when it runs. Remove it only once that verification
+# has happened and scitex-cards says the group is closed.
 [project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
@@ -654,7 +868,34 @@ required_plugins = ["pytest-asyncio", "pytest-xdist"]
 
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short -m 'not integration and not docker_smoke'"
+
+# DUMP EVERY THREAD'S STACK WHEN A TEST STOPS MAKING PROGRESS.
+#
+# Purely diagnostic: pytest arms faulthandler and dumps tracebacks after this
+# many seconds in ONE test. It does not fail, kill or skip anything — a slow
+# test that finishes still passes, and the dump is the only side effect. That
+# is why this is safe to set on a suite whose normal full run is ~6 minutes.
+#
+# WHY IT EXISTS. A matrix leg has now hung THREE times by this repo's own
+# count (see the comments in pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml:
+# PR #594's 1h39m, a duplicate py3.11 leg at 40+ min while its siblings
+# finished in 11). MEASURED 2026-08-21 on run 32482771853: the py3.13 leg
+# stalled at 67-68% and produced NO OUTPUT AT ALL for 36.5 minutes before the
+# job's 45-minute timeout killed it — no test line, no traceback, nine orphan
+# python processes reaped by the runner. Its py3.11 sibling passed in 6m12s on
+# the same diff, concurrently, on a different host.
+#
+# Two agents then spent an evening refuting six hypotheses (the diff, an
+# ambient Postgres error at the stall boundary, the host's store, within-run
+# collision, a third repo's CI, and both runners on that box) and still could
+# not say WHAT it blocked on — because the log cannot answer that question.
+# This line makes the next occurrence answer it by itself.
+#
+# 300s is chosen against the observed suite: the whole run takes ~6 minutes, so
+# no healthy single test comes near five minutes, and a real hang exceeds it
+# long before the job's 45-minute wall.
+faulthandler_timeout = 300
+addopts = "-v --tb=short -p tests._store_isolation -m 'not integration and not docker_smoke'"
 markers = [
     "integration: slow end-to-end tests that spawn a real Claude Code agent (require claude CLI + tmux + ANTHROPIC_API_KEY or SAC_ANTHROPIC_API_KEY). Opt in with '-m integration'.",
     "docker_smoke: real-Docker smoke tests for DockerRuntime (build image, start/stop newbie-docker agent, exec claude -p). Skipped unless docker daemon reachable. Opt in with '-m docker_smoke'.",
@@ -670,6 +911,69 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+# ---------------------------------------------------------------------------
+# T201 (`print` found) allowlist — the raw-print gate's ONLY escape hatch.
+#
+# CI (.github/workflows/lint.yml, step "No raw print() in src/ (T201)") runs
+# `ruff check --select T201,T203 src/`. sac's diagnostics belong to
+# scitex-logging, which stamps the emitting module on every record and fans out
+# to the rotating runtime log as well as stderr; a raw print carries no origin
+# and dies with whatever stream was attached.
+#
+# Note T201 already ignores `print(..., file=<injected stream>)`, so a
+# function whose caller supplies `stream=` / `err_stream=` / `log_stream=`
+# needs NO entry here — that print is part of the function's reporting
+# contract, not an unrouted diagnostic. Everything below therefore writes to a
+# HARDCODED stdout/stderr on purpose.
+#
+# HOUSE RULE: one file per entry, each with its own written reason, added
+# deliberately. Never a blanket ignore and never a widened glob — a gate that
+# cannot fail is worse than no gate. If you are tempted to add an entry for a
+# DIAGNOSTIC, you want the logger instead; these exemptions exist only where
+# stdout/stderr IS the interface.
+[tool.ruff.lint.per-file-ignores]
+# The build hook runs under hatch during wheel/sdist construction, before the
+# package (and therefore scitex_logging) is importable at all. Its prints are
+# build-log progress; a logger here would be a circular dependency.
+"src/hatch_build.py" = ["T201"]
+
+# Claude Code WorktreeCreate hook, executed as a standalone script from the
+# agent's own $HOME after being copied out of _baseline_assets. STDOUT IS THE
+# PROTOCOL: the SDK reads the created worktree path from it (`print(policy_path)`),
+# so a stray log line on stdout breaks worktree creation outright. Its stderr
+# prints are the SDK's documented human-diagnostic channel. It also cannot rely
+# on scitex_logging being importable in the environment it is copied into.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_create.py" = ["T201"]
+
+# Same deal: a standalone Claude Code hook copied into the agent's $HOME,
+# reporting through the SDK's stderr channel with no sac import available.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/worktree_remove.py" = ["T201"]
+
+# Same deal: a standalone SessionStart hook copied into the agent's $HOME. Its
+# one print is the reap summary the SDK surfaces to the operator.
+"src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/session_start_reap_stale.py" = ["T201"]
+
+# `sac never-stop-when-task-remains` is a Claude Code Stop hook whose STDOUT IS
+# A JSON DECISION FRAME (tests/.../test_never_stop_when_task_remains_cmds.py
+# asserts `json.loads(stdout)` still parses). Routing its stderr diagnostics to
+# a logger would risk a handler putting log text on stdout and corrupting that
+# frame — the precise failure class this whole change is meant to avoid.
+"src/scitex_agent_container/cli_pkg/never_stop_when_task_remains_cmds.py" = ["T201"]
+
+# `sac-statusline` is invoked by Claude Code on every status-line update and its
+# STDOUT IS THE RENDERED STATUS LINE consumed by the client. Nothing else may
+# appear there.
+"src/scitex_agent_container/statusline.py" = ["T201"]
+
+# A standalone probe baked into the SIF and run by the image build to verify
+# the artifact's symbols. It deliberately imports nothing from sac (that is the
+# point of the probe) and its stdout OK/FATAL lines are the build's verdict.
+"src/scitex_agent_container/containers/sif_symbol_probe.py" = ["T201"]
+
+# A worked example shipped inside a skill for operators to copy and run; its
+# print is the example's output. Not a sac code path.
+"src/scitex_agent_container/_skills/scitex-agent-container/scitex_smoke_test.py" = ["T201"]
 
 [tool.coverage.run]
 # Subprocess + multi-process coverage: child Python interpreters

@@ -437,3 +437,75 @@ def test_build_argv_keeps_non_secret_env_flag(
     present = "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv
     # Assert
     assert present is True
+
+
+# ---------------------------------------------------------------------------
+# The GLUED ``--env=KEY=VALUE`` spelling is swept too
+#
+# THE HOLE THIS PINS. The sweep recognised only the SPLIT ``["--env", "K=V"]``
+# form while ``_apptainer_env_dedup`` also knew the GLUED ``--env=K=V``, so a
+# spec using the glued spelling — LIVE across this fleet's ``raw_args`` — put
+# its secret straight into the world-readable launcher argv while every test
+# here still passed. Measured: 1 exposed pid before, 0 after. Both modules now
+# share ``_apptainer_env_dedup.env_pair_at`` (pinned in that module's mirror).
+# ---------------------------------------------------------------------------
+_GLUED_SENTINEL = "ZZZ-sentinel-glued-9c1d-must-not-appear-in-argv"
+
+
+@pytest.fixture
+def glued_sweep(tmp_path: Path) -> SimpleNamespace:
+    """Sweep a GLUED secret --env= (plus a glued non-secret)."""
+    argv = [
+        "apptainer", "exec",
+        f"--env=SAC_ANTHROPIC_API_KEY={_GLUED_SENTINEL}",
+        "--env=SAC_NAME=x",
+        "img.sif", "cmd",
+    ]
+    out = redact_secret_env_to_file(list(argv), state_dir=tmp_path)
+    return SimpleNamespace(
+        out=out,
+        joined=" ".join(out),
+        ef=secret_env_file_path(tmp_path),
+    )
+
+
+def test_glued_secret_value_absent_from_argv(glued_sweep: SimpleNamespace) -> None:
+    # Arrange
+    joined = glued_sweep.joined
+    # Act
+    leaked = _GLUED_SENTINEL in joined
+    # Assert
+    assert leaked is False
+
+
+def test_glued_secret_flag_removed_from_argv(glued_sweep: SimpleNamespace) -> None:
+    # Arrange
+    out = glued_sweep.out
+    # Act — the whole single token goes, not just its value.
+    remaining = [tok for tok in out if tok.startswith("--env=SAC_ANTHROPIC_API_KEY")]
+    # Assert
+    assert remaining == []
+
+
+def test_glued_secret_value_reaches_the_env_file(
+    glued_sweep: SimpleNamespace,
+) -> None:
+    # Arrange
+    ef = glued_sweep.ef
+    # Act — delivery preserved: apptainer reads this file at exec.
+    content = ef.read_text()
+    # Assert
+    assert f"SAC_ANTHROPIC_API_KEY={_GLUED_SENTINEL}" in content
+
+
+# (The 0600 mode of the env-file is already pinned for the split sweep above;
+# both spellings land in the SAME file, so it is one property, not two.)
+
+
+def test_glued_non_secret_env_flag_is_kept(glued_sweep: SimpleNamespace) -> None:
+    # Arrange
+    out = glued_sweep.out
+    # Act — no over-reach: a glued NON-secret keeps its place and spelling.
+    present = "--env=SAC_NAME=x" in out
+    # Assert
+    assert present is True

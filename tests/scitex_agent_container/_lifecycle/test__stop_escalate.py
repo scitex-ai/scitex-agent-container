@@ -49,6 +49,27 @@ _SIGTERM_DEAF = (
 )
 
 
+
+class FakeThread:
+    """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
+
+    This file's spec enables ``health``, so the start path spawns the
+    health monitor. With the real ``threading.Thread`` that daemon thread
+    OUTLIVES the test and, ~90 s later, writes a birth certificate and logs
+    an ERROR into whatever test is running then (develop red, 2026-08-24;
+    measured with a capture-immune probe). Same shape as ``FakeThread`` in
+    ``test_lifecycle.py``. PA-306: a hand-written stand-in, not a mock.
+    """
+
+    def __init__(self, *, target=None, args=(), daemon=False, **_kw) -> None:
+        self.target = target
+        self.args = args
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
 def _no_sleep(_seconds: float) -> None:
     return None
 
@@ -581,10 +602,12 @@ def _restart(tmp_path: Path, runtime: Any, *, name: str = "alpha") -> bool:
         # leg (and off the network).
         successor_auth_check=lambda _path: None,
         wait_for_stop_timeout_s=0.05,
+        thread_factory=FakeThread,
     )
 
 
 def test_restart_kills_the_runtime_that_ignored_sigterm(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange — the neurovista shape: a REAL process that ignores SIGTERM.
@@ -597,6 +620,7 @@ def test_restart_kills_the_runtime_that_ignored_sigterm(
 
 
 def test_restart_starts_the_replacement_after_escalating(
+    pg_schema: str,
     tmp_path: Path, deaf_proc: subprocess.Popen
 ) -> None:
     # Arrange
@@ -608,7 +632,7 @@ def test_restart_starts_the_replacement_after_escalating(
     assert runtime.start_calls == 1
 
 
-def test_restart_raises_when_the_survivor_cannot_be_killed(tmp_path: Path) -> None:
+def test_restart_raises_when_the_survivor_cannot_be_killed(pg_schema, tmp_path: Path) -> None:
     # Arrange — up, and unkillable (no nameable pid).
     _write_spec(tmp_path)
     # Act
@@ -619,7 +643,7 @@ def test_restart_raises_when_the_survivor_cannot_be_killed(tmp_path: Path) -> No
         call()
 
 
-def test_restart_never_starts_over_a_surviving_runtime(tmp_path: Path) -> None:
+def test_restart_never_starts_over_a_surviving_runtime(pg_schema, tmp_path: Path) -> None:
     # Arrange
     _write_spec(tmp_path)
     runtime = _PidlessRuntime()

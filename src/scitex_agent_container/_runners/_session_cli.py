@@ -16,6 +16,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from ..config._residency_types import AGENT_RESIDENCIES, RESIDENT
 from ._session_state import DEFAULT_TICK_SECONDS
 
 __all__ = ["_parse_argv", "main"]
@@ -100,6 +101,20 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--residency",
+        type=str,
+        choices=sorted(AGENT_RESIDENCIES),
+        default=RESIDENT,
+        help=(
+            "spec.residency passthrough (v4 residency axis). 'resident' "
+            "(default): the daemon parks awaiting more work after a "
+            "conversation completes. 'one-shot': the daemon exits "
+            "cleanly (ExitRecord reason oneshot-complete) when its "
+            "conversation completes. argparse choices refuse anything "
+            "else, naming the valid set."
+        ),
+    )
+    p.add_argument(
         "--print-stream",
         action="store_true",
         help=(
@@ -180,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     return asyncio.run(
         run(
             args.name,
+            residency=args.residency,
             state_root=args.state_root,
             tick_seconds=args.tick_seconds,
             mission=args.mission,

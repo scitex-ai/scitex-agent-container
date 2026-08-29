@@ -43,10 +43,21 @@ TOKEN = "test-token-shutdown-sse"
 
 
 @pytest.fixture
-def shutdown_env(tmp_path: Path):
+def shutdown_env(tmp_path: Path, pg_schema: str):
     """Isolate on-disk roots to ``tmp_path`` and disable the noisy
     background loops so the lifespan launches essentially just the
     shutdown bridge — keeping the shutdown-timing assertion deterministic.
+
+    ``pg_schema`` JOINED ON 2026-08-28 for the same reason it joined
+    ``test_listen_notify_delivery``: the SSE stream's FIRST act is a durable
+    replay (``list_undelivered``), and that read moved to the shared
+    PostgreSQL (ADR-0023). Without a reachable store the stream raises
+    before it can be interrupted, and this test reported
+    ``SSE stream closed before shutdown was triggered`` — which reads like a
+    shutdown-timing regression and was in fact a store the harness never
+    provisioned. Same root cause as the four notify failures, confirmed from
+    the traceback (``_node_channel_stream.py`` -> ``list_undelivered``)
+    rather than assumed.
     """
     saved: dict[str, str | None] = {}
     env = {
