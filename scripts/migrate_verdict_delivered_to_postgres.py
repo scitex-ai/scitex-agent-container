@@ -115,6 +115,7 @@ success path: a row that cannot be written raises.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -152,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         "--state-db",
         type=Path,
         default=None,
-        help="SQLite state.db (default: the package's DEFAULT_DB_PATH)",
+        help="SQLite state.db (default: $SCITEX_AGENT_CONTAINER_STATE_DB, else <runtime>/state.db)",
     )
     parser.add_argument(
         "--commit",
@@ -162,9 +163,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.state_db is None:
-        from scitex_agent_container._state.state_db import DEFAULT_DB_PATH
+        from scitex_agent_container._runtime_paths import runtime_base_dir
 
-        args.state_db = Path(DEFAULT_DB_PATH)
+        args.state_db = Path(
+            os.environ.get(
+                "SCITEX_AGENT_CONTAINER_STATE_DB",
+                str(runtime_base_dir() / "state.db"),
+            )
+        )
 
     from scitex_agent_container._state.state_db_verdict_dedup import (
         record_verdict_delivered,

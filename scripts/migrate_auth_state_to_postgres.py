@@ -32,6 +32,7 @@ Nothing is deleted from SQLite — the old table stays untouched as a fallback.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -56,7 +57,7 @@ def _sqlite_rows(db_path: Path) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", type=Path, default=None,
-                    help="SQLite state.db to read (default: sac's resolved DEFAULT_DB_PATH)")
+                    help="SQLite state.db to read (default: $SCITEX_AGENT_CONTAINER_STATE_DB, else <runtime>/state.db)")
     ap.add_argument("--commit", action="store_true",
                     help="actually write; without it this is a dry run that writes nothing")
     args = ap.parse_args()
@@ -66,9 +67,14 @@ def main() -> int:
         get_auth_state,
         record_auth_checks,
     )
-    from scitex_agent_container._state.state_db import DEFAULT_DB_PATH
+    from scitex_agent_container._runtime_paths import runtime_base_dir
 
-    db_path = args.db or DEFAULT_DB_PATH
+    db_path = args.db or Path(
+            os.environ.get(
+                "SCITEX_AGENT_CONTAINER_STATE_DB",
+                str(runtime_base_dir() / "state.db"),
+            )
+        )
     print(f"source (sqlite)  : {db_path}")
     print(f"target (postgres): {auth_state_store_target().locator}")
 
