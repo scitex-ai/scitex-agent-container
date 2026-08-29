@@ -5,7 +5,8 @@ family (scitex-todo card ``openai-compat-2``). Same wire surface (sync
 ``(name, text) -> str``); the underlying transport is
 ``agents.Runner.run_streamed`` normalized through
 :class:`scitex_agent_container._runners.openai_session.OpenAIAgentsSession`,
-with conversation state persisted in the agent's ``SQLiteSession`` db.
+with conversation state persisted in the agent's ``openai_sessions`` store
+(this host's PostgreSQL — see ``_state.openai_session_store``).
 
 Requires the optional ``[openai]`` extra
 (``pip install scitex-agent-container[openai]``); without it the handler

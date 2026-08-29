@@ -9,7 +9,7 @@ Five built-ins:
 * :func:`handle_openai_session` — drives an OpenAI model via the
   ``openai-agents`` SDK (``spec.harness: openai``; optional
   ``[openai]`` extra). Stateful: turns share the agent's
-  ``SQLiteSession`` conversation state.
+  PostgreSQL-backed conversation state.
 * :func:`handle_claude_cli` — *(legacy)* runs ``claude --print`` with
   the user text and forwards stdout. Kept for back-compat; will be
   removed once ``claude --print`` itself is removed upstream. Migrate
@@ -218,9 +218,10 @@ def handle_openai_session(agent_name: str, user_text: str) -> str:
     :class:`scitex_agent_container._runners.openai_session.OpenAIAgentsSession`
     (the concrete ``HarnessSession`` — see openai-compat-2). Unlike the
     Claude handler this one is STATEFUL: the session persists turns in
-    the agent's ``SQLiteSession`` db (see
-    ``runtimes._openai_sdk_common.resolve_state_db_path``), so repeated
-    A2A sends continue one conversation.
+    the ``openai_sessions`` store keyed by ``(agent, session_id)`` (see
+    ``_state.openai_session_store``), so repeated A2A sends continue one
+    conversation — and a send RAISES rather than forgetting the history
+    when this host's PostgreSQL is unreachable.
 
     Env knobs (mirroring the Claude handler's):
 
