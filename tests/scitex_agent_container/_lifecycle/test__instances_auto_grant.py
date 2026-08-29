@@ -307,7 +307,6 @@ def _fire_monitor_restart_against_foreign_db(
     before = {r["id"] for r in list_active_instances()}
 
     foreign = tmp_path / "foreign" / "state.db"
-    state_db.init_schema(foreign)
     saved = state_db.DEFAULT_DB_PATH
     state_db.DEFAULT_DB_PATH = foreign
     try:

@@ -81,7 +81,6 @@ def empty_store(tmp_path: Path):
     importlib.reload(state_db_mod)
     importlib.reload(registry_mod)
     importlib.reload(agents_list_mod)
-    state_db_mod.init_schema(db)
     try:
         yield db
     finally:

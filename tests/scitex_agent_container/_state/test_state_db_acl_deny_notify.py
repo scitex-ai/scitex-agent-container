@@ -41,7 +41,6 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     saved_cooldown_env = os.environ.get("SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:

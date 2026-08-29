@@ -47,7 +47,6 @@ def kind_env(pg_schema: str, tmp_path: Path):
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
 
     # Same-group ACL — alice (sender) and lead (target) both rooted.
     record_lineage(child="alice", parent="root")

@@ -306,9 +306,6 @@ class TestResolvePeerUrlCrossHostFallback:
         # the honest "is the agent running?" error must still fire.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import init_schema
-
-        init_schema()
         # Act
         action = lambda: resolve_peer_url("clew")
         # Assert

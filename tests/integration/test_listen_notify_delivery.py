@@ -117,7 +117,6 @@ def listen_state_db(tmp_path: Path, pg_schema: str):
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
     try:
         yield {"db": db}
     finally:

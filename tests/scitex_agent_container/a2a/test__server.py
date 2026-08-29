@@ -691,7 +691,6 @@ def _isolated_db(tmp_path: Path, pg_schema: str):
     saved_default = _state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     _state_db.DEFAULT_DB_PATH = db
-    _state_db.init_schema(db)
     try:
         yield db
     finally:

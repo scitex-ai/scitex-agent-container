@@ -262,7 +262,6 @@ def lead_env(tmp_path: Path, env_save_restore):
     state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
 
     # Lead config — production reads this via the env-routed config.yaml.
     # Each test that actually pushes rewrites ``a2a_port`` with the

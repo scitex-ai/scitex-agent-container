@@ -55,7 +55,6 @@ def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"

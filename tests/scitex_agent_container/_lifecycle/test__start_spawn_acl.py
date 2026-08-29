@@ -98,7 +98,6 @@ def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     saved_default = state_db.DEFAULT_DB_PATH
     os.environ.update(keys)
     state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:
