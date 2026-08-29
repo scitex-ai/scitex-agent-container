@@ -10,8 +10,13 @@ Two tiers, matching the optional-dependency contract:
   succeed with ``agents`` BLOCKED), and terminal-aggregate building.
 * **Real SDK** — ``pytest.importorskip("agents")`` per test: ToolSpec →
   ``FunctionTool`` conversion (including invoking the wrapped handler),
-  normalization of REAL SDK event objects, and the network-free
-  ``start``/``close`` lifecycle against a tmp ``SQLiteSession`` db.
+  normalization of REAL SDK event objects, and the ``start``/``close``
+  lifecycle against a ``PostgresAgentSession``.
+
+``pg_schema`` is taken by EXACTLY the tests that reach the store — the
+round-trip and the failing-turn one — and by no others. It is not autouse
+on purpose: ``__init__``/``start()``/``close()`` open no connection, and a
+test that takes the fixture anyway would stop being able to prove that.
 
 No mocks (PA-306); no live-API turns (a ``send`` happy path needs a
 real OpenAI key — the error-path contract is covered instead, which is
@@ -41,6 +46,7 @@ from scitex_agent_container._runners._harness_session import (
     HarnessSession,
     ToolSpec,
 )
+from scitex_agent_container._runners._openai_pg_session import PostgresAgentSession
 from scitex_agent_container._runners.openai_session import (
     OpenAIAgentsSession,
     OpenAISessionError,
@@ -645,11 +651,18 @@ def test_normalize_real_sdk_agent_updated_event():
     assert normalized.text == "agent_updated:triage"
 
 
-def test_start_builds_sqlite_session_state(openai_env: Path):
+def test_start_builds_postgres_session_state(openai_env: Path):
+    """NO ``pg_schema``: constructing the session must not touch the store.
+
+    That is a property worth asserting rather than a convenience. The store
+    handle is opened on the first READ or WRITE, so ``start()`` stays as
+    network-free as it was when it opened a local file — and the autouse
+    unreachable-DSN guard is what proves it: if construction connected, this
+    test would fail on port 1 instead of passing.
+    """
     # Arrange
-    agents = pytest.importorskip("agents")
-    db_path = openai_env / "state.sqlite3"
-    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini", db_path=db_path)
+    pytest.importorskip("agents")
+    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini")
 
     async def _go() -> Any:
         await session.start()
@@ -660,31 +673,48 @@ def test_start_builds_sqlite_session_state(openai_env: Path):
     # Act
     state = asyncio.run(_go())
     # Assert
-    assert isinstance(state, agents.SQLiteSession)
+    assert isinstance(state, PostgresAgentSession)
 
 
-def test_start_creates_the_state_db_file(openai_env: Path):
+def test_session_state_round_trips_through_postgres(
+    openai_env: Path, pg_schema: str
+):
+    """A turn WRITTEN by one session object is READ by a different one.
+
+    The replacement for ``test_start_creates_the_state_db_file``, which
+    asserted that a file appeared on disk. There is no file; the property
+    that mattered was never the file but that conversation state SURVIVES
+    the session object, so this reads it back through a second
+    ``OpenAIAgentsSession`` — the answer can only come from the store.
+    """
     # Arrange
     pytest.importorskip("agents")
-    db_path = openai_env / "state.sqlite3"
-    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini", db_path=db_path)
+    written = [{"role": "user", "content": "remember this"}]
 
-    async def _go() -> None:
-        await session.start()
-        await session.close()
+    async def _go() -> list[Any]:
+        writer = OpenAIAgentsSession("alpha", model="gpt-4o-mini")
+        await writer.start()
+        try:
+            await writer._session.add_items(list(written))
+        finally:
+            await writer.close()
+        reader = OpenAIAgentsSession("alpha", model="gpt-4o-mini")
+        await reader.start()
+        try:
+            return await reader._session.get_items()
+        finally:
+            await reader.close()
 
     # Act
-    asyncio.run(_go())
+    items = asyncio.run(_go())
     # Assert
-    assert db_path.exists()
+    assert items == written
 
 
 def test_close_resets_started_flag(openai_env: Path):
     # Arrange
     pytest.importorskip("agents")
-    session = OpenAIAgentsSession(
-        "alpha", model="gpt-4o-mini", db_path=openai_env / "s.sqlite3"
-    )
+    session = OpenAIAgentsSession("alpha", model="gpt-4o-mini")
 
     async def _go() -> bool:
         await session.start()
@@ -697,15 +727,23 @@ def test_close_resets_started_flag(openai_env: Path):
     assert started is False
 
 
-def test_send_failure_surfaces_as_turn_ending_error_event(openai_env: Path):
+def test_send_failure_surfaces_as_turn_ending_error_event(
+    openai_env: Path, pg_schema: str
+):
     """Any turn failure (fake key → 401 online, DNS error offline) must
-    yield a terminal ``kind="error"`` event, never leak an exception."""
+    yield a terminal ``kind="error"`` event, never leak an exception.
+
+    ``pg_schema`` because this one DOES touch the store: ``Runner`` reads
+    the conversation history before it calls the model, so the turn reaches
+    PostgreSQL before it reaches the failure being asserted. Without it the
+    autouse guard's unreachable DSN raises there instead, and the test would
+    still go green — on the wrong error.
+    """
     # Arrange
     pytest.importorskip("agents")
     session = OpenAIAgentsSession(
         "alpha",
         model="gpt-4o-mini",
-        db_path=openai_env / "s.sqlite3",
         record_spend=False,
     )
 

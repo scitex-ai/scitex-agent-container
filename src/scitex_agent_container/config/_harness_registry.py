@@ -253,7 +253,7 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             inner_argv=_openai_agents_inner_argv,
             hosted="runner",  # shared session daemon since v4 step 7
             beat_writer="in-process",  # daemon + turn-driver beats, self-stamped
-            # The SQLiteSession db persists turns under the agent's own
+            # The conversation store persists turns under the agent's own
             # name, but sac's resume contract (rehydrate a PRIOR
             # conversation from a caller-supplied session id) is not
             # implemented for this harness — the runner CLI and turn

@@ -142,12 +142,22 @@ slurm = [
 openai = [
     # openai-compat-2: the `openai` harness (spec.harness:
     # openai). Backs `_runners/openai_session.py` (OpenAIAgentsSession — the
-    # concrete HarnessSession over Runner.run_streamed + SQLiteSession)
-    # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
+    # concrete HarnessSession over Runner.run_streamed) and the
+    # `openai_session` A2A handler/executor. OPTIONAL on purpose:
     # Claude-only deployments must not pull it — every import is lazy and
-    # the handler raises a clear HandlerError when absent. 0.17.4 floor
-    # per the card spec (SQLiteSession + FunctionTool surface stable).
-    "openai-agents>=0.17.4",
+    # the handler raises a clear HandlerError when absent.
+    #
+    # FLOOR RAISED 0.17.4 -> 0.19.0, MEASURED not guessed. Conversation
+    # state moved off the SDK's own SQLite session onto PostgreSQL
+    # (`_runners/_openai_pg_session.py`), and the replacement implements the
+    # SDK's `Session` Protocol through the SDK's OWN settings helpers rather
+    # than a second copy of their precedence rules. Wheels for 0.17.4,
+    # 0.18.0, 0.19.0, 0.20.0, 0.21.0 and 0.22.0 were downloaded and read on
+    # 2026-08-29: `agents/memory/session_settings.py` carries
+    # `resolve_session_limit` in ALL of them and `coerce_session_settings`
+    # only from 0.19.0. Left at 0.17.4 the import would be an ImportError at
+    # the declared minimum — a floor that lies is worse than a high one.
+    "openai-agents>=0.19.0",
 ]
 codex = [
     # Claude Code stays the harness. scitex-genai supplies the local

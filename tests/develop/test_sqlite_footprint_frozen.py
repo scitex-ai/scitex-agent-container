@@ -118,15 +118,22 @@ docstring to say the schema issues ZERO of them. ``SCAN_EXEMPT`` carries
 those, each with a written reason, and is itself under a staleness gate — an
 exemption that stops matching must leave, or it becomes a blessed filename.
 
-THE IMPORT SCAN CANNOT SEE A VENDORED SQLite, AND THAT IS THE LIVE HOLE
-=======================================================================
-``agents.SQLiteSession(...)`` opens a real SQLite file on disk, per agent, and
-NOTHING in that call chain imports sqlite3 in this repo — the ``openai-agents``
-package does it. An import-based scan is structurally blind to it, and it was
-blind to it for the whole life of this file. ``FROZEN_VENDOR_SQLITE`` freezes
-the constructs instead of the import: ``SQLiteSession(``, ``SqliteDict(``,
-``create_engine("sqlite...``, ``aiosqlite``, ``apsw``, ``libsql``,
-``sqlite:///`` and ``.sqlite``/``.sqlite3`` path literals.
+THE IMPORT SCAN CANNOT SEE A VENDORED SQLite — THE HOLE THAT WAS LIVE HERE
+==========================================================================
+``agents.SQLiteSession(...)`` opened a real SQLite file on disk, per agent, and
+NOTHING in that call chain imported sqlite3 in this repo — the ``openai-agents``
+package did it. An import-based scan is structurally blind to that, and it was
+blind to it for the whole life of this file until the vendor scan landed on
+2026-08-29. ``FROZEN_VENDOR_SQLITE`` freezes the constructs instead of the
+import: ``SQLiteSession(``, ``SqliteDict(``, ``create_engine("sqlite...``,
+``aiosqlite``, ``apsw``, ``libsql``, ``sqlite:///`` and
+``.sqlite``/``.sqlite3`` path literals.
+
+THAT SET IS NOW EMPTY, and the scan stays. The runner's conversation state
+moved to PostgreSQL the day after the scan was written, so the population it
+was built to measure is gone — which is exactly when a ratchet stops being
+evidence and starts being the only thing standing between zero and the next
+one. The set may only shrink; it has, to nothing.
 
 ``sqlite3.connect(`` is deliberately NOT among them. Any module calling it has
 already imported sqlite3 and is therefore covered by ``FROZEN_SQLITE``; adding
@@ -583,22 +590,27 @@ _CONSTRUCTS_VENDOR_SQLITE = re.compile(
 #: Modules under ``src/`` that open SQLite through a VENDOR library rather
 #: than through sqlite3, as SRC-relative paths. THIS LIST MAY ONLY SHRINK.
 #:
-#: Measured 2026-08-29 — and the measurement is the point. Both entries were
-#: invisible to every gate in this file until the scan existed, which is the
-#: concrete evidence that "no module imports sqlite3" was never the same
-#: statement as "no module opens SQLite".
-FROZEN_VENDOR_SQLITE = frozenset(
-    {
-        # ``agents.SQLiteSession(self.session_id, db_path=str(db_path))`` —
-        # conversation state for the OpenAI runner. The database is real and
-        # per-agent; only the sqlite3 import is somebody else's.
-        "_runners/openai_session.py",
-        # Resolves WHERE that database lives: builds ``<agent>.sqlite3`` under
-        # the runtime state dir, and documents the ``:memory:`` sentinel that
-        # opts out of a file entirely.
-        "runtimes/_openai_sdk_common.py",
-    }
-)
+#: EMPTY SINCE 2026-08-29, and it took one day to get here. The scan was
+#: written that morning and found TWO entries that had been invisible to every
+#: other gate in this file — concrete evidence that "no module imports
+#: sqlite3" was never the same statement as "no module opens SQLite". Both are
+#: gone the same day:
+#:
+#:   * ``_runners/openai_session.py`` constructed
+#:     ``agents.SQLiteSession(self.session_id, db_path=str(db_path))`` for the
+#:     OpenAI runner's conversation state. It now constructs
+#:     ``_runners._openai_pg_session.PostgresAgentSession``, which keeps the
+#:     same conversation in this host's PostgreSQL through
+#:     ``_state/openai_session_store.py``.
+#:   * ``runtimes/_openai_sdk_common.py`` resolved WHERE that database lived.
+#:     A store target is not a path, so the helper was deleted rather than
+#:     rewritten — along with the module docstring's cross-reference to it.
+#:
+#: The scan itself STAYS at zero. ``test_the_vendor_list_has_no_stale_entries``
+#: keeps this set honest in the other direction, and the two positive controls
+#: below are planted files precisely so an empty live tree cannot make them
+#: vacuous.
+FROZEN_VENDOR_SQLITE: frozenset[str] = frozenset()
 
 
 def _modules_defining_tables(root: Path) -> set[str]:
@@ -1015,7 +1027,11 @@ def test_the_vendor_regex_matches_the_real_construction() -> None:
     for. A regex can be narrowed by a well-meant edit — an anchor, a word
     boundary — and still walk the whole tree finding nothing.
     """
-    # Arrange — src/scitex_agent_container/_runners/openai_session.py:413
+    # Arrange — the call this scan was written for, as it stood at
+    # src/scitex_agent_container/_runners/openai_session.py:413 before it
+    # moved to PostgreSQL. A LITERAL, not a read of the tree: the tree is
+    # empty by design now, so anchoring this to a live line would delete the
+    # only proof the pattern still matches the shape it exists to catch.
     the_live_call = "agents.SQLiteSession(self.session_id, db_path=str(db_path))"
     # Act
     hit = _CONSTRUCTS_VENDOR_SQLITE.search(the_live_call)
@@ -1029,15 +1045,24 @@ def test_the_vendor_regex_matches_the_real_construction() -> None:
 def test_the_vendor_regex_does_not_match_a_docstring_mention() -> None:
     """NEGATIVE CONTROL — prose ABOUT SQLiteSession must not match.
 
-    Measured 2026-08-29: SEVEN files under src/ name ``SQLiteSession`` and
-    exactly ONE constructs it. If the pattern dropped the ``\\(`` and matched
-    the bare name, the frozen set would have to grow sevenfold to hold every
-    module that merely DOCUMENTS the session db — and a list of documenters
-    is not an inventory of databases. This is the same inversion that once let
-    a ``host_store`` heuristic excuse the real SQLite schema module: a comment
-    describing a thing is that thing, to a regex.
+    Measured 2026-08-29, on the tree this scan was written against: SEVEN
+    files under src/ named ``SQLiteSession`` and exactly ONE constructed it.
+    Had the pattern dropped the ``\\(`` and matched the bare name, the frozen
+    set would have grown sevenfold to hold every module that merely
+    DOCUMENTED the session db — and a list of documenters is not an inventory
+    of databases. This is the same inversion that once let a ``host_store``
+    heuristic excuse the real SQLite schema module: a comment describing a
+    thing is that thing, to a regex.
+
+    All seven are gone now — the construction moved to PostgreSQL and the six
+    prose mentions were reworded with it — so this control is asserted on a
+    literal rather than on the tree. Six documenters could not be told from
+    one database by any live-tree assertion once the tree reaches zero.
     """
-    # Arrange — src/scitex_agent_container/_runners/_openai_session_cli.py:21
+    # Arrange — the prose that stood at
+    # src/scitex_agent_container/_runners/_openai_session_cli.py:21 before the
+    # migration reworded it. Kept as a literal for the same reason as the
+    # positive control above.
     the_prose = "(the ``SQLiteSession`` db persists turns under the agent's own name,"
     # Act
     hit = _CONSTRUCTS_VENDOR_SQLITE.search(the_prose)
