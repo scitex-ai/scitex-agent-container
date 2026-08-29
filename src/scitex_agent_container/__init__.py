@@ -12,7 +12,7 @@ Public surface — CLI-tree-shaped noun submodules::
 
     sac.agent.list()                  # `sac agent list`
     sac.agent.start("head-nas")       # `sac agent start head-nas`
-    sac.db.query(table="events")      # `sac db query --table=events`
+    sac.db.clean()                    # `sac db clean`
     sac.host.list()                   # `sac host list`
     sac.skills.get("02_quick-start")  # `sac dev skills get 02_quick-start`
 

@@ -23,6 +23,38 @@ versioning follows [SemVer](https://semver.org/).
   A wall whose reset it cannot parse is held and REPORTED, never guessed at.
   Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
 
+### Removed
+- **The SQLite read surface: `sac db show` / `db query` / `db export` /
+  `db import`, their MCP and `sac.db.*` twins, and `state_db_health`.** These
+  were the last reachable callers of `state_db.open_db` / `init_schema` /
+  `table_counts` in `src/`; after this change the three functions have
+  definitions and no callers, which is the precondition for deleting them.
+  Nothing lost a capability, because none of them could still answer: their
+  `--table` choice list is `KNOWN_TABLES`, which is EMPTY, so `db query`
+  rejected every value an operator could type and `db show` counted a set with
+  no members. `db export` / `db import` were one JSON wire format over those
+  same tables — a delta shipped host-to-host — and every table they ever
+  carried now lives in the shared PostgreSQL store where each host reads and
+  writes the SAME rows, so a round trip could only re-insert a stale copy of
+  what the far side already holds. `state_db_health.inspect_store` classified a
+  state.db as absent / empty / populated so `db show` could say whether a zero
+  meant "no rows" or "wrong database"; its only caller went with `db show`, and
+  the design note it existed for is carried in `_maintenance/_roster_state`.
+  `sac db clean` / `migrate` / `tick` are unaffected — they maintain the
+  `instances` registry, which is on PostgreSQL.
+- **`_mcp._tools._db.db_migrate`'s `force` parameter.** It appended `--force`
+  to the argv, and `sac db migrate` has never defined that option, so
+  `force=True` did not force anything: Click refused the whole invocation.
+
+### Changed
+- **`GET /agents` and the `host_exec` ACL denial now name the PostgreSQL
+  target they actually consulted.** Both printed `state_db.DEFAULT_DB_PATH` —
+  a SQLite path neither one opens. The field is there because on 2026-08-09 an
+  empty `agents` list was read as fleet-wide data loss when the honest reading
+  was "you asked the wrong database", so dropping it would have restored the
+  ambiguity it exists to prevent; it now resolves the real locator instead
+  (`host_store` resolves without connecting, so neither path pays for it).
+
 ### Fixed
 - **`agent_send`'s non-blocking dispatch reported `delivered_subscriber_count:
   1` for an agent that had NEVER been started.** Three task cards were routed

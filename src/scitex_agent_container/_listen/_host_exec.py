@@ -111,7 +111,7 @@ from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
 from .._logging import get_logger
-from .._state import state_db as _state_db
+from .._state.state_db_acl_policy_store import POLICY_STORE
 from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
 from ..config._group_resolver import groups_intersect
 from ._acl import deny_response
@@ -321,10 +321,19 @@ async def host_exec(
                 "and has not yet replayed registrations, or that it resolved a "
                 "DIFFERENT store than the agents register into"
             )
+        # Name the store that answered, not the SQLite path this gate had
+        # printed since before the policy table moved — it never opened
+        # that file, and `cause` above turns on whether a policy row was
+        # FOUND, so an operator chasing a wrong-store denial needs the
+        # database the lookup actually used. `host_store` resolves without
+        # connecting.
+        from scitex_dev.store import host_store
+
+        store = host_store(pkg="scitex_agent_container", name=POLICY_STORE)
         return deny_response(
             reason=(
                 f"host_exec is restricted to groups {sorted(ELIGIBLE_GROUPS)}; "
-                f"{cause}. Store consulted: {_state_db.DEFAULT_DB_PATH}"
+                f"{cause}. Store consulted: {store.locator}"
             )
         )
 

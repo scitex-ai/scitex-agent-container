@@ -505,12 +505,12 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 # declares what ITS rows mean when two hosts merge them. sac is a leaf here,
 # not privileged.
 #
-# The declaration is the deliverable because sac's existing cross-host path
-# is unsafe in a way that is invisible: state_db_export.import_state does
-# INSERT OR IGNORE, so a row that CONTRADICTS the local one and a
-# byte-identical duplicate both return rowcount 0. The success value is also
-# the didn't-happen value, and two hosts can disagree forever with every call
-# reporting success.
+# The declaration is the deliverable because sac's previous cross-host path
+# was unsafe in a way that was invisible: state_db_export.import_state did
+# INSERT OR IGNORE, so a row that CONTRADICTED the local one and a
+# byte-identical duplicate both returned rowcount 0. The success value was
+# also the didn't-happen value, and two hosts could disagree forever with
+# every call reporting success. That path was deleted on 2026-08-29.
 #
 # The classification each schema encodes: an agent's pid/heartbeat is
 # PER-HOST truth (two hosts describe two different processes and each is

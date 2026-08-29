@@ -57,7 +57,7 @@ a table whose writer and reader are both deleted.
 Large helper groups live in sibling modules, all re-exported from THIS
 module so ``from ...state_db import X`` imports keep working:
 
-  * :mod:`state_db_export` — export_state / import_state / import_legacy_registry.
+  * :mod:`state_db_export` — import_legacy_registry.
   * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
   * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
     latest_heartbeats_per_name. On PostgreSQL, NOT in this database.
@@ -398,15 +398,7 @@ from .state_db_diary import (  # noqa: E402,F401
     record_heartbeat,
     record_turn,
 )
-from .state_db_export import (  # noqa: E402,F401
-    EXPORT_SCHEMA_VERSION,
-    export_state,
-    import_legacy_registry,
-    import_state,
-)
-from .state_db_export import (  # noqa: E402
-    _table_filter_clauses as _table_filter_clauses_impl,
-)
+from .state_db_export import import_legacy_registry  # noqa: E402,F401
 from .state_db_gc import (  # noqa: E402,F401
     _proc_btime,
     gc_dead_instances,
@@ -425,13 +417,3 @@ from .state_db_instances import (  # noqa: E402,F401
     record_instance_start,
     record_instance_stop,
 )
-
-
-def _table_filter_clauses(since: str | None) -> dict[str, tuple[str, tuple]]:
-    """Per-table SQL fragments + params for ``--since`` filtering.
-
-    Thin wrapper over ``state_db_export._table_filter_clauses`` so the
-    original module-level signature stays compatible with callers that
-    only pass ``since``.
-    """
-    return _table_filter_clauses_impl(since, KNOWN_TABLES)

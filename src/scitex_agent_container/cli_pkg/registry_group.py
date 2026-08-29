@@ -67,9 +67,11 @@ registry_group.add_command(_rebind(_reconcile_impl, "reconcile"))
 # ``sac db export --tables comms_nodes`` on a peer and fed the payload to
 # ``import_state``. That table moved to the shared PostgreSQL store, where
 # every host reads and writes the SAME directory, so there is nothing left
-# to converge — and the verb could no longer even run, because
-# ``comms_nodes`` left ``KNOWN_TABLES`` and ``export_state`` now rejects the
-# name.
+# to converge — and by then the verb could no longer even run, because
+# ``comms_nodes`` had left ``KNOWN_TABLES`` and ``export_state`` rejected
+# the name. Both halves of that wire pair, and the ``sac db export`` /
+# ``sac db import`` commands quoted above, were themselves deleted on
+# 2026-08-29, so the sweep could not be revived even in principle.
 #
 # DELETED rather than left as a no-op, under the ruling this repo applies to
 # a table with no writer: a verb that reports ``[ok] pull <peer> inserted=0``

@@ -267,7 +267,15 @@ FROZEN_SQLITE = frozenset(
         # move and named the fix (unhide); port_allocator_store.try_claim is
         # where it lives.
         "_state/state_db.py",
-        "_state/state_db_health.py",
+        # _state/state_db_health.py LEFT THIS SET 2026-08-29, by DELETION and
+        # not by a port. ``inspect_store`` classified a state.db as absent /
+        # empty / populated so ``sac db show`` could say whether a zero meant
+        # "no rows" or "wrong database" — the remedy for the 2026-08-09
+        # incident named in this file's own prose. ``db show`` was its only
+        # caller in src/ and went the same day with the rest of the SQLite
+        # read surface, so the classifier had nothing left to report to. What
+        # it was FOR is not lost: the reporting-boundary rule it established
+        # is carried, by name, in ``_maintenance/_roster_state``.
         # _state/state_db_heartbeats.py LEFT THIS SET 2026-08-28, and it is
         # the first entry to leave by DELETION rather than by a port: its
         # table ``instance_heartbeats`` was removed from state.db, and the
@@ -406,7 +414,10 @@ FROZEN_SQLITE_TESTS = frozenset(
         "tests/scitex_agent_container/_lifecycle/test__rename_db.py",
         "tests/scitex_agent_container/_state/test_state_db.py",
         "tests/scitex_agent_container/_state/test_state_db_connect_branches.py",
-        "tests/scitex_agent_container/_state/test_state_db_health.py",
+        # tests/.../_state/test_state_db_health.py LEFT THIS SET 2026-08-29
+        # with the module it tested. This is the ``develop/`` half of the same
+        # asymmetry the docstring describes: a deleted test file cannot import
+        # sqlite3, so leaving the entry would fail the staleness direction.
         "tests/scitex_agent_container/_state/test_state_db_instances.py",
         "tests/scitex_agent_container/_state/test_state_db_turns_errors_heartbeats.py",
     }

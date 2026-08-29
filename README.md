@@ -328,7 +328,7 @@ sac dev systemd list / install / uninstall    # kind=timer|service -> ~/.config/
 sac dev cron    list / install / uninstall    # kind=cron -> crontab entries
 
 # State db / registry / events
-sac db query / show / clean / export / import / migrate / tick   # state.db inspection
+sac db clean / migrate / tick             # sweep + import the instance registry
 sac registry register / reconcile         # comms_nodes repair / singleton placement
                                           #   (the directory lives in the shared
                                           #   PostgreSQL store — `sync` removed 2026-08-28)

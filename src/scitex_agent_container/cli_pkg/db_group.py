@@ -1,18 +1,20 @@
-"""``sac db`` noun group — SQLite-backed state inspection (F-CS11).
+"""``sac db`` noun group — instance-registry maintenance.
 
 Subcommands:
 
-  * ``sac db show`` — schema + per-table counts.
-  * ``sac db query --table=<t>``  — list rows from a known table.
   * ``sac db migrate`` — one-shot import of the legacy
-    ``registry/*.json`` shards into the ``instances`` table.
+    ``registry/*.json`` shards into ``instances``.
+  * ``sac db clean`` — sweep dead instance rows.
+  * ``sac db tick`` — the same sweep, silent, for cron / systemd timers.
 
-Read-only queries first; write paths (clean / tick / supervisor /
-export / import) land in subsequent F-CS11 phases.
-
-``export`` and ``import`` moved to :mod:`._db_wire_cmds` on 2026-08-28
-(per-file line cap); they are registered on this group at the bottom of
-this module and re-exported from it.
+``show`` and ``query`` were DELETED on 2026-08-29 along with the rest of
+the SQLite read surface. Both went through ``open_db``, and
+``KNOWN_TABLES`` was already empty, so ``--table`` could not parse any
+value and ``show`` could only ever count nothing. ``export`` and
+``import`` went the same day, from ``_db_wire_cmds``, which was deleted
+with them: they were one JSON wire format over those same tables, and
+the shared PostgreSQL store is the sync now — there is no peer left to
+ship a delta to.
 """
 
 from __future__ import annotations
@@ -23,14 +25,7 @@ from pathlib import Path
 
 import click
 
-from .._state import state_db as _state_db
-from .._state.state_db import (
-    KNOWN_TABLES,
-    gc_dead_instances,
-    import_legacy_registry,
-    open_db,
-    table_counts,
-)
+from .._state.state_db import gc_dead_instances, import_legacy_registry
 from ._helpers import _json_flag, console
 
 
@@ -39,167 +34,13 @@ from ._helpers import _json_flag, console
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 def db_group() -> None:
-    """Inspect and maintain the sac state database (state.db).
+    """Maintain the sac instance registry.
 
     \b
     Examples:
-      $ sac db show
-      $ sac db query --table=events --limit=20
+      $ sac db clean
       $ sac db migrate
     """
-
-
-@db_group.command("show")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def db_show(ctx: click.Context, as_json: bool) -> None:
-    """Schema overview + per-table row counts.
-
-    The output NAMES THE DATABASE IT READ (``store``).
-    ``SCITEX_AGENT_CONTAINER_STATE_DB`` is set per-agent in every sac
-    container, so an agent reads its OWN shard — which never holds
-    fleet rows — while the populated registry sits elsewhere. Without
-    the path, all-zero counts look exactly like a wiped fleet registry:
-    on 2026-08-09 THREE agents independently reached that conclusion from
-    their own empty shard (two escalating P1 data loss) while the host DB
-    was healthy — three, independently, is what makes it a tool defect
-    rather than a coincidence.
-
-    \b
-    Example:
-      $ sac db show
-      $ sac db show --json
-    """
-    # Classify the store BEFORE counting. `table_counts()` goes through
-    # `open_db`, which calls `init_schema` unconditionally — so on a wrong or
-    # zero-byte path it CREATES empty tables and then truthfully reports zero
-    # rows for all of them. Measured 2026-08-09: that is how a 0-byte
-    # state.db produced a confident "no agents registered" while twelve
-    # agents were running. Counting first and asking questions later is what
-    # made the failure invisible.
-    from .._state.state_db import DEFAULT_DB_PATH
-    from .._state.state_db_health import inspect_store
-
-    store = inspect_store(DEFAULT_DB_PATH)
-    counts = table_counts()
-    # Read through the MODULE, not a from-import: the constant is bound
-    # at import time from the env, so a captured copy goes stale the
-    # moment anything re-resolves it. Reporting a stale path would be
-    # the very bug this line exists to prevent.
-    payload = {
-        "store": str(_state_db.DEFAULT_DB_PATH),
-        "tables": counts,
-        "known_tables": list(KNOWN_TABLES),
-        # Three-valued, at the reporting boundary: a zero here means "zero
-        # rows" ONLY when store_state is "populated".
-        "store_state": store.state,
-        "store_path": str(store.path),
-        "counts_are_authoritative": store.is_populated,
-    }
-    if _json_flag(ctx, as_json):
-        click.echo(json.dumps(payload, indent=2))
-        return
-    console.print("[bold]sac state.db[/bold]")
-    console.print(f"  [dim]store: {_state_db.DEFAULT_DB_PATH}[/dim]")
-    if not store.is_populated:
-        console.print(f"  [yellow]{store.describe()}[/yellow]")
-        console.print(
-            "  [yellow]the counts below are NOT evidence about the fleet[/yellow]"
-        )
-    for table in KNOWN_TABLES:
-        n = counts.get(table, 0)
-        console.print(f"  {table:<14}  {n:>6}")
-
-
-@db_group.command("query")
-@click.option(
-    "--table",
-    type=click.Choice(KNOWN_TABLES, case_sensitive=False),
-    required=True,
-    help="Table to read from.",
-)
-@click.option("--limit", type=int, default=20, help="Cap output rows (default 20).")
-@click.option(
-    "--where",
-    type=str,
-    default=None,
-    help="Optional SQL fragment (no params; trusted operator input only).",
-)
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def db_query(
-    ctx: click.Context,
-    table: str,
-    limit: int,
-    where: str | None,
-    as_json: bool,
-) -> None:
-    """List rows from a known table, most recent first when possible.
-
-    \b
-    Example:
-      (no example: ``KNOWN_TABLES`` is EMPTY, so no value parses)
-
-    \b
-    THIS VERB HAS NOTHING LEFT TO READ. The examples named
-    ``--table=channel_events`` and then ``--table=instances`` on 2026-08-28;
-    both tables moved to the shared PostgreSQL store that day, and
-    ``instances`` was the last one ``init_schema`` created. ``--table`` is a
-    ``click.Choice(KNOWN_TABLES)``, so a stale example did not merely return
-    nothing — it FAILED to parse, which is the worse kind of stale help, and
-    with an empty choice list EVERY value now fails to parse.
-
-    \b
-    That refusal is the intended end state rather than an oversight: an
-    empty result would read as "this agent has no rows", when the truth is
-    "you are asking the wrong database". ``sac agents list`` answers what is
-    running; the channel history is ``sac_channel_events`` in the shared
-    store (ADR-0023).
-    """
-    sql = f"SELECT * FROM {table}"  # table is whitelisted via click.Choice
-    if where:
-        sql += f" WHERE {where}"
-    # Order by a sensible default per table; no-op for tables without
-    # a recognisable timestamp column.
-    order_by = {
-        # ``instances`` (``started_at DESC``), ``definitions``
-        # (``first_seen_at DESC``), ``instance_heartbeats`` and ``events``
-        # (``ts DESC`` each) had entries here until 2026-08-28. All four
-        # left KNOWN_TABLES that day, so ``--table`` can no longer name them
-        # and these keys could only ever be dead. For ``instances`` the verb
-        # that answers the question it used to is ``sac agents list``.
-        # ``attempts`` had a ``ts DESC`` entry here until 2026-08-28. It
-        # left KNOWN_TABLES, so ``--table`` can no longer name it and this
-        # key could only ever be dead.
-    }.get(table)
-    if order_by:
-        sql += f" ORDER BY {order_by}"
-    sql += " LIMIT ?"
-
-    with open_db() as conn:
-        rows = [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
-
-    if _json_flag(ctx, as_json):
-        # Bare ARRAY, and NOTHING else on this path — not even stderr.
-        # Wrapping breaks consumers that index it (a published contract
-        # is a MIGRATION). A stderr line is worse than it looks: the MCP
-        # wrapper reads Click's `result.output`, which MERGES stderr into
-        # stdout, so one extra line makes the JSON unparseable and agents
-        # get `data: None` instead of rows. Measured, not assumed.
-        # An MCP caller gets the store from the wrapper (_mcp/_tools/_db)
-        # as a sibling key, where it cannot corrupt the payload.
-        click.echo(json.dumps(rows, indent=2))
-        return
-    console.print(f"[dim]store: {_state_db.DEFAULT_DB_PATH}[/dim]")
-    if not rows:
-        console.print(f"[dim]({table}: no rows)[/dim]")
-        return
-    # Plain key-value rendering keeps the column set obvious without
-    # rich.Table's width-management quirks on wide schemas.
-    for i, row in enumerate(rows):
-        console.print(f"[bold]row {i}[/bold]")
-        for k, v in row.items():
-            console.print(f"  {k}: {v}")
 
 
 @db_group.command("migrate")
@@ -264,7 +105,7 @@ def db_migrate(
     "--dry-run",
     is_flag=True,
     default=False,
-    help="Report what would be swept without mutating state.db.",
+    help="Report what would be swept without mutating the registry.",
 )
 @click.option(
     "-y",
@@ -327,9 +168,9 @@ def db_clean(
 def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     """One-shot housekeeping pass. Designed for cron / systemd timers.
 
-    Silent on success (just exits 0); writes only to state.db. Same
-    semantics as ``sac db clean`` but produces no human output, and
-    the exit code is the only signal:
+    Silent on success (just exits 0). Same semantics as ``sac db
+    clean`` but produces no human output, and the exit code is the
+    only signal:
 
       * 0 — pass completed (zero or more rows swept).
       * non-zero — sweep raised; the operator should investigate.
@@ -343,22 +184,9 @@ def db_tick(ctx: click.Context, heartbeat_stale_seconds: int) -> None:
     gc_dead_instances(heartbeat_stale_seconds=heartbeat_stale_seconds)
 
 
-# The cross-host wire pair lives in :mod:`._db_wire_cmds` — imported at the
-# BOTTOM so ``db_group`` is already defined when the registration below
-# runs, and re-exported so every existing
-# ``from ...cli_pkg.db_group import db_export`` import site keeps resolving.
-from ._db_wire_cmds import db_export, db_import  # noqa: E402
-
-db_group.add_command(db_export)
-db_group.add_command(db_import)
-
 __all__ = [
     "db_clean",
-    "db_export",
     "db_group",
-    "db_import",
     "db_migrate",
-    "db_query",
-    "db_show",
     "db_tick",
 ]

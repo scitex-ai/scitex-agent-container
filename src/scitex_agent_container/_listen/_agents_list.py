@@ -21,12 +21,32 @@ import logging
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .._state import state_db as _state_db
 from .._state.registry import Registry
+from .._state.state_db_instances_store import INSTANCES_STORE
 
 __all__ = ["list_agents"]
 
 log = logging.getLogger(__name__)
+
+
+def _resolved_store() -> str:
+    """WHICH store answered, as a printable locator.
+
+    ``host_store`` RESOLVES a target and does not connect, so naming the
+    store costs this route nothing. All three sources below read the same
+    per-host PostgreSQL, so one locator describes every one of them.
+
+    This printed ``state_db.DEFAULT_DB_PATH`` until 2026-08-29 — a SQLite
+    path this route had stopped opening, and by then never opened at all.
+    Dropping the field was the wrong repair: the field exists because on
+    2026-08-09 an empty ``agents`` list was read as "the fleet is gone"
+    when the honest reading was "you asked the wrong database", and a
+    caller that cannot see WHICH database cannot tell those apart. So it
+    names the real one instead.
+    """
+    from scitex_dev.store import host_store
+
+    return str(host_store(pkg="scitex_agent_container", name=INSTANCES_STORE).locator)
 
 
 async def list_agents(request: Request) -> JSONResponse:
@@ -114,11 +134,12 @@ async def list_agents(request: Request) -> JSONResponse:
     #
     # We cannot tell those apart from row counts alone — both are zero. So
     # publish what the caller needs to judge for itself: WHICH store was
-    # consulted, and what each source contributed. The same remedy `db show`
-    # needed, for the same reason. `agents` keeps its shape, so existing
-    # consumers are untouched.
+    # consulted, and what each source contributed. `sac db show` carried the
+    # same remedy until it was deleted with the SQLite read surface on
+    # 2026-08-29. `agents` keeps its shape, so existing consumers are
+    # untouched.
     sources = {
-        "store": str(_state_db.DEFAULT_DB_PATH),
+        "store": _resolved_store(),
         "registry_rows": n_registry,
         "self_peer_rows": n_self_peers,
         "comms_node_rows": n_comms_nodes,
@@ -141,7 +162,7 @@ async def list_agents(request: Request) -> JSONResponse:
             "GET /agents returned ZERO rows from all three sources "
             "(store=%s). If agents are running, the registry is not being "
             "seen — this is not evidence that none exist.",
-            _state_db.DEFAULT_DB_PATH,
+            _resolved_store(),
         )
     return JSONResponse({"agents": rows, "sources": sources})
 

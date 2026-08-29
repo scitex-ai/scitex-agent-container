@@ -50,7 +50,8 @@ log = logging.getLogger(__name__)
 _INSTRUCTIONS = """\
 scitex-agent-container (sac) — declarative container wrapper for
 agents. Tools mirror the `sac` CLI surface: `agent_*` for lifecycle
-(list / status / start / stop / logs), `db_*` for SQLite state queries,
+(list / status / start / stop / logs), `db_*` for instance-registry
+maintenance,
 `host_*` for multi-host topology, `image_*` for container image
 build, `template_*` for spec rendering, plus `account_*`, `skills_*`,
 `mcp_*` and a few introspection helpers. Tool names mirror the CLI

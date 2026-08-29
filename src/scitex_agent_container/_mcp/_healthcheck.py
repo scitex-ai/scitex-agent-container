@@ -56,7 +56,7 @@ CRITICAL_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "scitex-agent-container": (
         "host_exec_local (run host commands)",
         "agent_spawn / agent_start / agent_restart (manage peers)",
-        "db_query / db_show (state DB)",
+        "db_clean / db_tick / db_migrate (instance registry)",
         "host_exec / host_list (multi-host)",
     ),
     "scitex-cards": (

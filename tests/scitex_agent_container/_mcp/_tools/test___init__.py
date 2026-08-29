@@ -254,48 +254,6 @@ def test_agent_restart_with_name_dispatches_text_argv():
 # ---------------------------------------------------------------------------
 
 
-def test_db_show_with_no_args_dispatches_json_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_show()
-    # Assert
-    assert captured[-1] == ("json", ["db", "show", "--json"])
-
-
-def test_db_query_with_no_filters_uses_default_limit():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_query()
-    # Assert
-    assert captured[-1] == ("json", ["db", "query", "--json", "--limit", "50"])
-
-
-def test_db_query_with_table_agent_host_and_limit_appends_filters_in_order():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_query(table="instances", agent="a", host="h", limit=5)
-    # Assert
-    assert captured[-1] == (
-        "json",
-        [
-            "db",
-            "query",
-            "--json",
-            "--limit",
-            "5",
-            "--table",
-            "instances",
-            "--agent",
-            "a",
-            "--host",
-            "h",
-        ],
-    )
-
-
 def test_db_clean_with_stale_seconds_dispatches_json_argv():
     # Arrange
     with _recording() as captured:
@@ -327,45 +285,6 @@ def test_db_migrate_with_defaults_dispatches_bare_text_argv():
         _db.db_migrate()
     # Assert
     assert captured[-1] == ("text", ["db", "migrate"])
-
-
-def test_db_migrate_with_force_true_appends_force_flag():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_migrate(force=True)
-    # Assert
-    assert captured[-1] == ("text", ["db", "migrate", "--force"])
-
-
-def test_db_export_with_no_filters_dispatches_bare_text_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_export()
-    # Assert
-    assert captured[-1] == ("text", ["db", "export"])
-
-
-def test_db_export_with_since_and_host_appends_filter_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_export(since="2024-01-01", host="h")
-    # Assert
-    assert captured[-1] == (
-        "text",
-        ["db", "export", "--since", "2024-01-01", "--host", "h"],
-    )
-
-
-def test_db_import_with_input_path_dispatches_json_argv():
-    # Arrange
-    with _recording() as captured:
-        # Act
-        _db.db_import("/blob.json")
-    # Assert
-    assert captured[-1] == ("json", ["db", "import", "/blob.json", "--json"])
 
 
 # ---------------------------------------------------------------------------
@@ -509,15 +428,6 @@ def test_register_all_tools_binds_agent_start_tool():
     register_all_tools(mcp)
     # Assert
     assert "agent_start" in {fn.__name__ for fn in mcp.registered}
-
-
-def test_register_all_tools_binds_db_show_tool():
-    # Arrange
-    mcp = _FakeMCP()
-    # Act
-    register_all_tools(mcp)
-    # Assert
-    assert "db_show" in {fn.__name__ for fn in mcp.registered}
 
 
 def test_register_all_tools_binds_host_list_tool():
