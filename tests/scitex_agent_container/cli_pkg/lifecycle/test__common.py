@@ -415,13 +415,18 @@ class TestBoundHost:
 
 
 def _reload_state_db_at(path: Path, env_save_restore):
-    """Redirect DEFAULT_DB_PATH at ``path`` and reload the state_db
-    module so the rebound path takes effect.
+    """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at ``path`` and reload the
+    state_db module.
+
+    THE RELOAD NO LONGER REBINDS A PATH. It existed so the import-time
+    ``DEFAULT_DB_PATH`` constant would follow the env var this had just set;
+    that constant was deleted with the storage engine on 2026-08-30, and
+    ``record_instance_start`` and friends address the shared PostgreSQL store.
 
     PA-306 §3 no-mocks: uses the project ``env_save_restore`` fixture
     (NOT pytest's ``monkeypatch``) to manage the env var save/restore.
-    Returns the reloaded module so the caller can call its
-    ``record_instance_start`` etc. against the redirected DB.
+    Returns the module so the caller can call its ``record_instance_start``
+    etc.
     """
     import importlib
 
@@ -434,8 +439,7 @@ def _reload_state_db_at(path: Path, env_save_restore):
 
 class TestRegistryActiveOn:
     def test_missing_state_db_treated_as_not_live(self, tmp_path, env_save_restore):
-        # Arrange — point state.db at a non-existent path; reload module
-        # so DEFAULT_DB_PATH is recomputed.
+        # Arrange — point the env var at a non-existent path.
         import importlib
 
         state_db_mod = _reload_state_db_at(tmp_path / "nope.db", env_save_restore)

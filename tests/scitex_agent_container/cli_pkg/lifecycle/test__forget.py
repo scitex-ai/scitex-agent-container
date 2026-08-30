@@ -31,7 +31,6 @@ from typing import Iterator
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_instances import (
     list_active_instances,
     record_instance_start,
@@ -64,13 +63,10 @@ def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Real isolated state.db; env + module constants saved/restored."""
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:

@@ -45,7 +45,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_instances import (
     list_active_instances,
     record_instance_start,
@@ -54,16 +53,12 @@ from scitex_agent_container._state.state_db_instances import (
 _REAL_DB = Path("~/.scitex/agent-container/runtime/state.db").expanduser()
 
 
-def test_default_db_path_is_not_the_real_state_db() -> None:
-    """The resolved default must never be the operator's live fleet database."""
-    # Arrange
-    real = _REAL_DB
-    # Act
-    resolved = Path(state_db.DEFAULT_DB_PATH)
-    # Assert
-    assert resolved != real
-
-
+# ``test_default_db_path_is_not_the_real_state_db`` was here until 2026-08-30.
+# It asserted ``state_db.DEFAULT_DB_PATH != ~/.scitex/.../state.db``, and by the
+# end it could not fail for the reason it claimed: the constant selected no
+# storage, so a wrong value moved nothing. It is deleted with the constant
+# rather than repointed. The env-var test below is the half that still guards
+# something — a subprocess inherits it.
 def test_state_db_env_var_is_not_the_real_state_db() -> None:
     """Subprocesses inherit the env, so the env var must be redirected too."""
     # Arrange

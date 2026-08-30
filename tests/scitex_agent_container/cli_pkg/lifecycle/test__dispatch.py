@@ -169,17 +169,18 @@ def shim_bin(tmp_path: Path, env_save_restore) -> Path:
 
 @pytest.fixture
 def state_db(fake_home: Path) -> Path:
-    """Redirect state.db to a tmp path under fake_home.
+    """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp path under
+    fake_home.
 
-    DEFAULT_DB_PATH is module-level and reads the env var at import
-    time, so we reload the module after setting the env var. Tests
-    that mutate state.db rely on this to stay isolated; without the
-    reload each test would write to the user's real state.db.
+    ``DEFAULT_DB_PATH`` was module-level and read this env var at import, so
+    this reloaded the module after setting it — without the reload a test
+    would have written to the user's real state.db. That constant was deleted
+    with the storage engine on 2026-08-30 and the writes address the shared
+    PostgreSQL store, so the reload re-derives nothing.
 
-    Both env-var manipulation and module reload are managed locally
-    (no env_save_restore) so the teardown order is unambiguous: we
-    first reset the env, THEN reload, so DEFAULT_DB_PATH lands back
-    on the real path the user expects after the fixture exits.
+    Both the env-var manipulation and the module reload are managed locally
+    (no env_save_restore) so the teardown order stays unambiguous: reset the
+    env first, THEN reload.
     """
     import importlib
     import os as _os

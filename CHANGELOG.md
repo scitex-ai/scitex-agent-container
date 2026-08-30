@@ -7,6 +7,24 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Removed
+- **`state_db.DEFAULT_DB_PATH`, and the ~4900-times-per-run test ceremony that
+  rebound it.** The engine deletion below left the PATH behind — a `Path`
+  naming a `state.db` that nothing created and nothing could open — explicitly
+  deferring its removal as "a separate change with a separate argument",
+  roughly fifty test modules having saved and restored it as isolation. This
+  is that change: the constant is gone, with 102 save/set/restore lines across
+  32 test modules, 31 imports they orphaned, one sentinel entry in the test
+  suite's state-floor alarm, and two tests that asserted properties of the
+  constant itself. Neither could fail any more — the constant selected no
+  storage, so a wrong value moved nothing.
+  **`$SCITEX_AGENT_CONTAINER_STATE_DB` is NOT removed** and is still
+  sandboxed per-test: sac injects it into every container, `agents rename`
+  rewrites it inside the spec, and `sac whoami` reports it. It no longer
+  selects storage, so a leak can no longer misdirect a write — it is kept
+  sandboxed because subprocesses inherit it.
+  Several fixtures still `importlib.reload(state_db)` to re-derive a constant
+  that no longer exists. Those reloads are inert and their docstrings now say
+  so; rewriting them is deliberately left out of an engine deletion.
 - **The storage engine itself. sac opens no local database, and the audit rule
   that says so now has no allowlist to read around it.** `state_db.py` kept a
   connection factory, `init_schema`, `open_db`, `table_counts` and the

@@ -38,11 +38,16 @@ class Layout:
     Every path derives from ``root``, so a caller — a test, or an operator
     with a non-standard install — can point the whole rename somewhere
     else. Deliberately NOT read from the module-level constants elsewhere
-    in sac (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``,
-    ``state_db.DEFAULT_DB_PATH``): those are computed from ``$HOME`` at
-    IMPORT time, so a fixture that sets ``$HOME`` afterwards CANNOT redirect
-    them. A test that trusted that would look isolated while reading — and
-    writing — the live fleet.
+    in sac (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``):
+    those are computed from ``$HOME`` at IMPORT time, so a fixture that sets
+    ``$HOME`` afterwards CANNOT redirect them. A test that trusted that would
+    look isolated while reading — and writing — the live fleet.
+
+    ``state_db.DEFAULT_DB_PATH`` was the third name in that list until
+    2026-08-30, when it was deleted along with the ``state.db`` it addressed.
+    It is dropped rather than left as an example, because an import-time
+    hazard illustrated with a constant that no longer exists teaches the
+    reader to look for a trap the code can no longer set.
     """
 
     root: Path

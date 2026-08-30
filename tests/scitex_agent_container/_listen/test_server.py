@@ -787,14 +787,12 @@ def cross_host_env(tmp_path: Path):
     # Arrange
     db = tmp_path / "state.db"
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
 
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["HOME"] = str(tmp_path)
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     # WI-4 Q4(b): seed the per-host bearer registry. The forwarder
@@ -805,7 +803,6 @@ def cross_host_env(tmp_path: Path):
     try:
         yield {"db": db, "tmp": tmp_path}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_db_env is None:
@@ -1023,14 +1020,12 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     """
     # Arrange — fresh tmp env, NO peer-token for host-z.
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     db = tmp_path / "state.db"
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["HOME"] = str(tmp_path)
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     record_lineage(child="permitted-peer", parent="root")
@@ -1049,7 +1044,6 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
             )
         yield r
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_db_env is None:

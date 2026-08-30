@@ -38,7 +38,6 @@ import pytest
 from scitex_agent_container._listen._self_peer_persistence import (
     persist_discovered_self_peers,
 )
-from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state.state_db_nodes import (
     CommsNodeConflictError,
     register_comms_node,
@@ -67,12 +66,9 @@ def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
     """Redirect ``state.db`` writes to a per-test tmp file (no ``monkeypatch``)."""
     db = tmp_path / "state.db"
     prev_env = _swap_env(_STATE_DB_ENV, str(db))
-    prev_attr = _state_db.DEFAULT_DB_PATH
-    _state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        _state_db.DEFAULT_DB_PATH = prev_attr
         _swap_env(_STATE_DB_ENV, prev_env)
 
 

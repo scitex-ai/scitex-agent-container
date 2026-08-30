@@ -636,12 +636,16 @@ def test_verify_real_liveness_ignores_rows_for_other_agents(
 
 @pytest.fixture
 def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
-    """Per-test on-disk state.db, exported via env (explicit save/restore).
+    """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (explicit
+    save/restore).
 
-    ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a
-    module-level ``DEFAULT_DB_PATH``; reload it after setting the env so the
-    ``instances`` / ``a2a_ports`` writes land in the temp DB, not the
-    developer's real ``~/.scitex`` tree. Mirrors the ``_instances`` test.
+    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_db`` read this
+    variable at import into a module-level ``DEFAULT_DB_PATH`` until
+    2026-08-30, and reloading was how a fixture made that constant follow the
+    env it had just set. The constant is deleted with the storage engine, and
+    the ``instances`` / ``a2a_ports`` writes this fixture was protecting
+    address the shared PostgreSQL store — ``pg_schema`` is what isolates them
+    now. What remains here is an env value subprocesses inherit.
     """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"

@@ -68,12 +68,15 @@ def _instances_store(pg_schema: str):
 
 @pytest.fixture
 def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
-    """Per-test on-disk state.db, exported via env (explicit save/restore).
+    """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (explicit
+    save/restore).
 
-    ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into a
-    module-level ``DEFAULT_DB_PATH``; reload it after setting the env so the
-    ``instances`` writes land in the temp DB, not the developer's real
-    ``~/.scitex`` tree. Mirrors ``_lifecycle/test__stale_lease.py``.
+    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_db`` read this
+    variable at import into a module-level ``DEFAULT_DB_PATH`` until
+    2026-08-30; the constant is deleted with the storage engine, and the
+    ``instances`` writes it guarded address the shared PostgreSQL store, which
+    is what ``pg_schema`` isolates. What remains here is an env value
+    subprocesses inherit.
     """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"

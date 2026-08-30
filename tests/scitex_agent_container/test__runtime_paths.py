@@ -63,7 +63,6 @@ def test_empty_env_falls_back_to_default(env_save_restore):
 @pytest.mark.parametrize(
     "module_path, attr, subpath",
     [
-        ("scitex_agent_container._state.state_db", "DEFAULT_DB_PATH", "state.db"),
         ("scitex_agent_container._state.registry", "REGISTRY_DIR", "registry"),
         ("scitex_agent_container._runners._session_state", "DEFAULT_STATE_ROOT", ""),
     ],
@@ -79,7 +78,6 @@ def test_env_relocates_module_constant(
     # restored re-derives the constant from an env var this test has just
     # dropped, which pins it at the operator's real $HOME for every remaining
     # test in this xdist worker. See the fixture's docstring.
-    env_save_restore.delete("SCITEX_AGENT_CONTAINER_STATE_DB")
     env_save_restore.delete("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
     env_save_restore.set(RUNTIME_DIR_ENV, str(tmp_path / "rt"))
     mod = importlib.reload(importlib.import_module(module_path))
@@ -91,17 +89,12 @@ def test_env_relocates_module_constant(
     assert Path(got) == expected
 
 
-def test_per_file_state_db_override_still_wins(env_save_restore, tmp_path):
-    # Arrange — explicit STATE_DB override must beat RUNTIME_DIR.
-    env_save_restore.set(RUNTIME_DIR_ENV, str(tmp_path / "rt"))
-    env_save_restore.set(
-        "SCITEX_AGENT_CONTAINER_STATE_DB", str(tmp_path / "explicit" / "s.db")
-    )
-    mod = importlib.reload(
-        importlib.import_module("scitex_agent_container._state.state_db")
-    )
-    env_save_restore.reload_after_restore(mod)
-    # Act
-    got = mod.DEFAULT_DB_PATH
-    # Assert
-    assert Path(got) == tmp_path / "explicit" / "s.db"
+# ``test_per_file_state_db_override_still_wins`` was here until 2026-08-30. It
+# pinned the precedence ``$SCITEX_AGENT_CONTAINER_STATE_DB`` beat
+# ``$SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` when ``state_db.DEFAULT_DB_PATH``
+# recomputed. Both halves of that sentence are gone: the constant is deleted
+# with the storage engine, and there is no longer any consumer for which the
+# two variables could compete. The variable itself survives — sac injects it
+# into containers, a rename rewrites it, ``sac whoami`` reports it — but none
+# of those resolve it against ``RUNTIME_DIR``, so re-pointing this test at one
+# of them would have been a new assertion wearing a passing test's name.

@@ -204,8 +204,12 @@ class TestResolvePeerUrl:
 
 @pytest.fixture
 def isolated_state_db(tmp_path: Path):
-    """Redirect state.db to a tmp path; reload the module so the
-    module-level DEFAULT_DB_PATH picks it up (explicit save/restore)."""
+    """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` (explicit save/restore).
+
+    The reload picked up a module-level ``DEFAULT_DB_PATH`` until 2026-08-30.
+    That constant is deleted with the storage engine, so the reload re-derives
+    nothing; the env value survives as something subprocesses inherit.
+    """
     import importlib
     import os
 

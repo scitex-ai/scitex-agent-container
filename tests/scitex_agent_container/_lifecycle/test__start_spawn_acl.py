@@ -34,7 +34,6 @@ from typing import Any, Iterator
 import pytest
 
 from scitex_agent_container._lifecycle._start import agent_start
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container._state.state_db_nodes import derive_group, record_lineage
 from scitex_agent_container.config import AgentConfig
@@ -95,13 +94,10 @@ def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
         "SCITEX_DIR": str(home / ".scitex"),
     }
     saved = {k: os.environ.get(k) for k in keys}
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ.update(keys)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         for k, prev in saved.items():
             if prev is None:
                 os.environ.pop(k, None)

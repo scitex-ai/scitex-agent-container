@@ -45,7 +45,6 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import (
     await_until_serving,
@@ -70,7 +69,6 @@ def isolated_env(pg_schema: str, tmp_path: Path):
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    saved_db_const = _state_db.DEFAULT_DB_PATH
 
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
@@ -80,7 +78,6 @@ def isolated_env(pg_schema: str, tmp_path: Path):
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    _state_db.DEFAULT_DB_PATH = db_path
 
     # WI-2 ACL: register the WI-3 demo nodes as siblings under a
     # common root so they share a group. Without this the new
@@ -94,7 +91,6 @@ def isolated_env(pg_schema: str, tmp_path: Path):
     finally:
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
-        _state_db.DEFAULT_DB_PATH = saved_db_const
         for key, val in (
             ("HOME", saved_home),
             ("SCITEX_AGENT_CONTAINER_REGISTRY_DIR", saved_reg_env),

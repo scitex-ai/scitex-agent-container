@@ -23,7 +23,6 @@ import pytest
 
 from scitex_agent_container._listen import _registry_endpoints as _re
 from scitex_agent_container._state import port_allocator as _pa
-from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state import state_db_instances as _instances
 
 
@@ -65,21 +64,19 @@ def _swap_env(name: str, value: str | None) -> str | None:
 
 @pytest.fixture
 def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
-    """Redirect ``state.db`` writes to a per-test tmp file.
+    """Give this test a private ``$SCITEX_AGENT_CONTAINER_STATE_DB``.
 
-    Mirrors the ``cross_host_env`` fixture in ``test_server.py``:
-    ``DEFAULT_DB_PATH`` is captured at import time so just setting the
-    env var is not enough — we swap the module attribute directly and
-    restore it on teardown.
+    Mirrors the ``cross_host_env`` fixture in ``test_server.py``. Both used to
+    swap ``state_db.DEFAULT_DB_PATH`` as well, because that constant was
+    captured at import and setting the env var alone did not move it. The
+    constant was deleted with the storage engine on 2026-08-30; the env var is
+    what a subprocess reads and all that is swapped here now.
     """
     db = tmp_path / "state.db"
     prev_env = _swap_env(_STATE_DB_ENV, str(db))
-    prev_attr = _state_db.DEFAULT_DB_PATH
-    _state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        _state_db.DEFAULT_DB_PATH = prev_attr
         _swap_env(_STATE_DB_ENV, prev_env)
 
 
@@ -89,12 +86,9 @@ def isolated_host_env(tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     prev_db_env = _swap_env(_STATE_DB_ENV, str(db))
     prev_host_env = _swap_env(_SAC_HOST_ENV, "test-host")
-    prev_attr = _state_db.DEFAULT_DB_PATH
-    _state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        _state_db.DEFAULT_DB_PATH = prev_attr
         _swap_env(_STATE_DB_ENV, prev_db_env)
         _swap_env(_SAC_HOST_ENV, prev_host_env)
 

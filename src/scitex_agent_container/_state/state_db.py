@@ -18,6 +18,17 @@ disk and a set of verbs that answered every question with a plausible zero —
 the exact success-shaped wrong answer each departing table was removed to
 avoid, one level up, in the accessor that was supposed to be the safe one.
 
+``DEFAULT_DB_PATH`` WENT LAST, AND IT IS WHY THIS PARAGRAPH EXISTS. The engine
+deletion left the PATH behind — a ``Path`` naming a ``state.db`` that nothing
+created and nothing could open — on the stated ground that retiring it was "a
+separate change with a separate argument", roughly fifty test modules having
+saved and restored it as isolation ceremony. This is that change. The argument
+is the one the constant's own comment made against itself: it selected no
+storage, so the ~4900 per-test rebindings isolated nothing, and the test
+sandbox's state-floor check spent a third of its sentinels proving a constant
+nobody reads still pointed somewhere harmless. A guard that cannot fail costs
+exactly what it appears to buy.
+
 WHAT STAYED, AND WHY EACH IS HERE
 =================================
 :func:`now_iso` and :func:`new_uuid7` are pure value helpers with callers all
@@ -36,36 +47,13 @@ next reader should not have to open it to find that out.
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 # Re-exported for the 7 modules that ``from ...state_db import
 # _resolve_host`` (claude_session, _node_channel, state_db_export,
 # state_db_gc, _send, send_cmds, _dispatch).
-from .._runtime_paths import runtime_base_dir
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
-
-#: THE PATH IS ALL THAT IS LEFT OF ``state.db``, AND NOTHING CREATES IT.
-#:
-#: Kept for one reason only: the test sandbox's state-floor check
-#: (``tests/conftest.py::_assert_state_floor_intact``) reads it, alongside
-#: ``registry.REGISTRY_DIR`` and ``_session_state.DEFAULT_STATE_ROOT``, to
-#: prove a suite has not pointed an import-time constant at the operator's
-#: real runtime directory. It selects no storage: no code path in ``src/``
-#: opens it, and with the engine deleted no code path can.
-#:
-#: Retiring the constant is a separate change with a separate argument —
-#: roughly fifty test modules save/restore it as isolation ceremony that has
-#: already stopped isolating anything — and doing it here would have hidden a
-#: fifty-file fixture rewrite inside an engine deletion.
-DEFAULT_DB_PATH = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_STATE_DB",
-        str(runtime_base_dir() / "state.db"),
-    )
-)
 
 
 def now_iso() -> str:
