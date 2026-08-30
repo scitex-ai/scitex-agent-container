@@ -361,7 +361,7 @@ def test_port_store_returns_the_same_cached_handle_within_a_process(
     pg_schema: str,
 ) -> None:
     # Arrange — first call populates the per-process cache (card
-    # sqlite-out-per-call-connect-cost-20260828: Store.__init__ pays a
+    # store-connect-cost-per-call-20260828: Store.__init__ pays a
     # psycopg connect, so the agent-start path must not construct per call).
     first = pa.port_store()
     # Act

@@ -315,7 +315,7 @@ from scitex_cards._throughput import WIP_STATUSES
 # function was there and wrong. Measured that day, five independent gates
 # went green on that artifact within one hour — this probe, the master-side
 # SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
-# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# and a 7537-test suite on a store where the defect cannot exist.
 # So the FLOOR is what excludes the broken release; this import only catches
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.

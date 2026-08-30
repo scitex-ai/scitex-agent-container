@@ -6,7 +6,7 @@ run beneath ``_send_resolve``, ``resolve_node_host``,
 ``resolve_forward_target`` and ``_agents_list`` — per message, not per
 operator command.
 
-MEASURED, not assumed (card ``sqlite-out-per-call-connect-cost-20260828``):
+MEASURED, not assumed (card ``store-connect-cost-per-call-20260828``):
 the previous local connect 0.067 ms against ``psycopg.connect`` 10.707 ms — 159x —
 and ``Store.__init__`` pays that connect plus the dialect ``schema_lock`` and
 two probes even when no DDL runs. On the sibling table a per-call ``Store``

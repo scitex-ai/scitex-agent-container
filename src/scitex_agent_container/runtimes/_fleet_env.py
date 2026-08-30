@@ -74,9 +74,10 @@ HOST_PROCESS_AGENT_NAME = "cli"
 # agent that does not override the key in its own ``spec.env``.
 #
 # SCITEX_CARDS_READ_BACKEND (2026-07-18, the operator's YAML→DB ruling,
-# requested by scitex-cards): pins the board's read path to the SQLite store.
+# requested by scitex-cards): pinned the board's read path to the local-file
+# store of the day.
 #
-# SCITEX_CARDS_DUAL_WRITE was injected alongside it to keep a SQLite mirror
+# SCITEX_CARDS_DUAL_WRITE was injected alongside it to keep a database mirror
 # fresh next to a ~9 MB tasks YAML. That YAML tier was DELETED 2026-07-21, so
 # from then on the flag gated nothing while still being injected into every
 # container — and scitex-cards' ``health`` FAILS its ``single_write_target``
@@ -102,8 +103,9 @@ HOST_PROCESS_AGENT_NAME = "cli"
 #
 # It was not merely useless, it was ACTIVELY MISLEADING. In scitex-cards' own
 # words, from their retired-vars module: the board's systemd unit carried
-# ``SCITEX_CARDS_READ_BACKEND=sqlite`` while the board served 0 cards from a
-# database holding 2,654 — "it did nothing, but it STATED a read policy, so
+# a ``SCITEX_CARDS_READ_BACKEND`` pin naming the retired engine while the
+# board served 0 cards from a database holding 2,654 — "it did nothing, but
+# it STATED a read policy, so
 # everyone diagnosing the outage read that line, concluded the read target was
 # configured and correct, and looked elsewhere. An inert setting that appears to
 # answer the question is worse than no setting at all: it spends the
@@ -120,8 +122,10 @@ HOST_PROCESS_AGENT_NAME = "cli"
 # ``config.yaml``'s ``fleet_default_env``. Asserted by
 # test_an_empty_fleet_default_env_is_a_valid_state.
 #
-# SCITEX_STORE_DSN (2026-08-19, the operator's storage-consolidation order:
-# 「sqlite 根絶をしてください」「fail fast, fail loud, no fallbacks」).
+# SCITEX_STORE_DSN (2026-08-19, the operator's storage-consolidation order —
+# eradicate the retired engine, and 「fail fast, fail loud, no fallbacks」).
+# The order is recorded verbatim in
+# ``docs/adr/0022-state-in-postgres-configuration-in-git.md``.
 #
 # READ THE TWO PARAGRAPHS ABOVE BEFORE ADDING ANOTHER KEY HERE. Two store
 # variables were declared here and later retired for STATING a routing policy
@@ -145,9 +149,10 @@ HOST_PROCESS_AGENT_NAME = "cli"
 #
 # The unset arm is the point: the failure is LOUD and there is no local-file
 # path to slip into. That is scitex-dev's design, in their own words at
-# ``resolve_target``: "deliberately no SQLite fallback ... a host whose
-# Postgres is down must fail loudly rather than start writing to a private
-# local file that shares nothing."
+# ``resolve_target``: host_store "has exactly two steps (SCITEX_STORE_DSN or
+# the per-host Postgres) and deliberately no third: a host whose Postgres is
+# down must fail loudly rather than start writing to a private local file
+# that shares nothing."
 #
 # test_store_dsn_is_read_for_behaviour_by_its_consumer asserts BOTH arms, so
 # if scitex-dev ever stops honouring the variable, sac goes RED here instead

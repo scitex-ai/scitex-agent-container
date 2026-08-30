@@ -2,6 +2,13 @@
 
 * **Status**: Proposed (first slice implemented)
 * **Date**: 2026-08-12
+* **Later ruling, 2026-08-19** (the storage-consolidation order that made
+  `SCITEX_STORE_DSN` a fleet default):
+  「sqlite 根絶をしてください」/「fail fast, fail loud, no fallbacks」.
+  Recorded here rather than in the module it governs
+  (`runtimes/_fleet_env.py`), because an ADR is the one place the
+  eradication rule permits the name to stand — so the operator's words
+  survive verbatim instead of being reworded out of the tree.
 * **Operator rulings**: 「state.db というものは使ってはいけません」/
   「sqlite 使った瞬間負けだと思った方が良いです」/
   「今 5432 を scitex のために使ってるものはすべて間違い」/

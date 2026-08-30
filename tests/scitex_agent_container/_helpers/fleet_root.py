@@ -367,7 +367,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
       YAML file, so even a call that forgot ``store=`` lands in tmp rather
       than on the live 1,400-card board.
 
-    * **the SQLite shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
+    * **the mirror shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
       ``$SCITEX_TODO_DB``) points at a tmp DB. This one is not belt-and-
       braces, it is load-bearing, and its absence destroyed the live board
       on 2026-07-20: the dual-write mirror resolves its own path and
@@ -402,10 +402,10 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
         _env_overrides(
             {
                 "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
-                # *** THE SQLITE SHADOW — isolating the YAML IS NOT ENOUGH. ***
+                # *** THE MIRROR SHADOW — isolating the YAML IS NOT ENOUGH. ***
                 #
                 # Redirecting the store above protects the YAML and nothing
-                # else. scitex-cards mirrors every write into a SQLite shadow
+                # else. scitex-cards mirrors every write into a shadow database
                 # whose path it resolves ITSELF, ignoring the store you wrote
                 # to: `_dual_write.mirror_after_save` calls
                 # `mirror_doc_incremental(doc, resolve_db_path(), ...)` with NO

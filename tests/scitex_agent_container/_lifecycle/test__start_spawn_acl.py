@@ -81,7 +81,7 @@ class _FakeHandover:
 def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Isolated state.db + runtime dir + HOME, all under tmp_path.
 
-    No mocks — real sqlite, real dirs; env + module constants saved and
+    No mocks — real files, real dirs; env + module constants saved and
     restored on teardown.
     """
     db = tmp_path / "state.db"

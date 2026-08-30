@@ -3,9 +3,11 @@
 """Group authority read STRAIGHT FROM THE SPEC — configuration, not state.
 
 Operator ruling 2026-08-12: **"states → PostgreSQL, configuration →
-files under git"**, and, about the SQLite state layer, ``state.db という
-ものは使ってはいけません`` / ``sqlite 使った瞬間負けだと思った方が良い
-です``.
+files under git"**, and, about the per-host state layer that preceded it,
+``state.db というものは使ってはいけません``. The rulings are recorded in
+full, verbatim, in ``docs/adr/0022-state-in-postgres-configuration-in-git.md``;
+an ADR is where a decision is kept, so this module cites it rather than
+reproducing it.
 
 An agent's named groups are **configuration**. They are authored by a
 human in ``spec.yaml``::
@@ -16,7 +18,8 @@ human in ``spec.yaml``::
 
 Nothing at runtime discovers, negotiates, or mutates them. They are a
 pure function of a file. Yet until this module they reached every
-authority gate through a **cache in a per-host, per-agent SQLite file**:
+authority gate through a **cache in a per-host, per-agent local
+database file**:
 
     spec.yaml ──agent_start──▶ node_comms_policy (state.db) ──ACL──▶ gate
                (persist_acl_policy)          ↑

@@ -11,11 +11,11 @@ WHY THIS EXISTS AT ALL
 The ``openai-agents`` SDK persists multi-turn memory through a ``Session``
 object, and sac used the SDK's own file-backed one — a real per-agent
 database under ``~/.scitex/agent-container/runtime/openai-sessions/``. It was
-the LAST local database sac opened, and the only one no import scan
-scan could ever see, because the import happens inside the vendor package.
-That is the whole hole ``tests/develop/test_sqlite_footprint_frozen.py``'s
-vendor gate was written to measure, and closing it is what empties
-``FROZEN_VENDOR_SQLITE``.
+the LAST local database sac opened, and the only one no import scan could
+ever see, because the import happens inside the vendor package. That is the
+whole hole the vendor gate in
+``tests/develop/test_retired_engine_footprint_frozen.py`` was written to
+measure, and closing it is what took that gate's live population to zero.
 
 THE RUNNER IS LIVE, so this is not a paper migration: handyman-05's spec sets
 ``handler: openai_session``, eleven specs name ``openai-agents``, and the

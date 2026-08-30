@@ -255,9 +255,10 @@ def test_get_items_limit_returns_the_latest_n(pg_schema: str) -> None:
 
 
 def test_get_items_limit_zero_returns_nothing(pg_schema: str) -> None:
-    """``0`` means none and a NEGATIVE limit means all — SQLite's own
-    ``LIMIT`` semantics, kept deliberately so existing callers keep their
-    answer rather than being tidied into a single "no limit" branch."""
+    """``0`` means none and a NEGATIVE limit means all — the ``LIMIT``
+    semantics the previous engine had, kept deliberately so existing callers
+    keep their answer rather than being tidied into a single "no limit"
+    branch."""
     # Arrange
     pytest.importorskip("agents")
     session = PostgresAgentSession("alpha")

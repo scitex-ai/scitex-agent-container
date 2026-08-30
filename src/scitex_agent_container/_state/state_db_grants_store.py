@@ -21,7 +21,7 @@ order the ports landed in, and it costs twice:
 
 * ``psycopg.connect`` is 10.707 ms against the previous 0.067 ms
   (159x, measured on the live primary, card
-  ``sqlite-out-per-call-connect-cost-20260828``). :func:`.has_grant` is
+  ``store-connect-cost-per-call-20260828``). :func:`.has_grant` is
   called by ``_listen._acl.check_send_acl`` for every cross-group message,
   so the per-call open was paying that connect on the ACL path.
 * a connection dying UNDER a cached handle is the failure the target-keyed

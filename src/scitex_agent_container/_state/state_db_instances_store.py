@@ -86,7 +86,7 @@ ONE HANDLE PER PROCESS — MANDATORY HERE, NOT AN OPTIMISATION
 ``instances`` sits under ``_send_resolve``, ``resolve_node_host``,
 ``resolve_forward_target`` and ``_agents_list`` — the a2a routing path, run
 PER MESSAGE. Measured on the live primary (card
-``sqlite-out-per-call-connect-cost-20260828``): the previous local-file
+``store-connect-cost-per-call-20260828``): the previous local-file
 connect cost 0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and
 ``Store.__init__``
 pays that connect plus the dialect ``schema_lock`` and two probes even when

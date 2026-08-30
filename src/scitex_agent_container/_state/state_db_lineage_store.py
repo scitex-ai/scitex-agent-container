@@ -68,7 +68,7 @@ ONE HANDLE PER PROCESS
 Same judgement, and the same measurement, as
 :mod:`.state_db_comms_nodes_store`: ``psycopg.connect`` costs 10.707 ms
 against the previous 0.067 ms (159x, live primary, card
-``sqlite-out-per-call-connect-cost-20260828``), and these readers sit on
+``store-connect-cost-per-call-20260828``), and these readers sit on
 the ACL path of EVERY message send and every agent-CRUD request. A per-call
 ``Store`` would pay that connect on each one. See
 :func:`open_lineage_store` for the target-keyed invalidation and

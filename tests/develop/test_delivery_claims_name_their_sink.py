@@ -61,7 +61,8 @@ falsifiable subset and stops.
 SHRINKING IS TWO LINES; GROWING IS IMPOSSIBLE
 =============================================
 Name the sink in the comment, delete the entry here. A 70th unnamed claim
-fails. Same asymmetry as tests/develop/test_sqlite_footprint_frozen.py, for
+fails. Same asymmetry as
+tests/develop/test_retired_engine_footprint_frozen.py, for
 the same reason: a list that can only shrink is an inventory; one that can
 grow is a wish.
 

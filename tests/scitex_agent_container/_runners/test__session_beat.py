@@ -3,9 +3,10 @@
 
 WHY THESE ASSERTIONS AND NOT OTHERS. ``_DefaultDBWriter`` has promised
 "best-effort ... we catch + log here" in its docstring since it was written,
-but nothing caught anything. Under SQLite that was invisible — the diary
-wrote to a local file that effectively never failed, so the un-implemented
-promise was never exercised. Moving the diary to PostgreSQL made the write
+but nothing caught anything. Under the old local-file store that was
+invisible — the diary wrote to a file that effectively never failed, so the
+un-implemented promise was never exercised. Moving the diary to PostgreSQL
+made the write
 genuinely failable, and every runner test that merely ticks a heartbeat died
 on a refused connection. So the assertions here are about the two halves of
 that contract, and they pull in opposite directions:

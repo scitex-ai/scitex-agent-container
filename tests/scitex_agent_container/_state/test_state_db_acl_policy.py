@@ -40,9 +40,8 @@ writes takes ``pg_schema``, the shared opt-in fixture, which skips where no
 cluster exists and FAILS where a configured one is broken.
 
 ``sender_target_relationship`` used to be tested here. It reads ``lineage``,
-which is still SQLite, so it moved to
-``test_state_db_lineage_rel.py`` alongside the module it moved to — rather
-than staying in a file whose name now promises PostgreSQL.
+so it moved to ``test_state_db_lineage_rel.py`` alongside the module it moved
+to, rather than staying in a file about the ACL policy table.
 
 NO MONKEYPATCH (PA-306 §3): the module is exercised through its real public
 surface, and isolation comes from the fixture pointing SCITEX_STORE_DSN at a
@@ -136,7 +135,8 @@ def test_may_spawn_never_rescues_an_already_denied_spawn(pg_schema: str) -> None
 
 
 def test_may_spawn_round_trips_as_a_real_bool(pg_schema: str) -> None:
-    # Arrange — the SQLite column was 0/1; the store field is BOOL.
+    # Arrange — the previous engine had no boolean type, so the column was
+    # 0/1; the store field is BOOL.
     record_comms_policy(name="cap-a", may_spawn=False)
     # Act
     value = read_comms_policy(name="cap-a")["may_spawn"]

@@ -311,7 +311,7 @@ From: ./sac-base.sif
         #
         # The floor is >=0.17.2 and NOT >=0.16.0, because 0.17.0 DESTROYS CARD
         # DATABASES: its store resolution accepts an explicit YAML path that
-        # does not exist plus a bundled-example fallback, and a YAML->sqlite
+        # does not exist plus a bundled-example fallback, and a YAML->database
         # sync then wrote the example's single card over 2142 real ones
         # (2026-07-19, recovered from backup). A lower floor lets a resolver
         # land on that version again, so the floor is the guard.
@@ -490,7 +490,7 @@ from scitex_cards._throughput import WIP_STATUSES
 # function was there and wrong. Measured that day, five independent gates
 # went green on that artifact within one hour — this probe, the master-side
 # SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
-# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# and a 7537-test suite on a store where the defect cannot exist.
 # So the FLOOR is what excludes the broken release; this import only catches
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.

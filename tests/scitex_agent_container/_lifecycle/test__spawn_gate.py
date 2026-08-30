@@ -2,9 +2,10 @@
 wired into core ``agent_start`` (ADR-0010 Rule B / Phase 2).
 
 PA-306: NO mocks. Every test runs ``enforce_spawn_gate`` against a REAL
-on-disk SQLite state.db (isolated per test) and the REAL ``check_spawn``
-/ ``record_lineage`` collaborators. The caller identity is set via a
-real yield-based env override (no monkeypatch).
+store — the shared ``pg_schema`` fixture, plus a per-test on-disk state
+path for the module constant that still carries one — and the REAL
+``check_spawn`` / ``record_lineage`` collaborators. The caller identity is
+set via a real yield-based env override (no monkeypatch).
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 """
@@ -35,7 +36,7 @@ def db_path(tmp_path: Path) -> Iterator[Path]:
 
     The gate's internal calls use ``db_path=None`` (→ DEFAULT_DB_PATH),
     so re-binding the module constant is what isolates them. No mocks —
-    a real sqlite file under tmp_path.
+    a real path under tmp_path.
     """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")

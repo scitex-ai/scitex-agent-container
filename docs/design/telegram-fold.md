@@ -157,18 +157,19 @@ The 5 persistence tools (`get_history`, `get_unread`, `mark_read`,
 `search_messages`, `get_context`) are **not** ported into sac. From the audit
 (`05_sac-mcp-telegram.md`):
 
-> The split is clean: transport tools (reply/react/edit/download/send_document)
-> belong wherever the bot token lives; persistence tools
-> (history/unread/mark_read/search/get_context) are telegrammer's distinct
-> value-add and only make sense if you keep the SQLite store.
+The audit's finding, paraphrased: the split is clean, because transport tools
+(reply/react/edit/download/send_document) belong wherever the bot token
+lives, while persistence tools (history/unread/mark_read/search/get_context)
+are telegrammer's distinct value-add and only make sense if you keep its
+local message database.
 
 Sac's bus is intentionally non-persistent (`_inbox_bus.py` comments: "No
 persistence: replay belongs on disk (`session.jsonl`), not in the bus.").
-Re-introducing a SQLite store into sac MCP would contradict that.
+Re-introducing a local message store into sac MCP would contradict that.
 
 If history/search must survive, ship a separate `tg-archiver` sidecar that
-subscribes to the bus and writes telegrammer-compatible SQLite. Out of scope
-for this fold.
+subscribes to the bus and writes a telegrammer-compatible store. Out of
+scope for this fold.
 
 ## Allowed-users model
 
@@ -242,7 +243,7 @@ config files.
   per-agent; default target should probably be `master`. Configurable?
   Multi-subscriber fanout?
 - Persistence: do you want a `tg-archiver` sidecar that re-creates
-  telegrammer's SQLite store from the bus, or is `session.jsonl` enough?
+  telegrammer's message store from the bus, or is `session.jsonl` enough?
 - Cross-host: today the bus is per-`sac listen`. Should Telegram-driven
   messages reach agents on other hosts in this round, or wait for the
   generic cross-host A2A story?

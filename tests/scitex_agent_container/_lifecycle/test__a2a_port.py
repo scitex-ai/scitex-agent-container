@@ -4,9 +4,10 @@ PA-306: no `unittest.mock`. Production helpers `port_allocator.claim_port`
 and `port_allocator.release_port` are swapped via a hand-rolled fake
 context manager that records calls and restores the attribute on
 teardown. The "end-to-end" tests use the REAL allocator against a REAL
-database — no patching whatsoever. They took a ``tmp_path`` sqlite DB until
-2026-08-28, when ``a2a_ports`` moved to per-host PostgreSQL; they now take
-the shared ``pg_schema`` fixture, which points the real store resolver at a
+database — no patching whatsoever. They took a ``tmp_path`` local DB file
+until 2026-08-28, when ``a2a_ports`` moved to per-host PostgreSQL; they now
+take the shared ``pg_schema`` fixture, which points the real store resolver
+at a
 throwaway schema and SKIPS where no writable database exists.
 """
 

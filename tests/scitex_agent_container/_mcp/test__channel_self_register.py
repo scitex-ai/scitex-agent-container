@@ -10,8 +10,9 @@ cadence matching the agent runner's heartbeat.
 
 ON POSTGRESQL SINCE 2026-08-28. The directory moved to the shared store, so
 these tests take ``pg_schema`` and ``register_self_node`` / ``refresh_node``
-lost their ``db_path`` argument — it threaded a SQLite file that no longer
-exists. The ``updated_at`` the refresh loop advances is the store's hybrid
+lost their ``db_path`` argument — it threaded a local database file that no
+longer exists. The ``updated_at`` the refresh loop advances is the store's
+hybrid
 logical clock rather than a column each writer had to remember to bump.
 
 Real config.yaml via the shared ``env_save_restore`` fixture and a real
