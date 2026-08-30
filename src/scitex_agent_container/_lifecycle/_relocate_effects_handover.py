@@ -6,7 +6,7 @@ missing was a holder: the refusal this module replaces said "nothing claims a
 lease on the source's behalf at start-up, so there is no holder to hand FROM".
 
 THE LEASE LIVES IN POSTGRESQL, NOT IN ``state.db``, SINCE 2026-08-28. Every
-hint below names the store rather than the table alone, because ``sqlite3
+hint below names the store rather than the table alone, because a raw
 state.db 'select * from relocation_leases'`` still answers — with the row this
 cutover left behind. An operator settling a handover from that answer would be
 reading a snapshot of the past while the fence moved on in another database,
@@ -94,7 +94,7 @@ class HandoverEffects:
                 hint=(
                     "nothing was handed over and the source is still the owner of record; "
                     "read the relocation_leases record in the PostgreSQL store "
-                    "(_state.relocation_pg.load_lease, NOT sqlite3 state.db) and settle "
+                    "(_state.relocation_pg.load_lease, NOT a local file) and settle "
                     "it before re-running"
                 ),
             )
@@ -107,7 +107,7 @@ class HandoverEffects:
                 detail="the lease was written and could not be read back",
                 hint=(
                     "read relocation_leases in the PostgreSQL store "
-                    "(_state.relocation_pg.load_lease, NOT sqlite3 state.db) before doing "
+                    "(_state.relocation_pg.load_lease, NOT a local file) before doing "
                     "anything else — the handover may or may not have landed, and that is "
                     "the one thing that must not stay unknown"
                 ),

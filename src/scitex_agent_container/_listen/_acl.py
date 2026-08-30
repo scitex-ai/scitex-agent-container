@@ -123,7 +123,7 @@ def check_lineage_acl(
     there is no state.db behind this gate to isolate from: the descendant
     walk reads the shared PostgreSQL store, which isolates via
     ``SCITEX_STORE_DSN`` (the ``pg_schema`` fixture). A parameter that
-    still promised SQLite isolation would promise something no lookup
+    still promised per-file isolation would promise something no lookup
     under it can deliver.
     """
     if caller is None or caller == "":

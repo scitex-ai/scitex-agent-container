@@ -1,4 +1,4 @@
-"""Diary-style writes — on PostgreSQL only (sqlite→Postgres, 2026-08-28).
+"""Diary-style writes — on the per-host PostgreSQL store.
 
 Three logical stores let every agent write a journal the lead reads:
 
@@ -14,7 +14,7 @@ WHY THIS MODULE MOVED
 =====================
 Operator ruling, restated 2026-08-28: 「スクライトなんて全部絶滅させて
 ください」 and 「スクライト1個でも使ったら負け」 — because the fleet is
-MULTI-HOST, and a SQLite file per host means a different truth per host.
+MULTI-HOST, and a state file per host means a different truth per host.
 That is not theoretical: the same evening, per-host agent SPECS were
 measured diverging 122/137/122/124 across four machines. A per-host
 state.db is the same failure in a different file format.
@@ -23,18 +23,18 @@ The move ADOPTS :mod:`scitex_dev.store`, the fleet's own store primitive,
 rather than growing a private psycopg layer here — the same route
 :mod:`.state_db_verdict_dedup` and :mod:`.state_db_incarnations` took.
 That primitive's ``resolve_target`` is exactly two steps
-(``SCITEX_STORE_DSN`` or the per-host PostgreSQL) with NO SQLite
+(``SCITEX_STORE_DSN`` or the per-host PostgreSQL) with NO local-file
 fallback, so a host whose PostgreSQL is unreachable raises
 ``StoreTargetError`` naming the DSN it could not reach. Fail fast, fail
 loud, no fallbacks — implemented in the primitive, not re-argued here.
 
-``db_path`` IS GONE from every signature. It named a SQLite file; there
-is no file. Callers that threaded it through simply stop.
+``db_path`` IS GONE from every signature. It named a file; there is no
+file. Callers that threaded it through simply stop.
 
 APPEND-ONLY IS PRESERVED, DELIBERATELY
 ======================================
-The SQLite tables were append-only: every beat, turn and error was its
-own row, and the history stayed queryable. The obvious key/value
+These are append-only: every beat, turn and error is its own row, and
+the history stays queryable. The obvious key/value
 shortcut — keying a heartbeat by agent NAME so a new beat overwrites the
 last — would have been less code and would have SILENTLY DISCARDED that
 history. Changing storage and semantics together is how a breaking
@@ -42,9 +42,7 @@ change rides along inside a migration unnoticed, so the identity of
 every record here includes its timestamp: a new tick is a new record,
 exactly as before.
 
-TIMESTAMPS STAY REAL UNIX-SECONDS, the format the SQLite columns used
-and the format callers already read. Same clock, same wire format,
-different storage.
+TIMESTAMPS ARE REAL UNIX-SECONDS, the format every caller already reads.
 
 ``expected_revision`` IS MANDATORY, AND ``NEW_RECORD`` IS THE RIGHT VALUE
 ========================================================================
@@ -57,13 +55,13 @@ exactly what ``NEW_RECORD`` asserts.
 identity already exists, i.e. a duplicate beat at a byte-identical timestamp.
 "Already recorded" is the outcome we wanted, so it returns rather than raising.
 The catch is deliberately NARROW — nothing else is swallowed, so an unreachable
-store still fails loudly, which is the whole point of moving off SQLite.
+store still fails loudly, which is the whole point of a store that has no
+local fallback to hide behind.
 
 THE ``lastrowid`` CONTRACT
 ==========================
-``record_error`` returned SQLite's ``lastrowid`` and one caller
-propagates it (``_runners/_session_beat.py``). PostgreSQL has no
-``lastrowid``, so the id now comes from the store's own monotonic
+``record_error`` returns an id that one caller propagates
+(``_runners/_session_beat.py``). It comes from the store's own monotonic
 ``next_seq()``. That keeps the contract that matters — a unique,
 increasing integer per record — without pretending to be a rowid.
 """
@@ -86,8 +84,8 @@ HEARTBEATS_STORE = "diary_heartbeats"
 _ACTOR = "scitex-agent-container"
 
 # Bounds on the inline prompt/response and error-detail fields so a
-# runaway message cannot bloat the store. Unchanged from the SQLite
-# version — the operator's "first ~500 chars / first ~1000 chars" spec.
+# runaway message cannot bloat the store — the operator's
+# "first ~500 chars / first ~1000 chars" spec.
 _TURN_TEXT_LIMIT = 500
 _ERROR_DETAIL_LIMIT = 1000
 
@@ -255,8 +253,8 @@ def record_error(
 ) -> int:
     """Append one ``errors`` record. Returns the new ``error_id``.
 
-    The id is the store's monotonic ``next_seq()`` rather than SQLite's
-    ``lastrowid`` — see the module docstring.
+    The id is the store's monotonic ``next_seq()`` — see the module
+    docstring.
     """
     from scitex_dev.store import NEW_RECORD
 
@@ -320,8 +318,8 @@ def record_heartbeat(
 def latest_heartbeats_per_name() -> list[dict]:
     """Return one heartbeat per agent ``name`` — the most recent.
 
-    The SQLite version did this with a GROUP BY / MAX(ts) self-join. The
-    store is row-oriented, so the reduction happens here instead. That is
+    The reduction happens HERE rather than in the store, which is
+    row-oriented and has no GROUP BY / MAX(ts) to push it down to. That is
     a deliberate trade: the fleet's beat table is tens of rows, and doing
     it in Python keeps this module free of a second query dialect.
     """

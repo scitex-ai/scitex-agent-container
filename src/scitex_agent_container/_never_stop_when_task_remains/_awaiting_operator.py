@@ -100,7 +100,7 @@ _DEFAULT_CMD = "scitex-cards list-tasks"
 
 #: The store-identity command. A READER THAT DOES NOT NAME ITS SOURCE WILL BE
 #: WRONG AGAIN the next time a store moves, and this fleet currently has four:
-#: two Postgres clones, an abandoned SQLite inbox sidecar still being opened
+#: two Postgres clones, an abandoned inbox sidecar still being opened
 #: constantly and written never, and a YAML file that `scitex-cards done`
 #: resolved to while ``$SCITEX_CARDS_DB`` named Postgres.
 #:
@@ -198,7 +198,7 @@ def _store_identity() -> str:
     the other lacked. Every operation on both succeeded.
 
     The half a fork cannot forge comes from the ENGINE, not the rows —
-    ``pg_control_system().system_identifier`` on Postgres, its sqlite analogue
+    ``pg_control_system().system_identifier`` on Postgres, its per-file analogue
     on a file store. So identity is the PAIR. When the store reports only the
     uuid, this says so in the rendered line rather than presenting a
     lineage id as though it identified this instance: a reader who is told

@@ -9,7 +9,7 @@ The four public names (:func:`record_instance_start`,
 :mod:`.state_db`, so every ``from ...state_db import record_instance_start``
 keeps resolving. What changed is underneath: the rows live in the shared
 PostgreSQL store (:mod:`.state_db_instances_store`), not in a per-host
-SQLite file, and ``db_path`` is GONE from every signature because there is
+file, and ``db_path`` is GONE from every signature because there is
 no file to point at.
 
 The agent-rename half lives in :mod:`.state_db_instances_rename` — the
@@ -21,7 +21,7 @@ WHY THE STORE MAKES THESE FUNCTIONS LOOK DIFFERENT
 run through everything below, and each one is written out rather than
 relied upon, because the guard moved OUT of the database and INTO this file:
 
-1. **A stop reads first and refuses explicitly.** The SQLite tombstone was
+1. **A stop reads first and refuses explicitly.** The tombstone was
    ``UPDATE ... WHERE id=? AND ended_at IS NULL``, and the ``WHERE`` did the
    refusing: a missing row and an already-ended row both came back as
    ``rowcount == 0``. ``put`` refuses nothing, so :func:`end_instance`
@@ -39,7 +39,7 @@ relied upon, because the guard moved OUT of the database and INTO this file:
 3. **A read by ``id`` alone is a scan.** The record identity is ``{id,
    host}`` (PER_HOST truth: two hosts describing one agent are describing
    two processes), and :func:`record_instance_stop` is handed only an id —
-   as its SQLite ancestor was. It therefore locates the record by scanning,
+   as its predecessor was. It therefore locates the record by scanning,
    which costs one query on a path that runs once per stop. The alternative
    would be to make every caller thread a host it does not have.
 
@@ -93,7 +93,7 @@ def find_by_id(store: "Store", instance_id: str) -> "Row | None":
 
     A scan, because ``id`` is only HALF the identity. uuid7 ids are globally
     unique, so at most one record can match and the scan cannot be ambiguous
-    — which is exactly what ``WHERE id=?`` relied on in SQLite.
+    — which is exactly what ``WHERE id=?`` relied on.
     """
     if not instance_id:
         return None
@@ -214,11 +214,11 @@ def record_instance_stop(instance_id: str, *, exit_reason: str = "stopped") -> b
     """Mark an instance as ended. Returns True iff THIS call ended it.
 
     Idempotent: stopping an already-stopped record is a no-op returning
-    ``False``, exactly as the SQLite ``rowcount == 0`` meant. Stopping an
+    ``False``, exactly as a zero rowcount meant. Stopping an
     id the store has never seen is the same ``False`` and writes nothing.
 
     It appended a ``kind='stop'`` row to ``events`` until 2026-08-28. That
-    table left SQLite the same day for having no reader at all, and every
+    table went the same day for having no reader at all, and every
     fact the row carried — the stop timestamp and ``exit_reason`` — is
     written to the record here.
     """
@@ -237,7 +237,7 @@ def record_instance_stop(instance_id: str, *, exit_reason: str = "stopped") -> b
 #
 # THE FIELDS STAY DECLARED, and that is not a contradiction.
 # ``last_heartbeat_at`` / ``iter_count`` / ``input_tokens`` /
-# ``output_tokens`` hold REAL VALUES on rows migrated out of SQLite, and
+# ``output_tokens`` hold REAL VALUES on rows migrated out of the old store, and
 # ``state_db_gc``'s staleness branch reads the first of them. With no
 # writer that branch can only ever fire on migrated history — a
 # pre-existing fact the ``instance_heartbeats`` departure note records, and
@@ -258,7 +258,7 @@ def read_instance(instance_id: str) -> dict | None:
 def list_active_instances(host: str | None = None) -> list[dict]:
     """Every record with no ``ended_at``, optionally host-filtered.
 
-    Ordered ``(started_at, id)`` DESC — newest first, as the SQLite
+    Ordered ``(started_at, id)`` DESC — newest first, as the original
     ``ORDER BY started_at DESC`` was, plus the ``id`` tiebreak the resolvers
     depend on and that ``started_at``'s one-second resolution cannot supply
     on its own.

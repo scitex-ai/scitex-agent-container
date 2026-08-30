@@ -6,8 +6,8 @@ Covers :mod:`scitex_agent_container._state.state_db_comms_nodes` and the
 
 WHAT CHANGED WHEN THE TABLE MOVED, AND WHAT THESE TESTS NOW ASSERT
 ==================================================================
-This file used to open a SQLite file under ``tmp_path`` and read
-``sqlite_master`` / ``PRAGMA table_info`` to prove the seven columns
+This file used to open a database file under ``tmp_path`` and read
+the schema catalogue to prove the seven columns
 existed. Those tests are GONE, not ported: the store owns its own DDL from
 a declared schema, so "does the column exist" is a question about
 scitex-dev's dialect rather than about sac, and asserting it here would test
@@ -25,7 +25,7 @@ claims that are actually sac's:
     primitive already maintains.
 
 PER-HOST ISOLATION WAS A PROPERTY OF THE OLD TESTS, NOT OF THE FEATURE. The
-sibling file ``test_state_db_export_comms_nodes_sync.py`` opened TWO SQLite
+sibling file ``test_state_db_export_comms_nodes_sync.py`` opened TWO
 files and asserted a row written to A was invisible in B until a sync ran.
 It is deleted, because that separation is precisely what this migration
 removes: one shared directory is the point, and a test asserting the
@@ -42,11 +42,9 @@ at a throwaway schema.
 from __future__ import annotations
 
 import socket
-from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
     CommsNodeConflictError,
     is_local_node,
@@ -72,47 +70,23 @@ THIS_NODE = socket.gethostname()
 FOREIGN_HOST = f"not-{THIS_NODE}"
 
 
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    """A per-test state.db PATH — the file is left for the code to make.
-
-    This called ``init_schema`` here until the suite stopped creating SQLite
-    files as a side effect. Nothing was lost: the only test that reads this
-    database opens it through ``state_db.open_db``, which initialises on first
-    use, so the file is still made by the production path rather than by a
-    fixture reaching for it first.
-    """
-    # Arrange
-    p = tmp_path / "state.db"
-    return p
-
-
 # ---------------------------------------------------------------------------
-# the departure — comms_nodes is not a SQLite table any more
+# TWO STORAGE-ABSENCE TESTS AND THEIR ``db_path`` FIXTURE WERE HERE.
+#
+# They asserted that a fresh state.db carried no ``comms_nodes`` table and
+# that the name had left ``KNOWN_TABLES``. The reasoning was specific to this
+# table and worth keeping on the record: an empty leftover would have answered
+# the routing resolver "not registered" instead of raising, and every caller
+# reads that as "not in the federated graph, do not cross-host forward" — a
+# wrong answer that looks like a right one, on the forwarding path.
+#
+# sac no longer opens a local database, so there is no fresh state.db to
+# inspect and no
+# whitelist to read. Both tests are deleted rather than re-pointed: an absence
+# test needs somewhere the thing could still be. The ratchet in
+# the storage-footprint gate under ``tests/develop/`` is what would now
+# notice a local table growing back anywhere in the package.
 # ---------------------------------------------------------------------------
-
-
-def test_comms_nodes_is_gone_from_a_fresh_state_db(db_path: Path) -> None:
-    # Arrange
-    conn_ctx = state_db.open_db(db_path)
-    # Act
-    with conn_ctx as conn:
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='comms_nodes'"
-        ).fetchall()
-    # Assert — an empty leftover table would answer the routing resolver
-    # "not registered" instead of raising, which is worse than no table.
-    assert rows == []
-
-
-def test_known_tables_no_longer_offers_comms_nodes() -> None:
-    # Arrange
-    from scitex_agent_container._state.state_db import KNOWN_TABLES
-
-    # Act
-    contains = "comms_nodes" in KNOWN_TABLES
-    # Assert
-    assert contains is False
 
 
 def test_the_declared_schema_has_exactly_the_four_fields() -> None:
@@ -458,7 +432,7 @@ def test_rename_carries_registered_at_forward(pg_schema: str) -> None:
 
 
 def test_rename_refuses_to_overwrite_a_live_occupant(pg_schema: str) -> None:
-    # Arrange — two DIFFERENT agents, both live. The SQLite path refused this
+    # Arrange — two DIFFERENT agents, both live. The original path refused this
     # via the ``name`` PRIMARY KEY (IntegrityError -> DbRenameError); the
     # store has no such constraint, so the refusal has to be explicit.
     register_comms_node(name="old", host="mba", a2a_port=8642)

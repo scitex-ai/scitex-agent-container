@@ -60,7 +60,7 @@ def fast_beat_env(pg_schema: str):
     internal.
 
     ``pg_schema`` joined on 2026-08-28: the SSE stream's first act is a
-    durable replay, and ``channel_events`` left SQLite for the shared
+    durable replay, and ``channel_events`` moved to the shared
     PostgreSQL that day (ADR-0023). Without a reachable schema the stream
     raises before it can beat, so the keepalive assertion would be testing a
     connection error.

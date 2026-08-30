@@ -70,7 +70,7 @@ def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
 
     ``pg_schema`` FIRST, and it is not decoration. When this fixture was
     written the comms state lived entirely in the ``state.db`` below, so
-    isolating a tmp SQLite file and HOME was the whole job. The ACL tables
+    isolating a tmp database file and HOME was the whole job. The ACL tables
     have since moved to the per-host PostgreSQL store, and without this
     dependency the deny path writes its rate-limit rows into the LIVE fleet
     store — measured 2026-08-20, ``alpha``/``beta``/``gamma`` rows in

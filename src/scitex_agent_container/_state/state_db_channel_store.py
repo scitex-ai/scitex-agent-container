@@ -7,7 +7,7 @@ TABLE`` statements, the cached psycopg connection, and the reconnect wrapper.
 
 PLAIN POSTGRESQL TABLES, NOT ``scitex_dev.store`` — AND WHY
 ===========================================================
-Every other table sac moved off SQLite in August 2026 adopted the fleet's
+Every other table sac moved to the shared store in August 2026 adopted the fleet's
 own ``scitex_dev.store`` primitive. This one deliberately does NOT, and the
 decision is recorded in ``docs/adr/0023-channel-events-plain-postgres.md``
 with the measurements behind it. The short form, three disqualifiers, each
@@ -27,7 +27,7 @@ sufficient on its own:
    filter. Measured 16.3 ms at 766 rows and ~190 ms at 9 k — paid on every
    SSE connect, on the event loop.
 
-The operator's rule is NO SQLITE. Plain tables in the SAME database
+The operator's rule is ONE STORAGE ENGINE. Plain tables in the SAME database
 ``host_store()`` resolves to satisfy it: one shared PostgreSQL, no per-host
 file, no divergent truth. What they give up is the store's replication
 machinery, which this table refuses anyway.
@@ -44,7 +44,7 @@ take part in the surrounding transaction, so with two concurrent writers on
 one target, id ``N+1`` can COMMIT and become visible before ``N`` does. A
 reader doing ``WHERE id > cursor ORDER BY id`` then ships ``N+1``, advances
 its cursor past it, and never returns ``N`` — a silent drop, with no error
-anywhere, that SQLite's single serialised writer could not produce.
+anywhere, that a single serialised writer could not produce.
 
 The counter row makes commit order and id order the same thing: the
 ``ON CONFLICT ... DO UPDATE`` takes a row lock on ``(target)`` that is held
@@ -72,7 +72,7 @@ This module's machinery — :func:`_with_connect_timeout`,
 :func:`_is_connection_lost`, :func:`run_with_reconnect`, and the
 clear-the-reference-before-close in :func:`_close_handle_locked` — is COPIED
 from :mod:`.state_db_comms_nodes_store`, which arrived at each piece by
-measurement. ``psycopg.connect`` costs 10.707 ms against SQLite's 0.067 ms
+measurement. ``psycopg.connect`` costs 10.707 ms against the previous 0.067 ms
 (159x, measured on the live primary), and this table is written once per
 message and read once per SSE connect, so a per-call connect is not a cost it
 can pay either.
@@ -143,7 +143,7 @@ DEFAULT_CONNECT_TIMEOUT_S = 5
 DDL_ADVISORY_LOCK_KEY = 7_305_244_310_022_618_113
 
 #: The two tables. Declared here rather than in ``state_db_schema`` because
-#: that module holds SQLite DDL for ``state.db``, and this is neither.
+#: that module held the per-agent schema, and this is neither.
 #:
 #: ``PRIMARY KEY (target, id)`` is the composite the per-target cursor
 #: requires: ``id`` alone is NOT unique any more, which is precisely why
@@ -228,14 +228,14 @@ def _resolve_target() -> "StoreTarget":
     RESOLVED THROUGH THE SAME FUNCTION AS EVERY MIGRATED TABLE, on purpose.
     This module does not adopt ``scitex_dev.store``'s record model, but it
     absolutely does adopt its TARGET resolution — ``SCITEX_STORE_DSN`` or the
-    per-host PostgreSQL, with NO SQLite fallback — so the channel history
+    per-host PostgreSQL, with NO local-file fallback — so the channel history
     lands in the same database as everything else sac owns and the test
     suite's ``pg_schema`` fixture isolates it by pointing that one variable
     at a throwaway schema.
 
     A non-PostgreSQL target RAISES rather than degrading. There is no other
     backend this module can speak, and a resolver that answered "no events"
-    from somewhere it cannot read is the exact failure the whole sqlite-out
+    from somewhere it cannot read is the exact failure the whole storage-consolidation
     migration exists to remove.
     """
     from scitex_dev.store import Backend, StoreTargetError, host_store
@@ -455,7 +455,7 @@ def open_channel_connection() -> "psycopg.Connection":
     """The process's shared connection. DO NOT ``close()`` the result.
 
     ONE HANDLE PER PROCESS. ``psycopg.connect`` costs 10.707 ms against
-    SQLite's 0.067 ms (159x, measured on the live primary), and this table is
+    the previous 0.067 ms (159x, measured on the live primary), and this table is
     written once per message; paying a connect per event would make every
     a2a send 10 ms slower for nothing. ``psycopg.Connection`` carries its own
     lock and is safe to share between threads, which is what the

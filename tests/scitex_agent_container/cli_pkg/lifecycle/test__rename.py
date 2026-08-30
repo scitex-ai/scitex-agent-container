@@ -112,11 +112,11 @@ def test_dry_run_reports_the_rows_it_would_carry(dry_run):
     ``definitions.name`` for the rest of that day (deleted: no writer), then
     ``instances.name`` — which moved to the shared store as well. Every
     remaining ``NAME_COLUMNS`` pair names a table ``init_schema`` no longer
-    creates, so the SQLite half of this report is now permanently empty and
+    creates, so the local half of this report is now permanently empty and
     ``build_plan`` merges ``count_instance_rename_rows`` into it under the
     same ``table.column`` keys.
 
-    A needle that had followed the SQLite half down would have gone green on
+    A needle that had followed the local half down would have gone green on
     an empty section, which is the failure this assertion exists to catch:
     ``0 column(s)`` printed for an agent with hundreds of lifetime records.
     """

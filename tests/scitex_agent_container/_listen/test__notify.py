@@ -50,7 +50,7 @@ def notify_env(tmp_path: Path, pg_schema: str):
     """Isolated state.db + registry + PostgreSQL schema for ``/v1/notify``.
 
     ``pg_schema`` joined this fixture on 2026-08-28: ``channel_events`` left
-    SQLite for the shared PostgreSQL (ADR-0023), so ``publish_to_agent``'s
+    its own file for the shared PostgreSQL (ADR-0023), so ``publish_to_agent``'s
     persist half now needs a REAL throwaway schema. The isolated ``state.db``
     stays for everything else the listen app touches.
 

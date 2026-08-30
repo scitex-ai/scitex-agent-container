@@ -770,7 +770,7 @@ class TestUnknownRoute:
 # host A's broker. The Q4(b) per-host bearer registry is exercised
 # by the missing-peer-token loud-502 tests at the bottom.
 #
-# No mocks (handoff §0): real SQLite + real ``uvicorn``.
+# No mocks (handoff §0): a real store + real ``uvicorn``.
 # ---------------------------------------------------------------------------
 
 
@@ -1298,13 +1298,13 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     # receiver's inbox across the transport. The two apps agree about the
     # grant because they share one in-process SCITEX_STORE_DSN, NOT because
     # the fixture's tmp HOME pins them to a file: comms_grants is PostgreSQL
-    # now. record_lineage below still takes db_path — lineage is still SQLite.
+    # now. record_lineage below still takes db_path — lineage had not moved yet.
     db = cross_host_ssh_env["db"]
     record_lineage(child="alice", parent="root-a")
     record_lineage(child="outsider", parent="root-b")
     # db_path is gone from the grants primitives — that store is on
     # PostgreSQL and isolates via SCITEX_STORE_DSN (the pg_schema fixture).
-    # record_lineage above KEEPS its db_path: that module is still on SQLite.
+    # record_lineage above KEEPS its db_path: that module had not moved yet.
     state_db_nodes_grant.grant_send(
         sender="outsider",
         target="alice",

@@ -2,7 +2,7 @@
 
 WHY THIS IS A STEP AND NOT THREE MORE ``NAME_COLUMNS`` PAIRS
 ============================================================
-``_rename_db.rename_rows`` SKIPS a table absent from ``sqlite_master``. So
+``_rename_db.rename_rows`` SKIPPED a table the schema no longer declared. So
 after ``instances`` moved to PostgreSQL, leaving ``("instances", "name")``,
 ``("instances", "spawned_by")`` and ``("instances", "workdir")`` in its
 tables would have made the rename report SUCCESS while every record kept the
@@ -106,7 +106,7 @@ def test_the_rename_leaves_a_merely_containing_component_alone(
     pg_schema: str,
 ) -> None:
     # Arrange — ``sub_path`` replaces WHOLE components, which is what keeps
-    # the rewrite from mangling ``…/old-archive/…``. Same helper the SQLite
+    # the rewrite from mangling ``…/old-archive/…``. Same helper the original
     # path used, so the behaviour cannot drift between the two.
     instance_id = record_instance_start(
         "old", host="host-a", workdir="/home/u/proj/old-archive"
@@ -197,7 +197,7 @@ def test_undoing_an_empty_rename_is_a_no_op(pg_schema: str) -> None:
 
 def test_the_dry_run_count_reports_every_touched_field(pg_schema: str) -> None:
     # Arrange — what ``sac agents rename --dry-run`` prints. Reported under
-    # the same ``table.column`` keys the SQLite counts use, so the operator
+    # the same ``table.column`` keys the pre-migration counts used, so the operator
     # reads ONE list and a zero means the same thing everywhere in it.
     record_instance_start("old", host="host-a", workdir="/home/u/proj/old")
     record_instance_start("child", host="host-a", spawned_by="old")

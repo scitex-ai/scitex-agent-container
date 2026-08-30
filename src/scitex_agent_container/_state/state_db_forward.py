@@ -58,7 +58,7 @@ def resolve_forward_target(*, name: str) -> dict[str, Any] | None:
 
     ``db_path`` IS GONE. Both halves of this resolver now read PostgreSQL:
     ``comms_nodes`` moved on 2026-08-28 and ``instances`` moved the same day,
-    so there is no SQLite file left for the parameter to name. The
+    so there is no file left for the parameter to name. The
     ``a2a_port``/``bound_port`` preference this docstring used to describe is
     likewise gone, and for a better reason than tidiness: the store keeps ONE
     port field. The two columns always held one value, and the split is what

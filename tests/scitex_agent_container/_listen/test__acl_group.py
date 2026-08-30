@@ -19,7 +19,7 @@ The ACL-enforcement half of the group feature, exercised at the
 
 Groups are seeded via ``record_comms_policy(group_name=...)`` — the same
 row ``agent_start`` writes from the resolved spec label. No mocks: real
-on-disk SQLite via the yield-based ``db_path`` env override.
+on-disk state via the yield-based ``db_path`` env override.
 
 AAA (each marker on its own line), one assertion per test.
 """

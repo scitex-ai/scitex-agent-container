@@ -3,7 +3,7 @@
 """``rename_comms_grants`` — what it carries, what it refuses, how it unwinds.
 
 The grants half of the agent-rename flow, replacing the two ``NAME_COLUMNS``
-pairs that renamed the SQLite table until 2026-08-29.
+pairs that renamed the original table until 2026-08-29.
 
 THREE PROPERTIES, and each is load-bearing rather than tidy:
 
@@ -213,7 +213,7 @@ def refused(pg_schema: str):
 
     Constructed through the real verbs: ``grant_send`` then ``revoke_send``
     is exactly how an operator produces a hidden record, and it is the state
-    the SQLite ``UPDATE`` could never have distinguished from an empty slot.
+    the original ``UPDATE`` could never have distinguished from an empty slot.
     """
     grant_send(sender=NEW, target="peer", note="withdrawn on purpose")
     revoke_send(sender=NEW, target="peer")

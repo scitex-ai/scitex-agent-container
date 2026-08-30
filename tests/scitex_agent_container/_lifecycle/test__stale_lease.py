@@ -4,12 +4,12 @@ The operator's failure mode: a previous container died WITHOUT going
 through ``agent_stop``, leaving an active ``instances`` row whose
 recorded PID is dead. Before this helper, the operator had to run::
 
-    sqlite3 ~/.scitex/agent-container/state.db \\
+    # (the retired per-agent database)
         "DELETE FROM instances WHERE name='<name>' AND ended_at IS NULL"
 
 …otherwise the next ``sac agents start`` no-op'd on the zombie lease.
 
-These tests use a real on-disk SQLite ``state.db`` (per-test, via the
+These tests use a real isolated store (per-test, via the
 ``SCITEX_AGENT_CONTAINER_STATE_DB`` env override) and a real PID
 oracle (the test process's own ``os.getpid()`` for the "alive" case;
 a known-dead PID we just forked-and-waited for the "dead" case). No
@@ -54,7 +54,7 @@ def db_path(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     ``instances`` MOVED to the shared PostgreSQL store on 2026-08-28, so this
     fixture now takes ``pg_schema`` as well: the lease helper's
     ``list_active_instances`` / ``record_instance_stop`` writes land there,
-    not in the temp file. The SQLite half is kept because the start path this
+    not in the temp file. The local half is kept because the start path this
     file drives still opens state.db for its other tables — and because a
     temp path is what keeps THIS test's rows out of the host's real database.
     """

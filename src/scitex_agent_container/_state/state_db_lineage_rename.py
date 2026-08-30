@@ -3,12 +3,12 @@
 The lineage half of the agent-rename flow. It replaces two entries that
 ``_lifecycle/_rename_db.NAME_COLUMNS`` carried until 2026-08-28,
 ``("lineage", "child_name")`` and ``("lineage", "parent_name")``, which had
-been renamed by a SQLite ``UPDATE`` over a table that no longer exists.
+been renamed by an ``UPDATE`` over a table that no longer exists.
 
 Leaving those pairs behind was not an option, and the reason is the one
 ``_lifecycle/_rename_db`` already stated for ``comms_nodes`` and
 ``node_comms_policy``: ``rename_rows`` SKIPS a table absent from
-``sqlite_master``, so a stale pair does not crash — it reports SUCCESS
+the schema catalogue, so a stale pair does not crash — it reports SUCCESS
 while the edge stays under the old name. For lineage that silence is a
 PRIVILEGE CHANGE in both directions:
 

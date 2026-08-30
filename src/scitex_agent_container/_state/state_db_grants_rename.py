@@ -6,12 +6,12 @@
 The grants half of the agent-rename flow. It replaces the two entries
 ``_lifecycle/_rename_db.NAME_COLUMNS`` carried until 2026-08-29,
 ``("comms_grants", "sender_name")`` and ``("comms_grants", "target_name")``,
-which renamed the rows with a SQLite ``UPDATE`` over a table that stopped
+which renamed the rows with an ``UPDATE`` over a table that stopped
 existing on 2026-08-28.
 
 Leaving those pairs behind was not an option, for the reason every table
 before this one had its pairs removed: ``rename_rows`` SKIPPED a table absent
-from ``sqlite_master``, so a stale pair did not crash — it reported SUCCESS
+from the schema, so a stale pair did not crash — it reported SUCCESS
 while the grants stayed under the old name. For an ACL table that silence
 cuts both ways and both ways are wrong:
 
@@ -26,7 +26,7 @@ cuts both ways and both ways are wrong:
 BOTH FIELDS ARE THE IDENTITY, SO A RENAME IS A COPY AND A RETIRE
 ================================================================
 ``sender_name`` and ``target_name`` are both IDENTITY fields, exactly as the
-SQLite ``(sender_name, target_name)`` lookup treated them. Rewriting either
+original ``(sender_name, target_name)`` lookup treated them. Rewriting either
 is therefore not an update: it is one record ending and another beginning —
 the :func:`.state_db_acl_policy.rename_comms_policy` shape. A grant may
 match on EITHER side (the renamed agent as sender, as target, or a
@@ -301,7 +301,7 @@ def count_grant_rename_rows(*, old: str) -> dict[str, int]:
     READ-ONLY, and reported under the same ``table.column`` keys the rest of
     the dry-run report uses — the keys the two deleted ``NAME_COLUMNS`` pairs
     printed under, so an operator who has run this before reads the same
-    list. A self-grant counts once on each side, exactly as two SQLite
+    list. A self-grant counts once on each side, exactly as two
     ``WHERE`` clauses over one row would have counted it.
     """
     if not old:

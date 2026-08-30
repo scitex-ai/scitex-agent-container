@@ -9,7 +9,7 @@ lives in a real, throwaway PostgreSQL schema (the ``pg_schema`` fixture). The
 stub server captures the request body so we can assert the dispatch_id was
 actually put on the wire.
 
-``db_path`` is gone — it named a SQLite file and there is no file. The reads
+``db_path`` is gone — it named a file and there is no file. The reads
 below stay UNFILTERED on purpose: what they check is that the peer client
 wrote a row at all and moved its status, not whose it is; the owning-agent
 scoping has its own module, ``_state/test_dispatch_ledger_fleet_scope.py``.

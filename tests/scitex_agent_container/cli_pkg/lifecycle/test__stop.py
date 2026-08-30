@@ -610,7 +610,7 @@ def remote_row_for_clew(cross_host_state_db, pg_schema: str):
     verify BOTH stores are cleared on force-release.
 
     ``pg_schema`` because "both stores" is now literal: the instances row is
-    SQLite and the directory entry is PostgreSQL. Without it the directory
+    in the local file and the directory entry is PostgreSQL. Without it the directory
     write would resolve the unreachable guard DSN and raise.
     """
     from scitex_agent_container._state.state_db import record_instance_start

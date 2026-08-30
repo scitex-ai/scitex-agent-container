@@ -103,7 +103,7 @@ __all__ = [
 # ``record_lineage`` (the WRITER) and ``derive_group`` (the reader that
 # turns edges into the default-ACL unit) moved into
 # :mod:`.state_db_lineage_group` on 2026-08-28, when ``lineage`` left
-# SQLite. The store-shaped writer — a get, a conditional unhide, a put
+# the old backend. The store-shaped writer — a get, a conditional unhide, a put
 # whose ``PutResult.conflicts`` must be inspected because IMMUTABLE keeps
 # the first value WITHOUT raising — does not fit under this module's line
 # cap beside everything else it carries. Same split, same reason, as
@@ -161,7 +161,7 @@ def spawn_allowed(
     """Decide whether ``caller`` is allowed to call ``sac agents start``.
 
     ``db_path`` is GONE (2026-08-28): the parent lookup this makes is a
-    read of the shared PostgreSQL lineage store, not of a SQLite file.
+    read of the shared PostgreSQL lineage store, not of a local file.
 
     Current policy (handoff §4 / WI-2, relaxed per operator ruling
     2026-07-05): a *root* node (no parent) is allowed to spawn.
@@ -307,7 +307,7 @@ def resolve_node_host(*, name: str) -> dict[str, Any] | None:
     path in ``_listen/_node_channel.py`` handles that case.
 
     ``db_path`` IS GONE: both sources are PostgreSQL now, so there is no
-    SQLite file for it to name.
+    file for it to name.
     """
     if not name:
         return None

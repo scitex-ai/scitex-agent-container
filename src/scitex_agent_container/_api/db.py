@@ -1,7 +1,7 @@
 """``sac.db`` — instance-registry verbs as bare names.
 
 ``show`` / ``query`` / ``export`` / ``import_`` were deleted on 2026-08-29
-with the SQLite read surface they wrapped; the CLI commands behind them are
+with the per-agent read surface they wrapped; the CLI commands behind them are
 gone, so re-exporting the names would only have promised verbs that raise.
 """
 

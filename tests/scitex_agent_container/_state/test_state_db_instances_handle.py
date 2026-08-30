@@ -7,7 +7,7 @@ run beneath ``_send_resolve``, ``resolve_node_host``,
 operator command.
 
 MEASURED, not assumed (card ``sqlite-out-per-call-connect-cost-20260828``):
-``sqlite3.connect`` 0.067 ms against ``psycopg.connect`` 10.707 ms — 159x —
+the previous local connect 0.067 ms against ``psycopg.connect`` 10.707 ms — 159x —
 and ``Store.__init__`` pays that connect plus the dialect ``schema_lock`` and
 two probes even when no DDL runs. On the sibling table a per-call ``Store``
 measured a ~44x routing regression end to end.

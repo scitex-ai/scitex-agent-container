@@ -24,7 +24,7 @@ must come from the runtime that just started the session
 (:meth:`runtimes.base.RuntimeBase.session_name`), so the recorded string
 is THE SAME one passed to ``tmux new-session -s``.
 
-Real on-disk SQLite state.db (env-overridden per test) and the REAL
+A real isolated store (env-overridden per test) and the REAL
 ``TuiSessionRuntime``. No mocks.
 """
 

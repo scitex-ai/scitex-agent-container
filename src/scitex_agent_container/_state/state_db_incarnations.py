@@ -24,21 +24,21 @@ never by value (see ``_lifecycle._birth_certificate``).
 
 THE STORAGE NOTE THIS MODULE USED TO CARRY IS NOW DISCHARGED
 ============================================================
-The previous docstring said, in as many words, that the birth record went
-through the SQLite factory so that "the separately-carded sqlite→Postgres
-migration carries it along instead of this PR front-running it". This IS
-that migration. The note was a promise; this module is it being kept.
+An earlier docstring here promised that the birth record would ride along
+with a separately-carded storage migration rather than front-running it.
+This module is that promise kept: the record is written to the store and
+nowhere else.
 
 The move is by ADOPTING :mod:`scitex_dev.store` — the fleet's own store
 primitive — rather than by sac growing a private psycopg layer, exactly as
 :mod:`.state_db_verdict_dedup` did before it. That primitive implements the
 operator's 2026-08-19 rule ("fail fast, fail loud, no fallbacks") in its own
 ``resolve_target``: exactly two steps (``SCITEX_STORE_DSN`` or the per-host
-Postgres) and deliberately NO SQLite fallback. A host whose PostgreSQL is
-unreachable raises ``StoreTargetError`` naming the DSN it could not reach.
+PostgreSQL) and deliberately no local-file fallback. A host whose PostgreSQL
+is unreachable raises ``StoreTargetError`` naming the DSN it could not reach.
 
-``db_path`` IS GONE from every function. It named a SQLite file; there is no
-file. Callers that used to thread it through simply stop.
+``db_path`` IS GONE from every function. It named a file; there is no file.
+Callers that used to thread it through simply stop.
 
 TWO DELIBERATE DIVERGENCES FROM THE verdict_dedup TEMPLATE
 ==========================================================
@@ -50,9 +50,9 @@ TWO DELIBERATE DIVERGENCES FROM THE verdict_dedup TEMPLATE
    later as an unparseable timestamp. Same clock (:func:`state_db.now_iso`),
    same format, different storage.
 
-2. THE BIRTH FIELDS ARE ``LAST_WRITER_WINS``, NOT ``IMMUTABLE``. The SQLite
-   version was ``INSERT OR REPLACE`` and its docstring said why: "a retried
-   launch that re-records the same id must refresh rather than crash".
+2. THE BIRTH FIELDS ARE ``LAST_WRITER_WINS``, NOT ``IMMUTABLE``, because a
+   retried launch that re-records the same id must refresh rather than
+   crash.
    ``IMMUTABLE`` would make that retry raise. This is the opposite call from
    verdict_dedup, where a moved timestamp silently reorders a failure streak
    — there the immutability IS the invariant; here refreshability is.
@@ -66,7 +66,7 @@ is a real signal (a pre-artifact incarnation, or a birth write that failed)
 and fabricating a birth here would hide it."
 
 The store has no UPDATE-only verb — ``put`` writes whatever record you hand
-it — so the SQLite ``UPDATE ... WHERE`` no longer refuses on its own. The
+it — so nothing refuses a write to an id that was never born. The
 refusal is therefore EXPLICIT here: read first, return False on a miss, and
 only then write. Written out rather than relied upon, because the guard
 moved from the database into this function and a reader needs to see it.
@@ -120,9 +120,8 @@ def _schema() -> Any:
     takes ``LAST_WRITER_WINS`` (see the module docstring for why this
     differs from verdict_dedup).
 
-    ``agent_id`` is indexed: the SQLite table carried
-    ``idx_incarnations_agent ON (agent_id, born_at)``, and the queries that
-    index served — "every incarnation of this agent" — are the ones a
+    ``agent_id`` is indexed on ``(agent_id, born_at)``, and the queries that
+    index serves — "every incarnation of this agent" — are the ones a
     future reader will write.
     """
     from scitex_dev.store import FieldKind, FieldPolicy, FieldRole, MergeRule, Schema
@@ -195,10 +194,8 @@ def open_incarnation_store() -> Store:
 def init_incarnations_schema() -> str:
     """Create the incarnations tables if missing. Idempotent.
 
-    Returns the resolved store LOCATOR as a string — the PostgreSQL
-    equivalent of the ``Path`` the SQLite version returned, and useful in
-    exactly the same way: it names WHERE the state actually went, so an
-    operator can check it rather than assume it.
+    Returns the resolved store LOCATOR as a string. It names WHERE the state
+    actually went, so an operator can check it rather than assume it.
     """
     store = open_incarnation_store()
     try:
@@ -222,9 +219,8 @@ def record_incarnation_birth(
     exactly once per incarnation, and a retried launch that re-records the
     same id must refresh rather than crash.
 
-    A retry refreshes ``born_at`` too. That matches the SQLite behaviour
-    exactly — ``INSERT OR REPLACE`` rewrote the whole row — and is the
-    correct reading: the birth being recorded is the one that took.
+    A retry refreshes ``born_at`` too, which is the correct reading: the
+    birth being recorded is the one that took.
     """
     from scitex_dev.store import ANY_REVISION
 
@@ -266,7 +262,8 @@ def record_incarnation_exit(
 
     The read-then-write is not an optimisation and must not be collapsed
     into a bare ``put``: the store has no UPDATE-only verb, so this function
-    IS the refusal that the SQLite ``UPDATE ... WHERE`` used to perform.
+    IS the refusal — without it, settling an id that was never born would
+    INSERT a death with no birth.
     """
     from scitex_dev.store import ANY_REVISION
 
@@ -298,9 +295,8 @@ def get_incarnation(incarnation_id: str) -> dict | None:
 
     ``Row.values`` is the schema fields only — the store's own bookkeeping
     (hlc, seq, origin, owner) hangs off sibling attributes and deliberately
-    does NOT ride along in the returned dict. The SQLite version returned
-    ``dict(sqlite3.Row)``, which was likewise exactly the table columns, so
-    callers see the same shape they always did.
+    does NOT ride along in the returned dict, so callers see exactly the
+    declared fields and nothing else.
     """
     store = open_incarnation_store()
     try:

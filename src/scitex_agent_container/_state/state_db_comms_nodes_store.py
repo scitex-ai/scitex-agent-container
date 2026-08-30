@@ -4,7 +4,7 @@ Split out of :mod:`.state_db_comms_nodes` (which stays the import surface
 everything else uses) to keep both files under the per-file line cap. This
 half holds nothing a caller outside ``_state`` should reach for: the schema
 declaration, the ``Store`` factory, and the two helpers that turn a stored
-record into the dict shape the SQLite version returned.
+record into the dict shape callers read.
 
 ON POSTGRESQL SINCE 2026-08-28, AND THAT DELETES THE SYNC LAYER
 ===============================================================
@@ -25,14 +25,14 @@ writes ONE directory, so cross-host resolution is a read rather than a
 replicated guess, and the anti-entropy layer has nothing left to converge.
 
 The store resolves through ``scitex_dev.store.host_store``:
-``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO SQLite fallback, so
+``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO local-file fallback, so
 a host whose PostgreSQL is unreachable raises ``StoreTargetError`` naming the
 DSN it could not reach — rather than resolving an empty local file and
 answering "that agent is not registered", which is the failure this whole
 move exists to remove.
 
 ``db_path`` IS GONE from every signature in the sibling module. It named a
-SQLite file; there is no file. Test isolation comes from pointing
+file; there is no file. Test isolation comes from pointing
 ``SCITEX_STORE_DSN`` at a throwaway schema (the ``pg_schema`` fixture),
 which is stronger than a temp path was because it exercises the real
 resolver.
@@ -42,7 +42,7 @@ THREE COLUMNS DID NOT MOVE, AND EACH IS A CONCEPT THE PRIMITIVE OWNS
 The schema below is the one :mod:`.._store_plugin` declared for
 ``sac_comms_nodes`` back when it was still a plan — ``name`` identity,
 ``host`` and ``a2a_port`` last-writer-wins, ``registered_at`` immutable —
-and it declares exactly four fields. The three SQLite columns that are NOT
+and it declares exactly four fields. The three legacy columns that are NOT
 here were each a hand-rolled copy of something the store already maintains,
 and keeping a second copy is how the two drift:
 
@@ -55,8 +55,8 @@ and keeping a second copy is how the two drift:
     ``register_comms_node`` unhides. Nothing is ever hard-deleted, so "was
     never registered" and "was registered and stopped" remain different
     answers — which they were NOT going to be for much longer, because the
-    SQLite version's own docstring planned a GC that physically deletes
-    tombstones.
+    previous implementation's own docstring planned a GC that physically
+    deletes tombstones.
 
 ``source_host`` → the reserved ``_origin`` column (``Row.origin``)
     Hand-rolled provenance, and :mod:`.._store_plugin` measured what it was
@@ -108,8 +108,8 @@ ONE HANDLE PER PROCESS — THIS MODULE DIFFERS FROM ITS SIBLINGS ON PURPOSE
 =========================================================================
 Every other migrated module opens and closes a ``Store`` per call. This one
 caches: ``comms_nodes`` is the a2a ROUTING path, read once per message, and
-``psycopg.connect`` costs 10.707 ms against SQLite's 0.067 ms (159x,
-measured on the live primary — card
+``psycopg.connect`` costs 10.707 ms against the 0.067 ms the previous
+local-file backend paid (159x, measured on the live primary — card
 ``sqlite-out-per-call-connect-cost-20260828``). See
 :func:`open_comms_nodes_store` for the end-to-end number, the target-keyed
 invalidation, and what happens when the connection dies.
@@ -300,8 +300,8 @@ def comms_nodes_schema() -> Any:
     return Schema(
         name=COMMS_NODES_STORE,
         fields={
-            # The agent name IS the identity, exactly as the SQLite PRIMARY
-            # KEY treated it. ADR-0014: names are globally unique.
+            # The agent name IS the identity, exactly as the previous
+            # PRIMARY KEY treated it. ADR-0014: names are globally unique.
             "name": ident(FieldKind.TEXT),
             "host": addr(FieldKind.TEXT, indexed=True),
             "a2a_port": addr(FieldKind.INTEGER),
@@ -367,11 +367,13 @@ def open_comms_nodes_store() -> "Store":
     ``resolve_forward_target`` and ``_agents_list``, which run PER MESSAGE.
 
     Measured on the live primary (card
-    ``sqlite-out-per-call-connect-cost-20260828``): ``sqlite3.connect`` costs
-    0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and ``Store.__init__``
+    ``sqlite-out-per-call-connect-cost-20260828``): the previous local-file
+    connect cost 0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and
+    ``Store.__init__``
     pays that connect plus the dialect ``schema_lock`` and two probes even
     when no DDL runs. End to end, ``resolve_comms_node_host`` measured
-    1.03 ms/call on SQLite against 45.3 ms/call with a per-call ``Store``:
+    1.03 ms/call before the move against 45.3 ms/call with a per-call
+    ``Store``:
     a ~44x routing regression, which is not a cost this table can pay.
 
     ``Store`` carries its own internal ``RLock`` and is built to be shared,
@@ -459,7 +461,7 @@ def hlc_seconds(row: "Row") -> float:
 
 
 def comms_node_as_dict(row: "Row") -> dict[str, Any]:
-    """One stored record in the caller-facing shape the SQLite version had.
+    """One stored record in the caller-facing dict shape.
 
     ``updated_at`` / ``ended_at`` / ``source_host`` are DERIVED (see the
     module docstring): the HLC, the hide flag, and ``_origin`` respectively.

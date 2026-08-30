@@ -334,8 +334,8 @@ def test_the_canonical_port_is_accepted() -> None:
     assert result is None
 
 
-def test_a_sqlite_store_path_is_not_a_dsn() -> None:
-    # Arrange — ``SCITEX_CARDS_DB`` is a filesystem path on SQLite.
+def test_a_file_store_path_is_not_a_dsn() -> None:
+    # Arrange — ``SCITEX_CARDS_DB`` is a filesystem path, not a DSN.
     argv = ["--env", "SCITEX_CARDS_DB=/home/agent/.scitex/cards/cards.db"]
     # Act
     result = assert_no_forbidden_scitex_dsn(argv)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""The ``lineage`` store — the properties the SQLite version could not have.
+"""The ``lineage`` store — the properties the previous backend could not have.
 
 Companion to the 2026-08-28 move. Behaviour that merely SURVIVED the
 migration (the three group relations, the walks, the ACL decisions) stays
@@ -13,7 +13,7 @@ claims the STORE introduces, each of which the ACL now rests on:
   ever started raising instead of reporting, the writer would go from
   "logs a contradiction" to "crashes a spawn", and only this file would
   say so.
-* The solitary short-circuit never opens the store. Cheap against SQLite,
+* The solitary short-circuit never opens the store. Cheap against a local file,
   load-bearing against PostgreSQL: an isolated capsule must resolve its
   own group without a network round-trip.
 * The handle is cached per process and EVICTED when the DSN changes.

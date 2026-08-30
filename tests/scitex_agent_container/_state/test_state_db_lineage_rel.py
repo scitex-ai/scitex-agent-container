@@ -5,14 +5,14 @@
 These tests lived in ``test_state_db_acl_policy.py`` until 2026-08-28, when
 ``node_comms_policy`` moved to PostgreSQL and this function did not. They
 moved here because it read ``lineage``, a different table with a different
-owner, still on SQLite at the time.
+owner, still on the old backend at the time.
 
 THAT SENTENCE IS NOW DISCHARGED. ``lineage`` moved the same day, so the
 function no longer takes ``db_path`` and no longer reads a file. The tests
 stay in this file — the classification is still a distinct question from
 the policy that consumes it — but they take ``pg_schema`` now, and the
 "measured where the property still lives" note they carried was about a
-SQLite table that no longer exists.
+table that no longer exists.
 
 Real PostgreSQL, no mocks. These SKIP on a host with no writable database.
 """

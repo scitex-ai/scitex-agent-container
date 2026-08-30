@@ -200,7 +200,7 @@ os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(_SAC_STATE_FLOOR / "runti
 # that is correct — and all of it protects only the YAML.
 #
 # The board is no longer just YAML. scitex-cards mirrors every write into a
-# SQLite shadow, and the mirror resolves its OWN path independently of the
+# card-board shadow, and the mirror resolves its OWN path independently of the
 # store you wrote to:
 #
 #   _dual_write.mirror_after_save(doc, store_path)   # store_path = our tmp yaml

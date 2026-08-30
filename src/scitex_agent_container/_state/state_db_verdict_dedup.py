@@ -7,16 +7,16 @@ already saw. A re-run that flips the conclusion on the same ``head_sha`` is a
 DISTINCT key, so the flipped verdict IS delivered; a new push is likewise
 distinct. The dedup is per exact outcome, not per PR.
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
+WHY THIS MODULE IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
+The operator's 2026-08-19 order was to move every table to
 PostgreSQL: "fail fast, fail loud, no fallbacks". This is the first table to
 move, and it moves by ADOPTING :mod:`scitex_dev.store` — the fleet's own
 store primitive — rather than by sac growing a private psycopg layer.
 
 That primitive already implements the operator's rule, in its own words at
 ``resolve_target``: "exactly two steps (``SCITEX_STORE_DSN`` or the per-host
-Postgres) and deliberately NO SQLite fallback: a host whose Postgres is down
+Postgres) and deliberately no local-file fallback: a host whose Postgres is down
 must fail loudly rather than start writing to a private local file that
 shares nothing."
 
@@ -28,7 +28,7 @@ reads is worse than no dedup at all.
 
 WHAT REPLACED WHAT
 ==================
-``db_path`` IS GONE from every function. It named a SQLite file; there is no
+``db_path`` IS GONE from every function. It named a file; there is no
 file. The store target comes from :func:`scitex_dev.store.host_store`, which
 sac's containers reach because ``SCITEX_STORE_DSN`` is injected as a fleet
 default (see :mod:`.._fleet_env`). Callers that used to thread ``db_path``
@@ -167,7 +167,7 @@ def init_verdict_dedup_schema() -> str:
     """Create the delivered-set tables if missing. Idempotent.
 
     Returns the resolved store LOCATOR as a string — the PostgreSQL
-    equivalent of the ``Path`` the SQLite version returned, and useful in
+    equivalent of the ``Path`` the previous implementation returned, and useful in
     exactly the same way: it names WHERE the state actually went, so an
     operator can check it rather than assume it.
 

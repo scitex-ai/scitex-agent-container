@@ -230,7 +230,7 @@ def _live_agent_pids() -> dict[str, int] | None:
     missing pid against the owner's heartbeat before concluding anything —
     :func:`resolve_liveness` does.
 
-    ``db_path`` IS GONE. It named the SQLite file the registry used to live
+    ``db_path`` IS GONE. It named the file the registry used to live
     in; since 2026-08-28 ``instances`` is in the shared PostgreSQL store, so
     the parameter selected nothing. Removing it rather than accepting and
     ignoring it matters HERE more than elsewhere: a caller passing a path and
@@ -287,7 +287,7 @@ def resolve_liveness(
     it never guesses "dead".
 
     ``db_path`` overrides the registry location (tests point it at a real temp
-    SQLite file; production leaves it ``None``)."""
+    file; production leaves it ``None``)."""
     from ._agent_exec_liveness import _pid_alive
 
     pids = _live_agent_pids()

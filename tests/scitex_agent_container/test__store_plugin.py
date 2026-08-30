@@ -17,7 +17,6 @@ from importlib.metadata import entry_points
 import pytest
 from scitex_dev.store import HLC, MergeRule, merge_field
 
-from scitex_agent_container._state.state_db import KNOWN_TABLES
 from scitex_agent_container._store_plugin import (
     CLASSIFIED,
     INSTANCES,
@@ -40,17 +39,20 @@ def _stamp(wall_us: int, node: str = "compute-04") -> HLC:
 # ---------------------------------------------------------------------------
 
 
-def test_every_known_table_has_an_explicit_sync_decision():
-    # Arrange: the failure this guards is a NEW table added to the state DB
-    # that nobody classified. It would then be silently absent from sync,
-    # which looks identical to a table deliberately excluded. Forcing every
-    # KNOWN_TABLES entry into exactly one of the two sets makes the omission
-    # a red test instead of a quiet gap.
-    decided = set(SOURCE_TABLE.values()) | set(NEVER_SYNCED)
-    # Act
-    undecided = sorted(set(KNOWN_TABLES) - decided)
-    # Assert
-    assert undecided == []
+# ``test_every_known_table_has_an_explicit_sync_decision`` WAS HERE. It read
+# ``state_db.KNOWN_TABLES`` and required every entry to appear in exactly one
+# of ``SOURCE_TABLE`` / ``NEVER_SYNCED``, so a NEW table nobody classified
+# turned into a red test rather than a quiet absence from sync — an absence
+# that looks identical to a deliberate exclusion.
+#
+# ``KNOWN_TABLES`` was the whitelist of tables in sac's own local database.
+# That database is gone and so is the constant, which leaves the gate with no
+# population to iterate: it had already been passing vacuously over an empty
+# tuple. The partition tests below still hold ``SOURCE_TABLE`` and
+# ``NEVER_SYNCED`` to being disjoint and to naming real fields, so what is
+# lost is only the completeness half — and completeness against WHAT is now
+# the open question, since the tables these policies describe live in the
+# shared store and sac no longer enumerates them anywhere.
 
 
 def test_no_table_is_both_replicated_and_never_synced():

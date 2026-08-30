@@ -7,9 +7,9 @@ alone: this file knows how a claim is STORED, and ``port_allocator`` knows
 which port an agent should get. Its surface is re-exported from
 ``port_allocator`` so the existing import sites are unchanged.
 
-WHY THIS LEDGER NO LONGER TOUCHES SQLite
+WHY THIS LEDGER IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
+The operator's 2026-08-19 order was to move every table to
 PostgreSQL: "fail fast, fail loud, no fallbacks". ``a2a_ports`` moves the way
 ``verdict_delivered``, ``incarnations``, ``pending_prompts``,
 ``inbound_dispatches`` and ``comms_grants`` moved before it — by ADOPTING
@@ -79,7 +79,7 @@ THE STORE HANDLE IS CACHED PER PROCESS (card
 sqlite-out-per-call-connect-cost-20260828)
 ============================================
 ``Store.__init__`` pays a psycopg connect (measured 10.7 ms — 159x the old
-SQLite open) plus a schema advisory lock and two catalogue probes on EVERY
+local open) plus a schema advisory lock and two catalogue probes on EVERY
 construction, and port allocation sits on the agent-start path. So the
 module holds ONE Store per (resolved target, pid) behind a lock —
 :func:`port_store` — instead of constructing per call. The key includes the
@@ -125,7 +125,7 @@ def _schema() -> Any:
     """The claim-ledger schema.
 
     Built lazily so importing this module does not import scitex-dev; the
-    SQLite version was equally lazy about ``state_db``, for the same reason
+    original was equally lazy about ``state_db``, for the same reason
     (import cost off the hot path).
 
     ``port`` is the sole IDENTITY (the store requires IMMUTABLE on
@@ -140,7 +140,7 @@ def _schema() -> Any:
     port to its first claimant. The loud-lost-race property lives in
     :func:`try_claim`'s mandatory read-back instead.
 
-    ``claimed_at`` is epoch REAL, not the ISO text the SQLite column held.
+    ``claimed_at`` is epoch REAL, not the ISO text the original column held.
     Every migrated timestamp column across ``_state`` is REAL, and the only
     consumer is ``sac ports --json``, which passes the value straight
     through.
@@ -274,7 +274,7 @@ def init_port_schema() -> str:
     """Create the claim tables if missing. Idempotent.
 
     Returns the resolved store LOCATOR as a string — the PostgreSQL
-    equivalent of the ``Path`` the SQLite schema helper worked against, and
+    equivalent of the ``Path`` the schema helper worked against, and
     useful in exactly the same way: it names WHERE the claims actually went,
     so an operator can check rather than assume.
     """

@@ -140,10 +140,10 @@ def _open_instance_pid(name: str) -> int | None:
     ``preflight`` let the rename proceed underneath it.
     """
     # Through the OWNING module, not through its table. The raw SELECT this
-    # replaces would keep reading a SQLite ``instances`` table after that
+    # replaces would keep reading a local ``instances`` table after that
     # table moves backend, and would report "not running" for every agent
     # rather than failing — the same silent-stranding shape found in
-    # ``_authheal/_specimen`` during the sqlite->PostgreSQL migration.
+    # ``_authheal/_specimen`` during the move to PostgreSQL.
     #
     # ``list_active_instances`` already applies ``ended_at IS NULL`` and
     # orders by ``started_at DESC``, so only this function's two extra
@@ -152,7 +152,7 @@ def _open_instance_pid(name: str) -> int | None:
 
     try:
         rows = list_active_instances()
-    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
+    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught a driver error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
         return None
     for row in rows:
         if row.get("name") == name and row.get("pid") is not None:
@@ -257,7 +257,7 @@ def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
     The rows a rename actually carries are in the shared PostgreSQL store,
     and the two counters below are their readers.
 
-    Both report under the SQLite-era ``table.column`` keys deliberately — an
+    Both report under the pre-migration ``table.column`` keys deliberately — an
     operator who has run ``--dry-run`` before reads the same list, and a zero
     means the same thing it meant.
 

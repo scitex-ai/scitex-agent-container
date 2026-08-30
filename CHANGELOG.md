@@ -6,6 +6,60 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- **The storage engine itself. sac opens no local database, and the audit rule
+  that says so now has no allowlist to read around it.** `state_db.py` kept a
+  connection factory, `init_schema`, `open_db`, `table_counts` and the
+  `KNOWN_TABLES` whitelist every generic reader walked; all of it is deleted,
+  along with `state_db_schema.py`. The shape they had reached is the argument
+  for deleting rather than keeping them: `KNOWN_TABLES` was already an EMPTY
+  tuple and both schema constants pure SQL comments, so `init_schema` issued
+  no DDL, `open_db` handed out a connection to a database with no tables, and
+  `table_counts` could only return `{}`. Nothing in `src/` called any of the
+  three. What remained created an empty file on disk and answered every
+  question with a plausible zero — the exact success-shaped wrong answer each
+  departing table was removed to avoid, one level up.
+  `state_db.py` is now a namespace: two id helpers and the accessor
+  re-exports.
+- **The `db_path` chain through `_lifecycle/_instances.py`.** It was added
+  2026-07-14 to PIN a per-agent database for the health monitor's restart
+  callback, which runs on a background daemon thread — without it, writes
+  followed a mutable process-global and landed in another test's database
+  under pytest and in the live fleet file on a real host. Both were observed.
+  Every write on that path now addresses the store through `SCITEX_STORE_DSN`,
+  so the parameter had spent its last weeks being threaded from
+  `make_restart_callback` through `restart_and_record` to
+  `record_local_instance`, where nothing read it. A pin that pins nothing
+  reads as an isolation guarantee that is not being made.
+- **The fourteen one-shot `scripts/migrate_*_to_postgres.py` carriers, their
+  five shared helpers and their nine tests.** A one-shot migration does not
+  earn permanent tooling. No carrier logged its own run, so completion was
+  established externally: the source files are gone fleet-wide (a manifest of
+  33 `state.db` files was taken 2026-08-29 before deletion), and each
+  destination store holds rows stamped BEFORE its cutover — history only a
+  migration could have written. `sac_channel_import` keeps 53 import records
+  naming source host, path and id window across three hosts.
+  **One exception is recorded as a loss, not a completion:**
+  `migrate_diary_to_postgres.py` measured 32 heartbeats on compute-04 the
+  night of the port and the destination holds 1, on an append-only store where
+  every tick is its own record. Those rows were not carried and the source is
+  now destroyed. The script is deleted because it has nothing left to carry on
+  any host — not because it finished.
+
+### Changed
+- **`tests/develop/test_sqlite_footprint_frozen.py` keeps its scans and loses
+  its allowlists.** Four frozen inventories (`FROZEN_SQLITE`, `_SCRIPTS`,
+  `_TESTS`, `_DDL`) are empty, and their staleness tests were vacuous with
+  them — a test that cannot fail is worse than no test, because the file still
+  lists it. The predicate "every module importing sqlite3 appears in
+  FROZEN_SQLITE" collapses to "nothing imports sqlite3", which is the rule the
+  operator asked for with no list between the reader and it. The import scan,
+  the `CREATE TABLE` scan (with `POSTGRES_DDL` for legitimate PostgreSQL
+  definers) and the VENDOR scan all stay, as do the planted-file positive
+  controls. The vendor scan is the one that must outlive the others:
+  `SQLiteSession` is the shape SQLite returns in once nobody writes
+  `import sqlite3`, and no import check can see it.
+
 ### Added
 - **`sac agents resume-rate-limited` — the third agent-liveness enforcer, and
   the shape the other two divide the fleet around without covering.** A

@@ -253,7 +253,7 @@ def _emit(result: dict, as_json: bool) -> None:
 #
 # Imports happen inside the callback (not at module import) to keep the
 # Click cold-start cheap: ``sac --help`` and tab-completion press should
-# never load SQLite. The same lazy pattern used by ``host_group`` /
+# never load a database driver. The same lazy pattern used by ``host_group`` /
 # ``peer_group`` for state_db consumers.
 # ---------------------------------------------------------------------------
 

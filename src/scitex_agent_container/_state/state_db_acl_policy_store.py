@@ -111,7 +111,7 @@ def policy_schema() -> Any:
     return Schema(
         name=POLICY_STORE,
         fields={
-            # The agent name IS the identity, exactly as the SQLite
+            # The agent name IS the identity, exactly as the original
             # PRIMARY KEY treated it.
             "name": _ident(FieldKind.TEXT),
             "outbound_siblings": _setting(FieldKind.TEXT),
@@ -119,7 +119,7 @@ def policy_schema() -> Any:
             "inbound_siblings": _setting(FieldKind.TEXT),
             "inbound_parent": _setting(FieldKind.TEXT),
             "lineage_group": _setting(FieldKind.TEXT),
-            # BOOL, not the SQLite 0/1 INTEGER. The column was a boolean
+            # BOOL, not a 0/1 INTEGER. The column was a boolean
             # wearing an integer's clothes; the store has the type.
             "may_spawn": _setting(FieldKind.BOOL),
             "group_name": _setting(FieldKind.TEXT),
@@ -255,7 +255,7 @@ def decode_policy(values: Any) -> dict[str, Any]:
 
     Every field is read through a ``get`` carrying the pre-Phase-3
     default, so a record written before a field existed reads exactly as
-    it did under the SQLite column default rather than raising a
+    it did under the original column default rather than raising a
     ``KeyError`` inside an ACL gate.
     """
     return {

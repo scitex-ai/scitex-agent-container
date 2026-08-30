@@ -120,7 +120,7 @@ HOST_PROCESS_AGENT_NAME = "cli"
 # ``config.yaml``'s ``fleet_default_env``. Asserted by
 # test_an_empty_fleet_default_env_is_a_valid_state.
 #
-# SCITEX_STORE_DSN (2026-08-19, the operator's SQLite-eradication order:
+# SCITEX_STORE_DSN (2026-08-19, the operator's storage-consolidation order:
 # 「sqlite 根絶をしてください」「fail fast, fail loud, no fallbacks」).
 #
 # READ THE TWO PARAGRAPHS ABOVE BEFORE ADDING ANOTHER KEY HERE. Two store
@@ -143,8 +143,8 @@ HOST_PROCESS_AGENT_NAME = "cli"
 #                                   Store() raises StoreTargetError naming the
 #                                   missing socket path
 #
-# The unset arm is the point: the failure is LOUD and there is no SQLite path
-# to slip into. That is scitex-dev's design, in their own words at
+# The unset arm is the point: the failure is LOUD and there is no local-file
+# path to slip into. That is scitex-dev's design, in their own words at
 # ``resolve_target``: "deliberately no SQLite fallback ... a host whose
 # Postgres is down must fail loudly rather than start writing to a private
 # local file that shares nothing."
@@ -203,7 +203,7 @@ HOST_PROCESS_AGENT_NAME = "cli"
 # cannot write".
 #
 # (Those five steps are described rather than quoted on purpose: the
-# sqlite-footprint guard flags any module carrying table-definition DDL, and it
+# storage-footprint guard flags any module carrying table-definition DDL, and it
 # reads a COMMENT the same way it reads code. It flagged this file when the
 # statements were written out literally, which is the guard being right — a
 # module that declares no tables should not contain the words for declaring

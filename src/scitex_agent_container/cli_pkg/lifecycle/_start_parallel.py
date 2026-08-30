@@ -5,7 +5,7 @@
 When ``sac agents start`` is handed MULTIPLE targets (or a bulk
 directory of ``<name>/<name>.yaml`` agents), launching them all in one
 in-process loop serialises the work and a naive in-process thread pool
-would RACE: ``agent_start`` writes a shared SQLite state DB and
+would RACE: ``agent_start`` writes a shared state store and
 allocates ports, so two threads stepping through it concurrently
 corrupt each other's port claims / instance rows.
 
@@ -15,7 +15,7 @@ dispatch each target as ITS OWN
 
     sac agents start <target> --yes --no-redispatch [propagated flags]
 
-subprocess. Each child owns its own process, opens its own SQLite
+subprocess. Each child owns its own process, opens its own
 connection, and the kernel serialises the DB writes — no shared
 in-process mutable state to race. We bound the fan-out with a
 ``ThreadPoolExecutor(max_workers=concurrency)`` (each worker just

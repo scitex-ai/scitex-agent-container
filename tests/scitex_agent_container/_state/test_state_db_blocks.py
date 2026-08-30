@@ -127,7 +127,7 @@ def test_block_empty_target_raises(pg_schema: str) -> None:
 #
 # `unblock_send` used to DELETE. The store has no delete — it has `hide`, which
 # is the better primitive here (who unblocked whom, and when, survives) but
-# introduces a state SQLite did not have: a cleared pair is HIDDEN, not ABSENT.
+# introduces a state a plain DELETE did not have: a cleared pair is HIDDEN, not ABSENT.
 # These pin the three-value branch that distinguishes them.
 
 
@@ -191,7 +191,7 @@ def test_unblocking_hides_the_record_rather_than_destroying_it(pg_schema: str) -
 
 
 def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> None:
-    """The SQLite version returned None. Naming where the state went is more
+    """The previous implementation returned None. Naming where the state went is more
     useful: an operator can check it instead of assuming it."""
     # Arrange
     expected_scheme = "postgres"

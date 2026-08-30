@@ -26,16 +26,16 @@ suppress the redundant frame).
 Schema is minimal: ``(sender, target)`` as the composite identity plus
 ``last_notified_at``.
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
+WHY THIS MODULE IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
+The operator's 2026-08-19 order was to move every table to
 PostgreSQL: "fail fast, fail loud, no fallbacks". This is the fifth
 table to move, and it lands in the same PR as ``comms_blocks`` because
 the two are siblings from the same task, both empty, and both remove a
 line from the same block of ``state_db.init_schema`` — splitting them
 would only manufacture a third merge conflict in that function.
 
-``db_path`` IS GONE from every function. It named a SQLite file; there
+``db_path`` IS GONE from every function. It named a file; there
 is no file.
 
 THE ATOMIC CHECK-AND-UPDATE IS PRESERVED, BY A DIFFERENT MECHANISM
@@ -112,7 +112,7 @@ def _schema() -> Any:
 
     Built lazily so importing this module does not import scitex-dev.
 
-    ``(sender, target)`` is the composite IDENTITY — the SQLite table's PRIMARY
+    ``(sender, target)`` is the composite IDENTITY — the original PRIMARY
     KEY, unchanged. ``last_notified_at`` is LAST_WRITER_WINS: every successful
     notification moves it forward, and that IS the rate limit.
     """
@@ -251,7 +251,7 @@ def should_notify_acl_deny(
                 return False
         # First time, or cool-down elapsed — write + return True.
         #
-        # THE REVISION IS THE TRANSACTION. The SQLite version held the read and
+        # THE REVISION IS THE TRANSACTION. The original held the read and
         # the upsert in one transaction so a burst of denied attempts published
         # ONE notification. Here the read's own revision is passed back as
         # ``expected_revision``: a racing writer that moved it first makes this

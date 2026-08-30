@@ -4,14 +4,14 @@ Every outbound dispatch gets a stable ``dispatch_id`` minted at the sender and
 persisted to the ``dispatches`` store so dispatches can be filtered and
 recalled later.
 
-``db_path`` IS GONE from every call. It named a SQLite file and there is no
+``db_path`` IS GONE from every call. It named a file and there is no
 file; every test that used to thread ``tmp_path / "state.db"`` now takes
 ``pg_schema`` instead, which is the seam keeping one test's rows out of
 another's — and out of the live fleet store.
 
 THE ONE TEST THAT CHANGED SHAPE rather than just its fixture is the schema
-one. It used to open ``state.db`` with ``sqlite3`` and look for a table named
-``dispatches`` in ``sqlite_master``; there is no file to open, so it now reads
+one. It used to open ``state.db`` directly and look for a table named
+``dispatches`` in the schema catalogue; there is no file to open, so it now reads
 the tables PostgreSQL actually holds through a SECOND, INDEPENDENT client —
 raw psycopg, plain SQL. Asking the store whether its own write landed cannot
 distinguish "wrote to PostgreSQL" from "wrote somewhere else", which is
@@ -64,7 +64,7 @@ def test_init_ledger_schema_creates_the_dispatches_store_in_postgres(pg_schema: 
 def test_init_ledger_schema_reports_where_the_state_went(pg_schema: str):
     """The return value NAMES the target, so a caller can check it.
 
-    The SQLite version returned a Path for the same reason. A store that
+    The previous implementation returned a Path for the same reason. A store that
     cannot say where it is is a store nobody can verify.
     """
     # Arrange

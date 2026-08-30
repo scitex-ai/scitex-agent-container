@@ -17,7 +17,7 @@ in the one case you tested.
 
 Separate file because ``test_send_cmds.py`` is 566 lines against a 512 cap.
 PA-306: no mocks — real spec files under ``tmp_path`` and a real isolated
-SQLite state db.
+per-agent state database.
 """
 
 from __future__ import annotations

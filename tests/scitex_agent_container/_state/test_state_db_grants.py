@@ -7,7 +7,7 @@ can be written" but "after a revoke, the predicate the gate calls says NO".
 A migration that stored grants perfectly and forgot to deny would read as
 green on every round-trip assertion and be a security regression.
 
-THREE PROPERTIES THE SQLITE VERSION HAD THAT ARE EASY TO LOSE HERE, each
+THREE PROPERTIES THE PREVIOUS BACKEND HAD THAT ARE EASY TO LOSE HERE, each
 with its own test below:
 
   * REVOKE DENIES. `revoke_send` no longer DELETEs — the store's only
@@ -17,7 +17,7 @@ with its own test below:
   * REVOKE NO LONGER FORGETS. Under DELETE, "never granted" and "granted
     then revoked" were indistinguishable. The hidden row keeps the history,
     so the audit question is answerable.
-  * THE LISTING ORDER IS CAUSAL, NOT WALL-CLOCK. The SQLite docstring
+  * THE LISTING ORDER IS CAUSAL, NOT WALL-CLOCK. The original docstring
     recorded why it ordered by rowid: `created_at` ties on bulk-imported
     peer rows and skews across hosts, and a foreign row then sorted into a
     plausible position instead of standing out — which is what let a leaked
@@ -215,7 +215,7 @@ def test_listing_order_is_insertion_order_not_created_at(pg_schema: str) -> None
 def test_listing_order_ignores_created_at_even_when_two_rows_share_one(
     pg_schema: str,
 ) -> None:
-    # Arrange — the SQLite predecessor of this test was called
+    # Arrange — the predecessor of this test was called
     # "..._keeps_insertion_order_when_timestamps_tie", and under the old
     # clause `ORDER BY created_at ASC, sender_name ASC` an exact tie WAS a
     # distinct hazard: it fell through to the ALPHABETICAL tiebreak, so two

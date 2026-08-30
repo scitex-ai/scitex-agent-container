@@ -21,7 +21,7 @@ only thing that ever exercised the round trip they asserted. Identity
 is once more the self-claimed ``metadata.from_agent``, which is what the
 grant tests above already assume.
 
-No mocks (handoff §0): real SQLite under ``tmp_path``.
+No mocks (handoff §0): a real store.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_lineage_store import read_edges
 from scitex_agent_container._state.state_db_nodes import (
     derive_group,
@@ -42,42 +41,41 @@ from scitex_agent_container._state.state_db_nodes import (
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
-    # Arrange
-    p = tmp_path / "state.db"
-    return p
+    """A per-test ``state.db`` PATH that no longer selects any storage.
 
-
-# ---------------------------------------------------------------------------
-# Schema — lineage + comms_grants tables exist
-# ---------------------------------------------------------------------------
-
-
-def test_lineage_table_is_absent_from_a_fresh_state_db(db_path: Path) -> None:
-    """INVERTED on 2026-08-28, and kept rather than deleted.
-
-    This asserted the SQLite ``lineage`` table EXISTS. The spawn DAG moved
-    to the shared PostgreSQL store and its DDL is gone, so the honest
-    version of the same question is the opposite one — and it is worth
-    asking, because an empty leftover would be worse here than a crash:
-    every reader treats "no row for this child" as ROOT, and a root MAY
-    SPAWN. A stray ``CREATE TABLE lineage`` sneaking back into the schema
-    would hand the whole fleet spawn authority, silently. This test is what
-    would notice.
+    Kept because roughly thirty tests below still request it, and dropping it
+    would mean editing thirty signatures inside an unrelated change. Every one
+    of them reads and writes the PostgreSQL store that ``pg_schema`` isolates;
+    this path names a file none of them opens and nothing creates. It is a
+    parameter waiting to be retired, not a seam.
     """
     # Arrange
-    conn_ctx = state_db.open_db(db_path)
-    # Act
-    with conn_ctx as conn:
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='lineage'"
-        ).fetchall()
-    # Assert
-    assert rows == []
+    return tmp_path / "state.db"
+
+
+# ---------------------------------------------------------------------------
+# ``test_lineage_table_is_absent_from_a_fresh_state_db`` WAS HERE, and of all
+# the absence tests this migration retired this is the one whose reasoning is
+# worth preserving verbatim.
+#
+# It asserted that no ``lineage`` table existed in a fresh state.db. An empty
+# leftover would have been worse here than a crash: every reader treats "no
+# row for this child" as ROOT, and a root MAY SPAWN. A stray ``CREATE TABLE
+# lineage`` sneaking back would have handed the whole fleet the spawn
+# authority the gate exists to withhold, silently, with nothing logged and
+# nothing 403ing.
+#
+# The test could only ask that question of a local database, and sac has
+# none. The guard that carries the concern forward is structural: the
+# storage-footprint gate under ``tests/develop/`` fails on any module that
+# grows local DDL back, which is the step before a stray ``lineage`` table
+# could exist at all.
+# ---------------------------------------------------------------------------
 
 
 # ``test_comms_grants_table_exists`` and ``test_comms_grants_has_column``
-# were here until 2026-08-28. They asked ``sqlite_master`` and
-# ``PRAGMA table_info`` whether the SQLite ``comms_grants`` table and its four
+# were here until 2026-08-28. They asked the schema catalogue whether the
+# ``comms_grants`` table and its four
 # columns existed -- and this commit deletes that DDL, because every reader
 # had already moved to the shared PostgreSQL store. A DDL-presence test
 # outlives its table by exactly one commit; keeping them would mean either a
@@ -196,7 +194,7 @@ def test_derive_group_of_unknown_node_is_singleton(pg_schema: str, db_path: Path
 #
 # These two moved here from test_state_db_acl_policy.py on 2026-08-28. They
 # are about derive_group, which now STRADDLES two databases: the policy read
-# is PostgreSQL and the lineage walk is still SQLite, so they take both
+# is PostgreSQL and the lineage walk was not yet, so they take both
 # ``pg_schema`` and ``db_path``. Left in the acl-policy file they would have
 # read as coverage of the migrated module, which they are not.
 # ---------------------------------------------------------------------------
@@ -553,7 +551,7 @@ def test_spawn_allowed_developer_group_child_still_respects_may_spawn(
 # removes, denies and returns False / the listing pairs. Keeping copies here
 # meant every future grants change had to be edited in two places, and the
 # copies here were the weaker pair — their arrange step wrote through
-# ``state_db.open_db``, i.e. into the abandoned SQLite table, which is why
+# ``state_db.open_db``, i.e. into the abandoned table, which is why
 # they read back empty rather than failing loudly.
 #
 # WHAT STAYS IS THE ONE THING THIS FILE UNIQUELY COVERS: the four primitives

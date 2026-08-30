@@ -21,11 +21,11 @@ That is also why the readers here are not best-effort. A store that
 answered "no edges" on an outage would make every agent a ROOT, and a root
 may spawn (:func:`..state_db_nodes.spawn_allowed`) — the outage would hand
 out spawn authority. ``host_store`` resolves ``SCITEX_STORE_DSN`` or the
-per-host PostgreSQL with NO SQLite fallback, so an unreachable primary
+per-host PostgreSQL with NO local-file fallback, so an unreachable primary
 raises ``StoreTargetError`` naming the DSN instead of resolving an empty
 local file and quietly promoting the whole fleet.
 
-``db_path`` IS GONE from every signature that took it. It named a SQLite
+``db_path`` IS GONE from every signature that took it. It named a
 file; there is no file. Test isolation comes from pointing
 ``SCITEX_STORE_DSN`` at a throwaway schema (the ``pg_schema`` fixture),
 which is stronger than a temp path was because it exercises the real
@@ -67,7 +67,7 @@ ONE HANDLE PER PROCESS
 ======================
 Same judgement, and the same measurement, as
 :mod:`.state_db_comms_nodes_store`: ``psycopg.connect`` costs 10.707 ms
-against ``sqlite3.connect``'s 0.067 ms (159x, live primary, card
+against the previous 0.067 ms (159x, live primary, card
 ``sqlite-out-per-call-connect-cost-20260828``), and these readers sit on
 the ACL path of EVERY message send and every agent-CRUD request. A per-call
 ``Store`` would pay that connect on each one. See
@@ -230,7 +230,7 @@ def lineage_schema() -> Any:
     return Schema(
         name=LINEAGE_STORE,
         fields={
-            # The CHILD is the identity, exactly as the SQLite PRIMARY KEY
+            # The CHILD is the identity, exactly as the original PRIMARY KEY
             # treated it: a child has one parent, ever, so one record per
             # child makes distinct edges distinct records and a union can
             # drop none of them.
@@ -374,7 +374,7 @@ def _close_handle_locked() -> None:
 
 
 def lineage_edge_as_dict(row: "Row") -> dict[str, Any]:
-    """One stored edge in the shape the SQLite row had.
+    """One stored edge in the shape the original row had.
 
     The three columns the table declared, and nothing derived: unlike the
     directory, this table never carried a hand-rolled ``updated_at`` or
@@ -397,7 +397,7 @@ class LineageEdges:
     verb, so "who are X's children" cannot be pushed to the server the way
     ``WHERE parent_name = ?`` was. Reading the table once and indexing it in
     Python is not a workaround for that: it is FEWER round-trips than the
-    SQLite version made. ``derive_group`` issued up to three statements,
+    original made. ``derive_group`` issued up to three statements,
     ``sender_target_relationship`` two, and ``descendants_of`` one PER BFS
     LEVEL; each is now one read.
 

@@ -12,7 +12,7 @@ THE DEFECT THEY PIN
 ===================
 The two backends have opposite shapes and the migration joins them:
 
-  * ``state.db`` was PER-AGENT. Every agent got its own SQLite file, so
+  * ``state.db`` was PER-AGENT. Every agent got its own database file, so
     ``list_dispatches()`` with no filters meant "my dispatches" — the SHARD
     did the scoping, and no code had to.
   * ``SCITEX_STORE_DSN`` is FLEET-WIDE. ``runtimes/_fleet_env.py`` injects one
@@ -61,7 +61,7 @@ for that reason and no other.
 WHAT ONE SHARED STORE MEANS NOW
 ===============================
 The original fixture pointed BOTH agents at a SINGLE ``state.db``, to
-reproduce in SQLite the condition the migration was about to create. It is no
+reproduce on the old backend the condition the migration was about to create. It is no
 longer a reproduction: ``pg_schema`` gives the test one real PostgreSQL store,
 which is literally the post-migration shape, and the module resolves it
 itself. The test bodies are unchanged, exactly as that branch predicted —

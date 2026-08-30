@@ -20,14 +20,14 @@ Lifecycle of one row:
 FIFO by ``ts`` + sequential TUI turn processing keeps the dispatch↔turn
 correlation correct: the Nth ``Stop`` claims the Nth recorded dispatch.
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
+WHY THIS MODULE IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
+The operator's 2026-08-19 order was to move every table to
 PostgreSQL: "fail fast, fail loud, no fallbacks". This is the fourth table to
 move, after ``verdict_delivered``, ``incarnations`` and ``pending_prompts``,
 and it moves the same way — by ADOPTING :mod:`scitex_dev.store` rather than
 by sac growing a private psycopg layer. ``db_path`` is gone from every
-function; it named a SQLite file and there is no file.
+function; it named a file and there is no file.
 
 The old module's own rationale for the cross-process bridge — "the SAME
 state.db is bound into the container so the host-side writer and the
@@ -51,7 +51,7 @@ Measured 2026-08-20 before assuming it:
 
 So the id only ever ROUND-TRIPS claim -> settle inside one Stop-hook call. It
 never crosses a process boundary, is never persisted elsewhere, and is never
-compared. Its integer-ness was an artifact of how SQLite minted it, not a
+compared. Its integer-ness was an artifact of how it was minted, not a
 property anything depended on. The natural key replaces it outright.
 
 IDENTITY IS TOTAL, WHICH TOOK ONE DECISION
@@ -59,13 +59,13 @@ IDENTITY IS TOTAL, WHICH TOOK ONE DECISION
 ``(agent, from_agent, dispatch_id, ts)``. ``dispatch_id`` is optional at the
 call site, and store IDENTITY fields must be present, so a missing one is
 stored as ``""`` — read it as "this wake carried no dispatch id", the same
-thing the SQLite ``NULL`` meant.
+thing the original ``NULL`` meant.
 
 That leaves one collision: two wakes for the same agent, from the same peer,
 with no dispatch id, in the SAME float instant. ``time.time()`` is
 microsecond-resolution and a TUI wake is a human-or-bus event, so it is not
 credible — but "not credible" is exactly the assumption that bites, and the
-SQLite counter made duplicates free. So the insert RETRIES with the timestamp
+single local counter made duplicates free. So the insert RETRIES with the timestamp
 advanced by one microsecond instead of failing or overwriting. Deterministic,
 preserves FIFO order, and needs no counter.
 """
@@ -193,7 +193,7 @@ def init_inbound_schema() -> str:
     """Create the ledger tables if missing. Idempotent.
 
     Returns the resolved store LOCATOR as a string — the PostgreSQL
-    equivalent of the path the SQLite version returned, and it names WHERE
+    equivalent of the path the previous implementation returned, and it names WHERE
     the state actually went so an operator can check rather than assume.
     """
     store = open_inbound_store()
@@ -277,9 +277,9 @@ def claim_oldest_pending(*, agent: str) -> dict[str, Any] | None:
     fields plus ``status``), or ``None`` when the agent has no pending
     dispatch (the common no-op — most turns have no requester).
 
-    THE ATOMIC CLAIM IS PRESERVED, and it was explicit in the SQLite version:
+    THE ATOMIC CLAIM IS PRESERVED, and it was explicit in the previous implementation:
     "two concurrent Stop hooks (or a hook retry) can never push the same
-    completion twice". SQLite got that from ``BEGIN IMMEDIATE``; the store has
+    completion twice". That came from ``BEGIN IMMEDIATE``; the store has
     no transaction, so it comes from optimistic concurrency instead. The
     update carries ``expected_revision=<the row's seq>``, so a racing claimer
     that already flipped this row raises ``RevisionMismatchError`` — and we

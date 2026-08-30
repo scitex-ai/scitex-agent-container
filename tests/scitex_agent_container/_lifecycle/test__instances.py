@@ -3,7 +3,7 @@
 A LOCAL ``sac agent start`` previously created no state.db ``instances``
 row, so ``send_to_agent`` reported "agent not running" and ``/v1/turn``
 was unreachable. ``record_local_instance`` / ``end_local_instance`` close
-that gap. Tests use a real on-disk SQLite state.db (isolated per test via
+that gap. Tests use a real isolated store (per test, via
 the ``SCITEX_AGENT_CONTAINER_STATE_DB`` env override) and a real runtime
 stub exposing ``_state_dir`` — no mocks.
 """

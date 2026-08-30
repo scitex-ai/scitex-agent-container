@@ -19,7 +19,7 @@ caveat. The tests below assert what actually gates: the host-wide
 bearer at the perimeter, and the name-based ACL behind it.
 
 Mirrors ``src/scitex_agent_container/_listen/_acl.py``. No mocks
-(handoff §0): real SQLite, real Starlette app.
+(handoff §0): a real store, real Starlette app.
 """
 
 from __future__ import annotations

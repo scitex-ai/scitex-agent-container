@@ -11,7 +11,7 @@ name: tests
 #
 # A green PR therefore predicted NOTHING about the release. The PR gate was
 # STRUCTURALLY INCAPABLE of observing a concurrency bug — no amount of care in
-# review could have caught `sqlite3.IntegrityError: UNIQUE constraint failed:
+# review could have caught `IntegrityError: UNIQUE constraint failed:
 # a2a_ports.port` (v0.21.19) or `no free a2a port` (v0.21.18), because
 # single-process pytest cannot race with itself. The tag got pushed, `test`
 # failed on the release runner, `build`/`publish`/`release` were skipped

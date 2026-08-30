@@ -44,7 +44,7 @@ def _dead_store():
 
 
 def test_the_store_target_is_postgres_not_a_file():
-    """The whole point of the port: no SQLite path anywhere."""
+    """The whole point of the port: no local-file path anywhere."""
     # Arrange
     target = A.auth_state_store_target()
     # Act

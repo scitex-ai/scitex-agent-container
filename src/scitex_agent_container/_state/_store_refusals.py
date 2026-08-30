@@ -17,9 +17,9 @@ when someone asks why a table they can see is not on the sync path.
 
 WHY ENTRIES OUTLIVE THEIR TABLES
 ================================
-Several names here no longer exist as SQLite tables at all. They STAY.
-The completeness gate only checks that every ``KNOWN_TABLES`` name is
-decided, so a table LEAVING that tuple must not read as its refusal being
+Several names here no longer exist as tables at all. They STAY.
+The completeness gate only checked that every declared name was
+decided, so a table LEAVING that list must not read as its refusal being
 withdrawn: a store that moved backend still must not replicate, and deleting
 the reason would lose why.
 """
@@ -50,7 +50,7 @@ NEVER_SYNCED: dict[str, str] = {
     ),
     "acl_deny_notify_log": (
         "a per-host rate-limit ledger (last_notified_at) — since 2026-08-20 a "
-        "per-host PostgreSQL store rather than a SQLite table, which does not "
+        "per-host PostgreSQL store, which does not "
         "change the ruling. Merging it suppresses a deny-notification on a "
         "host that never sent one — the failure is a notification that does "
         "NOT arrive, which is invisible by construction"
@@ -61,8 +61,8 @@ NEVER_SYNCED: dict[str, str] = {
         "sac_instances.last_heartbeat_at under MergeRule.MAX, so syncing "
         "the stream would move the same fact at many times the cost. The "
         "original wording said 'thousands of rows per agent per day'; it "
-        "was never thousands and never one — since 2026-08-28 it is not a "
-        "SQLite table either. It left KNOWN_TABLES with its writer and "
+        "was never thousands and never one — and since 2026-08-28 the table "
+        "does not exist at all. It went with its writer and "
         "reader, both of which had zero callers in src/, and it held 0 "
         "rows on every host measured. None of that withdraws the refusal: "
         "if a heartbeat stream is ever written again it must not sync"
@@ -70,8 +70,8 @@ NEVER_SYNCED: dict[str, str] = {
     "attempts": (
         "a legacy actions.db carry-over with ZERO writers anywhere in src/ "
         "— replicating a table nothing writes moves no information. Since "
-        "2026-08-28 it is not a SQLite table either: it left KNOWN_TABLES "
-        "and its DDL was deleted, which does not change the ruling"
+        "2026-08-28 the table does not exist at all: its DDL was deleted, "
+        "which does not change the ruling"
     ),
     "definitions": (
         "same: never INSERTed by any code path. This entry used to open "
@@ -88,34 +88,34 @@ NEVER_SYNCED: dict[str, str] = {
         "which are already the started_at/ended_at columns of the "
         "sac_instances row it points at. Its autoincrement id would also "
         "collide across hosts, so it costs a key rewrite to move a fact "
-        "that is already replicated. Since 2026-08-28 it is not a SQLite "
-        "table either — deleted for having zero readers, on the same "
+        "that is already replicated. Since 2026-08-28 the table does not "
+        "exist at all — deleted for having zero readers, on the same "
         "already-replicated argument this refusal rests on — and the rows "
         "it left on existing databases must still not sync"
     ),
     "turns": (
         "the agent conversation diary — prompt_text and response_text, i.e. "
         "the full content of what agents were asked and answered. Since "
-        "2026-08-28 a per-host PostgreSQL store rather than a SQLite table, "
+        "2026-08-28 a per-host PostgreSQL store, "
         "which does not change the ruling: high-volume per-host diagnostics "
         "whose content is the most sensitive thing sac records, and it "
         "should not leave its host as a side effect of a directory sync"
     ),
     "errors": (
         "per-host error journal, since 2026-08-28 a per-host PostgreSQL "
-        "store rather than a SQLite table. Useful to READ across hosts, but "
+        "store. Useful to READ across hosts, but "
         "that is a query concern; replicating it puts an unbounded "
         "diagnostic stream on the sync path"
     ),
     "heartbeats": (
         "the diary-style heartbeat stream (name, host, pid, state, ts), "
         "append-only, and since 2026-08-28 a per-host PostgreSQL store "
-        "rather than a SQLite table. Same argument as instance_heartbeats: "
+        "store. Same argument as instance_heartbeats: "
         "the fleet-relevant content is the latest sample, carried as "
         "sac_instances.last_heartbeat_at"
     ),
     # MOST OF THIS DICT NO LONGER APPEARS IN KNOWN_TABLES, and that is fine.
-    # The diary trio left SQLite on 2026-08-28; ``attempts``, ``node_tokens``,
+    # The diary trio moved on 2026-08-28; ``attempts``, ``node_tokens``,
     # ``definitions``, ``instance_heartbeats`` and ``events`` were deleted
     # over the same few days. Every one of them STAYS here for the reason
     # acl_deny_notify_log stays: the completeness gate only checks that every

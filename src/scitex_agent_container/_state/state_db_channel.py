@@ -29,15 +29,16 @@ and connection in :mod:`.state_db_channel_store`):
 
 ON POSTGRESQL SINCE 2026-08-28, AND ``db_path`` IS GONE
 =======================================================
-``channel_events`` was the LAST SQLite table sac owned. Operator ruling,
-restated repeatedly through August 2026: 「スクライトなんて全部絶滅させて
-ください」 — because the fleet is MULTI-HOST and a SQLite file per host means
-a different truth per host. Measured on scitex-compute-04, 2026-08-12: the
+``channel_events`` was the LAST table sac kept in a per-agent file.
+Operator ruling, restated repeatedly through August 2026: 「スクライトなんて
+全部絶滅させてください」 — because the fleet is MULTI-HOST and a state file
+per host means a different truth per host. Measured on scitex-compute-04,
+2026-08-12: the
 in-container ``state.db`` held 0 channel events while the bare host's held
 1872, both readable, every call exit 0. An empty read cannot distinguish "no
 events" from "I looked in the wrong file".
 
-``db_path`` is gone from every signature here. It named a SQLite file; there
+``db_path`` is gone from every signature here. It named a file; there
 is no file. Test isolation comes from pointing ``SCITEX_STORE_DSN`` at a
 throwaway schema (the ``pg_schema`` fixture), which is stronger than a temp
 path was because it exercises the real resolver.
@@ -64,8 +65,8 @@ FOUR CONTRACTS THIS MODULE MUST NOT BREAK
 
 All times stored as double-precision unix-seconds (float). This module owns
 ``sac_channel_events`` and nothing else — it does NOT read the diary trio
-(turns / errors / heartbeats), which named this format when it lived in the
-same SQLite file. The shared wire format is kept anyway, because comparing
+(turns / errors / heartbeats), which named this format back when the two
+shared one file. The shared wire format is kept anyway, because comparing
 two timestamps across the two stores should not need a conversion.
 """
 
@@ -166,7 +167,7 @@ def format_ts_iso(ts: object) -> str:
 #: ``nextval`` is non-transactional: two concurrent writers on one target can
 #: commit id N+1 before N, and a reader doing ``id > cursor ORDER BY id``
 #: then ships N+1, advances past it, and NEVER RETURNS N — a silent drop
-#: SQLite's serialised writer could not produce. The ``DO UPDATE`` here takes
+#: a single serialised writer could not produce. The ``DO UPDATE`` here takes
 #: a row lock on ``(target)`` held until commit, so for one target commit
 #: order IS id order. Different targets touch different rows and never
 #: contend.
@@ -298,7 +299,7 @@ def mark_delivered(row_ids: Iterable[int], *, target: str) -> None:
     ``row_ids`` AND whose ``delivered_at`` is still NULL.
 
     ``target`` IS REQUIRED, AND THAT IS A CORRECTNESS FIX, NOT ERGONOMICS.
-    Ids used to be globally unique (a SQLite ``AUTOINCREMENT`` rowid), so
+    Ids used to be globally unique (one ``AUTOINCREMENT`` sequence), so
     ``WHERE id IN (...)`` named exactly the rows the caller had just shipped.
     They are now PER-TARGET, so agent ``A`` and agent ``B`` both have an
     event ``1`` — and the old predicate would mark ``B``'s event delivered
@@ -337,7 +338,7 @@ class ChannelRename:
     Holds the ids the rename actually touched, so the undo is scoped to
     those rows rather than to a ``WHERE target = new`` predicate that would
     also clobber rows which legitimately held ``new`` before — the same trap
-    the SQLite version's rowid capture existed to avoid.
+    the original's row-id capture existed to avoid.
     """
 
     __slots__ = ("old", "new", "offset", "target_ids", "source_ids")
@@ -372,13 +373,14 @@ def rename_channel_events(*, old: str, new: str) -> ChannelRename | None:
 
     A renamed agent is the SAME agent — its past must still be findable
     under the new name. This is the ``git mv`` position, and it is why
-    ``channel_events`` was in ``_rename_db.NAME_COLUMNS`` for as long as it
-    was a SQLite table.
+    ``channel_events`` was in ``_rename_db.NAME_COLUMNS`` for as long as
+    that module existed.
 
     IT IS AN EXPLICIT STEP RATHER THAN A ``NAME_COLUMNS`` PAIR, and the
     reason is the same one that moved ``comms_nodes`` and
     ``node_comms_policy`` out of that tuple on 2026-08-28: ``rename_rows``
-    SKIPS a table absent from ``sqlite_master``. Leaving the two pairs behind
+    SKIPPED any table the schema no longer declared. Leaving the two pairs
+    behind
     would have made ``sac agents rename`` report success while the agent's
     entire message history stayed under the old name — a silent no-op, which
     is worse than a crash because nobody looks.

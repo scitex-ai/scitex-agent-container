@@ -339,7 +339,7 @@ class TestRegistryAvailability:
         self, pg_schema: str
     ) -> None:
         # Arrange — a REAL, empty store (the throwaway schema). The read
-        # SUCCEEDS and lists nobody. It was an empty SQLite state.db until
+        # SUCCEEDS and lists nobody. It was an empty per-agent database until
         # 2026-08-28, when ``instances`` moved to the shared store.
         # Act
         pids = mod._live_agent_pids()
@@ -349,7 +349,7 @@ class TestRegistryAvailability:
     def test_unreadable_registry_is_none(self) -> None:
         # Arrange — a REAL failure, no mock. It used to be a state.db whose
         # parent path was a regular FILE, so the OS refused to create the
-        # directory sqlite needed. The registry is the shared PostgreSQL
+        # directory the old backend needed. The registry is the shared PostgreSQL
         # store since 2026-08-28, so the equivalent real failure is a DSN
         # nothing answers on — port 1, refused immediately. Env is saved and
         # restored by hand (PA-306 bans monkeypatch), and the module's own

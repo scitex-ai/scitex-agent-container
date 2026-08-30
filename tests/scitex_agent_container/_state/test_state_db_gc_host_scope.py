@@ -2,7 +2,7 @@
 
 THE HAZARD THIS FILE EXISTS FOR
 ===============================
-Under per-host SQLite the heartbeat-staleness branch scoped ONLY by
+Under the per-host file the heartbeat-staleness branch scoped ONLY by
 ``remote=0``, and that was sufficient BY ACCIDENT: each host owned its own
 file, so "not a cross-host mirror row" also meant "written here". The move to
 the SHARED store removes both halves of that accident — a peer's own local
@@ -66,7 +66,7 @@ def _beat(instance_id: str, ts: str) -> None:
     ``update_heartbeat``, deleted on 2026-08-28 with the
     ``instance_heartbeats`` table that had no caller in ``src/`` and 0 rows
     on every host. The field stays declared because rows MIGRATED out of
-    SQLite carry real values and this GC branch reads them — so the branch
+    the old rows carry real values and this GC branch reads them — so the branch
     is still live against real data, and testing it means putting that data
     there the way the migration does: a partial ``Store.put`` through the
     production schema.
@@ -118,7 +118,7 @@ def test_a_stale_local_record_is_marked_gc_stale(pg_schema: str) -> None:
 
 
 def test_a_stale_record_on_another_host_is_not_swept(pg_schema: str) -> None:
-    # Arrange — THE PIN. Under per-host SQLite this row was unreachable; on
+    # Arrange — THE PIN. Under the per-host file this row was unreachable; on
     # the shared store it is one scan away, and it is ``remote=0`` because
     # the peer wrote it about ITSELF. Sweeping it tombstones a live agent on
     # a machine this sweep has never looked at.
@@ -169,7 +169,7 @@ def test_a_record_with_no_heartbeat_is_not_swept_by_this_branch(
     pg_schema: str,
 ) -> None:
     # Arrange — a NULL heartbeat is "we have no sample", not "the sample is
-    # old". The SQLite branch said ``last_heartbeat_at IS NOT NULL``.
+    # old". The old branch said ``last_heartbeat_at IS NOT NULL``.
     instance_id = record_instance_start("alpha", host=_local(), pid=os.getpid())
     # Act
     counters = gc_dead_instances(heartbeat_stale_seconds=60)

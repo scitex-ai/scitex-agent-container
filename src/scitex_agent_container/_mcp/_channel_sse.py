@@ -139,7 +139,7 @@ async def _consume_sse(
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
 
-    # Replay cursor: the SQLite row id of the last event we actually
+    # Replay cursor: the row id of the last event we actually
     # dispatched, echoed back as ``Last-Event-ID`` so a reconnect resumes
     # where we stopped instead of at "now".
     #

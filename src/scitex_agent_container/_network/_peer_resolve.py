@@ -140,7 +140,7 @@ def _lookup_bound_port(agent_name: str) -> int | None:
     auto-port agent without having to re-parse + reproduce the
     allocator's logic.
 
-    Failure modes (registry missing, schema not yet created, sqlite
+    Failure modes (registry missing, schema not yet created, storage
     locked) degrade to ``None`` so the caller raises the same "no
     port recorded" PeerError it would for a static-port misconfig.
     """

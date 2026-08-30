@@ -8,7 +8,7 @@ Split out of :mod:`.state_db_instances` (which stays the import surface
 exactly as :mod:`.state_db_comms_nodes_store` is split out of its sibling.
 Nothing here is for a caller outside ``_state``: the schema declaration, the
 ``Store`` factory, the process-wide handle, and the two helpers that turn a
-stored record into the dict shape the SQLite version returned.
+stored record into the dict shape callers read.
 
 ON POSTGRESQL SINCE 2026-08-28 — THE LAST BIG TABLE
 ====================================================
@@ -21,19 +21,19 @@ different RECORDS that never meet in a merge, and by ``SINGLE_WRITER`` so
 only the observing host writes its own telemetry.
 
 The store resolves through ``scitex_dev.store.host_store``:
-``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO SQLite fallback, so
+``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO local-file fallback, so
 a host whose PostgreSQL is unreachable raises ``StoreTargetError`` naming the
 DSN it could not reach — rather than resolving an empty local file and
 answering "that agent is not running", which is the failure this move exists
 to remove.
 
 ``db_path`` IS GONE from every signature in the sibling module. It named a
-SQLite file; there is no file.
+file; there is no file.
 
 THREE COLUMNS WERE DROPPED, AND THREE WERE ADDED BACK. BOTH MEASURED.
 ======================================================================
 :mod:`.._store_plugin` declared ``sac_instances`` while it was still a plan.
-Checking that declaration against the SQLite DDL and against every reader in
+Checking that declaration against the original DDL and against every reader in
 ``src/`` found gaps in both directions, and the honest fix is to close them
 in the declaration rather than to paper over them here.
 
@@ -86,8 +86,9 @@ ONE HANDLE PER PROCESS — MANDATORY HERE, NOT AN OPTIMISATION
 ``instances`` sits under ``_send_resolve``, ``resolve_node_host``,
 ``resolve_forward_target`` and ``_agents_list`` — the a2a routing path, run
 PER MESSAGE. Measured on the live primary (card
-``sqlite-out-per-call-connect-cost-20260828``): ``sqlite3.connect`` costs
-0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and ``Store.__init__``
+``sqlite-out-per-call-connect-cost-20260828``): the previous local-file
+connect cost 0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and
+``Store.__init__``
 pays that connect plus the dialect ``schema_lock`` and two probes even when
 no DDL runs. A per-call ``Store`` measured a ~44x routing regression on the
 sibling table. This module therefore caches, keyed on the resolved target,
@@ -432,7 +433,7 @@ def strip_unset(values: dict[str, Any]) -> dict[str, Any]:
 
 
 def sortable_recency(row: dict[str, Any]) -> tuple[str, str]:
-    """The ``(started_at, id)`` key the SQLite readers ordered DESC by.
+    """The ``(started_at, id)`` key every reader orders DESC by.
 
     The ``id`` tiebreak is load-bearing, not decoration: ``resolve_node_host``
     and ``resolve_forward_target`` both ordered ``started_at DESC, id DESC``
@@ -449,8 +450,8 @@ def sortable_recency(row: dict[str, Any]) -> tuple[str, str]:
     the same way every call, which is what stops a resolver flapping between
     two live records) and does NOT guarantee RECENCY.
 
-    This is inherited, not introduced: the SQLite ``ORDER BY started_at DESC,
-    id DESC`` had exactly the same property, against the same ids. It is
+    This is inherited, not introduced: the original ``ORDER BY started_at
+    DESC, id DESC`` had exactly the same property, against the same ids. It is
     written down here rather than left implied because "uuid7 is
     time-ordered" is the kind of premise a reader accepts without checking,
     and a caller that needs true recency inside one second needs a finer
@@ -460,7 +461,7 @@ def sortable_recency(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def instance_as_dict(row: "Row") -> dict[str, Any]:
-    """One stored record in the caller-facing shape the SQLite version had.
+    """One stored record in the caller-facing dict shape.
 
     ``bound_port`` is MIRRORED from ``a2a_port`` — the two columns always
     held one value and the store now keeps one field, but seven readers
@@ -468,7 +469,8 @@ def instance_as_dict(row: "Row") -> dict[str, Any]:
     storage move. See the module docstring.
 
     ``remote`` is emitted as ``0``/``1`` rather than as a Python bool because
-    ``sqlite3.Row`` did: callers compare it truthily, but a test asserting
+    the rows callers were handed always did: they compare it truthily, but a
+    test asserting
     ``row["remote"] == 1`` is asserting the shape it was handed, and this
     move must not quietly change that answer.
 

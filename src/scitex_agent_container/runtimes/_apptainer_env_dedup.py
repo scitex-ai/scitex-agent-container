@@ -257,7 +257,7 @@ def assert_no_forbidden_scitex_dsn(
     DSN itself is NOT included in the message — it can carry a password,
     and this message reaches logs.
 
-    A no-op for every other argv, including SQLite ``SCITEX_*_DB``
+    A no-op for every other argv, including ``SCITEX_*_DB``
     paths and non-scitex PostgreSQL URLs.
     """
     for _start, _width, key, value in _env_pair_spans(argv):

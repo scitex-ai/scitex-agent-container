@@ -14,7 +14,7 @@ material the 2026-08-11 canary refused on: a true row, read as a live writer,
 about a machine nobody had asked.
 
 THE STORE IS POSTGRESQL SINCE 2026-08-28, and ``db_path`` IS GONE from this
-function. It named a SQLite file; there is no file. What is REPORTED as the store
+function. It named a file; there is no file. What is REPORTED as the store
 is the locator :mod:`.._state.relocation_pg` resolves — resolving it does not
 connect, so naming the store never costs the lease answer.
 

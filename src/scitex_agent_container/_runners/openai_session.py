@@ -319,7 +319,7 @@ class OpenAIAgentsSession:
             and async connection management into every call site.
         session_id: Logical conversation key. Defaults to ``agent_name``;
             together they identify the row in the ``openai_sessions``
-            store. ``db_path`` IS GONE — it named a per-agent SQLite file
+            store. ``db_path`` IS GONE — it named a per-agent file
             and there is no file; state lives in this host's PostgreSQL
             (:mod:`.._state.openai_session_store`), and tests isolate with
             the shared ``pg_schema`` fixture rather than an override.

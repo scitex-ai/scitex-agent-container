@@ -14,7 +14,7 @@ and both call it — and the tests below drive the PHASE against the same states
 :mod:`test__relocate_lease_readiness` drives the predicate against.
 
 NOT MOCKED. The lease store is a REAL PostgreSQL one — a throwaway schema from
-the shared ``pg_schema`` fixture, since the lease moved off SQLite on 2026-08-28
+the shared ``pg_schema`` fixture, since the lease moved stores on 2026-08-28
 — and the liveness observation runs the real tmux script through ``sh -c``: for
 an agent name no session exists under, tmux answers honestly and that answer is
 the machine's, not a canned one. Only the "another host IS running it" case is

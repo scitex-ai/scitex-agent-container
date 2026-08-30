@@ -229,7 +229,7 @@ def test_a_launch_past_the_deadline_answers_before_the_launch_finishes(
     round trip whose handler is only promised to *decide* within 0.3 s. The
     remaining 0.7 s was silently standing in for "and everything else the
     request touches is fast": TestClient's portal thread, the ACL check, the
-    sqlite lineage read, JSON encode/decode. None of that is bounded, and CI
+    lineage read, JSON encode/decode. None of that is bounded, and CI
     runs the suite at ``-n 32`` on 32 cores, so the ceiling measured the BOX,
     not the deadline. The sibling failure in this same module on 2026-08-12
     (``marker is None``) was the same clock-for-event substitution.

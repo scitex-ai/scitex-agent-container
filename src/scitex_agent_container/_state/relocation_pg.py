@@ -1,13 +1,13 @@
 """Relocation state — residency, leases and the attempt journal, on PostgreSQL.
 
-Step 4 of the operator's sqlite→PostgreSQL migration (approved 2026-08-24).
+Step 4 of the operator's move to PostgreSQL (approved 2026-08-24).
 Adopts :mod:`scitex_dev.store` the way :mod:`.state_db_incarnations` and
 :mod:`.port_allocator_pg` do, so the fleet keeps one storage primitive and
 one failure mode: the store resolves ``SCITEX_STORE_DSN`` or the per-host
-PostgreSQL and has NO SQLite fallback, so an unreachable database raises
+PostgreSQL and has NO local-file fallback, so an unreachable database raises
 naming the DSN instead of silently writing somewhere nobody reads.
 
-``db_path`` IS GONE from every function. It named a SQLite file; there is no
+``db_path`` IS GONE from every function. It named a file; there is no
 file.
 
 THREE STORES, BECAUSE THERE WERE THREE TABLES
@@ -19,9 +19,9 @@ every claim.
 
 WHAT ``rowid`` WAS DOING, AND WHAT REPLACES IT
 ==============================================
-The SQLite residency table had no primary key. It leaned on ``rowid`` twice,
-and both uses need an answer here because PostgreSQL has no equivalent
-(``ctid`` is not stable):
+The original residency table had no primary key. It leaned on an implicit
+row id twice, and both uses need an answer here because PostgreSQL has no
+stable equivalent (``ctid`` is not):
 
 1. ``UPDATE agent_residency SET to_ts=? WHERE rowid=?`` — addressing ONE stay
    to close it. Under the store, records are addressed by IDENTITY, so the
@@ -41,8 +41,8 @@ and both uses need an answer here because PostgreSQL has no equivalent
 
 ``_migrate`` IS DELETED, AND ITS DATA IS NOT
 ============================================
-The SQLite module carried schema evolution — ``PRAGMA table_info`` to detect
-an old shape by a MISSING COLUMN, then ``ALTER TABLE ADD COLUMN`` and
+The module this replaces carried schema evolution — probing for an old
+shape by a MISSING COLUMN, then ``ALTER TABLE ADD COLUMN`` and
 ``ALTER TABLE RENAME TO``. None of that survives: the store owns its own DDL
 from a declared schema, so there is nothing to evolve in place.
 
@@ -147,7 +147,7 @@ def _residency_schema() -> Any:
 def _lease_schema() -> Any:
     """The single current lease per agent — replaced, never appended.
 
-    ``agent`` alone is the identity, preserving the SQLite PRIMARY KEY: there
+    ``agent`` alone is the identity, preserving the original PRIMARY KEY: there
     is exactly one answer to "who holds it", and a history of holders would
     invite reading the wrong one.
     """
@@ -220,9 +220,10 @@ def _journal_store() -> "Store":
 def init_relocation_schema() -> str:
     """Create all three stores if missing. Idempotent. Returns the locator.
 
-    NO LONGER CALLS ``state_db.init_schema``. The SQLite version did, and
-    returned its ``Path`` — a dependency that made relocation state
-    inseparable from the rest of ``state.db``. Cutting it is part of the
+    NO LONGER CALLS ``state_db.init_schema``, a function that no longer
+    exists. The version this replaces did, and returned its ``Path`` — a
+    dependency that made relocation state inseparable from the rest of the
+    per-agent database. Cutting it is part of the
     point: these three stores stand on their own now.
     """
     from scitex_dev.store import host_store
@@ -244,8 +245,9 @@ def init_relocation_schema() -> str:
 def _stays(store: "Store", agent: str) -> list[Any]:
     """This agent's stays, oldest first, ties broken deterministically.
 
-    ``from_ts`` then ``hlc``. The SQLite version broke the tie on ``rowid``
-    (insertion order within one file); ``hlc`` is a documented TOTAL order
+    ``from_ts`` then ``hlc``. The version this replaces broke the tie on an
+    implicit row id (insertion order within one file); ``hlc`` is a
+    documented TOTAL order
     across replicas, so two hosts reading the same history now agree.
     """
     rows = [r for r in store.rows() if r.values.get("agent") == agent]
@@ -270,8 +272,9 @@ def record_residency(
     Provenance dropped at the moment of writing cannot be recovered by
     reading.
 
-    THE CLOSE AND THE OPEN ARE ONE TRANSACTION. In SQLite they shared an
-    ``open_db`` block; here they share ``Store.batch()``, whose contract is
+    THE CLOSE AND THE OPEN ARE ONE TRANSACTION. They shared a single
+    connection block before; here they share ``Store.batch()``, whose
+    contract is
     that on any exception "the transaction is rolled back, so a failed batch
     applies NOTHING". Without it a crash between the two writes would leave
     the agent with NO open stay — the one state this table must never be in,
@@ -435,7 +438,7 @@ def save_journal(relocation) -> int:
     The MAX(attempt)+1 allocation is carried over as-is, INCLUDING its
     read-then-write shape. That is a race in principle — two savers for one
     agent would compute the same next attempt — and it is not one in practice
-    for the reason the SQLite version relied on: two relocations of one agent
+    for the reason the original relied on: two relocations of one agent
     cannot be in flight at once, because the resume path loads the latest
     attempt and refuses a different destination. Noting it rather than
     silently inheriting it: if that higher-level guarantee is ever relaxed,

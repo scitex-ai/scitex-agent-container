@@ -105,7 +105,7 @@ def registry_register(
     operator can resolve it explicitly. Silent overwrite is the wrong
     default for a verb the human typed.
 
-    ``--db-path`` is GONE (2026-08-28). It overrode a SQLite file; the
+    ``--db-path`` is GONE (2026-08-28). It overrode a file; the
     directory is the shared PostgreSQL store and there is no file to
     override. ``SCITEX_STORE_DSN`` is the equivalent knob.
 
