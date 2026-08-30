@@ -170,8 +170,9 @@ def test_resolve_end_to_end_assigns_int_port(pg_schema: str) -> None:
     """No fakes — drive the real port_allocator against a real database.
 
     The claim ledger moved off ``state.db`` on 2026-08-28, so pinning
-    ``state_db.DEFAULT_DB_PATH`` at a tmp file no longer isolates anything
-    the allocator reads. ``pg_schema`` points the REAL store resolver at a
+    ``state_db.DEFAULT_DB_PATH`` at a tmp file stopped isolating anything the
+    allocator reads — and on 2026-08-30 that constant was deleted outright
+    with the storage engine. ``pg_schema`` points the REAL store resolver at a
     throwaway schema instead. ``DEFAULT_RANGE`` is still saved and restored
     by hand (PA-306 — no monkeypatch).
     """

@@ -14,11 +14,12 @@ PA-306 no-mocks: every collaborator is real.
 * Liveness is exercised against REAL sockets: a bound-and-listening
   socket (live) and a bound-then-closed free port (dead / orphan). No
   probe is monkeypatched.
-* A yield-based ``isolated_state`` fixture redirects BOTH state
-  read-paths — ``$HOME`` and the import-time
-  ``state_db.DEFAULT_DB_PATH`` constant — at an isolated ``tmp_path``,
-  so the CLI smoke tests never read or write the live fleet registry
-  (no monkeypatch; these are the codebase's own seams).
+* A yield-based ``isolated_state`` fixture points ``$HOME`` and
+  ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at an isolated ``tmp_path``, so the
+  CLI smoke tests never read or write the live fleet registry (no
+  monkeypatch; these are the codebase's own seams). It also redirected the
+  import-time ``state_db.DEFAULT_DB_PATH`` constant until 2026-08-30, when
+  that constant was deleted with the storage engine.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._state import port_allocator as pa
-from scitex_agent_container._state import state_db
 from scitex_agent_container.cli_pkg._main import main
 from scitex_agent_container.cli_pkg.ports_cmds import (
     _reference_map,
@@ -91,34 +91,32 @@ def isolated_state(tmp_path, pg_schema):
     dependency rather than left to autouse ordering, for the same reason
     ``_isolate_state_db`` requests ``_assert_state_floor_intact`` by name.
 
-    ``sac ports`` takes no ``--db``: it resolves state.db from
-    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed
-    at import time**. So overriding ``$HOME`` alone does NOT redirect it
-    — by the time a fixture runs, the constant already points at the
-    developer's real ``~/.scitex/agent-container/runtime/state.db``, and
-    a CLI test would *read* (and ``claim_port`` would *WRITE*) the live
-    fleet registry. In CI that silently invents a registry; on a real
-    host it pollutes one.
+    ``sac ports`` takes no ``--db``. It used to resolve state.db from
+    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed at
+    import time**, so overriding ``$HOME`` alone did NOT redirect it — by the
+    time a fixture ran, the constant already pointed at the developer's real
+    ``~/.scitex/agent-container/runtime/state.db``, and a CLI test would
+    *read* (and ``claim_port`` would *WRITE*) the live fleet registry. In CI
+    that silently invented a registry; on a real host it polluted one.
 
-    So touch both read-paths — the env var AND the constant — exactly as
-    ``tests/smoke/conftest.py::comms_env`` does. These are the seams the
-    codebase itself exposes for this: no monkeypatch, no mock.
+    THAT CONSTANT WAS DELETED WITH THE STORAGE ENGINE on 2026-08-30, and the
+    ledger it addressed had already moved to PostgreSQL. ``pg_schema`` above
+    is what isolates the claim now; ``$HOME`` and the env var are still
+    pinned here because the CLI reads both. These are the seams the codebase
+    itself exposes: no monkeypatch, no mock.
     """
     db = tmp_path / "state.db"
     prior = {
         k: os.environ.get(k)
         for k in ("HOME", "USERPROFILE", "SCITEX_AGENT_CONTAINER_STATE_DB")
     }
-    prior_db_path = state_db.DEFAULT_DB_PATH
 
     os.environ["HOME"] = str(tmp_path)
     os.environ["USERPROFILE"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield tmp_path
     finally:
-        state_db.DEFAULT_DB_PATH = prior_db_path
         for k, v in prior.items():
             if v is None:
                 os.environ.pop(k, None)

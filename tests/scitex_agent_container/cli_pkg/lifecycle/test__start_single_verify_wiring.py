@@ -27,7 +27,6 @@ from typing import Any, Iterator
 
 import pytest
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container.cli_pkg.lifecycle._start_single import (
     run_single_targets,
 )
@@ -83,13 +82,10 @@ def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
         "SCITEX_DIR": str(home / ".scitex"),
     }
     saved = {k: os.environ.get(k) for k in keys}
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ.update(keys)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         for k, prev in saved.items():
             if prev is None:
                 os.environ.pop(k, None)

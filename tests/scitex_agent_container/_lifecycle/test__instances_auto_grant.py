@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
-import importlib
 import os
 from pathlib import Path
 from typing import Iterator
@@ -46,20 +45,21 @@ def _instances_store(pg_schema: str):
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
-    """Per-test on-disk state.db, exported via env (save/restore).
+    """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (save/restore).
 
-    ``state_db`` reads ``SCITEX_AGENT_CONTAINER_STATE_DB`` at import into
-    a module-level ``DEFAULT_DB_PATH``; reload after setting the env so
-    every helper (including ``has_grant`` / ``open_db``) lands in the
-    temp DB.
+    IT NO LONGER SELECTS A DATABASE, and the two ``importlib.reload`` calls
+    that used to bracket it are gone with the reason for them. ``state_db``
+    read this variable at import into ``DEFAULT_DB_PATH``, so a fixture that
+    set the env had to reload the module for ``has_grant`` and friends to
+    follow. That constant was deleted on 2026-08-30 and those helpers address
+    the shared PostgreSQL store — the reload re-derived nothing and steered
+    nothing. What is left is an env value a subprocess would inherit, kept
+    per-test so a leak can be attributed.
     """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
     try:
         yield p
     finally:
@@ -67,7 +67,6 @@ def db_path(tmp_path: Path) -> Iterator[Path]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
-        importlib.reload(mod)
 
 
 class _RuntimeStub:
@@ -265,22 +264,21 @@ def _write_health_spec(tmp_path: Path, name: str) -> Path:
     return spec
 
 
-def _fire_monitor_restart_against_foreign_db(
-    db_path: Path, tmp_path: Path, name: str
-) -> tuple[Path, set[str]]:
-    """Arrange + Act: start a health-monitored agent against ``db_path``,
-    then move the process-global default to a FOREIGN db and fire the
-    monitor's restart callback (what the leaked daemon thread does on its
-    next tick).
+def _fire_monitor_restart(db_path: Path, tmp_path: Path, name: str) -> None:
+    """Arrange + Act: start a health-monitored agent, then fire the monitor's
+    restart callback — what the leaked daemon thread does on its next tick.
 
-    Returns ``(foreign_db_path, instance_ids_in_db_path_before_restart)``.
-    The second element exists so a caller can tell "the write went to the
-    right place" apart from "the write was lost entirely" — bare absence
-    from the foreign db is not a positive control, because ``agent_start``
-    has already written a row to ``db_path`` before the callback fires.
+    WAS ``_fire_monitor_restart_against_foreign_db`` UNTIL 2026-08-30, and the
+    dropped half of the name is the point. It used to swap
+    ``state_db.DEFAULT_DB_PATH`` to a "foreign" path around the callback, so a
+    caller could tell a write that went to the right store from one that was
+    lost. That constant is deleted; before it was, it had already stopped
+    selecting where a lifecycle record lands. Swapping it steered nothing, so
+    the swap is removed rather than left as an arrangement that reads like one.
+    It returned ``(foreign_path, ids_before)`` for the same abandoned purpose;
+    its one surviving caller ignored both.
     """
     from scitex_agent_container._lifecycle import lifecycle as lc
-    from scitex_agent_container._state import state_db
     from scitex_agent_container._state.registry import Registry
 
     created: list[_CapturingThread] = []
@@ -301,19 +299,7 @@ def _fire_monitor_restart_against_foreign_db(
     restart_cb = created[0].args[3]
     config = created[0].args[1]
 
-    # An unrelated LATER test isolates itself: the process-global moves.
-    from scitex_agent_container._state.state_db_instances import list_active_instances
-
-    before = {r["id"] for r in list_active_instances()}
-
-    foreign = tmp_path / "foreign" / "state.db"
-    saved = state_db.DEFAULT_DB_PATH
-    state_db.DEFAULT_DB_PATH = foreign
-    try:
-        restart_cb(config)  # the leaked monitor thread fires
-    finally:
-        state_db.DEFAULT_DB_PATH = saved
-    return foreign, before
+    restart_cb(config)  # the leaked monitor thread fires
 
 
 # ``test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db``
@@ -365,6 +351,6 @@ def test_monitor_restart_callback_still_auto_grants_self_to_lead(
 
     name = "pinned-2"
     # Act
-    _fire_monitor_restart_against_foreign_db(db_path, tmp_path, name)
+    _fire_monitor_restart(db_path, tmp_path, name)
     # Assert
     assert has_grant(sender=name, target="lead") is True

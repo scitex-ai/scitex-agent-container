@@ -101,8 +101,11 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
     by an earlier test in the shared default db (CI runs the whole
     suite) makes ``alpha`` look "running" and the send POSTs to a dead
     loopback port instead of falling through to ``claude --resume``.
-    Redirecting to an empty db (and reloading the import-time
-    ``DEFAULT_DB_PATH``) keeps these resume-path tests deterministic.
+    Redirecting to an empty db kept these resume-path tests deterministic.
+    The reload below was how the import-time ``DEFAULT_DB_PATH`` constant
+    followed that redirect; it was deleted with the storage engine on
+    2026-08-30, so the reload re-derives nothing and the instance rows come
+    from the shared PostgreSQL store.
     """
     import importlib
 

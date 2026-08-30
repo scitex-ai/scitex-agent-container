@@ -34,7 +34,6 @@ from scitex_agent_container._listen._acl import check_send_acl, check_spawn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import block_send
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
@@ -50,13 +49,10 @@ def db_path(tmp_path: Path):
     # Arrange
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:

@@ -156,11 +156,14 @@ class _SilentHTTP:
 
 @pytest.fixture
 def isolated_state_db(tmp_path: Path, pg_schema: str):
-    """Point ``state_db.DEFAULT_DB_PATH`` (and the env) at ``tmp_path``.
+    """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at ``tmp_path``.
 
     DEPENDS ON ``pg_schema`` since 2026-08-28: the port this module resolves
     comes from the a2a claim ledger, which moved to PostgreSQL, so redirecting
-    ``state.db`` alone no longer isolates what these tests read.
+    ``state.db`` alone no longer isolates what these tests read. It also
+    pinned ``state_db.DEFAULT_DB_PATH`` until 2026-08-30, when that constant
+    was deleted with the storage engine — the env half is all that is left,
+    and ``pg_schema`` is what does the isolating.
     """
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)

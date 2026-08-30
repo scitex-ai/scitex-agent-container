@@ -666,7 +666,6 @@ import socket as _socket
 
 import httpx as _httpx
 
-from scitex_agent_container._state import state_db as _state_db
 from tests.scitex_agent_container._helpers.loopback_server import (
     run_loopback as _run_loopback_shared,
 )
@@ -688,13 +687,10 @@ def _isolated_db(tmp_path: Path, pg_schema: str):
     """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = _state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    _state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        _state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:

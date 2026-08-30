@@ -9,10 +9,11 @@ Two escape routes exist and both are closed:
 
 1. **Paths.** ``Layout`` derives every path from an injectable ``root``.
    That is deliberate: sac's own module-level defaults
-   (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``,
-   ``state_db.DEFAULT_DB_PATH``) are computed from ``$HOME`` at IMPORT
-   time, so a fixture that only sets ``$HOME`` CANNOT redirect them — it
-   would read and write the live fleet while looking isolated.
+   (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``) are
+   computed from ``$HOME`` at IMPORT time, so a fixture that only sets
+   ``$HOME`` CANNOT redirect them — it would read and write the live fleet
+   while looking isolated. (``state_db.DEFAULT_DB_PATH`` was a third until
+   2026-08-30, when it was deleted with the storage engine.)
 
 2. **The board.** Every scitex-cards call takes an explicit ``store=``.
    That explicit argument is the PRIMARY isolation and it is what these

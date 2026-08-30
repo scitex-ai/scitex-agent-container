@@ -31,7 +31,6 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import has_block
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
@@ -49,12 +48,10 @@ _TOKEN = "test-token-approve-flow"
 def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
@@ -69,7 +66,6 @@ def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
         record_lineage(child="worker-a", parent="root")
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_env is None:

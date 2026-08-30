@@ -23,7 +23,6 @@ from scitex_agent_container._lifecycle._spawn_gate import (
     enforce_spawn_gate,
     resolve_spawn_caller,
 )
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
     derive_group,
     record_lineage,
@@ -32,21 +31,20 @@ from scitex_agent_container._state.state_db_nodes import (
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
-    """Isolated state.db; env + DEFAULT_DB_PATH overridden then restored.
+    """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB``, overridden then restored.
 
-    The gate's internal calls use ``db_path=None`` (→ DEFAULT_DB_PATH),
-    so re-binding the module constant is what isolates them. No mocks —
-    a real path under tmp_path.
+    This also re-bound ``state_db.DEFAULT_DB_PATH`` until 2026-08-30, back when
+    the gate's internal calls passed ``db_path=None`` and resolved through that
+    constant. It is deleted with the storage engine and the gate addresses the
+    shared PostgreSQL store, so ``pg_schema`` is what isolates these now. No
+    mocks — a real path under tmp_path.
     """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:

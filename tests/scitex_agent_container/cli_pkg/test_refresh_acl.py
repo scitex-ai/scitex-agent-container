@@ -21,7 +21,6 @@ import pytest
 import yaml as _yaml
 from click.testing import CliRunner
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_nodes import (
     read_comms_policy,
     record_comms_policy,
@@ -35,13 +34,10 @@ def db_path(tmp_path: Path):
     # Arrange — isolated on-disk state.db via the env override.
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
