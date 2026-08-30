@@ -196,7 +196,15 @@ FROZEN_SQLITE = frozenset(
         # records an unavailable reading instead of aborting the specimen. It
         # now goes through auth_state.get_auth_state(), so the next backend
         # move carries it along instead of stranding it.
-        "_lifecycle/_rename_db.py",
+        # _lifecycle/_rename_db.py LEFT THIS SET 2026-08-30 — DELETED, not
+        # ported. The note below said it leaves "when that rewrite happens,
+        # not before"; this is that moment. Its last two pairs
+        # (`comms_grants`) became a store-backed step in `_rename`, and with
+        # NAME_COLUMNS and PATH_COLUMNS then both EMPTY the module could not
+        # touch anything: `rename_rows` looped over an empty tuple and
+        # reported success. `test__rename_db` asserted exactly that condition
+        # and failed the moment the last pair left, which is why the deletion
+        # is forced rather than optional.
         # _lifecycle/_rename_plan.py LEFT THIS SET 2026-08-24, and like
         # _authheal/_specimen.py it left WITHOUT being ported — it was reading
         # a table it does not own. It opened its own sqlite3 connection to
@@ -401,9 +409,10 @@ FROZEN_SQLITE_TESTS = frozenset(
         # it opens the source db afterwards to prove nothing was written.
         "tests/develop/test_migrate_scripts_do_not_write_by_default.py",
         # --- tests of production code that still speaks SQLite ---
-        # Pairs with src ``_lifecycle/_rename_db.py``, which enumerates
-        # sqlite_master and is SQLite-ENGINE code rather than SQLite-backed.
-        "tests/scitex_agent_container/_lifecycle/test__rename_db.py",
+        # test__rename_db.py LEFT THIS SET 2026-08-30 with the src module it
+        # paired with. It is the test that FORCED the deletion: it asserted
+        # the module must still declare pairs to look for, and went red the
+        # moment the last pair moved to the store.
         "tests/scitex_agent_container/_state/test_state_db.py",
         "tests/scitex_agent_container/_state/test_state_db_connect_branches.py",
         "tests/scitex_agent_container/_state/test_state_db_health.py",

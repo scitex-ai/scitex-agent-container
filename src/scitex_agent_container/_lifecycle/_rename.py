@@ -43,7 +43,6 @@ fails before it touches anything shared.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -51,20 +50,21 @@ from .._state.state_db_acl_policy import rename_comms_policy
 from .._state.state_db_channel import (
     ChannelRename,
     rename_channel_events,
-    undo_rename_channel_events,
 )
 from .._state.state_db_comms_nodes import rename_comms_node
+from .._state.state_db_grants_rename import GrantsRenameUndo, rename_grant_rows
 from .._state.state_db_lineage_rename import rename_lineage
 from .._state.state_db_instances_rename import (
     InstancesRenameUndo,
     rename_instance_rows,
     undo_rename_instance_rows,
 )
-from ._rename_cards import CardMigration, CardMigrationError, find_owned_cards
-from ._rename_cards import migrate_cards, undo_migrate_cards
-from ._rename_db import DbUndo, count_rows, rename_rows, undo_rename_rows
+from ._rename_cards import CardMigrationError, find_owned_cards
+from ._rename_cards import migrate_cards
 from ._rename_plan import (
     Layout,
+    _count_rows_everywhere,
+    move_path,
     Move,
     RenameError,
     RenamePlan,
@@ -73,6 +73,18 @@ from ._rename_plan import (
     probe_running,
 )
 from ._rename_spec import rewrite_spec
+from ._rename_undo import (
+    _rollback_message,
+    _undo_acl_policy,
+    _undo_cards,
+    _undo_channel_history,
+    _undo_comms_node,
+    _undo_grants,
+    _undo_lineage,
+    _undo_move,
+    _undo_registry,
+    _unwind,
+)
 
 # Step labels — stable strings. The CLI prints them; the rollback test
 # injects a failure at each in turn.
@@ -84,6 +96,7 @@ STEP_REGISTRY = "registry"
 STEP_STATE_DB = "state-db"
 STEP_INSTANCES = "instances"
 STEP_ACL = "acl-policy"
+STEP_GRANTS = "comms-grants"
 STEP_DIRECTORY = "comms-directory"
 STEP_LINEAGE = "lineage"
 STEP_CHANNEL = "channel-history"
@@ -99,6 +112,7 @@ STEPS: tuple[str, ...] = (
     STEP_STATE_DB,
     STEP_INSTANCES,
     STEP_ACL,
+    STEP_GRANTS,
     STEP_DIRECTORY,
     STEP_LINEAGE,
     STEP_CHANNEL,
@@ -137,7 +151,7 @@ def apply_plan(
     try:
         # 1. Spec dir. Every step below addresses the spec at its NEW path.
         _step(STEP_SPEC_DIR)
-        _move(plan.spec_move)
+        move_path(plan.spec_move)
         undo.append((STEP_SPEC_DIR, _undo_move(plan.spec_move)))
 
         # 2. The spec's self-references.
@@ -152,21 +166,21 @@ def apply_plan(
             _step(label)
             if move is None:
                 continue
-            _move(move)
+            move_path(move)
             undo.append((label, _undo_move(move)))
 
         # 5. Registry JSON — its `name` + `config` fields name the agent.
         _step(STEP_REGISTRY)
         if plan.registry_move is not None:
             before = plan.registry_move.src.read_text(encoding="utf-8")
-            _move(plan.registry_move)
+            move_path(plan.registry_move)
             _rewrite_registry_json(plan.registry_move.dst, old, new, layout)
             undo.append((STEP_REGISTRY, _undo_registry(plan.registry_move, before)))
 
-        # 6. state.db rows — one transaction, rowid-scoped undo.
+        # 6. state.db rows — step and module deleted 2026-08-30. Its last two
+        # pairs became step 7b; with both column tuples empty it was a no-op
+        # that reported success, which `test__rename_db` refuses.
         _step(STEP_STATE_DB)
-        db_undo: DbUndo = rename_rows(layout.state_db, old, new)
-        undo.append((STEP_STATE_DB, lambda: undo_rename_rows(db_undo)))
 
         # 6b. The ``instances`` records — PostgreSQL since 2026-08-28, so
         # their own step for exactly the reason steps 7 and 8 are their own.
@@ -211,6 +225,28 @@ def apply_plan(
         _step(STEP_ACL)
         if rename_comms_policy(old=old, new=new):
             undo.append((STEP_ACL, _undo_acl_policy(old, new)))
+
+        # 7b. The explicit cross-group grants — PostgreSQL since 2026-08-28,
+        # and the ONE table whose ``NAME_COLUMNS`` pairs were not removed with
+        # the move. ``rename_rows`` skips tables absent from ``sqlite_master``,
+        # so until this step existed the rename reported success while every
+        # grant kept the OLD name: ``count_rows`` returned ``{}``, so even
+        # ``--dry-run`` said there was nothing to carry.
+        #
+        # What that costs is the mirror of step 7's. A policy decides what the
+        # agent's GROUP may do; a grant is the explicit per-pair exception. The
+        # renamed agent starts under the new name, `_listen._acl` finds no
+        # grant for it, and sends that were permitted yesterday are denied —
+        # surfacing later as a permission error nobody connects to the rename.
+        #
+        # The directed pair IS the record identity, so this is a copy +
+        # withdraw like step 8, NOT an in-place update. The inverse is
+        # key-scoped rather than the verb reversed, because ``new`` may have
+        # legitimately held grants before the rename.
+        _step(STEP_GRANTS)
+        grants_undo: GrantsRenameUndo = rename_grant_rows(old=old, new=new)
+        if grants_undo.total:
+            undo.append((STEP_GRANTS, _undo_grants(grants_undo)))
 
         # 8. The ADR-0014 comms directory — PostgreSQL since 2026-08-28, so
         # its own step for the same reason step 7 is one.
@@ -340,9 +376,9 @@ def _verify_nothing_left_behind(
         if path.exists():
             leftovers.append(f"{label} still at {path}")
 
-    rows = count_rows(layout.state_db, old)
+    rows = _count_rows_everywhere(plan, old)
     if rows:
-        leftovers.append(f"state.db still has rows for {old!r}: {rows}")
+        leftovers.append(f"the store still has rows for {old!r}: {rows}")
 
     if plan.cards_enabled:
         orphans = find_owned_cards(old, store=store)
@@ -380,72 +416,16 @@ def agent_rename(
 # ---------------------------------------------------------------------------
 
 
-def _move(move: Move) -> None:
-    move.dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(move.src), str(move.dst))
 
 
-def _undo_move(move: Move) -> Callable[[], None]:
-    return lambda: _move(Move(move.dst, move.src))
 
 
-def _undo_acl_policy(old: str, new: str) -> Callable[[], None]:
-    """Put the policy record back under ``old``.
-
-    The same verb with the arguments swapped — it copies the values back and
-    retires the name the forward step created, so an unwound rename leaves
-    exactly one live policy, under the name the agent actually has.
-    """
-
-    def _undo() -> None:
-        rename_comms_policy(old=new, new=old)
-
-    return _undo
 
 
-def _undo_lineage(old: str, new: str) -> Callable[[], None]:
-    """Move the lineage edge back. The same verb, arguments swapped.
-
-    Cannot itself hit the parent-side refusal: this only runs when the
-    forward call SUCCEEDED, which means nothing named ``old`` as a parent,
-    and the forward call did not create such an edge.
-    """
-
-    def _undo() -> None:
-        rename_lineage(old=new, new=old)
-
-    return _undo
 
 
-def _undo_comms_node(old: str, new: str) -> Callable[[], None]:
-    """Put the directory entry back under ``old``.
-
-    The same verb with the arguments swapped — it copies the routing tuple
-    back and withdraws the name the forward step created, so an unwound
-    rename leaves exactly one live entry, under the name the agent actually
-    answers to.
-    """
-
-    def _undo() -> None:
-        rename_comms_node(old=new, new=old)
-
-    return _undo
 
 
-def _undo_channel_history(undo: ChannelRename) -> Callable[[], None]:
-    """The inverse of step 9 — id-scoped, not the same verb reversed.
-
-    ``rename_channel_events(old=new, new=old)`` would look symmetric and be
-    wrong: it would also drag rows that legitimately held ``new`` BEFORE the
-    rename (the leftovers of a previously deleted agent by that name) over to
-    ``old``. The recorded ids are what make the undo exact, the same property
-    ``_rename_db``'s rowid capture buys for the SQLite half.
-    """
-
-    def _undo() -> None:
-        undo_rename_channel_events(undo)
-
-    return _undo
 
 
 def _rewrite_spec_file(
@@ -491,24 +471,8 @@ def _rewrite_registry_json(path: Path, old: str, new: str, layout: Layout) -> No
     path.write_text(json.dumps(entry, indent=2), encoding="utf-8")
 
 
-def _undo_registry(move: Move, before: str) -> Callable[[], None]:
-    def _undo() -> None:
-        _move(Move(move.dst, move.src))
-        move.src.write_text(before, encoding="utf-8")
-
-    return _undo
 
 
-def _undo_cards(migration: CardMigration) -> Callable[[], None]:
-    def _undo() -> None:
-        failed = undo_migrate_cards(migration)
-        if failed:
-            raise CardMigrationError(
-                f"could not hand these cards back to {migration.old!r}: "
-                f"{', '.join(failed)}"
-            )
-
-    return _undo
 
 
 # ---------------------------------------------------------------------------
@@ -516,30 +480,8 @@ def _undo_cards(migration: CardMigration) -> Callable[[], None]:
 # ---------------------------------------------------------------------------
 
 
-def _unwind(undo: list[tuple[str, Callable[[], None]]]) -> list[str]:
-    """Run every recorded inverse, newest first. Never raises."""
-    failures: list[str] = []
-    for label, revert in reversed(undo):
-        try:
-            revert()
-        except Exception as exc:  # noqa: BLE001 - collect; never mask the cause
-            failures.append(f"{label}: {exc}")
-    return failures
 
 
-def _rollback_message(
-    old: str, new: str, exc: BaseException, failures: list[str]
-) -> str:
-    head = f"rename {old!r} -> {new!r} FAILED at: {exc}"
-    if not failures:
-        return f"{head}\n    Rolled back — {old!r} is exactly as it was."
-    listed = "\n".join(f"      - {f}" for f in failures)
-    return (
-        f"{head}\n"
-        f"    ROLLBACK INCOMPLETE. These could not be undone:\n{listed}\n"
-        f"    {old!r} is in a PARTIAL state — fix the above by hand before "
-        "starting either name."
-    )
 
 
 __all__ = [

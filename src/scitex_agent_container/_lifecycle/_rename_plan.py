@@ -13,11 +13,12 @@ stops.
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._rename_cards import find_foreign_scoped_cards, find_owned_cards
-from ._rename_db import count_rows
+
 from ._rename_spec import SpecChange, plan_spec_changes
 
 # Same rule ``sac agents create`` enforces: the name is a directory name.
@@ -240,19 +241,13 @@ def preflight(old: str, new: str, layout: Layout) -> None:
 
 
 def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
-    """``{"table.column": n}`` across BOTH databases a rename now touches.
+    """``{"table.column": n}`` for everything a rename will carry.
 
-    ONE REPORT, TWO BACKENDS, and the merge is load-bearing rather than
-    tidy. ``count_rows`` reads ``state.db``, where every ``NAME_COLUMNS``
-    pair that remains names a table ``init_schema`` stopped creating on
-    2026-08-28 — so that half can only return ``{}`` on any database sac
-    makes today. The rows a rename actually carries are in the shared
-    PostgreSQL store, and ``count_instance_rename_rows`` is their reader.
-
-    Without the merge the dry run prints ``0 column(s)`` for an agent with
-    hundreds of recorded lifetimes: a zero that reads as "nothing to carry"
-    while naming no database it failed to ask. Both halves report under the
-    same ``table.column`` keys, so the operator reads one list.
+    ONE BACKEND SINCE 2026-08-30. This used to merge a ``state.db`` half
+    read by ``count_rows``, but every table that half named had stopped
+    being created on 2026-08-28, so it could only ever return ``{}``; the
+    module and its step are now deleted. All remaining rows live in the
+    shared PostgreSQL store.
 
     AN UNREACHABLE STORE PRODUCES A WARNING, NEVER A SILENT ZERO. ``--dry-run``
     must not be the step that fails a rename — the same reasoning
@@ -261,16 +256,18 @@ def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
     the reason "there is nothing there", and only one of those is safe to
     act on. So the failure is caught and SAID.
     """
-    counts = dict(count_rows(plan.layout.state_db, old))
+    counts: dict[str, int] = {}
 
+    from .._state.state_db_grants_rename import count_grant_rename_rows
     from .._state.state_db_instances_rename import count_instance_rename_rows
 
     try:
         counts.update(count_instance_rename_rows(old=old))
+        counts.update(count_grant_rename_rows(old=old))
     except Exception as exc:  # stx-allow: fallback (reason: --dry-run must not be the step that fails a rename, and an unreachable store is a fact about this host rather than about the plan. Kept broad because the store raises per-backend types; the warning below is what keeps the resulting zero from being read as "nothing to carry".)
         plan.warnings.append(
             "could not read the instances store, so the row counts below are "
-            f"the state.db half ONLY and are NOT a total ({exc}). The rename "
+            f"INCOMPLETE and are NOT a total ({exc}). The rename "
             "itself still carries those records — this is the count that is "
             "missing, not the step."
         )
@@ -392,3 +389,18 @@ __all__ = [
     "preflight",
     "probe_running",
 ]
+
+
+def move_path(move: Move) -> None:
+    """Perform one planned move, creating the destination's parent.
+
+    Lives here rather than in :mod:`._rename` because BOTH directions call it:
+    the forward step moves ``src -> dst`` and the inverse in
+    :mod:`._rename_undo` moves it back. Putting it with the :class:`Move` it
+    operates on keeps those two modules from importing each other.
+    """
+    move.dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(move.src), str(move.dst))
+
+
+# EOF
