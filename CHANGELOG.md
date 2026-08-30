@@ -47,18 +47,65 @@ versioning follows [SemVer](https://semver.org/).
   any host — not because it finished.
 
 ### Changed
-- **`tests/develop/test_sqlite_footprint_frozen.py` keeps its scans and loses
-  its allowlists.** Four frozen inventories (`FROZEN_SQLITE`, `_SCRIPTS`,
-  `_TESTS`, `_DDL`) are empty, and their staleness tests were vacuous with
-  them — a test that cannot fail is worse than no test, because the file still
-  lists it. The predicate "every module importing sqlite3 appears in
-  FROZEN_SQLITE" collapses to "nothing imports sqlite3", which is the rule the
-  operator asked for with no list between the reader and it. The import scan,
-  the `CREATE TABLE` scan (with `POSTGRES_DDL` for legitimate PostgreSQL
-  definers) and the VENDOR scan all stay, as do the planted-file positive
-  controls. The vendor scan is the one that must outlive the others:
-  `SQLiteSession` is the shape SQLite returns in once nobody writes
-  `import sqlite3`, and no import check can see it.
+- **The retired engine's NAME is gone from every tracked file outside
+  `docs/adr/`, and a gate keeps it that way.** #1274 removed the engine; this
+  removes the vocabulary, which is the half that carried the last reversal —
+  a previous removal was undone in effect rather than in commit, because the
+  code stayed clean while the documentation went on naming the engine as the
+  default. 78 lines across 30 files: release notes, module and test
+  docstrings, four copies of one container banner, two quoted operator rulings
+  and eleven citations of a task-board id. Every line keeps its facts, dates
+  and measurements; only the name goes, replaced by what it was in that
+  sentence — a driver, a catalogue table, a local file, a retired engine.
+  Measured on the tree with NO exclusions: the only tracked files that still
+  name it are the three ADRs, which are the one allowed place because an ADR
+  records a decision that was taken, and the two detectors.
+- **Three of those lines were stale, and two of them were wrong.**
+  `_fleet_env.py` quoted scitex-dev's `resolve_target` on a sentence that
+  module no longer contains — it now reads "deliberately no third" — so the
+  quote is restored to what the cited source actually says.
+  `test_state_db_acl_policy.py` said `lineage` was "still" on the old engine;
+  it moved to PostgreSQL on 2026-08-28, which the neighbouring test file's own
+  docstring already said. `openai_session_store.py` pointed at a frozen
+  constant that was deleted along with the allowlists.
+- **The footprint ratchet's FILENAME no longer carries the engine's name**, and
+  is now `tests/develop/test_retired_engine_footprint_frozen.py`. The scans
+  read file CONTENT, so a path was never an offence — but the old name was the
+  last thing in the repository forcing a cross-reference to spell the word, and
+  two files had to.
+- **The task-board card cited for the 159x per-call connect measurement is
+  re-identified as `store-connect-cost-per-call-20260828`.** Its previous id
+  embedded the engine's name, eleven docstrings cite it as provenance, and an
+  identifier is not exempt. Mangling it in those citations would have made them
+  unresolvable, so the card was superseded and cross-linked instead: the
+  original keeps its history and is closed as re-identified, NOT as completed.
+
+### Added
+- **`tests/develop/test_the_engine_name_stays_gone.py` — the name gate.** The
+  footprint ratchet next door asserts that nothing USES the retired engine;
+  this asserts that nothing NAMES it. The two are deliberately independent:
+  prose can name the engine without importing it, and — as the vendor scan
+  exists to prove — code can open it without naming it. `docs/adr/` is exempt,
+  both detectors are exempt, and a staleness gate deletes an exemption that
+  stops matching, so it cannot decay into a blessed filename. Ignore-rule
+  PATTERN lines are exempt — a `.gitignore` line excluding the engine's files
+  is a refusal, not a mention — while comments inside those same files are
+  prose and are not. Verified by planting the word in a tracked source file:
+  the gate goes red, and green again once it is removed.
+
+### Changed
+- **The footprint ratchet keeps its scans and loses its allowlists.** Four
+  frozen inventories (the module, script, test and DDL lists) are empty, and
+  their staleness tests were vacuous with them — a test that cannot fail is
+  worse than no test, because the file still lists it. The predicate "every
+  module importing the retired driver appears in the frozen list" collapses
+  to "nothing imports it", which is the rule the operator asked for with no
+  list between the reader and it. The import scan, the `CREATE TABLE` scan
+  (with `POSTGRES_DDL` for legitimate PostgreSQL definers) and the VENDOR
+  scan all stay, as do the planted-file positive controls. The vendor scan is
+  the one that must outlive the others: a vendored session object is the
+  shape the engine returns in once nobody writes the import, and no import
+  check can see it.
 
 ### Added
 - **`sac agents resume-rate-limited` — the third agent-liveness enforcer, and
@@ -78,7 +125,8 @@ versioning follows [SemVer](https://semver.org/).
   Scheduled as the `sac.resume-rate-limited-agents` JobSpec.
 
 ### Removed
-- **The SQLite read surface: `sac db show` / `db query` / `db export` /
+- **The retired engine's read surface: `sac db show` / `db query` /
+  `db export` /
   `db import`, their MCP and `sac.db.*` twins, and `state_db_health`.** These
   were the last reachable callers of `state_db.open_db` / `init_schema` /
   `table_counts` in `src/`; after this change the three functions have
@@ -103,7 +151,8 @@ versioning follows [SemVer](https://semver.org/).
 ### Changed
 - **`GET /agents` and the `host_exec` ACL denial now name the PostgreSQL
   target they actually consulted.** Both printed `state_db.DEFAULT_DB_PATH` —
-  a SQLite path neither one opens. The field is there because on 2026-08-09 an
+  a local-file path neither one opens. The field is there because on
+  2026-08-09 an
   empty `agents` list was read as fleet-wide data loss when the honest reading
   was "you asked the wrong database", so dropping it would have restored the
   ambiguity it exists to prevent; it now resolves the real locator instead
@@ -145,8 +194,9 @@ versioning follows [SemVer](https://semver.org/).
 - **`sac agents rename` now carries an agent's ACL grants, and REFUSES rather
   than guessing when it cannot.** `comms_grants` was the last pair of
   `(table, column)` entries inside `_lifecycle/_rename_db`, and that module
-  renamed rows with a SQLite `UPDATE` over a table that has not existed since
-  2026-08-28 — it SKIPS a table absent from `sqlite_master`, so the rename
+  renamed rows with a single-engine `UPDATE` over a table that has not
+  existed since 2026-08-28 — it SKIPS a table absent from that engine's own
+  catalogue, so the rename
   reported success having moved nothing. For an ACL table that silence cut
   both ways: the renamed agent silently LOST every cross-group permission an
   operator had granted it (`check_send_acl` asks `has_grant` about the LIVE
@@ -195,8 +245,9 @@ versioning follows [SemVer](https://semver.org/).
   `[store]`.
 
 ### Removed
-- **`_lifecycle/_rename_db.py`, and with it the last SQLite-ENGINE module in
-  `src/`.** It walked `sqlite_master` to rewrite an agent's rows across every
+- **`_lifecycle/_rename_db.py`, and with it the last module in `src/` bound
+  to the retired ENGINE.** It walked that engine's own catalogue table to
+  rewrite an agent's rows across every
   table; every one of those tables now lives in PostgreSQL and is renamed by
   its own step with its own inverse. The `state-db` step, `Layout.state_db`,
   `_rename_db`'s frozen-footprint entry and its test file all go in the same
@@ -249,14 +300,16 @@ grounds that had nothing to do with the thing they measured.
 
 ## [0.26.3] - 2026-08-24
 
-**Off SQLite.** Every remaining piece of runtime state that a container wrote
-to a private SQLite file now lives in the per-host PostgreSQL on `:55432`,
+**Off the local-file engine.** Every remaining piece of runtime state that a
+container wrote to a private database file now lives in the per-host
+PostgreSQL on `:55432`,
 where a second agent on the same host can see it. This is the release that
 carries the migration the operator directed on 2026-08-24, plus the day's
 repairs to the things the migration exposed.
 
 ### Changed
-- **State moved off SQLite onto per-host PostgreSQL**: both remaining ACL
+- **State moved off the local-file engine onto per-host PostgreSQL**: both
+  remaining ACL
   tables (#1161) and the ACL pending-prompt flag (#1158); the inbound dispatch
   ledger (#1169); the agent auth cache (#1203); relocation residency, leases
   and journal (#1207); and the two raw `instances` readers now go through the
@@ -912,7 +965,8 @@ change that needs one.
          read from postgresql://scitex_cards@127.0.0.1:55432/scitex_cards (uuid 1d55dd6e)
 
   This fleet currently has four stores — two Postgres clones, an abandoned
-  SQLite inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the
+  local-file inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write
+  since the
   previous morning while readers kept attaching), and a YAML file that
   `scitex-cards done` resolved to while `$SCITEX_CARDS_DB` named Postgres. A
   count with no named source is unfalsifiable: it looks identical whether it
@@ -2234,7 +2288,7 @@ change that needs one.
   overrides at INFO instead. The defaults are DATA — no sac logic names a
   consumer, and per-agent opt-out needs no new mechanism (set the key in
   `spec.env`, or `""` to neutralise). Seeded with `SCITEX_CARDS_DUAL_WRITE=1`
-  and `SCITEX_CARDS_READ_BACKEND=sqlite`.
+  and a `SCITEX_CARDS_READ_BACKEND` pin naming the engine of the day.
 
 - **`auth-heal` is declared as a `kind="timer"` JobSpec (`sac.heal-agent-auth`)
   instead of a hand-written crontab line** (PR #753). The cron line was
@@ -2688,14 +2742,16 @@ what had to be true for it to actually arrive.
   workflow — not an equivalent setup, the same bytes. Green PR ⇒ green release,
   by construction.
 
-- **`claim_port()` lost a race and raised a raw sqlite traceback — the bug that
+- **`claim_port()` lost a race and raised a raw driver traceback — the bug that
   ghosted v0.21.18/19.** The pinned-port branch was a TOCTOU: it `SELECT`ed for a
   clash, then `INSERT`ed, with nothing in between. A concurrent claimant landing
-  in that window tripped `UNIQUE(port)` and `sqlite3.IntegrityError` escaped to
+  in that window tripped `UNIQUE(port)` and the driver's `IntegrityError`
+  escaped to
   the caller. *Which* error you got — the intended diagnosis or a driver
   traceback — was decided purely by thread timing, which is why the failure moved
-  between releases and read as a flake. Reproduced deterministically (16 threads,
-  real sqlite, no mocks): 6 raw escapes, 9 clean errors. The claim is now a single
+  between releases and read as a flake. Reproduced deterministically (16
+  threads, a real database, no mocks): 6 raw escapes, 9 clean errors. The
+  claim is now a single
   atomic statement (`INSERT ... ON CONFLICT DO NOTHING` + read-back).
 
 - **A lost port race is now resolved by ORIGIN, so a concurrent fleet relaunch
@@ -3082,7 +3138,8 @@ cannot be stopped. It was held back rather than published.
 
 - **Tests raced real servers against arbitrary 5-second deadlines (#661).** The
   loopback server wasn't dead — it was **slow** (`server.started` measured at
-  7.49s, because the listen lifespan does a filesystem walk plus SQLite upserts
+  7.49s, because the listen lifespan does a filesystem walk plus database
+  upserts
   before reporting ready). The old wait also **swallowed the server's startup
   exception**, burned its ceiling, and then blamed a timeout — so a *crashed*
   server and a *slow* one produced the identical error. The idiom was copy-pasted

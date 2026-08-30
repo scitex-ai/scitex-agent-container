@@ -3,7 +3,7 @@
 """Tests for spec-sourced group authority.
 
 This file used to be built around an ``identical_from_both_stores``
-pair — one caller, one spec, two genuinely different SQLite stores, one
+pair — one caller, one spec, two genuinely different local stores, one
 answer. It was written for the 2026-08-11 relocation incident (nine
 ``403 ACL deny`` probes at once, because the target host held no
 ``node_comms_policy`` row for the caller) and the 2026-08-09 escalation
@@ -11,7 +11,7 @@ answer. It was written for the 2026-08-11 relocation incident (nine
 registry had been wiped, while the host DB was healthy).
 
 THAT SHAPE IS GONE, and this docstring no longer claims otherwise. Both
-incidents were caused by the per-agent SQLite shard, and moving
+incidents were caused by the per-agent local shard, and moving
 ``node_comms_policy`` to one shared PostgreSQL store removes the shard
 rather than testing around it. There is no longer a second store for a
 caller to disagree with, so the equality the old headline asserted is
@@ -120,8 +120,9 @@ class RelocateCase:
 def relocate_case(spec_root, tmp_path) -> RelocateCase:
     """An agent whose spec is visible and whose policy row is published.
 
-    It used to build two SQLite files: a populated one standing for the bare
-    host's ``~/.scitex/agent-container/runtime/state.db``, and an empty one
+    It used to build two local database files: a populated one standing for
+    the bare host's ``~/.scitex/agent-container/runtime/state.db``, and an
+    empty one
     standing for the private ``/state/<agent>/state.db`` shard a SIF gets --
     the exact shape of the relocation 403. The shard is what caused that
     incident, and it no longer exists: the policy row lives in one shared

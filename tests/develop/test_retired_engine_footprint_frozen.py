@@ -52,6 +52,16 @@ properties of THIS repository: nothing imports sqlite3, nothing defines a
 table that has not been declared PostgreSQL, and nothing opens SQLite through
 a vendor library.
 
+It says nothing about VOCABULARY, which is a separate failure with its own
+history — a previous removal was undone by documentation that went on naming
+the engine as the default while the code stayed clean. That gate is
+``tests/develop/test_the_engine_name_stays_gone.py``, and the two are
+deliberately independent: prose can name the engine without importing it, and
+the vendor scan below exists because code can open it without naming it.
+This file is one of the two detectors that gate exempts, and it earns that
+exemption by being unable to state its own rule without writing the import
+line, the vendor constructions and the operator instruction above.
+
 THE IMPORT CHECK ALONE WAS NEVER ENOUGH, TWICE OVER
 ===================================================
 ``import sqlite3`` is a good proxy for "somebody OPENED a database". It is not
@@ -164,7 +174,7 @@ SCAN_EXEMPT = frozenset(
         # rather than special-cased inside the scanner, because a scanner that
         # silently skips one path is a scanner nobody can audit — and the one
         # path it would skip is the gate.
-        "tests/develop/test_sqlite_footprint_frozen.py",
+        "tests/develop/test_retired_engine_footprint_frozen.py",
     }
 )
 

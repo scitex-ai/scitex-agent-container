@@ -488,8 +488,8 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # THE RAISE IS A CAPABILITY REQUIREMENT, WHICH IS WHAT A FLOOR IS FOR — not a
     # quarantine, and not a walk-back of the ruling below. 0.17.0 DESTROYS CARD
     # DATABASES: its store resolution accepts an explicit YAML path that does not
-    # exist plus a bundled-example fallback, and a YAML->sqlite sync then wrote the
-    # example's single card over 2142 real ones (2026-07-19, recovered from
+    # exist plus a bundled-example fallback, and a YAML->database sync then wrote
+    # the example's single card over 2142 real ones (2026-07-19, recovered from
     # backup). "Does not delete the board" is a capability, so it belongs in the
     # specifier. >=0.16.0 happens to resolve to 0.17.2 today only because 0.17.2 is
     # newest; that is luck, and luck expires the moment any other constraint in the
@@ -718,7 +718,7 @@ from scitex_cards._throughput import WIP_STATUSES
 # function was there and wrong. Measured that day, five independent gates
 # went green on that artifact within one hour — this probe, the master-side
 # SYMBOL_PROBE, the Spartan bake's content check, upstream's hasattr check,
-# and a 7537-test suite that runs on SQLite where the defect cannot exist.
+# and a 7537-test suite on a store where the defect cannot exist.
 # So the FLOOR is what excludes the broken release; this import only catches
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.

@@ -55,8 +55,8 @@ about what the spec said.
 from __future__ import annotations
 
 # ``db_path`` IS GONE from every reader below (2026-08-28). It named a
-# SQLite file, and the only thing any of them did with it was hand it to
-# ``read_comms_policy`` — which now reads ``node_comms_policy`` from
+# local database file, and the only thing any of them did with it was hand
+# it to ``read_comms_policy`` — which now reads ``node_comms_policy`` from
 # PostgreSQL. Leaving the parameter would have been worse than removing
 # it: a caller passing a ``tmp_path`` would believe it had isolated the
 # read, and it would silently have been reading the live fleet store.

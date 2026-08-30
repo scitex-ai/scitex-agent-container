@@ -110,7 +110,7 @@ Every other migrated module opens and closes a ``Store`` per call. This one
 caches: ``comms_nodes`` is the a2a ROUTING path, read once per message, and
 ``psycopg.connect`` costs 10.707 ms against the 0.067 ms the previous
 local-file backend paid (159x, measured on the live primary — card
-``sqlite-out-per-call-connect-cost-20260828``). See
+``store-connect-cost-per-call-20260828``). See
 :func:`open_comms_nodes_store` for the end-to-end number, the target-keyed
 invalidation, and what happens when the connection dies.
 """
@@ -367,7 +367,7 @@ def open_comms_nodes_store() -> "Store":
     ``resolve_forward_target`` and ``_agents_list``, which run PER MESSAGE.
 
     Measured on the live primary (card
-    ``sqlite-out-per-call-connect-cost-20260828``): the previous local-file
+    ``store-connect-cost-per-call-20260828``): the previous local-file
     connect cost 0.067 ms and ``psycopg.connect`` 10.707 ms — 159x — and
     ``Store.__init__``
     pays that connect plus the dialect ``schema_lock`` and two probes even

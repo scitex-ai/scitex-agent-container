@@ -76,7 +76,7 @@ is the live one, and the loudness IMMUTABLE was meant to buy comes from the
 mandatory read-back instead, which works under any merge rule.
 
 THE STORE HANDLE IS CACHED PER PROCESS (card
-sqlite-out-per-call-connect-cost-20260828)
+store-connect-cost-per-call-20260828)
 ============================================
 ``Store.__init__`` pays a psycopg connect (measured 10.7 ms — 159x the old
 local open) plus a schema advisory lock and two catalogue probes on EVERY
@@ -224,7 +224,7 @@ def port_store() -> "Store":
 
     Keyed by the RESOLVED target and the pid (module docstring says why:
     per-call construction costs a 10.7 ms psycopg connect on the agent-start
-    path — card sqlite-out-per-call-connect-cost-20260828 — while the
+    path — card store-connect-cost-per-call-20260828 — while the
     ``pg_schema`` fixture and forked test processes both invalidate a naive
     singleton). ``Store`` serialises its own operations internally, so one
     shared handle per process is safe for concurrent threads.

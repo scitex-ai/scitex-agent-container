@@ -127,7 +127,7 @@ def get_port(agent_name: str) -> int | None:
     A scan by design — the store identity is the port, so the agent is data.
     See :mod:`.port_allocator_store` for the cost, which is stated there
     rather than hidden. The handle is the per-process cached one (card
-    sqlite-out-per-call-connect-cost-20260828): never closed here.
+    store-connect-cost-per-call-20260828): never closed here.
     """
     store = port_store()
     for port, holder in live_claims(store).items():

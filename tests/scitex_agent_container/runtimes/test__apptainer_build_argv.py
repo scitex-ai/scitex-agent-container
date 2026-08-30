@@ -1235,7 +1235,7 @@ def _argv_for_env(tmp_path: Path, env_block: str) -> list[str]:
 def test_sac_injects_no_fleet_default_env_into_the_built_argv(tmp_path) -> None:
     """Inverts test_fleet_default_env_reaches_the_built_argv.
 
-    That test asserted the seeded SCITEX_CARDS_READ_BACKEND=sqlite arrived
+    That test asserted the seeded SCITEX_CARDS_READ_BACKEND pin arrived
     without the spec asking. sac stopped declaring it 2026-07-29 on the store
     owner's ruling (nothing reads it, and it misled a diagnosis by stating a
     read policy that was never enforced), so the correct assertion is that a

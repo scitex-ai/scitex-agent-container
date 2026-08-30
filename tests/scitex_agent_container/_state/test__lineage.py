@@ -3,7 +3,7 @@
 PR-3 Checkpoint 3 — pins the BFS transitive descendants walk used
 by the lineage-scoped ACL gate. AAA + one-assert (PA-307).
 
-REAL POSTGRESQL SINCE 2026-08-28, not a temp SQLite file. The walk reads
+REAL POSTGRESQL SINCE 2026-08-28, not a temp local file. The walk reads
 the shared lineage store, so isolation comes from ``pg_schema`` pointing
 ``SCITEX_STORE_DSN`` at a throwaway schema — which is stronger than the
 ``tmp_path`` these tests used to take, because it exercises the real
@@ -224,7 +224,7 @@ def test_ancestors_cycle_is_bounded(pg_schema: str) -> None:
 
 def test_descendants_cycle_is_bounded(pg_schema: str) -> None:
     # Arrange — the DOWN walk over the same mutually-pointing pair. It had
-    # no cycle test at all before, because the SQLite version could only be
+    # no cycle test at all before, because the local-file version could only be
     # given a cycle by hand-editing the file.
     record_lineage(child="x", parent="y")
     record_lineage(child="y", parent="x")

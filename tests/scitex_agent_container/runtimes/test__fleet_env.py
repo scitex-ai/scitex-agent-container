@@ -142,7 +142,7 @@ def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
 
     The unset arm resolves to a UNIX socket that does not exist in a
     container, and opening a Store against it raises StoreTargetError naming
-    the missing path. That loud refusal — with no SQLite to slip into — is
+    the missing path. That loud refusal — with no local file to slip into — is
     scitex-dev's stated design and the behaviour the operator asked for.
 
     THE DISCRIMINATOR WAS A RENDERING DETAIL, and a dependency bump exposed
@@ -827,7 +827,8 @@ def test_dead_read_routing_key_is_not_a_fleet_default(key: str) -> None:
     """sac must not declare a read-routing flag that nothing reads.
 
     This INVERTS ``test_read_backend_default_is_retained``, which asserted the
-    SQLite read pin "stays". That test was written when the pin was believed to
+    retired-engine read pin "stays". That test was written when the pin was
+    believed to
     mean something. It does not: scitex-cards searched their read path from
     source (positive control first) and found the variable only in a comment and
     a retired-vars key — never read for behaviour. The old test pinned a policy

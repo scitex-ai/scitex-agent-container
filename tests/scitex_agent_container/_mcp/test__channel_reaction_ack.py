@@ -15,7 +15,7 @@ Three surfaces are covered, no mocks / monkeypatch on production:
 3. Sender-side absorption — :func:`absorb_reaction_ack` walks the
    envelope and flips the dispatch-ledger row to ``STATUS_REACTED``.
    Real PostgreSQL via the shared ``pg_schema`` fixture, the same seam
-   the ledger tests use since that table moved off SQLite.
+   the ledger tests use since that table moved to PostgreSQL.
 
 Operator mandate (lead a2a ``1781e82a``, 2026-06-14): structural
 reaction so absence = comm miss, detectable.

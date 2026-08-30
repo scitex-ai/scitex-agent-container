@@ -232,7 +232,7 @@ def test_main_returns_zero_when_queue_empty(tmp_path: Path, pg_schema: str) -> N
 def test_main_still_flushes_without_the_retired_state_db_env(
     tmp_path: Path, pg_schema: str
 ) -> None:
-    """The ledger moved to PostgreSQL, so a SQLite path must not gate the flush.
+    """The ledger moved to PostgreSQL, so a local path must not gate the flush.
 
     ``main`` used to refuse unless ``SCITEX_AGENT_CONTAINER_STATE_DB`` was set,
     which was right while the ledger was a file and became a trap the moment it

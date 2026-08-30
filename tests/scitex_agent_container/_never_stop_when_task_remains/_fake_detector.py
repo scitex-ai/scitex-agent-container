@@ -178,11 +178,14 @@ PAIRED_STORE_JSON = json.dumps(
 
 #: The ABANDONED sidecar, measured the same night: 365 rows, 149 unseen, a
 #: zero-byte WAL, and no write since the previous morning while readers kept
-#: attaching. Opened constantly, written never.
+#: attaching. Opened constantly, written never. Its identity also named the
+#: retired engine — a different engine from the board's — but that field is
+#: dropped here because nothing reads it: ``_awaiting_operator`` consults
+#: ``resolved``, ``store_uuid`` and ``system_identifier`` only, and the local
+#: path below is what makes this a different source from the live board.
 DEAD_SIDECAR_JSON = json.dumps(
     {
         "resolved": "/home/agent/.scitex/cards/runtime/todo.db",
-        "backend": "sqlite",
         "store_uuid": "deadbeef-0000-0000-0000-000000000000",
     }
 )
