@@ -76,7 +76,7 @@ def check_lease_holdable(facts: LeaseFacts, from_host: str, agent: str) -> Check
             hint=(
                 "read the agent's record from relocation_leases in the PostgreSQL "
                 "store (_state.relocation_pg.load_lease) before deciding — NOT "
-                "sqlite3 state.db, which still answers from the row left behind by "
+                "the retired local file, which still answers from the row left behind by "
                 "the 2026-08-28 cutover and would name a holder and a fence that "
                 "moved on. The handover needs a lease it can hand FROM, and "
                 "discovering that after the agent has been stopped is the one thing "

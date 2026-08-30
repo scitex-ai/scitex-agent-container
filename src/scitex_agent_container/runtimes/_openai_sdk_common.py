@@ -13,7 +13,7 @@ note). Mirrors the concern split established there:
 
 Session-state placement USED TO BE the third concern here, and it is gone
 rather than moved: the helper picked a filesystem path for a per-agent
-SQLite database, and there is no file to place any more. Conversation
+database file, and there is no file to place any more. Conversation
 state lives in this host's PostgreSQL, resolved by
 :mod:`_state.openai_session_store` — a store target, not a path — so the
 question this module answered no longer has a filesystem answer. The

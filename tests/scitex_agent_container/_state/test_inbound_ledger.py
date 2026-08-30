@@ -6,10 +6,10 @@ reports completion.
 Real PostgreSQL via ``scitex_dev.store``, isolated per test by the
 ``pg_schema`` fixture (no mocks). Covers the pending→reporting→reported
 lifecycle, FIFO claim order, the atomic single-claim guarantee, the identity
-collision the SQLite autoincrement used to absorb, and fail-loud validation.
+collision the old autoincrement used to absorb, and fail-loud validation.
 STX-TQ002 AAA markers + STX-TQ007 one assert + STX-TQ003 descriptive names.
 
-``db_path`` IS GONE from every call. It named a SQLite file and there is no
+``db_path`` IS GONE from every call. It named a file and there is no
 file; every test that used to thread ``tmp_path / "state.db"`` now takes
 ``pg_schema`` instead, which is the seam that keeps one test's rows out of
 another's — and out of the live fleet store.
@@ -104,7 +104,7 @@ def test_claim_is_atomic_so_one_row_is_claimed_once(pg_schema: str) -> None:
 
 
 def test_two_wakes_in_the_same_instant_are_both_kept(pg_schema: str) -> None:
-    """The collision the SQLite autoincrement used to absorb for free.
+    """The collision the old autoincrement used to absorb for free.
 
     Identity is ``(agent, from_agent, dispatch_id, ts)``. Two requester-bearing
     wakes with no dispatch id, from the same peer, at the SAME float instant
@@ -113,7 +113,7 @@ def test_two_wakes_in_the_same_instant_are_both_kept(pg_schema: str) -> None:
 
     Not credible in production (``time.time()`` is microsecond-resolution and a
     wake is a bus event) — which is exactly why it is pinned here rather than
-    reasoned about: the SQLite version made duplicates free and the port must
+    reasoned about: the old counter made duplicates free and the port must
     not quietly withdraw that.
     """
     # Arrange — same everything, including ts.

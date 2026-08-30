@@ -40,7 +40,7 @@ more than its check performed will be believed at its name.**
 
 THE SHARED STORE MADE ONE BRANCH FLEET-WIDE. IT IS SCOPED NOW.
 ==============================================================
-Under per-host SQLite the heartbeat-staleness branch scoped ONLY by
+Under the per-host file the heartbeat-staleness branch scoped ONLY by
 ``remote=0``, and that was sufficient by accident: each host owned its own
 file, so "not a cross-host mirror row" also meant "written here". On the
 SHARED store it means neither — a peer's own local record is ``remote=0``
@@ -187,7 +187,7 @@ def gc_dead_instances(
     the observer) and losing either would be a silent widening.
 
     ``dry_run=True`` runs all three checks but writes nothing — counters
-    reflect what *would* be swept. As under SQLite, a dry run can report MORE
+    reflect what *would* be swept. As before the move, a dry run can report MORE
     than the real sweep would: branch 1 does not actually end anything, so a
     record it names can be counted again by branches 2 and 3.
     """
@@ -222,7 +222,7 @@ def gc_dead_instances(
         if not instance_id or instance_id in swept:
             return False
         if dry_run:
-            # Deliberately NOT added to ``swept``: the SQLite version re-read
+            # Deliberately NOT added to ``swept``: the previous implementation re-read
             # the table between branches, so a dry run (which updates nothing)
             # let a later branch see a record an earlier one named. Preserved
             # rather than quietly improved — the counters are a preview of

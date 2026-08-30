@@ -2,7 +2,7 @@
 
 PR-3 Checkpoint 3 — pins the lineage-scoped ACL gate that the
 DELETE, STATUS, send, and tail surfaces consume. AAA + one-assert
-(PA-307); real sqlite (no mocks, PA-306).
+(PA-307); a real store (no mocks, PA-306).
 
 Contract:
   caller may operate on target iff

@@ -9,9 +9,9 @@ Claude-only deployment can import it without the optional SDK.
 WHY THIS EXISTS AT ALL
 ======================
 The ``openai-agents`` SDK persists multi-turn memory through a ``Session``
-object, and sac used the SDK's own file-backed one — a real per-agent SQLite
+object, and sac used the SDK's own file-backed one — a real per-agent
 database under ``~/.scitex/agent-container/runtime/openai-sessions/``. It was
-the LAST SQLite database sac opened, and the only one no ``import sqlite3``
+the LAST local database sac opened, and the only one no import scan
 scan could ever see, because the import happens inside the vendor package.
 That is the whole hole ``tests/develop/test_sqlite_footprint_frozen.py``'s
 vendor gate was written to measure, and closing it is what empties
@@ -104,7 +104,7 @@ def _schema() -> Any:
     """The conversation-state schema.
 
     Built lazily so importing this module does not import scitex-dev; the
-    SQLite-era code was equally lazy about its own imports, for the same
+    The original code was equally lazy about its own imports, for the same
     reason (import cost off the hot path).
 
     ``(agent, session_id)`` is the composite IDENTITY, and the store requires

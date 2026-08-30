@@ -2,7 +2,7 @@
 + may_spawn, evaluated server-side by ``_listen._acl``.
 
 Mirrors the existing ``test__acl.py`` conventions (handoff §0 no mocks:
-real SQLite, real lineage rows). AAA structure, one assertion per test,
+a real store, real lineage rows). AAA structure, one assertion per test,
 descriptive names. Each test seeds only the policy row(s) it exercises
 so default-preservation tests (no row) stay byte-faithful to legacy
 behaviour.

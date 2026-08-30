@@ -19,21 +19,21 @@ denied (block wins). The receiver explicitly silenced the sender after some
 earlier grant — honouring the more recent veto.
 :func:`_listen._acl.check_send_acl` enforces this precedence.
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
+WHY THIS MODULE IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to PostgreSQL:
+The operator's 2026-08-19 order was to move every table to PostgreSQL:
 "fail fast, fail loud, no fallbacks". This is the fourth table to move, after
 ``verdict_delivered``, ``incarnations`` and ``pending_prompts``, and it moves the
 same way — by ADOPTING :mod:`scitex_dev.store` rather than by sac growing a
 private psycopg layer.
 
-``db_path`` IS GONE from every function. It named a SQLite file; there is no
+``db_path`` IS GONE from every function. It named a file; there is no
 file. ``grant_flush`` and ``_listen._acl`` stop threading one in.
 
 NO MIGRATION SCRIPT, and that is measured rather than assumed. When this slice
 was scoped the prediction was the opposite — "``comms_blocks`` is a DURABLE
 decision, not a transient flag, so it almost certainly holds real rows and this
-one DOES need a migration". It holds ZERO rows: 52 SQLite databases read across
+one DOES need a migration". It holds ZERO rows: 52 per-agent databases read across
 compute-01..04 (the fleet state.db plus every per-agent shard), 0 in all of them.
 Nobody has ever blocked anyone. The prediction was reasonable and wrong, which is
 why it was checked before any code was written.
@@ -52,7 +52,7 @@ worse than downtime: a block check that cannot reach its store and answers
 sender. There is no safe default for this question, which is exactly why it
 must not have one.
 
-The connection cost is unchanged in SHAPE — the SQLite version also opened and
+The connection cost is unchanged in SHAPE — the previous implementation also opened and
 closed a connection per check — but a unix-socket round trip is dearer than a
 file open. If that ever shows up in send latency, the fix is a pooled or
 long-lived store handle, not a cache of the answer: a cached block is a block
@@ -114,7 +114,7 @@ def _schema() -> Any:
     Built lazily so importing this module does not import scitex-dev; the old
     module was equally lazy about ``state_db``, for the same reason.
 
-    ``(sender_name, target_name)`` is the composite IDENTITY — the SQLite
+    ``(sender_name, target_name)`` is the composite IDENTITY — the original
     table's PRIMARY KEY, unchanged. Identity fields must be IMMUTABLE and the
     store enforces it: "changing one does not update the record, it names a
     different record", which is exactly right for a pair.
@@ -173,7 +173,7 @@ def open_blocks_store() -> Store:
     The caller owns closing it. Every public function opens and closes one per
     call, mirroring the old ``with open_db(...)`` shape: ``has_block`` runs on
     the ACL path, but that path already crosses a process boundary, and a
-    connection per check is what the SQLite version did too.
+    connection per check is what the previous implementation did too.
     """
     import socket
 
@@ -195,7 +195,7 @@ def ensure_comms_blocks_table() -> str:
     calls it by that name and the name still says what it does.
 
     Returns the resolved store LOCATOR as a string — the PostgreSQL equivalent
-    of the ``None`` the SQLite version returned, and strictly more useful: it
+    of the ``None`` the previous implementation returned, and strictly more useful: it
     names WHERE the state actually went, so an operator can check it rather than
     assume it.
     """
@@ -283,7 +283,7 @@ def has_block(*, sender: str, target: str) -> bool:
     no 403 reason, no receiver push, no approve-prompt re-fire.
 
     ``get`` excludes hidden records by default, so an unblocked pair reads as
-    absent here — which is precisely the SQLite DELETE semantics this replaces.
+    absent here — which is precisely the DELETE semantics this replaces.
     """
     if not sender or not target:
         return False

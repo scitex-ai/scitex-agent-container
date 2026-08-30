@@ -16,9 +16,9 @@ per-node bearer was supposed to pin it, but that feature was removed
 2026-08-28 having never been armed. The optional ``note`` is a
 free-form audit annotation.
 
-ON POSTGRESQL SINCE 2026-08-28 (the operator's SQLite-eradication
+ON POSTGRESQL SINCE 2026-08-28 (the operator's storage-consolidation
 order). The store resolves through ``scitex_dev.store.host_store``:
-``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO SQLite
+``SCITEX_STORE_DSN`` or the per-host PostgreSQL, with NO local-file
 fallback, so a host whose PostgreSQL is unreachable raises
 ``StoreTargetError`` naming the DSN it could not reach.
 
@@ -32,17 +32,17 @@ reconnect wrapper. Every verb here now runs through
 from this module and keeps meaning exactly what it meant — a FRESH,
 caller-owned ``Store`` the caller closes.
 
-``db_path`` IS GONE from all four signatures. It named a SQLite file;
+``db_path`` IS GONE from all four signatures. It named a file;
 there is no file. Test isolation now comes from pointing
 ``SCITEX_STORE_DSN`` at a throwaway schema — the ``pg_schema`` fixture
 — which is a better isolation than a temp path was, because it
 exercises the real resolver.
 
 THREE THINGS THIS MIGRATION HAD TO PRESERVE, each a real property of
-the SQLite version rather than an incidental behaviour:
+the previous implementation rather than an incidental behaviour:
 
 1. REVOKE IS NOT A DELETE ANY MORE, and that is a strengthening. The
-   SQLite version issued ``DELETE FROM comms_grants``, so a revoked
+   original issued ``DELETE FROM comms_grants``, so a revoked
    grant left no trace and "was never granted" and "was granted then
    revoked" became indistinguishable — for an ACL table that is the
    difference between a clean history and an unanswerable audit
@@ -53,7 +53,7 @@ the SQLite version rather than an incidental behaviour:
    ``False`` immediately after a revoke — the security behaviour is
    unchanged; only the forgetting stopped.
 
-2. THE LISTING ORDER IS THE HLC, NOT ``created_at``. The SQLite
+2. THE LISTING ORDER IS THE HLC, NOT ``created_at``. The original
    docstring recorded, at length, why it ordered by ``rowid``: a
    wall-clock ``created_at`` ties on bulk-imported peer rows and skews
    across hosts, so a foreign row sorted into a plausible-looking
@@ -166,7 +166,7 @@ def revoke_send(*, sender: str, target: str) -> bool:
         key = {"sender_name": sender, "target_name": target}
         if store.get(key) is None:
             # Absent, or already hidden — either way nothing was live,
-            # which is what the SQLite rowcount==0 meant.
+            # which is what a zero rowcount meant.
             return False
         store.hide(key, expected_revision=ANY_REVISION, actor=ACTOR)
         return True

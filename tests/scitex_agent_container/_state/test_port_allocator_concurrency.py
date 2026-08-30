@@ -3,7 +3,7 @@
 THE INCIDENT. The release gate (self-hosted Spartan, inside the SIF, pytest
 under `-n $(nproc)` xdist) died on:
 
-    sqlite3.IntegrityError: UNIQUE constraint failed: a2a_ports.port
+    IntegrityError: UNIQUE constraint failed: a2a_ports.port
 
 …while the PR gate stayed GREEN. It could not have been otherwise: the PR gate
 ran `pytest tests/` SINGLE-PROCESS on a hosted ubuntu box, so it was
@@ -32,7 +32,7 @@ takes the ``explicit`` branch. An auto-port agent therefore traverses the
 pinned-port code on every forced restart.
 
 NOT A TEST-ONLY BUG. On a real host two concurrent restarts race here and the
-operator gets a raw sqlite traceback instead of a diagnosis.
+operator gets a raw driver traceback instead of a diagnosis.
 
 No mocks: a real database, the real ``claim_port``, real threads. The
 ``Barrier`` is what makes it deterministic rather than a 1-in-N flake — it
@@ -42,12 +42,12 @@ window together. Pre-fix this reproduced ~6 raw IntegrityError escapes out of
 
 THE BACKEND MOVED 2026-08-28, and this module had to move with it in a way
 that is more than plumbing. ``a2a_ports`` now lives in per-host PostgreSQL, so
-the per-test SQLite path is replaced by the shared ``pg_schema`` fixture. Two
+the per-test file path is replaced by the shared ``pg_schema`` fixture. Two
 assertions needed REWORDING rather than re-pointing, and both are the same
 mistake in different clothes — an assertion that names the OLD backend keeps
 passing while measuring nothing:
 
-  * "no raw ``sqlite3.IntegrityError`` escaped" is trivially true once the
+  * "no raw driver ``IntegrityError`` escaped" is trivially true once the
     driver is psycopg. It is now stated as "everything that escaped is the
     diagnostic ``RuntimeError``", which is backend-neutral and stronger.
   * a direct ``SELECT ... FROM a2a_ports`` cannot run at all. It is now a
@@ -100,7 +100,7 @@ def _claim_concurrently(
     return errors
 
 
-def test_concurrent_explicit_pin_never_leaks_a_raw_sqlite_error(
+def test_concurrent_explicit_pin_never_leaks_a_raw_driver_error(
     pg_schema: str,
 ) -> None:
     # Arrange — 16 DISTINCT agents all pinned to the SAME port. Exactly one can
@@ -114,10 +114,10 @@ def test_concurrent_explicit_pin_never_leaks_a_raw_sqlite_error(
 
     # Assert — the regression: a raw driver exception must NEVER reach the
     # caller. Stated as "everything that escapes is the diagnostic
-    # RuntimeError" rather than naming ``sqlite3.IntegrityError``, because the
+    # RuntimeError" rather than naming a driver ``IntegrityError``, because the
     # backend moved to PostgreSQL and a check spelled for the OLD driver would
     # have gone permanently, invisibly vacuous — psycopg's UniqueViolation is
-    # not a sqlite3.IntegrityError, so the original assertion would pass while
+    # not a driver IntegrityError, so the original assertion would pass while
     # sixteen raw psycopg tracebacks reached the operator. Backend-neutral is
     # also strictly stronger: it catches the next driver too.
     leaked = [e for e in errors if not isinstance(e, RuntimeError)]

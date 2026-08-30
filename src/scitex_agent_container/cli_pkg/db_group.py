@@ -8,7 +8,7 @@ Subcommands:
   * ``sac db tick`` — the same sweep, silent, for cron / systemd timers.
 
 ``show`` and ``query`` were DELETED on 2026-08-29 along with the rest of
-the SQLite read surface. Both went through ``open_db``, and
+that read surface. Both went through ``open_db``, and
 ``KNOWN_TABLES`` was already empty, so ``--table`` could not parse any
 value and ``show`` could only ever count nothing. ``export`` and
 ``import`` went the same day, from ``_db_wire_cmds``, which was deleted
@@ -65,7 +65,7 @@ def db_migrate(
     """One-shot import of legacy ``registry/*.json`` into ``instances``.
 
     Imported rows are marked ``exit_reason='reboot-swept'`` — they
-    represent state captured before the SQLite migration and are
+    represent state captured before the storage migration and are
     not running by definition. Idempotent: re-running skips rows
     that already exist (matched by name + host + started_at).
 

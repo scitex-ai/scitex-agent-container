@@ -144,7 +144,7 @@ class TestCLI:
     def test_db_clean_sweep_exits_zero(self):
         # Arrange
         # F-CS11 phase 5: `registry clean` was renamed to `db clean`.
-        # The new path is the SQLite GC sweep — runs against state.db,
+        # The new path is the GC sweep — runs against the store,
         # exits 0 with zero-or-more swept entries.
         runner = CliRunner()
         # Act

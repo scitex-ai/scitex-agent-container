@@ -19,7 +19,7 @@ of them already opened through a cached handle wrapped in
 no reconnect at all. That asymmetry was not a design decision, it was the
 order the ports landed in, and it costs twice:
 
-* ``psycopg.connect`` is 10.707 ms against ``sqlite3.connect``'s 0.067 ms
+* ``psycopg.connect`` is 10.707 ms against the previous 0.067 ms
   (159x, measured on the live primary, card
   ``sqlite-out-per-call-connect-cost-20260828``). :func:`.has_grant` is
   called by ``_listen._acl.check_send_acl`` for every cross-group message,
@@ -199,7 +199,7 @@ def grants_schema() -> Any:
     return Schema(
         name=GRANTS_STORE,
         fields={
-            # The directed pair IS the identity, exactly as the SQLite
+            # The directed pair IS the identity, exactly as the original
             # (sender_name, target_name) lookup treated it.
             "sender_name": _ident(FieldKind.TEXT),
             "target_name": _ident(FieldKind.TEXT),
@@ -318,7 +318,7 @@ def grant_key(values: Any) -> dict[str, Any]:
 def hlc_sort_key(row: "Row") -> tuple:
     """Total order over records, immune to wall-clock skew.
 
-    The successor to the SQLite ``rowid`` ordering. ``node`` is the final
+    The successor to the original row-id ordering. ``node`` is the final
     tiebreak so the order is total rather than merely partial — two origins
     can mint the same (wall_us, logical) pair.
     """

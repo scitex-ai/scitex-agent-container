@@ -1,4 +1,4 @@
-"""CI-verdict delivered-set — on a REAL PostgreSQL, never SQLite, never a mock.
+"""CI-verdict delivered-set — on a REAL PostgreSQL, never a local file, never a mock.
 
 Mirrors ``src/scitex_agent_container/_state/state_db_verdict_dedup.py``.
 
@@ -6,7 +6,7 @@ WHY THESE TESTS TALK TO A REAL DATABASE
 =======================================
 The module under test is PostgreSQL-only by the operator's 2026-08-19 order
 ("fail fast, fail loud, no fallbacks"), and it reaches PostgreSQL through
-``scitex_dev.store``. A suite that exercised the store's SQLite dialect
+``scitex_dev.store``. A suite that exercised the store's file-backed dialect
 instead would be testing a code path production can never take.
 
 That is not a hypothetical. scitex-dev 0.49.0 shipped a PostgreSQL backend
@@ -103,7 +103,7 @@ def test_init_creates_the_delivered_set_in_postgres(pg_schema: str) -> None:
 def test_init_reports_where_the_state_went(pg_schema: str) -> None:
     """The return value NAMES the target, so a caller can check it.
 
-    The SQLite version returned a Path for the same reason. A store that
+    The previous implementation returned a Path for the same reason. A store that
     cannot say where it is is a store nobody can verify.
     """
     # Arrange

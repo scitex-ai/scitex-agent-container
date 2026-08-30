@@ -30,7 +30,7 @@ The ``sdk_heartbeat_loop`` half of this invariant lives in the sibling
 ``test__sdk_heartbeat_loop_unknown_is_not_dead.py``.
 
 NO MOCKS: real ``tmp_path`` state dirs, the real ``write_heartbeat`` writer,
-and a real sqlite ``state.db`` with real rows written through the real
+and a real isolated store with real rows written through the real
 ``record_instance_start`` / ``claim_port`` APIs.
 
 STX-TQ002 AAA-markers each on its own line + STX-TQ007 one-assert.

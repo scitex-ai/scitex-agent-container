@@ -5,7 +5,7 @@ Exercises the transport + ACL stack shipped by WI-1..WI-4 of
 ``HANDOFF_AGENT_COMMS_2026-05-19.md`` across real processes — no
 mocks. Each test boots a real ``uvicorn`` on a loopback port, talks
 to it via ``httpx`` (POST + SSE) **directly** (the wire layer, one
-level below the ``a2a_*`` MCP tools), reads/writes the real SQLite
+level below the ``a2a_*`` MCP tools), reads/writes the real
 ``state.db``, and gates on real per-node bearer tokens.
 
 The MCP-tool variant of these same behaviours — driving the
@@ -847,7 +847,7 @@ _CHANNEL_COLUMNS = ("id", "target", "source", "kind", "content", "meta_json", "t
 def _read_channel_events_for_target(db, target: str) -> list[dict]:
     """Read every ``sac_channel_events`` row for ``target`` as plain dicts.
 
-    ``db`` is the SQLite state.db and is now UNUSED — kept in the signature
+    ``db`` named the per-agent state file and is now UNUSED — kept in the signature
     because the caller passes it alongside its other reads and dropping it
     would make this the one helper with a different shape. The rows moved to
     the shared PostgreSQL on 2026-08-28 (ADR-0023).

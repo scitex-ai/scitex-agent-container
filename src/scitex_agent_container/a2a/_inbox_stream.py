@@ -119,7 +119,7 @@ async def inbox_stream(request: Request, ctx: Any) -> Response:
             #
             # OFF THE EVENT LOOP, every database call in this generator.
             # They were safe as sync calls while ``channel_events`` was a
-            # local SQLite file; since 2026-08-28 each is a NETWORK round
+            # local file; since 2026-08-28 each is a NETWORK round
             # trip, so a blackholed primary would stall THIS WHOLE DAEMON —
             # every request it is serving, not just this stream.
             # BOUNDED — and ``asyncio.to_thread`` was NOT, which an earlier

@@ -140,7 +140,7 @@ def _state_db_row(agent: str) -> str:
     """The ``agent_auth_state`` row, pipe-separated as in the operator's example."""
     # READ THROUGH THE OWNING MODULE, not through its storage. This used to
     # open ``state.db`` directly and SELECT from ``agent_auth_state``. The same
-    # PR that moved that table to PostgreSQL would have left this raw SQLite
+    # PR that moved that table to PostgreSQL would have left this raw local
     # read behind — and because the read is wrapped in the deliberate fallback
     # below, it would not have failed: it would have returned
     # "<state.db unreadable>" forever, a MISSING reading rendered as a reading.

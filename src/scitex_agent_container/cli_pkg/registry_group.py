@@ -1,6 +1,6 @@
 """``sac registry`` noun-group — registry maintenance verbs.
 
-Post-F-CS11: ``registry clean`` is folded into the new SQLite-backed
+Post-F-CS11: ``registry clean`` is folded into the state-backed
 ``sac db clean``. The old verb still parses but hard-errors per
 scitex CLI convention §5 with a redirect to the new path.
 

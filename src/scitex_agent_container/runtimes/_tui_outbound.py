@@ -23,7 +23,7 @@ the pane gives no reliable turn-complete signal. So:
 The SAME ``state.db`` is bound into the container at ``/state/<name>``, so
 the host-side bridge writer and the in-container hook reader share it
 (``open_db`` WAL + ``busy_timeout`` make the cross-process access safe).
-This is the sac SQLite state DB doing what it is for — durable, ACID,
+This is the sac state store doing what it is for — durable, ACID,
 queryable communication state — not an ad-hoc side file.
 """
 
@@ -270,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     listen_url = os.environ.get("SAC_LISTEN_BASE_URL", "").strip()
     bearer = os.environ.get("SAC_LISTEN_BEARER", "").strip() or None
     # SCITEX_AGENT_CONTAINER_STATE_DB IS NO LONGER PART OF THIS GATE, and
-    # dropping it is the point rather than tidying. It named the SQLite file
+    # dropping it is the point rather than tidying. It named the file
     # the ledger used to live in; the ledger is PostgreSQL now and this path
     # reads nothing from it. Left in place, an agent without that variable
     # would silently stop reporting completions — the gate would be refusing

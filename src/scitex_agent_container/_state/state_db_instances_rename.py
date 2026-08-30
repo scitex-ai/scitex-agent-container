@@ -13,7 +13,7 @@ WHY THIS IS A RENAME *STEP* AND NOT THREE MORE ``NAME_COLUMNS`` PAIRS
 ``("instances", "workdir")``. Leaving them there after the move would have
 been WORSE than a crash, for exactly the reason the ``comms_nodes`` and
 ``node_comms_policy`` pairs were removed before it: ``rename_rows`` SKIPS a
-table absent from ``sqlite_master``, so the rename would have reported
+a table the schema no longer declared, so the rename would have reported
 SUCCESS while every record kept the OLD name.
 
 What that costs is not cosmetic. ``list_active_instances`` is the oracle
@@ -39,7 +39,7 @@ declaration is not implementable:
 
 The alternative was to exclude ``spawned_by`` from the rename and say so.
 Rejected: ``_lifecycle/_status`` reads it as the lineage edge and
-``sac agents rename`` already covered it under SQLite, so excluding it would
+``sac agents rename`` already covered it before the move, so excluding it would
 retire live coverage in a storage migration.
 
 Declaring it LAST_WRITER_WINS costs nothing that IMMUTABLE was buying,
@@ -206,7 +206,7 @@ def count_instance_rename_rows(*, old: str) -> dict[str, int]:
 
     The store half of ``_rename_db.count_rows``, which is what ``sac agents
     rename --dry-run`` prints. Reported under the same ``table.column`` keys
-    the SQLite counts use, so the operator reads one list rather than two —
+    the pre-migration counts used, so the operator reads one list rather than two —
     and so a zero here is a zero for the same reason it is everywhere else in
     that report, rather than "this half was not asked".
     """

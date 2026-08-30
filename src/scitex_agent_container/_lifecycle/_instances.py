@@ -21,7 +21,6 @@ without rescanning by name+host.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
@@ -146,8 +145,6 @@ def _state_dir_for(config: AgentConfig, runtime: Any):
 def record_local_instance(
     config: AgentConfig,
     runtime: Any,
-    *,
-    db_path: Path | None = None,
 ) -> str | None:
     """Insert (or refresh) the local ``instances`` row for ``config``.
 
@@ -156,24 +153,21 @@ def record_local_instance(
     IS NULL`` never collides on a restart. Returns the new instance id,
     or ``None`` when the runtime can't report a state dir.
 
-    ``db_path`` PINS the store every write below lands in. ``None``
-    keeps the historical behaviour (resolve ``state_db.DEFAULT_DB_PATH``
-    per write, at call time).
+    THERE IS NO ``db_path`` PARAMETER ANY MORE, and its removal is the end
+    of a chain rather than a rename. It was added on 2026-07-14 to PIN a
+    per-agent ``state.db`` for the health monitor's restart callback, which
+    runs on a background daemon thread and was otherwise re-resolving a
+    MUTABLE PROCESS-GLOBAL at call time — under pytest that meant another
+    test's tmp database, and on a real host the live fleet file.
 
-    Why the parameter exists (test-isolation bug, 2026-07-14): this
-    function is also reached from the health-monitor's restart callback
-    (:func:`restart_and_record`), which runs on a BACKGROUND DAEMON
-    THREAD that outlives whatever started it. With ``db_path=None``
-    every write re-resolved the module-level ``DEFAULT_DB_PATH`` — a
-    MUTABLE PROCESS-GLOBAL — at call time, so the monitor wrote into
-    whichever database the process happened to consider "default" at
-    the moment it fired. Under pytest that is a *different test's*
-    isolated tmp DB (the auto-grant below then showed up as a stray
-    ``<name> -> lead`` row in an unrelated suite); on a real host with
-    no test redirecting it, it is the live fleet ``state.db``.
-    :func:`_lifecycle._start.agent_start` now resolves the path ONCE
-    and pins it here and into the restart callback, so a monitor always
-    writes to the store its agent was started against.
+    Every write below now goes to the store addressed by
+    ``SCITEX_STORE_DSN``: the a2a claim ledger moved to per-host PostgreSQL
+    on 2026-08-20 and ``instances`` to the shared store on 2026-08-28. A
+    process-global path stopped selecting anything at that point, so the
+    parameter had spent its last weeks being threaded from
+    :func:`make_restart_callback` through :func:`restart_and_record` to
+    here, where nothing read it. A pin that pins nothing is worse than no
+    pin: it reads as an isolation guarantee that is not being made.
     """
     from .._runners._session_state import write_instance_id
     from .._state.port_allocator import get_port
@@ -191,12 +185,6 @@ def record_local_instance(
         if row.get("name") == config.name:
             record_instance_stop(str(row["id"]), exit_reason="superseded")
 
-    # NO ``db_path`` anywhere on this path any more. The a2a claim ledger
-    # moved to per-host PostgreSQL (``_state/port_allocator_store``) on
-    # 2026-08-20 and ``instances`` moved to the SHARED store on 2026-08-28,
-    # so the parameter this function still accepts no longer selects
-    # anything either side of this line — it survives only for the
-    # registry/spec paths its callers thread it through.
     a2a_port = get_port(config.name)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
@@ -240,7 +228,7 @@ def record_local_instance(
     )
 
     # ADR-0014 — paired comms_nodes write so cross-host peers can resolve
-    # this agent. The instances table is per-host SQLite; comms_nodes is the
+    # this agent. The instances table is per-host; comms_nodes is the
     # federated layer, and since 2026-08-28 that is the SHARED PostgreSQL
     # store, so peers see this entry immediately — there is no sync to wait
     # for. Best-effort: any error here is logged but does not abort the agent
@@ -335,11 +323,6 @@ def record_local_instance(
     # sibling side-writes above — see ``_birth_certificate``.
     from ._birth_certificate import write_birth_certificate
 
-    # No ``db_path``: the certificate went to per-host PostgreSQL on
-    # 2026-08-19. This function's own ``db_path`` still names the SQLite
-    # state.db that ``record_local_instance`` above writes to — the two
-    # records now live in two different databases, which is exactly what
-    # the migration is doing, one table at a time.
     write_birth_certificate(config, instance_id)
     return instance_id
 
@@ -347,8 +330,6 @@ def record_local_instance(
 def restart_and_record(
     config: AgentConfig,
     runtime_factory: Any,
-    *,
-    db_path: Path | None = None,
 ) -> bool:
     """Restart ``config`` via its runtime AND refresh its ``instances`` row.
 
@@ -376,64 +357,43 @@ def restart_and_record(
     Returns whatever ``runtime.start`` returned; the row is refreshed only
     on a successful start (a failed restart must not fabricate a live row).
 
-    ``db_path`` PINS the store the refreshed row (and the ``<self> ->
-    lead`` auto-grant) is written to. This function is the health
-    monitor's restart callback and therefore runs on a long-lived
-    BACKGROUND DAEMON THREAD; resolving the store from the mutable
-    ``state_db.DEFAULT_DB_PATH`` global at call time meant the thread
-    followed that global wherever it moved. See
-    :func:`record_local_instance` for the full incident note.
+    THE STORE IS NO LONGER SOMETHING THIS CALL CAN CHOOSE, and that is the
+    resolution of a real incident rather than a simplification. A ``db_path``
+    parameter pinned a per-agent ``state.db`` here from 2026-07-14, because
+    this function IS the health monitor's restart callback and runs on a
+    long-lived background daemon thread: without a pin, every write
+    re-resolved a mutable process-global at the moment the monitor fired.
+    Under pytest that landed a ``<self> -> lead`` auto-grant in a LATER,
+    UNRELATED test's database; on a real host it landed test agent names in
+    the live fleet file. Both were observed.
+
+    Every write on this path now addresses the store through
+    ``SCITEX_STORE_DSN``, which no caller mutates mid-process, so the class of
+    bug the pin defended against cannot be reached from here — and the pin
+    itself had stopped selecting anything once ``instances`` moved.
     """
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:
-        record_local_instance(config, runtime, db_path=db_path)
+        record_local_instance(config, runtime)
     return started
 
 
 def make_restart_callback(
     runtime_factory: Any,
-    *,
-    db_path: Path | None = None,
 ) -> Callable[[AgentConfig], bool]:
-    """Build the health-monitor's restart callback with the state.db PINNED.
+    """Adapt :func:`restart_and_record` to the health monitor's callback shape.
 
     :func:`_lifecycle._start.agent_start` spawns :func:`health.health_monitor`
-    on a DAEMON THREAD and hands it this callback. That thread outlives the
-    call that created it — it keeps ticking (``health.interval``, then a
-    restart backoff) long after ``agent_start`` returned.
+    on a DAEMON THREAD and hands it this callback, which must take a single
+    ``AgentConfig``. Binding ``runtime_factory`` is all that is left to do.
 
-    The callback must therefore capture WHICH state.db it writes to, once,
-    up front. Previously it did not: it called
-    :func:`restart_and_record` with no ``db_path``, so each write
-    re-resolved ``state_db.DEFAULT_DB_PATH`` — a MUTABLE PROCESS-GLOBAL —
-    at the moment the monitor fired, and landed wherever that global then
-    pointed:
-
-    * under pytest, into a LATER, UNRELATED test's isolated tmp database
-      (its ``<self> -> lead`` auto-grant surfaced as a stray
-      ``target='lead'`` row in a suite that never started an agent — an
-      intermittent red gated by ``health.interval`` + restart backoff,
-      invisible when that suite ran alone);
-    * on a real host with nothing redirecting the global, into the LIVE
-      FLEET ``state.db`` (test agent names ``alpha`` / ``beta`` / ``zombie``
-      were found granted to ``lead`` in production because of this).
-
-    Resolving ``DEFAULT_DB_PATH`` as a module ATTRIBUTE here (never
-    ``from .state_db import DEFAULT_DB_PATH``, which would capture the
-    value at import and be immune to redirection) pins the store at
-    agent_start time. The monitor then always writes to the database its
-    agent was started against.
+    It used to bind a ``db_path`` too — see :func:`restart_and_record` for the
+    incident that put it there and the store move that made it inert.
     """
-    if db_path is None:
-        from .._state import state_db as _state_db
-
-        db_path = _state_db.DEFAULT_DB_PATH
-
-    pinned = db_path
 
     def _restart(config: AgentConfig) -> bool:
-        return restart_and_record(config, runtime_factory, db_path=pinned)
+        return restart_and_record(config, runtime_factory)
 
     return _restart
 

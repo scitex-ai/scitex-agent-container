@@ -13,7 +13,7 @@ six test modules had each hand-rolled the same startup wait —
 — and that 5-second ceiling is a RACE BY CONSTRUCTION. uvicorn sets
 ``server.started`` only AFTER the ASGI **lifespan startup** completes, and the
 listen app's lifespan awaits ``persist_self_peers_on_listen_startup()`` (a
-filesystem walk over the config/fleet search dirs plus SQLite upserts) before
+filesystem walk over the config/fleet search dirs plus store upserts) before
 spawning its six background loops. Measured on a loaded box: the server came
 up in **7.49s** — against the 5.0s ceiling. On a 2-core CI runner under load
 that is a coin flip, and it is why the leg went red without hanging.

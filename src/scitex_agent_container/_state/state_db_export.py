@@ -10,7 +10,7 @@ peer left to converge with, so a round trip could only re-insert a stale copy
 of what the far side already holds. THE STORE IS THE SYNC.
 
 What remains is :func:`import_legacy_registry`, which lifts the JSON shards a
-pre-SQLite registry left on disk into ``instances``. It is a one-shot carrier
+pre-migration registry left on disk into ``instances``. It is a one-shot carrier
 for operator data that predates the migration, not a sync path, and it writes
 through the PostgreSQL instance store like every other writer — see its own
 docstring for why ``db_path`` is accepted and ignored.
@@ -48,7 +48,7 @@ def import_legacy_registry(
     left as a silent no-op.
 
     THE DEDUPE KEY IS ``(name, host, started_at)``, NOT the record identity.
-    That is unchanged from the SQLite version and it has to be: the identity
+    That is unchanged from the previous implementation and it has to be: the identity
     is ``(id, host)`` and ``id`` is MINTED here, so every re-run would mint a
     fresh one and every re-run would import everything again. The natural key
     is what makes this idempotent; the surrogate id never could.

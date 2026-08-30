@@ -74,7 +74,7 @@ class _DefaultDBWriter:
     observational — turns, errors, heartbeats. An agent whose telemetry
     store is unreachable must keep running and lose rows, never die with
     it. That sentence was in this docstring before any of it was true:
-    the SQLite diary wrote to a local file that effectively never failed,
+    the diary used to write to a local file that effectively never failed,
     so the promised catch was never exercised and never implemented. A
     remote store makes the failure real, and every runner test that
     merely ticks a heartbeat died on a refused connection. The catch is
@@ -271,7 +271,7 @@ def write_heartbeat(
     ``/tmp`` tmpfs.
 
     The JSON file is kept as a fast-path cache for local readers
-    (``sac agent status`` polls it without opening sqlite); the DB
+    (``sac agent status`` polls it without opening the store); the DB
     row is the cross-host queryable record.
 
     The DB write is suppressed when ``name`` or ``host`` is None —
@@ -419,7 +419,7 @@ async def heartbeat_loop(
 
     def _beat() -> None:
         # Heartbeat is BEST-EFFORT: a transient state.db / FS I/O hiccup
-        # (e.g. sqlite "disk I/O error" on GPFS) must NOT crash a live
+        # (e.g. a "disk I/O error" on GPFS) must NOT crash a live
         # agent. cohort-A Qwen de-risk 2026-06-23: such an error in the
         # heartbeat write propagated through ``await hb_task`` and failed
         # an ALREADY-COMPLETED solve (submission written, 8 claims

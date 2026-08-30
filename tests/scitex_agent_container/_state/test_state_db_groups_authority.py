@@ -14,7 +14,7 @@ therefore depended on the ORDER of a YAML list — moving ``developer`` to
 the front would have silently fixed it.
 
 Every test below drives the REAL persistence + REAL lookup against an
-on-disk SQLite state.db (the yield-based ``db_path`` env override the
+an isolated store (the yield-based ``db_path`` env override the
 sibling group tests use). Nothing is mocked: a mock over
 ``resolve_group_name`` / ``read_comms_policy`` is exactly what would have
 let this bug through, since the defect lived in what those functions

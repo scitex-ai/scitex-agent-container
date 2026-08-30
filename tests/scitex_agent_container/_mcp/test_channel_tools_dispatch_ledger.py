@@ -15,7 +15,7 @@ No mocks: the ``a2a_send`` tool POSTs to ``{listen_url}/agents/<target>
 /message:send`` over real httpx; a real loopback ``http.server`` stands
 in for ``sac listen`` and captures the wire body. The ledger lives in a real,
 throwaway PostgreSQL schema (the ``pg_schema`` fixture) — ``db_path`` is gone,
-because it named a SQLite file and there is no file. The mcp ``server`` is
+because it named a file and there is no file. The mcp ``server`` is
 a tiny hand-rolled recorder exposing only the two decorator methods
 ``register_tools`` uses (``list_tools`` / ``call_tool``) — a real
 collaborator object, not a Mock.

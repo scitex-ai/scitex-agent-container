@@ -9,7 +9,7 @@ feature work: this command is the WRITER, so its verdicts must actually land in
 state.db for ``sac agents list`` to read back.
 
 No mocks: pure calls, a real Click invocation, and a real PostgreSQL schema
-via the shared ``pg_schema`` fixture (the store moved off SQLite 2026-08-24,
+via the shared ``pg_schema`` fixture (the store moved 2026-08-24,
 so there is no ``state.db`` to point at any more).
 """
 
@@ -125,7 +125,7 @@ def test_auth_status_help_renders_interval_option():
 
 def test_persisted_failing_verdict_is_readable_by_the_list(pg_schema: str):
     # Arrange — the contract that makes the feature work: the watchdog writes,
-    # the list reads. A real sqlite file, a real row, no mocks.
+    # the list reads. A real store, a real row, no mocks.
     from scitex_agent_container._state.auth_state import list_auth_states
     rows = evaluate_agents({"scitex-hpc": (_STUCK, _STUCK)})
     # Act

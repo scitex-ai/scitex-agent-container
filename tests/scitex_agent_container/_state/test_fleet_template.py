@@ -271,7 +271,7 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore, pg_schema: str):
     DEPENDS ON ``pg_schema`` since 2026-08-28, and the reason is worth stating
     because it is surprising: a ``--dry-run`` still reaches
     ``resolve_a2a_port`` -> ``claim_port``, so it really does take an a2a port
-    claim. That was already true under SQLite — the claim just landed in the
+    claim. That was already true before the move — the claim just landed in the
     per-test ``state.db`` and nothing said so. Now the ledger is PostgreSQL and
     an unreachable store makes the dry run exit 1, which is what surfaced it.
     Requesting the fixture isolates the claim; that the dry run mutates state

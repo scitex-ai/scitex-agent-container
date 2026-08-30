@@ -3,7 +3,7 @@
 """``rename_lineage`` — what moves, and what the schema will not let move.
 
 The lineage half of the agent-rename flow, replacing the two
-``NAME_COLUMNS`` pairs that renamed the SQLite table until 2026-08-28.
+``NAME_COLUMNS`` pairs that renamed the old table until 2026-08-28.
 
 The asymmetry is the whole subject of this file. ``child_name`` is the
 store IDENTITY, so an agent's OWN edge can be moved (copy onto the new

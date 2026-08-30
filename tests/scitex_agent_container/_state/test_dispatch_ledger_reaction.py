@@ -16,7 +16,7 @@ Operator mandate (lead a2a ``1781e82a``): "absence of the reaction
 
 Conventions: AAA markers, one assertion per test (STX-TQ007), no mocks / no
 monkeypatch. Real PostgreSQL via ``scitex_dev.store``, isolated per test by
-the ``pg_schema`` fixture — ``db_path`` is gone, because it named a SQLite
+the ``pg_schema`` fixture — ``db_path`` is gone, because it named a
 file and there is no file.
 """
 

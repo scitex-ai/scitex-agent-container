@@ -439,7 +439,7 @@ def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_stat
     # production writer for this field any more (``update_heartbeat`` went
     # with ``instance_heartbeats``), which is exactly why the value has to be
     # placed by hand: the GC branch that reads it is still live against rows
-    # migrated out of SQLite, and this is the guard that keeps it off remote
+    # migrated out of the old store, and this is the guard that keeps it off remote
     # rows.
     host = read_instance(instance_id)["host"]
     run_with_reconnect(

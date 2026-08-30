@@ -15,7 +15,7 @@ is unchanged::
 WHY THIS MODULE MOVED
 =====================
 Operator ruling, restated 2026-08-28: 「スクライトなんて全部絶滅させて
-ください」. The fleet is MULTI-HOST and a SQLite file per host means a
+ください」. The fleet is MULTI-HOST and a state file per host means a
 different ACL per host — measured on scitex-compute-04 2026-08-11, where
 the in-container per-agent shard held NO policy row for anybody while the
 bare-host file held them all, so every authority gate resolved the empty
@@ -23,7 +23,7 @@ set and answered 403. A per-host state.db is that outage's storage layer.
 
 The move ADOPTS :mod:`scitex_dev.store`, the fleet's own primitive, whose
 ``resolve_target`` is exactly two steps (``SCITEX_STORE_DSN`` or the
-per-host PostgreSQL) with NO SQLite fallback. A host whose PostgreSQL is
+per-host PostgreSQL) with NO local-file fallback. A host whose PostgreSQL is
 unreachable raises ``StoreTargetError`` naming the DSN it could not
 reach. Fail fast, fail loud, no fallbacks.
 
@@ -34,7 +34,7 @@ reads whatever record it finds, and :func:`read_comms_policy` answers
 with all-allow defaults when it finds none. Silence is indistinguishable
 from permission, so the store must raise rather than return empty.
 
-``db_path`` IS GONE from every policy signature. It named a SQLite file;
+``db_path`` IS GONE from every policy signature. It named a file;
 there is no file. Test isolation now comes from pointing
 ``SCITEX_STORE_DSN`` at a throwaway schema — the ``pg_schema`` fixture —
 which is better isolation than a temp path was, because it exercises the
@@ -49,7 +49,7 @@ changes. See that module for the full argument.
 
 REMOVAL IS ``hide``, NEVER A DELETE
 ===================================
-The SQLite table had no delete — but the rename path did
+The original table had no delete — but the rename path did
 ``UPDATE node_comms_policy SET name = ?``, which under an IDENTITY field
 is not an update at all: it is one record ending and another beginning.
 :func:`rename_comms_policy` therefore copies the values onto the new name
@@ -173,7 +173,7 @@ def record_comms_policy(
     EVERY field is written on every call, including the ones the caller
     left at their defaults. ``Store.put`` is a PARTIAL update — absent
     fields are left alone — so writing the full record is what preserves
-    the SQLite ``INSERT ... ON CONFLICT DO UPDATE SET <all columns>``
+    the original ``INSERT ... ON CONFLICT DO UPDATE SET <all columns>``
     semantics. Dropping to a partial write would let a previous
     ``outbound_siblings="deny"`` survive a spec edit that removed it,
     which is a stale ACL wearing a fresh timestamp.
@@ -349,7 +349,7 @@ def rename_comms_policy(*, old: str, new: str) -> bool:
     value onto the new identity and RETIRES the old one.
 
     Called from the agent-rename flow, which used to do this with
-    ``UPDATE node_comms_policy SET name = ?`` across the SQLite table.
+    ``UPDATE node_comms_policy SET name = ?`` across the original table.
     Miss it and the ACL gate holds no policy for the live name, so the
     renamed agent resolves to NO named group and every authority gate
     denies it — the 2026-08-10 shape reached by a different route.

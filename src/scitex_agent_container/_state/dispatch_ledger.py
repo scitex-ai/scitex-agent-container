@@ -11,13 +11,13 @@ messages), the a2a ``message_id`` (one message) and the receiver-side
 ``turn_id`` (the diary's ``turns`` store, on per-host PostgreSQL since
 2026-08-28, which tracks the ``/v1/turn`` state machine).
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
+WHY THIS MODULE IS ON THE SHARED STORE
 ========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
+The operator's 2026-08-19 order was to move every table to
 PostgreSQL: "fail fast, fail loud, no fallbacks". This table moves the way
 every predecessor did — by ADOPTING :mod:`scitex_dev.store` rather than by sac
 growing a private psycopg layer. ``db_path`` IS GONE from every function; it
-named a SQLite file and there is no file. A host whose PostgreSQL is
+named a file and there is no file. A host whose PostgreSQL is
 unreachable raises ``StoreTargetError`` naming the DSN, which is intended: a
 ledger written to a private local file nobody reads is worse than no ledger.
 
@@ -38,11 +38,11 @@ was tried first and lost a status update silently; :func:`_find_row` carries
 the measurement. The OWNING AGENT SCOPES READS, which is where the fleet-wide
 leak lives, and is not a permission check on a write.
 
-NOTHING IS MIGRATED IN FROM THE 130+ SQLite SHARDS, deliberately. A dispatch
+NOTHING IS MIGRATED IN FROM THE 130+ PER-AGENT SHARDS, deliberately. A dispatch
 row records a send that already happened; the recall and comm-miss surfaces
 that read it have no production callers, and a comm-miss report is only
 actionable inside its SLO window (seconds to minutes), so importing history
-would import noise. The old files stay on disk, readable with any sqlite3
+would import noise. The old files stay on disk, readable with any
 client, for anyone who wants them.
 
 All times are unix-seconds (float), matching the diary tables.
@@ -131,7 +131,7 @@ def init_ledger_schema() -> str:
     """Create the ledger tables if missing. Idempotent.
 
     Returns the resolved store LOCATOR as a string — the PostgreSQL equivalent
-    of the ``Path`` the SQLite version returned, and useful the same way: it
+    of the ``Path`` the previous implementation returned, and useful the same way: it
     NAMES where the state actually went, so an operator can check rather than
     assume.
     """

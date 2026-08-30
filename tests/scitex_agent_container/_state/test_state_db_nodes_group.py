@@ -9,7 +9,7 @@ Covers the state-DB half of the group ACL:
 * ``is_developer`` recognises a developer-group member.
 
 AAA (each marker on its own line), one assertion per test, no mocks —
-real on-disk SQLite via the yield-based ``db_path`` env override.
+real on-disk state via the yield-based ``db_path`` env override.
 """
 
 from __future__ import annotations

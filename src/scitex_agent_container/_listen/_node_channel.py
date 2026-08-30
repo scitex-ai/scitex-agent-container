@@ -122,7 +122,7 @@ async def node_message_send(request: Request) -> Response:
     )
     # OFF THE EVENT LOOP. Both resolvers are BLOCKING and, since the
     # comms_nodes directory moved to PostgreSQL on 2026-08-28, both can reach
-    # the network: they fall through from the local SQLite ``instances``
+    # the network: they fall through from the local ``instances``
     # lookup to a shared-store read. Called inline, a primary that swallows
     # SYN would stall THIS whole daemon — every request it is serving, not
     # just this one — for as long as the connect takes. The store's DSN now

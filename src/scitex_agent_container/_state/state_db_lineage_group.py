@@ -1,7 +1,7 @@
 """The lineage WRITER and the group it derives — on PostgreSQL.
 
 Extracted from :mod:`.state_db_nodes` on 2026-08-28, when ``lineage`` moved
-off SQLite and the store-shaped writer no longer fit under that module's
+to the store, and the store-shaped writer no longer fit under that module's
 line cap. It is the same split, for the same reason, that already gave
 :mod:`.state_db_lineage_rel` its own file: ``state_db_nodes`` is the import
 surface, not the implementation.
@@ -59,7 +59,7 @@ def record_lineage(
     Both values stay in the oplog either way, so the contradiction is
     recoverable rather than merely logged.
 
-    ``db_path`` is GONE. It named a SQLite file; there is no file.
+    ``db_path`` is GONE. It named a file; there is no file.
     """
     if not child or not parent:
         raise ValueError("record_lineage: child and parent must be non-empty")
@@ -175,7 +175,7 @@ def derive_group(
     though they share a parent edge.
 
     THE SOLITARY SHORT-CIRCUIT STILL RETURNS BEFORE THE STORE IS TOUCHED,
-    and that is now load-bearing in a way it was not against SQLite. The
+    and that is now load-bearing in a way it was not against the old backend. The
     lineage import sits BELOW the branch on purpose: a solitary capsule
     must resolve its own singleton group without a PostgreSQL round-trip,
     so an unreachable primary cannot turn "isolated" into an exception on

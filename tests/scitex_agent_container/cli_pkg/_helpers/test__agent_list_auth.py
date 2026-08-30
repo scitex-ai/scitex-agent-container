@@ -10,7 +10,7 @@ accidentally make things WORSE:
 * it must stay in the LIVE set for ``restart --all-running`` too, or the sweep
   would skip exactly the agents a restart would cure.
 
-No mocks: pure functions over real dicts, plus a real state.db in ``tmp_path``
+No mocks: pure functions over real dicts, plus a real isolated store
 for the end-to-end read.
 
 TQ: AAA marker triple (TQ002), one asserted fact per test (TQ007).

@@ -1,7 +1,7 @@
 """``instances`` on the shared PostgreSQL store (2026-08-28).
 
 Replaces the family-tree-column tests these lines used to hold. Those
-asserted the SQLite DDL and the ``ALTER TABLE`` migration that added
+asserted the original DDL and the ``ALTER TABLE`` migration that added
 ``bound_port`` / ``remote`` / ``spawned_by``; both are gone with the table,
 so re-pointing them at the store would have kept the NAMES while asserting
 something else. What survives is the BEHAVIOUR they were protecting, plus
@@ -22,19 +22,12 @@ database used to give for free:
 
 Needs a real PostgreSQL: ``pg_schema`` is the shared opt-in fixture, which
 skips where no cluster exists and FAILS where a configured one is broken.
-The three tests that assert SQLite no longer carries the table take no
-fixture — they are about the absence, and an absence must be checkable on a
-host with no database at all.
 """
 
 from __future__ import annotations
 
 import importlib
-import os
-import sqlite3
-from pathlib import Path
 
-import pytest
 
 from scitex_agent_container._state.state_db_instances import (
     end_instance,
@@ -77,62 +70,19 @@ def seed_instance(instance_id: str, **values) -> str:
     return instance_id
 
 
-@pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db location, exported via env (explicit save/restore).
-
-    Still needed by the three absence tests: ``init_schema`` writes a real
-    file and they read ``sqlite_master`` back out of it.
-    """
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
-
-
 # ---------------------------------------------------------------------------
-# SQLite no longer carries the table — the absence, asserted.
+# TWO STORAGE-ABSENCE TESTS WERE HERE. They asserted that a fresh state.db had
+# no ``instances`` table and that ``KNOWN_TABLES`` no longer offered the name
+# — the guard against a leftover table definition handing every generic reader
+# an empty table to answer from, which reads as "no agent has ever run here"
+# rather than as "you are asking the wrong database".
+#
+# They are deleted rather than re-pointed because sac no longer opens a local
+# database at all: there is no ``init_schema`` to run, no ``KNOWN_TABLES`` to
+# inspect and no schema catalogue to read. An absence test whose subject
+# cannot exist is unfailable. The structural replacement is the
+# storage-footprint gate under ``tests/develop/``.
 # ---------------------------------------------------------------------------
-
-
-def test_a_fresh_state_db_has_no_instances_table(db_path: Path) -> None:
-    # Arrange — the fresh-DB proof. A leftover CREATE TABLE would give every
-    # generic reader an EMPTY table to answer from, which reads as "no agent
-    # has ever run here" rather than as "you are asking the wrong database".
-    from scitex_agent_container._state.state_db import init_schema
-
-    # Act
-    init_schema()
-    # Assert
-    with sqlite3.connect(db_path) as conn:
-        names = {
-            r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-    assert "instances" not in names
-
-
-def test_known_tables_no_longer_offers_instances() -> None:
-    # Arrange — every reader of this tuple is GENERIC (``table_counts``
-    # behind ``sac db show``, export/import, the ``--table`` choice list), so
-    # a name left behind would make ``sac db show`` print ``instances 0``.
-    from scitex_agent_container._state.state_db import KNOWN_TABLES
-
-    # Act
-    offered = "instances" in KNOWN_TABLES
-    # Assert
-    assert offered is False
 
 
 def test_the_legacy_family_tree_migration_is_gone() -> None:
@@ -142,7 +92,6 @@ def test_the_legacy_family_tree_migration_is_gone() -> None:
     # function in ``state_db_migrations``, so the whole module went with it
     # rather than surviving as departure notes with no code — which is why
     # this asserts the import fails rather than that an attribute is absent.
-    import importlib
 
     gone = False
     # Act
@@ -250,7 +199,7 @@ def test_a_start_given_only_bound_port_still_records_an_address(
 
 
 def test_remote_defaults_to_zero(pg_schema: str) -> None:
-    # Arrange — sqlite3.Row handed callers an int, and a test asserting == 1
+    # Arrange — the row handed callers an int, and a test asserting == 1
     # is asserting the shape it was given; the move must not change it.
     record_instance_start("alpha", host="host-a")
     # Act
@@ -333,7 +282,7 @@ def test_a_dropped_parameter_is_a_typeerror_rather_than_ignored(
 
 
 def test_stopping_an_unknown_id_returns_false(pg_schema: str) -> None:
-    # Arrange — the SQLite ``rowcount == 0``. A death with no recorded birth
+    # Arrange — a zero rowcount. A death with no recorded birth
     # is a real signal and must not be papered over.
     # Act
     ended = record_instance_stop("no-such-id")
@@ -494,7 +443,7 @@ def test_the_id_tiebreak_is_deterministic_not_chronological(
     # call, which is what stops a resolver flapping between two live records
     # and sending consecutive messages to different agents. It does NOT
     # identify the newer one: ``new_uuid7`` is uuid4 below Python 3.14, so
-    # the ids carry no time. Inherited from the SQLite ``ORDER BY started_at
+    # the ids carry no time. Inherited from the original ``ORDER BY started_at
     # DESC, id DESC``, not introduced here.
     same = "2026-01-01T00:00:00Z"
     seed_instance("id-aaa", name="alpha", host="host-a", started_at=same)
@@ -532,7 +481,7 @@ def test_list_active_instances_filters_by_host(pg_schema: str) -> None:
 
 
 def test_list_active_instances_orders_newest_first(pg_schema: str) -> None:
-    # Arrange — the SQLite ``ORDER BY started_at DESC``. Callers take
+    # Arrange — the original ``ORDER BY started_at DESC``. Callers take
     # ``rows[0]`` as "the newest", so the order IS the contract.
     #
     # The two records are SEEDED with distinct ``started_at`` values rather
@@ -626,7 +575,7 @@ def test_a_late_heartbeat_cannot_rewind_the_recorded_one(pg_schema: str) -> None
     # There is NO production writer for this field today — its only one was
     # ``update_heartbeat``, deleted on 2026-08-28 with the
     # ``instance_heartbeats`` table that had no caller and 0 rows on every
-    # host. The field is still carried because rows MIGRATED out of SQLite
+    # host. The field is still carried because rows MIGRATED out of the retired store
     # hold real values and ``state_db_gc``'s staleness branch reads them, so
     # the merge rule is what decides what a replica or a re-run does with
     # those values. Written the way the migration writes them.

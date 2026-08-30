@@ -8,7 +8,7 @@ kill+reconnect replays exactly the missed events.
 These tests drive the persistence primitives against a REAL PostgreSQL
 schema — the shared ``pg_schema`` fixture, which points ``SCITEX_STORE_DSN``
 at a throwaway schema and drops it afterwards. No mocks, no monkeypatch, no
-``db_path``: that argument named a SQLite file and there is no file.
+``db_path``: that argument named a file and there is no file.
 
 FOUR CONTRACTS, ONE TEST EACH AT MINIMUM
 ========================================
@@ -82,7 +82,7 @@ def _event(content: str = "hello", **extra: Any) -> dict[str, Any]:
 def test_ids_are_per_target_not_global(pg_schema: str) -> None:
     """Interleaved targets each get their OWN 1, 2, 3.
 
-    Under SQLite the id was a global AUTOINCREMENT rowid, so interleaving
+    The id used to be a global AUTOINCREMENT row id, so interleaving
     produced 1,3,5 / 2,4,6. The SSE cursor is per-target, so that numbering
     made "resume from 3" mean different things to different agents.
     """

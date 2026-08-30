@@ -26,7 +26,7 @@ The places (:class:`._rename_plan.Layout` owns the paths):
 WHY 6 THROUGH 11 ARE SIX STEPS AND NOT SIX MORE ``NAME_COLUMNS`` PAIRS
 ======================================================================
 Every one of them was a ``(table, column)`` pair inside ``_rename_db`` until
-its table left SQLite. That module walked ``sqlite_master`` and SKIPPED a
+its table moved. That module walked the schema catalogue and SKIPPED a
 table it could not find — deliberately, so a fleet that has never started an
 agent does not block a rename — which turned each stale pair into a SILENT
 NO-OP: the rename reported success having moved nothing. Worse than a crash,

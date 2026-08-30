@@ -22,16 +22,16 @@ design in favour of a simpler BLOCK / UNBLOCK primitive:
 The original message content is NEVER stored here (the receiver
 decides on identity, not on message content).
 
-WHY THIS MODULE NO LONGER TOUCHES SQLite
-========================================
-The operator's 2026-08-19 order was to eradicate SQLite and move to
-PostgreSQL: "fail fast, fail loud, no fallbacks". This is the third table
+WHY THIS MODULE IS ON THE SHARED STORE
+======================================
+The operator's 2026-08-19 order was to move every table to PostgreSQL:
+"fail fast, fail loud, no fallbacks". This is the third table
 to move, after ``verdict_delivered`` and ``incarnations``, and it moves
 the same way — by ADOPTING :mod:`scitex_dev.store` rather than by sac
 growing a private psycopg layer.
 
-``db_path`` IS GONE from every function. It named a SQLite file; there is
-no file. ``grant_flush`` was threading its own state.db path in here and
+``db_path`` IS GONE from every function. It named a file; there is
+no file. ``grant_flush`` was threading its own path in here and
 stops; the two records now live in two different databases, which is what
 the migration is doing one table at a time.
 
@@ -42,7 +42,7 @@ DELETES, and the store has no delete — it has ``hide``, which marks a
 record invisible to ``get``/``rows`` while keeping it in the oplog.
 
 That is the better primitive here (the decision history stays auditable),
-but it introduces a lifecycle the SQLite version did not have: a cleared
+but it introduces a lifecycle a plain DELETE did not have: a cleared
 pair is not ABSENT, it is HIDDEN. Written naively, the next denial for
 that pair would find ``get() -> None``, try to insert, collide with the
 hidden record, and return "already pending" — so the receiver would never
@@ -59,8 +59,7 @@ in THREE values rather than two:
 ``get`` alone collapses the first two into "nothing there", and that
 collapse is exactly the bug.
 
-All times are unix-seconds (float), matching the SQLite column and the
-diary tables.
+All times are unix-seconds (float), matching the diary tables.
 """
 
 from __future__ import annotations
@@ -98,8 +97,8 @@ def _schema() -> Any:
     Built lazily so importing this module does not import scitex-dev; the
     old module was equally lazy about ``state_db``, for the same reason.
 
-    ``(sender, target)`` is the composite IDENTITY — the SQLite table's
-    PRIMARY KEY, unchanged. Identity fields must be IMMUTABLE and the
+    ``(sender, target)`` is the composite IDENTITY, unchanged from the
+    original PRIMARY KEY. Identity fields must be IMMUTABLE and the
     store enforces it: "changing one does not update the record, it names
     a different record", which is exactly right for a pair.
 
@@ -165,10 +164,8 @@ def open_pending_prompt_store() -> Store:
 def init_pending_prompts_schema() -> str:
     """Create the flag tables if missing. Idempotent.
 
-    Returns the resolved store LOCATOR as a string — the PostgreSQL
-    equivalent of the ``None`` the SQLite version returned, and strictly
-    more useful: it names WHERE the state actually went, so an operator can
-    check it rather than assume it.
+    Returns the resolved store LOCATOR as a string. It names WHERE the
+    state actually went, so an operator can check it rather than assume it.
     """
     store = open_pending_prompt_store()
     try:
@@ -191,13 +188,13 @@ def record_pending_prompt(*, sender: str, target: str) -> bool:
     than treated as already-pending; collapsing those two states is how
     this becomes a prompt that never fires again.
 
-    CONCURRENCY IS PRESERVED, and it was explicit in the SQLite version:
-    "the check + insert is one atomic transaction so a concurrent burst of
-    denied attempts emits exactly one prompt". Here the insert carries
+    CONCURRENCY IS PRESERVED, and the requirement is unchanged: the check +
+    insert must behave as one atomic step so a concurrent burst of denied
+    attempts emits exactly one prompt. Here the insert carries
     ``expected_revision=NEW_RECORD``, so a racing writer that created the
     record between our check and our write raises ``RevisionMismatchError``
-    — which means "someone else prompted", the same answer the SQLite
-    transaction gave. Nothing else is caught: an unreachable store must
+    — which means "someone else prompted". Nothing else is caught: an
+    unreachable store must
     still be loud.
     """
     if not sender or not target:
@@ -229,8 +226,7 @@ def has_pending_prompt(*, sender: str, target: str) -> bool:
     the receiver's block/unblock decision.
 
     ``get`` excludes hidden records by default, so a cleared pair reads as
-    absent here — which is precisely the SQLite DELETE semantics this
-    replaces.
+    absent here — precisely the DELETE semantics this replaces.
     """
     if not sender or not target:
         return False

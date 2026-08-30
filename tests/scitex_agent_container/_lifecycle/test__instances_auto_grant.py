@@ -11,7 +11,7 @@ hand. Pinning the grant write inside ``record_local_instance`` means
 EVERY successful start refreshes it — and because :func:`grant_send`
 is idempotent, repeat starts do not duplicate the row.
 
-Tests use a real on-disk SQLite state.db (isolated per test via the
+Tests use a real isolated store (via the
 ``SCITEX_AGENT_CONTAINER_STATE_DB`` env override) and a real runtime
 stub exposing ``_state_dir`` — no mocks, no monkeypatch.
 """
@@ -111,7 +111,7 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
     """A repeat start must not RE-STAMP the grant it already holds.
 
     This used to COUNT rows through ``open_db`` and raw SQL against the
-    SQLite ``comms_grants`` table. That table is abandoned — and worse, the
+    local ``comms_grants`` table. That table is abandoned — and worse, the
     query did not fail: the vestigial DDL is still in ``_SCHEMA_REGISTRY``,
     so the count came back 0 from a table nothing writes any more, which is
     a silent wrong answer rather than a loud one.

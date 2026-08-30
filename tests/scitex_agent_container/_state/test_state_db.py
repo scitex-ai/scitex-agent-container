@@ -1,42 +1,40 @@
 """Tests for scitex_agent_container._state.state_db (F-CS11).
 
 Covers:
-- init_schema: idempotent creation of every table in ``KNOWN_TABLES``.
-  That was "all four registry tables + attempts" until 2026-08-28; by then
-  ``attempts`` had been deleted and ``definitions`` / ``instance_heartbeats``
-  / ``events`` followed it the same day, so the registry is ``instances``
-  alone and the whitelist is three names. The tests below are parametrized
-  over the CONSTANT rather than a literal list, which is why they needed no
-  edit for any of that — the prose is what went stale.
-- table_counts: returns zero counts on a fresh db.
 - import_legacy_registry: lifts JSON shards into ``instances`` rows
   with ``exit_reason='reboot-swept'``; idempotent on re-run; tolerates
   malformed shards.
-- ``sac db migrate`` end-to-end via CliRunner. ``sac db show`` and
-  ``sac db query`` were covered here until 2026-08-29, when both verbs
-  were deleted with the SQLite read surface.
+- ``sac db migrate`` / ``clean`` / ``tick`` end-to-end via CliRunner.
+- record_instance_start / _stop and gc_dead_instances, through the
+  PostgreSQL instance store.
+
+WHAT THIS FILE STOPPED COVERING, AND WHY THE TESTS WENT RATHER THAN THE
+ASSERTIONS: ``init_schema`` / ``table_counts`` were exercised here until the
+storage engine was deleted from ``state_db``. Both had already been hollowed
+out — the two table-by-table cases were parametrized over ``KNOWN_TABLES``,
+which had shrunk to an empty tuple, so pytest was collecting ZERO cases from
+them and reporting the file green on the strength of tests that no longer
+existed. The remaining two asserted that a file appeared on disk and that
+calling the creator twice did not raise. Neither is a fact about sac any
+more; there is no file and no creator.
+
+``sac db show`` and ``sac db query`` were covered here until 2026-08-29, when
+both verbs were deleted with the read surface they wrapped.
 
 TQ cleanup (state_db slice): every test carries AAA markers and exactly
-one assertion. Same-setup invariants (e.g. all-tables-empty on a fresh
-db) collapse into ``pytest.parametrize`` over ``KNOWN_TABLES``. Test
-names spell out the behaviour being verified (TQ003-compatible).
+one assertion. Test names spell out the behaviour being verified
+(TQ003-compatible).
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._state.state_db import (
-    KNOWN_TABLES,
-    import_legacy_registry,
-    init_schema,
-    table_counts,
-)
+from scitex_agent_container._state.state_db import import_legacy_registry
 
 
 @pytest.fixture
@@ -70,54 +68,6 @@ def db_path(tmp_path: Path, pg_schema: str):
 # ---------------------------------------------------------------------------
 # init_schema / table_counts
 # ---------------------------------------------------------------------------
-
-
-def test_init_schema_creates_state_db_file_on_disk(db_path: Path):
-    # Arrange — fresh tmp_path, no db yet.
-    pre_existed = db_path.exists()
-    # Act
-    init_schema()
-    # Assert
-    assert (not pre_existed) and db_path.exists()
-
-
-@pytest.mark.parametrize("table", sorted(KNOWN_TABLES))
-def test_init_schema_creates_each_known_registry_table(db_path: Path, table: str):
-    # Arrange
-    init_schema()
-    # Act
-    with sqlite3.connect(db_path) as conn:
-        names = {
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-    # Assert
-    assert table in names
-
-
-def test_init_schema_called_twice_does_not_raise_on_idempotent_replay(
-    db_path: Path,
-):
-    # Arrange
-    init_schema()
-    # Act — second call must be a no-op on an already-initialised db.
-    init_schema()
-    # Assert — reaching this line means the second call did not raise.
-    assert db_path.exists()
-
-
-@pytest.mark.parametrize("table", sorted(KNOWN_TABLES))
-def test_table_counts_returns_zero_for_each_table_on_fresh_db(
-    db_path: Path, table: str
-):
-    # Arrange
-    # (fixture already prepared an empty db env)
-    # Act
-    counts = table_counts()
-    # Assert
-    assert counts[table] == 0
 
 
 # ---------------------------------------------------------------------------

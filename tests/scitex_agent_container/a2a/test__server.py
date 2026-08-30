@@ -681,7 +681,7 @@ def _isolated_db(tmp_path: Path, pg_schema: str):
     constant are touched so callers that read either path see the
     isolated db.
 
-    ``pg_schema`` joined on 2026-08-28: ``channel_events`` left SQLite for
+    ``pg_schema`` joined on 2026-08-28: ``channel_events`` moved to
     the shared PostgreSQL (ADR-0023), so the durability tests below need a
     real throwaway schema. Declared on the FIXTURE rather than on each test
     so the ordering is a dependency rather than a hope.
@@ -704,7 +704,7 @@ def _isolated_db(tmp_path: Path, pg_schema: str):
 def _channel_rows(sql: str) -> list:
     """Read ``sac_channel_events`` through a real connection to the store.
 
-    Replaces four ``_state_db.open_db(...)`` reads that named a SQLite table
+    Replaces four reads that named a table in the retired per-agent database
     which no longer exists. The queries are unchanged apart from the table
     name and the placeholder style.
     """

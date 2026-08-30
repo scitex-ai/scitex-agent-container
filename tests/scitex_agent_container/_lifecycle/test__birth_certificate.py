@@ -5,7 +5,7 @@ Operator requirement (2026-08-14): record the COMPILED final spec as
 and reference credentials by slot/source NAME, never by value.
 
 Real AgentConfigs, a REAL PostgreSQL via the ``pg_schema`` fixture (the
-certificate moved off SQLite on 2026-08-19; the fixture gives each test a
+certificate moved stores on 2026-08-19; the fixture gives each test a
 throwaway schema so the live fleet state is never touched), and a REAL git
 repo for the sha tests (git invoked as a subprocess with -C, signing
 disabled per-invocation). No mocks.

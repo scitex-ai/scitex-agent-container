@@ -72,8 +72,8 @@
 # And the decisive one: RELOCATING A LEAK DOES NOT FIX IT. 3 TB buys roughly
 # 430 runs instead of 40 — the same outage, months later, with nobody watching.
 # The lifecycle is the bug. A move would also put ~480 `tmp_path` test files and
-# the SQLite state-DB tests on a volume that is probably network-backed, where
-# SQLite locking is unreliable and a `--target` install's tens of thousands of
+# the state-DB tests on a volume that is probably network-backed, where
+# file locking is unreliable and a `--target` install's tens of thousands of
 # small files are the worst possible workload; this suite has already been
 # burned by that genre of flake. If disk pressure later needs structural relief,
 # gate it on FILESYSTEM TYPE (node-local only, not mere existence), decide it

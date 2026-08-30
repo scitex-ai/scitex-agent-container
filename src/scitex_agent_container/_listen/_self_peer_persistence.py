@@ -133,7 +133,7 @@ def persist_discovered_self_peers(
     and continue.
 
     ``db_path`` is GONE from this signature (2026-08-28). It existed only to
-    thread a SQLite file into ``register_comms_node``, and the ADR-0014
+    thread a file path into ``register_comms_node``, and the ADR-0014
     directory is now the shared PostgreSQL store; there is no file to point
     at. Test isolation comes from ``SCITEX_STORE_DSN``.
     """

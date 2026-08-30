@@ -8,7 +8,7 @@ from. The edges themselves (``child_name``, ``parent_name``,
 read-only.
 
 ON POSTGRESQL SINCE 2026-08-28. ``db_path`` is gone from both signatures —
-it named a SQLite file and there is no file. What changed for the walks
+it named a file and there is no file. What changed for the walks
 themselves is the number of round-trips, and it went DOWN: each function
 now reads the edge set ONCE through
 :func:`.state_db_lineage_store.read_edges` and walks it in memory, where
@@ -66,7 +66,7 @@ def descendants_of(
     need to disambiguate.
 
     ONE BEHAVIOUR CHANGED IN THE CYCLE CASE, stated rather than left to
-    be discovered. The SQLite version guarded only on the ``seen`` set, so
+    be discovered. The original guarded only on the ``seen`` set, so
     given the edges ``a → b`` and ``b → a`` it returned ``{b, a}`` —
     including ``a`` itself, which contradicts the "does NOT include
     ``name``" promise three paragraphs up. The ``child == name`` guard

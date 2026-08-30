@@ -32,7 +32,7 @@ invariant is ``UNIQUE(port)``), why a released claim is a TOMBSTONE that must
 be unhidden rather than treated as held, and why the lookup cost inverts into
 an O(n) scan over a range-bounded ledger.
 
-``db_path`` IS GONE from every function here. It named a SQLite file; there is
+``db_path`` IS GONE from every function here. It named a file; there is
 no file. Callers that threaded it through simply stop, and test isolation
 comes from the shared ``pg_schema`` fixture pointing ``SCITEX_STORE_DSN`` at a
 throwaway schema.
@@ -186,7 +186,7 @@ def claim_port(
     store = port_store()
     # ONE read serves the fast path AND the auto scan below. Re-reading
     # per candidate would turn a crowded range into a thousand round trips
-    # against PostgreSQL, where SQLite paid only a local file write.
+    # against PostgreSQL, where the old backend paid only a local file write.
     held = live_claims(store)
 
     # Idempotent fast path: same agent -> return the existing claim.
@@ -242,7 +242,7 @@ def release_port(agent_name: str) -> bool:
     Hides rather than deletes, because ``hide`` is the store's only removal.
     The record, its values and its whole history stay readable through
     ``include_hidden=True`` and in the oplog, while every default read treats
-    the port as free — so the property the SQLite ``DELETE`` gave ("this agent
+    the port as free — so the property the original ``DELETE`` gave ("this agent
     no longer holds a port") is unchanged and only the forgetting stopped.
     ``port_allocator_store.try_claim`` is what makes the tombstone
     re-claimable; that module's docstring says why it has to.
@@ -261,7 +261,7 @@ def list_claims() -> list[dict]:
     """Every LIVE claim, ascending by port — the shape the CLI renders.
 
     Used by ``sac agents list``, ``sac ports`` and the listen registry.
-    Sorted EXPLICITLY: ``rows()`` returns no order at all, so the SQLite
+    Sorted EXPLICITLY: ``rows()`` returns no order at all, so the original
     ``ORDER BY port`` has to be re-stated here rather than inherited.
 
     The dict key stays ``"name"`` — the shape every CLI/listen consumer

@@ -7,10 +7,10 @@ closes a ``Store`` per call, mirroring the old ``with open_db(...)`` shape.
 ``resolve_forward_target`` and ``_agents_list``, which run PER MESSAGE.
 
 MEASURED, not assumed (card ``sqlite-out-per-call-connect-cost-20260828``):
-``sqlite3.connect`` 0.067 ms against ``psycopg.connect`` 10.707 ms — 159x —
+the previous local connect 0.067 ms against ``psycopg.connect`` 10.707 ms — 159x —
 and ``Store.__init__`` pays that connect plus the dialect ``schema_lock`` and
 two probes even when no DDL runs. End to end, ``resolve_comms_node_host``
-measured 1.03 ms/call on SQLite against 45.3 ms/call with a per-call
+measured 1.03 ms/call before the move against 45.3 ms/call with a per-call
 ``Store``: a ~44x routing regression.
 
 WHAT THESE TESTS ARE FOR, AND WHAT THEY ARE NOT

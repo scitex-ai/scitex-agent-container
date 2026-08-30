@@ -31,7 +31,7 @@ Two escape routes exist and both are closed:
    first, then re-arm it.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
-and writes, and the state.db is a real SQLite file with the real schema.
+and writes, and the store is real, with the real schema.
 """
 
 from __future__ import annotations
@@ -254,7 +254,7 @@ def make_fleet(
 
 # ``make_state_db`` was here until 2026-08-29. It called sac's own
 # ``init_schema`` on ``Layout.state_db`` so the rename suites walked the
-# production SQLite schema rather than a hand-rolled one. Both halves of that
+# production schema rather than a hand-rolled one. Both halves of that
 # sentence stopped being true: ``init_schema`` issues ZERO ``CREATE TABLE``,
 # and ``Layout.state_db`` is gone with ``_lifecycle/_rename_db.py`` — there is
 # no state.db path for a rename to touch, so there is nothing for a helper to
@@ -263,7 +263,7 @@ def make_fleet(
 # ``seed_db_rows`` had gone the same way on 2026-08-28, and before it
 # ``COMMS_NODE_SQL`` / ``DEFINITION_SQL`` / ``INSTANCE_SQL`` /
 # ``CHANNEL_EVENT_SQL`` — four raw INSERTs, each retired as its table left
-# SQLite, the last of them announcing the move as 147 setup ERRORs across
+# the old store, the last of them announcing the move as 147 setup ERRORs across
 # three rename suites. Both halves a rename must carry are now seeded through
 # their REAL production writers below, which is a better seed than any INSERT
 # was: it exercises the production id allocation and the production merge
@@ -279,12 +279,12 @@ def seed_identity_and_history(name: str) -> None:
     """Identity record, history row and ACL grant — all three in PostgreSQL.
 
     Every part a rename must carry. They stopped sharing a database on
-    2026-08-28 and then, later the same day, stopped being in SQLite at all:
+    2026-08-28 and then, later the same day, stopped being in that database at all:
     ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Writing all
     three here is what keeps any one of them from moving again unnoticed.
 
     The identity half has moved three times. It was ``comms_nodes.name``
-    until the ADR-0014 directory left SQLite for the shared store, then
+    until the ADR-0014 directory moved to the shared store, then
     ``definitions.name`` until that table was deleted for having no writer,
     then ``instances.name`` — which left the same day for the shared store
     as well. It is written here through ``record_instance_start``, the same
@@ -300,7 +300,7 @@ def seed_identity_and_history(name: str) -> None:
 
     The AUTHORISATION half was the last of the three to need seeding: it rode
     inside ``_rename_db``'s ``comms_grants`` pairs until 2026-08-29, which is
-    to say it was not carried at all once the table left SQLite. It is written
+    to say it was not carried at all once the table moved. It is written
     through the real ``grant_send`` and carried by
     ``state_db_grants_rename.rename_comms_grants``.
 

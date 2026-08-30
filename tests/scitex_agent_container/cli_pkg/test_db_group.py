@@ -6,7 +6,7 @@ Targets the uncovered rich-console paths of ``db migrate`` and
 
 The ``db show`` / ``db query`` / ``db export`` / ``db import`` cases that
 made up the bulk of this file were deleted on 2026-08-29 with the verbs
-themselves — the SQLite read surface went, so there is nothing left for
+themselves — that read surface went, so there is nothing left for
 them to exercise.
 
 PA-306 conventions:

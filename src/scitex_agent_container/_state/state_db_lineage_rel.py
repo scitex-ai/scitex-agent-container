@@ -4,7 +4,7 @@ Extracted from :mod:`.state_db_acl_policy` on 2026-08-28, when the policy
 table moved to PostgreSQL and this function did not: it reads a DIFFERENT
 table, ``lineage``, which had its own migration ahead of it. That migration
 landed the same day, so the note this module used to carry — "STILL ON
-SQLITE ... it keeps ``db_path``, and keeps reading SQLite, until ``lineage``
+THE OLD BACKEND ... it kept ``db_path``, and kept reading a local file, until ``lineage``
 itself moves" — is now discharged rather than merely stale. ``db_path`` is
 gone; there is no file to point it at.
 
@@ -45,7 +45,7 @@ def sender_target_relationship(
     by the two parents alone: ``target`` being ``sender``'s parent, or
     ``sender`` being ``target``'s, or the two agreeing. ``child_name`` is
     the store's identity, so each is an indexed ``get`` — the same two
-    round-trips the SQLite version made, against a table that no longer has
+    round-trips the previous implementation made, against a table that no longer has
     to exist on this host to be readable.
 
     ``"self"`` is answered BEFORE either read, so the commonest trivial

@@ -130,7 +130,7 @@ def test_empty_result_names_the_store_it_consulted(client):
     assert body["sources"]["store"] == expected
 
 
-def test_the_named_store_is_not_the_sqlite_path_nothing_here_opens(
+def test_the_named_store_is_not_the_file_path_nothing_here_opens(
     client, empty_store
 ):
     # Arrange: until 2026-08-29 this field carried

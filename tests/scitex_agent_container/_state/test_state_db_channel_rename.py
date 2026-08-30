@@ -2,8 +2,8 @@
 
 This is the half of ``sac agents rename`` that ``_rename_db.NAME_COLUMNS``
 used to carry, until ``channel_events`` became the last table to leave
-SQLite (ADR-0023). ``rename_rows`` SKIPS a table absent from
-``sqlite_master``, so leaving the two pairs behind would have made the
+its own file (ADR-0023). ``rename_rows`` SKIPPED a table the schema no
+longer declared, so leaving the two pairs behind would have made the
 rename report success while every message the agent ever sent or received
 stayed filed under the old name — the quietest of the three silent no-ops
 that move produced, because nobody greps a history they were told had moved.
@@ -146,7 +146,7 @@ def test_undo_does_not_drag_a_stranger_row_along(pg_schema: str) -> None:
     A previously deleted agent by the destination name can have left history
     behind. Rolling the rename back must not move that stranger's rows to the
     old name — which is why the undo is id-scoped, exactly as ``_rename_db``'s
-    rowid capture is for the SQLite half.
+    row-id capture is for the local half.
     """
     # Arrange
     persist_event(target="new-name", event=_event("stranger"))

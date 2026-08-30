@@ -1,8 +1,8 @@
 """``PostgresAgentSession`` — the ``openai-agents`` ``Session`` on PostgreSQL.
 
 The replacement for the SDK's own file-backed session object, and the last
-piece of sac's SQLite eradication: the runner's conversation memory was the
-only database left that no ``import sqlite3`` scan could see, because the
+piece of sac's storage consolidation: the runner's conversation memory was the
+only database left that no import scan could see, because the
 import happened inside the vendor package rather than here.
 
 WHAT THE PROTOCOL ACTUALLY IS (read from the installed SDK, not remembered)
@@ -160,7 +160,7 @@ class PostgresAgentSession:
         deliberately rather than tidied. ``> 0`` returns the LATEST N items in
         chronological order — the documented contract. ``0`` returns NOTHING
         and a NEGATIVE value returns EVERYTHING, which reads like a bug and is
-        SQLite's own ``LIMIT`` semantics that the previous implementation
+        the ``LIMIT`` semantics that the previous implementation
         explicitly preserved; collapsing them into one "no limit" branch would
         change what ``get_items(0)`` answers for every existing caller.
 

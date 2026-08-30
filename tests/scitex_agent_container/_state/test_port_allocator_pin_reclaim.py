@@ -19,7 +19,7 @@ file of its own rather than a line in the allocator's own test module.
 HONEST STATUS OF EACH TEST HERE — READ THIS BEFORE TRUSTING A GREEN RUN
 ======================================================================
 THE TABLE HAS NOW MOVED (2026-08-28). When this file was written
-``_state/port_allocator.py`` still owned a SQLite table and ``release_port``
+``_state/port_allocator.py`` still owned a local table and ``release_port``
 still issued ``DELETE FROM a2a_ports``, which freed the row outright — so the
 round trip below passed for a reason that disappeared the moment the table
 moved. It moved; the round trip still passes, and it now passes for the
@@ -27,7 +27,7 @@ reason this file demanded: ``port_allocator_store.try_claim`` UNHIDES the
 tombstone instead of reading it as held.
 
 What that changes here is ONLY the plumbing. The round-trip test used to
-thread a ``tmp_path`` SQLite file through ``db_path``; ``db_path`` is gone
+thread a ``tmp_path`` database file through ``db_path``; ``db_path`` is gone
 from the allocator's signatures because it named a file that no longer
 exists, so the test now takes ``pg_schema`` like the three below it. The
 ARRANGE, the ACT and the single assertion are untouched — the invariant is
@@ -101,13 +101,13 @@ third-party primitive: each asserts what the store measurably does today.
 Their value is that they turn RED the day that behaviour changes — at which
 point the hazard is gone and this file should be revisited.
 
-VANTAGE: A REAL POSTGRESQL, NEVER THE STORE'S SQLITE DIALECT
+VANTAGE: A REAL POSTGRESQL, NEVER THE STORE'S FILE-BACKED DIALECT
 ============================================================
 ``pg_schema`` (the shared opt-in fixture in ``tests/_store_isolation.py``)
-points ``SCITEX_STORE_DSN`` at a throwaway schema. The store's SQLite
+points ``SCITEX_STORE_DSN`` at a throwaway schema. The store's file-backed
 dialect would have run on every machine and was deliberately NOT used:
 ``test_state_db_verdict_dedup.py`` records why — "a suite that exercised the
-store's SQLite dialect instead would be testing a code path production can
+store's file-backed dialect instead would be testing a code path production can
 never take", and scitex-dev 0.49.0 shipped a PostgreSQL backend that could
 be written to and never read from precisely because nobody read back through
 the dialect production uses.
@@ -115,7 +115,7 @@ the dialect production uses.
 The cost is stated rather than hidden: ``pg_schema`` SKIPS wherever there is
 no writable PostgreSQL, and per the operator's 2026-08-26 ruling every fleet
 host's loopback is now a READ-ONLY REPLICA of the one primary. So EVERY test
-in this file — the round trip included, now that the allocator has no SQLite
+in this file — the round trip included, now that the allocator has no local
 path left to fall back on — skips on a host with no writable database, and
 only executes where one is provisioned. A skip is not a pass; that is the
 whole reason this paragraph exists instead of a green tick. Point
@@ -155,7 +155,7 @@ def _probe_schema() -> Any:
     table, and a store named for the real table would be the first half of
     exactly the split brain the work was told not to create.
 
-    ``claimed_at`` is epoch ``REAL``, not the ISO text the SQLite column
+    ``claimed_at`` is epoch ``REAL``, not the ISO text the original column
     holds — the migrated timestamp columns across ``_state`` are all REAL.
     """
     from scitex_dev.store import FieldKind, FieldPolicy, FieldRole, MergeRule, Schema
@@ -181,7 +181,7 @@ def _probe_schema() -> Any:
     return Schema(
         name="a2a_ports_reclaim_probe",
         fields={
-            # The agent name is the identity, exactly as the SQLite
+            # The agent name is the identity, exactly as the original
             # ``name TEXT PRIMARY KEY`` treats it.
             "name": ident(FieldKind.TEXT),
             "port": fact(FieldKind.INTEGER),
@@ -250,7 +250,7 @@ def test_a_pinned_port_is_reclaimed_by_the_same_agent_after_release(
 
     Written against the PUBLIC surface and not against the backend precisely
     so it would keep testing the same thing across the move — which is what
-    happened. Before the migration it passed because SQLite's ``DELETE``
+    happened. Before the migration it passed because the old ``DELETE``
     freed the row; it now passes because ``port_allocator_store.try_claim``
     UNHIDES the tombstone that ``hide`` leaves behind. Map ``release_port``
     onto ``hide`` and ``claim_port``'s insert onto a bare

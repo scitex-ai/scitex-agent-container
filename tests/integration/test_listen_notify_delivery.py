@@ -25,7 +25,7 @@ No mocks (STX-NM002), mirroring the real-socket style of
   port;
 * the subscriber is a REAL ``httpx`` SSE stream over that socket;
 * the publish goes through the REAL ``Broker`` inside the REAL app;
-* the ``state.db`` is a REAL (isolated, tmp_path) SQLite file.
+* the store is REAL and isolated per test.
 
 TQ: module docstring states intent (TQ001); AAA markers (TQ002); the
 state.db / bring-up fixtures are FUNCTION scoped (TQ004) and ``yield``

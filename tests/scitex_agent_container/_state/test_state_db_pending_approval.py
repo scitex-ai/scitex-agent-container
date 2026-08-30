@@ -9,7 +9,7 @@ decision clears it) lives in its own test file.
 
 No-mocks (PA-306): a REAL PostgreSQL via the shared ``pg_schema``
 fixture, which gives each test a throwaway schema so the live fleet
-store is never touched. The flag moved off SQLite on 2026-08-20; there
+store is never touched. The flag moved to the store on 2026-08-20; there
 is deliberately NO skipif on database availability, because a skip that
 reads as a pass is the defect this migration exists to remove.
 
@@ -172,7 +172,7 @@ def test_empty_target_raises(pg_schema: str) -> None:
 
 
 def test_clearing_hides_the_record_rather_than_destroying_it(pg_schema: str) -> None:
-    """The decision survives the clear, which the SQLite DELETE destroyed.
+    """The decision survives the clear, which the previous DELETE destroyed.
 
     ``clear_pending_prompt`` maps to the store's ``hide``, so the record
     stays in the oplog with the actor that cleared it. Reads are
@@ -234,7 +234,7 @@ def test_re_recording_after_a_clear_refreshes_the_timestamp(pg_schema: str) -> N
 def test_init_returns_a_locator_naming_the_postgres_endpoint(pg_schema: str) -> None:
     """The return value names WHERE the state went, so it can be checked.
 
-    The SQLite version returned None. The locator names the DATABASE and
+    The previous implementation returned None. The locator names the DATABASE and
     not the search_path schema layered on top — the same shape the
     incarnations store has, pinned here so the two do not drift apart.
     """

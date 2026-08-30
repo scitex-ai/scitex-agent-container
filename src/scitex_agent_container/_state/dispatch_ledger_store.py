@@ -13,7 +13,7 @@ WHOSE LEDGER IS THIS: THE DEFECT THAT HAD TO BE FIXED BEFORE THE MOVE
 =====================================================================
 The two backends have OPPOSITE shapes and a naive port silently joins them:
 
-  * ``state.db`` was PER-AGENT. Every agent had its own SQLite file, so
+  * ``state.db`` was PER-AGENT. Every agent had its own database file, so
     ``list_dispatches()`` with no filters meant "my dispatches" — the SHARD
     did the scoping and no code had to.
   * ``SCITEX_STORE_DSN`` is FLEET-WIDE. ``runtimes/_fleet_env`` injects ONE
@@ -53,7 +53,7 @@ THE COST OF EVERY READ IS O(n), STATED RATHER THAN HIDDEN
 =========================================================
 ``Store`` exposes ``get``/``put``/``rows``, not SQL — no WHERE clause and no
 index to lean on — so every listing materialises the whole ledger and filters
-in Python where the old module pushed four indexes at SQLite. That is a REAL
+in Python where the old module pushed four indexes at the database. That is a REAL
 regression, and this is the worst table for it so far: it grows by one row per
 a2a message per agent, fleet-wide, where ``verdict_delivered`` grew by a
 handful a day. Two things keep it acceptable and neither is permanent — the
@@ -172,7 +172,7 @@ def open_dispatch_store() -> Store:
     call, mirroring the old ``with open_db(...)`` shape.
 
     MULTI_WRITER, and this is where the fleet-wide DSN changes the honest
-    answer rather than merely the scale. Under a per-agent SQLite file exactly
+    answer rather than merely the scale. Under a per-agent file exactly
     one process ever wrote a row; under one shared table every agent on every
     host writes into it, so the ownership check SINGLE_WRITER runs would refuse
     legitimate writes from the second host onward.

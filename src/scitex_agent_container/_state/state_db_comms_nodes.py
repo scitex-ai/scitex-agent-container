@@ -11,13 +11,13 @@ using ``from ..._state.state_db_nodes import register_comms_node``.
 ON POSTGRESQL SINCE 2026-08-28. The schema, the ``Store`` factory and the
 row codec live in :mod:`.state_db_comms_nodes_store`, whose docstring
 carries the whole storage argument: why the sync layer is gone, and which
-three SQLite columns did not move because the primitive already owns the
+three legacy columns did not move because the primitive already owns the
 concepts they hand-rolled (``ended_at`` → ``hide()``, ``source_host`` →
 ``_origin``, ``updated_at`` → the HLC). This file holds the VERBS, and their
 policy is unchanged — the storage moved, ADR-0014's fail-loud conflict rule
 did not.
 
-``db_path`` IS GONE from every signature below. It named a SQLite file;
+``db_path`` IS GONE from every signature below. It named a file;
 there is no file.
 """
 
@@ -129,7 +129,7 @@ def register_comms_node(
 ) -> None:
     """Idempotent upsert of ``name`` → ``(host, a2a_port)``.
 
-    Behaviour (unchanged from the SQLite version — the storage moved, the
+    Behaviour (unchanged from the previous implementation — the storage moved, the
     policy did not):
 
     * No existing record → insert one, stamping ``registered_at``.
@@ -350,7 +350,7 @@ def unregister_comms_node(*, name: str) -> bool:
     The record, its values and its whole history stay readable through
     ``include_hidden=True`` and in the oplog. Re-running on an
     already-withdrawn name is a no-op returning ``False``, matching what the
-    SQLite ``rowcount == 0`` meant.
+    a zero rowcount meant.
     """
     if not name:
         return False
@@ -379,7 +379,7 @@ def rename_comms_node(*, old: str, new: str) -> bool:
     ``UPDATE comms_nodes SET name = ?`` as one more ``(table, column)`` pair
     in ``_lifecycle/_rename_db.NAME_COLUMNS``. Leaving the pair there
     after the move would have been WORSE than a crash: ``rename_rows`` skips
-    tables absent from ``sqlite_master``, so the rename would have reported
+    tables the schema no longer declared, so the rename would have reported
     success while the A2A directory kept advertising the OLD name. Peers then
     resolve a name the agent no longer answers to, and the renamed agent is
     unreachable. Withdrawing the old entry matters just as much in the other
@@ -404,7 +404,7 @@ def rename_comms_node(*, old: str, new: str) -> bool:
         if row is None:
             return False
 
-        # REFUSE a live occupant, loudly. The SQLite path did this for us:
+        # REFUSE a live occupant, loudly. The original path did this for us:
         # ``name`` was the PRIMARY KEY, so ``rename_rows``' UPDATE hit a
         # UNIQUE constraint and ``_rename_db`` turned the IntegrityError into
         # ``DbRenameError("state.db already holds rows for <new>")``. The
@@ -433,7 +433,7 @@ def rename_comms_node(*, old: str, new: str) -> bool:
             "registered_at": float(row.values["registered_at"]),
         }
         # A WITHDRAWN record under ``new`` is taken over rather than refused,
-        # and that is a deliberate difference from the SQLite path, which
+        # and that is a deliberate difference from the original path, which
         # refused this too (a tombstone still occupied the PK). It has to be:
         # renaming back — ``old`` -> ``new`` -> ``old`` — leaves ``old``
         # withdrawn by the first move, so refusing here would make the

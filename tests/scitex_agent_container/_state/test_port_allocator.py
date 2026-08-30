@@ -9,7 +9,7 @@ restore per PA-306.
 
 VANTAGE CHANGED 2026-08-28, ASSERTIONS DID NOT. ``a2a_ports`` moved to
 per-host PostgreSQL, so ``db_path`` is gone from every allocator signature —
-it named a SQLite file and there is no file. The per-test ``db`` fixture is
+it named a file and there is no file. The per-test ``db`` fixture is
 replaced by the shared ``pg_schema`` one, which points the REAL resolver at a
 throwaway schema; that is a stronger isolation than a temp path was, because
 it exercises the resolver production uses instead of bypassing it. Every

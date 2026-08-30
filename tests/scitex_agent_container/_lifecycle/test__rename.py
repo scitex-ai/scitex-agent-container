@@ -114,7 +114,7 @@ def _carried_names() -> list[str]:
     list``, the start preflight and the reconciler read — and carried by
     ``rename_instance_rows`` as its own step.
 
-    The history half left SQLite the same day: ``channel_events`` became
+    The history half moved the same day: ``channel_events`` became
     ``sac_channel_events`` in the shared PostgreSQL (ADR-0023) and is carried
     by ``rename_channel_events`` as its own step, so it is read through that
     store's own connection.
@@ -143,7 +143,7 @@ def _carried_grants() -> list[tuple[str, str]]:
 
     A fourth thing a rename must carry, and the newest: ``comms_grants`` was
     two ``NAME_COLUMNS`` pairs inside ``_rename_db`` until 2026-08-29, which
-    means that from the day the table left SQLite until that one, a rename
+    means that from the day the table moved until that one, a rename
     silently dropped every cross-group permission the agent had. Read through
     ``list_comms_grants``, which excludes revoked rows — so this photographs
     what the ACL gate would actually authorise, not what the table holds.
@@ -336,7 +336,7 @@ def test_the_plan_lists_the_board_identity_among_the_spec_changes(world: World):
 
 
 def test_the_plan_counts_the_rows_a_rename_would_touch(world: World):
-    """The dry-run count must survive the table leaving SQLite.
+    """The dry-run count must survive the table moving stores.
 
     ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL), then
     ``definitions.name`` for the rest of that day (deleted: no writer), then
@@ -364,7 +364,7 @@ def test_the_plan_counts_the_rows_a_rename_would_touch(world: World):
 
 
 def test_the_plan_counts_the_acl_grants_a_rename_would_carry(world: World):
-    """The grants half of the same report, under its SQLite-era key."""
+    """The grants half of the same report, under its pre-migration key."""
     # Arrange
     key = "comms_grants.sender_name"
     # Act

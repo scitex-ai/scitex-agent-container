@@ -142,7 +142,7 @@ def write_birth_certificate(
     ``record_local_instance`` side-writes).
 
     ``db_path`` was dropped on 2026-08-19 when the incarnations table moved
-    to per-host PostgreSQL. It named a SQLite file this function no longer
+    to per-host PostgreSQL. It named a file this function no longer
     writes to, and an ignored parameter in a signature is a lie a caller
     cannot see through: ``_instances.write_instance_records`` was still
     threading its own state.db path in here, which would have read as

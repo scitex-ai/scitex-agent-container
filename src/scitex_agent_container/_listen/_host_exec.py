@@ -321,7 +321,7 @@ async def host_exec(
                 "and has not yet replayed registrations, or that it resolved a "
                 "DIFFERENT store than the agents register into"
             )
-        # Name the store that answered, not the SQLite path this gate had
+        # Name the store that answered, not the file path this gate had
         # printed since before the policy table moved — it never opened
         # that file, and `cause` above turns on whether a policy row was
         # FOUND, so an operator chasing a wrong-store denial needs the

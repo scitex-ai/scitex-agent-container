@@ -4,7 +4,7 @@ Mirrors ``src/scitex_agent_container/_state/relocation_pg.py``.
 
 THE TEST THAT CARRIES THE DESIGN
 ================================
-``test_moving_hosts_leaves_exactly_one_open_stay``. The SQLite version closed
+``test_moving_hosts_leaves_exactly_one_open_stay``. The original closed
 the old stay and opened the new one inside one transaction; here they share
 ``Store.batch()``. If that batch is ever removed, a crash between the two
 writes leaves an agent with NO open stay — and ``current_residency`` then
@@ -13,7 +13,8 @@ to prevent. The pair of tests around it pin both halves: the old stay closes
 AT the new one's start, and exactly one stay stays open.
 
 ``test_history_is_ordered_when_two_stays_share_a_from_ts`` pins the other
-half of the rowid replacement. SQLite broke that tie on insertion order; this
+half of the row-id replacement. The original broke that tie on insertion
+order; this
 port breaks it on ``hlc``, a total order across replicas. Without a tie-break
 the history is non-deterministic, which is what the original design went out
 of its way to avoid.
@@ -146,7 +147,8 @@ def test_current_residency_is_the_open_stays_host(pg_schema: str) -> None:
 def test_history_is_ordered_when_two_stays_share_a_from_ts(pg_schema: str) -> None:
     """The other half of the rowid replacement — a deterministic tie-break.
 
-    Two stays on different hosts at the SAME instant. SQLite broke the tie on
+    Two stays on different hosts at the SAME instant. The original broke the
+    tie on
     insertion order; this port breaks it on ``hlc``. What is asserted is that
     the order is the WRITE order, deterministically, rather than arbitrary.
     """
@@ -229,7 +231,8 @@ def test_a_second_save_replaces_rather_than_appends(pg_schema: str) -> None:
 
 
 def test_the_fence_survives_the_round_trip(pg_schema: str) -> None:
-    # Arrange — carried over from the deleted SQLite suite. The fence is what
+    # Arrange — carried over from the deleted pre-migration suite. The fence
+    # is what
     # actually fences: a holder that comes back reads this record, sees a fence
     # above its own and knows it is out, so a fence that does not survive the
     # round trip disarms the whole instrument.
@@ -342,7 +345,8 @@ def test_load_journal_returns_the_latest_attempt(pg_schema: str) -> None:
 
 
 def test_another_agents_attempts_are_counted_separately(pg_schema: str) -> None:
-    # Arrange — carried over from the deleted SQLite suite. MAX(attempt)+1 is
+    # Arrange — carried over from the deleted pre-migration suite.
+    # MAX(attempt)+1 is
     # allocated per AGENT; a counter shared across agents would number a first
     # relocation as attempt 3 and make the journal unreadable as a history.
     init_relocation_schema()

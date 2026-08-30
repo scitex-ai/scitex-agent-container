@@ -8,7 +8,7 @@ v0.21.18) and, in a neighbouring namespace, nearly restarted the live
 control plane.
 
 WHY ``claim_port`` USED TO BE THE CANARY, AND WHY IT CANNOT BE ANY MORE.
-``a2a_ports.name`` was the PRIMARY KEY of a SQLite table and
+``a2a_ports.name`` was the PRIMARY KEY of a local table and
 ``port_allocator.claim_port`` consulted ONLY that database — it never checked
 whether a port was really bound. So every distinct agent name that reached
 ``agent_start`` burned another port out of the fixed range [19000, 19999], and
@@ -23,7 +23,7 @@ touches ``state.db`` at all. Left as written, these two tests would have gone
 on passing while measuring a DIFFERENT database's isolation — which is the
 precise shape of the vacuous test this file exists to prevent, one level up.
 
-THE CANARY THEREFORE MOVES, AND STAYS ON SQLite. ``record_instance_start``
+THE CANARY THEREFORE MOVES, AND STAYS ON THE LOCAL FILE. ``record_instance_start``
 writes the ``instances`` table, which moved to the shared PostgreSQL
 store on 2026-08-28 — so these two take ``pg_schema``, whose throwaway
 schema is what now supplies the isolation the temp file used to. The
