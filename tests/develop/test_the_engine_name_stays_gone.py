@@ -27,8 +27,16 @@ THE RULE, AND WHOSE IT IS
 Operator ruling 2026-08-29, applied fleet-wide with no per-package exceptions:
 the name may appear only in ``docs/adr/``. An ADR records a decision that was
 actually taken, and rewriting one destroys the record rather than the
-dependency. Everything else — source, tests, documentation, and the CHANGELOG
-— reaches zero.
+dependency. Source, tests and documentation reach zero.
+
+THE CHANGELOG IS COVERED, BUT ONLY WHERE IT IS STILL BEING WRITTEN. The
+first version of this rule treated the whole file as prose, and that was
+wrong for the same reason the ADR carve-out is right: an entry under a
+SHIPPED version heading is a record of what that release contained, so
+editing it does not remove the dependency — it makes the published
+changelog disagree with the published tag. ``## [Unreleased]`` is enforced;
+shipped headings are a record. sac has nine such lines under four shipped
+versions, and they stay.
 
 The reference implementation is scitex-dev's
 ``tests/develop/test__sqlite_is_not_named_anywhere.py``. This is sac's copy of
@@ -41,7 +49,7 @@ because it guards two different properties: this file guards the NAME, and
 :mod:`test_retired_engine_footprint_frozen` guards the USE. The footprint
 ratchet cannot state its own rule without writing the driver's import line, the
 vendor constructions it matches, and the operator instruction it exists to
-carry — 82 lines of it, all load-bearing.
+carry — 81 lines of it, all load-bearing.
 
 BOTH EXEMPTIONS ARE UNDER A STALENESS GATE. An exemption that stops matching
 must be deleted, or it decays into a blessed filename that whatever drifts into
@@ -80,6 +88,17 @@ EXEMPT_DETECTORS = (
 #: and a packaging change is exactly the sort of thing that starts tracking
 #: one without anybody deciding to.
 IGNORED_PREFIXES = ("build/", "src/scitex_agent_container.egg-info/")
+
+#: A CHANGELOG entry under a SHIPPED version heading is a record of what
+#: that release contained. Rewriting one does not remove the dependency — it
+#: makes the published changelog disagree with the published tag, which is
+#: the same failure as an incident record losing the cause it names. So the
+#: gate enforces the changelog only under ``## [Unreleased]``, where nothing
+#: has shipped claiming the text yet. THE EXEMPTION IS A HEADING, NOT A
+#: FILE: a new entry written today is still covered, and it stops being
+#: covered at exactly the moment a release freezes it.
+CHANGELOG = "CHANGELOG.md"
+UNRELEASED_HEADING = "## [Unreleased]"
 
 #: Ignore-rule files where a PATTERN line is a refusal, not a mention: writing
 #: ``*.sqlite3`` into ``.gitignore`` is the repository declining to carry the
@@ -125,11 +144,17 @@ def _names_the_engine(rel: str) -> list[str]:
         text = (REPO / rel).read_text(errors="ignore")
     except (OSError, UnicodeDecodeError):  # pragma: no cover - binary/unreadable
         return []
-    return [
-        f"{rel}:{number}: {line.strip()[:110]}"
-        for number, line in enumerate(text.splitlines(), start=1)
-        if _NAME.search(line) and not _is_ignore_pattern(rel, line)
-    ]
+    hits: list[str] = []
+    frozen_by_a_release = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        if rel == CHANGELOG and line.startswith("## "):
+            frozen_by_a_release = line.strip() != UNRELEASED_HEADING
+        if not _NAME.search(line):
+            continue
+        if _is_ignore_pattern(rel, line) or frozen_by_a_release:
+            continue
+        hits.append(f"{rel}:{number}: {line.strip()[:110]}")
+    return hits
 
 
 def _offenders() -> list[str]:
@@ -208,6 +233,49 @@ def test_the_ignore_exemption_does_not_reach_ordinary_files() -> None:
     exempt = _is_ignore_pattern(rel, "*.sqlite3\n")
     # Assert
     assert exempt is False
+
+
+def test_a_released_changelog_entry_is_a_record_not_an_offence() -> None:
+    """The changelog is enforced under [Unreleased] and nowhere else.
+
+    MEASURED, not assumed: sac's changelog carries nine lines naming the
+    engine under four shipped headings — [0.26.3], [0.25.0], [0.21.25] and
+    [0.21.20] — plus one under a tag that was cut but never published. Each
+    describes what that release actually did. This asserts the gate leaves
+    them alone while still covering the section being written.
+    """
+    # Arrange
+    offenders = _names_the_engine(CHANGELOG)
+    # Act
+    under_a_shipped_heading = sorted(offenders)
+    # Assert
+    assert not under_a_shipped_heading, (
+        "the changelog names the engine under [Unreleased], which is still "
+        f"being written and is therefore covered: {under_a_shipped_heading}"
+    )
+
+
+def test_the_changelog_exemption_is_a_heading_not_the_whole_file() -> None:
+    """NEGATIVE CONTROL — the released-section exemption must not launder
+    the file.
+
+    Without this, "the changelog is a record" would quietly become "the
+    changelog is exempt", and the next unreleased entry could name the
+    engine freely. The gate has to still see the [Unreleased] section, and
+    the only way to know it does is to check that the section exists and is
+    reached before any shipped heading.
+    """
+    # Arrange
+    lines = (REPO / CHANGELOG).read_text(errors="ignore").splitlines()
+    headings = [ln.strip() for ln in lines if ln.startswith("## ")]
+    # Act
+    first = headings[0] if headings else ""
+    # Assert
+    assert first == UNRELEASED_HEADING, (
+        f"the first changelog heading is {first!r}, not {UNRELEASED_HEADING!r}. "
+        "The exemption keys off heading order, so an [Unreleased] section that "
+        "is missing or not first would exempt the entire file silently."
+    )
 
 
 def test_every_exempt_detector_really_names_the_engine() -> None:
