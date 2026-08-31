@@ -26,11 +26,21 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+#: "a git command that pulls" — the shape an editable remedy must have. Not
+#: the literal string `git pull`: the primitive composes
+#: `git -C <repo> pull --ff-only` so the command works from any CWD and can
+#: never rewrite unpushed commits, and an older primitive emits a bare
+#: `git pull`. Both are the same promise; a `pip install -U` is not.
+#: Unanchored on purpose: `.match()` pins it to the start of a REMEDY
+#: string, while `.search()` finds the `fix:` line inside rendered output.
+_GIT_PULL = re.compile(r"git\b(?:\s+\S+)*?\s+pull\b")
 
 from scitex_agent_container._freshness import (
     DIST_NAME,
@@ -90,9 +100,40 @@ def _report(**evidence):
     )
 
 
+def _upstream_evidence(behind: int) -> dict:
+    """The second editable axis, when the installed primitive has it.
+
+    scitex-dev grew a distinction this fixture predates. Distance from the
+    latest release tag says only that the tag is not in HEAD's history, and
+    release tags are cut on `main` — so a perfectly healthy `develop` is
+    permanently "behind" one, and reporting STALE on that alone prints a
+    `git pull` that can never close the gap. Distance from the TRACKING
+    REMOTE is the one gap a pull does close, so it is now the only fact that
+    may be judged STALE; tag distance on its own reads as UNKNOWN.
+
+    Supplied CONDITIONALLY because sac's `[dev]` floor still permits a
+    primitive that predates these keys, and ``StaticSources`` rejects an
+    unknown kwarg. FOLLOW-UP: inline them once the floor moves past the
+    release that ships them — the same floor bump the module docstring
+    already asks for.
+    """
+    if versioning is None:
+        return {}
+    import inspect
+
+    params = inspect.signature(versioning.StaticSources).parameters
+    if "editable_behind_upstream" not in params:
+        return {}
+    return {
+        "editable_behind_upstream": behind,
+        "editable_repo": "/home/ywatanabe/proj/scitex-agent-container",
+    }
+
+
 # An editable checkout behind its own release tag — the operator's actual
 # situation: his `.venv` advertised 0.21.21 from a frozen .dist-info while
-# executing current develop.
+# executing current develop. The remote genuinely carries those 7 commits,
+# which is what makes this both STALE and fixable by a pull.
 EDITABLE_BEHIND = dict(
     install_kind="editable",
     effective_version="0.21.24",
@@ -101,6 +142,7 @@ EDITABLE_BEHIND = dict(
     executable="/home/ywatanabe/proj/scitex-agent-container/.venv/bin/python",
     editable_ahead_behind=(0, 7),
     pypi_latest="0.21.24",
+    **_upstream_evidence(7),
 )
 
 # A wheel genuinely behind what shipped — the one case where a version
@@ -201,8 +243,12 @@ class TestActsOnTheVerdict:
         report = stale_editable
         # Act
         text, _code = _render(report, as_json=False)
-        # Assert — an alarm that does not say what to DO gets ignored.
-        assert "git pull" in text
+        # Assert — an alarm that does not say what to DO gets ignored. Matched
+        # as "a git command that pulls" rather than the literal `git pull`,
+        # because the primitive now composes `git -C <repo> pull --ff-only`:
+        # CWD-independent so it cannot hit the wrong repo, and never
+        # `--rebase`, which would rewrite the operator's unpushed work.
+        assert _GIT_PULL.search(text), text
 
     def test_a_fresh_verdict_exits_zero(self, fresh_report):
         # Arrange
@@ -305,8 +351,19 @@ class TestNeverClobbersAnEditableCheckout:
         report = stale_editable
         # Act
         remedies = [f.remedy for f in report.stale if f.remedy]
-        # Assert — stated positively, not merely as the absence of pip.
-        assert all(r.startswith("git pull") for r in remedies), remedies
+        # Assert — stated positively, not merely as the absence of pip. The
+        # shape is "a git command that pulls", which admits the primitive's
+        # `git -C <repo> pull --ff-only` without admitting a wheel clobber.
+        assert all(_GIT_PULL.match(r) for r in remedies), remedies
+
+    def test_no_editable_remedy_rewrites_unpushed_work(self, stale_editable):
+        # Arrange — `--rebase` rewrites commits the developer has not pushed.
+        # A WARNING's remedy must not be able to cost anybody their work.
+        report = stale_editable
+        # Act
+        remedies = " ".join(f.remedy for f in report.stale)
+        # Assert
+        assert "--rebase" not in remedies
 
     def test_an_editable_stale_report_has_a_remedy_at_all(self, stale_editable):
         # Arrange
