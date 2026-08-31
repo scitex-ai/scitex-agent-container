@@ -326,14 +326,14 @@ grounds that had nothing to do with the thing they measured.
 
 ## [0.26.3] - 2026-08-24
 
-**Off SQLite.** Every remaining piece of runtime state that a container wrote
-to a private SQLite file now lives in the per-host PostgreSQL on `:55432`,
+**Off the retired engine.** Every remaining piece of runtime state that a
+container wrote to a private local file now lives in the per-host PostgreSQL on `:55432`,
 where a second agent on the same host can see it. This is the release that
 carries the migration the operator directed on 2026-08-24, plus the day's
 repairs to the things the migration exposed.
 
 ### Changed
-- **State moved off SQLite onto per-host PostgreSQL**: both remaining ACL
+- **State moved off the retired engine onto per-host PostgreSQL**: both remaining ACL
   tables (#1161) and the ACL pending-prompt flag (#1158); the inbound dispatch
   ledger (#1169); the agent auth cache (#1203); relocation residency, leases
   and journal (#1207); and the two raw `instances` readers now go through the
@@ -989,7 +989,7 @@ change that needs one.
          read from postgresql://scitex_cards@127.0.0.1:55432/scitex_cards (uuid 1d55dd6e)
 
   This fleet currently has four stores — two Postgres clones, an abandoned
-  SQLite inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the
+  retired-engine inbox sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the
   previous morning while readers kept attaching), and a YAML file that
   `scitex-cards done` resolved to while `$SCITEX_CARDS_DB` named Postgres. A
   count with no named source is unfalsifiable: it looks identical whether it
@@ -2311,7 +2311,7 @@ change that needs one.
   overrides at INFO instead. The defaults are DATA — no sac logic names a
   consumer, and per-agent opt-out needs no new mechanism (set the key in
   `spec.env`, or `""` to neutralise). Seeded with `SCITEX_CARDS_DUAL_WRITE=1`
-  and `SCITEX_CARDS_READ_BACKEND=sqlite`.
+  and `SCITEX_CARDS_READ_BACKEND` set to the retired engine.
 
 - **`auth-heal` is declared as a `kind="timer"` JobSpec (`sac.heal-agent-auth`)
   instead of a hand-written crontab line** (PR #753). The cron line was
@@ -2765,14 +2765,14 @@ what had to be true for it to actually arrive.
   workflow — not an equivalent setup, the same bytes. Green PR ⇒ green release,
   by construction.
 
-- **`claim_port()` lost a race and raised a raw sqlite traceback — the bug that
+- **`claim_port()` lost a race and raised a raw driver traceback — the bug that
   ghosted v0.21.18/19.** The pinned-port branch was a TOCTOU: it `SELECT`ed for a
   clash, then `INSERT`ed, with nothing in between. A concurrent claimant landing
-  in that window tripped `UNIQUE(port)` and `sqlite3.IntegrityError` escaped to
+  in that window tripped `UNIQUE(port)` and the driver's `IntegrityError` escaped to
   the caller. *Which* error you got — the intended diagnosis or a driver
   traceback — was decided purely by thread timing, which is why the failure moved
   between releases and read as a flake. Reproduced deterministically (16 threads,
-  real sqlite, no mocks): 6 raw escapes, 9 clean errors. The claim is now a single
+  the real engine, no mocks): 6 raw escapes, 9 clean errors. The claim is now a single
   atomic statement (`INSERT ... ON CONFLICT DO NOTHING` + read-back).
 
 - **A lost port race is now resolved by ORIGIN, so a concurrent fleet relaunch
@@ -3159,7 +3159,7 @@ cannot be stopped. It was held back rather than published.
 
 - **Tests raced real servers against arbitrary 5-second deadlines (#661).** The
   loopback server wasn't dead — it was **slow** (`server.started` measured at
-  7.49s, because the listen lifespan does a filesystem walk plus SQLite upserts
+  7.49s, because the listen lifespan does a filesystem walk plus local-store upserts
   before reporting ready). The old wait also **swallowed the server's startup
   exception**, burned its ceiling, and then blamed a timeout — so a *crashed*
   server and a *slow* one produced the identical error. The idiom was copy-pasted
