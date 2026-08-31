@@ -61,9 +61,8 @@ falsifiable subset and stops.
 SHRINKING IS TWO LINES; GROWING IS IMPOSSIBLE
 =============================================
 Name the sink in the comment, delete the entry here. A 70th unnamed claim
-fails. Same asymmetry as
-tests/develop/test_retired_engine_footprint_frozen.py, for
-the same reason: a list that can only shrink is an inventory; one that can
+fails. The asymmetry is the whole point, and it is the reason to prefer a
+shrink-only list: a list that can only shrink is an inventory; one that can
 grow is a wish.
 
 WHAT A PASS DOES **NOT** PROVE — READ THIS BEFORE TRUSTING A GREEN
