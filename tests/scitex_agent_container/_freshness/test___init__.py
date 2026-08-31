@@ -33,15 +33,6 @@ from pathlib import Path
 
 import pytest
 
-#: "a git command that pulls" — the shape an editable remedy must have. Not
-#: the literal string `git pull`: the primitive composes
-#: `git -C <repo> pull --ff-only` so the command works from any CWD and can
-#: never rewrite unpushed commits, and an older primitive emits a bare
-#: `git pull`. Both are the same promise; a `pip install -U` is not.
-#: Unanchored on purpose: `.match()` pins it to the start of a REMEDY
-#: string, while `.search()` finds the `fix:` line inside rendered output.
-_GIT_PULL = re.compile(r"git\b(?:\s+\S+)*?\s+pull\b")
-
 from scitex_agent_container._freshness import (
     DIST_NAME,
     LISTEN_UNIT,
@@ -91,6 +82,15 @@ requires_primitive = pytest.mark.skipif(
         "The degradation tests in TestDegradesToUnknown still run."
     ),
 )
+
+#: "a git command that pulls" — the shape an editable remedy must have. Not
+#: the literal string `git pull`: the primitive composes
+#: `git -C <repo> pull --ff-only` so the command works from any CWD and can
+#: never rewrite unpushed commits, while an older primitive emits a bare
+#: `git pull`. Both are the same promise; a `pip install -U` is not.
+#: Unanchored on purpose: `.match()` pins it to the start of a REMEDY
+#: string, while `.search()` finds the `fix:` line inside rendered output.
+_GIT_PULL = re.compile(r"git\b(?:\s+\S+)*?\s+pull\b")
 
 
 def _report(**evidence):
