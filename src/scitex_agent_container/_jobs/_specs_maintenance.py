@@ -3,12 +3,41 @@
 Split out of :mod:`._jobs_plugin` (at the per-file cap), following the
 convention :mod:`._specs_liveness` established for the same reason.
 
-Unlike the accounts group these four are INDEPENDENT — none depends on
+Unlike the accounts group these five are INDEPENDENT — none depends on
 another's output and any one can be disabled without breaking the rest.
 What makes them one file is the shared property that every one of them
 REPORTS rather than repairs, so a finding is not the unit being
 unhealthy. That distinction is why ``host-sync-check`` carries
 ``--exit-zero``; see its comment for the measurement that forced it.
+
+``timer-liveness-check`` is the one that reports on the SCHEDULER rather than
+on the fleet, and it is deliberately in this group rather than in
+:mod:`._specs_liveness`: those three restart AGENTS, this one only reports,
+and grouping by "reports rather than repairs" is what makes either file
+readable. It is also, unavoidably, a check that can be killed by the very
+fault it detects — a dead timer cannot report that timers are dead. That is
+not a reason to skip it. Under the ecosystem supervisor's PeriodicRunner the
+cadence comes from ``on_unit_active_sec`` and no systemd timer is involved at
+all, so the check runs on a rail the fault cannot reach; on a host still
+carrying the retired per-leaf units it would go silent WITH them, and a
+detector that goes quiet in the same breath as the thing it watches is still
+better than the five days of confident green that preceded it.
+
+CADENCE, HONESTLY: the permanent fix for the fault above is a wall-clock
+trigger — ``OnCalendar=*:0/5`` with ``Persistent=true``, which cannot land in
+the past-forever state and catches up a missed run. It is NOT applied to the
+recovery-critical specs here or in :mod:`._specs_liveness`, and the reason is
+measured, not stylistic. ``JobSpec.on_calendar`` exists in scitex-dev 0.57.0
+and its SYSTEMD renderer emits it (``jobs/_systemd.py``), but neither live
+rail reads it: the ecosystem supervisor's cadence resolver
+(``_supervisor/_schedule.cadence_sec``) consults ``on_unit_active_sec`` then
+``schedule`` and never ``on_calendar``, and ``ecosystem up``'s cron lowering
+(``_up_timer_losses.lowering_losses``) counts a set ``on_calendar`` as a
+DROPPED guarantee and REFUSES the whole lowering. So declaring one here would
+change nothing about when these jobs run and would break the lowering for
+every sac job at once. The missing half belongs to scitex-dev, and it is
+exactly one thing: ``cadence_sec`` (and the periodic runner behind it) has no
+``on_calendar`` branch.
 """
 
 from __future__ import annotations
@@ -172,6 +201,54 @@ def maintenance_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             # nothing — releases are not more frequent than hourly — and each
             # pass makes real network calls.
             on_boot_sec="25min",
+            on_unit_active_sec="1h",
+        ),
+        JobSpec(
+            name="scitex-agent-container-timer-liveness-check",
+            schedule="23 * * * *",  # hourly (cron form; timer cadence below)
+            # SELF-BOUNDING (120s). A pass is one `systemctl --user
+            # list-unit-files` plus one `systemctl --user show` per enabled
+            # timer — ~22 units on a fleet host, milliseconds each. 120s is
+            # generous enough that a loaded host is never mistaken for a
+            # broken one, which matters here: a timed-out pass reports
+            # UNKNOWN, and a manufactured UNKNOWN is exactly the reading this
+            # check exists to refuse to manufacture.
+            command=f"/usr/bin/timeout 120 {sac} doctor --timers --strict",
+            description=(
+                "Asks the one question every other systemd instrument answers "
+                "WRONG: will each ENABLED --user timer ever fire again? A timer "
+                "built from OnBootSec+OnUnitActiveSec alone stops re-arming the "
+                "first time its service misses a period (the next monotonic "
+                "elapse lands in the past, systemd does not fire monotonic "
+                "timers retroactively, and Persistent=true applies only to "
+                "OnCalendar). MEASURED 2026-09-02 on scitex-compute-04: six "
+                "enabled timers dead — the agent auth-heal sweep among them, "
+                "silent for FIVE DAYS while a wedged agent went unrestarted — "
+                "and is-enabled=enabled, is-active=active and Result=success "
+                "throughout. Only NextElapseUSecMonotonic=infinity said "
+                "otherwise, and nothing was reading it. READ-ONLY: it never "
+                "starts, re-arms, enables or removes a unit; the remedy is "
+                "printed for a human, because for an ORPHAN of the retired "
+                "per-leaf timer lowering the correct remedy is REMOVAL and "
+                "re-arming it would install a second scheduler. --strict so an "
+                "UNREADABLE timer is loud too: `systemctl --user show` needs a "
+                "user bus, so a pass with no vantage learns nothing and must "
+                "not be recorded as a clean host."
+            ),
+            kind="timer",
+            # Hourly, and the cadence is bounded from BOTH sides. A timer dies
+            # the moment its service misses one period, so the fleet's fastest
+            # job (5min) can be dead 55 minutes before this notices — and that
+            # is still 5 days better than the operator noticing. Faster buys
+            # little: the failure is measured in days of silence, and each pass
+            # spawns one subprocess per enabled unit.
+            #
+            # 40min after boot on purpose, and it is not arbitrary: a REBOOT
+            # RE-ARMS OnBootSec, so every timer on a just-booted host reads
+            # armed regardless of how broken its rendering is. Checking at
+            # boot would report the most reassuring possible answer at the
+            # exact moment it is least informative. Uptime is the risk factor.
+            on_boot_sec="40min",
             on_unit_active_sec="1h",
         ),
     ]

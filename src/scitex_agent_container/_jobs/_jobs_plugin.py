@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Ten jobs today:
+    Thirteen jobs today:
 
     * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
       of the single-refresher model, and the sibling of
@@ -142,6 +142,20 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
       only then atomically swaps the live ``sac-<layer>.sif`` symlinks.
       Keep-3 rotation on both sides. A source-unchanged run is a cheap
       SKIPPED verdict — the */10 cadence buys freshness, not transfers.
+
+    * ``sac.timer-liveness-check`` (``kind="timer"``) — the check on the
+      SCHEDULER itself. A ``systemd --user`` timer built from
+      ``OnBootSec`` + ``OnUnitActiveSec`` alone stops re-arming the first time
+      its service misses a period, and every ordinary instrument still calls
+      it healthy: ``is-enabled=enabled``, ``is-active=active``,
+      ``Result=success``, ``SubState=elapsed``. Only
+      ``NextElapseUSecMonotonic=infinity`` says otherwise. MEASURED 2026-09-02
+      on scitex-compute-04 — SIX enabled timers dead, including the agent
+      auth-heal sweep, silent five days while a wedged agent went unrestarted;
+      the operator noticed before any instrument did. Read-only: it reports,
+      and the remedy is printed for a human, because for an ORPHAN of the
+      retired per-leaf lowering the right remedy is REMOVAL and re-arming it
+      would install a second scheduler.
 
     * ``sac.worktree-gc`` (``kind="timer"``) — the DAILY worktree GC,
       ``sac worktree gc --apply --all``. Agent-tool worktrees auto-clean

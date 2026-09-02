@@ -193,3 +193,70 @@ def test_spartan_sif_bake_timeout_outlives_two_bakes_and_a_pull() -> None:
     job = _job("scitex-agent-container-spartan-sif-bake")
     # Assert
     assert job.command.startswith("/usr/bin/timeout 14400 ")
+
+
+def test_timer_liveness_check_is_yielded_by_provide_jobs() -> None:
+    # Arrange — the detector only exists if something RUNS it. The incident
+    # it answers ran for five days precisely because nothing was reading
+    # NextElapseUSecMonotonic; a check shipped and scheduled nowhere would
+    # repeat that with an extra module.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    assert job.name == "scitex-agent-container-timer-liveness-check"
+
+def test_timer_liveness_check_kind_is_timer() -> None:
+    # Arrange — kind must be one of {"service","timer","cron"}; a wrong kind
+    # raises at construction and `ecosystem up` then silently DROPS sac's
+    # whole provider, taking the OAuth refresh and the GC down with it.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    assert job.kind == "timer"
+
+def test_timer_liveness_check_command_is_the_strict_form() -> None:
+    # Arrange — --strict is load-bearing, not decoration: without it an
+    # UNREADABLE pass (no user bus, so nothing was learned) would exit 0 and
+    # be recorded as a clean host. A dead timer already exits non-zero
+    # regardless; --strict is what makes blindness loud too.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    bound, _payload, rest = _split_command(job.command)
+    assert (bound, rest) == ("/usr/bin/timeout 120", "doctor --timers --strict")
+
+def test_timer_liveness_check_cadence_is_hourly() -> None:
+    # Arrange — the failure is measured in DAYS of silence (five, on
+    # compute-04), so hourly turns a multi-day blind spot into a one-hour
+    # one. Faster buys little and each pass spawns one subprocess per
+    # enabled unit.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    assert job.on_unit_active_sec == "1h"
+
+def test_timer_liveness_check_waits_out_the_post_boot_window() -> None:
+    # Arrange — a REBOOT re-arms OnBootSec, so every timer on a just-booted
+    # host reads armed no matter how broken its rendering is. Checking at
+    # boot would return the most reassuring possible answer at the exact
+    # moment it is least informative; uptime is the risk factor.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    assert job.on_boot_sec == "40min"
+
+def test_timer_liveness_check_declares_no_calendar_cadence() -> None:
+    # Arrange — a wall-clock trigger is the real fix for the fault this job
+    # detects, and it CANNOT be declared here today. `JobSpec.on_calendar`
+    # exists in scitex-dev 0.57.0 and the systemd renderer emits it, but the
+    # ecosystem supervisor's cadence resolver never reads it
+    # (`_supervisor/_schedule.cadence_sec`: on_unit_active_sec, then
+    # schedule) and `ecosystem up`'s cron lowering counts a set on_calendar
+    # as a DROPPED guarantee and refuses the lowering for sac's whole
+    # provider. Declaring one would change no cadence and break every job.
+    # This pins the honest state so the day scitex-dev grows the branch, the
+    # test that has to change says exactly why.
+    # Act
+    job = _job("scitex-agent-container-timer-liveness-check")
+    # Assert
+    assert job.on_calendar is None

@@ -45,6 +45,8 @@ import click
 
 from .._drift import DriftState, DriftStatus, check_spec_source_drift
 from .._drift._fleet import HostDrift, check_fleet_drift
+from .._maintenance._timer_liveness_model import ARMING_VIOLATION
+from .._maintenance._timer_liveness_probe import check_timer_liveness
 from .._readiness import NodeReadiness, node_readiness_for_this_host
 from ..runtimes._cct_poller_singleton import (
     POLLER_OK,
@@ -62,6 +64,7 @@ from ..runtimes._cct_token_collision import (
     check_token_collisions,
 )
 from ..runtimes._cct_token_collision import SCOPE_NOTE as COLLISION_SCOPE_NOTE
+from ._doctor_timers import render_timers_human
 from ._helpers import _json_flag, console
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -234,12 +237,14 @@ def _render_local(
     with_pollers: bool = True,
     with_collisions: bool = True,
     with_node: bool = True,
+    with_timers: bool = True,
 ) -> int:
     """Run + render the requested local checks. Returns exit code.
 
     ``--strict`` fails on a drifted spec source OR an alarming poller verdict
     OR an alarming collision verdict OR a node that would not produce a
-    fully-equipped agent — each of which includes UNKNOWN,
+    fully-equipped agent OR a timer sac could not read — each of which
+    includes UNKNOWN,
     matching ``sac agents cct-audit``: an invariant sac could not assert is
     not an invariant that held.
     """
@@ -250,6 +255,7 @@ def _render_local(
     verdict = check_poller_singleton() if with_pollers else None
     collisions = check_token_collisions() if with_collisions else None
     readiness = node_readiness_for_this_host() if with_node else None
+    timers = check_timer_liveness() if with_timers else None
 
     if status is not None:
         payload["local"] = status.to_dict()
@@ -263,6 +269,9 @@ def _render_local(
     if readiness is not None:
         payload["node"] = readiness.to_dict()
         failed = failed or readiness.is_alarming
+    if timers is not None:
+        payload["timers"] = timers.to_dict()
+        failed = failed or timers.is_alarming
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
@@ -275,7 +284,18 @@ def _render_local(
             _render_collisions_human(collisions)
         if readiness is not None:
             _render_node_human(readiness)
+        if timers is not None:
+            render_timers_human(timers)
 
+    # A dead timer fails WITHOUT --strict, and it is the only check here
+    # that does. The others report a state a human then judges; this one
+    # reports a unit that cannot recover on its own and whose every other
+    # instrument says `enabled active Result=success`. A finding that needs
+    # an opt-in flag to be heard is how it stayed unheard for five days.
+    # UNKNOWN stays strict-gated like its siblings: no vantage is not a
+    # measurement.
+    if timers is not None and timers.state == ARMING_VIOLATION:
+        return 1
     return 1 if (strict and failed) else 0
 
 
@@ -318,13 +338,24 @@ def _render_local(
     ),
 )
 @click.option(
+    "--timers",
+    "timers",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run ONLY the timer-liveness check: will every ENABLED systemd "
+        "--user timer on this host ever fire again?"
+    ),
+)
+@click.option(
     "--strict",
     "strict",
     is_flag=True,
     default=False,
     help=(
-        "Exit non-zero when any checked source is drifted, or the poller or "
-        "collision verdict is violation/unknown (CI gate)."
+        "Exit non-zero when any checked source is drifted, or the poller, "
+        "collision or timer verdict is violation/unknown (CI gate). A DEAD "
+        "timer already exits non-zero without this flag."
     ),
 )
 @click.option(
@@ -342,6 +373,7 @@ def doctor(
     pollers: bool,
     collisions: bool,
     node: bool,
+    timers: bool,
     strict: bool,
     timeout: int,
     as_json: bool,
@@ -350,7 +382,8 @@ def doctor(
 
     \b
     Examples:
-      $ sac doctor                 # drift + pollers + collisions + node
+      $ sac doctor                 # drift + pollers + collisions + node + timers
+      $ sac doctor --timers        # only: will every enabled timer fire again?
       $ sac doctor --node          # only: would an agent here have tools?
       $ sac doctor --pollers       # only: one live poller per bot token?
       $ sac doctor --collisions    # only: do two SPECS take the same bot?
@@ -381,7 +414,19 @@ def doctor(
     told the operator so. No such decision had been made.
 
     \b
-    All three are READ-ONLY and three-valued — ok / violation / unknown. They
+    --timers ANSWERS A QUESTION EVERY OTHER INSTRUMENT GETS WRONG. A user
+    timer built from OnBootSec+OnUnitActiveSec alone stops re-arming the
+    first time its service misses a period — the next monotonic elapse is
+    computed in the past, systemd will not fire it retroactively, and
+    Persistent=true covers OnCalendar timers only. Measured 2026-09-02 on
+    scitex-compute-04: SIX enabled timers dead (the auth-heal sweep among
+    them, silent for five days) while is-enabled, is-active and Result all
+    read healthy. Only NextElapseUSecMonotonic=infinity said otherwise. A
+    reboot re-arms OnBootSec, so a freshly-booted host reads clean whatever
+    its rendering does: uptime is the risk factor and reboots mask it.
+
+    \b
+    All of them are READ-ONLY and three-valued — ok / violation / unknown. They
     report duplicates; they do not kill, lock or refuse them, and an
     unreadable /proc/<pid>/environ or an inconclusive pool read is reported
     as unknown rather than quietly counted as fine. No bot token VALUE is
@@ -392,11 +437,23 @@ def doctor(
         code = _render_fleet(ctx, as_json, strict, timeout)
     elif pollers:
         code = _render_local(
-            ctx, as_json, strict, with_drift=False, with_collisions=False, with_node=False
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_collisions=False,
+            with_node=False,
+            with_timers=False,
         )
     elif collisions:
         code = _render_local(
-            ctx, as_json, strict, with_drift=False, with_pollers=False, with_node=False
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_pollers=False,
+            with_node=False,
+            with_timers=False,
         )
     elif node:
         code = _render_local(
@@ -406,6 +463,17 @@ def doctor(
             with_drift=False,
             with_pollers=False,
             with_collisions=False,
+            with_timers=False,
+        )
+    elif timers:
+        code = _render_local(
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_pollers=False,
+            with_collisions=False,
+            with_node=False,
         )
     else:
         code = _render_local(ctx, as_json, strict)

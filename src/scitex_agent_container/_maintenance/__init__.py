@@ -1,6 +1,6 @@
 """Host-hygiene maintenance rails that run on a schedule, not on a whim.
 
-Three concerns live here:
+Four concerns live here:
 
 * **git worktree sprawl** (:mod:`._worktree_gc`), the standing liability
   behind the incident card ``incident-worktree-sprawl-permanent-gc-20260710``
@@ -12,6 +12,14 @@ Three concerns live here:
   and duplicated dist-info. Twice now (2026-07-16, 2026-08-09) an agent
   has executed code from a deleted or abandoned tree while ``--version``
   reported a healthy number; only path-level inspection exposes it.
+
+* **timers that will never fire again** (:mod:`._timer_liveness_model`),
+  surfaced as ``sac doctor --timers``. A ``systemd --user`` timer built from
+  ``OnBootSec`` + ``OnUnitActiveSec`` alone stops re-arming the first time
+  its service misses a period, and ``is-enabled``, ``is-active`` and
+  ``Result`` all keep reporting health — measured 2026-09-02 on
+  scitex-compute-04, six dead timers including the agent auth-heal sweep,
+  silent for five days.
 
 The shape every rail in this package follows, learned from
 ``_hostsync``:
@@ -91,6 +99,26 @@ from ._overlay_venv_model import (
     VenvCheck,
 )
 from ._overlay_venv_predicate import plan_invalidation
+from ._timer_liveness_model import (
+    ARMING_OK,
+    ARMING_UNKNOWN,
+    ARMING_VIOLATION,
+    TIMER_ARMED,
+    TIMER_NEVER_AGAIN,
+    TIMER_UNKNOWN,
+    TimerLivenessVerdict,
+    TimerReading,
+    parse_show_output,
+)
+from ._timer_liveness_model import SCOPE_NOTE as TIMER_SCOPE_NOTE
+from ._timer_liveness_probe import (
+    check_timer_liveness,
+    enabled_timer_units,
+    read_capture_dir,
+)
+from ._timer_liveness_probe import (
+    verdict_for as timer_verdict_for,
+)
 from ._venv_dist_assertion import (
     VenvDistributionError,
     assert_venv_distributions_unique,
@@ -117,6 +145,20 @@ from ._worktree_gc_alarm import (
 from ._worktree_gc_repos import discover_repos, spec_workdirs
 
 __all__ = [
+    "ARMING_OK",
+    "ARMING_UNKNOWN",
+    "ARMING_VIOLATION",
+    "TIMER_ARMED",
+    "TIMER_NEVER_AGAIN",
+    "TIMER_SCOPE_NOTE",
+    "TIMER_UNKNOWN",
+    "TimerLivenessVerdict",
+    "TimerReading",
+    "check_timer_liveness",
+    "enabled_timer_units",
+    "parse_show_output",
+    "read_capture_dir",
+    "timer_verdict_for",
     "ACTION_INVALIDATE",
     "ACTION_NONE",
     "ACTION_REFUSE",

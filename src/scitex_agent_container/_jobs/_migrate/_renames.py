@@ -148,6 +148,13 @@ BORN_CANONICAL: frozenset[str] = frozenset(
         # which is precisely why a rate-limited fleet stayed stopped for
         # 1h46m. Nothing for a migration to displace.
         "scitex-agent-container-resume-rate-limited-agents",
+        # Added 2026-09-02, after six enabled `--user` timers were measured
+        # in the never-fires-again state on scitex-compute-04. Born
+        # canonical because nothing has ever run this check under any
+        # name: the fault went unobserved for five days precisely because
+        # no predecessor existed. There is no legacy unit for a migration
+        # to displace.
+        "scitex-agent-container-timer-liveness-check",
     }
 )
 
