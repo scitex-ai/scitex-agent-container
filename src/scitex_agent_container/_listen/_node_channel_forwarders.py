@@ -5,14 +5,35 @@ Holds the WI-4 cross-host forward path that the node-comms routes in
 host. Three callables make up the surface:
 
 * :func:`_forward_to_remote` — entry point + transport selector. Reads
-  the per-host bearer registry and the operator's ``peers:`` block,
-  then dispatches to the HTTP or ssh leg.
-* :func:`_forward_via_http` — legacy HTTP transport (Stage 1). Used
-  when the destination host is NOT in ``host_config.peers``; matches
-  the two-listen test topology's loopback rewrite.
-* :func:`_forward_via_ssh_curl` — ADR-0015 Stage 2 transport. ssh +
-  remote curl into ``127.0.0.1:<port>`` on the destination, reusing
-  the same helper as the ``/v1/turn`` direct-ssh path.
+  the per-host bearer registry, resolves the destination through the
+  SAME peer map the CLI verbs use (config.yaml ``peers:`` UNION the
+  scitex-dev host registry — :func:`~.._state._peer_resolve.peers_with_registry`),
+  and dispatches to the ssh leg. A destination that is not an ssh peer
+  is REFUSED with a 502 that names the fix; it is never guessed at.
+* :func:`_forward_via_ssh_curl` — ADR-0015 Stage 2 transport, the ONLY
+  production transport. ssh + remote curl into ``127.0.0.1:<port>`` on
+  the destination, reusing the same helper as the ``/v1/turn``
+  direct-ssh path.
+* :func:`_forward_via_http` — the in-process TEST transport. Reached
+  only for the ``host-*`` loopback aliases the two-listen suite in
+  ``test_server.py`` stamps on its ``instances`` rows
+  (:func:`_is_test_loopback_alias`); never for a fleet host.
+
+Why there is no HTTP leg for production (measured 2026-09-02)
+--------------------------------------------------------------
+Every agent's bridge and sidecar bind ``127.0.0.1`` by default
+(``runtimes/_tui_turn_bridge_lifecycle.py`` ``DEFAULT_HOST``,
+``runtimes/a2a_sidecar.py`` host default) and no spec on the fleet
+declares ``spec.a2a.host``, so ``http://<host>:<agent-port>/...`` can
+never connect from another machine. This module used to take that leg
+whenever the destination was absent from the RAW ``peers:`` block of
+``~/.scitex/agent-container/config.yaml`` — and ``scitex-compute-01`` /
+``scitex-compute-03`` have no such file at all, so every cross-host send
+from those hosts silently posted plain HTTP and died with ``All
+connection attempts failed``. The CLI verbs (``sac host probe`` and
+friends) had already stopped gating on the raw block and resolve peers
+through the host registry's ``ssh_alias``; the forwarder simply was not
+using the same SSoT. Now it does, and the only fallback is a loud one.
 
 The split keeps the route handlers in :mod:`._node_channel` under the
 per-file LOC cap; ``_node_channel`` re-exports
@@ -24,6 +45,8 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import logging
+from dataclasses import dataclass
 from typing import Any
 
 from starlette.responses import JSONResponse, Response
@@ -32,7 +55,138 @@ __all__ = [
     "_forward_to_remote",
     "_forward_via_http",
     "_forward_via_ssh_curl",
+    "_is_test_loopback_alias",
 ]
+
+log = logging.getLogger(__name__)
+
+#: Hosts this process has already refused with the "not an ssh peer" 502.
+#: The 502 body carries the whole remedy on EVERY call; the WARNING line is
+#: written once per host so the FORWARDING host's listen journal
+#: (``journalctl -u sac-listen`` — the unit's stderr) names the fault
+#: without repeating it for every retry the sender makes.
+_WARNED_UNROUTABLE_HOSTS: set[str] = set()
+
+
+def _is_test_loopback_alias(target_host: str) -> bool:
+    """True only for the in-process two-listen TEST topology's host labels.
+
+    ``host-a`` / ``host-b`` (any ``host-*``) are the labels
+    ``tests/scitex_agent_container/_listen/test_server.py`` stamps on
+    ``instances`` rows so two real ``uvicorn`` listens on ONE machine can
+    play two hosts; :func:`_forward_via_http` rewrites them to
+    ``127.0.0.1``. No fleet host is named this way (fleet names are
+    ``scitex-<kind>-NN``), and this predicate is the ONLY gate under which
+    the forwarder ever posts plain HTTP — it is the test topology, never
+    production. The match is byte-for-byte the rewrite ADR-0015 froze
+    ("do not broaden or tighten the ``host-*`` loopback rewrite").
+    """
+    return target_host.startswith("host-")
+
+
+@dataclass(frozen=True)
+class _PeerRoute:
+    """What :func:`_resolve_ssh_peer` decided about one destination host.
+
+    ``ssh_target`` is the alias to dial (``None`` when the host is not an
+    ssh peer); ``config_path`` names the config.yaml THIS host resolved
+    so the refusal can point at the file to edit; ``reason`` says, in
+    operator terms, why no ssh route exists (empty when one does).
+    """
+
+    ssh_target: str | None
+    config_path: str
+    reason: str = ""
+
+
+def _resolve_ssh_peer(target_host: str) -> _PeerRoute:
+    """Resolve ``target_host`` to an ssh alias through the CLI's SSoT.
+
+    Same map ``sac host probe`` / ``sac host exec`` dispatch on:
+    config.yaml ``peers:`` (glob keys included — ``PeersMap`` resolves
+    them) UNION the scitex-dev host registry rows that carry an
+    ``ssh_alias``. A registry row WITHOUT an alias (inbound ssh not
+    possible) is deliberately not a route, so it lands in the refusal.
+
+    A config.yaml that fails to parse must not disable forwarding: the
+    registry-merged map is still consulted (with an empty config block)
+    and the parse failure is carried into any refusal's ``reason`` so the
+    operator sees BOTH facts in the 502.
+    """
+    from .._state._peer_resolve import peers_with_registry
+    from .._state.host_config import MovingAliasError, _default_config_path
+    from .._state.host_config import load as _load_host_config
+
+    config_note = ""
+    try:
+        _cfg = _load_host_config()
+        raw_peers = _cfg.peers
+        config_path = str(_cfg.source_path or _default_config_path())
+    except Exception as exc:  # noqa: BLE001  # stx-allow: fallback (reason: a malformed config.yaml must not disable cross-host forwarding — the registry-merged map still routes, and the parse failure is carried into the 502 body and this host's listen journal (journalctl -u sac-listen) via the warning below)
+        raw_peers = {}
+        config_path = str(_default_config_path())
+        config_note = f"{config_path} failed to load ({exc}); "
+        log.warning(
+            "cross-host forward: %s failed to load (%s); resolving peers "
+            "from the scitex-dev host registry alone",
+            config_path,
+            exc,
+        )
+
+    peers = peers_with_registry(raw_peers)
+    try:
+        spec = peers[target_host]
+    except MovingAliasError as exc:
+        return _PeerRoute(None, config_path, f"{config_note}{exc}")
+    except KeyError:
+        spec = None
+
+    if spec is not None and spec.ssh:
+        return _PeerRoute(spec.ssh, config_path)
+    if spec is not None:
+        reason = (
+            f"{config_note}{config_path} declares peer {target_host!r} "
+            f"but its ssh: target is empty"
+        )
+    else:
+        from scitex_config._ecosystem import local_state as _local_state
+
+        hosts_yaml = _local_state.user_path("dev", "hosts.yaml")
+        reason = (
+            f"{config_note}it is in neither the peers: block of {config_path} "
+            f"nor the scitex-dev host registry ({hosts_yaml}) with an ssh_alias"
+        )
+    return _PeerRoute(None, config_path, reason)
+
+
+def _refuse_unroutable(
+    *,
+    target_host: str,
+    target_port: int,
+    target_name: str,
+    route: _PeerRoute,
+) -> Response:
+    """The loud 502 for a destination that is not an ssh peer.
+
+    Names the host, states why plain HTTP is not attempted (the fleet's
+    agents bind loopback), and names BOTH fixes. Logged at WARNING once
+    per host per process (see :data:`_WARNED_UNROUTABLE_HOSTS`).
+    """
+    message = (
+        f"cross-host forward to {target_name!r} on host {target_host!r} "
+        f"refused: {target_host!r} is not resolvable to an ssh peer on this "
+        f"host — {route.reason}. The fleet's agents bind 127.0.0.1 (bridge "
+        f"and sidecar default host), so a direct HTTP forward to "
+        f"http://{target_host}:{target_port} cannot work and was not "
+        f"attempted. Fix one of: (1) declare {target_host!r} with an "
+        f"ssh_alias in the scitex-dev host registry hosts.yaml; "
+        f"(2) add `peers: {{{target_host}: {{ssh: <alias>}}}}` to "
+        f"{route.config_path} on this host."
+    )
+    if target_host not in _WARNED_UNROUTABLE_HOSTS:
+        _WARNED_UNROUTABLE_HOSTS.add(target_host)
+        log.warning("%s", message)
+    return JSONResponse({"error": message}, status_code=502)
 
 
 async def _forward_to_remote(
@@ -67,14 +221,15 @@ async def _forward_to_remote(
     the receiving host (handoff §4 acceptance "ACL is enforced at
     the receiving host").
 
-    **Transport selector (ADR-0015 Stage 2)**: when ``target_host``
-    is a member of ``host_config.peers`` (including via glob keys
-    like ``spartan-*``), the forward leg is ssh + remote curl
-    instead of plain HTTP — a WAN hostname like ``ywata-note-win``
-    is rarely routable directly between hosts, but the operator's
-    existing ssh trust to that host is. Hosts NOT in ``peers:`` keep
-    the legacy HTTP path verbatim, including the ``host-*`` loopback
-    alias rewrite the two-listen tests depend on.
+    **Transport selector**: ``target_host`` is resolved through
+    :func:`_resolve_ssh_peer` — config.yaml ``peers:`` (glob keys
+    included) UNION the scitex-dev host registry, the same SSoT the
+    CLI verbs dispatch on. A resolvable host takes the ssh + remote
+    curl leg. A ``host-*`` test-loopback alias
+    (:func:`_is_test_loopback_alias`) takes the in-process HTTP leg.
+    Anything else is refused with a 502 that names the host and both
+    fixes — plain HTTP to a fleet host cannot connect (agents bind
+    loopback) and is never attempted.
     """
     if not target_port:
         return JSONResponse(
@@ -97,34 +252,31 @@ async def _forward_to_remote(
             status_code=502,
         )
 
-    # ADR-0015 transport selector. Resolve ``target_host`` against the
-    # operator's ``peers:`` block (with glob fallback via PeersMap). If
-    # the destination is a known peer, ssh-tunnel the POST; otherwise
-    # fall through to the legacy HTTP path.
-    from .._state.host_config import load as _load_host_config
-
-    try:
-        _cfg = _load_host_config()
-        peer_spec = _cfg.peers.get(target_host)
-    except Exception:  # noqa: BLE001  # stx-allow: fallback (reason: a malformed config.yaml must not silently disable the HTTP fallback)
-        peer_spec = None
-
-    if peer_spec is not None and peer_spec.ssh:
+    route = _resolve_ssh_peer(target_host)
+    if route.ssh_target:
         return await _forward_via_ssh_curl(
             target_host=target_host,
             target_port=target_port,
             target_name=target_name,
             body=body,
             peer_bearer=peer_bearer,
-            ssh_target=peer_spec.ssh,
+            ssh_target=route.ssh_target,
         )
 
-    return await _forward_via_http(
+    if _is_test_loopback_alias(target_host):
+        return await _forward_via_http(
+            target_host=target_host,
+            target_port=target_port,
+            target_name=target_name,
+            body=body,
+            peer_bearer=peer_bearer,
+        )
+
+    return _refuse_unroutable(
         target_host=target_host,
         target_port=target_port,
         target_name=target_name,
-        body=body,
-        peer_bearer=peer_bearer,
+        route=route,
     )
 
 
@@ -136,22 +288,25 @@ async def _forward_via_http(
     body: dict[str, Any],
     peer_bearer: str,
 ) -> Response:
-    """Legacy HTTP-only cross-host forward (Stage 1). Used when
-    ``target_host`` is NOT in ``host_config.peers`` — typically the
-    in-process two-listen test topology, or a deployment where overlay
-    routing makes the canonical host name directly reachable.
+    """In-process TEST transport: plain HTTP to the loopback listen.
+
+    Reached only when :func:`_forward_to_remote` found no ssh peer AND
+    ``target_host`` is a ``host-*`` test-loopback alias
+    (:func:`_is_test_loopback_alias`). Production never lands here:
+    fleet agents bind ``127.0.0.1``, so a direct HTTP forward to
+    another machine cannot connect, and the selector refuses such a
+    host with a 502 instead of calling this.
     """
     import httpx as _httpx
 
     forward_url = (
         f"http://{target_host}:{target_port}/agents/{target_name}/message:send"
     )
-    # In our test loopback both hosts live on 127.0.0.1; the canonical
+    # In the test loopback both hosts live on 127.0.0.1; the canonical
     # host name is a label, not a routable address. Rewrite to
-    # 127.0.0.1 when the resolved host is a known-loopback alias so
-    # the test fixtures can drive both legs on one machine. Real
-    # deployments use ssh-alias / tunnel hostnames and route as-is.
-    if target_host in ("host-a", "host-b") or target_host.startswith("host-"):
+    # 127.0.0.1 for the known-loopback aliases so the test fixtures can
+    # drive both legs on one machine.
+    if _is_test_loopback_alias(target_host):
         forward_url = (
             f"http://127.0.0.1:{target_port}/agents/{target_name}/message:send"
         )
@@ -174,7 +329,7 @@ async def _forward_via_http(
 
     try:
         return JSONResponse(resp.json(), status_code=resp.status_code)
-    except Exception:  # noqa: BLE001  # stx-allow: fallback (reason: non-JSON destination body is tolerated; surfaced as text)
+    except Exception:  # noqa: BLE001  # stx-allow: fallback (reason: a non-JSON destination body is tolerated and returned verbatim as forwarded_body_text in the a2a response the sender receives)
         return JSONResponse(
             {"forwarded_body_text": resp.text}, status_code=resp.status_code
         )
