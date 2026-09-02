@@ -80,6 +80,56 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Routing helper
 # ---------------------------------------------------------------------------
+def extract_turn_text(body: object) -> tuple[str | None, dict]:
+    """Pull the turn text (and sac metadata) out of either accepted body shape.
+
+    Returns ``(text, metadata)`` — ``metadata`` is the envelope's
+    ``params.metadata`` when there is one, else ``{}``, so the caller can fall
+    back to it for ``from_agent`` / ``dispatch_id``.
+
+    TWO SHAPES REACH THIS BRIDGE, and accepting only one is what broke
+    cross-host messaging on 2026-09-02 even after the route alias landed:
+
+        flat      {"text": "...", "from_agent": "...", "dispatch_id": "..."}
+        A2A v1    {"jsonrpc": "2.0", "method": "SendMessage", "params":
+                   {"message": {"parts": [{"text": "..."}]},
+                    "metadata": {"from_agent": ..., "dispatch_id": ...}}}
+
+    The flat form is what ``sac listen`` synthesises for a local wake. The
+    envelope is what every a2a caller in this package actually sends
+    (``_channel_tools._wrap_message_send``) — sac extension fields live under
+    ``params.metadata`` because A2A v1's strict validator rejects unknown
+    fields at the params root. A bridge that reads only ``body["text"]``
+    answers ``missing or empty 'text' field`` to a perfectly well-formed peer
+    message, which is what it did.
+
+    Multi-part messages are joined with newlines rather than silently taking
+    part[0]: dropping the tail of a message is worse than a long inject.
+    """
+    if not isinstance(body, dict):
+        return None, {}
+    flat = body.get("text")
+    if isinstance(flat, str) and flat.strip():
+        return flat, {}
+    params = body.get("params")
+    if not isinstance(params, dict):
+        return None, {}
+    meta = params.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    message = params.get("message")
+    if not isinstance(message, dict):
+        return None, meta
+    parts = message.get("parts")
+    if not isinstance(parts, list):
+        return None, meta
+    texts = [
+        p["text"]
+        for p in parts
+        if isinstance(p, dict) and isinstance(p.get("text"), str) and p["text"].strip()
+    ]
+    return ("\n".join(texts) if texts else None), meta
+
+
 def is_turn_route(path: str, agent_name: str) -> bool:
     """True iff ``path`` is a turn-delivery route for ``agent_name``.
 
@@ -187,7 +237,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._respond(400, {"error": f"bad JSON: {exc}"})
             return
-        text = body.get("text") if isinstance(body, dict) else None
+        text, envelope_meta = extract_turn_text(body)
         if not isinstance(text, str) or not text.strip():
             self._respond(400, {"error": "missing or empty 'text' field"})
             return
@@ -197,6 +247,10 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         # for an operator send / boot turn → no report is owed.
         raw_from = body.get("from_agent") if isinstance(body, dict) else None
         raw_did = body.get("dispatch_id") if isinstance(body, dict) else None
+        # An A2A envelope carries these under ``params.metadata`` instead of at
+        # the root; the flat form still wins when both are present.
+        raw_from = raw_from or envelope_meta.get("from_agent")
+        raw_did = raw_did or envelope_meta.get("dispatch_id")
         from_agent = raw_from if isinstance(raw_from, str) and raw_from else None
         dispatch_id = raw_did if isinstance(raw_did, str) and raw_did else None
         try:
