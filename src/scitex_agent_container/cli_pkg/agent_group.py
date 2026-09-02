@@ -75,6 +75,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         (
             "Maintenance",
             [
+                "env",
                 "prune-claude",
                 "archive-claude-bloat",
                 "refresh-acl",
@@ -300,5 +301,17 @@ _register_migrate_layers(agent_group)
 from ._declare_a2a_host import declare_a2a_host as _declare_a2a_host_impl  # noqa: E402
 
 agent_group.add_command(_declare_a2a_host_impl)
+
+# `env` — set/unset one agent's `spec.apptainer.env` keys. The verb sac never
+# had: the job was being done on the host by a hand-written `sed` script
+# (~/.local/bin/sac-agent-env.sh) that compared against the first `^\s+K:` line
+# anywhere in the document and then rewrote EVERY indented `K:` line in the
+# file, in every block — so `model=` reached `spec.claude.model`. The editor
+# behind this verb anchors on the key PATH (config/_env_block_line.py), is
+# idempotent to the byte, and `--restart` fires only when the spec moved.
+# See docs/hand-written-script-retirement-20260902.md.
+from ._agents_env import register as _register_agents_env  # noqa: E402
+
+_register_agents_env(agent_group)
 
 __all__ = ["agent_group"]

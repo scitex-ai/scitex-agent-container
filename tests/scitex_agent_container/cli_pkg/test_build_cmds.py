@@ -442,3 +442,92 @@ def test_check_with_mixed_bad_and_canonical_targets_still_exits_zero(
     result = runner.invoke(check, [str(spec)])
     # Assert
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# check — absent bind SOURCES (report-only; the detection half of the retired
+# ~/.local/bin/sac-prune-binds.py, without its deletion half)
+# ---------------------------------------------------------------------------
+
+
+def test_check_names_a_bind_whose_source_is_absent(tmp_path, _runtime_shims):
+    # Arrange — until this existed, `check` said nothing and the operator
+    # learned of it only from apptainer's FATAL at start.
+    missing = tmp_path / "not-provisioned"
+    spec = _write_spec_with_binds(tmp_path, [f"{missing}:/srv/x:ro"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert str(missing) in result.output
+
+
+def test_check_does_not_fail_on_an_absent_bind_source(tmp_path, _runtime_shims):
+    # Arrange — `check` is routinely run on one host for a spec that RUNS on
+    # another, where a host-local source is absent by design.
+    missing = tmp_path / "not-provisioned"
+    spec = _write_spec_with_binds(tmp_path, [f"{missing}:/srv/x:ro"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert result.exit_code == 0
+
+
+def test_check_does_not_offer_to_delete_an_absent_bind(tmp_path, _runtime_shims):
+    # Arrange — the 2026-08-09 ruling: report and refuse, never prune.
+    missing = tmp_path / "not-provisioned"
+    spec = _write_spec_with_binds(tmp_path, [f"{missing}:/srv/x:ro"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert "do not delete the declaration" in " ".join(result.output.split())
+
+
+def test_check_leaves_the_spec_file_untouched(tmp_path, _runtime_shims):
+    # Arrange — the retired script rewrote the whole document every run.
+    missing = tmp_path / "not-provisioned"
+    spec = _write_spec_with_binds(tmp_path, [f"{missing}:/srv/x:ro"])
+    before = spec.read_text()
+    runner = CliRunner()
+    # Act
+    runner.invoke(check, [str(spec)])
+    # Assert
+    assert spec.read_text() == before
+
+
+def test_check_reports_a_present_bind_source_as_ok(tmp_path, _runtime_shims):
+    # Arrange
+    present = tmp_path / "provisioned"
+    present.mkdir()
+    spec = _write_spec_with_binds(tmp_path, [f"{present}:/srv/x:ro"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert "1 present" in " ".join(result.output.split())
+
+
+def test_check_expands_a_tilde_bind_source_before_judging_it(
+    tmp_path, _runtime_shims
+):
+    # Arrange — `~` is expanded by the spec parser, so a `~`-written bind that
+    # sac WOULD mount must not be reported absent. The retired script did not
+    # expand and dropped such binds.
+    spec = _write_spec_with_binds(tmp_path, ["~:/srv/home:ro"])
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert "1 present" in " ".join(result.output.split())
+
+
+def test_check_with_no_binds_declared_says_so(tmp_path, _runtime_shims):
+    # Arrange
+    spec = _write_spec(tmp_path)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert "bind sources: OK (none declared)" in " ".join(result.output.split())

@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`sac agents env set NAME KEY=VALUE… [--restart]` and `sac agents env unset
+  NAME KEY… [--restart]`** — the verb sac never had. Nothing could set a spec's
+  environment variable, so the job was being done on the host by
+  `~/.local/bin/sac-agent-env.sh`, which compared the requested value against
+  the FIRST `^\s+K:` line anywhere in the document (so `model=` read
+  `spec.claude.model`) and then `sed`-rewrote EVERY indented `K:` line in the
+  file, in every block. The new editor
+  (`config/_env_block_line.py`) anchors on the key PATH `spec.apptainer.env`
+  through the existing `config/_yaml_line_edit` primitives, so it is a line
+  edit and not a YAML round-trip: comments, blank lines, key order and quote
+  style everywhere else survive. Idempotent to the byte — a key already at its
+  value leaves the file untouched, and `--restart` therefore fires only when
+  the spec actually moved. Refuses, all-or-nothing, any value it cannot
+  rewrite on one line (block scalar, anchor/alias/tag, collection). Exit 0
+  changed-or-already-correct, 1 spec missing or shape refused, 2 malformed
+  `KEY=VALUE`.
+- **`sac agents check` now reports bind SOURCES that are absent on this host**,
+  naming each with the relocate preflight's own classifier (provision / carry /
+  decide). It WARNS and never fails — `check` is routinely run on one host for
+  a spec that runs on another — and it never offers to delete the declaration,
+  per the 2026-08-09 ruling. This is the detection half of another retired host
+  script (`~/.local/bin/sac-prune-binds.py`); its pruning half is deliberately
+  not ported.
+- **`docs/hand-written-script-retirement-20260902.md`** — one row per
+  hand-written host script under `~/.local/bin`, with the superseding `sac`
+  verb, the gap that remains, and the decision. The record that lets those host
+  files be deleted with confidence.
+
 ### Removed
 - **`state_db.DEFAULT_DB_PATH`, and the ~4900-times-per-run test ceremony that
   rebound it.** The engine deletion below left the PATH behind — a `Path`

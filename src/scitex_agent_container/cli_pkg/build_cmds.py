@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import click
 
@@ -92,6 +93,16 @@ def check(name_or_path: str) -> None:
     # docs/adr/0001-isolation-hardening.md §D4.
     _warn_host_mirroring_bind_targets(config)
 
+    # Bind SOURCES that are absent on THIS host. Until now `check` said
+    # nothing about them and the operator learned of one only at start — an
+    # ERROR line from the bind guard, then apptainer's own `FATAL: mount
+    # source ... doesn't exist`, rc 255. This is the detection half of a
+    # retired host script (~/.local/bin/sac-prune-binds.py); the script's
+    # other half DELETED the offending line, which the 2026-08-09 ruling
+    # forbids and which this deliberately does not do. See
+    # docs/hand-written-script-retirement-20260902.md.
+    _warn_absent_bind_sources(config_path, config)
+
     # raw_args as an APPTAINER ARGV, not merely as YAML. This check said
     # "Ready to deploy" on a spec whose raw_args carried an env assignment
     # with no `--env` before it, minutes before that agent failed to start
@@ -163,6 +174,86 @@ def _warn_host_mirroring_bind_targets(config) -> None:
                 f"/opt/, /data/.\n       See "
                 f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
             )
+
+
+def _warn_absent_bind_sources(config_path, config) -> None:
+    """Name every ``spec.apptainer.binds`` source that does not exist here.
+
+    REPORTS, NEVER PRUNES, AND NEVER FAILS THE CHECK
+        A missing bind source stops a start dead, so the temptation is to
+        treat it as a preflight failure and to offer to delete the line. Both
+        are wrong here. Deleting is forbidden outright — the operator's
+        2026-08-09 ruling is that an absent source is three different problems
+        (provision it / carry it with the agent / decide it is obsolete) and
+        removing the declaration answers none of them while making the spec
+        lie about what the agent needs. Failing is wrong because ``check`` is
+        routinely run on one host for a spec that RUNS on another, where a
+        host-local source is absent by design and by nobody's mistake; a check
+        that goes red for that teaches operators to ignore it.
+
+    Each missing source is classified by :func:`.._lifecycle
+    ._relocate_bind_kind.classify_bind` — the same classifier the relocate
+    preflight uses — so the line carries WHAT the path is and WHAT to do,
+    rather than "path not found" repeated three times for three different
+    problems.
+
+    Reads the raw document rather than ``config.apptainer.binds`` because
+    :func:`.._listen._inline_spec_preflight.preflight_bind_sources` is the
+    package's one answer to "is this bind resolvable?", it takes the raw v3
+    shape, and it applies the same ``~``/``$VAR`` expansion the spec parser
+    does. Any problem reading the file is swallowed: this is an ADVISORY
+    beside a check that has already validated the spec.
+    """
+    import yaml
+
+    from .._lifecycle._relocate_bind_kind import classify_bind
+    from .._listen._inline_spec_preflight import preflight_bind_sources
+
+    try:
+        raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    except (
+        OSError,
+        yaml.YAMLError,
+    ) as exc:  # stx-allow: fallback (reason: an advisory must not break a check whose spec already validated)
+        console.print(f"[dim]  binds: not re-read for source check ({exc})[/dim]")
+        return
+
+    result = preflight_bind_sources(raw if isinstance(raw, dict) else {})
+    if not result.checks:
+        console.print(f"  {'bind sources:':30s} [green]OK (none declared)[/green]")
+        return
+    if result.ok:
+        console.print(
+            f"  {'bind sources:':30s} "
+            f"[green]OK ({len(result.checks)} present)[/green]"
+        )
+        return
+
+    from ..config._host import resolve_hostname
+
+    console.print(
+        f"  {'bind sources:':30s} "
+        f"[yellow]{len(result.unresolvable)} of {len(result.checks)} "
+        f"absent on this host[/yellow]"
+    )
+    workdir = str(getattr(config, "workdir", "") or "")
+    here = resolve_hostname()
+    for entry in result.unresolvable:
+        path = entry.host_resolved or entry.bind
+        kind = classify_bind(path, workdir=workdir, from_host=here)
+        # soft_wrap: a bind path wrapped across two lines is one the operator
+        # cannot grep out of a log — the same reason `agents reconcile` sets it
+        # on the agent name.
+        console.print(
+            f"[yellow]  WARN  {entry.bind}\n"
+            f"        {kind.kind} — {kind.action}: {kind.fix}[/yellow]",
+            soft_wrap=True,
+        )
+    console.print(
+        "[yellow]        A start will refuse (credential binds) or apptainer "
+        "will FATAL. Provision, carry or re-point the source — do not delete "
+        "the declaration.[/yellow]"
+    )
 
 
 def _bind_target(bind: str) -> str:

@@ -56,6 +56,70 @@ def split_ending(raw: str) -> "tuple[str, str]":
     return raw, ""
 
 
+def split_inline_comment(value: str) -> "tuple[str, str]":
+    """Split an inline value into ``(scalar, trailing comment)``.
+
+    A ``#`` only opens a comment when it starts the text or follows a space or
+    tab AND is not inside a quoted scalar — the same rule YAML itself applies.
+    Scanning for quotes rather than reaching for ``value.split("#")`` is what
+    keeps ``PROMPT: "issue #12"`` intact; the naive split truncates it and the
+    truncation is invisible in a diff of the rewritten line.
+
+    Both halves come back verbatim apart from the whitespace between them:
+    ``scalar`` is right-stripped and ``comment`` starts at the ``#``, so a
+    caller re-emitting ``f"{key}: {scalar}  {comment}"`` keeps the operator's
+    note attached to the key it annotates.
+    """
+    in_single = in_double = False
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_double = False
+        elif ch == "'":
+            in_single = True
+        elif ch == '"':
+            in_double = True
+        elif ch == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].rstrip(), value[i:]
+        i += 1
+    return value, ""
+
+
+def inline_value(body: str) -> "str | None":
+    """The raw text after ``key:`` on a mapping-key line, comment included.
+
+    ``None`` when the line is not a mapping key at all, or when the key opens
+    a block and carries nothing after the colon. Callers that have already
+    located the line with :func:`find_key` use this to read the value without
+    re-implementing the key pattern.
+    """
+    m = _KEY_RE.match(body)
+    return None if m is None else m.group("value")
+
+
+def inline_scalar(body: str) -> "str | None":
+    """:func:`inline_value` with any trailing comment removed.
+
+    ``None`` when there is no value **or** the tail is only a comment. That
+    second case is the one worth naming: ``env:  # set by the operator`` opens
+    a block, and reading its comment as the block's value hides every child
+    key underneath it from a structural search.
+    """
+    raw = inline_value(body)
+    if raw is None:
+        return None
+    scalar = split_inline_comment(raw)[0]
+    return scalar or None
+
+
 def _indent_of(body: str) -> str:
     return body[: len(body) - len(body.lstrip(" \t"))]
 
@@ -148,9 +212,10 @@ def find_block(bodies: "list[str]", path: "tuple[str, ...]") -> "Block | None":
         i = find_key(bodies, search_start, search_stop, indent, segment)
         if i is None:
             return None
-        m = _KEY_RE.match(bodies[i])
-        assert m is not None  # find_key only returns lines that matched
-        inline = m.group("value")
+        # The COMMENT-STRIPPED value: `apptainer:  # engine block` opens a
+        # block like any other, and treating its note as the value would end
+        # the descent one level above every key the caller came for.
+        inline = inline_scalar(bodies[i])
         if inline:
             # An inline value ends the descent. Returning it (rather than None)
             # lets the caller distinguish "no such key" from "the key is there
@@ -205,6 +270,9 @@ __all__ = [
     "Block",
     "find_block",
     "find_key",
+    "inline_scalar",
+    "inline_value",
     "insert_after",
     "split_ending",
+    "split_inline_comment",
 ]
