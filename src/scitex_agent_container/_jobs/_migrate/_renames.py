@@ -93,7 +93,9 @@ class Rename:
         return units_for(self.new, self.kind)
 
 
-#: Every job sac declared under the legacy prefix, and what it becomes.
+#: Every job sac declared under the legacy prefix, and what it becomes —
+#: plus, since 2026-09-02, the one hand-written unit a declared job replaced
+#: (see the last row).
 #:
 #: EXPLICIT, NOT DERIVED, and that is the point. After the rename lands,
 #: ``provide_jobs()`` no longer mentions a single old name — so a table
@@ -218,6 +220,23 @@ RENAMES: tuple[Rename, ...] = (
     Rename(
         old="sac.worktree-gc",
         new="scitex-agent-container-worktree-gc",
+        kind="timer",
+    ),
+    # Added 2026-09-02. NOT a legacy `sac.*` JobSpec name: the old name is a
+    # HAND-WRITTEN unit pair on compute-04 (`sac-constitution-refresh
+    # .service` / `.timer`, OnBootSec=3min, OnUnitActiveSec=10min, ExecStart
+    # `~/.local/bin/sac-constitution-refresh.sh`) that scheduled the script
+    # this job is the source-side port of (operator ruling 2026-09-02:
+    # hand-written scripts must live on the source side). A row rather than
+    # BORN_CANONICAL because a unit DOES exist to retire, and the same
+    # stop -> disable -> displace -> install order applies: both units write
+    # the same bytes into the same overlays, so two of them is harmless
+    # duplication rather than a race — but a displaced unit is one nobody
+    # has to remember to remove. The script file itself is host state the
+    # migration does not touch.
+    Rename(
+        old="sac-constitution-refresh",
+        new="scitex-agent-container-constitution-refresh",
         kind="timer",
     ),
 )

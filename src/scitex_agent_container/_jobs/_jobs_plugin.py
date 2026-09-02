@@ -21,7 +21,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Ten jobs today:
+    Thirteen jobs today (the bullets below cover the ones with a story;
+    the accounts group documents its own):
 
     * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
       of the single-refresher model, and the sibling of
@@ -157,6 +158,20 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
       well-defined here: it sweeps the local git repos declared as agents'
       ``spec.workdir``, so the command is correct as written.
 
+    * ``scitex-agent-container-constitution-refresh`` (``kind="timer"``) —
+      the EVERY-10-MINUTES push of the current constitution into every
+      agent overlay's ``upper/home/agent/.claude/commands/`` — the path a
+      RUNNING agent reads — with a read-back through the overlay as the
+      self-check. INCIDENT 2026-08-15: the copy an agent reads is a
+      snapshot taken at start and nothing refreshed it, so a rule the
+      operator set reached 2 of 21 agents while three versions circulated.
+      It ran for seventeen days as a hand-written host script under a
+      hand-written unit pair on compute-04; the operator ruling of
+      2026-09-02 — hand-written scripts must live on the source side — is
+      why it is declared here. Engine in :mod:`._constitution_refresh`,
+      spec in :mod:`._specs_constitution`, and the hand-written unit is
+      retired by the migration table when this one is armed.
+
     ``sac listen`` is DELIBERATELY NOT declared here, and adding it back
     would take the fleet's control plane down: scitex-dev derives the unit
     filename from the job name VERBATIM, so a ``sac.listen`` JobSpec
@@ -236,6 +251,7 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
 
     """
     from ._specs_accounts import accounts_jobs
+    from ._specs_constitution import constitution_jobs
     from ._specs_liveness import liveness_jobs
     from ._specs_maintenance import maintenance_jobs
 
@@ -251,6 +267,10 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
         # other covers (corpses vs live-but-wedged), so they are unreadable
         # apart.
         *liveness_jobs(executable=executable),
+        # The constitution push is APPENDED, not spliced into maintenance:
+        # it writes into agent overlays, and the maintenance group defines
+        # itself by reporting rather than repairing.
+        *constitution_jobs(executable=executable),
     ]
 
 

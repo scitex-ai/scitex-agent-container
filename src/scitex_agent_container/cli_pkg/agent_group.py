@@ -80,6 +80,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "refresh-acl",
                 "declare-a2a-host",
                 "migrate-layers",
+                "refresh-constitution",
             ],
         ),
     ]
@@ -154,6 +155,19 @@ from ._agents_resume_rate_limited import (  # noqa: E402
 )
 
 _register_resume_rate_limited(agent_group)
+# `refresh-constitution` — merged is not live until this runs. The copy a
+# running agent reads is a snapshot taken at start; this pushes the current
+# constitution into every overlay's upper/home/agent/.claude/commands/ (the
+# path the agent reads — NOT runtime/<agent>/home/, which looks the same and
+# is read by nobody) and reads each copy back through the overlay before
+# counting it. The payload of the `scitex-agent-container-constitution-
+# refresh` timer, ported from a hand-written host script per the 2026-09-02
+# ruling that hand-written scripts must live on the source side.
+from ._agents_refresh_constitution import (  # noqa: E402
+    register as _register_refresh_constitution,
+)
+
+_register_refresh_constitution(agent_group)
 # `auth-audit` — READ-ONLY comparison of the shipped auth verdict against the
 # pane's LAYOUT. It exists because `auth-status` flags WORKING agents: a banner
 # is the last thing an agent RENDERED, not proof it is broken now, so an agent

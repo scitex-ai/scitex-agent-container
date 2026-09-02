@@ -159,15 +159,50 @@ def test_every_new_name_is_package_qualified(rename) -> None:
     assert qualified is True
 
 
-def test_the_old_names_are_exactly_what_ps226_rejects() -> None:
-    # Arrange — a POSITIVE CONTROL. If the old names already passed the
-    # rule, this whole migration would be a no-op wearing a migration's
-    # clothes, and every other test here would pass anyway.
-    olds = [r.old for r in _renames.RENAMES]
+def _legacy_olds() -> list[str]:
+    """The old names the PREFIX rename displaces — every ``sac.*`` row."""
+    return [
+        r.old
+        for r in _renames.RENAMES
+        if r.old.startswith(_names.LEGACY_JOB_PREFIX)
+    ]
+
+
+def test_the_legacy_old_names_are_exactly_what_ps226_rejects() -> None:
+    # Arrange — a POSITIVE CONTROL over the prefix rename. If those old
+    # names already passed the rule, that migration would be a no-op
+    # wearing a migration's clothes, and every other test here would pass
+    # anyway. Scoped to the `sac.*` rows on purpose: a row can also retire
+    # a HAND-WRITTEN unit (`sac-constitution-refresh`), whose old name was
+    # never minted by the job grammar and is not a PS-226 violation — it
+    # is displaced because a declared job now does its work.
+    olds = _legacy_olds()
     # Act
     already_clean = [name for name in olds if PS226.match(name)]
     # Assert
     assert already_clean == []
+
+
+def test_the_prefix_rename_still_has_rows_to_control() -> None:
+    # Arrange — the scoped control above is vacuous over an empty list, so
+    # the list must be shown non-empty for it to be a control at all.
+    # Act
+    count = len(_legacy_olds())
+    # Assert
+    assert count > 0
+
+
+def test_no_old_name_carries_the_canonical_prefix() -> None:
+    # Arrange — an old name is either a legacy `sac.*` name or a hand-written
+    # unit the grammar never minted. A CANONICAL old name would be a rename
+    # among canonical names, which this table does not express and the
+    # migrator's stop-then-install order was never argued for.
+    # Act
+    canonical_olds = [
+        r.old for r in _renames.RENAMES if r.old.startswith(_names.JOB_PREFIX)
+    ]
+    # Assert
+    assert canonical_olds == []
 
 
 def test_a_timer_job_materialises_two_units() -> None:
