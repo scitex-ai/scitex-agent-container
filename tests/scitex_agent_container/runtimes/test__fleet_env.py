@@ -109,6 +109,13 @@ def _resolved_store_locator(dsn: str | None) -> str:
             os.environ[key] = saved
 
 
+#: A DSN no scitex-dev version can ever resolve to on its own: RFC 2606
+#: reserves ``.invalid``, so seeing this host in a locator proves the env
+#: variable was read — independent of where the zero-config default lives
+#: (0.57.0: per-host socket; 0.58.1: fleet primary; next version: its call).
+_SENTINEL_DSN = "postgresql://sentinel.invalid:59999/sentinel_db"
+
+
 def test_the_injected_store_dsn_reaches_scitex_devs_resolver() -> None:
     """Half of the guard the two RETIRED store variables never had.
 
@@ -131,51 +138,69 @@ def test_the_injected_store_dsn_reaches_scitex_devs_resolver() -> None:
     assert "55432" in locator
 
 
-def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
-    """The other half: the two arms must DIFFER, or the variable is inert.
+def test_the_injection_is_observed_a_sentinel_moves_the_target() -> None:
+    """The other half: changing the variable must MOVE the target, or it is inert.
 
     A test that only checked the "set" arm could pass even if scitex-dev
     resolved to 55432 for its own reasons and ignored the variable entirely —
     which is precisely the inert-but-plausible state that cost the live
-    diagnosis above. Requiring the UNSET arm to land elsewhere is what makes
-    "read for behaviour" an observation rather than an assumption.
+    diagnosis above. So this arm must prove the variable is OBSERVED.
 
-    The unset arm resolves to a UNIX socket that does not exist in a
-    container, and opening a Store against it raises StoreTargetError naming
-    the missing path. That loud refusal — with no local file to slip into — is
-    scitex-dev's stated design and the behaviour the operator asked for.
+    THE PREVIOUS PREDICATE COMPARED THE TWO ARMS and required them to differ
+    — reading "the unset arm lands elsewhere" as a fact about sac's variable.
+    It is a fact about SCITEX-DEV'S DEFAULT, and the default moved. Measured:
 
-    THE DISCRIMINATOR WAS A RENDERING DETAIL, and a dependency bump exposed
-    it. This asserted ``"55432" not in locator`` — reading the ABSENCE of a
-    port as proof the unset arm went elsewhere. Measured on both versions:
+        scitex-dev 0.57.0  unset: postgres[host=~/.scitex/pg/run ... ]  <- socket
+        scitex-dev 0.58.1  unset: postgres[host=scitex-primary port=55432]
 
-        scitex-dev 0.56.0   set: postgres://127.0.0.1:55432/scitex
-                          unset: postgres://?/scitex            <- no port
-        scitex-dev 0.56.1 unset: postgres[... port=55432]       <- port
+    0.58.1 adopted the fleet primary as its own zero-config default, so the
+    unset arm now equals the injected fleet DSN BY UPSTREAM DESIGN, and the
+    two-arm inequality failed on every host that resolves the newest release
+    — reproduced 2026-09-02 in a clean venv with no ambient environment at
+    all, after first being mistaken for a CI-runner env leak. Same lesson as
+    the 0.56.1 incident this docstring used to describe: any predicate that
+    encodes WHERE the default goes breaks when upstream moves the default.
 
-    The behaviour never changed; only ``__str__`` did. That is the whole
-    reason this ran green on a developer machine pinned to 0.56.0 and red in
-    CI, which resolves the newest — and why it took a full CI reproduction,
-    not a local run, to see it. Both failing tests on develop shared this
-    single cause, and between them they blocked every open PR, including
-    ones touching no state code at all.
+    So inject a SENTINEL instead. ``sentinel.invalid`` can never be any
+    version's default (RFC 2606 reserves .invalid), so:
+      * sentinel in the injected arm's locator  => the variable is read for
+        behaviour — the exact property the retired variables never had;
+      * sentinel absent from the unset arm      => the helper's save/restore
+        works and the sentinel did not leak into the default path.
+    Neither assertion knows or cares where the default resolves, so a future
+    default move cannot fail this test — only ignoring the variable can.
 
-    The locator is a DISPLAY FORM (the real connection string is
-    ``target.dsn``, redacted here deliberately). A display form is not a
-    contract. So state the predicate this docstring already describes: the
-    two arms must DIFFER. That is exactly what "the variable is not inert"
-    means, it needs no knowledge of WHICH field carries the difference, and
-    no reformatting on either side can defeat it.
-
-    Mutation-checked: pointing the unset arm at the injected DSN makes the
-    two identical and this test fails, so it still discriminates.
+    Resolution stays PURE (computes a target, never connects), so the
+    sentinel host is never dialed. Mutation-checked: dropping the env read
+    in the resolver makes the locator show the default instead, and this
+    fails. The companion leak-guard is its own test below (TQ007).
     """
     # Arrange
-    with_injection = _resolved_store_locator(FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"])
+    dsn = _SENTINEL_DSN
     # Act
-    without_injection = _resolved_store_locator(None)
+    injected = _resolved_store_locator(dsn)
     # Assert
-    assert without_injection != with_injection
+    assert "sentinel.invalid" in injected
+
+
+def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
+    """Leak-guard companion to the sentinel test above.
+
+    Proves the helper's save/restore seam actually restores: after an
+    injected resolution, an unset resolution must show no trace of the
+    sentinel. Deliberately says NOTHING about where the unset arm lands —
+    0.57.0 answers a unix socket, 0.58.1 answers the fleet primary, and both
+    are upstream's business (see the docstring above for the incident that
+    taught this). Mutation-checked: making ``_resolved_store_locator`` skip
+    its ``finally`` restore leaves the sentinel in ``os.environ`` and this
+    fails.
+    """
+    # Arrange
+    _resolved_store_locator(_SENTINEL_DSN)
+    # Act
+    unset = _resolved_store_locator(None)
+    # Assert
+    assert "sentinel.invalid" not in unset
 
 
 # ----------------------------------------------------------------------
