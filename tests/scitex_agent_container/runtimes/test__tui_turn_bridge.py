@@ -216,6 +216,40 @@ def test_is_turn_route_accepts_named_turn_for_this_agent() -> None:
     assert accepted is True
 
 
+def test_is_turn_route_accepts_the_a2a_message_send_verb() -> None:
+    """The spelling every a2a caller in this package actually posts.
+
+    Regression for a live cross-host outage (2026-09-02): peer sends to
+    `figrecipe` on compute-03 all died with ``no turn route
+    '/agents/figrecipe/message:send'`` while the agent was healthy. A peer
+    that resolves the target to the host's listen port gets ``sac listen``,
+    which serves this verb; one that resolves to the agent's own a2a port
+    gets this bridge, which did not. The caller does not choose which, so
+    both must answer it.
+    """
+    # Arrange
+    path = "/agents/figrecipe/message:send"
+    # Act
+    accepted = bridge.is_turn_route(path, "figrecipe")
+    # Assert
+    assert accepted is True
+
+
+def test_is_turn_route_rejects_message_send_for_another_agent() -> None:
+    """The misroute guard must survive the new alias.
+
+    Widening the accepted set is exactly where a cross-agent leak gets
+    introduced: a POST naming a DIFFERENT agent must still 404 rather than
+    land in this session.
+    """
+    # Arrange
+    path = "/agents/someone-else/message:send"
+    # Act
+    accepted = bridge.is_turn_route(path, "figrecipe")
+    # Assert
+    assert accepted is False
+
+
 def test_is_turn_route_rejects_named_route_for_other_agent() -> None:
     # Arrange
     path = "/agents/someone-else/turn"
