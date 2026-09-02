@@ -84,9 +84,26 @@ def is_turn_route(path: str, agent_name: str) -> bool:
     """True iff ``path`` is a turn-delivery route for ``agent_name``.
 
     Accepts the bare ``/v1/turn`` (the port already identifies the agent)
-    and the named ``/agents/<agent_name>/{turn,send}`` aliases. A named
-    route for a DIFFERENT agent is rejected (the caller returns 404) so a
-    misrouted POST fails loud rather than landing in the wrong session.
+    and the named ``/agents/<agent_name>/{turn,send,message:send}`` aliases.
+    A named route for a DIFFERENT agent is rejected (the caller returns 404)
+    so a misrouted POST fails loud rather than landing in the wrong session.
+
+    ``message:send`` IS THE FLEET'S A2A VERB, and omitting it here cost a
+    live cross-host outage on 2026-09-02: every peer send to `figrecipe` on
+    compute-03 died with ``no turn route
+    '/agents/figrecipe/message:send'`` while the agent was healthy — running,
+    registered, one live inbox subscriber. Nothing in that 404 says "wrong
+    port": it reads as if the agent is missing, so the hour went to peer
+    tokens, listen restarts and registry collisions before the path itself
+    was read.
+
+    The asymmetry that hid it: a peer resolving the target to the HOST's
+    listen port reaches ``sac listen``, which serves ``message:send``
+    (see ``_channel_tools`` / ``_session_completion`` — the same spelling
+    everywhere); a peer resolving to the AGENT's own a2a port reaches this
+    bridge instead, and only here was the verb unknown. Which of the two a
+    peer resolves is a registry detail no caller controls, so the bridge
+    must answer the same verb its listen does.
     """
     clean = path.split("?", 1)[0].rstrip("/")
     if clean == "/v1/turn":
@@ -94,6 +111,7 @@ def is_turn_route(path: str, agent_name: str) -> bool:
     if agent_name and clean in (
         f"/agents/{agent_name}/turn",
         f"/agents/{agent_name}/send",
+        f"/agents/{agent_name}/message:send",
     ):
         return True
     return False
