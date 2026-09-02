@@ -44,7 +44,6 @@ from scitex_agent_container._listen._handler_deadline import (
     client_timeout_for,
 )
 from scitex_agent_container._runners import _session_state
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
@@ -548,7 +547,6 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         "SCITEX_DIR": str(home / ".scitex"),
     }
     saved = {k: os.environ.get(k) for k in keys}
-    saved_default = state_db.DEFAULT_DB_PATH
     # ``_session_state.DEFAULT_STATE_ROOT`` is bound ONCE, at import time, from
     # ``runtime_base_dir()`` (_session_state.py:76). Restoring the env var is
     # therefore NOT enough: whichever test first drags that module into the
@@ -559,18 +557,17 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     # after it in the worker ERRORs -- measured 2026-08-24: this file alone,
     # then tests/scitex_agent_container/runtimes/test__cct_token_pool.py, gave
     # 89 passed / 61 errors in one process purely from this leak.
-    # Rebinding it explicitly (same shape as ``state_db.DEFAULT_DB_PATH`` above)
-    # makes the redirect deliberate and, crucially, UNDOES it.
+    # Rebinding it explicitly makes the redirect deliberate and, crucially,
+    # UNDOES it. (This used to say "same shape as ``state_db.DEFAULT_DB_PATH``
+    # above"; that constant was deleted with the storage engine on 2026-08-30,
+    # so ``DEFAULT_STATE_ROOT`` is now the only constant this fixture swaps.)
     saved_state_root = _session_state.DEFAULT_STATE_ROOT
     os.environ.update(keys)
-    state_db.DEFAULT_DB_PATH = db
     _session_state.DEFAULT_STATE_ROOT = runtime_dir
-    state_db.init_schema(db)
     try:
         yield db
     finally:
         _session_state.DEFAULT_STATE_ROOT = saved_state_root
-        state_db.DEFAULT_DB_PATH = saved_default
         for k, prev in saved.items():
             if prev is None:
                 os.environ.pop(k, None)
@@ -697,6 +694,7 @@ def test_agent_start_forwards_assume_yes_to_broker_body(
 
 
 def test_agent_start_not_in_sif_uses_local_runtime(
+    pg_schema: str,
     isolated_state, sif_env, listen_env, tmp_path
 ) -> None:
     # Arrange — NO in-SIF env vars set → regression guard: local flow intact.

@@ -7,10 +7,10 @@ running here". When a container dies WITHOUT going through
 runtime crash), the row is never marked ended — the row is **stale**
 and points at a PID that no longer exists.
 
-Before this helper, the operator's manual workaround was::
+Before this helper, the operator's manual workaround was to open the
+per-agent state database by hand and run::
 
-    sqlite3 ~/.scitex/agent-container/state.db \
-        "DELETE FROM instances WHERE name='<name>' AND ended_at IS NULL"
+    DELETE FROM instances WHERE name='<name>' AND ended_at IS NULL
 
 …otherwise the next ``sac agents start`` saw the stale row, the
 already-running check fired, and the start no-op'd. This helper
@@ -28,7 +28,7 @@ Design notes:
 
 * Atomicity: each stale row is closed via :func:`record_instance_stop`
   which sets ``ended_at`` + writes a paired ``events`` row in a single
-  SQLite transaction — concurrent starts cannot see a half-cleared
+  single transaction — concurrent starts cannot see a half-cleared
   state.
 
 * Per-row PID truth: when ``row['pid']`` is non-null we probe it with

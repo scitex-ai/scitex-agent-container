@@ -5,13 +5,18 @@ is a pure predicate over facts; this is the part that opens the state db and, wh
 the answer depends on it, spends one ssh asking a third machine whether it is
 running the agent.
 
-TWO SOURCES, AND THEY ARE NOT INTERCHANGEABLE. The row comes from the
+TWO SOURCES, AND THEY ARE NOT INTERCHANGEABLE. The record comes from the
 COORDINATOR's own store — which is the whole of the problem it exists to describe,
 since the coordinator is always the host being LEFT and the destination of a move
-never learns what happened. The liveness comes from the host the row NAMES, over
+never learns what happened. The liveness comes from the host the record NAMES, over
 the same tmux question the runtime asks. One without the other is exactly the
 material the 2026-08-11 canary refused on: a true row, read as a live writer,
 about a machine nobody had asked.
+
+THE STORE IS POSTGRESQL SINCE 2026-08-28, and ``db_path`` IS GONE from this
+function. It named a file; there is no file. What is REPORTED as the store
+is the locator :mod:`.._state.relocation_pg` resolves — resolving it does not
+connect, so naming the store never costs the lease answer.
 
 WHAT ``read=False`` PROTECTS. An unreadable or absent store must leave ``read``
 false, NOT ``lease=None`` — because ``lease=None`` is a real and common answer
@@ -42,7 +47,6 @@ def gather_lease_facts(
     local_host: str = "",
     now: float | None = None,
     exec_fn: Callable[..., dict] | None = None,
-    db_path=None,
     load: Callable[[str], object] | None = None,
     observe: Callable[[str, str], tuple[bool | None, str]] | None = None,
 ) -> LeaseFacts:
@@ -57,9 +61,9 @@ def gather_lease_facts(
     both of which the check reports as UNKNOWN and refuses on.
     """
     moment = time.time() if now is None else float(now)
-    store = _store_path(db_path)
+    store = _store_locator()
 
-    reader = load if load is not None else _default_load(db_path)
+    reader = load if load is not None else _default_load()
     try:
         lease = reader(agent)
     except Exception as exc:  # stx-allow: fallback (reason: an unreadable lease store must leave the fact UNOBSERVED, never "no row", which would bootstrap a lease and proceed)
@@ -106,23 +110,31 @@ def _needs_observing(lease, from_host: str, now: float) -> bool:
     return not (callable(expired) and expired(now))
 
 
-def _store_path(db_path) -> str:
-    """Which db was read. Reported because a lease answer is only as good as its store."""
-    if db_path is not None:
-        return str(db_path)
-    try:
-        from .._state.state_db import DEFAULT_DB_PATH
+def _store_locator() -> str:
+    """Which store was read. Reported because a lease answer is only as good as its store.
 
-        return str(DEFAULT_DB_PATH)
+    RESOLVING IS NOT CONNECTING. ``host_store`` is documented pure — it decides
+    WHERE the lease lives without opening anything — so the store can be named
+    even when it turns out to be unreachable, which is exactly the case the
+    caller most needs named. That is why this is not folded into the read.
+    """
+    try:
+        from scitex_dev.store import host_store
+
+        from .._state.relocation_pg import LEASE_STORE
+
+        return str(
+            host_store(pkg="scitex_agent_container", name=LEASE_STORE).locator
+        )
     except Exception:  # stx-allow: fallback (reason: the store's NAME is for the report; failing to render it must not cost the reader the lease answer itself)
         return ""
 
 
-def _default_load(db_path) -> Callable[[str], object]:
+def _default_load() -> Callable[[str], object]:
     def load(agent: str):
-        from .._state.state_db_relocation import load_lease
+        from .._state.relocation_pg import load_lease
 
-        return load_lease(agent, db_path=db_path)
+        return load_lease(agent)
 
     return load
 

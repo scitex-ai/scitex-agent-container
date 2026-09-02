@@ -265,8 +265,17 @@ def test_read_csv_rows_preserves_value_whitespace_verbatim(
 
 
 @pytest.fixture
-def cli_dry_run_result(tmp_path: Path, env_save_restore):
+def cli_dry_run_result(tmp_path: Path, env_save_restore, pg_schema: str):
     """Invoke ``sac agent start --params-file --dry-run`` once.
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28, and the reason is worth stating
+    because it is surprising: a ``--dry-run`` still reaches
+    ``resolve_a2a_port`` -> ``claim_port``, so it really does take an a2a port
+    claim. That was already true before the move — the claim just landed in the
+    per-test ``state.db`` and nothing said so. Now the ledger is PostgreSQL and
+    an unreachable store makes the dry run exit 1, which is what surfaced it.
+    Requesting the fixture isolates the claim; that the dry run mutates state
+    at all is pre-existing behaviour and out of scope here.
 
     The ``start`` command's preflight reads ``$HOME/.claude/.credentials.json``
     on the actual-dispatch path; ``--dry-run`` still ends up exercising
@@ -348,7 +357,7 @@ def cli_dry_run_result(tmp_path: Path, env_save_restore):
     return result, out_dir
 
 
-def test_start_params_file_dry_run_exits_zero(cli_dry_run_result):
+def test_start_params_file_dry_run_exits_zero(pg_schema: str, cli_dry_run_result):
     # Arrange
     result, _ = cli_dry_run_result
     # Act

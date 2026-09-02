@@ -4,11 +4,12 @@ Every fixture here hands the pass REAL state it can write to and a test can
 read back: an on-disk ``state.db``, an on-disk fleet registry of v3 specs,
 an on-disk sac event log, an on-disk history file.
 
-The ``db_path`` fixture redirects BOTH handles (the env var AND the
-already-baked ``DEFAULT_DB_PATH`` module constant), because the constant is
-computed at import and an env-only fixture is too late — the trap
+The ``db_path`` fixture redirected BOTH handles — the env var AND the
+already-baked ``DEFAULT_DB_PATH`` module constant — because the constant was
+computed at import and an env-only fixture was too late; that is the trap
 ``tests/conftest.py`` documents at length, and the one that once landed test
-agent names in the live production fleet database.
+agent names in the live production fleet database. The constant was deleted
+with the storage engine on 2026-08-30, so only the env var is redirected now.
 """
 
 from __future__ import annotations
@@ -18,22 +19,17 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._state import state_db
 
 
 @pytest.fixture
 def db_path(tmp_path: Path):
-    # Arrange — an isolated on-disk state.db, both handles redirected.
+    # Arrange — an isolated per-test value for the env var.
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:

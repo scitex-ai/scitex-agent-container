@@ -35,8 +35,9 @@ THE THREE STATES, and they need three different responses:
 Collapsing ``absent`` into ``empty`` is the defect. Only ``populated`` licenses
 a factual claim about what the sweep would do.
 
-Design note carried from :mod:`.._state.state_db_health` (``StoreState``): the
-distinction belongs at the REPORTING boundary, not in the enumerator.
+Design note carried from ``_state.state_db_health.StoreState``, deleted
+2026-08-29 with the per-agent read surface: the distinction belongs at the
+REPORTING boundary, not in the enumerator.
 ``fleet_spec_paths`` keeps returning a plain list — ``.._authheal._detect``
 shares it and a raising enumerator would break a caller that is not reporting
 to anyone. This is for the sweep that tells a human what it did.

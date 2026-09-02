@@ -2,6 +2,13 @@
 
 * **Status**: Proposed (first slice implemented)
 * **Date**: 2026-08-12
+* **Later ruling, 2026-08-19** (the storage-consolidation order that made
+  `SCITEX_STORE_DSN` a fleet default):
+  「sqlite 根絶をしてください」/「fail fast, fail loud, no fallbacks」.
+  Recorded here rather than in the module it governs
+  (`runtimes/_fleet_env.py`), because an ADR is the one place the
+  eradication rule permits the name to stand — so the operator's words
+  survive verbatim instead of being reworded out of the tree.
 * **Operator rulings**: 「state.db というものは使ってはいけません」/
   「sqlite 使った瞬間負けだと思った方が良いです」/
   「今 5432 を scitex のために使ってるものはすべて間違い」/
@@ -130,23 +137,62 @@ change how a running agent was started.
 | `node_comms_policy` | A projection of `spec.yaml`'s `metadata.labels` / `spec.comms` / `spec.lineage`. Both writers derive it from the spec. |
 | `comms_grants` | Operator-declared cross-group permissions. |
 | `comms_blocks` | Operator-declared receiver-side vetoes. |
-| `definitions` | Content-addressed cache of git-resident YAML. |
+
+`definitions` was listed here — "content-addressed cache of git-resident
+YAML" — until 2026-08-28, when it was DELETED rather than migrated. The
+classification was right and it was the classification that condemned it:
+a cache of something git already holds is only worth carrying if somebody
+fills it, and no code path has ever INSERTed a row (0 rows on every
+state.db measured; `_store_plugin.NEVER_SYNCED` had recorded the finding
+before this ADR was written). The `REFERENCES` clause went with it, and
+the all-NULL `instances.definition_id` followed hours later when
+`instances` moved to the store: an FK to a table nobody fills is not a
+column worth carrying into a new schema.
 
 ### STATE → PostgreSQL, single-writer per row
 
-`instances`, `comms_nodes`, `lineage`, `a2a_ports`, `node_tokens`
-(secret — §7), `inbound_dispatches`, `pending_prompts`,
-`acl_deny_notify_log`, `agent_residency`, `relocation_leases`.
+`instances`, `comms_nodes`, `lineage`, `a2a_ports`,
+`inbound_dispatches`, `pending_prompts`, `acl_deny_notify_log`,
+`agent_residency`, `relocation_leases`.
+
+`node_tokens` was listed here as state (secret — §7) until 2026-08-28,
+when it was DELETED rather than migrated. See open question 8.
 
 Almost all of these are **facts about a host, authored by that host**.
 That is what makes them safely syncable (§5).
 
 ### LOG / EVENT → PostgreSQL, append-only
 
-`events`, `attempts`, `turns`, `errors`, `heartbeats`,
-`instance_heartbeats`, `channel_events`, `dispatches`,
+`turns`, `errors`, `heartbeats`, `channel_events`, `dispatches`,
 `relocation_journal`, `verdict_delivered`. Bulk of the bytes, least
 urgent, and the easiest to sync (pure union).
+
+`events`, `attempts` and `instance_heartbeats` were listed here too, and
+all three were DELETED rather than migrated — `attempts` on 2026-08-28,
+`events` and `instance_heartbeats` the same day. This paragraph is the
+amendment rather than a footnote because the list above was, until it was
+written, the document telling a reader to MIGRATE tables the evidence says
+to drop:
+
+* `instance_heartbeats` — its writer (`update_heartbeat`) and its reader
+  (`latest_instance_heartbeat`) each had ZERO callers in `src/`, and it
+  held 0 rows on compute-01, compute-03, compute-04 and nas-03. Migrating
+  it would have carried an empty table onto a new backend and kept the
+  determinism argument in its DDL comment alive for another year.
+* `attempts` — never had a writer at all.
+* `events` — the one that is NOT empty (1181 rows on the host state.db)
+  and still should not move, because it has zero READERS. Both its writers
+  wrote `kind='start'` / `'stop'` as SQL literals, and both facts are
+  already on the `instances` row in the same transaction, which is the
+  same argument `_store_plugin.NEVER_SYNCED` gives for refusing to
+  replicate it. It was also never a faithful log: `state_db_gc` closes
+  stale instances with a bare UPDATE and wrote no event, so GC-reaped
+  deaths were already missing from it.
+
+"Append-only log" is a category that earns a migration only when something
+reads the log. These three did not, and the existing rows stay on disk —
+nothing is dropped, sac just stops issuing the DDL and stops claiming to
+maintain them.
 
 ### LAUNCH SNAPSHOT → a file burned into the agent
 
@@ -437,11 +483,36 @@ spec path is exercised through the real
 6. **`hosts.yaml` `pg:` block is not implemented**, and `hosts.yaml` is
    not itself under git. "Configuration → files" is done for specs;
    "→ **under Git**" remains a separate step for both.
-7. **`comms_grants` / `comms_blocks` / `definitions`** are classified as
-   configuration but still live in SQLite.
-8. **`node_tokens` is a secret** and must never follow
+7. **`comms_grants` / `comms_blocks`** are classified as configuration but
+   still live in SQLite. `definitions` was named here too until
+   2026-08-28; it no longer lives anywhere. It was deleted rather than
+   migrated — nothing had ever written it — so this line is one open
+   question shorter rather than one answer longer.
+8. ~~**`node_tokens` is a secret** and must never follow
    `node_comms_policy` into git; its migration needs a credential story
-   first.
+   first.~~ **RESOLVED 2026-08-28 — the credential story is that there
+   was no credential.** The table was measured before deciding: 0 rows
+   on compute-01, compute-03, compute-04 and nas-03 (`runtime/state.db`,
+   2026-08-28 11:40Z), and `mint_node_token` had ZERO callers outside
+   the test suite. So `resolve_node_token` always returned `None`,
+   `request.state.authenticated_node` was always `None`, and the
+   per-node anti-spoofing branch in `check_send_acl` had never fired.
+   The feature was never armed; it was removed rather than migrated,
+   along with the table, the DDL, the middleware and the `KNOWN_TABLES`
+   entry. What gates a send is the host-wide bearer plus the name-based
+   ACL, which is what gated it all along.
+
+   Removal also closed an export hole by construction: `export_state`
+   ships every column of a `KNOWN_TABLES` member — `token` included —
+   and the MCP `db_export` tool takes no `tables` argument with which
+   to withhold one. The table's absence is now the guarantee that used
+   to depend on nobody calling export.
+
+   `_store_plugin.NEVER_SYNCED` deliberately KEEPS its refusal of the
+   name: a table leaving `KNOWN_TABLES` must not read as the refusal
+   being withdrawn, and that entry is where a future per-node
+   credential store would arrive. If one is ever built, this open
+   question re-opens with it.
 9. **`~/.scitex/agent-container/runtime/state.db` on ywata-note-win is
    untouched**, deliberately: nine remaining relocations read it.
 10. **Six of the eight named consumers are unsurveyed.**

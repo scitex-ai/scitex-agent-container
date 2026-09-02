@@ -42,7 +42,7 @@ def _decide(**overrides):
 
 
 def _row(**overrides) -> dict:
-    """A plain ``instances`` row, shaped exactly as sqlite3 hands one back."""
+    """A plain ``instances`` row, shaped exactly as the store hands one back."""
     row = {
         "name": "alpha",
         "host": "host-a",

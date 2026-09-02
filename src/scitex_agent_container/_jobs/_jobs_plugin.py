@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Nine jobs today:
+    Ten jobs today:
 
     * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
       of the single-refresher model, and the sibling of
@@ -71,6 +71,29 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
       duplication described below, one costume over. The crontab is host state a
       PR cannot edit, so the cron retirement is an operator/dotfiles step that
       must land WITH the enable.
+
+    * ``sac.resume-rate-limited-agents`` (``kind="timer"``) — the THIRD member
+      of that family, and the shape the first two divide the fleet around
+      without covering. A provider rate wall leaves the tmux session ALIVE, so
+      fleet-reconcile hands off (correctly — there is no corpse), and the
+      banner is not an auth banner, so the auth matcher excludes it (also
+      correctly, and it says why at the exclusion: *a restart does not fix a
+      rate wall*). Two right answers, and the agent stays stopped.
+
+      INCIDENT 2026-08-28: a session limit stopped a set of agents at ~17:25
+      UTC and lifted at 19:10 UTC; nothing resumed until the operator asked at
+      20:56 UTC. This job reads the reset time out of the provider's OWN
+      banner, HOLDS while the wall stands — so it structurally cannot spend a
+      token against a live limit — and then CONTINUES the agent through the
+      verified delivery path rather than restarting it, because the session
+      and its whole context survived the wall. A wall whose reset it cannot
+      parse is held and REPORTED, never guessed at.
+
+      It keeps its OWN debounce ledger, like the other two keep theirs: the
+      history file is a flat ``{agent: [epoch, ...]}`` with no subsystem key,
+      so three enforcers sharing one file would consume each other's budget
+      and race on one atomic write. Not gated: unlike its login-expired
+      sibling there is no incumbent doing this job, because nothing was.
 
     * ``sac.heal-agent-auth`` — RETIRED 2026-08-20, and the succession is the
       reason. This spec declared the INCUMBENT healer

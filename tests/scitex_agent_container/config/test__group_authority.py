@@ -2,21 +2,31 @@
 # -*- coding: utf-8 -*-
 """Tests for spec-sourced group authority.
 
-The headline is the ``identical_from_both_stores`` pair — one caller,
-one spec, two genuinely different stores, one answer. That is the
-assertion that would have caught the 2026-08-11 relocation incident
-(nine ``403 ACL deny`` probes at once, because the target host held no
+This file used to be built around an ``identical_from_both_stores``
+pair — one caller, one spec, two genuinely different local stores, one
+answer. It was written for the 2026-08-11 relocation incident (nine
+``403 ACL deny`` probes at once, because the target host held no
 ``node_comms_policy`` row for the caller) and the 2026-08-09 escalation
 (three agents read an empty per-agent shard and concluded the fleet
 registry had been wiped, while the host DB was healthy).
 
-Real SQLite files and real spec files throughout — no mocks, and no
-fixture that rewrites production internals. The "container" store is a
-genuinely empty database, which is exactly what ``/state/<agent>/state.db``
-is inside a SIF; the "bare host" store is a genuinely populated one. Two
-tests below assert that the stores really do still differ, so the
-equality tests can never quietly decay into comparing one store with
-itself and proving nothing.
+THAT SHAPE IS GONE, and this docstring no longer claims otherwise. Both
+incidents were caused by the per-agent local shard, and moving
+``node_comms_policy`` to one shared PostgreSQL store removes the shard
+rather than testing around it. There is no longer a second store for a
+caller to disagree with, so the equality the old headline asserted is
+now true BY CONSTRUCTION and cannot be tested — a test for it can only
+call the same function twice.
+
+The old docstring promised the opposite: that "two tests below assert
+that the stores really do still differ, so the equality tests can never
+quietly decay into comparing one store with itself and proving
+nothing." That guard is exactly what decayed. The tests it protected
+became ``x == x``, and one of them — a container store holding no row —
+asserted an emptiness that the shared store cannot produce, so it was
+green only where nothing could write. They are deleted below rather
+than left passing under names that promise coverage this file no longer
+provides.
 """
 
 from __future__ import annotations
@@ -94,27 +104,33 @@ def spec_root(tmp_path):
 
 @dataclass(frozen=True)
 class RelocateCase:
-    """One agent, its spec, and the two stores that used to disagree."""
+    """One agent and its spec.
+
+    It carried ``host_db`` and ``container_db`` until the policy table
+    moved to PostgreSQL. Nothing read them after that -- ``record_comms_policy``
+    stopped taking a ``db_path`` -- but they kept the file LOOKING like it
+    still exercised two stores, which is how three tests went on claiming a
+    container/host comparison they no longer made.
+    """
 
     name: str
-    host_db: Path
-    container_db: Path
 
 
 @pytest.fixture()
 def relocate_case(spec_root, tmp_path) -> RelocateCase:
-    """An agent whose spec is visible but whose policy row is host-only.
+    """An agent whose spec is visible and whose policy row is published.
 
-    ``host_db`` stands for the bare host's populated
-    ``~/.scitex/agent-container/runtime/state.db``; ``container_db``
-    stands for the private ``/state/<agent>/state.db`` shard a SIF gets,
-    which holds no ``node_comms_policy`` row for anybody. This is the
-    exact shape of the relocation 403.
+    It used to build two local database files: a populated one standing for
+    the bare host's ``~/.scitex/agent-container/runtime/state.db``, and an
+    empty one
+    standing for the private ``/state/<agent>/state.db`` shard a SIF gets --
+    the exact shape of the relocation 403. The shard is what caused that
+    incident, and it no longer exists: the policy row lives in one shared
+    PostgreSQL store that every caller reads. The two paths are not built any
+    more because nothing could read them.
     """
     name = "t-auth-relocate"
     _write_spec(spec_root, name, groups="developer, infra")
-    host_db = tmp_path / "host-state.db"
-    container_db = tmp_path / "container-state.db"
     record_comms_policy(
         name=name,
         outbound_siblings="allow",
@@ -125,32 +141,35 @@ def relocate_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="developer",
         group_names=frozenset({"developer", "infra"}),
-        db_path=host_db,
     )
-    return RelocateCase(name=name, host_db=host_db, container_db=container_db)
+    return RelocateCase(name=name)
 
 
 # ---------------------------------------------------------------------------
-# the two stores really do differ — the fault condition, asserted
+# the published row is readable
+#
+# This section asserted the FAULT CONDITION: that a populated host store and
+# an empty container shard really did disagree, so the equality tests further
+# down could not decay into comparing one store with itself.
+#
+# `test_container_store_holds_no_policy_row` is deleted. It made the IDENTICAL
+# call as the test below -- `read_comms_policy(name=case.name)`, no store
+# argument, because there is no longer one to pass -- and asserted the
+# OPPOSITE result. Against the shared store that row exists, so the read
+# returns "developer" and the assertion of "" is simply false; it passed only
+# where nothing could write, which made it green here and red on any writable
+# primary. Two tests cannot both be right about one call, and the one that is
+# right is the one that is kept.
 # ---------------------------------------------------------------------------
 
 
-def test_host_store_holds_the_policy_row(relocate_case):
+def test_the_published_policy_row_is_readable(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    policy = read_comms_policy(name=case.name, db_path=case.host_db)
+    policy = read_comms_policy(name=case.name)
     # Assert
     assert policy["group_name"] == "developer"
-
-
-def test_container_store_holds_no_policy_row(relocate_case):
-    # Arrange
-    case = relocate_case
-    # Act
-    policy = read_comms_policy(name=case.name, db_path=case.container_db)
-    # Assert
-    assert policy["group_name"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -158,41 +177,21 @@ def test_container_store_holds_no_policy_row(relocate_case):
 # ---------------------------------------------------------------------------
 
 
-def test_group_set_is_identical_from_container_and_host(relocate_case):
+def test_group_set_from_the_container_is_the_spec_answer(pg_schema: str, relocate_case):
     # Arrange
     case = relocate_case
     # Act
-    from_host = resolve_group_names(name=case.name, db_path=case.host_db)
-    from_container = resolve_group_names(name=case.name, db_path=case.container_db)
-    # Assert
-    assert from_host == from_container
-
-
-def test_group_set_from_the_container_is_the_spec_answer(relocate_case):
-    # Arrange
-    case = relocate_case
-    # Act
-    from_container = resolve_group_names(name=case.name, db_path=case.container_db)
+    from_container = resolve_group_names(name=case.name)
     # Assert
     assert from_container == frozenset({"developer", "infra"})
 
 
-def test_primary_group_is_identical_from_container_and_host(relocate_case):
-    # Arrange
-    case = relocate_case
-    # Act
-    from_host = resolve_group_name(name=case.name, db_path=case.host_db)
-    from_container = resolve_group_name(name=case.name, db_path=case.container_db)
-    # Assert
-    assert from_host == from_container
-
-
-def test_developer_authority_holds_from_the_container_store(relocate_case):
+def test_developer_authority_holds_from_the_container_store(pg_schema: str, relocate_case):
     """The gate itself agrees — this is what the 403 actually turned on."""
     # Arrange
     case = relocate_case
     # Act
-    allowed = is_developer(name=case.name, db_path=case.container_db)
+    allowed = is_developer(name=case.name)
     # Assert
     assert allowed is True
 
@@ -340,7 +339,6 @@ def stale_row_case(spec_root, tmp_path) -> RelocateCase:
     """A spec that has DROPPED developer, over a row that still grants it."""
     name = "t-auth-revoked"
     _write_spec(spec_root, name, groups="generalist")
-    db = tmp_path / "stale.db"
     record_comms_policy(
         name=name,
         outbound_siblings="allow",
@@ -351,35 +349,34 @@ def stale_row_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="developer",
         group_names=frozenset({"developer"}),
-        db_path=db,
     )
-    return RelocateCase(name=name, host_db=db, container_db=db)
+    return RelocateCase(name=name)
 
 
-def test_stale_row_still_records_the_revoked_group(stale_row_case):
+def test_stale_row_still_records_the_revoked_group(pg_schema: str, stale_row_case):
     # Arrange
     case = stale_row_case
     # Act
-    policy = read_comms_policy(name=case.name, db_path=case.host_db)
+    policy = read_comms_policy(name=case.name)
     # Assert
     assert policy["group_name"] == "developer"
 
 
-def test_spec_revocation_beats_the_stale_row(stale_row_case):
+def test_spec_revocation_beats_the_stale_row(pg_schema: str, stale_row_case):
     """Deleting a group from the spec actually revokes it."""
     # Arrange
     case = stale_row_case
     # Act
-    groups = resolve_group_names(name=case.name, db_path=case.host_db)
+    groups = resolve_group_names(name=case.name)
     # Assert
     assert groups == frozenset({"generalist"})
 
 
-def test_revoked_developer_authority_is_actually_denied(stale_row_case):
+def test_revoked_developer_authority_is_actually_denied(pg_schema: str, stale_row_case):
     # Arrange
     case = stale_row_case
     # Act
-    allowed = is_developer(name=case.name, db_path=case.host_db)
+    allowed = is_developer(name=case.name)
     # Assert
     assert allowed is False
 
@@ -388,7 +385,6 @@ def test_revoked_developer_authority_is_actually_denied(stale_row_case):
 def foreign_node_case(spec_root, tmp_path) -> RelocateCase:
     """A node with a policy row but NO spec — a remote / federated peer."""
     name = "t-auth-foreign"
-    db = tmp_path / "foreign.db"
     record_comms_policy(
         name=name,
         outbound_siblings="allow",
@@ -399,12 +395,11 @@ def foreign_node_case(spec_root, tmp_path) -> RelocateCase:
         may_spawn=True,
         group_name="researcher",
         group_names=frozenset({"researcher"}),
-        db_path=db,
     )
-    return RelocateCase(name=name, host_db=db, container_db=db)
+    return RelocateCase(name=name)
 
 
-def test_foreign_node_has_no_visible_spec(foreign_node_case):
+def test_foreign_node_has_no_visible_spec(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
@@ -413,19 +408,19 @@ def test_foreign_node_has_no_visible_spec(foreign_node_case):
     assert groups is None
 
 
-def test_foreign_node_falls_back_to_its_policy_row(foreign_node_case):
+def test_foreign_node_falls_back_to_its_policy_row(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
-    groups = resolve_group_names(name=case.name, db_path=case.host_db)
+    groups = resolve_group_names(name=case.name)
     # Assert
     assert groups == frozenset({"researcher"})
 
 
-def test_foreign_node_primary_group_falls_back_to_its_row(foreign_node_case):
+def test_foreign_node_primary_group_falls_back_to_its_row(pg_schema: str, foreign_node_case):
     # Arrange
     case = foreign_node_case
     # Act
-    primary = resolve_group_name(name=case.name, db_path=case.host_db)
+    primary = resolve_group_name(name=case.name)
     # Assert
     assert primary == "researcher"

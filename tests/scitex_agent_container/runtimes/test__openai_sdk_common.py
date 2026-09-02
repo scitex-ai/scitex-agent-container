@@ -1,11 +1,19 @@
 """Tests for ``runtimes/_openai_sdk_common.py`` (openai-compat-2).
 
 Covers the auth-provisioning precedence contract (SAC env wins →
-process env fallback → loud failure), model resolution, state-db
-placement, and the ``_provider_common`` re-exports. None of this needs
-the ``openai-agents`` SDK — the module is import-safe on Claude-only
+process env fallback → loud failure), model resolution, and the
+``_provider_common`` re-exports. None of this needs the
+``openai-agents`` SDK — the module is import-safe on Claude-only
 deployments by design, and these tests prove it by never importing
 ``agents``.
+
+STATE-DB PLACEMENT IS NO LONGER ONE OF THE CONCERNS. Seven tests here
+pinned ``resolve_state_db_path`` — the directory, the filename, the
+name sanitiser, the override — and they went with the function when
+the OpenAI runner's conversation state moved to PostgreSQL. Nothing
+replaced them at this level: a store TARGET is not a path, and the
+behaviour that used to be checked here is now checked against a real
+store in ``_runners/test_openai_session.py`` under ``pg_schema``.
 
 PA-306: no ``monkeypatch`` / ``unittest.mock`` — env mutations use an
 explicit save/restore fixture (the ``isolated_env`` pattern from
@@ -16,7 +24,6 @@ one-assert-per-test.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -26,7 +33,6 @@ from scitex_agent_container.runtimes._openai_sdk_common import (
     OpenAISDKCommonError,
     default_openai_model,
     provision_openai_auth,
-    resolve_state_db_path,
 )
 
 _ENV_KEYS = ("SAC_OPENAI_API_KEY", "OPENAI_API_KEY", "SAC_OPENAI_MODEL")
@@ -152,72 +158,6 @@ def test_default_model_whitespace_only_returns_none(clean_env) -> None:
     model = default_openai_model()
     # Assert
     assert model is None
-
-
-# ---------------------------------------------------------------------------
-# resolve_state_db_path
-# ---------------------------------------------------------------------------
-
-
-def test_state_db_lands_under_runtime_openai_sessions(tmp_path: Path) -> None:
-    # Arrange
-    expected_parent = (
-        tmp_path / ".scitex" / "agent-container" / "runtime" / "openai-sessions"
-    )
-    # Act
-    path = resolve_state_db_path("alpha", home=tmp_path)
-    # Assert
-    assert path.parent == expected_parent
-
-
-def test_state_db_filename_is_agent_name_sqlite3(tmp_path: Path) -> None:
-    # Arrange
-    # Act
-    path = resolve_state_db_path("alpha", home=tmp_path)
-    # Assert
-    assert path.name == "alpha.sqlite3"
-
-
-def test_state_db_parent_directory_is_created(tmp_path: Path) -> None:
-    # Arrange
-    # Act
-    path = resolve_state_db_path("alpha", home=tmp_path)
-    # Assert
-    assert path.parent.is_dir()
-
-
-def test_state_db_unsafe_agent_name_is_sanitized(tmp_path: Path) -> None:
-    # Arrange
-    # Act
-    path = resolve_state_db_path("a/b c", home=tmp_path)
-    # Assert
-    assert path.name == "a-b-c.sqlite3"
-
-
-def test_state_db_empty_sanitized_name_falls_back_to_agent(tmp_path: Path) -> None:
-    # Arrange
-    # Act
-    path = resolve_state_db_path("///", home=tmp_path)
-    # Assert
-    assert path.name == "agent.sqlite3"
-
-
-def test_state_db_override_is_used_verbatim(tmp_path: Path) -> None:
-    # Arrange
-    override = tmp_path / "custom" / "state.db"
-    # Act
-    path = resolve_state_db_path("alpha", home=tmp_path, override=override)
-    # Assert
-    assert path == override
-
-
-def test_state_db_override_parent_is_created(tmp_path: Path) -> None:
-    # Arrange
-    override = tmp_path / "custom" / "state.db"
-    # Act
-    resolve_state_db_path("alpha", home=tmp_path, override=override)
-    # Assert
-    assert override.parent.is_dir()
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ Registry contract (v4 step 4, ``config._harness_registry``): the
 hosts it), ``beat_writer="in-process"`` (the beats below), and
 ``can_resume=False`` — so a ``resume_session_id`` is REFUSED loudly
 here (and earlier, in :mod:`._openai_session_cli`), never silently
-remapped. The ``SQLiteSession`` state db does persist turns across
+remapped. The conversation store DOES persist turns across
 process lifetimes under the agent's own name, but sac's resume
 contract — rehydrate a PRIOR incarnation's conversation from a
 caller-supplied session id — is not implemented for this harness;
@@ -144,7 +144,7 @@ async def run_openai_conversation(
     drains :class:`~._session_inbox.TurnEnvelope` items until a
     :class:`~._session_inbox.ShutdownEnvelope` (or an ``exit_after``
     turn — the one-shot handshake) ends the run. One vendor session is
-    held open for the whole conversation; its ``SQLiteSession`` state db
+    held open for the whole conversation; its PostgreSQL-backed store
     (keyed by the agent's name) carries multi-turn memory.
 
     ``max_restarts`` / ``restart_backoff_s`` are accepted per the

@@ -21,9 +21,10 @@ This verb closes both gaps. The operator runs::
 
     sac registry register --name lead --host lead-host --a2a-port 7878
 
-and the row lands in ``comms_nodes`` immediately. Other hosts pull it
-via ``sac registry sync --from lead-host`` (ADR-0014 anti-entropy).
-No process restart required.
+and the entry lands in the ADR-0014 directory immediately. Since
+2026-08-28 that directory is the SHARED PostgreSQL store, so other hosts
+see it on their next resolve — there is no pull to run and nothing to
+converge. No process restart required.
 
 Failure policy — **fail loud**, not best-effort. ``sac listen`` and
 ``sac mcp channel`` swallow registry-write failures with
@@ -37,8 +38,6 @@ re-typed-args their way out.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import click
 
@@ -78,23 +77,16 @@ from .._state.state_db_nodes import (
         "Source-of-record host. Defaults to None — the row is treated "
         "as locally-registered (matches what `sac listen` and `sac mcp "
         "channel` self-register write). Set this only when relaying a "
-        "peer's row from a third host (rare; ``sac registry sync`` is "
-        "the supported anti-entropy path for that)."
+        "peer's entry on another host's BEHALF, which is what makes "
+        "the conflict check compare the declared source against the "
+        "stored record's _origin instead of this host's own name."
     ),
-)
-@click.option(
-    "--db-path",
-    "db_path",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Override the state.db path. Defaults to the standard location.",
 )
 def registry_register(
     name: str,
     host: str,
     a2a_port: int,
     source_host: str | None,
-    db_path: Path | None,
 ) -> None:
     """Write a ``comms_nodes`` row directly. ADR-0014 operator-repair path.
 
@@ -113,6 +105,10 @@ def registry_register(
     operator can resolve it explicitly. Silent overwrite is the wrong
     default for a verb the human typed.
 
+    ``--db-path`` is GONE (2026-08-28). It overrode a file; the
+    directory is the shared PostgreSQL store and there is no file to
+    override. ``SCITEX_STORE_DSN`` is the equivalent knob.
+
     \\b
     Examples:
       $ sac registry register --name lead --host lead-host --a2a-port 7878
@@ -124,7 +120,6 @@ def registry_register(
             host=host,
             a2a_port=a2a_port,
             source_host=source_host,
-            db_path=db_path,
         )
     except CommsNodeConflictError as exc:
         raise click.ClickException(str(exc)) from exc

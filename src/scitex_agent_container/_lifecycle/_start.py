@@ -217,7 +217,18 @@ def agent_start(
     # becomes live without manual state.db surgery. Defaults preserve
     # pre-Phase-3 behaviour, so an existing YAML with no spec.comms /
     # spec.lineage blocks writes the all-allow / may_spawn=True row.
-    persist_acl_policy(config)
+    #
+    # NOT ON A DRY RUN. This publish was a write to the host's own
+    # state.db, where a dry run doing it was untidy but contained. The
+    # policy now lives in ONE store shared by the whole fleet, so the same
+    # line makes `sac agents start --dry-run` mutate fleet-wide ACL state
+    # for an agent it is not starting -- and makes the dry run fail
+    # outright wherever that store is unreachable, which is how CI found
+    # it: the smoke test drives the real CLI against the isolation DSN and
+    # got `exit=1 ... Cannot connect to Postgres store 'node_comms_policy'`.
+    # A dry run answers "would this start?" and must not write to do it.
+    if not dry_run:
+        persist_acl_policy(config)
 
     # Resolve spec.a2a.port BEFORE the runtime builds argv. ``"auto"``
     # gets a fresh allocator claim; an explicit int is recorded so
@@ -254,7 +265,7 @@ def agent_start(
     # Already running?
     forced_stop = False
     # Stale-lease cleanup (operator pain point — replaces the manual
-    # ``sqlite3 … DELETE FROM instances …`` workaround). When the runtime PID
+    # ``DELETE FROM instances`` workaround). When the runtime PID
     # is dead, any active ``instances`` row for this agent name is stale (the
     # previous container died without going through agent_stop). Clear those
     # rows so a zombie lease cannot vouch for a dead agent. Live runtimes are

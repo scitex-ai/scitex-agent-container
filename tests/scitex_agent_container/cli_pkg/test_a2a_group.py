@@ -598,9 +598,11 @@ def test_doctor_against_live_serve_envelope_ok(
 # a2a {grant,revoke,grants} -- cross-group ACL verbs (no mocks).
 #
 # Each test uses ``isolated_state_db`` which pins
-# ``SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp_path SQLite and reloads
-# the state_db module so the import-time DEFAULT_DB_PATH constant
-# picks up the new value. Same seam ``test_db_group.py`` already uses.
+# ``SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp_path and reloads the state_db
+# module. That reload existed to make the import-time ``DEFAULT_DB_PATH``
+# constant pick up the new value; the constant was deleted with the storage
+# engine on 2026-08-30, so the reload re-derives nothing and the grants these
+# tests read come from the shared PostgreSQL store.
 # ---------------------------------------------------------------------------
 
 
@@ -780,6 +782,7 @@ def test_revoke_empty_target_writes_error_to_stderr(
 
 def test_grants_empty_table_renders_no_grants_marker(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()
@@ -791,6 +794,7 @@ def test_grants_empty_table_renders_no_grants_marker(
 
 def test_grants_json_empty_table_is_empty_array(
     isolated_state_db: Path,
+    pg_schema: str,
 ) -> None:
     # Arrange
     runner = CliRunner()

@@ -31,7 +31,6 @@ from scitex_agent_container._listen.peer_tokens import write_peer_token
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.host_config import LeadConfig
 from scitex_agent_container._state.lead_inbox import (
     LEAD_EVENT_KINDS,
@@ -252,17 +251,14 @@ def lead_env(tmp_path: Path, env_save_restore):
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    saved_db_const = state_db.DEFAULT_DB_PATH
 
     db = tmp_path / "state.db"
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
     os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(tmp_path / "runtime")
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
 
     # Lead config — production reads this via the env-routed config.yaml.
     # Each test that actually pushes rewrites ``a2a_port`` with the
@@ -280,7 +276,6 @@ def lead_env(tmp_path: Path, env_save_restore):
     try:
         yield {"db": db, "cfg": cfg, "tmp_path": tmp_path}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         for k, v in (
@@ -316,8 +311,8 @@ def _push_kind(lead_env, *, kind: str, summary: str, from_agent: str) -> dict:
     port = _free_port()
     _setup_lead_at_port(lead_env, port)
     # Lead must be reachable for ACL — same-group send.
-    record_lineage(child=from_agent, parent="root", db_path=lead_env["db"])
-    record_lineage(child="lead", parent="root", db_path=lead_env["db"])
+    record_lineage(child=from_agent, parent="root")
+    record_lineage(child="lead", parent="root")
 
     app = create_app(token=TOKEN, local_host="127.0.0.1")
     with _run_listen(app, port):
@@ -431,8 +426,8 @@ def test_regression_agent_completion_event_lands_in_lead_inbox(lead_env, pg_sche
     # config.yaml).
     port = _free_port()
     _setup_lead_at_port(lead_env, port)
-    record_lineage(child="alice", parent="root", db_path=lead_env["db"])
-    record_lineage(child="lead", parent="root", db_path=lead_env["db"])
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="lead", parent="root")
     app = create_app(token=TOKEN, local_host="127.0.0.1")
 
     # Act — agent pushes a completion event over the real HTTP stack.

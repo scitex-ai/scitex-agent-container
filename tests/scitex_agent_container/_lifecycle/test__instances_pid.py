@@ -24,7 +24,7 @@ the tmux PANE pid for TUI (the pane's ``bash -c`` ``exec``s apptainer, and
 ``exec`` KEEPS the pid, so the pane pid IS the container process), and the
 ``<state_dir>/apptainer_pid`` process for the SDK/apptainer runtime.
 
-Real on-disk SQLite state.db (env-overridden per test), real pid files, real
+A real isolated store (env-overridden per test), real pid files, real
 OS pids (``os.getpid()`` is by definition alive; a reaped child pid is by
 definition dead). No mocks.
 """
@@ -43,8 +43,14 @@ from scitex_agent_container.config import AgentConfig
 
 
 @pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db location, exported via env (explicit save/restore)."""
+def db_path(tmp_path: Path, pg_schema: str):
+    """Isolated state.db location, exported via env (explicit save/restore).
+
+    DEPENDS ON ``pg_schema`` since 2026-08-28 — see the same fixture in
+    ``test__instances.py``: ``record_local_instance`` reads the a2a claim, and
+    that ledger is PostgreSQL now, so state.db isolation alone is no longer
+    the whole isolation this module needs.
+    """
     p = tmp_path / "state.db"
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)

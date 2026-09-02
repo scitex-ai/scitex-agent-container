@@ -21,7 +21,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import has_block
 from scitex_agent_container._state.state_db_nodes import has_grant
 
@@ -32,14 +31,10 @@ _TOKEN = "test-token-acl-routes"
 def isolated_state(tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
@@ -66,7 +61,7 @@ def test_unblock_route_writes_comms_grants_row(isolated_state: Path, pg_schema: 
             headers=_auth(),
         )
     # Assert
-    assert has_grant(sender="alice", target="lead", db_path=isolated_state)
+    assert has_grant(sender="alice", target="lead")
 
 
 def test_unblock_route_returns_200(isolated_state: Path, pg_schema: str) -> None:
@@ -137,7 +132,7 @@ def test_grant_route_writes_comms_grants_like_unblock(
             headers=_auth(),
         )
     # Assert
-    assert has_grant(sender="alice", target="lead", db_path=isolated_state)
+    assert has_grant(sender="alice", target="lead")
 
 
 # ---------------------------------------------------------------------------

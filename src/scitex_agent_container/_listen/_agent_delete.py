@@ -39,7 +39,9 @@ async def agent_delete(request: Request) -> JSONResponse:
       * **404 Not Found** — agent never existed or was already deleted.
       * **403 Forbidden** (PR-3) — caller is identified (via
         ``request.state.authenticated_node``) but lacks lineage-scoped
-        permission to operate on this target. Body shape:
+        permission to operate on this target. Nothing sets that
+        attribute since 2026-08-28, so this branch is unreachable over
+        HTTP today; see the gate below. Body shape:
         ``{"error": "ACL deny", "kind": "acl_deny", "reason": "..."}``
         — the 5th kind in the wire taxonomy pinned with clew.
 
@@ -49,12 +51,17 @@ async def agent_delete(request: Request) -> JSONResponse:
     irrelevant) but the caller can't touch it.
     """
     name = request.path_params["name"]
-    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` is the
-    # resolved per-node identity from NodeAuthMiddleware; ``None``
-    # is the administrative / host-wide bearer (always allowed by
-    # check_lineage_acl). The ACL is enforced BEFORE we touch the
-    # state dir / pid file so a denied caller learns nothing about
-    # whether the target exists (status, marker, runtime files).
+    # PR-3 — lineage-scoped ACL gate. ``authenticated_node`` was the
+    # resolved per-node identity; the middleware that set it was removed
+    # 2026-08-28 (nothing ever minted a per-node bearer, so it was always
+    # ``None`` in any case), and this route reads no other caller shape —
+    # no body, no query param. So ``caller`` is ``None`` on every request
+    # and ``check_lineage_acl`` admits it as administrative. Stated plainly
+    # because the alternative is a reader assuming DELETE is lineage-gated
+    # against a non-admin caller that has never existed. The gate is kept:
+    # it costs nothing, and it is where a real caller identity would land.
+    # It still runs BEFORE we touch the state dir / pid file so a denied
+    # caller learns nothing about whether the target exists.
     from ._acl import check_lineage_acl, deny_response
 
     caller = getattr(request.state, "authenticated_node", None)

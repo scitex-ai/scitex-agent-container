@@ -14,8 +14,8 @@ Three surfaces are covered, no mocks / monkeypatch on production:
 
 3. Sender-side absorption — :func:`absorb_reaction_ack` walks the
    envelope and flips the dispatch-ledger row to ``STATUS_REACTED``.
-   Real sqlite under ``tmp_path`` via the same env-fixture pattern
-   the ledger tests use.
+   Real PostgreSQL via the shared ``pg_schema`` fixture, the same seam
+   the ledger tests use since that table moved to PostgreSQL.
 
 Operator mandate (lead a2a ``1781e82a``, 2026-06-14): structural
 reaction so absence = comm miss, detectable.
@@ -23,10 +23,8 @@ reaction so absence = comm miss, detectable.
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -320,27 +318,7 @@ async def test_post_reaction_ack_marks_envelope_with_ack_loop_guard(fake_listen)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def db_path(tmp_path: Path):
-    # Arrange — isolated state.db via env, mirroring the ledger tests.
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
-
-
-def test_absorb_reaction_ack_flips_ledger_to_reacted(db_path: Path):
+def test_absorb_reaction_ack_flips_ledger_to_reacted(pg_schema: str):
     # Arrange — record a dispatch, simulate the receiver's 👀 landing.
     from scitex_agent_container._state.dispatch_ledger import (
         STATUS_REACTED,
@@ -362,7 +340,7 @@ def test_absorb_reaction_ack_flips_ledger_to_reacted(db_path: Path):
     assert rows[0]["status"] == STATUS_REACTED
 
 
-def test_absorb_reaction_ack_returns_true_on_match(db_path: Path):
+def test_absorb_reaction_ack_returns_true_on_match(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import record_dispatch
 
@@ -378,7 +356,7 @@ def test_absorb_reaction_ack_returns_true_on_match(db_path: Path):
     assert matched is True
 
 
-def test_absorb_reaction_ack_returns_false_on_non_reaction_event(db_path: Path):
+def test_absorb_reaction_ack_returns_false_on_non_reaction_event(pg_schema: str):
     # Arrange — a regular inbound message should never touch the
     # ledger. Returning False is the audit signal.
     event = {
@@ -392,7 +370,7 @@ def test_absorb_reaction_ack_returns_false_on_non_reaction_event(db_path: Path):
     assert matched is False
 
 
-def test_absorb_reaction_ack_returns_false_without_dispatch_id(db_path: Path):
+def test_absorb_reaction_ack_returns_false_without_dispatch_id(pg_schema: str):
     # Arrange — legacy senders that never minted a ledger row are
     # not a failure; they're a no-op (deliberate, not silent).
     event: dict[str, Any] = {"from_agent": "bob", "kind": "reaction"}
@@ -402,7 +380,7 @@ def test_absorb_reaction_ack_returns_false_without_dispatch_id(db_path: Path):
     assert matched is False
 
 
-def test_absorb_reaction_ack_is_idempotent_on_double_delivery(db_path: Path):
+def test_absorb_reaction_ack_is_idempotent_on_double_delivery(pg_schema: str):
     # Arrange — a retried receipt must not corrupt the row.
     from scitex_agent_container._state.dispatch_ledger import (
         STATUS_REACTED,
@@ -429,7 +407,7 @@ def test_absorb_reaction_ack_is_idempotent_on_double_delivery(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_comm_miss_detected_when_receipt_never_lands(db_path: Path):
+def test_comm_miss_detected_when_receipt_never_lands(pg_schema: str):
     # Arrange — sender records a dispatch but the receiver never
     # reacts (their adapter is down).
     import time
@@ -451,7 +429,7 @@ def test_comm_miss_detected_when_receipt_never_lands(db_path: Path):
     assert len(rows) == 1
 
 
-def test_comm_miss_cleared_after_reaction_lands(db_path: Path):
+def test_comm_miss_cleared_after_reaction_lands(pg_schema: str):
     # Arrange — same dispatch, but the receipt landed via absorption.
     import time
 

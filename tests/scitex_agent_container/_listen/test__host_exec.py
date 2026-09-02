@@ -155,7 +155,7 @@ def test_host_exec_denies_when_no_caller_resolves():
     assert resp.status_code == 403
 
 
-def test_host_exec_denies_when_group_is_not_eligible():
+def test_host_exec_denies_when_group_is_not_eligible(pg_schema: str):
     # Arrange — hand-rolled resolver that reports a non-eligible group.
     req = _FakeRequest({"argv": ["echo", "hi"]}, authenticated_node="some-agent")
     # Act
@@ -200,7 +200,7 @@ def test_host_exec_allows_the_privileged_group():
     assert resp.status_code == 200
 
 
-def test_host_exec_denies_unlabeled_privileged_style_caller_helpfully():
+def test_host_exec_denies_unlabeled_privileged_style_caller_helpfully(pg_schema: str):
     # Arrange — an agent that has NOT been labeled into the privileged group
     # resolves to the ungrouped "" (or any non-eligible group) and is refused
     # with a structured 403 that names the eligible groups.

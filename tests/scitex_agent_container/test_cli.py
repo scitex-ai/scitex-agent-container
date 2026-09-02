@@ -16,6 +16,20 @@ from scitex_agent_container.cli_pkg._helpers._agent_list_probe import (
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 VALID_CONFIG = {
     "apiVersion": "scitex-agent-container/v3",
     "kind": "Agent",
@@ -130,7 +144,7 @@ class TestCLI:
     def test_db_clean_sweep_exits_zero(self):
         # Arrange
         # F-CS11 phase 5: `registry clean` was renamed to `db clean`.
-        # The new path is the SQLite GC sweep — runs against state.db,
+        # The new path is the GC sweep — runs against the store,
         # exits 0 with zero-or-more swept entries.
         runner = CliRunner()
         # Act

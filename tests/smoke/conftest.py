@@ -22,7 +22,6 @@ import pytest
 
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 
 
 def pytest_configure(config):
@@ -70,7 +69,7 @@ def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
 
     ``pg_schema`` FIRST, and it is not decoration. When this fixture was
     written the comms state lived entirely in the ``state.db`` below, so
-    isolating a tmp SQLite file and HOME was the whole job. The ACL tables
+    isolating a tmp database file and HOME was the whole job. The ACL tables
     have since moved to the per-host PostgreSQL store, and without this
     dependency the deny path writes its rate-limit rows into the LIVE fleet
     store — measured 2026-08-20, ``alpha``/``beta``/``gamma`` rows in
@@ -105,7 +104,6 @@ def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
         ),
     }
     saved_consts = {
-        "state_db": state_db.DEFAULT_DB_PATH,
         "registry": _reg.REGISTRY_DIR,
         "session_state": _ss.DEFAULT_STATE_ROOT,
     }
@@ -115,14 +113,11 @@ def comms_env(pg_schema: str, disk_tmp: Path) -> Iterator[dict[str, Any]]:
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(disk_tmp / "registry")
     os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(disk_tmp / "runtime")
     os.environ.pop("SCITEX_AGENT_CONTAINER_YAML_DIRS", None)
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = disk_tmp / "registry"
     _ss.DEFAULT_STATE_ROOT = disk_tmp / "runtime"
-    state_db.init_schema(db)
     try:
         yield {"db": db, "tmp": disk_tmp}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_consts["state_db"]
         _reg.REGISTRY_DIR = saved_consts["registry"]
         _ss.DEFAULT_STATE_ROOT = saved_consts["session_state"]
         for key, val in saved_env.items():

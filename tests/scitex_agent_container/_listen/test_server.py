@@ -40,6 +40,49 @@ from scitex_agent_container._state import state_db_nodes as state_db_nodes_grant
 from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import run_loopback
 
+
+def _bind_instance_port(name: str, port: int) -> None:
+    """Point ``name``'s live instances record at ``port``.
+
+    A partial ``Store.put`` — ``instances`` moved to the shared PostgreSQL
+    store on 2026-08-28, so there is no table to ``UPDATE``. The record was
+    just written by ``record_instance_start`` with ``a2a_port=0``; this binds
+    the loopback port the test actually listens on, which is what the
+    forwarder resolves.
+    """
+    from scitex_dev.store import ANY_REVISION
+
+    from scitex_agent_container._state.state_db_instances import (
+        live_instance_for_name,
+    )
+    from scitex_agent_container._state.state_db_instances_store import (
+        ACTOR,
+        run_with_reconnect,
+    )
+
+    row = live_instance_for_name(name)
+    run_with_reconnect(
+        lambda store: store.put(
+            {"id": row["id"], "host": row["host"], "a2a_port": port},
+            expected_revision=ANY_REVISION,
+            actor=ACTOR,
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 TOKEN = "test-token-abc123"
 
 # WI-4 cross-host forwarder: both apps in the loopback tests run
@@ -252,53 +295,33 @@ class TestListAgents:
         assert body["agents"][0]["name"] == "alpha"
 
     def test_registered_agent_row_carries_a2a_port_when_allocator_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: when port_allocator has a claim, the row carries it.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22000, 22001), db_path=db)
-            r = _reg.Registry()
-            r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["a2a_port"] == 22000
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _pa.claim_port("alpha", range_=(22000, 22001))
+        r = _reg.Registry()
+        r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["a2a_port"] == 22000
 
     def test_registered_agent_row_carries_turn_url_when_allocator_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: turn_url ships alongside a2a_port for the
         # nudge→turn dispatcher.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _pa.claim_port("alpha", range_=(22100, 22101), db_path=db)
-            r = _reg.Registry()
-            r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["turn_url"].endswith(":22100/v1/turn")
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _pa.claim_port("alpha", range_=(22100, 22101))
+        r = _reg.Registry()
+        r.add("alpha", "/path/to/spec.yaml", "sc-alpha", pid=12345)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["turn_url"].endswith(":22100/v1/turn")
 
     def test_registered_agent_row_carries_null_a2a_port_when_no_claim(
         self, client, auth_headers, isolated_env
@@ -306,46 +329,24 @@ class TestListAgents:
         # Arrange — Q1: when port_allocator has NO claim for the name,
         # the row still ships the key (= null) so consumers can branch
         # on field presence rather than key presence.
-        from scitex_agent_container._state import state_db as _state_db
-
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            r = _reg.Registry()
-            r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["a2a_port"] is None
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        r = _reg.Registry()
+        r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["a2a_port"] is None
 
     def test_registered_agent_row_carries_null_turn_url_when_no_claim(
         self, client, auth_headers, isolated_env
     ):
         # Arrange — Q1: turn_url is null when a2a_port resolves to null
         # (derive_turn_url's bothness rule).
-        from scitex_agent_container._state import state_db as _state_db
-
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            r = _reg.Registry()
-            r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
-            # Act
-            body = client.get("/agents", headers=auth_headers).json()
-            # Assert
-            assert body["agents"][0]["turn_url"] is None
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        r = _reg.Registry()
+        r.add("portless", "/path/to/spec.yaml", "sc-portless", pid=98765)
+        # Act
+        body = client.get("/agents", headers=auth_headers).json()
+        # Assert
+        assert body["agents"][0]["turn_url"] is None
 
 
 # --- GET /agents/<name>/status -------------------------------------------
@@ -406,28 +407,18 @@ class TestAgentStatus:
         assert "turn_url" in body
 
     def test_known_agent_status_carries_resolved_turn_url_when_port_claimed(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange — Q1: when port_allocator has a claim, status surfaces
         # the derived turn_url so scitex-todo's resolver can dispatch.
         from scitex_agent_container._state import port_allocator as _pa
-        from scitex_agent_container._state import state_db as _state_db
 
-        db = isolated_env / "state.db"
-        os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-        saved_db_path = _state_db.DEFAULT_DB_PATH
-        _state_db.DEFAULT_DB_PATH = db
-        try:
-            _state_db.init_schema(db)
-            _write_spec(isolated_env, "beta")
-            _pa.claim_port("beta", range_=(23000, 23001), db_path=db)
-            # Act
-            body = client.get("/agents/beta/status", headers=auth_headers).json()
-            # Assert
-            assert body["turn_url"].endswith(":23000/v1/turn")
-        finally:
-            _state_db.DEFAULT_DB_PATH = saved_db_path
-            os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
+        _write_spec(isolated_env, "beta")
+        _pa.claim_port("beta", range_=(23000, 23001))
+        # Act
+        body = client.get("/agents/beta/status", headers=auth_headers).json()
+        # Assert
+        assert body["turn_url"].endswith(":23000/v1/turn")
 
 
 # --- POST /agents/<name>/send --------------------------------------------
@@ -475,7 +466,7 @@ class TestAgentSendValidation:
         assert resp.status_code == 404
 
     def test_prompt_without_session_id_returns_409(
-        self, client, auth_headers, isolated_env
+        self, client, auth_headers, isolated_env, pg_schema
     ):
         # Arrange
         _write_spec(isolated_env, "gamma")
@@ -779,7 +770,7 @@ class TestUnknownRoute:
 # host A's broker. The Q4(b) per-host bearer registry is exercised
 # by the missing-peer-token loud-502 tests at the bottom.
 #
-# No mocks (handoff §0): real SQLite + real ``uvicorn``.
+# No mocks (handoff §0): a real store + real ``uvicorn``.
 # ---------------------------------------------------------------------------
 
 
@@ -796,17 +787,14 @@ def cross_host_env(tmp_path: Path):
     # Arrange
     db = tmp_path / "state.db"
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
 
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["HOME"] = str(tmp_path)
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
     # WI-4 Q4(b): seed the per-host bearer registry. The forwarder
     # pulls ``peer-tokens/host-a.token`` to authenticate when
     # forwarding to host A. ``$HOME`` is already tmp_path so the
@@ -815,7 +803,6 @@ def cross_host_env(tmp_path: Path):
     try:
         yield {"db": db, "tmp": tmp_path}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_db_env is None:
@@ -886,22 +873,18 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     # Arrange
     db = cross_host_env["db"]
     # Register the target as a live instance on host-a.
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
     # Permitted-peer is registered as a child of root, so is alice;
     # they share a group and ACL allows the send.
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
 
     host_a_port = _free_port()
     host_b_port = _free_port()
 
-    # Bind the actual port for host A onto the instances row so the
+    # Bind the actual port for host A onto the instances record so the
     # resolver routes to the right loopback.
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -968,16 +951,12 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
     """
     # Arrange
     db = cross_host_env["db"]
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
     host_a_port = _free_port()
     host_b_port = _free_port()
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1033,7 +1012,7 @@ def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_sch
 
 
 @pytest.fixture
-def missing_peer_token_response(tmp_path: Path):
+def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     """Drive a forwarder POST with NO peer-token written for the
     destination host, so the forwarder must fall through to the loud
     502 path. Yielded value is the live ``httpx.Response`` so each
@@ -1041,21 +1020,18 @@ def missing_peer_token_response(tmp_path: Path):
     """
     # Arrange — fresh tmp env, NO peer-token for host-z.
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_db_const = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     db = tmp_path / "state.db"
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["HOME"] = str(tmp_path)
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
     state_db.record_instance_start(
-        name="alice", host="host-z", a2a_port=9999, db_path=db
+        name="alice", host="host-z", a2a_port=9999
     )
     app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1068,7 +1044,6 @@ def missing_peer_token_response(tmp_path: Path):
             )
         yield r
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_db_env is None:
@@ -1213,12 +1188,8 @@ def _drive_ssh_cross_host_send(
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
 
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    _bind_instance_port("alice", host_a_port)
 
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
@@ -1279,8 +1250,8 @@ def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
     """
     # Arrange
     db = cross_host_ssh_env["db"]
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
     # Act
     event = _drive_ssh_cross_host_send(
         cross_host_ssh_env, sender="permitted-peer", text="hi via ssh"
@@ -1298,8 +1269,8 @@ def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
     """
     # Arrange
     db = cross_host_ssh_env["db"]
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
     # Act
     event = _drive_ssh_cross_host_send(
         cross_host_ssh_env, sender="permitted-peer", text="probe"
@@ -1316,17 +1287,21 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     grant is redundant — cross-group already allows — but the grant path
     still works and the message must arrive at the receiver's inbox.)
     """
-    # Arrange — sender lives under a SEPARATE root from alice; the grant
-    # on the receiver's db (same db here; the fixture's tmp HOME pins both
-    # apps to it) is written on the destination side, and the message
-    # must arrive at the receiver's inbox across the transport.
+    # Arrange — sender lives under a SEPARATE root from alice. The grant is
+    # written on the destination side and the message must arrive at the
+    # receiver's inbox across the transport. The two apps agree about the
+    # grant because they share one in-process SCITEX_STORE_DSN, NOT because
+    # the fixture's tmp HOME pins them to a file: comms_grants is PostgreSQL
+    # now. record_lineage below still takes db_path — lineage had not moved yet.
     db = cross_host_ssh_env["db"]
-    record_lineage(child="alice", parent="root-a", db_path=db)
-    record_lineage(child="outsider", parent="root-b", db_path=db)
+    record_lineage(child="alice", parent="root-a")
+    record_lineage(child="outsider", parent="root-b")
+    # db_path is gone from the grants primitives — that store is on
+    # PostgreSQL and isolates via SCITEX_STORE_DSN (the pg_schema fixture).
+    # record_lineage above KEEPS its db_path: that module had not moved yet.
     state_db_nodes_grant.grant_send(
         sender="outsider",
         target="alice",
-        db_path=db,
         note="ADR-0015 stage2 e2e test grant",
     )
     # Act
@@ -1350,17 +1325,13 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
-    record_lineage(child="alice", parent="root", db_path=db)
-    record_lineage(child="outsider", parent="root", db_path=db)
+    record_lineage(child="alice", parent="root")
+    record_lineage(child="outsider", parent="root")
     state_db_nodes_grant.record_comms_policy(
-        name="alice", inbound_siblings="deny", db_path=db
+        name="alice", inbound_siblings="deny"
     )
-    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0, db_path=db)
-    with state_db.open_db(db) as conn:
-        conn.execute(
-            "UPDATE instances SET a2a_port = ? WHERE name = 'alice'",
-            (host_a_port,),
-        )
+    state_db.record_instance_start(name="alice", host="host-a", a2a_port=0)
+    _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
     app_b = create_app(token=SHARED_TOKEN, local_host="host-b")
 
@@ -1389,8 +1360,8 @@ def test_cross_host_send_via_ssh_shim_uses_peer_token_bearer_header(
     """
     # Arrange
     db = cross_host_ssh_env["db"]
-    record_lineage(child="permitted-peer", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="alice", parent="root")
     _drive_ssh_cross_host_send(
         cross_host_ssh_env, sender="permitted-peer", text="bearer probe"
     )
@@ -1433,8 +1404,8 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
     intra-group ACL allows the send.
     """
     db = cross_host_env["db"]
-    record_lineage(child="bob", parent="root", db_path=db)
-    record_lineage(child="alice", parent="root", db_path=db)
+    record_lineage(child="bob", parent="root")
+    record_lineage(child="alice", parent="root")
     port = _free_port()
     app = create_app(token=SHARED_TOKEN, local_host="host-a")
 

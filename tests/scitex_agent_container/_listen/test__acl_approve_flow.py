@@ -31,7 +31,6 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import has_block
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container._state.state_db_nodes import (
@@ -46,16 +45,13 @@ _TOKEN = "test-token-approve-flow"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
@@ -67,10 +63,9 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # still-meaningful behaviour this file covers is the BLOCK /
         # UNBLOCK decision primitives + CLI, plus the pending-prompt clear
         # (pending seeded directly via ``record_pending_prompt``).
-        record_lineage(child="worker-a", parent="root", db_path=db)
+        record_lineage(child="worker-a", parent="root")
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_env is None:
@@ -191,7 +186,7 @@ def test_unblock_writes_comms_grants_row(isolated_state: Path, pg_schema: str) -
     # Act
     unblock_and_clear_pending(sender="worker-a", target="lead")
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
 def test_unblock_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -> None:
@@ -281,7 +276,7 @@ def test_blocked_send_emits_no_receiver_push(isolated_state: Path, pg_schema: st
             json=_send_payload("worker-a"),
             headers={"authorization": f"Bearer {_TOKEN}"},
         )
-    rows = list_undelivered(target="lead", db_path=isolated_state)
+    rows = list_undelivered(target="lead")
     # Assert — no rows landed for the lead from this blocked send.
     assert rows == []
 
@@ -321,7 +316,7 @@ def test_cli_unblock_writes_comms_grants(isolated_state: Path, pg_schema: str) -
     # Act
     CliRunner().invoke(a2a, ["unblock", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")
 
 
 def test_cli_block_writes_comms_blocks(isolated_state: Path, pg_schema: str) -> None:
@@ -342,4 +337,4 @@ def test_cli_grant_alias_still_unblocks(isolated_state: Path, pg_schema: str) ->
     # Act
     CliRunner().invoke(a2a, ["grant", "worker-a", "lead"])
     # Assert
-    assert has_grant(sender="worker-a", target="lead", db_path=isolated_state)
+    assert has_grant(sender="worker-a", target="lead")

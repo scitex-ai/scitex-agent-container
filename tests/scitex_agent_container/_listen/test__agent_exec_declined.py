@@ -22,7 +22,6 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._runners._session_state import state_dir_for
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 
 _TOKEN = "test-token-agent-exec-declined"
 
@@ -32,20 +31,16 @@ def isolated_listen_env(tmp_path: Path):
     """Isolated state.db + registry/runtime dirs (mirrors test__agent_exec_subprocess.py)."""
     db = tmp_path / "state.db"
     saved_env_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default_db = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     try:
         yield tmp_path
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default_db
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_env_db is None:

@@ -61,8 +61,8 @@ falsifiable subset and stops.
 SHRINKING IS TWO LINES; GROWING IS IMPOSSIBLE
 =============================================
 Name the sink in the comment, delete the entry here. A 70th unnamed claim
-fails. Same asymmetry as tests/develop/test_sqlite_footprint_frozen.py, for
-the same reason: a list that can only shrink is an inventory; one that can
+fails. The asymmetry is the whole point, and it is the reason to prefer a
+shrink-only list: a list that can only shrink is an inventory; one that can
 grow is a wish.
 
 WHAT A PASS DOES **NOT** PROVE — READ THIS BEFORE TRUSTING A GREEN
@@ -149,7 +149,20 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # the file is edited. That is the guard working, not misfiring: an entry
         # pinned by line is a claim about a LOCATION, and the location changed.
         "scitex_agent_container/_lifecycle/_in_sif_http_client.py:141",
-        "scitex_agent_container/_lifecycle/_instances.py:263",
+        # _instances.py LEFT THIS SET 2026-08-28. Its claim was frozen at
+        # :263 as an unnamed one, and it was twice RE-PINNED (:265, then :267
+        # by the a2a-ports migration, whose added comment moved it again) on
+        # the reasoning that a bare `except: pass` has no sink to name.
+        # That reasoning was right about the code and wrong about what to do:
+        # the review then proved the swallow was hiding a live TypeError (a
+        # stale `db_path=` kwarg) on EVERY spec-driven start. The honest fix
+        # was never to re-pin the debt — it was to give the site a sink. Both
+        # handlers now log (warning for a name collision, error for anything
+        # else) and NAME where it lands, so the claim is checkable and the
+        # entry is gone rather than moved. Verified on the merged file: the
+        # a2a-ports comment still shifts the lines, and it no longer matters,
+        # because a claim that names its sink is not this gate's business at
+        # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
@@ -171,10 +184,23 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
         "scitex_agent_container/_mcp/_channel_post_deliver.py:120",
         "scitex_agent_container/_mcp/_channel_post_deliver.py:99",
-        "scitex_agent_container/_mcp/_channel_reaction_ack.py:107",
-        "scitex_agent_container/_mcp/channel.py:329",
-        "scitex_agent_container/_network/_peer_dispatch.py:46",
-        "scitex_agent_container/_network/_peer_dispatch.py:59",
+        # THESE FOUR MOVED, they did not change. The dispatch-ledger port to
+        # PostgreSQL (2026-08-28) added prose above each of them, so the
+        # coordinates shifted 107->115, 329->331, 46->62 and 59->79. The
+        # `stx-allow` reasons themselves are byte-for-byte the ones frozen
+        # before, and no new unnamed claim was introduced.
+        #
+        # RE-PINNED RATHER THAN CLOSED, deliberately. Closing one means
+        # writing a path into the comment, and this file's own docstring says
+        # a plausible path that nothing writes to is WORSE than the honest
+        # unnamed claim, because it buys a green check. These four log through
+        # `logging.getLogger(__name__)`; where that lands for a container
+        # agent is a survey nobody has done, so naming it here would be a
+        # guess wearing a receipt.
+        "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
+        "scitex_agent_container/_mcp/channel.py:331",
+        "scitex_agent_container/_network/_peer_dispatch.py:62",
+        "scitex_agent_container/_network/_peer_dispatch.py:79",
         "scitex_agent_container/_network/probe.py:457",
         "scitex_agent_container/_reconcile/_budget.py:164",
         "scitex_agent_container/_reconcile/_pass.py:370",
@@ -210,7 +236,16 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/runtimes/_apptainer_auth_bind.py:296",
         "scitex_agent_container/runtimes/_cct_rail_alarm.py:198",
         "scitex_agent_container/runtimes/_cct_rail_verdict.py:242",
-        "scitex_agent_container/runtimes/_openai_sdk_common.py:179",
+        # _openai_sdk_common.py:179 LEFT THIS SET 2026-08-29, by DELETION
+        # rather than by naming a sink. The claim was "surfaced by
+        # vendor session open instead" on an `except OSError: pass` guarding
+        # the mkdir of the session-db parent directory — an honest claim while
+        # a session db was a FILE. sac's OpenAI runner now keeps conversation
+        # state in PostgreSQL (`_state/openai_session_store.py`), so there is
+        # no directory to create, no open to surface anything, and the whole
+        # helper went with the file. An entry whose line no longer exists must
+        # leave the list, or it becomes a blessed coordinate for whatever
+        # drifts into position 179.
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
         "scitex_agent_container/runtimes/_tui_inject.py:92",
         "scitex_agent_container/runtimes/_tui_turn_bridge_lifecycle.py:196",

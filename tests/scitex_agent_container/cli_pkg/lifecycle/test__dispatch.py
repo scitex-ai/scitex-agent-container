@@ -35,6 +35,20 @@ from scitex_agent_container.cli_pkg.lifecycle._dispatch import (
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import HostsSpec
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Shim helpers — dual-behavior rsync (dry-run vs real) plus a fake ssh.
 # ---------------------------------------------------------------------------
@@ -155,17 +169,18 @@ def shim_bin(tmp_path: Path, env_save_restore) -> Path:
 
 @pytest.fixture
 def state_db(fake_home: Path) -> Path:
-    """Redirect state.db to a tmp path under fake_home.
+    """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp path under
+    fake_home.
 
-    DEFAULT_DB_PATH is module-level and reads the env var at import
-    time, so we reload the module after setting the env var. Tests
-    that mutate state.db rely on this to stay isolated; without the
-    reload each test would write to the user's real state.db.
+    ``DEFAULT_DB_PATH`` was module-level and read this env var at import, so
+    this reloaded the module after setting it — without the reload a test
+    would have written to the user's real state.db. That constant was deleted
+    with the storage engine on 2026-08-30 and the writes address the shared
+    PostgreSQL store, so the reload re-derives nothing.
 
-    Both env-var manipulation and module reload are managed locally
-    (no env_save_restore) so the teardown order is unambiguous: we
-    first reset the env, THEN reload, so DEFAULT_DB_PATH lands back
-    on the real path the user expects after the fixture exits.
+    Both the env-var manipulation and the module reload are managed locally
+    (no env_save_restore) so the teardown order stays unambiguous: reset the
+    env first, THEN reload.
     """
     import importlib
     import os as _os
@@ -712,9 +727,6 @@ class TestDispatchStrictHostKeyChecking:
 class TestLookupRemotePeer:
     def test_no_active_row_returns_none(self, fake_home, state_db, env_save_restore):
         # Arrange — fresh state.db with no instances row for "alpha".
-        from scitex_agent_container._state.state_db import init_schema
-
-        init_schema()
         # Act
         result = lookup_remote_peer("alpha")
         # Assert
@@ -754,9 +766,6 @@ class TestTryDispatchRemote:
 
     def test_no_active_row_returns_false(self, fake_home, state_db, env_save_restore):
         # Arrange — no row; caller proceeds local.
-        from scitex_agent_container._state.state_db import init_schema
-
-        init_schema()
         calls: list = []
         # Act
         dispatched = try_dispatch_remote(

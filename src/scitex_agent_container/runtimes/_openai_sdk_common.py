@@ -10,8 +10,15 @@ note). Mirrors the concern split established there:
 2. **Workspace resolution** — re-exported verbatim from
    :mod:`runtimes._provider_common` (the openai-compat-1 extraction
    whose whole point was letting THIS module reuse it).
-3. **Session-state placement** — :func:`resolve_state_db_path` picks
-   where the ``openai-agents`` ``SQLiteSession`` database lives.
+
+Session-state placement USED TO BE the third concern here, and it is gone
+rather than moved: the helper picked a filesystem path for a per-agent
+database file, and there is no file to place any more. Conversation
+state lives in this host's PostgreSQL, resolved by
+:mod:`_state.openai_session_store` — a store target, not a path — so the
+question this module answered no longer has a filesystem answer. The
+cross-reference went with the function on purpose: documentation pointing
+at a deleted symbol is how a reader learns to distrust the prose.
 
 The ``openai-agents`` install is OPTIONAL (``pip install
 scitex-agent-container[openai]``): nothing here imports ``agents`` (even
@@ -41,8 +48,6 @@ gain. The contract here is therefore:
 from __future__ import annotations
 
 import os
-import re
-from pathlib import Path
 
 # Workspace + MCP wiring is provider-agnostic — reuse the openai-compat-1
 # extraction verbatim (see runtimes/_provider_common.py). Re-exported so
@@ -53,7 +58,6 @@ from ._provider_common import project_runtime_root, resolve_agent_workspace
 __all__ = [
     "OpenAISDKCommonError",
     "provision_openai_auth",
-    "resolve_state_db_path",
     "default_openai_model",
     "resolve_agent_workspace",
     "project_runtime_root",
@@ -120,62 +124,3 @@ def default_openai_model() -> str | None:
     """
     value = os.environ.get(_SAC_OPENAI_MODEL_ENV, "").strip()
     return value or None
-
-
-# ---------------------------------------------------------------------------
-# Session-state placement (SQLiteSession db)
-# ---------------------------------------------------------------------------
-
-# Filename-safe agent-name filter: keep letters/digits/._- and collapse
-# everything else to "-" so an exotic agent name can't escape the
-# sessions directory or produce an unopenable path.
-_UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def resolve_state_db_path(
-    agent_name: str,
-    *,
-    home: Path | None = None,
-    override: str | Path | None = None,
-) -> Path:
-    """Resolve where the agent's ``SQLiteSession`` database lives.
-
-    The ``openai-agents`` SDK persists conversation state in a SQLite
-    file (one logical session per ``session_id``). sac places it under
-    the standard per-agent runtime-state root so it survives restarts
-    and never pollutes the workspace repo::
-
-        ~/.scitex/agent-container/runtime/openai-sessions/<agent>.sqlite3
-
-    Args:
-        agent_name: The agent whose state db to resolve. Sanitized to a
-            filename-safe form (non ``[A-Za-z0-9._-]`` runs become ``-``).
-        home: Home-directory override (tests).
-        override: Explicit db path — used verbatim (parent created), for
-            specs that pin state elsewhere. ``:memory:`` is NOT special-
-            cased here; callers wanting ephemeral state pass the SDK's
-            own ``:memory:`` sentinel directly to ``SQLiteSession``.
-
-    Returns:
-        The resolved path. The parent directory is created (best-effort)
-        so ``SQLiteSession`` can open the file immediately.
-    """
-    if override is not None:
-        path = Path(override).expanduser()
-    else:
-        _home = Path(home) if home is not None else Path.home()
-        safe = _UNSAFE_NAME_CHARS.sub("-", agent_name).strip("-") or "agent"
-        path = (
-            _home
-            / ".scitex"
-            / "agent-container"
-            / "runtime"
-            / "openai-sessions"
-            / f"{safe}.sqlite3"
-        )
-    # stx-allow: fallback (reason: state dir may be read-only; SQLiteSession itself fails loudly on open, with a clearer path in hand)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:  # stx-allow: fallback (reason: surfaced by SQLiteSession open instead)
-        pass
-    return path

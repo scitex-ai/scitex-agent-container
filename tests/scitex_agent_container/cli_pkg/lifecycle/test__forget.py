@@ -31,7 +31,6 @@ from typing import Iterator
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_instances import (
     list_active_instances,
     record_instance_start,
@@ -40,24 +39,34 @@ from scitex_agent_container._state.state_db_nodes import (
     register_comms_node,
 )
 
+
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Real isolated state.db; env + module constants saved/restored."""
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
@@ -68,15 +77,11 @@ def _seed_active_instance(
     name: str, *, host: str = "h", db_path: Path | None = None
 ) -> str:
     """Insert one active ``instances`` row for ``name`` and return its id."""
-    return record_instance_start(name, host=host, db_path=db_path)
+    return record_instance_start(name, host=host)
 
 
-def _seed_comms_node(
-    name: str, *, host: str = "h", port: int = 9999, db_path: Path | None = None
-) -> None:
-    register_comms_node(
-        name=name, host=host, a2a_port=port, source_host=None, db_path=db_path
-    )
+def _seed_comms_node(name: str, *, host: str = "h", port: int = 9999) -> None:
+    register_comms_node(name=name, host=host, a2a_port=port, source_host=None)
 
 
 def _run_forget(*argv: str) -> object:
@@ -99,16 +104,18 @@ def test_forget_tombstones_stale_instances_row(isolated_state: Path) -> None:
     # Act
     _run_forget("ghost-agent", "--force")
     # Assert — no active rows remain for ghost-agent.
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "ghost-agent" not in active
 
 
-def test_forget_clears_comms_nodes_pin(isolated_state: Path) -> None:
+def test_forget_clears_comms_nodes_pin(
+    isolated_state: Path, pg_schema: str
+) -> None:
     # Arrange — federated routing still pins ghost-agent at a dead
     # host. Without this, future a2a sends silently fan out to the
     # dead host even after the instance row is gone.
     _seed_active_instance("ghost-agent", db_path=isolated_state)
-    _seed_comms_node("ghost-agent", db_path=isolated_state)
+    _seed_comms_node("ghost-agent")
     from scitex_agent_container._state.state_db_nodes import (
         resolve_node_host,
     )
@@ -116,7 +123,7 @@ def test_forget_clears_comms_nodes_pin(isolated_state: Path) -> None:
     # Act
     _run_forget("ghost-agent", "--force")
     # Assert — the comms_nodes routing tuple is gone.
-    assert resolve_node_host(name="ghost-agent", db_path=isolated_state) is None
+    assert resolve_node_host(name="ghost-agent") is None
 
 
 def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
@@ -128,7 +135,7 @@ def test_forget_exit_reason_is_operator_forget(isolated_state: Path) -> None:
 
     # Act
     _run_forget("ghost-agent", "--force")
-    row = last_known_instance("ghost-agent", db_path=isolated_state)
+    row = last_known_instance("ghost-agent")
     # Assert
     assert row is not None and row["exit_reason"] == "operator-forget"
 
@@ -181,7 +188,7 @@ def test_forget_force_overrides_live_safety_gate(isolated_state: Path) -> None:
     # Act
     _run_forget("live-but-dead", "--force")
     # Assert
-    active = [r["name"] for r in list_active_instances(db_path=isolated_state)]
+    active = [r["name"] for r in list_active_instances()]
     assert "live-but-dead" not in active
 
 

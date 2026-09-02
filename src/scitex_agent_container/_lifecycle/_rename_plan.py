@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._rename_cards import find_foreign_scoped_cards, find_owned_cards
-from ._rename_db import count_rows
 from ._rename_spec import SpecChange, plan_spec_changes
 
 # Same rule ``sac agents create`` enforces: the name is a directory name.
@@ -39,14 +38,26 @@ class Layout:
     Every path derives from ``root``, so a caller — a test, or an operator
     with a non-standard install — can point the whole rename somewhere
     else. Deliberately NOT read from the module-level constants elsewhere
-    in sac (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``,
-    ``state_db.DEFAULT_DB_PATH``): those are computed from ``$HOME`` at
-    IMPORT time, so a fixture that sets ``$HOME`` afterwards CANNOT redirect
-    them. A test that trusted that would look isolated while reading — and
-    writing — the live fleet.
+    in sac (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``):
+    those are computed from ``$HOME`` at IMPORT time, so a fixture that sets
+    ``$HOME`` afterwards CANNOT redirect them. A test that trusted that would
+    look isolated while reading — and writing — the live fleet.
+
+    ``state_db.DEFAULT_DB_PATH`` was the third name in that list until
+    2026-08-30, when it was deleted along with the ``state.db`` it addressed.
+    It is dropped rather than left as an example, because an import-time
+    hazard illustrated with a constant that no longer exists teaches the
+    reader to look for a trap the code can no longer set.
     """
 
     root: Path
+
+    #: ``state_db`` was a property here until 2026-08-29. It named
+    #: ``<root>/runtime/state.db``, and its only readers were the deleted
+    #: ``_rename_db`` and the pid probe below. sac's ``init_schema`` issues no
+    #: DDL at all, so the file it pointed at holds nothing a rename could
+    #: carry; keeping the property would have kept a path the rename appears
+    #: to touch and does not.
 
     @classmethod
     def default(cls) -> "Layout":
@@ -59,10 +70,6 @@ class Layout:
         if override:
             return cls(root=Path(override).expanduser())
         return cls(root=Path.home() / ".scitex" / "agent-container")
-
-    @property
-    def state_db(self) -> Path:
-        return self.root / "runtime" / "state.db"
 
     def spec_dir(self, name: str) -> Path:
         return self.root / "agents" / name
@@ -127,15 +134,21 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _open_instance_pid(db_path: Path, name: str) -> int | None:
-    """Return the pid of an open ``instances`` row for ``name``, if any."""
-    if not db_path.is_file():
-        return None
+def _open_instance_pid(name: str) -> int | None:
+    """Return the pid of an open ``instances`` row for ``name``, if any.
+
+    NO ``db_path``. It named a ``state.db`` this function stopped opening when
+    the read moved to ``list_active_instances``, and the leftover parameter
+    was not merely unused: an absent file made this answer ``None`` — "not
+    running" — BEFORE asking the store that actually holds the records. On a
+    host with no state.db a LIVE agent therefore read as stopped, and
+    ``preflight`` let the rename proceed underneath it.
+    """
     # Through the OWNING module, not through its table. The raw SELECT this
-    # replaces would keep reading a SQLite ``instances`` table after that
+    # replaces would keep reading a local ``instances`` table after that
     # table moves backend, and would report "not running" for every agent
     # rather than failing — the same silent-stranding shape found in
-    # ``_authheal/_specimen`` during the sqlite->PostgreSQL migration.
+    # ``_authheal/_specimen`` during the move to PostgreSQL.
     #
     # ``list_active_instances`` already applies ``ended_at IS NULL`` and
     # orders by ``started_at DESC``, so only this function's two extra
@@ -143,8 +156,8 @@ def _open_instance_pid(db_path: Path, name: str) -> int | None:
     from .._state.state_db_instances import list_active_instances
 
     try:
-        rows = list_active_instances(db_path=db_path)
-    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught sqlite3.Error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
+        rows = list_active_instances()
+    except Exception:  # stx-allow: fallback (reason: a fresh DB has no instances table — absence of the table is absence of evidence, not evidence of running. Kept deliberately broad: the raw version caught a driver error, and the accessor may raise a different type per backend, so narrowing it here would turn a fresh database into a crash mid-rename.)
         return None
     for row in rows:
         if row.get("name") == name and row.get("pid") is not None:
@@ -182,11 +195,11 @@ def probe_running(name: str, layout: Layout) -> tuple[str, str]:
         if _pid_alive(pid):
             return "running", f"pid {pid} (from {pid_file}) is alive"
 
-    open_pid = _open_instance_pid(layout.state_db, name)
+    open_pid = _open_instance_pid(name)
     if open_pid is not None and _pid_alive(open_pid):
         return (
             "running",
-            f"state.db has an open instances row for {name!r} whose pid "
+            f"the store has an open instances row for {name!r} whose pid "
             f"{open_pid} is alive",
         )
 
@@ -239,6 +252,48 @@ def preflight(old: str, new: str, layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
+    """``{"table.column": n}`` for every record a rename would carry.
+
+    ONE REPORT, AND IT IS NOW ENTIRELY THE STORE'S. ``count_rows`` read
+    ``state.db`` here until 2026-08-29 and was deleted with ``_rename_db``:
+    every ``NAME_COLUMNS`` pair it still declared named a table
+    ``init_schema`` stopped creating, so it could only ever return ``{}``.
+    The rows a rename actually carries are in the shared PostgreSQL store,
+    and the two counters below are their readers.
+
+    Both report under the pre-migration ``table.column`` keys deliberately — an
+    operator who has run ``--dry-run`` before reads the same list, and a zero
+    means the same thing it meant.
+
+    AN UNREACHABLE STORE PRODUCES A WARNING, NEVER A SILENT ZERO. ``--dry-run``
+    must not be the step that fails a rename — the same reasoning
+    :func:`_open_instance_pid` states — but an empty count for the reason
+    "the store did not answer" is indistinguishable from an empty count for
+    the reason "there is nothing there", and only one of those is safe to
+    act on. So the failure is caught and SAID, per counter, naming which half
+    is missing rather than leaving the total quietly short.
+    """
+    from .._state.state_db_grants_rename import count_grant_rename_rows
+    from .._state.state_db_instances_rename import count_instance_rename_rows
+
+    counts: dict[str, int] = {}
+    for label, counter in (
+        ("instances", count_instance_rename_rows),
+        ("comms_grants", count_grant_rename_rows),
+    ):
+        try:
+            counts.update(counter(old=old))
+        except Exception as exc:  # stx-allow: fallback (reason: --dry-run must not be the step that fails a rename, and an unreachable store is a fact about this host rather than about the plan. Kept broad because the store raises per-backend types; the warning below is what keeps the resulting zero from being read as "nothing to carry".)
+            plan.warnings.append(
+                f"could not read the {label} store, so the row counts below "
+                f"OMIT that half and are NOT a total ({exc}). The rename "
+                "itself still carries those records — this is the count that "
+                "is missing, not the step."
+            )
+    return counts
+
+
 def build_plan(
     old: str,
     new: str,
@@ -286,7 +341,7 @@ def build_plan(
         else:
             plan.warnings.append(f"no {label} at {src} — skipping that step")
 
-    plan.db_counts = count_rows(layout.state_db, old)
+    plan.db_counts = _count_rows_everywhere(plan, old)
 
     if cards:
         plan.card_ids = find_owned_cards(old, store=store)

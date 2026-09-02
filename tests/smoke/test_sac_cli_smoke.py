@@ -159,8 +159,14 @@ spec:
 """
 
 
-def test_sac_agents_start_dry_run_against_real_spec_yaml(tmp_path, env_save_restore):
-    # Arrange — write a minimal v3 spec and redirect HOME so the
+def test_sac_agents_start_dry_run_against_real_spec_yaml(
+    tmp_path, env_save_restore, pg_schema
+):
+    # Arrange — takes ``pg_schema`` since 2026-08-28: a --dry-run still reaches
+    # resolve_a2a_port -> claim_port, so it really does take an a2a claim, and
+    # that ledger is PostgreSQL now. Before the move the claim landed in the
+    # redirected HOME's state.db and nothing said so.
+    # Write a minimal v3 spec and redirect HOME so the
     # dry-run materialises its workspace under tmp_path, not the
     # developer's real ~/.scitex tree.
     home = tmp_path / "home"

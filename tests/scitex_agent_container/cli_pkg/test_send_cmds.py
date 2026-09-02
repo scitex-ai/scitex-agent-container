@@ -31,6 +31,20 @@ from scitex_agent_container.cli_pkg.send_cmds import send
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
+@pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
 # The generic ``_swap(name, fn)`` module-namespace helper lived here and is
 # gone with its last caller: every remaining swap targets a specific
 # collaborator (``os.kill``, ``post_turn_to_url``) and says so in its name.
@@ -87,8 +101,11 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
     by an earlier test in the shared default db (CI runs the whole
     suite) makes ``alpha`` look "running" and the send POSTs to a dead
     loopback port instead of falling through to ``claude --resume``.
-    Redirecting to an empty db (and reloading the import-time
-    ``DEFAULT_DB_PATH``) keeps these resume-path tests deterministic.
+    Redirecting to an empty db kept these resume-path tests deterministic.
+    The reload below was how the import-time ``DEFAULT_DB_PATH`` constant
+    followed that redirect; it was deleted with the storage engine on
+    2026-08-30, so the reload re-derives nothing and the instance rows come
+    from the shared PostgreSQL store.
     """
     import importlib
 

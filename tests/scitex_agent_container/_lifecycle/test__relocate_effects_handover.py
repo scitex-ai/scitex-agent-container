@@ -13,12 +13,19 @@ rule lives in ONE function, :func:`._relocate_lease_readiness.handoff_readiness`
 and both call it — and the tests below drive the PHASE against the same states
 :mod:`test__relocate_lease_readiness` drives the predicate against.
 
-NOT MOCKED. The lease store is the real sqlite one (the autouse fixture isolates
-it per test), and the liveness observation runs the real tmux script through
-``sh -c``: for an agent name no session exists under, tmux answers honestly and
-that answer is the machine's, not a canned one. Only the "another host IS running
-it" case is supplied as canned marker output, because creating a real second live
-agent is not something a unit test may do.
+NOT MOCKED. The lease store is a REAL PostgreSQL one — a throwaway schema from
+the shared ``pg_schema`` fixture, since the lease moved stores on 2026-08-28
+— and the liveness observation runs the real tmux script through ``sh -c``: for
+an agent name no session exists under, tmux answers honestly and that answer is
+the machine's, not a canned one. Only the "another host IS running it" case is
+supplied as canned marker output, because creating a real second live agent is
+not something a unit test may do.
+
+EVERY TEST HERE TAKES ``pg_schema``, INCLUDING THE ONES THAT WRITE NO ROW. The
+autouse isolation points ``SCITEX_STORE_DSN`` at a port nothing listens on, so a
+test without the fixture does not read an empty store — it raises on connect.
+The tests that begin with no lease are asserting the BOOTSTRAP path, which is a
+real read of a real empty store, and they only mean that when the store exists.
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ import pytest
 from scitex_agent_container._lifecycle._relocate_effects import RelocateAdapters
 from scitex_agent_container._lifecycle._relocate_lease import Lease
 from scitex_agent_container._lifecycle._relocate_shell import Shell
-from scitex_agent_container._state.state_db_relocation import load_lease, save_lease
+from scitex_agent_container._state.relocation_pg import load_lease, save_lease
 
 AGENT = "relocate-handover-test-no-such-session"
 SRC = "src-host"
@@ -96,8 +103,13 @@ def _row(holder: str, *, fence: int = 1, expires_at: float = NOW + DAY) -> None:
 
 
 @pytest.fixture
-def stale_row() -> None:
-    """The canary's return-leg input: a LIVE row naming a host that is not the source."""
+def stale_row(pg_schema: str) -> None:
+    """The canary's return-leg input: a LIVE row naming a host that is not the source.
+
+    Depends on ``pg_schema`` so the store the row is written to is the same
+    throwaway schema the phase under test reads back from — and so the tests
+    below inherit it without each having to ask.
+    """
     _row(THIRD, fence=1)
 
 
@@ -192,7 +204,7 @@ def test_that_refusal_forbids_forcing_it(stale_row) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_empty_store_still_bootstraps_and_hands_over() -> None:
+def test_an_empty_store_still_bootstraps_and_hands_over(pg_schema: str) -> None:
     # Arrange: sac claims no lease at agent start, so a first move finds no row.
     adapters = _adapters()
     # Act
@@ -201,7 +213,7 @@ def test_an_empty_store_still_bootstraps_and_hands_over() -> None:
     assert result.ok is True
 
 
-def test_the_bootstrapped_handover_lands_at_fence_one() -> None:
+def test_the_bootstrapped_handover_lands_at_fence_one(pg_schema: str) -> None:
     # Arrange
     adapters = _adapters()
     # Act
@@ -210,7 +222,7 @@ def test_the_bootstrapped_handover_lands_at_fence_one() -> None:
     assert load_lease(AGENT).fence == 1
 
 
-def test_a_row_already_held_by_the_source_hands_over_directly() -> None:
+def test_a_row_already_held_by_the_source_hands_over_directly(pg_schema: str) -> None:
     # Arrange: the ordinary second move.
     _row(SRC, fence=4)
     adapters = _adapters()
@@ -220,7 +232,7 @@ def test_a_row_already_held_by_the_source_hands_over_directly() -> None:
     assert load_lease(AGENT).fence == 5
 
 
-def test_an_expired_row_is_reclaimed_without_observing_anyone() -> None:
+def test_an_expired_row_is_reclaimed_without_observing_anyone(pg_schema: str) -> None:
     # Arrange: the fence already settles this, so no third host is asked.
     _row(THIRD, fence=1, expires_at=NOW - 1.0)
     adapters = _adapters(exec_fn=_says_running)

@@ -69,7 +69,12 @@ def _write_yaml(tmpdir: Path, name: str, handler: str = "echo") -> Path:
 
 
 @pytest.fixture()
-def echo_client() -> TestClient:
+def echo_client(pg_schema: str) -> TestClient:
+    # ``pg_schema``: every ``message:send`` through this client persists a
+    # channel event, and that table moved to the shared PostgreSQL on
+    # 2026-08-28 (ADR-0023). Without a throwaway schema the persist resolves
+    # the deliberately-unreachable DSN and the SDK assertions fail on a
+    # connection error rather than on anything they are testing.
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         p = _write_yaml(tmp, "mock-echo", handler="echo")
@@ -661,35 +666,53 @@ import socket as _socket
 
 import httpx as _httpx
 
-from scitex_agent_container._state import state_db as _state_db
 from tests.scitex_agent_container._helpers.loopback_server import (
     run_loopback as _run_loopback_shared,
 )
 
 
 @pytest.fixture
-def _isolated_db(tmp_path: Path):
-    """Point state.db at a tmp file for this test.
+def _isolated_db(tmp_path: Path, pg_schema: str):
+    """Point state.db at a tmp file AND the channel store at a tmp schema.
 
     PA-306 no-mocks: yield-based fixture saving/restoring real state
     (no ``monkeypatch``). Both the env var and the module-level
     constant are touched so callers that read either path see the
     isolated db.
+
+    ``pg_schema`` joined on 2026-08-28: ``channel_events`` moved to
+    the shared PostgreSQL (ADR-0023), so the durability tests below need a
+    real throwaway schema. Declared on the FIXTURE rather than on each test
+    so the ordering is a dependency rather than a hope.
     """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = _state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    _state_db.DEFAULT_DB_PATH = db
-    _state_db.init_schema(db)
     try:
         yield db
     finally:
-        _state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
             os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved_env
+
+
+def _channel_rows(sql: str) -> list:
+    """Read ``sac_channel_events`` through a real connection to the store.
+
+    Replaces four reads that named a table in the retired per-agent database
+    which no longer exists. The queries are unchanged apart from the table
+    name and the placeholder style.
+    """
+    from scitex_agent_container._state.state_db_channel_store import (
+        new_channel_connection,
+    )
+
+    conn = new_channel_connection()
+    try:
+        return list(conn.execute(sql).fetchall())
+    finally:
+        conn.close()
 
 
 def _send_payload(text: str, *, from_agent: str = "alice") -> dict:
@@ -766,11 +789,14 @@ def _durable_publish_row(_isolated_db, tmp_path):
         )
     assert resp.status_code in (200, 201, 202), resp.text
     # Assert handled by per-behaviour tests below.
-    with _state_db.open_db(_isolated_db) as conn:
-        rows = conn.execute(
-            "SELECT id, target, source, content, delivered_at FROM channel_events"
-        ).fetchall()
-    return rows
+    rows = _channel_rows(
+        "SELECT id, target, source, content, delivered_at FROM sac_channel_events"
+    )
+    return [
+        {"id": r[0], "target": r[1], "source": r[2], "content": r[3],
+         "delivered_at": r[4]}
+        for r in rows
+    ]
 
 
 def test_publish_with_no_subscriber_persists_exactly_one_row(
@@ -884,12 +910,11 @@ def test_replayed_event_is_marked_delivered_after_first_delivery(
             _consume_first_event(f"http://127.0.0.1:{port}/agents/bob/inbox/stream")
         )
     # Act
-    with _state_db.open_db(_isolated_db) as conn:
-        row = conn.execute(
-            "SELECT delivered_at FROM channel_events WHERE target='bob'"
-        ).fetchone()
+    rows = _channel_rows(
+        "SELECT delivered_at FROM sac_channel_events WHERE target = 'bob'"
+    )
     # Assert
-    assert row["delivered_at"] is not None
+    assert rows[0][0] is not None
 
 
 def test_sse_id_line_is_persisted_row_id(_isolated_db, tmp_path: Path) -> None:
@@ -909,12 +934,9 @@ def test_sse_id_line_is_persisted_row_id(_isolated_db, tmp_path: Path) -> None:
         sse_id, _event = _asyncio.run(
             _consume_event_with_id(f"http://127.0.0.1:{port}/agents/bob/inbox/stream")
         )
-    with _state_db.open_db(_isolated_db) as conn:
-        row = conn.execute(
-            "SELECT id FROM channel_events WHERE target='bob'"
-        ).fetchone()
+    rows = _channel_rows("SELECT id FROM sac_channel_events WHERE target = 'bob'")
     # Act
-    matches = sse_id is not None and int(sse_id) == int(row["id"])
+    matches = sse_id is not None and int(sse_id) == int(rows[0][0])
     # Assert
     assert matches
 
@@ -965,11 +987,10 @@ def _persisted_ack_event(_isolated_db, tmp_path):
         )
     assert resp.status_code in (200, 201, 202), resp.text
     # Assert handled by per-behaviour tests below.
-    with _state_db.open_db(_isolated_db) as conn:
-        row = conn.execute(
-            "SELECT meta_json FROM channel_events WHERE target='bob'"
-        ).fetchone()
-    return json.loads(row["meta_json"])
+    rows = _channel_rows(
+        "SELECT meta_json FROM sac_channel_events WHERE target = 'bob'"
+    )
+    return json.loads(rows[0][0])
 
 
 def test_a2a_send_path_propagates_ack_flag_into_event(_persisted_ack_event):

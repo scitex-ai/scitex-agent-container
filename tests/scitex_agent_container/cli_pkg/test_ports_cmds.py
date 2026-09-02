@@ -3,17 +3,23 @@
 PA-306 no-mocks: every collaborator is real.
 
 * ``CliRunner`` invokes the real Click command.
-* A real ``state.db`` under ``tmp_path`` carries real a2a claims made
-  through :mod:`_state.port_allocator` — the same allocator production
-  uses.
+* A real PostgreSQL schema (the shared ``pg_schema`` fixture) carries real
+  a2a claims made through :mod:`_state.port_allocator` — the same allocator
+  production uses. It was a ``state.db`` under ``tmp_path`` until 2026-08-28;
+  ``a2a_ports`` moved to per-host PostgreSQL and ``db_path`` went with it,
+  from ``collect_ports_data`` as well as from the allocator. The fixture
+  points the REAL resolver at a throwaway schema, so this exercises the
+  resolution production performs rather than bypassing it — and it SKIPS
+  where no writable database exists, which is not a pass.
 * Liveness is exercised against REAL sockets: a bound-and-listening
   socket (live) and a bound-then-closed free port (dead / orphan). No
   probe is monkeypatched.
-* A yield-based ``isolated_state`` fixture redirects BOTH state
-  read-paths — ``$HOME`` and the import-time
-  ``state_db.DEFAULT_DB_PATH`` constant — at an isolated ``tmp_path``,
-  so the CLI smoke tests never read or write the live fleet registry
-  (no monkeypatch; these are the codebase's own seams).
+* A yield-based ``isolated_state`` fixture points ``$HOME`` and
+  ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at an isolated ``tmp_path``, so the
+  CLI smoke tests never read or write the live fleet registry (no
+  monkeypatch; these are the codebase's own seams). It also redirected the
+  import-time ``state_db.DEFAULT_DB_PATH`` constant until 2026-08-30, when
+  that constant was deleted with the storage engine.
 """
 
 from __future__ import annotations
@@ -27,7 +33,6 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container._state import port_allocator as pa
-from scitex_agent_container._state import state_db
 from scitex_agent_container.cli_pkg._main import main
 from scitex_agent_container.cli_pkg.ports_cmds import (
     _reference_map,
@@ -37,12 +42,6 @@ from scitex_agent_container.cli_pkg.ports_cmds import (
 # ---------------------------------------------------------------------------
 # Fixtures (real collaborators, no monkeypatch)
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db(tmp_path: Path) -> Path:
-    """A per-test state.db path; the allocator creates schema on demand."""
-    return tmp_path / "state.db"
 
 
 @pytest.fixture
@@ -81,37 +80,43 @@ def dead_claim_port(dead_port):
 
 
 @pytest.fixture
-def isolated_state(tmp_path):
+def isolated_state(tmp_path, pg_schema):
     """Isolate EVERY read-path the bare CLI consults for state.
 
-    ``sac ports`` takes no ``--db``: it resolves state.db from
-    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed
-    at import time**. So overriding ``$HOME`` alone does NOT redirect it
-    — by the time a fixture runs, the constant already points at the
-    developer's real ``~/.scitex/agent-container/runtime/state.db``, and
-    a CLI test would *read* (and ``claim_port`` would *WRITE*) the live
-    fleet registry. In CI that silently invents a registry; on a real
-    host it pollutes one.
+    DEPENDS ON ``pg_schema`` (2026-08-28) because the a2a claims moved to
+    PostgreSQL, and the two isolations have to happen in that order. This
+    fixture repoints ``$HOME``, which is where libpq looks for ``.pgpass``;
+    ``pg_schema`` pins ``PGPASSFILE`` explicitly during ITS setup, so
+    requesting it here makes that pinning happen first. Written as a
+    dependency rather than left to autouse ordering, for the same reason
+    ``_isolate_state_db`` requests ``_assert_state_floor_intact`` by name.
 
-    So touch both read-paths — the env var AND the constant — exactly as
-    ``tests/smoke/conftest.py::comms_env`` does. These are the seams the
-    codebase itself exposes for this: no monkeypatch, no mock.
+    ``sac ports`` takes no ``--db``. It used to resolve state.db from
+    :data:`state_db.DEFAULT_DB_PATH`, a **module-level constant computed at
+    import time**, so overriding ``$HOME`` alone did NOT redirect it — by the
+    time a fixture ran, the constant already pointed at the developer's real
+    ``~/.scitex/agent-container/runtime/state.db``, and a CLI test would
+    *read* (and ``claim_port`` would *WRITE*) the live fleet registry. In CI
+    that silently invented a registry; on a real host it polluted one.
+
+    THAT CONSTANT WAS DELETED WITH THE STORAGE ENGINE on 2026-08-30, and the
+    ledger it addressed had already moved to PostgreSQL. ``pg_schema`` above
+    is what isolates the claim now; ``$HOME`` and the env var are still
+    pinned here because the CLI reads both. These are the seams the codebase
+    itself exposes: no monkeypatch, no mock.
     """
     db = tmp_path / "state.db"
     prior = {
         k: os.environ.get(k)
         for k in ("HOME", "USERPROFILE", "SCITEX_AGENT_CONTAINER_STATE_DB")
     }
-    prior_db_path = state_db.DEFAULT_DB_PATH
 
     os.environ["HOME"] = str(tmp_path)
     os.environ["USERPROFILE"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
     try:
         yield tmp_path
     finally:
-        state_db.DEFAULT_DB_PATH = prior_db_path
         for k, v in prior.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -124,18 +129,18 @@ def isolated_state(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_collect_reports_listen_port_at_given_bind(db: Path) -> None:
+def test_collect_reports_listen_port_at_given_bind(pg_schema: str) -> None:
     # Arrange
-    data = collect_ports_data(db_path=db, listen_host="127.0.0.1", listen_port=7878)
+    data = collect_ports_data(listen_host="127.0.0.1", listen_port=7878)
     # Act
     listen_port = data["listen"]["port"]
     # Assert
     assert listen_port == 7878
 
 
-def test_collect_listen_row_carries_pidfile_path(db: Path, tmp_path: Path) -> None:
+def test_collect_listen_row_carries_pidfile_path(pg_schema: str, tmp_path: Path) -> None:
     # Arrange
-    data = collect_ports_data(db_path=db, listen_port=7878, lock_dir=tmp_path)
+    data = collect_ports_data(listen_port=7878, lock_dir=tmp_path)
     # Act
     pidfile = data["listen"]["pidfile"]
     # Assert
@@ -147,10 +152,10 @@ def test_collect_listen_row_carries_pidfile_path(db: Path, tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_collect_lists_a2a_claim_owner(db: Path, dead_claim_port: int) -> None:
+def test_collect_lists_a2a_claim_owner(pg_schema: str, dead_claim_port: int) -> None:
     # Arrange
-    pa.claim_port("alpha", explicit=dead_claim_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=7878)
+    pa.claim_port("alpha", explicit=dead_claim_port)
+    data = collect_ports_data(listen_port=7878)
     # Act
     owners = {row["owner"] for row in data["a2a_claims"]}
     # Assert
@@ -158,21 +163,21 @@ def test_collect_lists_a2a_claim_owner(db: Path, dead_claim_port: int) -> None:
 
 
 def test_collect_marks_live_listening_port_as_live(
-    db: Path, listening_port: int
+    pg_schema: str, listening_port: int
 ) -> None:
     # Arrange — claim the very port a real socket is listening on.
-    pa.claim_port("beta", explicit=listening_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=1.0)
+    pa.claim_port("beta", explicit=listening_port)
+    data = collect_ports_data(listen_port=7878, probe_timeout=1.0)
     # Act
     row = next(r for r in data["a2a_claims"] if r["owner"] == "beta")
     # Assert
     assert row["live"] is True
 
 
-def test_collect_marks_dead_claim_as_orphan(db: Path, dead_claim_port: int) -> None:
+def test_collect_marks_dead_claim_as_orphan(pg_schema: str, dead_claim_port: int) -> None:
     # Arrange — claim a HELD, never-listened port; nothing listens on it.
-    pa.claim_port("gamma", explicit=dead_claim_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
+    pa.claim_port("gamma", explicit=dead_claim_port)
+    data = collect_ports_data(listen_port=7878, probe_timeout=0.2)
     # Act
     row = next(r for r in data["a2a_claims"] if r["owner"] == "gamma")
     # Assert
@@ -180,11 +185,11 @@ def test_collect_marks_dead_claim_as_orphan(db: Path, dead_claim_port: int) -> N
 
 
 def test_collect_lists_dead_claim_in_orphans_section(
-    db: Path, dead_claim_port: int
+    pg_schema: str, dead_claim_port: int
 ) -> None:
     # Arrange
-    pa.claim_port("gamma", explicit=dead_claim_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
+    pa.claim_port("gamma", explicit=dead_claim_port)
+    data = collect_ports_data(listen_port=7878, probe_timeout=0.2)
     # Act
     orphan_agents = {o["agent"] for o in data["orphans"]}
     # Assert
@@ -197,12 +202,12 @@ def test_collect_lists_dead_claim_in_orphans_section(
 
 
 def test_collect_flags_conflict_when_agent_claims_listen_port(
-    db: Path, dead_claim_port: int
+    pg_schema: str, dead_claim_port: int
 ) -> None:
     # Arrange — an agent claims the same port sac listen is told to use.
-    pa.claim_port("clash", explicit=dead_claim_port, db_path=db)
+    pa.claim_port("clash", explicit=dead_claim_port)
     data = collect_ports_data(
-        db_path=db, listen_port=dead_claim_port, probe_timeout=0.2
+        listen_port=dead_claim_port, probe_timeout=0.2
     )
     # Act
     conflict_ports = {c["port"] for c in data["conflicts"]}
@@ -210,10 +215,10 @@ def test_collect_flags_conflict_when_agent_claims_listen_port(
     assert dead_claim_port in conflict_ports
 
 
-def test_collect_no_conflict_for_disjoint_ports(db: Path, dead_claim_port: int) -> None:
+def test_collect_no_conflict_for_disjoint_ports(pg_schema: str, dead_claim_port: int) -> None:
     # Arrange — claim differs from the listen port.
-    pa.claim_port("solo", explicit=dead_claim_port, db_path=db)
-    data = collect_ports_data(db_path=db, listen_port=7878, probe_timeout=0.2)
+    pa.claim_port("solo", explicit=dead_claim_port)
+    data = collect_ports_data(listen_port=7878, probe_timeout=0.2)
     # Act
     conflicts = data["conflicts"]
     # Assert

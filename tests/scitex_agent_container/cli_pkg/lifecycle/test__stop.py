@@ -19,6 +19,20 @@ from scitex_agent_container.cli_pkg.lifecycle._stop import stop
 
 
 @pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_home(tmp_path):
     saved = os.environ.get("HOME")
     os.environ["HOME"] = str(tmp_path)
@@ -590,10 +604,15 @@ def ssh_shim_unreachable(tmp_path):
 
 
 @pytest.fixture
-def remote_row_for_clew(cross_host_state_db):
+def remote_row_for_clew(cross_host_state_db, pg_schema: str):
     """Seed an active singleton row for ``clew`` on the unreachable
     peer ``peer-x`` AND the matching comms_nodes pin so the test can
-    verify BOTH stores are cleared on force-release."""
+    verify BOTH stores are cleared on force-release.
+
+    ``pg_schema`` because "both stores" is now literal: the instances row is
+    in the local file and the directory entry is PostgreSQL. Without it the directory
+    write would resolve the unreachable guard DSN and raise.
+    """
     from scitex_agent_container._state.state_db import record_instance_start
     from scitex_agent_container._state.state_db_comms_nodes import register_comms_node
 

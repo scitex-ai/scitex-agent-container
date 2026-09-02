@@ -19,7 +19,7 @@ The ACL-enforcement half of the group feature, exercised at the
 
 Groups are seeded via ``record_comms_policy(group_name=...)`` — the same
 row ``agent_start`` writes from the resolved spec label. No mocks: real
-on-disk SQLite via the yield-based ``db_path`` env override.
+on-disk state via the yield-based ``db_path`` env override.
 
 AAA (each marker on its own line), one assertion per test.
 """
@@ -36,7 +36,6 @@ from scitex_agent_container._listen._acl import (
     check_send_acl,
     check_spawn,
 )
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_blocks import block_send
 from scitex_agent_container._state.state_db_nodes import (
     grant_send,
@@ -70,13 +69,12 @@ def _seed_child_from_labels(
     2026-08-10 defect — a helper that no longer mirrors production stops
     being able to catch a production bug.
     """
-    record_lineage(child=name, parent="root-parent", db_path=db_path)
+    record_lineage(child=name, parent="root-parent")
     record_comms_policy(
         name=name,
         group_name=group_from_labels(labels),
         group_names=all_named_groups(labels),
         may_spawn=may_spawn,
-        db_path=db_path,
     )
 
 
@@ -85,14 +83,10 @@ def db_path(tmp_path: Path):
     # Arrange
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     try:
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         if saved_env is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
@@ -107,14 +101,12 @@ def db_path(tmp_path: Path):
 def test_send_allowed_within_same_named_group(db_path: Path, pg_schema: str) -> None:
     """Same named group, no lineage edge, no grant → allow (full mesh)."""
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="bob", group_name="developer", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="bob", group_name="developer")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="bob",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -125,14 +117,12 @@ def test_send_allowed_cross_group_by_default(db_path: Path, pg_schema: str) -> N
     groups, no lineage, no grant → ALLOW. Cross-group messaging is
     collaboration, not a security boundary."""
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="carol", group_name="analysts", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="carol", group_name="analysts")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -142,15 +132,13 @@ def test_send_blocked_sender_still_denied_cross_group(db_path: Path, pg_schema: 
     """Override preserved: an explicit block still denies even though the
     cross-group default is now allow."""
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="carol", group_name="analysts", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="carol", group_name="analysts")
     block_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
-        db_path=db_path,
     )
     # Assert
     assert decision == "block"
@@ -159,15 +147,13 @@ def test_send_blocked_sender_still_denied_cross_group(db_path: Path, pg_schema: 
 def test_send_allowed_cross_group_with_explicit_grant(db_path: Path, pg_schema: str) -> None:
     """An explicit grant still flips a cross-group deny to allow."""
     # Arrange
-    record_comms_policy(name="alice", group_name="developer", db_path=db_path)
-    record_comms_policy(name="carol", group_name="analysts", db_path=db_path)
-    grant_send(sender="alice", target="carol", db_path=db_path)
+    record_comms_policy(name="alice", group_name="developer")
+    record_comms_policy(name="carol", group_name="analysts")
+    grant_send(sender="alice", target="carol")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="alice",
         claimed_from_agent="alice",
         target="carol",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -177,14 +163,12 @@ def test_ungrouped_pair_allowed_by_default(db_path: Path, pg_schema: str) -> Non
     """Messaging default-allow: two ungrouped agents in unrelated lineage
     families may now message each other with no grant."""
     # Arrange — no group_name on either; unrelated lineage families.
-    record_lineage(child="x", parent="root-x", db_path=db_path)
-    record_lineage(child="y", parent="root-y", db_path=db_path)
+    record_lineage(child="x", parent="root-x")
+    record_lineage(child="y", parent="root-y")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="x",
         claimed_from_agent="x",
         target="y",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -199,14 +183,12 @@ def test_ungrouped_pair_allowed_by_default(db_path: Path, pg_schema: str) -> Non
 def test_send_allowed_developer_to_researcher(db_path: Path, pg_schema: str) -> None:
     """Cross-group mesh: developer → researcher, no grant → allow."""
     # Arrange
-    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
-    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="dev-1", group_name="developer")
+    record_comms_policy(name="res-1", group_name="researcher")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="dev-1",
         claimed_from_agent="dev-1",
         target="res-1",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -215,14 +197,12 @@ def test_send_allowed_developer_to_researcher(db_path: Path, pg_schema: str) -> 
 def test_send_allowed_researcher_to_generalist(db_path: Path, pg_schema: str) -> None:
     """Cross-group mesh: researcher → generalist, no grant → allow."""
     # Arrange
-    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
-    record_comms_policy(name="gen-1", group_name="generalist", db_path=db_path)
+    record_comms_policy(name="res-1", group_name="researcher")
+    record_comms_policy(name="gen-1", group_name="generalist")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="res-1",
         claimed_from_agent="res-1",
         target="gen-1",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -231,14 +211,12 @@ def test_send_allowed_researcher_to_generalist(db_path: Path, pg_schema: str) ->
 def test_send_allowed_generalist_to_developer_all_directions(db_path: Path, pg_schema: str) -> None:
     """Mesh is bidirectional: generalist → developer, no grant → allow."""
     # Arrange
-    record_comms_policy(name="gen-1", group_name="generalist", db_path=db_path)
-    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
+    record_comms_policy(name="gen-1", group_name="generalist")
+    record_comms_policy(name="dev-1", group_name="developer")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="gen-1",
         claimed_from_agent="gen-1",
         target="dev-1",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -250,14 +228,12 @@ def test_send_allowed_mesh_group_to_non_mesh_group(db_path: Path, pg_schema: str
     still gates PRIVILEGED actions via check_lineage_acl; a solver that must
     reject inbound messages uses per-spec spec.comms.inbound=deny.)"""
     # Arrange
-    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
-    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
+    record_comms_policy(name="dev-1", group_name="developer")
+    record_comms_policy(name="solver-1", group_name="solver")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="dev-1",
         claimed_from_agent="dev-1",
         target="solver-1",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -268,14 +244,12 @@ def test_send_allowed_non_mesh_group_to_mesh_group(db_path: Path, pg_schema: str
     now ALLOWS (the exact cross-group case PR #12/#524's mesh could not
     cover for paper-group agents a2a-ing developer agents)."""
     # Arrange
-    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
-    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
+    record_comms_policy(name="solver-1", group_name="solver")
+    record_comms_policy(name="res-1", group_name="researcher")
     # Act
     decision, _reason = check_send_acl(
-        authenticated_node="solver-1",
         claimed_from_agent="solver-1",
         target="res-1",
-        db_path=db_path,
     )
     # Assert
     assert decision == "allow"
@@ -286,24 +260,24 @@ def test_send_allowed_non_mesh_group_to_mesh_group(db_path: Path, pg_schema: str
 # ---------------------------------------------------------------------------
 
 
-def test_developer_child_may_spawn(db_path: Path) -> None:
+def test_developer_child_may_spawn(pg_schema: str, db_path: Path) -> None:
     """A developer-group caller may spawn even as a (non-root) child."""
     # Arrange
-    record_lineage(child="dev-1", parent="root", db_path=db_path)
-    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
+    record_lineage(child="dev-1", parent="root")
+    record_comms_policy(name="dev-1", group_name="developer")
     # Act
-    decision, _reason = check_spawn(caller="dev-1", db_path=db_path)
+    decision, _reason = check_spawn(caller="dev-1")
     # Assert
     assert decision == "allow"
 
 
-def test_non_developer_child_still_denied_spawn(db_path: Path) -> None:
+def test_non_developer_child_still_denied_spawn(pg_schema: str, db_path: Path) -> None:
     """Backward-compatible: a non-developer child is still root-only denied."""
     # Arrange
-    record_lineage(child="worker-a", parent="root", db_path=db_path)
-    record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
+    record_lineage(child="worker-a", parent="root")
+    record_comms_policy(name="worker-a", group_name="analysts")
     # Act
-    decision, _reason = check_spawn(caller="worker-a", db_path=db_path)
+    decision, _reason = check_spawn(caller="worker-a")
     # Assert
     assert decision == "deny"
 
@@ -326,17 +300,18 @@ GRANT_LABELS = {
 }
 
 
-def test_child_with_developer_late_in_its_groups_may_spawn(db_path: Path) -> None:
+def test_child_with_developer_late_in_its_groups_may_spawn(pg_schema: str, db_path: Path) -> None:
     """THE reported bug, end-to-end from grant's real spec labels."""
     # Arrange
     _seed_child_from_labels("grant", GRANT_LABELS, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="grant", db_path=db_path)
+    decision, _reason = check_spawn(caller="grant")
     # Assert
     assert decision == "allow"
 
 
 def test_child_with_developer_late_in_its_groups_may_manage_peers(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     """The same membership question on the MANAGE gate (tail / stop /
@@ -345,33 +320,34 @@ def test_child_with_developer_late_in_its_groups_may_manage_peers(
     _seed_child_from_labels("grant", GRANT_LABELS, db_path=db_path)
     # Act
     decision, _reason = check_lineage_acl(
-        caller="grant", target="unrelated-peer", db_path=db_path
+        caller="grant", target="unrelated-peer"
     )
     # Assert
     assert decision == "allow"
 
 
-def test_child_with_researcher_late_in_its_groups_may_spawn(db_path: Path) -> None:
+def test_child_with_researcher_late_in_its_groups_may_spawn(pg_schema: str, db_path: Path) -> None:
     # Arrange
     labels = {"role": "worker", "groups": ["generalist", "researcher"]}
     _seed_child_from_labels("nv", labels, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="nv", db_path=db_path)
+    decision, _reason = check_spawn(caller="nv")
     # Assert
     assert decision == "allow"
 
 
-def test_child_with_privileged_late_in_its_groups_may_spawn(db_path: Path) -> None:
+def test_child_with_privileged_late_in_its_groups_may_spawn(pg_schema: str, db_path: Path) -> None:
     # Arrange
     labels = {"role": "worker", "groups": ["generalist", "privileged"]}
     _seed_child_from_labels("dotfiles", labels, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="dotfiles", db_path=db_path)
+    decision, _reason = check_spawn(caller="dotfiles")
     # Assert
     assert decision == "allow"
 
 
 def test_multi_group_child_with_no_authorising_group_is_still_denied(
+    pg_schema: str,
     db_path: Path,
 ) -> None:
     """The gate must still SHUT — a set-valued read that stopped denying
@@ -380,7 +356,7 @@ def test_multi_group_child_with_no_authorising_group_is_still_denied(
     labels = {"role": "worker", "groups": ["generalist", "active", "analysts"]}
     _seed_child_from_labels("worker-b", labels, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="worker-b", db_path=db_path)
+    decision, _reason = check_spawn(caller="worker-b")
     # Assert
     assert decision == "deny"
 
@@ -396,19 +372,19 @@ def test_multi_group_child_with_no_authorising_group_is_still_denied(
 # ---------------------------------------------------------------------------
 
 
-def test_labelled_researcher_child_may_spawn(db_path: Path) -> None:
+def test_labelled_researcher_child_may_spawn(pg_schema: str, db_path: Path) -> None:
     """Explicit ``groups: [researcher]`` child may spawn (regression pin)."""
     # Arrange
     _seed_child_from_labels(
         "neurovista", {"groups": ["researcher", "active"]}, db_path=db_path
     )
     # Act
-    decision, _reason = check_spawn(caller="neurovista", db_path=db_path)
+    decision, _reason = check_spawn(caller="neurovista")
     # Assert
     assert decision == "allow"
 
 
-def test_role_derived_researcher_child_may_spawn(db_path: Path) -> None:
+def test_role_derived_researcher_child_may_spawn(pg_schema: str, db_path: Path) -> None:
     """``role: researcher`` with NO groups label may spawn.
 
     The half of the operator's ruling that was missing: only developer-ish
@@ -418,37 +394,37 @@ def test_role_derived_researcher_child_may_spawn(db_path: Path) -> None:
     # Arrange
     _seed_child_from_labels("res-by-role", {"role": "researcher"}, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="res-by-role", db_path=db_path)
+    decision, _reason = check_spawn(caller="res-by-role")
     # Assert
     assert decision == "allow"
 
 
-def test_role_derived_researcher_child_may_manage_peer(db_path: Path) -> None:
+def test_role_derived_researcher_child_may_manage_peer(pg_schema: str, db_path: Path) -> None:
     """``role: researcher`` child may RESTART a developer peer (the incident)."""
     # Arrange
     _seed_child_from_labels("res-by-role", {"role": "research-agent"}, db_path=db_path)
-    record_comms_policy(name="scitex-clew", group_name="developer", db_path=db_path)
+    record_comms_policy(name="scitex-clew", group_name="developer")
     # Act
     decision, _reason = check_lineage_acl(
-        caller="res-by-role", target="scitex-clew", db_path=db_path
+        caller="res-by-role", target="scitex-clew"
     )
     # Assert
     assert decision == "allow"
 
 
-def test_role_derived_developer_child_may_spawn(db_path: Path) -> None:
+def test_role_derived_developer_child_may_spawn(pg_schema: str, db_path: Path) -> None:
     """The other half of the ruling: ``role: project-maintainer`` may spawn."""
     # Arrange
     _seed_child_from_labels(
         "dev-by-role", {"role": "project-maintainer"}, db_path=db_path
     )
     # Act
-    decision, _reason = check_spawn(caller="dev-by-role", db_path=db_path)
+    decision, _reason = check_spawn(caller="dev-by-role")
     # Assert
     assert decision == "allow"
 
 
-def test_worker_role_child_still_denied_spawn(db_path: Path) -> None:
+def test_worker_role_child_still_denied_spawn(pg_schema: str, db_path: Path) -> None:
     """NEGATIVE: a ``role: worker`` child derives no group → still denied.
 
     Guards against the fix over-reaching: role-derivation must promote the
@@ -458,12 +434,12 @@ def test_worker_role_child_still_denied_spawn(db_path: Path) -> None:
     # Arrange
     _seed_child_from_labels("worker-1", {"role": "worker"}, db_path=db_path)
     # Act
-    decision, _reason = check_spawn(caller="worker-1", db_path=db_path)
+    decision, _reason = check_spawn(caller="worker-1")
     # Assert
     assert decision == "deny"
 
 
-def test_isolated_solver_child_still_denied_spawn(db_path: Path) -> None:
+def test_isolated_solver_child_still_denied_spawn(pg_schema: str, db_path: Path) -> None:
     """NEGATIVE: an explicit non-mesh ``groups: [solver]`` child stays denied.
 
     Even when its role says ``researcher``: the explicit label wins, so a
@@ -474,12 +450,12 @@ def test_isolated_solver_child_still_denied_spawn(db_path: Path) -> None:
         "solver-1", {"role": "researcher", "groups": ["solver"]}, db_path=db_path
     )
     # Act
-    decision, _reason = check_spawn(caller="solver-1", db_path=db_path)
+    decision, _reason = check_spawn(caller="solver-1")
     # Assert
     assert decision == "deny"
 
 
-def test_researcher_child_with_may_spawn_false_is_denied(db_path: Path) -> None:
+def test_researcher_child_with_may_spawn_false_is_denied(pg_schema: str, db_path: Path) -> None:
     """NEGATIVE: per-spec ``lineage.may_spawn=false`` still overrides the group.
 
     The group grants authority; the spec can still revoke it. Without this,
@@ -490,7 +466,7 @@ def test_researcher_child_with_may_spawn_false_is_denied(db_path: Path) -> None:
         "res-nospawn", {"role": "researcher"}, db_path=db_path, may_spawn=False
     )
     # Act
-    decision, _reason = check_spawn(caller="res-nospawn", db_path=db_path)
+    decision, _reason = check_spawn(caller="res-nospawn")
     # Assert
     assert decision == "deny"
 
@@ -500,27 +476,27 @@ def test_researcher_child_with_may_spawn_false_is_denied(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_developer_may_manage_unrelated_agent(db_path: Path) -> None:
+def test_developer_may_manage_unrelated_agent(pg_schema: str, db_path: Path) -> None:
     """Developer-group caller manages a target with NO lineage edge."""
     # Arrange
-    record_comms_policy(name="dev-1", group_name="developer", db_path=db_path)
-    record_lineage(child="victim", parent="someone-else", db_path=db_path)
+    record_comms_policy(name="dev-1", group_name="developer")
+    record_lineage(child="victim", parent="someone-else")
     # Act
     decision, _reason = check_lineage_acl(
-        caller="dev-1", target="victim", db_path=db_path
+        caller="dev-1", target="victim"
     )
     # Assert
     assert decision == "allow"
 
 
-def test_non_developer_cannot_manage_unrelated_agent(db_path: Path) -> None:
+def test_non_developer_cannot_manage_unrelated_agent(pg_schema: str, db_path: Path) -> None:
     """Backward-compatible: non-developer with no lineage edge → deny."""
     # Arrange
-    record_comms_policy(name="worker-a", group_name="analysts", db_path=db_path)
-    record_lineage(child="victim", parent="someone-else", db_path=db_path)
+    record_comms_policy(name="worker-a", group_name="analysts")
+    record_lineage(child="victim", parent="someone-else")
     # Act
     decision, _reason = check_lineage_acl(
-        caller="worker-a", target="victim", db_path=db_path
+        caller="worker-a", target="victim"
     )
     # Assert
     assert decision == "deny"
@@ -535,20 +511,20 @@ def test_non_developer_cannot_manage_unrelated_agent(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_researcher_may_manage_developer_target_via_mesh(db_path: Path) -> None:
+def test_researcher_may_manage_developer_target_via_mesh(pg_schema: str, db_path: Path) -> None:
     """Researcher → developer, no lineage, no grant → allow (manage mesh)."""
     # Arrange — neurovista (researcher) restarts scitex-todo (developer).
-    record_comms_policy(name="neurovista", group_name="researcher", db_path=db_path)
-    record_comms_policy(name="scitex-todo", group_name="developer", db_path=db_path)
+    record_comms_policy(name="neurovista", group_name="researcher")
+    record_comms_policy(name="scitex-todo", group_name="developer")
     # Act
     decision, _reason = check_lineage_acl(
-        caller="neurovista", target="scitex-todo", db_path=db_path
+        caller="neurovista", target="scitex-todo"
     )
     # Assert
     assert decision == "allow"
 
 
-def test_mesh_caller_cannot_manage_isolated_solver_target(db_path: Path) -> None:
+def test_mesh_caller_cannot_manage_isolated_solver_target(pg_schema: str, db_path: Path) -> None:
     """A non-mesh target (isolated solver) stays unmanageable cross-group.
 
     Uses a RESEARCHER caller (not developer): the developer group has
@@ -556,12 +532,12 @@ def test_mesh_caller_cannot_manage_isolated_solver_target(db_path: Path) -> None
     isolation must be probed by a mesh-but-non-developer caller.
     """
     # Arrange — researcher caller, solver target (outside the mesh).
-    record_comms_policy(name="res-1", group_name="researcher", db_path=db_path)
-    record_comms_policy(name="solver-1", group_name="solver", db_path=db_path)
-    record_lineage(child="solver-1", parent="someone-else", db_path=db_path)
+    record_comms_policy(name="res-1", group_name="researcher")
+    record_comms_policy(name="solver-1", group_name="solver")
+    record_lineage(child="solver-1", parent="someone-else")
     # Act
     decision, _reason = check_lineage_acl(
-        caller="res-1", target="solver-1", db_path=db_path
+        caller="res-1", target="solver-1"
     )
     # Assert
     assert decision == "deny"

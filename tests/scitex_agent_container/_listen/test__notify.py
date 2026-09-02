@@ -38,7 +38,6 @@ from scitex_agent_container._listen._notify import publish_to_agent
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_channel import list_undelivered
 from scitex_agent_container.a2a._inbox_bus import Broker
 
@@ -46,8 +45,13 @@ TOKEN = "test-notify-token"
 
 
 @pytest.fixture
-def notify_env(tmp_path: Path):
-    """Isolated state.db + registry so ``/v1/notify`` persists in isolation.
+def notify_env(tmp_path: Path, pg_schema: str):
+    """Isolated state.db + registry + PostgreSQL schema for ``/v1/notify``.
+
+    ``pg_schema`` joined this fixture on 2026-08-28: ``channel_events`` left
+    its own file for the shared PostgreSQL (ADR-0023), so ``publish_to_agent``'s
+    persist half now needs a REAL throwaway schema. The isolated ``state.db``
+    stays for everything else the listen app touches.
 
     Function-scoped (TQ004 — no session/module-scoped state mutation) and
     ``yield``s after acquiring its resources (TQ005). Restores every env
@@ -59,22 +63,18 @@ def notify_env(tmp_path: Path):
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    saved_db_const = state_db.DEFAULT_DB_PATH
 
     db = tmp_path / "state.db"
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
     os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(tmp_path / "runtime")
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
 
     try:
         yield {"db": db, "tmp_path": tmp_path}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         for k, v in (

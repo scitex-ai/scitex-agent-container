@@ -33,7 +33,6 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._runners._session_state import state_dir_for
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 
 _TOKEN = "test-token-agent-exec-deadline"
 
@@ -61,20 +60,16 @@ def isolated_listen_env(tmp_path: Path):
     """Isolated state.db + registry/runtime dirs (mirrors the sibling tests)."""
     db = tmp_path / "state.db"
     saved_env_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default_db = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     try:
         yield tmp_path
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default_db
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_env_db is None:
@@ -93,8 +88,9 @@ def short_deadline():
 
     ``agents_start`` imports ``AGENT_START_DEADLINE_S`` INSIDE the function
     body, so reassigning the module attribute is picked up on the next call —
-    the same save/restore-seam idiom the sibling tests use for
-    ``state_db.DEFAULT_DB_PATH``.
+    the same save/restore-seam idiom the sibling tests used for
+    ``state_db.DEFAULT_DB_PATH`` until that constant was deleted with the
+    storage engine on 2026-08-30.
     """
     saved = _handler_deadline.AGENT_START_DEADLINE_S
     _handler_deadline.AGENT_START_DEADLINE_S = _TEST_DEADLINE_S
@@ -230,7 +226,7 @@ def test_a_launch_past_the_deadline_answers_before_the_launch_finishes(
     round trip whose handler is only promised to *decide* within 0.3 s. The
     remaining 0.7 s was silently standing in for "and everything else the
     request touches is fast": TestClient's portal thread, the ACL check, the
-    sqlite lineage read, JSON encode/decode. None of that is bounded, and CI
+    lineage read, JSON encode/decode. None of that is bounded, and CI
     runs the suite at ``-n 32`` on 32 cores, so the ceiling measured the BOX,
     not the deadline. The sibling failure in this same module on 2026-08-12
     (``marker is None``) was the same clock-for-event substitution.

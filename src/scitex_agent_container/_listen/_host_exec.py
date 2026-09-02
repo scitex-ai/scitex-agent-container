@@ -8,12 +8,14 @@ in-container image builds (``sac image build``), cron/systemd apply
 otherwise require the operator's shell.
 
 FLOW:
-1. Bearer-authed by the outer middleware; the inner identity resolver has
-   already populated ``request.state.authenticated_node`` (per-node bearer) or
-   left it None (host-wide bearer / admin path).
-2. Caller identity: prefer the authenticated node; fall back to an optional
-   body ``caller`` claim (host-wide bearer path only — same caveat as the
-   ``agents_start``/``agent_restart`` handlers).
+1. Bearer-authed by the outer middleware. An inner identity resolver used to
+   populate ``request.state.authenticated_node`` from a per-node bearer; it
+   was removed 2026-08-28 (nothing ever minted one), so that attribute is
+   absent and reads ``None`` — the host-wide bearer / admin path.
+2. Caller identity: prefer the authenticated node — which no longer arrives —
+   so in practice the optional body ``caller`` claim, self-asserted (same
+   caveat as the ``agents_start``/``agent_restart`` handlers). NOTE this is
+   what the GROUP GATE below is applied to.
 3. GROUP GATE: resolve the caller's group via
    ``resolve_group_name`` and refuse with 403 unless it is one of
    ``ELIGIBLE_GROUPS`` (developer, researcher, privileged). The operator
@@ -109,7 +111,7 @@ from starlette.responses import JSONResponse
 
 from .._lifecycle._off_loop import run_blocking
 from .._logging import get_logger
-from .._state import state_db as _state_db
+from .._state.state_db_acl_policy_store import POLICY_STORE
 from .._state.state_db_nodes import comms_policy_row_exists, resolve_group_names
 from ..config._group_resolver import groups_intersect
 from ._acl import deny_response
@@ -319,10 +321,19 @@ async def host_exec(
                 "and has not yet replayed registrations, or that it resolved a "
                 "DIFFERENT store than the agents register into"
             )
+        # Name the store that answered, not the file path this gate had
+        # printed since before the policy table moved — it never opened
+        # that file, and `cause` above turns on whether a policy row was
+        # FOUND, so an operator chasing a wrong-store denial needs the
+        # database the lookup actually used. `host_store` resolves without
+        # connecting.
+        from scitex_dev.store import host_store
+
+        store = host_store(pkg="scitex_agent_container", name=POLICY_STORE)
         return deny_response(
             reason=(
                 f"host_exec is restricted to groups {sorted(ELIGIBLE_GROUPS)}; "
-                f"{cause}. Store consulted: {_state_db.DEFAULT_DB_PATH}"
+                f"{cause}. Store consulted: {store.locator}"
             )
         )
 

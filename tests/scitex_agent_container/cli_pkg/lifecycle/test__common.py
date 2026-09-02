@@ -34,6 +34,20 @@ from scitex_agent_container.config._types import HostsSpec, SchedulingSpec
 
 
 @pytest.fixture(autouse=True)
+def _instances_store(pg_schema: str):
+    """A throwaway ``instances`` store for every test in this file.
+
+    ``instances`` moved to the shared PostgreSQL store on 2026-08-28 and the
+    verbs driven here read ``list_active_instances`` on every path, so the
+    dependency belongs to the VERB rather than to any one case. Autouse
+    rather than per-signature for that reason, and for one more: it keeps a
+    NEW test in this file from silently resolving whatever store the process
+    happens to point at.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_home(tmp_path: Path, env_save_restore):
     # Redirect $HOME so Path.home() returns tmp_path naturally — no
     # module-attribute swap required.
@@ -401,13 +415,18 @@ class TestBoundHost:
 
 
 def _reload_state_db_at(path: Path, env_save_restore):
-    """Redirect DEFAULT_DB_PATH at ``path`` and reload the state_db
-    module so the rebound path takes effect.
+    """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at ``path`` and reload the
+    state_db module.
+
+    THE RELOAD NO LONGER REBINDS A PATH. It existed so the import-time
+    ``DEFAULT_DB_PATH`` constant would follow the env var this had just set;
+    that constant was deleted with the storage engine on 2026-08-30, and
+    ``record_instance_start`` and friends address the shared PostgreSQL store.
 
     PA-306 §3 no-mocks: uses the project ``env_save_restore`` fixture
     (NOT pytest's ``monkeypatch``) to manage the env var save/restore.
-    Returns the reloaded module so the caller can call its
-    ``record_instance_start`` etc. against the redirected DB.
+    Returns the module so the caller can call its ``record_instance_start``
+    etc.
     """
     import importlib
 
@@ -420,8 +439,7 @@ def _reload_state_db_at(path: Path, env_save_restore):
 
 class TestRegistryActiveOn:
     def test_missing_state_db_treated_as_not_live(self, tmp_path, env_save_restore):
-        # Arrange — point state.db at a non-existent path; reload module
-        # so DEFAULT_DB_PATH is recomputed.
+        # Arrange — point the env var at a non-existent path.
         import importlib
 
         state_db_mod = _reload_state_db_at(tmp_path / "nope.db", env_save_restore)
@@ -533,6 +551,71 @@ class TestIterAgentYamls:
         result = _iter_agent_yamls(tmp_path)
         # Assert
         assert [n for n, _ in result] == ["bar", "foo"]
+
+    # -- the layout that actually exists on every host ----------------------
+    #
+    # Until 2026-08-27 this helper matched ONLY <name>/<name>.yaml, so it
+    # returned 0 against a registry holding 122 <name>/spec.yaml agents. Every
+    # fixture above uses the self-named layout, which is why the suite stayed
+    # green over a shape no host produces. These tests pin the real one.
+
+    def test_discovers_the_spec_yaml_layout_every_host_uses(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha"]
+
+    def test_returns_the_spec_yaml_path_not_a_self_named_guess(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert result[0][1].endswith("/alpha/spec.yaml")
+
+    def test_prefers_spec_yaml_when_both_layouts_are_present(self, tmp_path):
+        # Arrange
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        (tmp_path / "alpha" / "alpha.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert result[0][1].endswith("/alpha/spec.yaml")
+
+    def test_still_finds_the_self_named_layout_the_materializers_write(
+        self, tmp_path
+    ):
+        # Arrange -- `sac fleet materialize` and render_contributor_spec still
+        # emit <name>/<name>.yaml; the fallback is the alias half of the
+        # migration and must not regress while they do.
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        (tmp_path / "beta").mkdir()
+        (tmp_path / "beta" / "beta.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha", "beta"]
+
+    def test_skips_the_self_peer_marker(self, tmp_path):
+        # Arrange -- agents/self/spec.yaml registers the running listen's own
+        # identity and is NOT a launchable agent. It was invisible here only
+        # because this helper could not see spec.yaml at all.
+        (tmp_path / "self").mkdir()
+        (tmp_path / "self" / "spec.yaml").write_text(
+            "name: scitex-compute-04\nlisten_url: http://127.0.0.1:7878\n"
+        )
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "spec.yaml").write_text("x")
+        # Act
+        result = _iter_agent_yamls(tmp_path)
+        # Assert
+        assert [n for n, _ in result] == ["alpha"]
 
 
 # ---------------------------------------------------------------------------

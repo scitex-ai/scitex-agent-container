@@ -1,9 +1,16 @@
 """HANDOVER: move the write lease source -> target. THE atomic point of a relocation.
 
 :mod:`_relocate_lease` decided every rule and touched nothing;
-:func:`.._state.state_db_relocation.save_lease` gave the rows a home. What was
+:func:`.._state.relocation_pg.save_lease` gave the records a home. What was
 missing was a holder: the refusal this module replaces said "nothing claims a
 lease on the source's behalf at start-up, so there is no holder to hand FROM".
+
+THE LEASE LIVES IN POSTGRESQL, NOT IN ``state.db``, SINCE 2026-08-28. Every
+hint below names the store rather than the table alone, because a raw
+state.db 'select * from relocation_leases'`` still answers — with the row this
+cutover left behind. An operator settling a handover from that answer would be
+reading a snapshot of the past while the fence moved on in another database,
+which is precisely the two-writers state this phase exists to prevent.
 
 SO IT BOOTSTRAPS ONE, DELIBERATELY, AND SAYS SO. sac still does not claim a
 lease when an agent starts, which means for any agent that has never been
@@ -63,7 +70,7 @@ class HandoverEffects:
 
     def hand_over_lease(self) -> StepResult:
         """Move the write lease from the source to the target, and confirm it moved."""
-        from .._state.state_db_relocation import load_lease, save_lease
+        from .._state.relocation_pg import load_lease, save_lease
 
         now = self.now()
         held, note, refusal = self._holder_to_hand_from(now)
@@ -86,7 +93,9 @@ class HandoverEffects:
                 detail=f"the lease did not move: {verdict.reason}",
                 hint=(
                     "nothing was handed over and the source is still the owner of record; "
-                    "read the relocation_leases row and settle it before re-running"
+                    "read the relocation_leases record in the PostgreSQL store "
+                    "(_state.relocation_pg.load_lease, NOT a local file) and settle "
+                    "it before re-running"
                 ),
             )
         save_lease(moved)
@@ -97,9 +106,10 @@ class HandoverEffects:
                 ok=None,
                 detail="the lease was written and could not be read back",
                 hint=(
-                    "read relocation_leases before doing anything else — the handover may "
-                    "or may not have landed, and that is the one thing that must not stay "
-                    "unknown"
+                    "read relocation_leases in the PostgreSQL store "
+                    "(_state.relocation_pg.load_lease, NOT a local file) before doing "
+                    "anything else — the handover may or may not have landed, and that is "
+                    "the one thing that must not stay unknown"
                 ),
             )
         if confirmed.holder != self.to_host or confirmed.fence != moved.fence:
@@ -140,7 +150,7 @@ class HandoverEffects:
         is stopped. That is the point: a gate that could pass while this phase
         refuses would be a gate that guarantees the agent goes down first.
         """
-        from .._state.state_db_relocation import load_lease, save_lease
+        from .._state.relocation_pg import load_lease, save_lease
 
         held = load_lease(self.agent)
         holder_running = self._recorded_holder_running(held, now)

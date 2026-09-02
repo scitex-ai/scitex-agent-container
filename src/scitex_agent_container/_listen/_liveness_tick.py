@@ -211,7 +211,7 @@ async def liveness_tick_reconciler_loop(
                     # DEFENSE IN DEPTH (cards sac-listen-self-peer-persist-
                     # blocks-bind / sac-listen-watchdog-autorestart-alarm):
                     # the doc read + session/heartbeat reads + registry read
-                    # are blocking FS/SQLite. Run them OFF the event loop with
+                    # are blocking FS/database calls. Run them OFF the event loop with
                     # a hard timeout so a slow/locked read can never starve
                     # uvicorn's bind or the running listen server.
                     from .._lifecycle._off_loop import run_blocking_or

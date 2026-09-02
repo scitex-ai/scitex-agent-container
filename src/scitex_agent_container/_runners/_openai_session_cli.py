@@ -18,7 +18,7 @@ the daemon's harness-agnostic drive-until-done loop.
 
 The ONE flag that stays refused is ``--resume-session-id``: the harness
 registry's ``openai-agents`` descriptor declares ``can_resume=False``
-(the ``SQLiteSession`` db persists turns under the agent's own name,
+(the conversation store persists turns under the agent's own name,
 but sac's resume contract — rehydrate a PRIOR conversation from a
 caller-supplied id — is not implemented for this harness). The refusal
 reads the registry rather than hardcoding the answer, so flipping the

@@ -17,23 +17,20 @@ card responsibility that stays in ``server.py``.
 
 from __future__ import annotations
 
+import asyncio
+
+
 import json
 import logging
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import JSONResponse, Response
 
-from .._state.state_db_channel import (
-    list_since_id,
-    list_undelivered,
-    mark_delivered,
-    persist_event,
-)
+from .._lifecycle._off_loop import run_blocking
+from .._state.state_db_channel import persist_event
 from ..a2a._delivery_report import report_zero_delivery
 from ..a2a._inbox_bus import (
-    KEEPALIVE,
-    keepalive_interval_s,
     mint_acl_deny_synthetic_notification,
     mint_deny_notification,
     mint_event,
@@ -44,8 +41,14 @@ from ._acl_approve_prompt import (
     _mint_approval_prompt,
 )
 from ._node_channel_forwarders import _forward_to_remote
+from ._node_channel_stream import node_inbox_stream
 from ._nodes import Broker, NodeRegistry
 
+# ``node_inbox_stream`` now LIVES in ``._node_channel_stream`` and is
+# re-exported here, not defined here: route registration in ``server.py`` and
+# the historical ``from ..._listen._node_channel import node_inbox_stream``
+# test imports must keep resolving. Pure extraction, no behaviour change —
+# see that module's docstring for the split.
 __all__ = ["_forward_to_remote", "node_message_send", "node_inbox_stream"]
 
 log = logging.getLogger(__name__)
@@ -63,9 +66,9 @@ async def node_message_send(request: Request) -> Response:
     WI-2 ACL gate: every send is checked by
     :func:`_acl.check_send_acl` before publish:
 
-    * **Per-node bearer** pins identity — ``metadata.from_agent``
-      must match the resolved name, else 403 "identity spoof"
-      (handoff §4 acceptance).
+    * **Identity** is the ``metadata.from_agent`` claim. A per-node
+      bearer used to pin it (mismatch → 403 "identity spoof"); that
+      feature was removed 2026-08-28 having never been armed.
     * **Cross-group** is denied by default; intra-group
       (parent↔child and sibling↔sibling) is allowed.
     * **Explicit cross-group grants** (``comms_grants`` table) flip
@@ -76,9 +79,8 @@ async def node_message_send(request: Request) -> Response:
       verbatim (used by WI-4 forwarders authenticating with the
       destination's host bearer from ``peer-tokens/`` registry).
 
-    Bearer auth is enforced by :class:`BearerAuthMiddleware` (outer
-    perimeter) and identity resolution by :class:`NodeAuthMiddleware`
-    (sets ``request.state.authenticated_node``).
+    Bearer auth is enforced by :class:`BearerAuthMiddleware`, which
+    is the whole perimeter: the host-wide token, or 401/403.
     """
     name = request.path_params["name"]
     try:
@@ -118,14 +120,25 @@ async def node_message_send(request: Request) -> Response:
     local_host = getattr(request.app.state, "local_host", None) or _resolve_local_host(
         None
     )
-    if not is_local_node(name=name, local_host=local_host):
+    # OFF THE EVENT LOOP. Both resolvers are BLOCKING and, since the
+    # comms_nodes directory moved to PostgreSQL on 2026-08-28, both can reach
+    # the network: they fall through from the local ``instances``
+    # lookup to a shared-store read. Called inline, a primary that swallows
+    # SYN would stall THIS whole daemon — every request it is serving, not
+    # just this one — for as long as the connect takes. The store's DSN now
+    # carries an explicit ``connect_timeout`` (see
+    # ``state_db_comms_nodes_store``), which bounds that to seconds; the
+    # thread hop is what keeps even those seconds off the loop.
+    if not await asyncio.to_thread(
+        is_local_node, name=name, local_host=local_host
+    ):
         # ADDRESSABILITY, not locality. `is_local_node` above answers "which
         # host", for which a live instances row suffices with or without a
         # port; this asks "where do I POST", for which it does not. They used
         # to be one call, so a live row with a NULL port was handed back as
         # the answer and 502'd here — without ever consulting comms_nodes,
         # which may hold a working address for the same name.
-        target_info = resolve_forward_target(name=name)
+        target_info = await asyncio.to_thread(resolve_forward_target, name=name)
         if target_info is None:
             return JSONResponse(
                 {
@@ -164,15 +177,15 @@ async def node_message_send(request: Request) -> Response:
         if isinstance(src, dict):
             sac_meta.update(src)
 
-    # WI-2 ACL check. ``authenticated_node`` is set by
-    # :class:`NodeAuthMiddleware` — ``None`` means the host-wide
-    # bearer was presented (administrative caller). With a per-node
-    # bearer, ``metadata.from_agent`` MUST match the resolved name
-    # so identity cannot be spoofed via a metadata field (handoff
-    # §4 acceptance). See :func:`_acl.check_send_acl`.
-    authenticated_node = getattr(request.state, "authenticated_node", None)
+    # WI-2 ACL check. The sender is ``metadata.from_agent``, taken at
+    # its word: the host-wide bearer is the only credential the
+    # perimeter accepts, so every caller here is the administrative /
+    # cross-host-forwarding one. This read used to consult
+    # ``request.state.authenticated_node`` first (set by a per-node
+    # bearer middleware removed 2026-08-28) — that value was ``None``
+    # on every request ever served, so this is the same behaviour with
+    # the never-taken path gone. See :func:`_acl.check_send_acl`.
     decision, reason = check_send_acl(
-        authenticated_node=authenticated_node,
         claimed_from_agent=sac_meta.get("from_agent"),
         target=name,
     )
@@ -202,13 +215,15 @@ async def node_message_send(request: Request) -> Response:
         # skip publishing in that case (still 403 to the sender).
         if name:
             broker: Broker = request.app.state.inbox
-            sender_id = authenticated_node or sac_meta.get("from_agent")
+            sender_id = sac_meta.get("from_agent")
             notif = mint_deny_notification(
                 target=name,
                 from_agent=sender_id,
                 reason=reason or "ACL deny",
             )
-            row_id = persist_event(target=name, event=notif)
+            row_id = await run_blocking(
+                persist_event, target=name, event=notif
+            )
             notif["_row_id"] = row_id
             report_zero_delivery(
                 log,
@@ -242,7 +257,9 @@ async def node_message_send(request: Request) -> Response:
                         sender=sender_id,
                         reason=reason or "ACL deny",
                     )
-                    synth_row_id = persist_event(target=name, event=synth)
+                    synth_row_id = await run_blocking(
+                        persist_event, target=name, event=synth
+                    )
                     synth["_row_id"] = synth_row_id
                     report_zero_delivery(
                         log,
@@ -272,7 +289,9 @@ async def node_message_send(request: Request) -> Response:
                 first_pending = record_pending_prompt(sender=sender_id, target=name)
                 if first_pending:
                     prompt = _mint_approval_prompt(target=name, sender=sender_id)
-                    prompt_row_id = persist_event(target=name, event=prompt)
+                    prompt_row_id = await run_blocking(
+                        persist_event, target=name, event=prompt
+                    )
                     prompt["_row_id"] = prompt_row_id
                     report_zero_delivery(
                         log,
@@ -344,7 +363,10 @@ async def node_message_send(request: Request) -> Response:
     # envelope on the deny branch above so the receiver still learns
     # of the attempt; only attempt metadata is published — never the
     # message body.)
-    row_id = persist_event(target=name, event=event)
+    # OFF THE EVENT LOOP, same reason as the ``is_local_node`` hop above:
+    # ``persist_event`` is a PostgreSQL round trip since 2026-08-28, and a
+    # blackholed primary would otherwise stall the whole daemon here.
+    row_id = await run_blocking(persist_event, target=name, event=event)
     event["_row_id"] = row_id
 
     delivered = await broker.publish(name, event)
@@ -354,145 +376,4 @@ async def node_message_send(request: Request) -> Response:
             "to_agent": name,
             "delivered_subscriber_count": delivered,
         }
-    )
-
-
-async def node_inbox_stream(request: Request) -> Response:
-    """``GET /agents/<name>/inbox/stream`` — SSE: one frame per event
-    published to ``<name>`` on this sac listen.
-
-    Consumed by ``sac mcp channel --name <name>`` inside an external
-    node's Claude session (or a sac-managed agent's container). The
-    frame shape is identical to ``a2a/_server.py``'s stream so the
-    same client adapter works for both kinds of node.
-
-    Implicitly registers ``<name>`` as an external node on first
-    connect.
-
-    WI-1 finish-work (Q5 — handoff §4 durability acceptance applied
-    to the ``sac listen`` surface, mirroring ``a2a/_server.py``):
-
-      * On connect, replay missed events from the persistent
-        ``channel_events`` table BEFORE accepting any new live event.
-        Replay source:
-
-          - if the client passed ``Last-Event-ID``, replay every row
-            with ``id > Last-Event-ID``;
-          - otherwise replay every undelivered row (fresh-subscriber
-            case — handoff acceptance "an event POSTed with no
-            subscriber is delivered on connect").
-
-      * Each replay frame stamps the SQLite row id onto the SSE
-        ``id:`` line so the client can echo it back as
-        ``Last-Event-ID`` after a reconnect.
-
-      * After yielding a replay frame the row is marked
-        ``delivered_at`` so a subsequent fresh-subscriber connect
-        does not re-yield it.
-
-      * A malformed ``Last-Event-ID`` header is a loud 400 — a
-        corrupt cursor would silently disable replay if tolerated
-        (handoff §0).
-    """
-    name = request.path_params["name"]
-    base_url = str(request.base_url).rstrip("/")
-    nodes: NodeRegistry = request.app.state.nodes
-    broker: Broker = request.app.state.inbox
-    nodes.register(name, base_url)
-
-    last_event_id_raw = request.headers.get("last-event-id")
-    last_event_id: int | None = None
-    if last_event_id_raw is not None:
-        try:
-            last_event_id = int(last_event_id_raw)
-        except ValueError:
-            return JSONResponse(
-                {
-                    "error": (
-                        "Last-Event-ID header must be an integer; got "
-                        f"{last_event_id_raw!r}"
-                    )
-                },
-                status_code=400,
-            )
-
-    queue = await broker.subscribe(name)
-
-    async def stream():
-        try:
-            # Comment-only frame so HTTP clients see the connection
-            # open immediately (and tests can race-free detect "I'm
-            # subscribed" before publishing).
-            yield b": sac-channel ready\n\n"
-
-            # WI-1 replay: yield every missed durable row first, then
-            # accept live events from the broker.
-            if last_event_id is not None:
-                replay = list_since_id(target=name, since_id=last_event_id)
-            else:
-                replay = list_undelivered(target=name)
-            for entry in replay:
-                if await request.is_disconnected():
-                    return
-                row_id = entry["id"]
-                event = entry["event"]
-                # Strip the internal ``_row_id`` if a previous publish
-                # path stored it inside ``meta_json``; the SSE ``id:``
-                # line is the authoritative cursor.
-                event.pop("_row_id", None)
-                data = json.dumps(event, ensure_ascii=False)
-                yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
-                    "utf-8"
-                )
-                mark_delivered([row_id])
-
-            beat_s = keepalive_interval_s()
-            while True:
-                if await request.is_disconnected():
-                    return
-                # ``get_or_close`` races ``queue.get()`` against the
-                # broker's shutdown Event so a graceful ``sac listen``
-                # SIGTERM cancels this in-flight stream promptly instead
-                # of parking here until restart --force SIGKILLs at 10 s
-                # (card sac-listen-sigterm-sse-shutdown-hang). ``None``
-                # means "broker closing" — return so the StreamingResponse
-                # completes and the daemon exits cleanly.
-                event = await broker.get_or_close(queue, keepalive_after=beat_s)
-                if event is None:
-                    return
-                if event is KEEPALIVE:
-                    # Idle stream — beat. A comment frame is a no-op as CONTENT
-                    # to any SSE client (the adapter skips lines starting with
-                    # ':'), but it is not a no-op as SIGNAL: it gives the client
-                    # bytes, which is the ONLY way a bounded read deadline can
-                    # tell "quiet" from "silently dead" and re-dial instead of
-                    # parking forever on a socket nobody will ever speak on
-                    # again. Without it, a listen that vanishes without closing
-                    # deafens this agent until someone restarts it.
-                    yield b": keepalive\n\n"
-                    continue
-                # The publish path stamps the persisted row id onto
-                # the envelope as ``_row_id`` (see
-                # :func:`node_message_send`). We surface it as the SSE
-                # ``id:`` line and mark the row delivered.
-                row_id = event.pop("_row_id", None)
-                data = json.dumps(event, ensure_ascii=False)
-                if row_id is not None:
-                    yield (f"id: {row_id}\nevent: message\ndata: {data}\n\n").encode(
-                        "utf-8"
-                    )
-                    mark_delivered([int(row_id)])
-                else:
-                    # No row id means the event was injected by a
-                    # path that did NOT persist (future lifecycle
-                    # fan-out, ACL-reject notice, …). Deliver it but
-                    # skip the marker.
-                    yield f"event: message\ndata: {data}\n\n".encode("utf-8")
-        finally:
-            await broker.unsubscribe(name, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

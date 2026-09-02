@@ -1224,3 +1224,50 @@ def test_omitting_to_home_layers_is_not_an_error():
     errors = validate_raw(raw, path="<test>")
     # Assert
     assert not [e for e in errors if "to_home_layers" in e]
+
+
+# ---------------------------------------------------------------------------
+# Reserved agent names — dir-as-SSoT means the name arrives via the PATH,
+# never via the YAML body: a spec at .../<reserved>/spec.yaml declares the
+# host-process role slot by position alone. validate_raw is the chokepoint
+# both `sac agents check` / validate_config AND every load_config run
+# through, so this refusal also gates agent START for a hand-written or
+# host-broker-materialised spec (audit of #1250, 2026-08-28).
+# ---------------------------------------------------------------------------
+
+
+def test_reserved_dir_name_is_refused_at_validation():
+    # Arrange — legal YAML content; only the PATH carries the reserved name
+    # (SSOT constant, not a restated literal).
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    path = f"/agents/{HOST_PROCESS_AGENT_NAME}/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    bad = [e for e in errors if "reserved" in e]
+    # Assert — the refusal names the offending value (the role collision
+    # message quotes the name itself).
+    assert HOST_PROCESS_AGENT_NAME in bad[0]
+
+
+def test_reserved_name_refusal_states_the_role_collision():
+    # Arrange — the message must carry the REASON, not just "reserved":
+    # the derived Postgres role is the host process's own.
+    from scitex_agent_container.runtimes._fleet_env import HOST_PROCESS_AGENT_NAME
+
+    path = f"/agents/{HOST_PROCESS_AGENT_NAME}/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    bad = [e for e in errors if "reserved" in e]
+    # Assert
+    assert "PGUSER" in bad[0]
+
+
+def test_normal_dir_name_gets_no_reserved_error():
+    # Arrange — CONTROL: the refusal keys on the dir name alone; a normal
+    # agent path must not trip it (else the check rejects every spec).
+    path = "/agents/figrecipe/spec.yaml"
+    # Act
+    errors = validate_raw(_BASE, path=path)
+    # Assert
+    assert not [e for e in errors if "reserved" in e]

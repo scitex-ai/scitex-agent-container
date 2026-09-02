@@ -4,10 +4,15 @@
 the POST, stamps the id into the request body, and transitions the row
 to ``delivered`` / ``timeout`` / ``failed`` once the round-trip resolves.
 
-No mocks: a real ``http.server`` on loopback mimics ``/v1/turn`` and the
-real ``state.db`` lives under ``tmp_path`` (isolated via env). The stub
-server captures the request body so we can assert the dispatch_id was
+No mocks: a real ``http.server`` on loopback mimics ``/v1/turn`` and the ledger
+lives in a real, throwaway PostgreSQL schema (the ``pg_schema`` fixture). The
+stub server captures the request body so we can assert the dispatch_id was
 actually put on the wire.
+
+``db_path`` is gone — it named a file and there is no file. The reads
+below stay UNFILTERED on purpose: what they check is that the peer client
+wrote a row at all and moved its status, not whose it is; the owning-agent
+scoping has its own module, ``_state/test_dispatch_ledger_fleet_scope.py``.
 
 Conventions: AAA markers, one assertion per test (STX-TQ).
 """
@@ -15,36 +20,11 @@ Conventions: AAA markers, one assertion per test (STX-TQ).
 from __future__ import annotations
 
 import http.server
-import importlib
 import json
-import os
 import socket
 import threading
-from pathlib import Path
-
-import pytest
 
 from scitex_agent_container._network.peer import PeerError, post_turn_to_url
-
-
-@pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db, exported via env (explicit save/restore, no mock)."""
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
 
 
 def _free_port() -> int:
@@ -102,7 +82,7 @@ def _error_handler(status: int):
 # ---------------------------------------------------------------------------
 
 
-def test_post_turn_records_ledger_row_to_agent(db_path: Path):
+def test_post_turn_records_ledger_row_to_agent(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -121,7 +101,7 @@ def test_post_turn_records_ledger_row_to_agent(db_path: Path):
     assert rows[0]["to_agent"] == "bob"
 
 
-def test_post_turn_marks_clean_roundtrip_delivered(db_path: Path):
+def test_post_turn_marks_clean_roundtrip_delivered(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -138,7 +118,7 @@ def test_post_turn_marks_clean_roundtrip_delivered(db_path: Path):
     assert rows[0]["status"] == "delivered"
 
 
-def test_post_turn_stamps_dispatch_id_into_request_body(db_path: Path):
+def test_post_turn_stamps_dispatch_id_into_request_body(pg_schema: str):
     # Arrange — the stub captures the wire body so we can assert the id
     # was actually sent (receiver-side correlation).
     captured: list[dict] = []
@@ -154,7 +134,7 @@ def test_post_turn_stamps_dispatch_id_into_request_body(db_path: Path):
     assert len(captured[0]["dispatch_id"]) == 32
 
 
-def test_post_turn_wire_dispatch_id_matches_ledger_row(db_path: Path):
+def test_post_turn_wire_dispatch_id_matches_ledger_row(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -177,7 +157,7 @@ def test_post_turn_wire_dispatch_id_matches_ledger_row(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_post_turn_marks_http_error_failed(db_path: Path):
+def test_post_turn_marks_http_error_failed(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -198,7 +178,7 @@ def test_post_turn_marks_http_error_failed(db_path: Path):
     assert rows[0]["status"] == "failed"
 
 
-def test_post_turn_marks_unreachable_failed(db_path: Path):
+def test_post_turn_marks_unreachable_failed(pg_schema: str):
     # Arrange — port 1 on loopback is unrouteable → URLError → failed.
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -213,7 +193,7 @@ def test_post_turn_marks_unreachable_failed(db_path: Path):
     assert rows[0]["status"] == "failed"
 
 
-def test_post_turn_still_returns_reply_when_ledger_records(db_path: Path):
+def test_post_turn_still_returns_reply_when_ledger_records(pg_schema: str):
     # Arrange — the dispatch itself must succeed regardless of ledger.
     server, thread, port = _start_server(_echo_handler([]))
     try:

@@ -1,4 +1,4 @@
-"""The bot-token ownership ledger — on a REAL PostgreSQL, never SQLite, never a mock.
+"""The bot-token ownership ledger — on a REAL PostgreSQL, never a local file, never a mock.
 
 Mirrors ``src/scitex_agent_container/_state/state_db_token_owner.py``.
 
@@ -6,7 +6,7 @@ WHY THESE TESTS TALK TO A REAL DATABASE
 =======================================
 The module under test is PostgreSQL-only by the operator's 2026-08-19 order
 ("fail fast, fail loud, no fallbacks") and reaches PostgreSQL through
-``scitex_dev.store``. A suite that exercised the store's SQLite dialect would
+``scitex_dev.store``. A suite that exercised the store's file-backed dialect would
 be testing a code path production can never take — and scitex-dev 0.49.0
 shipped a PostgreSQL backend that could be WRITTEN to and never READ from,
 precisely because that path had been written to and never read from. So the

@@ -29,9 +29,10 @@ def resolve_peer_url(agent_name: str) -> str:
     and returns the URL the caller should POST to.
 
     When the YAML pins ``spec.a2a.port: auto`` the actual bound port
-    isn't in the YAML — it lives in ``state.db``'s ``a2a_ports`` table
-    where the port allocator persists the claim at agent_start.  We
-    consult that table by ``agent_name`` to discover the real port.
+    isn't in the YAML — it lives in the ``a2a_ports`` claim ledger,
+    per-host PostgreSQL since 2026-08-28, where the port allocator
+    persists the claim at agent_start.  We consult that ledger by
+    ``agent_name`` to discover the real port.
     See foundation-polish bug 1.
 
     For **cross-host** agents (``spec.host`` is set to a non-local peer
@@ -133,13 +134,13 @@ def _lookup_bound_port(agent_name: str) -> int | None:
 
     The YAML may say ``spec.a2a.port: auto`` (or omit ``port`` entirely)
     when the spec author wants the runtime to pick a free port. The
-    actual port is recorded in the ``a2a_ports`` table in ``state.db``
-    by :func:`_state.port_allocator.claim_port` at agent_start. The
-    peer client consults the same table so it can talk to an
+    actual port is recorded in the ``a2a_ports`` claim ledger (per-host
+    PostgreSQL) by :func:`_state.port_allocator.claim_port` at
+    agent_start. The peer client consults the same ledger so it can talk to an
     auto-port agent without having to re-parse + reproduce the
     allocator's logic.
 
-    Failure modes (registry missing, schema not yet created, sqlite
+    Failure modes (registry missing, schema not yet created, storage
     locked) degrade to ``None`` so the caller raises the same "no
     port recorded" PeerError it would for a static-port misconfig.
     """

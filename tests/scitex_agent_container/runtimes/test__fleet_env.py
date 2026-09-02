@@ -23,11 +23,23 @@ import pytest
 from scitex_agent_container.runtimes._fleet_env import (
     CONFIG_SECTION,
     FLEET_DEFAULT_ENV,
+    HOST_PROCESS_AGENT_NAME,
+    apply_fleet_defaults_to_process,
     declared_fleet_defaults,
     effective_env,
     fleet_env_flags,
     merge_fleet_env,
 )
+from scitex_agent_container.runtimes._pg_identity_env import (
+    PG_USER_ENV,
+    derive_pg_role,
+)
+
+# The host process's expected role, composed by the SAME primitive the
+# production code uses. Spelling ``ywatanabe__cli`` literally here would make
+# these tests pass on the operator's laptop and fail for anyone else — and
+# would quietly stop testing the composition the moment it changed.
+HOST_PROCESS_ROLE = derive_pg_role(HOST_PROCESS_AGENT_NAME)
 
 
 def _write_config_yaml(path: Path, mapping: dict) -> Path:
@@ -60,7 +72,7 @@ def test_sac_declares_the_store_dsn_and_nothing_else() -> None:
     defaults = declared_fleet_defaults(absent)
     # Assert
     assert defaults == {
-        "SCITEX_STORE_DSN": "postgresql://scitex_cards@127.0.0.1:55432/scitex",
+        "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     }
 
 
@@ -97,6 +109,13 @@ def _resolved_store_locator(dsn: str | None) -> str:
             os.environ[key] = saved
 
 
+#: A DSN no scitex-dev version can ever resolve to on its own: RFC 2606
+#: reserves ``.invalid``, so seeing this host in a locator proves the env
+#: variable was read — independent of where the zero-config default lives
+#: (0.57.0: per-host socket; 0.58.1: fleet primary; next version: its call).
+_SENTINEL_DSN = "postgresql://sentinel.invalid:59999/sentinel_db"
+
+
 def test_the_injected_store_dsn_reaches_scitex_devs_resolver() -> None:
     """Half of the guard the two RETIRED store variables never had.
 
@@ -119,51 +138,341 @@ def test_the_injected_store_dsn_reaches_scitex_devs_resolver() -> None:
     assert "55432" in locator
 
 
-def test_without_the_injection_the_resolver_goes_somewhere_else() -> None:
-    """The other half: the two arms must DIFFER, or the variable is inert.
+def test_the_injection_is_observed_a_sentinel_moves_the_target() -> None:
+    """The other half: changing the variable must MOVE the target, or it is inert.
 
     A test that only checked the "set" arm could pass even if scitex-dev
     resolved to 55432 for its own reasons and ignored the variable entirely —
     which is precisely the inert-but-plausible state that cost the live
-    diagnosis above. Requiring the UNSET arm to land elsewhere is what makes
-    "read for behaviour" an observation rather than an assumption.
+    diagnosis above. So this arm must prove the variable is OBSERVED.
 
-    The unset arm resolves to a UNIX socket that does not exist in a
-    container, and opening a Store against it raises StoreTargetError naming
-    the missing path. That loud refusal — with no SQLite to slip into — is
-    scitex-dev's stated design and the behaviour the operator asked for.
+    THE PREVIOUS PREDICATE COMPARED THE TWO ARMS and required them to differ
+    — reading "the unset arm lands elsewhere" as a fact about sac's variable.
+    It is a fact about SCITEX-DEV'S DEFAULT, and the default moved. Measured:
 
-    THE DISCRIMINATOR WAS A RENDERING DETAIL, and a dependency bump exposed
-    it. This asserted ``"55432" not in locator`` — reading the ABSENCE of a
-    port as proof the unset arm went elsewhere. Measured on both versions:
+        scitex-dev 0.57.0  unset: postgres[host=~/.scitex/pg/run ... ]  <- socket
+        scitex-dev 0.58.1  unset: postgres[host=scitex-primary port=55432]
 
-        scitex-dev 0.56.0   set: postgres://127.0.0.1:55432/scitex
-                          unset: postgres://?/scitex            <- no port
-        scitex-dev 0.56.1 unset: postgres[... port=55432]       <- port
+    0.58.1 adopted the fleet primary as its own zero-config default, so the
+    unset arm now equals the injected fleet DSN BY UPSTREAM DESIGN, and the
+    two-arm inequality failed on every host that resolves the newest release
+    — reproduced 2026-09-02 in a clean venv with no ambient environment at
+    all, after first being mistaken for a CI-runner env leak. Same lesson as
+    the 0.56.1 incident this docstring used to describe: any predicate that
+    encodes WHERE the default goes breaks when upstream moves the default.
 
-    The behaviour never changed; only ``__str__`` did. That is the whole
-    reason this ran green on a developer machine pinned to 0.56.0 and red in
-    CI, which resolves the newest — and why it took a full CI reproduction,
-    not a local run, to see it. Both failing tests on develop shared this
-    single cause, and between them they blocked every open PR, including
-    ones touching no state code at all.
+    So inject a SENTINEL instead. ``sentinel.invalid`` can never be any
+    version's default (RFC 2606 reserves .invalid), so:
+      * sentinel in the injected arm's locator  => the variable is read for
+        behaviour — the exact property the retired variables never had;
+      * sentinel absent from the unset arm      => the helper's save/restore
+        works and the sentinel did not leak into the default path.
+    Neither assertion knows or cares where the default resolves, so a future
+    default move cannot fail this test — only ignoring the variable can.
 
-    The locator is a DISPLAY FORM (the real connection string is
-    ``target.dsn``, redacted here deliberately). A display form is not a
-    contract. So state the predicate this docstring already describes: the
-    two arms must DIFFER. That is exactly what "the variable is not inert"
-    means, it needs no knowledge of WHICH field carries the difference, and
-    no reformatting on either side can defeat it.
-
-    Mutation-checked: pointing the unset arm at the injected DSN makes the
-    two identical and this test fails, so it still discriminates.
+    Resolution stays PURE (computes a target, never connects), so the
+    sentinel host is never dialed. Mutation-checked: dropping the env read
+    in the resolver makes the locator show the default instead, and this
+    fails. The companion leak-guard is its own test below (TQ007).
     """
     # Arrange
-    with_injection = _resolved_store_locator(FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"])
+    dsn = _SENTINEL_DSN
     # Act
-    without_injection = _resolved_store_locator(None)
+    injected = _resolved_store_locator(dsn)
     # Assert
-    assert without_injection != with_injection
+    assert "sentinel.invalid" in injected
+
+
+def test_the_sentinel_never_leaks_into_the_unset_arm() -> None:
+    """Leak-guard companion to the sentinel test above.
+
+    Proves the helper's save/restore seam actually restores: after an
+    injected resolution, an unset resolution must show no trace of the
+    sentinel. Deliberately says NOTHING about where the unset arm lands —
+    0.57.0 answers a unix socket, 0.58.1 answers the fleet primary, and both
+    are upstream's business (see the docstring above for the incident that
+    taught this). Mutation-checked: making ``_resolved_store_locator`` skip
+    its ``finally`` restore leaves the sentinel in ``os.environ`` and this
+    fails.
+    """
+    # Arrange
+    _resolved_store_locator(_SENTINEL_DSN)
+    # Act
+    unset = _resolved_store_locator(None)
+    # Assert
+    assert "sentinel.invalid" not in unset
+
+
+# ----------------------------------------------------------------------
+# The defaults reach sac's OWN process, not only its containers.
+#
+# The gap behind ``fe_sendauth: no password supplied`` on 2026-08-28:
+# ``sac agents restart`` on compute-04 opened ``node_comms_policy`` with NO
+# ``SCITEX_STORE_DSN`` in its own environment — the defaults were only ever
+# rendered into ``apptainer --env`` flags — so scitex-dev's resolver fell
+# through to the local UNIX socket, a streaming standby whose password no
+# ``.pgpass`` row could supply. A real mapping stands in for ``os.environ``
+# below (the seam exists so these tests do not touch the process they run
+# in); the last two go through the real ``os.environ`` with save/restore,
+# the repo idiom (see ``_resolved_store_locator``).
+# ----------------------------------------------------------------------
+
+
+def _bare_process_env(tmp_path: Path) -> dict[str, str]:
+    """A process env that says nothing about the store, defaults applied."""
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    return environ
+
+
+def test_the_sac_process_receives_the_store_dsn_it_hands_to_containers(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ["SCITEX_STORE_DSN"] == FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"]
+
+
+def test_applying_defaults_reports_exactly_the_keys_it_injected(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    injected = apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert — the declared cascade PLUS the host-side half of the pg identity
+    assert injected == {**FLEET_DEFAULT_ENV, PG_USER_ENV: HOST_PROCESS_ROLE}
+
+
+def test_applying_defaults_leaves_unrelated_process_keys_alone(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    # Act
+    environ = _bare_process_env(tmp_path)
+    # Assert
+    assert environ["PATH"] == "/usr/bin"
+
+
+def test_an_operator_exported_store_dsn_beats_the_fleet_default(
+    tmp_path: Path,
+) -> None:
+    """Same rule as ``spec.env`` over the fleet layer — a default exists in
+    order to be overridden. A host whose Postgres lives elsewhere exports its
+    own DSN, and sac must not silently redirect that host's writes to
+    ``scitex-primary``.
+    """
+    # Arrange
+    environ = {"SCITEX_STORE_DSN": "postgresql://elsewhere:5432/mine"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ["SCITEX_STORE_DSN"] == "postgresql://elsewhere:5432/mine"
+
+
+def test_the_config_yaml_layer_reaches_the_process_beside_a_kept_override(
+    tmp_path: Path,
+) -> None:
+    """Precedence proven against the FULL declared set, not just sac's
+    constant: the operator's config.yaml key is added, the exported DSN is
+    kept, and the return value names only what was actually injected.
+    """
+    # Arrange
+    cfg = _write_config_yaml(tmp_path / "config.yaml", {"OPERATOR_KEY": "from-yaml"})
+    environ = {"SCITEX_STORE_DSN": "postgresql://elsewhere:5432/mine"}
+    # Act
+    injected = apply_fleet_defaults_to_process(environ, config_path=cfg)
+    # Assert
+    assert injected == {"OPERATOR_KEY": "from-yaml", PG_USER_ENV: HOST_PROCESS_ROLE}
+
+
+def _with_store_dsn_unset(fn):
+    """Run ``fn`` with the injected keys absent from the REAL os.environ.
+
+    ``PGUSER`` is saved and cleared alongside ``SCITEX_STORE_DSN`` because the
+    process-level injection now sets BOTH. Clearing it makes the two tests
+    below exercise the injection rather than an inherited value (inside an
+    agent container ``PGUSER`` is always already set), and restoring it stops
+    a test from leaving a role name behind in the live environment it borrowed.
+    """
+    import os
+
+    key = "SCITEX_STORE_DSN"
+    keys = (key, PG_USER_ENV)
+    saved = {k: os.environ.get(k) for k in keys}
+    try:
+        for k in keys:
+            os.environ.pop(k, None)
+        return fn(key)
+    finally:
+        for k, previous in saved.items():
+            if previous is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = previous
+
+
+def test_the_default_form_writes_to_the_live_process_environment() -> None:
+    """No ``environ`` argument — the way ``cli_entry_point`` calls it."""
+    import os
+
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+
+    def act(key: str) -> str:
+        apply_fleet_defaults_to_process(config_path=absent)
+        return os.environ[key]
+
+    # Act
+    seen = _with_store_dsn_unset(act)
+    # Assert
+    assert seen == FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"]
+
+
+def test_a_second_application_finds_the_key_present_and_injects_nothing() -> None:
+    # Arrange
+    absent = Path("/nonexistent/config.yaml")
+
+    def act(_key: str) -> dict[str, str]:
+        apply_fleet_defaults_to_process(config_path=absent)
+        return apply_fleet_defaults_to_process(config_path=absent)
+
+    # Act
+    second = _with_store_dsn_unset(act)
+    # Assert
+    assert second == {}
+
+
+# ----------------------------------------------------------------------
+# ``PGUSER`` — the OTHER half of the same identity.
+#
+# The fleet's DSN is roleless on purpose and the login travels separately, so
+# a process holding only the DSN can reach the right server and still not say
+# who it is. libpq then falls back to the OS user, and ``.pgpass`` matches on
+# (host, port, database, USER) — compute-04's 522 rows contain no entry for
+# the bare OS user, so that fallback cannot authenticate at all:
+# ``fe_sendauth: no password supplied``. Containers were never exposed to this
+# because ``_pg_identity_env`` gives each one ``<host_user>__<agent>``; the
+# host-side process had no equivalent until it got ``<host_user>__cli``.
+# ----------------------------------------------------------------------
+
+
+def test_a_bare_process_env_gains_both_halves_of_the_pg_identity(
+    tmp_path: Path,
+) -> None:
+    """One assert on the PAIR, because either half alone cannot connect."""
+    # Arrange
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert (environ["SCITEX_STORE_DSN"], environ[PG_USER_ENV]) == (
+        FLEET_DEFAULT_ENV["SCITEX_STORE_DSN"],
+        HOST_PROCESS_ROLE,
+    )
+
+
+def test_the_injected_role_is_composed_by_the_shared_primitive(
+    tmp_path: Path,
+) -> None:
+    """SSOT: ``<host_user>__<name>`` is built in exactly one place.
+
+    ``derive_pg_role`` is what every container's ``PGUSER`` already comes
+    from, so asserting against it — rather than against a literal — is what
+    keeps a second copy of the string logic from appearing here later.
+    """
+    # Arrange
+    # Act
+    environ = _bare_process_env(tmp_path)
+    # Assert
+    assert environ[PG_USER_ENV] == derive_pg_role(HOST_PROCESS_AGENT_NAME)
+
+
+def test_a_process_that_already_declares_a_role_keeps_it_verbatim(
+    tmp_path: Path,
+) -> None:
+    """Declared-anywhere wins, same rule as the DSN above.
+
+    An operator debugging as another role, or a wrapper that already resolved
+    an identity, must not have it silently swapped for ``__cli`` — a
+    connection made under the wrong login is worse than one that fails.
+    """
+    # Arrange
+    environ = {PG_USER_ENV: "ywatanabe__deliberately-someone-else"}
+    # Act
+    apply_fleet_defaults_to_process(
+        environ, config_path=tmp_path / "no-such-config.yaml"
+    )
+    # Assert
+    assert environ[PG_USER_ENV] == "ywatanabe__deliberately-someone-else"
+
+
+def test_a_config_yaml_role_beats_the_host_process_default(tmp_path: Path) -> None:
+    """The third declaring layer: the operator's ``spec.fleet_default_env``.
+
+    The injection is checked AFTER the config cascade precisely so this layer
+    is covered by the same lookup, rather than by a second special case that
+    could disagree with it.
+    """
+    # Arrange
+    cfg = _write_config_yaml(
+        tmp_path / "config.yaml", {PG_USER_ENV: "ywatanabe__from-yaml"}
+    )
+    environ: dict[str, str] = {"PATH": "/usr/bin"}
+    # Act
+    apply_fleet_defaults_to_process(environ, config_path=cfg)
+    # Assert
+    assert environ[PG_USER_ENV] == "ywatanabe__from-yaml"
+
+
+def test_the_injected_dsn_names_no_role_of_its_own(tmp_path: Path) -> None:
+    """The DSN must stay ROLELESS — the guard on a 132-way identity collapse.
+
+    Putting the role in the DSN would "fix" the host process in one line, and
+    :data:`FLEET_DEFAULT_ENV` is the CONTAINERS' baseline too: apptainer would
+    hand that userinfo to all 132 agents, where libpq prefers it over each
+    agent's own ``PGUSER``, and every distinct per-agent login would become
+    one shared role. Userinfo lives before an ``@`` in the authority, so that
+    is what this looks at — not the whole string, which legitimately contains
+    ``:`` and ``/``.
+    """
+    # Arrange
+    environ = _bare_process_env(tmp_path)
+    # Act
+    authority = environ["SCITEX_STORE_DSN"].split("://", 1)[1].split("/", 1)[0]
+    # Assert
+    assert "@" not in authority
+
+
+def test_the_host_process_role_never_reaches_a_container(tmp_path: Path) -> None:
+    """The other side of the same guard, at the layer that renders containers.
+
+    ``cli`` is injected into the PROCESS, never into the declared defaults, so
+    an agent still launches as itself. If someone ever "simplifies" this by
+    adding ``PGUSER`` to :data:`FLEET_DEFAULT_ENV`, that key would win over
+    ``_pg_identity_env``'s per-agent injection (declared-anywhere-wins cuts
+    both ways) and this goes red.
+    """
+    # Arrange
+    config = SimpleNamespace(name="some-agent", env={}, apptainer=None)
+    # Act
+    env = effective_env(config, defaults=FLEET_DEFAULT_ENV)
+    # Assert
+    assert env[PG_USER_ENV] == derive_pg_role("some-agent")
+
 
 
 def test_declared_defaults_do_not_mutate_the_module_constant(tmp_path: Path) -> None:
@@ -543,7 +852,8 @@ def test_dead_read_routing_key_is_not_a_fleet_default(key: str) -> None:
     """sac must not declare a read-routing flag that nothing reads.
 
     This INVERTS ``test_read_backend_default_is_retained``, which asserted the
-    SQLite read pin "stays". That test was written when the pin was believed to
+    retired-engine read pin "stays". That test was written when the pin was
+    believed to
     mean something. It does not: scitex-cards searched their read path from
     source (positive control first) and found the variable only in a comment and
     a retired-vars key — never read for behaviour. The old test pinned a policy

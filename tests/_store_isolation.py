@@ -32,7 +32,7 @@ from typing import Iterator
 import pytest
 
 # ----------------------------------------------------------------------
-# PostgreSQL isolation for the sqlite -> Postgres migration (2026-08-19)
+# PostgreSQL isolation, introduced with the storage migration (2026-08-19)
 # ----------------------------------------------------------------------
 
 #: The per-host store. Loopback only — every fleet PostgreSQL refuses
@@ -172,7 +172,7 @@ def _no_accidental_fleet_store_writes() -> Iterator[None]:
 
     MEASURED INCIDENT, 2026-08-20. When the birth certificate moved to
     PostgreSQL (#1154), ``write_birth_certificate`` lost its ``db_path``. Tests
-    that had been threading a ``tmp_path`` SQLite file were suddenly resolving
+    that had been threading a ``tmp_path`` database file were suddenly resolving
     the FLEET DSN instead, and one full-suite run on scitex-compute-04 wrote
     **46 rows into the live incarnations store** — ``alpha``, ``zombie``,
     ``born-1``..``born-4``, ``pid-*``, ``rec-*``, ``screen-*``, every one a

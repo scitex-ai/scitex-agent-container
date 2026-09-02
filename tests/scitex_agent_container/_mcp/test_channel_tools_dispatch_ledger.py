@@ -6,9 +6,16 @@ agent, to_agent=target, conversation_id), stamps the id into the
 A2A ``params.metadata``, then transitions the row to ``delivered`` /
 ``failed`` on the send outcome.
 
+``a2a_send`` also stamps ``agent="alice"`` — the OWNING agent — since the
+ledger moved to the fleet-wide PostgreSQL store on 2026-08-28. It happens to
+equal ``from_agent`` here, which is why one test below asserts the two
+SEPARATELY rather than treating either as evidence of the other.
+
 No mocks: the ``a2a_send`` tool POSTs to ``{listen_url}/agents/<target>
 /message:send`` over real httpx; a real loopback ``http.server`` stands
-in for ``sac listen`` and captures the wire body. The mcp ``server`` is
+in for ``sac listen`` and captures the wire body. The ledger lives in a real,
+throwaway PostgreSQL schema (the ``pg_schema`` fixture) — ``db_path`` is gone,
+because it named a file and there is no file. The mcp ``server`` is
 a tiny hand-rolled recorder exposing only the two decorator methods
 ``register_tools`` uses (``list_tools`` / ``call_tool``) — a real
 collaborator object, not a Mock.
@@ -20,34 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import http.server
-import importlib
 import json
-import os
 import socket
 import threading
-from pathlib import Path
-
-import pytest
-
-
-@pytest.fixture
-def db_path(tmp_path: Path):
-    """Isolated state.db, exported via env (explicit save/restore, no mock)."""
-    p = tmp_path / "state.db"
-    key = "SCITEX_AGENT_CONTAINER_STATE_DB"
-    saved = os.environ.get(key)
-    os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
-
-    importlib.reload(mod)
-    try:
-        yield p
-    finally:
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-        importlib.reload(mod)
 
 
 class _ToolRecorder:
@@ -123,7 +105,7 @@ def _invoke_a2a_send(listen_url: str, target: str, content: str):
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_records_ledger_row_from_this_agent(db_path: Path):
+def test_a2a_send_records_ledger_row_from_this_agent(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -140,7 +122,32 @@ def test_a2a_send_records_ledger_row_from_this_agent(db_path: Path):
     assert rows[0]["from_agent"] == "alice"
 
 
-def test_a2a_send_records_target_as_to_agent(db_path: Path):
+def test_a2a_send_scopes_the_row_to_this_agent(pg_schema: str):
+    # Arrange — a FOREIGN row is planted first, and it is what makes this test
+    # able to fail: with only alice's own row present, an unscoped read and a
+    # scoped one return the same single row and the assertion proves nothing.
+    # Measured — without the foreign row this test passes even with the
+    # owning-agent filter deleted from list_dispatches.
+    from scitex_agent_container._state.dispatch_ledger import (
+        list_dispatches,
+        record_dispatch,
+    )
+
+    record_dispatch(agent="carol", from_agent="carol", to_agent="dave", text="theirs")
+    server, thread, port = _start_listen_stub(200, [])
+    try:
+        # Act
+        _invoke_a2a_send(f"http://127.0.0.1:{port}", "bob", "hi")
+        rows = list_dispatches(agent="alice")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+    # Assert
+    assert [r["to_agent"] for r in rows] == ["bob"]
+
+
+def test_a2a_send_records_target_as_to_agent(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -157,7 +164,7 @@ def test_a2a_send_records_target_as_to_agent(db_path: Path):
     assert rows[0]["to_agent"] == "bob"
 
 
-def test_a2a_send_marks_clean_send_delivered(db_path: Path):
+def test_a2a_send_marks_clean_send_delivered(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -174,7 +181,7 @@ def test_a2a_send_marks_clean_send_delivered(db_path: Path):
     assert rows[0]["status"] == "delivered"
 
 
-def test_a2a_send_stamps_dispatch_id_into_metadata(db_path: Path):
+def test_a2a_send_stamps_dispatch_id_into_metadata(pg_schema: str):
     # Arrange — capture the A2A envelope so we can read params.metadata.
     captured: list[dict] = []
     server, thread, port = _start_listen_stub(200, captured)
@@ -189,7 +196,7 @@ def test_a2a_send_stamps_dispatch_id_into_metadata(db_path: Path):
     assert len(captured[0]["params"]["metadata"]["dispatch_id"]) == 32
 
 
-def test_a2a_send_wire_dispatch_id_matches_ledger_row(db_path: Path):
+def test_a2a_send_wire_dispatch_id_matches_ledger_row(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 
@@ -212,7 +219,7 @@ def test_a2a_send_wire_dispatch_id_matches_ledger_row(db_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_send_marks_server_error_failed(db_path: Path):
+def test_a2a_send_marks_server_error_failed(pg_schema: str):
     # Arrange
     from scitex_agent_container._state.dispatch_ledger import list_dispatches
 

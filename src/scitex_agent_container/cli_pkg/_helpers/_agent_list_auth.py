@@ -85,7 +85,7 @@ def all_auth_states() -> dict[str, dict]:
     looked up per row from the returned dict — never a per-row db hit.
 
     Tolerant by design. A state.db that does not exist, an ``agent_auth_state``
-    table no watchdog has ever written, or any sqlite hiccup all map to ``{}`` —
+    table no watchdog has ever written, or any storage hiccup all map to ``{}`` —
     "nobody has been checked yet" — which every row then renders honestly as
     UNKNOWN rather than as verified-green. An auth-cache miss must never crash
     ``sac agents list``, and must never slow it down.

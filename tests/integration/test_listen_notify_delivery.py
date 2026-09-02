@@ -25,7 +25,7 @@ No mocks (STX-NM002), mirroring the real-socket style of
   port;
 * the subscriber is a REAL ``httpx`` SSE stream over that socket;
 * the publish goes through the REAL ``Broker`` inside the REAL app;
-* the ``state.db`` is a REAL (isolated, tmp_path) SQLite file.
+* the store is REAL and isolated per test.
 
 TQ: module docstring states intent (TQ001); AAA markers (TQ002); the
 state.db / bring-up fixtures are FUNCTION scoped (TQ004) and ``yield``
@@ -48,7 +48,6 @@ import uvicorn
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from tests.scitex_agent_container._helpers.loopback_server import (
     serve_in_thread,
     wait_until_serving,
@@ -71,8 +70,23 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def listen_state_db(tmp_path: Path):
-    """Isolated state.db + registry/runtime dirs for the real app.
+def listen_state_db(tmp_path: Path, pg_schema: str):
+    """Isolated state.db + registry/runtime dirs + channel store for the app.
+
+    ``pg_schema`` JOINED ON 2026-08-28, AND ITS ABSENCE WAS THE FAILURE.
+    ``/v1/notify`` persists the event BEFORE it publishes, and that write
+    moved from the local ``state.db`` to the shared PostgreSQL (ADR-0023).
+    The suite-wide guard in ``tests/_store_isolation.py`` points every test
+    that does NOT ask for a real store at ``127.0.0.1:1`` — a sentinel that
+    cannot connect — so this module's four tests began failing with
+    ``connection to server at "127.0.0.1", port 1 failed``.
+
+    The sentinel was never asserting "this path contacts no store"; it is
+    the default isolation, and that fixture's own docstring names the
+    opt-in: "Tests that need a REAL store take ``pg_schema``". This path now
+    needs one, so it takes one. Adding a production fallback that shrugged
+    at an unreachable store would have made the durability guarantee this
+    endpoint exists to provide silently untrue.
 
     Function-scoped (TQ004 — no shared mutable state across tests); sets
     its env + module constants, ``yield``s the bundle (TQ005), and
@@ -92,21 +106,17 @@ def listen_state_db(tmp_path: Path):
     }
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    saved_db_const = state_db.DEFAULT_DB_PATH
 
     db = tmp_path / "state.db"
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
     os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(tmp_path / "runtime")
-    state_db.DEFAULT_DB_PATH = db
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    state_db.init_schema(db)
     try:
         yield {"db": db}
     finally:
-        state_db.DEFAULT_DB_PATH = saved_db_const
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         for key, val in saved.items():

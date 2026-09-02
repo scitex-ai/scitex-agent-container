@@ -1,104 +1,59 @@
-"""SQLite-backed state for scitex-agent-container (F-CS11 + diary tables).
+"""The ``state_db`` facade — two id helpers and the accessor re-exports.
 
-Replaces the per-agent JSON files under
-``~/.scitex/agent-container/runtime/registry/`` with a single ``state.db``
-holding tables in three groups:
+THIS MODULE NO LONGER OPENS A DATABASE. It was the per-agent ``state.db``
+engine — connection factory, ``init_schema``, ``open_db``, ``table_counts``
+and the ``KNOWN_TABLES`` whitelist every generic reader walked — and all of
+it is gone. sac's state is the per-host PostgreSQL store reached through
+``scitex_dev.store``; ADR-0022 is the ruling and ADR-0023 records the one
+place plain PostgreSQL was chosen over the store primitive.
 
-  * F-CS11 registry — ``definitions``, ``instances``, ``events``.
-  * F-CS11 phase 2 — ``instance_heartbeats`` (the legacy
-    ``heartbeats`` time series, tied to an ``instances.id``).
-  * Diary (2026-05-17) — ``turns``, ``errors``, ``heartbeats``. Each
-    agent writes here continuously, like a journal; the lead reads
-    + filters when it wants cross-host visibility. ``heartbeats``
-    promotes the per-agent ``heartbeat.json`` file into a queryable
-    table keyed by ``(name, host, pid, state, ts)``.
+The engine's last day is worth one paragraph, because the shape it ended in
+is the argument for deleting it rather than leaving it. ``KNOWN_TABLES`` had
+already shrunk to an EMPTY tuple and both schema constants to pure SQL
+comments, so ``init_schema`` issued no DDL at all,
+``open_db`` handed out a connection to a database with no tables, and
+``table_counts`` could only ever return ``{}``. Nothing in ``src/`` called
+any of the three. What remained was a module that created an empty file on
+disk and a set of verbs that answered every question with a plausible zero —
+the exact success-shaped wrong answer each departing table was removed to
+avoid, one level up, in the accessor that was supposed to be the safe one.
 
-The single-file layout makes backup/sync trivial (one ``cp``) and
-keeps the existing ``actions.db`` table (``attempts``) co-located so
-queries can join across action history and instance lifecycle.
+``DEFAULT_DB_PATH`` WENT LAST, AND IT IS WHY THIS PARAGRAPH EXISTS. The engine
+deletion left the PATH behind — a ``Path`` naming a ``state.db`` that nothing
+created and nothing could open — on the stated ground that retiring it was "a
+separate change with a separate argument", roughly fifty test modules having
+saved and restored it as isolation ceremony. This is that change. The argument
+is the one the constant's own comment made against itself: it selected no
+storage, so the ~4900 per-test rebindings isolated nothing, and the test
+sandbox's state-floor check spent a third of its sentinels proving a constant
+nobody reads still pointed somewhere harmless. A guard that cannot fail costs
+exactly what it appears to buy.
 
-NOTE: The original F-CS11 ``heartbeats`` table is renamed to
-``instance_heartbeats`` on first open (idempotent migration in
-``init_schema``) so the diary-style ``heartbeats`` can own the name.
+WHAT STAYED, AND WHY EACH IS HERE
+=================================
+:func:`now_iso` and :func:`new_uuid7` are pure value helpers with callers all
+over the package; they never touched a connection. ``_resolve_host`` is
+re-exported for the seven modules that import it from here. The four accessor
+groups below are re-exported for the same reason — they moved into sibling
+modules under the per-file line cap years before the storage moved, and every
+``from ...state_db import X`` call site still resolves through this name.
 
-Large helper groups live in sibling modules, all re-exported from THIS
-module so ``from ...state_db import X`` imports keep working:
-
-  * :mod:`state_db_export` — export_state / import_state / import_legacy_registry.
-  * :mod:`state_db_gc` — gc_dead_instances / _proc_btime.
-  * :mod:`state_db_diary` — record_turn / record_error / record_heartbeat /
-    latest_heartbeats_per_name.
-  * :mod:`state_db_heartbeats` — update_heartbeat / latest_instance_heartbeat.
-  * :mod:`state_db_migrations` — idempotent schema migrations.
+The accessors themselves each own their storage now: :mod:`state_db_diary`
+(``turns`` / ``errors`` / ``heartbeats``), :mod:`state_db_instances`
+(``instances``), :mod:`state_db_gc` and :mod:`state_db_export`. This module
+mediates nothing between a caller and a store — it is a namespace, and the
+next reader should not have to open it to find that out.
 """
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Iterator
 
 # Re-exported for the 7 modules that ``from ...state_db import
 # _resolve_host`` (claude_session, _node_channel, state_db_export,
-# state_db_gc, _send, send_cmds, _dispatch). The ``instances`` CRUD
-# that used it directly moved to state_db_instances; keep the
-# re-export here so those import sites keep resolving.
-from .._runtime_paths import runtime_base_dir
+# state_db_gc, _send, send_cmds, _dispatch).
 from .state_db_hostname import resolve_host as _resolve_host  # noqa: F401
-from .state_db_migrations import (
-    migrate_instance_heartbeats_add_seq,
-    migrate_instances_add_family_tree_cols,
-    migrate_legacy_heartbeats,
-    migrate_node_comms_policy_add_group_name,
-    migrate_node_comms_policy_add_group_names,
-)
-from .state_db_schema import (
-    _SCHEMA_ATTEMPTS,
-    _SCHEMA_DIARY,
-    _SCHEMA_REGISTRY,
-)
-
-# ``SCITEX_AGENT_CONTAINER_STATE_DB`` still wins (explicit per-file
-# override); its FALLBACK now routes through ``runtime_base_dir`` so the
-# single ``SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` knob relocates state.db
-# too. Unset env => identical to the historical
-# ``~/.scitex/agent-container/runtime/state.db``.
-DEFAULT_DB_PATH = Path(
-    os.environ.get(
-        "SCITEX_AGENT_CONTAINER_STATE_DB",
-        str(runtime_base_dir() / "state.db"),
-    )
-)
-
-
-# Tables exposed by `sac db query --table=<t>`. Whitelisted so users
-# can't pass arbitrary identifiers through str-format SQL.
-KNOWN_TABLES = (
-    "definitions",
-    "instances",
-    "instance_heartbeats",
-    "events",
-    "attempts",
-    "turns",
-    "errors",
-    "heartbeats",
-    "channel_events",
-    "node_tokens",
-    "lineage",
-    "comms_grants",
-    "comms_nodes",
-    "node_comms_policy",
-    # ``incarnations`` was here until 2026-08-19. It now lives in per-host
-    # PostgreSQL via :mod:`.state_db_incarnations`, so it is NOT queryable
-    # through `sac db query`. Removed rather than left behind: a whitelisted
-    # name with no table returns an EMPTY result, and an empty result reads
-    # as "this agent has no incarnations" when the truth is "you are asking
-    # the wrong database". An unknown-table error is the honest answer.
-)
 
 
 def now_iso() -> str:
@@ -117,131 +72,6 @@ def new_uuid7() -> str:
     return str(uuid.uuid4())
 
 
-def _default_connector(db_path: Path) -> sqlite3.Connection:
-    """Default sqlite3 connection factory (test seam)."""
-    return sqlite3.connect(db_path, timeout=30.0)
-
-
-def _connect(
-    db_path: Path,
-    connector=_default_connector,
-) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = connector(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 30000")
-    current_mode = conn.execute("PRAGMA journal_mode").fetchone()
-    if current_mode and str(current_mode[0]).lower() != "wal":
-        import time
-
-        for attempt in range(50):
-            try:
-                conn.execute("PRAGMA journal_mode = WAL")
-                break
-            except sqlite3.OperationalError as exc:
-                if "locked" not in str(exc).lower() or attempt == 49:
-                    raise
-                time.sleep(0.02 * (attempt + 1))
-    # GPFS / network-FS reliability. WAL (above) alone still floods
-    # "disk I/O error" on Spartan GPFS under the heartbeat write loop
-    # (cohort-A 2026-06-24, a SINGLE run -- not the %16-concurrency
-    # case). scitex-db runs SQLite on GPFS reliably (neurovista) with
-    # the tunings below; mirror its recipe. The IOERR is on WRITES, so
-    # the load-bearing ones are synchronous=NORMAL (WAL-safe, far fewer
-    # GPFS fsyncs) and temp_store=MEMORY (no transient temp files on
-    # GPFS); mmap_size + wal_autocheckpoint complete scitex-db's set.
-    # Best-effort per-PRAGMA: a tuning that errors on an exotic FS must
-    # not kill an otherwise-usable connection.
-    for _pragma in (
-        "PRAGMA synchronous = NORMAL",
-        "PRAGMA temp_store = MEMORY",
-        "PRAGMA mmap_size = 30000000000",
-        "PRAGMA wal_autocheckpoint = 1000",
-    ):
-        try:
-            conn.execute(_pragma)
-        except sqlite3.Error:  # stx-allow: fallback (reason: tuning PRAGMAs are advisory; a failed one must not block open_db)
-            pass
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def init_schema(db_path: Path | None = None) -> Path:
-    """Create state.db with all tables if missing. Idempotent.
-
-    Returns the resolved database path.
-    """
-    path = Path(db_path) if db_path else DEFAULT_DB_PATH
-    with _connect(path) as conn:
-        migrate_legacy_heartbeats(conn)
-        migrate_instance_heartbeats_add_seq(conn)
-        conn.executescript(_SCHEMA_REGISTRY)
-        # ``executescript`` above creates ``instances`` fresh on a new
-        # DB (with the family-tree columns) but is a no-op on an
-        # existing one; the migration ADD COLUMNs them onto a pre-cols DB.
-        migrate_instances_add_family_tree_cols(conn)
-        # Same idempotent ADD COLUMN for the group-based-ACL ``group_name``
-        # column on a pre-existing ``node_comms_policy`` (operator
-        # 2026-06-25). No-op on a fresh DB (DDL already has the column).
-        migrate_node_comms_policy_add_group_name(conn)
-        # Same idempotent ADD COLUMN for the MULTI-value ``group_names``
-        # column the authority gates read (incident 2026-08-10 — an agent
-        # whose spec lists several groups was reduced to its FIRST one).
-        migrate_node_comms_policy_add_group_names(conn)
-        conn.executescript(_SCHEMA_ATTEMPTS)
-        conn.executescript(_SCHEMA_DIARY)
-        # Task #27's two ACL tables were both created here until 2026-08-20.
-        # ``pending_prompts`` and ``comms_blocks`` have BOTH moved to per-host
-        # PostgreSQL; each store creates its own schema on first open
-        # (``state_db_pending_approval.open_pending_prompt_store`` /
-        # ``state_db_blocks.open_blocks_store``), so there is nothing to run
-        # here for either. What is left of the pair in SQLite is
-        # ``comms_grants``, which lives in ``state_db_nodes`` and has not moved.
-        # The ``incarnations`` birth-certificate table used to be created
-        # here. It moved to per-host PostgreSQL on 2026-08-19; the promise
-        # this comment block used to make — "lives in the EXISTING sqlite
-        # factory ON PURPOSE so the separately-carded sqlite→Postgres
-        # migration carries it along" — is now kept. Its schema is created
-        # on first open by :func:`state_db_incarnations.open_incarnation_store`,
-        # so there is nothing to run here.
-        # sac-comms item D's rate-limit log (acl_deny_notify_log) was created
-        # here until 2026-08-20. It moved to per-host PostgreSQL alongside the
-        # two task-#27 tables above; its schema is created on first open by
-        # ``state_db_acl_deny_notify.open_deny_notify_store``.
-        conn.commit()
-    return path
-
-
-@contextmanager
-def open_db(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    """Context-managed connection. Initialises schema on first use."""
-    path = init_schema(db_path)
-    conn = _connect(path)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def table_counts(db_path: Path | None = None) -> dict[str, int]:
-    """Return ``{table_name: row_count}`` for every known table."""
-    counts: dict[str, int] = {}
-    with open_db(db_path) as conn:
-        for table in KNOWN_TABLES:
-            row = conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()
-            counts[table] = int(row["n"])
-    return counts
-
-
-# ``instances`` lifecycle CRUD (record_instance_start / _stop /
-# list_active_instances) moved to :mod:`state_db_instances` under the
-# per-file line cap; re-exported below so callers keep importing them
-# from :mod:`state_db`.
-
 # Re-export the helpers that used to live in this file but moved
 # into sibling modules under the per-file line cap. Existing callers
 # keep importing them from :mod:`state_db`.
@@ -251,22 +81,10 @@ from .state_db_diary import (  # noqa: E402,F401
     record_heartbeat,
     record_turn,
 )
-from .state_db_export import (  # noqa: E402,F401
-    EXPORT_SCHEMA_VERSION,
-    export_state,
-    import_legacy_registry,
-    import_state,
-)
-from .state_db_export import (  # noqa: E402
-    _table_filter_clauses as _table_filter_clauses_impl,
-)
+from .state_db_export import import_legacy_registry  # noqa: E402,F401
 from .state_db_gc import (  # noqa: E402,F401
     _proc_btime,
     gc_dead_instances,
-)
-from .state_db_heartbeats import (  # noqa: E402,F401
-    latest_instance_heartbeat,
-    update_heartbeat,
 )
 from .state_db_instances import (  # noqa: E402,F401
     last_known_instance,
@@ -274,13 +92,3 @@ from .state_db_instances import (  # noqa: E402,F401
     record_instance_start,
     record_instance_stop,
 )
-
-
-def _table_filter_clauses(since: str | None) -> dict[str, tuple[str, tuple]]:
-    """Per-table SQL fragments + params for ``--since`` filtering.
-
-    Thin wrapper over ``state_db_export._table_filter_clauses`` so the
-    original module-level signature stays compatible with callers that
-    only pass ``since``.
-    """
-    return _table_filter_clauses_impl(since, KNOWN_TABLES)

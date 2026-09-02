@@ -30,7 +30,6 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db
 from scitex_agent_container._state.state_db_acl_deny_notify import (
     last_notified_at,
 )
@@ -44,17 +43,23 @@ _TOKEN = "test-token-acl-deny-synthetic-notify"
 
 
 @pytest.fixture
-def isolated_state(tmp_path: Path) -> Iterator[Path]:
+def isolated_state(pg_schema: str, tmp_path: Path) -> Iterator[Path]:
+    """The deny scenario, seeded across BOTH stores.
+
+    ``pg_schema`` is a dependency of the FIXTURE rather than only of the
+    tests because the seed below calls ``record_comms_policy``, which since
+    2026-08-28 writes to PostgreSQL. A test that lists ``pg_schema`` after
+    ``isolated_state`` gets them set up in that order, so the seed would run
+    against the deliberately unreachable DSN and ERROR before the skip could
+    fire — which is exactly what happened.
+    """
     db = tmp_path / "state.db"
     saved_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-    saved_default = state_db.DEFAULT_DB_PATH
     saved_home = os.environ.get("HOME")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
     saved_cooldown_env = os.environ.get("SCITEX_ACL_DENY_NOTIFY_COOLDOWN_S")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    state_db.DEFAULT_DB_PATH = db
-    state_db.init_schema(db)
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
@@ -70,12 +75,11 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
         # deny path: ``worker-a`` and ``lead`` are siblings under a shared
         # root and ``lead`` carries a per-spec ``inbound.siblings=deny``,
         # so ``worker-a → lead`` is denied.
-        record_lineage(child="worker-a", parent="root", db_path=db)
-        record_lineage(child="lead", parent="root", db_path=db)
-        record_comms_policy(name="lead", inbound_siblings="deny", db_path=db)
+        record_lineage(child="worker-a", parent="root")
+        record_lineage(child="lead", parent="root")
+        record_comms_policy(name="lead", inbound_siblings="deny")
         yield db
     finally:
-        state_db.DEFAULT_DB_PATH = saved_default
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
         if saved_env is None:
@@ -111,7 +115,7 @@ def _send_payload(sender: str, content: str = "hi") -> dict:
 def _synthetic_rows(target: str, db_path: Path) -> list[dict]:
     return [
         r
-        for r in list_undelivered(target=target, db_path=db_path)
+        for r in list_undelivered(target=target)
         if r["event"].get("kind") == "acl_deny_notify"
     ]
 

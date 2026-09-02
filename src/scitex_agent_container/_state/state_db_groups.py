@@ -54,7 +54,12 @@ about what the spec said.
 
 from __future__ import annotations
 
-from pathlib import Path
+# ``db_path`` IS GONE from every reader below (2026-08-28). It named a
+# local database file, and the only thing any of them did with it was hand
+# it to ``read_comms_policy`` — which now reads ``node_comms_policy`` from
+# PostgreSQL. Leaving the parameter would have been worse than removing
+# it: a caller passing a ``tmp_path`` would believe it had isolated the
+# read, and it would silently have been reading the live fleet store.
 
 __all__ = [
     "in_named_group",
@@ -70,7 +75,6 @@ __all__ = [
 def resolve_group_name(
     *,
     name: str,
-    db_path: Path | None = None,
 ) -> str:
     """Return ``name``'s PRIMARY named group, or ``""`` if ungrouped.
 
@@ -97,7 +101,7 @@ def resolve_group_name(
         return from_spec
     from .state_db_acl_policy import read_comms_policy
 
-    policy = read_comms_policy(name=name, db_path=db_path)
+    policy = read_comms_policy(name=name)
     return str(policy.get("group_name", "") or "")
 
 
@@ -105,7 +109,6 @@ def same_named_group(
     *,
     sender: str,
     target: str,
-    db_path: Path | None = None,
 ) -> bool:
     """Return ``True`` iff ``sender`` and ``target`` share a NAMED group.
 
@@ -114,17 +117,16 @@ def same_named_group(
     the pre-group-name behaviour (an ungrouped fleet falls through to
     the lineage-mesh + explicit-grant ACL exactly as before).
     """
-    sender_group = resolve_group_name(name=sender, db_path=db_path)
+    sender_group = resolve_group_name(name=sender)
     if not sender_group:
         return False
-    target_group = resolve_group_name(name=target, db_path=db_path)
+    target_group = resolve_group_name(name=target)
     return target_group == sender_group
 
 
 def resolve_group_names(
     *,
     name: str,
-    db_path: Path | None = None,
 ) -> frozenset[str]:
     """Return EVERY named group ``name``'s persisted policy row holds.
 
@@ -183,7 +185,7 @@ def resolve_group_names(
         return from_spec
     from .state_db_acl_policy import read_comms_policy
 
-    policy = read_comms_policy(name=name, db_path=db_path)
+    policy = read_comms_policy(name=name)
     out = {str(g).strip() for g in policy.get("group_names", ()) if str(g).strip()}
     primary = str(policy.get("group_name", "") or "").strip()
     if primary:
@@ -195,7 +197,6 @@ def in_named_group(
     *,
     name: str,
     group: str,
-    db_path: Path | None = None,
 ) -> bool:
     """Return ``True`` iff ``name``'s persisted groups include ``group``.
 
@@ -209,14 +210,13 @@ def in_named_group(
         return False
     return any(
         g.strip().lower() == wanted
-        for g in resolve_group_names(name=name, db_path=db_path)
+        for g in resolve_group_names(name=name)
     )
 
 
 def is_developer(
     *,
     name: str,
-    db_path: Path | None = None,
 ) -> bool:
     """Return ``True`` iff ``developer`` is among ``name``'s named groups.
 
@@ -233,13 +233,12 @@ def is_developer(
     """
     from ..config._group_resolver import DEVELOPER_GROUP
 
-    return in_named_group(name=name, group=DEVELOPER_GROUP, db_path=db_path)
+    return in_named_group(name=name, group=DEVELOPER_GROUP)
 
 
 def is_researcher(
     *,
     name: str,
-    db_path: Path | None = None,
 ) -> bool:
     """Return ``True`` iff ``researcher`` is among ``name``'s named groups.
 
@@ -253,13 +252,12 @@ def is_researcher(
     """
     from ..config._group_resolver import RESEARCHER_GROUP
 
-    return in_named_group(name=name, group=RESEARCHER_GROUP, db_path=db_path)
+    return in_named_group(name=name, group=RESEARCHER_GROUP)
 
 
 def is_privileged(
     *,
     name: str,
-    db_path: Path | None = None,
 ) -> bool:
     """Return ``True`` iff ``privileged`` is among ``name``'s named groups.
 
@@ -269,4 +267,4 @@ def is_privileged(
     """
     from ..config._group_resolver import PRIVILEGED_GROUP
 
-    return in_named_group(name=name, group=PRIVILEGED_GROUP, db_path=db_path)
+    return in_named_group(name=name, group=PRIVILEGED_GROUP)

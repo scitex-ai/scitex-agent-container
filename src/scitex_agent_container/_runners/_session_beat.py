@@ -48,6 +48,20 @@ STATE_BUSY = "busy"
 STATE_STOPPING = "stopping"
 
 
+# Consecutive diary-write failures, keyed by row kind. MODULE level on
+# purpose: ``_resolve_db_writer`` builds a FRESH ``_DefaultDBWriter`` on
+# every call, so a per-instance counter would reset each beat and warn on
+# every tick. Keyed by kind so a broken heartbeat table cannot mute the
+# first turn failure.
+_DIARY_FAILURES: dict[str, int] = {}
+
+# Warn on the 1st failure of a kind, then every Nth. The diary is
+# best-effort, but a diary that is silently unreachable is precisely how
+# the store-DSN defect ran unnoticed from 08-23 to 08-27 — so a degraded
+# diary stays visible in the log without flooding a per-tick loop.
+_DIARY_WARN_EVERY = 100
+
+
 class _DefaultDBWriter:
     """Production writer that forwards to ``_state.state_db_diary``.
 
@@ -55,25 +69,82 @@ class _DefaultDBWriter:
     container venv fully wired) don't pay the import cost. The
     diary writes are best-effort: a single-table failure must not
     crash the runner's heartbeat loop, so we catch + log here.
+
+    Best-effort is the CONTRACT, not a convenience. The diary is
+    observational — turns, errors, heartbeats. An agent whose telemetry
+    store is unreachable must keep running and lose rows, never die with
+    it. That sentence was in this docstring before any of it was true:
+    the diary used to write to a local file that effectively never failed,
+    so the promised catch was never exercised and never implemented. A
+    remote store makes the failure real, and every runner test that
+    merely ticks a heartbeat died on a refused connection. The catch is
+    now actually here.
+
+    What this does NOT do is fail quietly. Every failing kind is logged
+    with its CONSECUTIVE count, so "the diary has been down for 4000
+    beats" is readable in the log rather than inferred from missing rows
+    — and recovery is logged too, so the end of an outage has a
+    timestamp.
     """
 
     def __init__(self) -> None:
         self._log = logging.getLogger(__name__ + "._DefaultDBWriter")
 
-    def record_heartbeat(self, **kwargs):
-        from .._state.state_db_diary import record_heartbeat
+    def _best_effort(self, kind: str, write):
+        """Run one diary write, absorbing any failure into a log line.
 
-        return record_heartbeat(**kwargs)
+        ``write`` is a thunk that performs its own lazy import, so an
+        ImportError from a half-wired environment is caught on the same
+        path as a refused Postgres connection — both mean "no row", and
+        neither is the runner's problem to die of.
+        """
+        try:
+            result = write()
+        except Exception as exc:  # noqa: BLE001 - telemetry must not kill the runner
+            seen = _DIARY_FAILURES.get(kind, 0) + 1
+            _DIARY_FAILURES[kind] = seen
+            if seen == 1 or seen % _DIARY_WARN_EVERY == 0:
+                self._log.warning(
+                    "diary %s write failed (%d consecutive; rows are being "
+                    "dropped): %s: %s",
+                    kind,
+                    seen,
+                    type(exc).__name__,
+                    exc,
+                )
+            return None
+        if _DIARY_FAILURES.get(kind):
+            self._log.warning(
+                "diary %s write recovered after %d consecutive failures",
+                kind,
+                _DIARY_FAILURES[kind],
+            )
+            _DIARY_FAILURES[kind] = 0
+        return result
+
+    def record_heartbeat(self, **kwargs):
+        def _write():
+            from .._state.state_db_diary import record_heartbeat
+
+            return record_heartbeat(**kwargs)
+
+        return self._best_effort("heartbeat", _write)
 
     def record_turn(self, **kwargs):
-        from .._state.state_db_diary import record_turn
+        def _write():
+            from .._state.state_db_diary import record_turn
 
-        return record_turn(**kwargs)
+            return record_turn(**kwargs)
+
+        return self._best_effort("turn", _write)
 
     def record_error(self, **kwargs):
-        from .._state.state_db_diary import record_error
+        def _write():
+            from .._state.state_db_diary import record_error
 
-        return record_error(**kwargs)
+            return record_error(**kwargs)
+
+        return self._best_effort("error", _write)
 
 
 def _resolve_db_writer(db_writer):
@@ -200,7 +271,7 @@ def write_heartbeat(
     ``/tmp`` tmpfs.
 
     The JSON file is kept as a fast-path cache for local readers
-    (``sac agent status`` polls it without opening sqlite); the DB
+    (``sac agent status`` polls it without opening the store); the DB
     row is the cross-host queryable record.
 
     The DB write is suppressed when ``name`` or ``host`` is None —
@@ -252,13 +323,20 @@ def report_sdk_error(
     detail: str | None = None,
     turn_id: str | None = None,
     db_writer=None,
-) -> int:
+) -> int | None:
     """Append one row to ``state.db.errors`` describing a runner crash.
 
-    Returns the new ``error_id``. ``cause`` is a short identifier
-    (``auth`` / ``network`` / ``sdk-crash`` / ``schema-mismatch``
-    / ...) that the lead groups on; ``detail`` carries the longer
-    message or traceback.
+    Returns the new ``error_id``, or ``None`` when the diary was
+    unreachable and the row was dropped — the default writer is
+    best-effort (see :class:`_DefaultDBWriter`), and an error report
+    that cannot be stored must not itself raise inside a crash path.
+    Annotated honestly rather than papered over with a sentinel id: no
+    caller reads this value today, and a fake integer would be
+    indistinguishable from a row that really landed.
+
+    ``cause`` is a short identifier (``auth`` / ``network`` /
+    ``sdk-crash`` / ``schema-mismatch`` / ...) that the lead groups on;
+    ``detail`` carries the longer message or traceback.
     """
     db = _resolve_db_writer(db_writer)
     return db.record_error(
@@ -341,7 +419,7 @@ async def heartbeat_loop(
 
     def _beat() -> None:
         # Heartbeat is BEST-EFFORT: a transient state.db / FS I/O hiccup
-        # (e.g. sqlite "disk I/O error" on GPFS) must NOT crash a live
+        # (e.g. a "disk I/O error" on GPFS) must NOT crash a live
         # agent. cohort-A Qwen de-risk 2026-06-23: such an error in the
         # heartbeat write propagated through ``await hb_task`` and failed
         # an ALREADY-COMPLETED solve (submission written, 8 claims

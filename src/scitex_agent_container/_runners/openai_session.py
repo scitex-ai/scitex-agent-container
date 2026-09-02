@@ -9,9 +9,9 @@ for the shape rationale). Wires:
 * ``Runner.run_streamed()`` → an async generator of
   :class:`~._harness_session.NormalizedEvent`
   (:func:`normalize_stream_event` + :meth:`OpenAIAgentsSession.send`).
-* ``SQLiteSession`` for conversation state (multi-turn memory across
-  :meth:`OpenAIAgentsSession.send` calls; placement via
-  :func:`runtimes._openai_sdk_common.resolve_state_db_path`).
+* :class:`~._openai_pg_session.PostgresAgentSession` for conversation
+  state (multi-turn memory across :meth:`OpenAIAgentsSession.send`
+  calls), held in this host's PostgreSQL rather than a per-agent file.
 * Per-turn spend recording into :mod:`_account.openai_usage`'s ledger
   (best-effort; never fails the turn).
 
@@ -44,10 +44,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ._harness_session import Message, NormalizedEvent, RunResult, ToolSpec
+from ._openai_pg_session import PostgresAgentSession
 # Re-exported so callers have ONE import site for the harness, regardless of
 # which module the transport logic happens to live in.
 from ._openai_mcp import McpConfigError, build_mcp_server
@@ -286,14 +286,14 @@ class OpenAIAgentsSession:
 
     Lifecycle mirrors the Protocol (and the production ``ClaudeSDKClient``
     loop it was modelled on): one :meth:`start` (auth + ``Agent`` +
-    ``SQLiteSession`` construction — no network), N :meth:`send` turns
+    conversation-store construction — no MODEL call), N :meth:`send` turns
     (each one ``Runner.run_streamed`` call, streaming
     :class:`NormalizedEvent`, terminating in ``kind="result"``), then
     :meth:`close`.
 
     Args:
-        agent_name: sac agent identity — names the SDK ``Agent`` and the
-            default state-db file.
+        agent_name: sac agent identity — names the SDK ``Agent`` and one
+            half of the conversation record's store identity.
         model: OpenAI model id. ``None`` → ``SAC_OPENAI_MODEL`` env →
             the SDK's own default.
         instructions: System prompt for the SDK ``Agent`` (``None`` keeps
@@ -317,10 +317,12 @@ class OpenAIAgentsSession:
             the callers that need this (the a2a handler, the runtime) read
             a spec, and handing them a constructor would push SDK imports
             and async connection management into every call site.
-        session_id: Logical conversation key inside the state db.
-            Defaults to ``agent_name``.
-        db_path: SQLite file override (``":memory:"`` for ephemeral
-            state). Default: ``resolve_state_db_path(agent_name)``.
+        session_id: Logical conversation key. Defaults to ``agent_name``;
+            together they identify the row in the ``openai_sessions``
+            store. ``db_path`` IS GONE — it named a per-agent file
+            and there is no file; state lives in this host's PostgreSQL
+            (:mod:`.._state.openai_session_store`), and tests isolate with
+            the shared ``pg_schema`` fixture rather than an override.
         max_turns: Optional cap forwarded to ``Runner.run_streamed``.
         record_spend: Record per-turn token usage into the
             :mod:`_account.openai_usage` spend ledger (best-effort).
@@ -340,7 +342,6 @@ class OpenAIAgentsSession:
         tools: Sequence[ToolSpec] = (),
         mcp_servers: Mapping[str, Any] | None = None,
         session_id: str | None = None,
-        db_path: str | Path | None = None,
         max_turns: int | None = None,
         record_spend: bool = True,
         tracing: bool = False,
@@ -351,7 +352,6 @@ class OpenAIAgentsSession:
         self.tools = tuple(tools)
         self.mcp_servers = dict(mcp_servers or {})
         self.session_id = session_id or agent_name
-        self.db_path = db_path
         self.max_turns = max_turns
         self.record_spend = record_spend
         self.tracing = tracing
@@ -363,19 +363,20 @@ class OpenAIAgentsSession:
     # -- HarnessSession surface ----------------------------------------
 
     async def start(self) -> None:
-        """Open the session: auth, tool conversion, ``Agent`` + ``SQLiteSession``.
+        """Open the session: auth, tool conversion, ``Agent`` + session store.
 
-        Network-free — the first API call happens on :meth:`send`.
-        Raises :class:`OpenAISessionError` if ``openai-agents`` is not
-        installed, and
-        :class:`~runtimes._openai_sdk_common.OpenAISDKCommonError` if no
-        API key is available.
+        STILL NETWORK-FREE, worth stating because the state moved to
+        PostgreSQL: constructing
+        :class:`~._openai_pg_session.PostgresAgentSession` opens NOTHING, so
+        the first connect of any kind still happens on :meth:`send`. Raises
+        :class:`OpenAISessionError` if ``openai-agents`` is not installed and
+        :class:`~runtimes._openai_sdk_common.OpenAISDKCommonError` if no API
+        key is available.
         """
         agents = _import_agents()
         from ..runtimes._openai_sdk_common import (
             default_openai_model,
             provision_openai_auth,
-            resolve_state_db_path,
         )
 
         provision_openai_auth()
@@ -405,12 +406,9 @@ class OpenAIAgentsSession:
         if model:
             agent_kwargs["model"] = model
         self._agent = agents.Agent(**agent_kwargs)
-        db_path = (
-            self.db_path
-            if self.db_path is not None
-            else resolve_state_db_path(self.agent_name)
+        self._session = PostgresAgentSession(
+            self.agent_name, session_id=self.session_id
         )
-        self._session = agents.SQLiteSession(self.session_id, db_path=str(db_path))
         self._started = True
 
     async def send(self, message: Message) -> AsyncIterator[NormalizedEvent]:
@@ -453,12 +451,13 @@ class OpenAIAgentsSession:
         yield NormalizedEvent(kind="result", result=result, raw=streamed)
 
     async def close(self) -> None:
-        """Tear down the session: MCP connections, then the state db handle.
+        """Tear down the session: MCP connections, then the conversation store.
 
-        Every connected MCP server is cleaned up even if one raises —
-        a stdio server left connected is an orphaned SUBPROCESS, and one
-        failing teardown must not strand the rest. The first error is
-        re-raised after the sweep so the failure is still visible.
+        Every connected MCP server is cleaned up even if one raises — a
+        stdio server left connected is an orphaned SUBPROCESS, and one
+        failing teardown must not strand the rest; the first error is
+        re-raised after the sweep. The duck-typed ``close()`` below is a
+        documented no-op for ``PostgresAgentSession`` (a shared handle).
         """
         servers, self._connected_mcp = self._connected_mcp, []
         first_error: Exception | None = None

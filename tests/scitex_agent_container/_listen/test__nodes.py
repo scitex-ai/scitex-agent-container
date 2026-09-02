@@ -45,7 +45,6 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state import state_db as _state_db
 from scitex_agent_container._state.state_db_nodes import record_lineage
 from tests.scitex_agent_container._helpers.loopback_server import (
     await_until_serving,
@@ -62,7 +61,7 @@ TOKEN = "test-token-wi3"
 
 
 @pytest.fixture
-def isolated_env(tmp_path: Path):
+def isolated_env(pg_schema: str, tmp_path: Path):
     saved_home = os.environ.get("HOME")
     saved_reg_env = os.environ.get("SCITEX_AGENT_CONTAINER_REGISTRY_DIR")
     saved_run_env = os.environ.get("SCITEX_AGENT_CONTAINER_RUNTIME_DIR")
@@ -70,7 +69,6 @@ def isolated_env(tmp_path: Path):
     saved_db_env = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
-    saved_db_const = _state_db.DEFAULT_DB_PATH
 
     os.environ["HOME"] = str(tmp_path)
     os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(tmp_path / "registry")
@@ -80,22 +78,19 @@ def isolated_env(tmp_path: Path):
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
-    _state_db.DEFAULT_DB_PATH = db_path
-    _state_db.init_schema(db_path)
 
     # WI-2 ACL: register the WI-3 demo nodes as siblings under a
     # common root so they share a group. Without this the new
     # ACL gate would deny ``permitted-peer → external-bob`` as
     # cross-group (each unattached node is its own singleton).
-    record_lineage(child="permitted-peer", parent="root", db_path=db_path)
-    record_lineage(child="external-bob", parent="root", db_path=db_path)
+    record_lineage(child="permitted-peer", parent="root")
+    record_lineage(child="external-bob", parent="root")
 
     try:
         yield tmp_path
     finally:
         _reg.REGISTRY_DIR = saved_reg_const
         _ss.DEFAULT_STATE_ROOT = saved_state_const
-        _state_db.DEFAULT_DB_PATH = saved_db_const
         for key, val in (
             ("HOME", saved_home),
             ("SCITEX_AGENT_CONTAINER_REGISTRY_DIR", saved_reg_env),

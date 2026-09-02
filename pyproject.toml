@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scitex-agent-container"
-version = "0.27.0"
+version = "0.28.1"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -142,12 +142,22 @@ slurm = [
 openai = [
     # openai-compat-2: the `openai` harness (spec.harness:
     # openai). Backs `_runners/openai_session.py` (OpenAIAgentsSession — the
-    # concrete HarnessSession over Runner.run_streamed + SQLiteSession)
-    # and the `openai_session` A2A handler/executor. OPTIONAL on purpose:
+    # concrete HarnessSession over Runner.run_streamed) and the
+    # `openai_session` A2A handler/executor. OPTIONAL on purpose:
     # Claude-only deployments must not pull it — every import is lazy and
-    # the handler raises a clear HandlerError when absent. 0.17.4 floor
-    # per the card spec (SQLiteSession + FunctionTool surface stable).
-    "openai-agents>=0.17.4",
+    # the handler raises a clear HandlerError when absent.
+    #
+    # FLOOR RAISED 0.17.4 -> 0.19.0, MEASURED not guessed. Conversation
+    # state moved off the SDK's own file-backed session onto PostgreSQL
+    # (`_runners/_openai_pg_session.py`), and the replacement implements the
+    # SDK's `Session` Protocol through the SDK's OWN settings helpers rather
+    # than a second copy of their precedence rules. Wheels for 0.17.4,
+    # 0.18.0, 0.19.0, 0.20.0, 0.21.0 and 0.22.0 were downloaded and read on
+    # 2026-08-29: `agents/memory/session_settings.py` carries
+    # `resolve_session_limit` in ALL of them and `coerce_session_settings`
+    # only from 0.19.0. Left at 0.17.4 the import would be an ImportError at
+    # the declared minimum — a floor that lies is worse than a high one.
+    "openai-agents>=0.19.0",
 ]
 codex = [
     # Claude Code stays the harness. scitex-genai supplies the local
@@ -316,7 +326,7 @@ dev = [
     # now gates on `unmasked_error_count`. Shipped in 0.49.2.
     #
     # Why now: scitex_dev.store ships after 0.48, and sac cannot adopt the
-    # fleet store primitive — the whole point of moving state off SQLite —
+    # fleet store primitive — the whole point of consolidating storage —
     # while this specifier excludes it.
     #
     # THE FLOOR IS 0.49.2, NOT 0.31.1, and the difference is not cosmetic.
@@ -495,12 +505,12 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 # declares what ITS rows mean when two hosts merge them. sac is a leaf here,
 # not privileged.
 #
-# The declaration is the deliverable because sac's existing cross-host path
-# is unsafe in a way that is invisible: state_db_export.import_state does
-# INSERT OR IGNORE, so a row that CONTRADICTS the local one and a
-# byte-identical duplicate both return rowcount 0. The success value is also
-# the didn't-happen value, and two hosts can disagree forever with every call
-# reporting success.
+# The declaration is the deliverable because sac's previous cross-host path
+# was unsafe in a way that was invisible: state_db_export.import_state did
+# INSERT OR IGNORE, so a row that CONTRADICTED the local one and a
+# byte-identical duplicate both returned rowcount 0. The success value was
+# also the didn't-happen value, and two hosts could disagree forever with
+# every call reporting success. That path was deleted on 2026-08-29.
 #
 # The classification each schema encodes: an agent's pid/heartbeat is
 # PER-HOST truth (two hosts describe two different processes and each is

@@ -17,7 +17,6 @@ from importlib.metadata import entry_points
 import pytest
 from scitex_dev.store import HLC, MergeRule, merge_field
 
-from scitex_agent_container._state.state_db import KNOWN_TABLES
 from scitex_agent_container._store_plugin import (
     CLASSIFIED,
     INSTANCES,
@@ -40,17 +39,20 @@ def _stamp(wall_us: int, node: str = "compute-04") -> HLC:
 # ---------------------------------------------------------------------------
 
 
-def test_every_known_table_has_an_explicit_sync_decision():
-    # Arrange: the failure this guards is a NEW table added to the state DB
-    # that nobody classified. It would then be silently absent from sync,
-    # which looks identical to a table deliberately excluded. Forcing every
-    # KNOWN_TABLES entry into exactly one of the two sets makes the omission
-    # a red test instead of a quiet gap.
-    decided = set(SOURCE_TABLE.values()) | set(NEVER_SYNCED)
-    # Act
-    undecided = sorted(set(KNOWN_TABLES) - decided)
-    # Assert
-    assert undecided == []
+# ``test_every_known_table_has_an_explicit_sync_decision`` WAS HERE. It read
+# ``state_db.KNOWN_TABLES`` and required every entry to appear in exactly one
+# of ``SOURCE_TABLE`` / ``NEVER_SYNCED``, so a NEW table nobody classified
+# turned into a red test rather than a quiet absence from sync — an absence
+# that looks identical to a deliberate exclusion.
+#
+# ``KNOWN_TABLES`` was the whitelist of tables in sac's own local database.
+# That database is gone and so is the constant, which leaves the gate with no
+# population to iterate: it had already been passing vacuously over an empty
+# tuple. The partition tests below still hold ``SOURCE_TABLE`` and
+# ``NEVER_SYNCED`` to being disjoint and to naming real fields, so what is
+# lost is only the completeness half — and completeness against WHAT is now
+# the open question, since the tables these policies describe live in the
+# shared store and sac no longer enumerates them anywhere.
 
 
 def test_no_table_is_both_replicated_and_never_synced():
@@ -89,7 +91,7 @@ def test_host_is_part_of_the_instance_identity():
     assert "host" in identity
 
 
-def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path):
+def test_the_field_the_per_host_identity_depends_on_is_actually_written(pg_schema):
     """A column declared in a schema and never populated is inert.
 
     This fleet found four such things in one night — scitex_dev.store with
@@ -105,16 +107,20 @@ def test_the_field_the_per_host_identity_depends_on_is_actually_written(tmp_path
     no host argument, so it also proves the DEFAULT populates it — a value
     that only appears when a caller remembers to pass it is not an origin.
     """
-    # Arrange
+    # Arrange — read back through the PRODUCTION reader now that the table
+    # lives in the shared store: ``export_state`` no longer carries
+    # ``instances`` (it left KNOWN_TABLES on 2026-08-28), and asking it would
+    # have raised rather than answered. The test's claim is unchanged, and it
+    # is still the writer that is exercised, with NO host argument, so the
+    # DEFAULT is what has to populate the identity field.
     from scitex_agent_container._state.state_db import record_instance_start
-    from scitex_agent_container._state.state_db_export import export_state
+    from scitex_agent_container._state.state_db_instances import read_instance
 
-    db = tmp_path / "state.db"
-    record_instance_start("agent-under-test", db_path=db)
+    instance_id = record_instance_start("agent-under-test")
     # Act
-    rows = export_state(db_path=db)["tables"]["instances"]
+    row = read_instance(instance_id)
     # Assert
-    assert (rows[0]["host"] or "").strip() != ""
+    assert (row["host"] or "").strip() != ""
 
 
 def test_a_stale_replica_cannot_roll_a_heartbeat_backwards():
@@ -248,8 +254,12 @@ def test_each_child_is_its_own_record_so_no_branch_can_collide():
 
 
 def test_bearer_tokens_are_never_replicated():
-    # Arrange: node_tokens is the authenticated-identity primitive. Copying
-    # it to every host turns one host's compromise into the fleet's.
+    # Arrange: node_tokens WAS the authenticated-identity primitive; copying
+    # it to every host would turn one host's compromise into the fleet's. The
+    # table was removed 2026-08-28 (never armed) and left KNOWN_TABLES; this
+    # assertion is kept deliberately, because a name leaving KNOWN_TABLES must
+    # not read as the refusal being withdrawn, and NEVER_SYNCED is where a
+    # future per-node credential store would arrive.
     # Act
     refused = "node_tokens" in NEVER_SYNCED
     # Assert

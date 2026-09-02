@@ -10,7 +10,7 @@ WHY THESE TESTS TALK TO A REAL DATABASE
 =======================================
 The module under test is PostgreSQL-only by the operator's 2026-08-19 order
 ("fail fast, fail loud, no fallbacks"), and it reaches PostgreSQL through
-``scitex_dev.store``. A suite that exercised the store's SQLite dialect
+``scitex_dev.store``. A suite that exercised the store's file-backed dialect
 instead would be testing a code path production can never take — the exact
 defect scitex-dev 0.49.0 shipped, where the PostgreSQL backend could be
 WRITTEN to and never READ from.
@@ -292,7 +292,7 @@ def test_unknown_incarnation_reads_none(pg_schema: str) -> None:
 
 
 def test_returned_dict_carries_no_store_bookkeeping(pg_schema: str) -> None:
-    """Callers see the schema fields, the same shape ``sqlite3.Row`` gave.
+    """Callers see the schema fields, the same shape the raw rows gave.
 
     The store hangs hlc / seq / origin / owner off sibling attributes rather
     than the values mapping, and this pins that: a caller iterating the dict
@@ -318,26 +318,19 @@ def test_returned_dict_carries_no_store_bookkeeping(pg_schema: str) -> None:
 
 
 # ----------------------------------------------------------------------
-# The SQLite table is gone, and asking for it must SAY so.
+# ``test_incarnations_is_no_longer_a_known_table`` WAS HERE.
+#
+# It was INVERTED on 2026-08-19 rather than deleted, and the inversion was
+# the point: while ``incarnations`` stayed whitelisted, ``sac db query
+# --table=incarnations`` would open state.db, find no such table and return
+# an EMPTY result — which reads as "this agent has no incarnations" when the
+# truth is "you are asking the wrong database". Removing the name turned that
+# silent lie into an unknown-table error, and this test held the line.
+#
+# The whitelist it read no longer exists; neither does the verb that consumed
+# it. A membership test against a constant that has been deleted cannot be
+# re-pointed at anything, so it goes.
 # ----------------------------------------------------------------------
-
-
-def test_incarnations_is_no_longer_a_sqlite_known_table() -> None:
-    """Inverted on 2026-08-19, and the inversion is the point.
-
-    While ``incarnations`` stayed whitelisted, ``sac db query
-    --table=incarnations`` would open state.db, find no such table, and
-    return an EMPTY result — which reads as "this agent has no
-    incarnations" when the truth is "you are asking the wrong database".
-    Removing the name turns that silent lie into an unknown-table error.
-    """
-    # Arrange
-    from scitex_agent_container._state.state_db import KNOWN_TABLES
-
-    # Act
-    known = set(KNOWN_TABLES)
-    # Assert
-    assert "incarnations" not in known
 
 
 # ----------------------------------------------------------------------
@@ -346,7 +339,7 @@ def test_incarnations_is_no_longer_a_sqlite_known_table() -> None:
 #
 # REGRESSION GUARD for a measured incident, 2026-08-20. PR #1154 dropped
 # `db_path` from `write_birth_certificate`; tests that had been threading a
-# tmp_path SQLite file silently began resolving the FLEET DSN, and one
+# tmp_path database file silently began resolving the FLEET DSN, and one
 # full-suite run on scitex-compute-04 wrote 46 rows into the live
 # `incarnations` store — alpha, zombie, born-1..4, pid-*, rec-*, grant-*,
 # screen-*, every one a fixture name. Removed afterwards with the store's

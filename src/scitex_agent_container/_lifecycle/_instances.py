@@ -20,10 +20,12 @@ without rescanning by name+host.
 
 from __future__ import annotations
 
-from pathlib import Path
+import logging
 from typing import Any, Callable
 
 from ..config import AgentConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _spawned_by() -> str:
@@ -143,8 +145,6 @@ def _state_dir_for(config: AgentConfig, runtime: Any):
 def record_local_instance(
     config: AgentConfig,
     runtime: Any,
-    *,
-    db_path: Path | None = None,
 ) -> str | None:
     """Insert (or refresh) the local ``instances`` row for ``config``.
 
@@ -153,24 +153,21 @@ def record_local_instance(
     IS NULL`` never collides on a restart. Returns the new instance id,
     or ``None`` when the runtime can't report a state dir.
 
-    ``db_path`` PINS the store every write below lands in. ``None``
-    keeps the historical behaviour (resolve ``state_db.DEFAULT_DB_PATH``
-    per write, at call time).
+    THERE IS NO ``db_path`` PARAMETER ANY MORE, and its removal is the end
+    of a chain rather than a rename. It was added on 2026-07-14 to PIN a
+    per-agent ``state.db`` for the health monitor's restart callback, which
+    runs on a background daemon thread and was otherwise re-resolving a
+    MUTABLE PROCESS-GLOBAL at call time — under pytest that meant another
+    test's tmp database, and on a real host the live fleet file.
 
-    Why the parameter exists (test-isolation bug, 2026-07-14): this
-    function is also reached from the health-monitor's restart callback
-    (:func:`restart_and_record`), which runs on a BACKGROUND DAEMON
-    THREAD that outlives whatever started it. With ``db_path=None``
-    every write re-resolved the module-level ``DEFAULT_DB_PATH`` — a
-    MUTABLE PROCESS-GLOBAL — at call time, so the monitor wrote into
-    whichever database the process happened to consider "default" at
-    the moment it fired. Under pytest that is a *different test's*
-    isolated tmp DB (the auto-grant below then showed up as a stray
-    ``<name> -> lead`` row in an unrelated suite); on a real host with
-    no test redirecting it, it is the live fleet ``state.db``.
-    :func:`_lifecycle._start.agent_start` now resolves the path ONCE
-    and pins it here and into the restart callback, so a monitor always
-    writes to the store its agent was started against.
+    Every write below now goes to the store addressed by
+    ``SCITEX_STORE_DSN``: the a2a claim ledger moved to per-host PostgreSQL
+    on 2026-08-20 and ``instances`` to the shared store on 2026-08-28. A
+    process-global path stopped selecting anything at that point, so the
+    parameter had spent its last weeks being threaded from
+    :func:`make_restart_callback` through :func:`restart_and_record` to
+    here, where nothing read it. A pin that pins nothing is worse than no
+    pin: it reads as an isolation guarantee that is not being made.
     """
     from .._runners._session_state import write_instance_id
     from .._state.port_allocator import get_port
@@ -184,13 +181,11 @@ def record_local_instance(
     host = _resolve_host(None)
     # End stale active rows for this name+host (e.g. a previous crash
     # that never reached agent_stop) so the unique index stays clear.
-    for row in list_active_instances(host=host, db_path=db_path):
+    for row in list_active_instances(host=host):
         if row.get("name") == config.name:
-            record_instance_stop(
-                str(row["id"]), exit_reason="superseded", db_path=db_path
-            )
+            record_instance_stop(str(row["id"]), exit_reason="superseded")
 
-    a2a_port = get_port(config.name, db_path=db_path)
+    a2a_port = get_port(config.name)
     workdir = getattr(config, "expanded_workdir", None) or getattr(
         config, "workdir", None
     )
@@ -230,18 +225,22 @@ def record_local_instance(
         remote=False,
         spawned_by=_spawned_by(),
         workdir=str(workdir) if workdir else None,
-        db_path=db_path,
     )
 
-    # ADR-0014 Stage 1 — paired comms_nodes write so cross-host peers
-    # can resolve this agent after a `sac registry sync`. The instances
-    # table is local; comms_nodes is the federated layer. Best-effort:
-    # any error here is logged but does not abort the agent start (a
-    # missing comms_nodes row degrades to "peers can't see this agent
-    # via the federated graph until next sync" — not a startup blocker).
+    # ADR-0014 — paired comms_nodes write so cross-host peers can resolve
+    # this agent. The instances table is per-host; comms_nodes is the
+    # federated layer, and since 2026-08-28 that is the SHARED PostgreSQL
+    # store, so peers see this entry immediately — there is no sync to wait
+    # for. Best-effort: any error here is logged but does not abort the agent
+    # start (a missing entry degrades to "peers can't see this agent via the
+    # federated graph" — not a startup blocker, and PostgreSQL being briefly
+    # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
-            from .._state.state_db_nodes import register_comms_node
+            from .._state.state_db_nodes import (
+                CommsNodeConflictError,
+                register_comms_node,
+            )
 
             register_comms_node(
                 name=config.name,
@@ -258,10 +257,36 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
-                db_path=db_path,
             )
-        except Exception:  # stx-allow: fallback (reason: never block agent start on registry write; PR L1's CommsNodeConflictError surfaces here as a logged collision rather than a silent shadow.)
-            pass
+        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            logger.warning(
+                "comms_nodes registration REFUSED for %r: %s. The agent IS "
+                "running; peers cannot resolve it by name until the "
+                "collision is resolved (`sac registry register --name %s "
+                "--host %s --a2a-port %d` once the other claimant is gone).",
+                config.name,
+                exc,
+                config.name,
+                host,
+                int(a2a_port),
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+            # NOT a bare pass. It was one until 2026-08-28, and it swallowed a
+            # TypeError from a stale ``db_path=`` kwarg on EVERY spec-driven
+            # start — invisibly, because the stop-side unregister still
+            # worked, so a restart moved an agent from visible to permanently
+            # withdrawn in the directory with nothing logged anywhere. A
+            # swallow that cannot be seen is indistinguishable from a call
+            # that never ran.
+            logger.error(
+                "comms_nodes registration FAILED for %r at %s:%d (%r). The "
+                "agent IS running but peers cannot resolve it by name; "
+                "`sac registry register` is the manual repair.",
+                config.name,
+                host,
+                int(a2a_port),
+                exc,
+            )
 
     # OP-PRIO-1 (split from #343) — refresh the ACL grant ``<self> →
     # lead`` on EVERY successful start. Without this, a previous
@@ -279,7 +304,6 @@ def record_local_instance(
             sender=config.name,
             target="lead",
             note="auto-grant on agent_start (op-2026-06-09)",
-            db_path=db_path,
         )
     except Exception:  # stx-allow: fallback (reason: never block agent start on grant write; missing grant degrades to operator running `sac a2a grant <name> lead` manually until next start)
         pass
@@ -299,11 +323,6 @@ def record_local_instance(
     # sibling side-writes above — see ``_birth_certificate``.
     from ._birth_certificate import write_birth_certificate
 
-    # No ``db_path``: the certificate went to per-host PostgreSQL on
-    # 2026-08-19. This function's own ``db_path`` still names the SQLite
-    # state.db that ``record_local_instance`` above writes to — the two
-    # records now live in two different databases, which is exactly what
-    # the migration is doing, one table at a time.
     write_birth_certificate(config, instance_id)
     return instance_id
 
@@ -311,8 +330,6 @@ def record_local_instance(
 def restart_and_record(
     config: AgentConfig,
     runtime_factory: Any,
-    *,
-    db_path: Path | None = None,
 ) -> bool:
     """Restart ``config`` via its runtime AND refresh its ``instances`` row.
 
@@ -340,64 +357,43 @@ def restart_and_record(
     Returns whatever ``runtime.start`` returned; the row is refreshed only
     on a successful start (a failed restart must not fabricate a live row).
 
-    ``db_path`` PINS the store the refreshed row (and the ``<self> ->
-    lead`` auto-grant) is written to. This function is the health
-    monitor's restart callback and therefore runs on a long-lived
-    BACKGROUND DAEMON THREAD; resolving the store from the mutable
-    ``state_db.DEFAULT_DB_PATH`` global at call time meant the thread
-    followed that global wherever it moved. See
-    :func:`record_local_instance` for the full incident note.
+    THE STORE IS NO LONGER SOMETHING THIS CALL CAN CHOOSE, and that is the
+    resolution of a real incident rather than a simplification. A ``db_path``
+    parameter pinned a per-agent ``state.db`` here from 2026-07-14, because
+    this function IS the health monitor's restart callback and runs on a
+    long-lived background daemon thread: without a pin, every write
+    re-resolved a mutable process-global at the moment the monitor fired.
+    Under pytest that landed a ``<self> -> lead`` auto-grant in a LATER,
+    UNRELATED test's database; on a real host it landed test agent names in
+    the live fleet file. Both were observed.
+
+    Every write on this path now addresses the store through
+    ``SCITEX_STORE_DSN``, which no caller mutates mid-process, so the class of
+    bug the pin defended against cannot be reached from here — and the pin
+    itself had stopped selecting anything once ``instances`` moved.
     """
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:
-        record_local_instance(config, runtime, db_path=db_path)
+        record_local_instance(config, runtime)
     return started
 
 
 def make_restart_callback(
     runtime_factory: Any,
-    *,
-    db_path: Path | None = None,
 ) -> Callable[[AgentConfig], bool]:
-    """Build the health-monitor's restart callback with the state.db PINNED.
+    """Adapt :func:`restart_and_record` to the health monitor's callback shape.
 
     :func:`_lifecycle._start.agent_start` spawns :func:`health.health_monitor`
-    on a DAEMON THREAD and hands it this callback. That thread outlives the
-    call that created it — it keeps ticking (``health.interval``, then a
-    restart backoff) long after ``agent_start`` returned.
+    on a DAEMON THREAD and hands it this callback, which must take a single
+    ``AgentConfig``. Binding ``runtime_factory`` is all that is left to do.
 
-    The callback must therefore capture WHICH state.db it writes to, once,
-    up front. Previously it did not: it called
-    :func:`restart_and_record` with no ``db_path``, so each write
-    re-resolved ``state_db.DEFAULT_DB_PATH`` — a MUTABLE PROCESS-GLOBAL —
-    at the moment the monitor fired, and landed wherever that global then
-    pointed:
-
-    * under pytest, into a LATER, UNRELATED test's isolated tmp database
-      (its ``<self> -> lead`` auto-grant surfaced as a stray
-      ``target='lead'`` row in a suite that never started an agent — an
-      intermittent red gated by ``health.interval`` + restart backoff,
-      invisible when that suite ran alone);
-    * on a real host with nothing redirecting the global, into the LIVE
-      FLEET ``state.db`` (test agent names ``alpha`` / ``beta`` / ``zombie``
-      were found granted to ``lead`` in production because of this).
-
-    Resolving ``DEFAULT_DB_PATH`` as a module ATTRIBUTE here (never
-    ``from .state_db import DEFAULT_DB_PATH``, which would capture the
-    value at import and be immune to redirection) pins the store at
-    agent_start time. The monitor then always writes to the database its
-    agent was started against.
+    It used to bind a ``db_path`` too — see :func:`restart_and_record` for the
+    incident that put it there and the store move that made it inert.
     """
-    if db_path is None:
-        from .._state import state_db as _state_db
-
-        db_path = _state_db.DEFAULT_DB_PATH
-
-    pinned = db_path
 
     def _restart(config: AgentConfig) -> bool:
-        return restart_and_record(config, runtime_factory, db_path=pinned)
+        return restart_and_record(config, runtime_factory)
 
     return _restart
 
@@ -431,7 +427,9 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
                 updated = record_instance_stop(str(row["id"]), exit_reason="stopped")
                 break
 
-    # ADR-0014 Stage 1 — paired tombstone in comms_nodes. Best-effort.
+    # ADR-0014 — paired withdrawal from comms_nodes. It is a hide() now,
+    # not an ``ended_at`` column, so it reaches every host by the same path
+    # the registration did. Best-effort.
     if updated:
         try:
             from .._state.state_db_nodes import unregister_comms_node

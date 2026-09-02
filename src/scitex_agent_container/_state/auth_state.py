@@ -31,7 +31,7 @@ READ CHEAP, WRITE CAREFULLY
     PR #635 just spent real effort making fast (it was ~296ms/row). So the read
     opens the db ONCE, runs ONE ``SELECT``, and **never initialises schema** — a
     reader that ran DDL would take a write lock on every ``sac agents list``. A
-    missing db / missing table / any sqlite hiccup returns ``{}`` ("nobody has
+    missing db / missing table / any storage hiccup returns ``{}`` ("nobody has
     been checked yet"): the list can neither crash nor stall on a cache miss.
     The WRITE path (:func:`record_auth_checks`) owns the DDL and runs at
     watchdog cadence, so its cost does not matter.
@@ -93,7 +93,7 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 #: database IS the isolation, and a host field would add a failure mode while
 #: buying nothing until federation exists. This matches the closest precedent,
 #: `state_db_acl_deny_notify` (explicitly "a per-host rate-limit ledger", which
-#: also keeps its SQLite key and carries no host column).
+#: also keeps its original key and carries no host column).
 logger = logging.getLogger(__name__)
 
 STORE_NAME = "auth_state"
@@ -173,8 +173,7 @@ def _row_to_state(row) -> dict:
 
     ``Row.values`` is the SCHEMA FIELDS ONLY — the store's own bookkeeping
     (hlc, seq, origin, owner, hidden) hangs off sibling attributes and
-    deliberately does not ride along. The SQLite version returned
-    ``dict(sqlite3.Row)``, which was likewise exactly the table columns, so
+    deliberately does not ride along. The original returned exactly the table columns, so
     every caller sees the shape it always did.
     """
     v = row.values
@@ -207,13 +206,13 @@ def record_auth_checks(
     untouched is the honest outcome: the stamp simply ages, and the reader marks
     it stale.
 
-    ALL FIVE FIELDS ARE SENT ON EVERY WRITE, including empty ones. The SQLite
+    ALL FIVE FIELDS ARE SENT ON EVERY WRITE, including empty ones. The original
     ``ON CONFLICT DO UPDATE`` overwrote every column unconditionally, so a
     recovered agent's stale ``banner`` was cleared by the next sweep. Sending
     only the non-empty fields would leave that banner in place forever, which
     reads as "still failing" long after it stopped.
 
-    ``db_path`` is ACCEPTED AND IGNORED. It named a SQLite file and there is no
+    ``db_path`` is ACCEPTED AND IGNORED. It named a file and there is no
     file; it stays in the signature only so the ten existing call sites keep
     working across this change, and it should be removed in a follow-up.
     """
@@ -323,7 +322,7 @@ def list_auth_states(*, db_path=None) -> dict[str, dict]:
     ON THE HOT PATH. This is called once per ``sac agents list``, and the shape
     is what keeps it affordable: ONE store open and ONE bulk read for the WHOLE
     fleet, looked up per row from the returned dict — never a per-agent store
-    hit. The port made the fixed cost of that single open dearer than SQLite's;
+    hit. The port made the fixed cost of that single open dearer than the local open it replaced;
     it did not make the call count grow.
 
     AN UNREACHABLE STORE IS REPORTED, NOT SWALLOWED SILENTLY. It returns the

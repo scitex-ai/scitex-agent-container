@@ -46,10 +46,15 @@ def board(tmp_path: Path):
 
 
 @pytest.fixture
-def fleet(sac_root: Path) -> Layout:
-    """A real agent on disk, with rows in state.db. No board."""
+def fleet(sac_root: Path, pg_schema: str) -> Layout:
+    """A real agent on disk, with rows in BOTH stores. No board.
+
+    ``pg_schema`` joined on 2026-08-28: ``seed_identity_and_history`` writes
+    the history half to the shared PostgreSQL now (ADR-0023), so the schema
+    has to exist before the seed runs.
+    """
     layout = make_fleet(sac_root, OLD)
-    seed_identity_and_history(layout, OLD)
+    seed_identity_and_history(OLD)
     return layout
 
 
@@ -100,13 +105,27 @@ def test_dry_run_reports_the_board_identity_change(dry_run):
     assert needle in output
 
 
-def test_dry_run_reports_the_state_db_rows(dry_run):
+def test_dry_run_reports_the_rows_it_would_carry(dry_run):
+    """The operator must see the count, wherever the rows now live.
+
+    ``comms_nodes.name`` until 2026-08-28 (moved to PostgreSQL), then
+    ``definitions.name`` for the rest of that day (deleted: no writer), then
+    ``instances.name`` — which moved to the shared store as well. Every
+    remaining ``NAME_COLUMNS`` pair names a table ``init_schema`` no longer
+    creates, so the local half of this report is now permanently empty and
+    ``build_plan`` merges ``count_instance_rename_rows`` into it under the
+    same ``table.column`` keys.
+
+    A needle that had followed the local half down would have gone green on
+    an empty section, which is the failure this assertion exists to catch:
+    ``0 column(s)`` printed for an agent with hundreds of lifetime records.
+    """
     # Arrange
-    needle = "comms_nodes.name"
+    needle = "instances.name"
     # Act
     output = dry_run.output
     # Assert
-    assert needle in output
+    assert needle in output, output
 
 
 def test_dry_run_reports_the_overlay_move(dry_run):
@@ -142,7 +161,7 @@ def test_dry_run_leaves_the_spec_dir_where_it_was(dry_run, fleet: Layout):
 # ---------------------------------------------------------------------------
 
 
-def test_rename_exits_clean(applied):
+def test_rename_exits_clean(pg_schema: str, applied):
     # Arrange
     expected = 0
     # Act
@@ -151,7 +170,7 @@ def test_rename_exits_clean(applied):
     assert code == expected, applied.output
 
 
-def test_rename_moves_the_spec_dir(applied, fleet: Layout):
+def test_rename_moves_the_spec_dir(pg_schema: str, applied, fleet: Layout):
     # Arrange
     new_spec = fleet.spec_file(NEW)
     # Act
@@ -160,7 +179,7 @@ def test_rename_moves_the_spec_dir(applied, fleet: Layout):
     assert exists
 
 
-def test_rename_tells_the_operator_how_to_start_the_agent(applied):
+def test_rename_tells_the_operator_how_to_start_the_agent(pg_schema: str, applied):
     # Arrange
     needle = f"sac agents start {NEW}"
     # Act
@@ -261,6 +280,37 @@ def test_json_dry_run_lists_the_current_board_identity_change(fleet: Layout):
     )
 
 
+def test_json_dry_run_reports_the_store_row_counts(fleet: Layout):
+    """``store_rows`` is the canonical key from 2026-08-29."""
+    # Arrange
+    expected = "instances.name"
+    # Act
+    result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
+    # Assert
+    assert expected in json.loads(result.stdout)["store_rows"]
+
+
+def test_json_dry_run_still_carries_the_deprecated_state_db_rows_alias(
+    fleet: Layout,
+):
+    """A published output shape is a migration, not a rename.
+
+    ``--json`` exists to be parsed. Dropping ``state_db_rows`` in the same
+    release that introduces ``store_rows`` would break every reader at once
+    with no window to move, so both ship for one release carrying the
+    identical dict. This test is what makes the alias's removal a deliberate
+    edit rather than a silent one.
+    """
+    # Arrange
+    envelope = json.loads(
+        _run(OLD, NEW, "--dry-run", "--json", "--no-cards").stdout
+    )
+    # Act
+    alias = envelope["state_db_rows"]
+    # Assert
+    assert alias == envelope["store_rows"]
+
+
 def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
     # Arrange
     needle = "SCITEX_TODO_AGENT_ID"
@@ -307,7 +357,7 @@ def test_dry_run_moves_no_card(fleet: Layout, board: Path):
     assert len(_owned(OLD, board)) == 3
 
 
-def test_rename_migrates_every_card(fleet: Layout, board: Path):
+def test_rename_migrates_every_card(pg_schema: str, fleet: Layout, board: Path):
     # Arrange
     _seed(board, 3)
     # Act

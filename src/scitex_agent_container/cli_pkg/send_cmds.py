@@ -279,7 +279,7 @@ def _is_known_agent(name: str) -> bool:
     # Through the OWNING module, not through its table. This used to open a
     # raw connection and SELECT from ``instances`` directly, which reads the
     # same rows today and strands the moment that table moves backend — the
-    # sqlite->PostgreSQL migration is doing exactly that, and the identical
+    # move to PostgreSQL is doing exactly that, and the identical
     # pattern in ``_authheal/_specimen`` would have silently returned "no such
     # row" forever. ``last_known_instance`` already answers this question
     # (latest row for the name, active OR ended, ``None`` when never seen),

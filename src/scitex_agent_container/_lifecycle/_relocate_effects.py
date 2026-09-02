@@ -167,7 +167,7 @@ class RelocateAdapters(
         if owners is not None:
             return owners
 
-        from .._state.state_db_relocation import record_residency
+        from .._state.relocation_pg import record_residency
 
         opened = record_residency(
             agent=self.agent,

@@ -5,7 +5,7 @@ Exercises the transport + ACL stack shipped by WI-1..WI-4 of
 ``HANDOFF_AGENT_COMMS_2026-05-19.md`` across real processes — no
 mocks. Each test boots a real ``uvicorn`` on a loopback port, talks
 to it via ``httpx`` (POST + SSE) **directly** (the wire layer, one
-level below the ``a2a_*`` MCP tools), reads/writes the real SQLite
+level below the ``a2a_*`` MCP tools), reads/writes the real
 ``state.db``, and gates on real per-node bearer tokens.
 
 The MCP-tool variant of these same behaviours — driving the
@@ -22,8 +22,9 @@ AAA-marked cases — one behaviour each (TQ):
   receiver's inbox (comms item D — body never leaks).
 * (c) Cross-group grant unblocks (a) — alpha → gamma after
   ``grant_send`` succeeds.
-* (d) Identity-spoof rejection — alpha's bearer with
-  ``metadata.from_agent="beta"`` → 403 "identity spoof".
+* (d) Bearer-perimeter rejection — a bearer that is not the host
+  token → 403 "invalid bearer token", before the ACL runs. (Was an
+  identity-spoof case until 2026-08-28; see that section.)
 * (e) Sibling fan-out — parent + four children (alpha, beta,
   gamma, zeta); every sibling→sibling pair allowed by default.
 * (f) Replay-on-reconnect — emit with no subscriber, reconnect,
@@ -321,11 +322,11 @@ def test_cross_group_deny_smoke_body_does_not_leak_to_recipient(
 # ---------------------------------------------------------------------------
 
 
-def test_cross_group_send_after_grant_delivers_to_recipient(comms_env):
+def test_cross_group_send_after_grant_delivers_to_recipient(pg_schema: str, comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
-    grant_send(sender="alpha", target="gamma", db_path=db, note="smoke-test grant")
+    grant_send(sender="alpha", target="gamma", note="smoke-test grant")
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
 
@@ -369,29 +370,38 @@ def test_cross_group_send_after_grant_delivers_to_recipient(comms_env):
 
 
 # ---------------------------------------------------------------------------
-# Case (d) — identity spoof: alpha's bearer claims to be beta
+# Case (d) — the bearer perimeter (was: identity spoof)
+#
+# This case drove alpha's PER-NODE bearer with
+# ``metadata.from_agent="beta"`` and asserted a 403 "identity spoof".
+# The per-node bearer feature was removed 2026-08-28 — nothing in
+# ``src/`` ever minted one, so ``node_tokens`` was empty on every fleet
+# host and this smoke layer was the only place such a bearer existed.
+# With it gone there is no second identity to contradict the claim, so
+# the case now pins the refusal that IS in force: a bearer other than
+# the host token never reaches the ACL at all.
 # ---------------------------------------------------------------------------
 
 
-def test_identity_spoof_via_metadata_returns_403_identity_spoof(comms_env):
+def test_unknown_bearer_is_refused_before_the_acl(comms_env):
     # Arrange
     db = comms_env["db"]
     tokens = _set_up_two_groups(db)
     app = create_app(token=tokens["host"], local_host="smoke-local")
     port = _free_port()
-    # Act — alpha's bearer, but ``metadata.from_agent`` claims "beta".
-    # Target "beta" is alpha's true sibling so a *non-spoof* send would
-    # otherwise be allowed; this isolates the spoof gate.
+    # Act — a bearer the daemon was not built with. Target "beta" is
+    # alpha's true sibling, so the ACL would allow this send; the only
+    # thing that can refuse it is the perimeter.
     with _run_loopback(app, port):
         with httpx.Client(timeout=5.0) as c:
             resp = c.post(
                 f"http://127.0.0.1:{port}/agents/beta/message:send",
-                json=_send_payload("not really beta", from_agent="beta"),
-                headers=_bearer(tokens["alpha"]),
+                json=_send_payload("not really beta", from_agent="alpha"),
+                headers=_bearer("not-the-host-token"),
             )
     # Assert
     body = resp.json()
-    assert resp.status_code == 403 and "identity spoof" in (body.get("reason") or ""), (
+    assert resp.status_code == 403 and body.get("error") == "invalid bearer token", (
         f"unexpected response: status={resp.status_code} body={body!r}"
     )
 
@@ -831,24 +841,36 @@ def test_listen_replay_on_reconnect_resumes_only_post_cursor_event_with_last_eve
 # ---------------------------------------------------------------------------
 
 
+_CHANNEL_COLUMNS = ("id", "target", "source", "kind", "content", "meta_json", "ts")
+
+
 def _read_channel_events_for_target(db, target: str) -> list[dict]:
-    """Read every ``channel_events`` row for ``target`` as plain dicts.
+    """Read every ``sac_channel_events`` row for ``target`` as plain dicts.
+
+    ``db`` named the per-agent state file and is now UNUSED — kept in the signature
+    because the caller passes it alongside its other reads and dropping it
+    would make this the one helper with a different shape. The rows moved to
+    the shared PostgreSQL on 2026-08-28 (ADR-0023).
 
     Extracted from the fixture so the fixture has no resource-acquiring
     keyword (``connect(...)`` / ``open(...)``) — keeps the audit's
     "fixture must yield, not return" pattern matcher quiet while the
-    underlying connection is already closed by the ``with`` block.
+    underlying connection is already closed here.
     """
-    import sqlite3
+    from scitex_agent_container._state.state_db_channel_store import (
+        new_channel_connection,
+    )
 
-    with sqlite3.connect(db) as conn:
-        conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            "SELECT id, target, source, kind, content, meta_json, ts "
-            "FROM channel_events WHERE target = ? ORDER BY id",
+    conn = new_channel_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_CHANNEL_COLUMNS)} FROM sac_channel_events "  # noqa: S608
+            "WHERE target = %s ORDER BY id",
             (target,),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_CHANNEL_COLUMNS, row)) for row in rows]
 
 
 @pytest.fixture

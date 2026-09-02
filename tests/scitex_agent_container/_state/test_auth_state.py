@@ -3,7 +3,7 @@
 The table that lets ``sac agents list`` say "this agent is tmux-GREEN but cannot
 call the API" without probing auth inline. Two halves are covered:
 
-* the STORE — a real state.db in ``tmp_path``, real rows, real sqlite (no mocks,
+* the STORE — a real isolated store, real rows, a real store (no mocks,
   no monkeypatch): write via the watchdog's ``record_auth_checks``, read back via
   the list's ``list_auth_states``;
 * the HONESTY RULES in :func:`verdict_for` — pure, so they are exercised with

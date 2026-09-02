@@ -9,10 +9,11 @@ Two escape routes exist and both are closed:
 
 1. **Paths.** ``Layout`` derives every path from an injectable ``root``.
    That is deliberate: sac's own module-level defaults
-   (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``,
-   ``state_db.DEFAULT_DB_PATH``) are computed from ``$HOME`` at IMPORT
-   time, so a fixture that only sets ``$HOME`` CANNOT redirect them — it
-   would read and write the live fleet while looking isolated.
+   (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``) are
+   computed from ``$HOME`` at IMPORT time, so a fixture that only sets
+   ``$HOME`` CANNOT redirect them — it would read and write the live fleet
+   while looking isolated. (``state_db.DEFAULT_DB_PATH`` was a third until
+   2026-08-30, when it was deleted with the storage engine.)
 
 2. **The board.** Every scitex-cards call takes an explicit ``store=``.
    That explicit argument is the PRIMARY isolation and it is what these
@@ -31,7 +32,7 @@ Two escape routes exist and both are closed:
    first, then re-arm it.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
-and writes, and the state.db is a real SQLite file with the real schema.
+and writes, and the store is real, with the real schema.
 """
 
 from __future__ import annotations
@@ -252,67 +253,85 @@ def make_fleet(
     return layout
 
 
-def make_state_db(layout: Layout) -> Path:
-    """Create a REAL state.db with the REAL schema under ``layout.root``.
+# ``make_state_db`` was here until 2026-08-29. It called sac's own
+# ``init_schema`` on ``Layout.state_db`` so the rename suites walked the
+# production schema rather than a hand-rolled one. Both halves of that
+# sentence stopped being true: ``init_schema`` issues ZERO ``CREATE TABLE``,
+# and ``Layout.state_db`` is gone with ``_lifecycle/_rename_db.py`` — there is
+# no state.db path for a rename to touch, so there is nothing for a helper to
+# create. Its only surviving caller went with it.
+#
+# ``seed_db_rows`` had gone the same way on 2026-08-28, and before it
+# ``COMMS_NODE_SQL`` / ``DEFINITION_SQL`` / ``INSTANCE_SQL`` /
+# ``CHANNEL_EVENT_SQL`` — four raw INSERTs, each retired as its table left
+# the old store, the last of them announcing the move as 147 setup ERRORs across
+# three rename suites. Both halves a rename must carry are now seeded through
+# their REAL production writers below, which is a better seed than any INSERT
+# was: it exercises the production id allocation and the production merge
+# rules rather than hand-writing a row into a shape the code never uses.
 
-    Uses sac's own ``init_schema`` so the tables (and therefore the
-    columns the rename walks) are exactly the production ones — a
-    hand-rolled fixture schema would drift and the tests would stop
-    proving anything.
+
+#: The counterparty of the grant :func:`seed_identity_and_history` writes.
+#: Named once so the suites asserting the carry cannot drift from the seed.
+GRANT_PEER = "grant-peer"
+
+
+def seed_identity_and_history(name: str) -> None:
+    """Identity record, history row and ACL grant — all three in PostgreSQL.
+
+    Every part a rename must carry. They stopped sharing a database on
+    2026-08-28 and then, later the same day, stopped being in that database at all:
+    ``sac``'s ``init_schema`` now issues ZERO ``CREATE TABLE``. Writing all
+    three here is what keeps any one of them from moving again unnoticed.
+
+    The identity half has moved three times. It was ``comms_nodes.name``
+    until the ADR-0014 directory moved to the shared store, then
+    ``definitions.name`` until that table was deleted for having no writer,
+    then ``instances.name`` — which left the same day for the shared store
+    as well. It is written here through ``record_instance_start``, the same
+    verb ``sac agents start`` uses, and carried by
+    ``state_db_instances_rename.rename_instance_rows`` as its own step in
+    ``_rename.apply_plan``.
+
+    The history half moved four times: ``turns`` (the diary trio, to
+    per-host PostgreSQL), then ``attempts`` (deleted, zero writers), then
+    ``channel_events.target``, now ``sac_channel_events`` in the shared
+    PostgreSQL (ADR-0023). It is written through the real ``persist_event``
+    and carried by ``state_db_channel.rename_channel_events``.
+
+    The AUTHORISATION half was the last of the three to need seeding: it rode
+    inside ``_rename_db``'s ``comms_grants`` pairs until 2026-08-29, which is
+    to say it was not carried at all once the table moved. It is written
+    through the real ``grant_send`` and carried by
+    ``state_db_grants_rename.rename_comms_grants``.
+
+    NO ``layout`` ARGUMENT, and no ``state.db``. It took one only to build
+    that file, ``Layout.state_db`` was deleted on 2026-08-29 with the rename
+    step that was its last reader, and a parameter kept past its last use is
+    the shape that made ``_open_instance_pid`` answer "not running" for a live
+    agent. Nothing here is rooted on disk any more; every record it writes is
+    keyed by ``name`` in the shared store.
+
+    CALLERS MUST TAKE ``pg_schema``: all three write to a real PostgreSQL
+    schema, so a caller without it resolves the unreachable DSN and fails.
     """
-    from scitex_agent_container._state.state_db import init_schema
-
-    db_path = layout.state_db
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_schema(db_path)
-    return db_path
-
-
-def seed_db_rows(db_path: Path, statements: list[tuple[str, tuple]]) -> Path:
-    """Execute seeding INSERTs against a real state.db, committing once.
-
-    Lives HERE rather than inline in a fixture on purpose. STX-TQ005 (the
-    ecosystem test-quality rule) forbids a fixture that opens an external
-    resource — ``sqlite3.connect(...)`` — and hands it back with ``return``
-    instead of ``yield``, because a returned connection is never closed.
-    These fixtures never hand the connection back at all; they open it,
-    write, and close it. Extracting that into a plain helper keeps the
-    fixture bodies resource-free and the rule satisfied for the right
-    reason rather than by suppression.
-    """
-    import sqlite3
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        with conn:
-            for sql, args in statements:
-                conn.execute(sql, args)
-    finally:
-        conn.close()
-    return db_path
-
-
-COMMS_NODE_SQL = (
-    "INSERT INTO comms_nodes (name, host, a2a_port, registered_at, updated_at) "
-    "VALUES (?, ?, ?, ?, ?)"
-)
-TURN_SQL = "INSERT INTO turns (turn_id, name, host, status, ts) VALUES (?, ?, ?, ?, ?)"
-
-
-def seed_identity_and_history(layout: Layout, name: str) -> Path:
-    """Give ``name`` one identity row (comms_nodes) and one history row (turns).
-
-    The two halves the rename must both carry: the live A2A directory entry,
-    and the agent's past.
-    """
-    db_path = make_state_db(layout)
-    return seed_db_rows(
-        db_path,
-        [
-            (COMMS_NODE_SQL, (name, "h", 9001, 1.0, 1.0)),
-            (TURN_SQL, ("t1", name, "h", "ok", 1.0)),
-        ],
+    from scitex_agent_container._state.state_db_channel import persist_event
+    from scitex_agent_container._state.state_db_grants import grant_send
+    from scitex_agent_container._state.state_db_instances import (
+        record_instance_start,
     )
+
+    # ``workdir`` carries the name as a whole path component on purpose: it is
+    # the PATH half of the rename, rewritten component-wise by
+    # ``rename_instance_rows``, and the only seeded field that proves it.
+    record_instance_start(name, workdir=f"/home/u/proj/{name}")
+    persist_event(target=name, event={"msg_id": f"seed-{name}", "content": "hi"})
+    # A THIRD half, added 2026-08-29 with the ``acl-grants`` step. It is here
+    # rather than in one test because the rollback matrix photographs whatever
+    # this helper seeds: an ACL grant that a failed rename does not hand back
+    # is a permission silently withdrawn, and that has to be checked at every
+    # injection point, not at one.
+    grant_send(sender=name, target=GRANT_PEER, note=f"seed for {name}")
 
 
 def _env_overrides(pairs: dict[str, str | None]) -> Iterator[None]:
@@ -349,7 +368,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
       YAML file, so even a call that forgot ``store=`` lands in tmp rather
       than on the live 1,400-card board.
 
-    * **the SQLite shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
+    * **the mirror shadow** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
       ``$SCITEX_TODO_DB``) points at a tmp DB. This one is not belt-and-
       braces, it is load-bearing, and its absence destroyed the live board
       on 2026-07-20: the dual-write mirror resolves its own path and
@@ -384,10 +403,10 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
         _env_overrides(
             {
                 "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
-                # *** THE SQLITE SHADOW — isolating the YAML IS NOT ENOUGH. ***
+                # *** THE MIRROR SHADOW — isolating the YAML IS NOT ENOUGH. ***
                 #
                 # Redirecting the store above protects the YAML and nothing
-                # else. scitex-cards mirrors every write into a SQLite shadow
+                # else. scitex-cards mirrors every write into a shadow database
                 # whose path it resolves ITSELF, ignoring the store you wrote
                 # to: `_dual_write.mirror_after_save` calls
                 # `mirror_doc_incremental(doc, resolve_db_path(), ...)` with NO

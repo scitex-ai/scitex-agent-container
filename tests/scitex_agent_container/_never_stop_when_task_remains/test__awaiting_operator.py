@@ -268,7 +268,7 @@ def test_a_real_reader_produces_the_line(env_save_restore, tmp_path):
 # ---------------------------------------------------------------------------
 # A READER THAT DOES NOT NAME ITS SOURCE WILL BE WRONG AGAIN
 #
-# This fleet has FOUR stores: two Postgres clones, an abandoned SQLite inbox
+# This fleet has FOUR stores: two Postgres clones, an abandoned per-file inbox
 # sidecar (365 rows, 149 unseen, zero-byte WAL, no write since the previous
 # morning while readers kept attaching — opened constantly, written never), and
 # a YAML file that `scitex-cards done` resolved to while $SCITEX_CARDS_DB named

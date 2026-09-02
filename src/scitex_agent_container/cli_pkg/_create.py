@@ -299,6 +299,16 @@ def create(
             "digits, '-', and '_' only (dir-as-SSoT convention)."
         )
 
+    # Reserved slots (the host-process role name) are refused at the front
+    # door, before anything is written — the collision story lives in
+    # config/_reserved_names.py. Imported lazily for the same cold-start
+    # budget reason as _default_base_dir (config is a heavy package).
+    from ..config._reserved_names import reserved_agent_name_error
+
+    reserved_msg = reserved_agent_name_error(name)
+    if reserved_msg is not None:
+        raise click.UsageError(reserved_msg)
+
     base = base_dir if base_dir is not None else _default_base_dir()
     agent_dir = base / name
     spec_path = agent_dir / "spec.yaml"
