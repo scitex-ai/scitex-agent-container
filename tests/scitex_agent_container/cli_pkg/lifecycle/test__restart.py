@@ -733,8 +733,16 @@ def test_brokered_restart_threads_fresh_to_the_host_client():
 # ---------------------------------------------------------------------------
 
 
-def _ok_restart_one(name, *, as_json, fresh):
-    """Recorder stand-in for ``_restart_one`` — always succeeds."""
+def _ok_restart_one(name, *, as_json, fresh, engine=None):
+    """Recorder stand-in for ``_restart_one`` — always succeeds.
+
+    Carries ``engine`` because the real ``_restart_one`` takes it
+    (``--engine <key>``, ``spec.engines``) and the command passes it on
+    EVERY call, ``None`` included. A stand-in that omitted the parameter
+    would raise ``TypeError`` inside the CliRunner and turn every
+    loop-level assertion below into a test of the stand-in's signature
+    rather than of the fan-out it exists to exercise.
+    """
     return {"name": name, "restarted": True, "dispatched": False}, True
 
 
@@ -752,7 +760,7 @@ def test_multiple_names_restart_each_once():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -777,11 +785,84 @@ def test_multiple_names_json_emits_array():
     assert isinstance(payload, list) and len(payload) == 2
 
 
+# ---------------------------------------------------------------------------
+# ``--engine <key>`` (spec.engines, ADR-0024). The restart command owns two
+# facts about it: the key REACHES the per-agent restart, and a batch
+# selection REFUSES rather than applying one per-spec key to several specs.
+# Both are pinned here because the ``_restart_one`` seam is where the CLI
+# hands the engine over — the stand-ins above carry ``engine`` for exactly
+# this reason.
+# ---------------------------------------------------------------------------
+
+
+def test_engine_key_reaches_the_per_agent_restart():
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y", "--engine", "qwen38-27b"])
+    # Assert — the key the operator named, verbatim, not the default.
+    assert seen == ["qwen38-27b"]
+
+
+def test_no_engine_flag_hands_the_per_agent_restart_none():
+    # POSITIVE CONTROL for the test above: without the flag the same seam
+    # must receive ``None`` (use the spec's declared default), so
+    # "the key arrives" is a fact about the flag and not about the recorder.
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y"])
+    # Assert
+    assert seen == [None]
+
+
+def test_engine_with_several_names_refuses_rather_than_applying_one_key():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(
+            restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"]
+        )
+    # Assert — engine keys are per spec; a batch cannot share one.
+    assert result.exit_code == 2
+
+
+def test_engine_refusal_on_several_names_restarts_nobody():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"])
+    # Assert — refusing halfway would leave a split fleet; nobody is touched.
+    assert seen == []
+
+
 def test_all_flag_restarts_every_enumerated_agent():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -844,7 +925,7 @@ def test_one_failure_still_attempts_rest():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         if name == "bad":
             return {"name": name, "error": "boom"}, False
@@ -860,7 +941,7 @@ def test_one_failure_still_attempts_rest():
 
 def test_one_failure_exits_nonzero():
     # Arrange
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         if name == "bad":
             return {"name": name, "error": "boom"}, False
         return {"name": name, "restarted": True}, True
@@ -912,7 +993,7 @@ def test_all_running_restarts_only_running_agents():
     # Arrange — --all-running must enumerate via the RUNNING-only seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -932,7 +1013,7 @@ def test_all_registry_restarts_every_agent():
     # Arrange — --all-registry must enumerate via the full-fleet seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -953,7 +1034,7 @@ def test_all_alias_matches_all_registry_behaviour():
     # enumerate the FULL fleet, not the running-only subset.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
