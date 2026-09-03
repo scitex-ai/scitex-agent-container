@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._explicit_validation import validate as _validate_explicit_fields
+from ._engine_types import apply_default_engine, parse_engines
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._residency_types import resolve_spec_residency
 from ._host import (
@@ -383,9 +384,11 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
                 "args": ["mcp", "start"],
             }
 
-    return AgentConfig(
+    engines = parse_engines(spec)
+    config = AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
+        engines=engines,
         # HARNESS — which agent SDK runs the session. NOT
         # spec.claude.provider (the inference backend). ``spec.harness``
         # is canonical; ``spec.provider`` is the deprecated alias, and a
@@ -445,6 +448,14 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         # distinguishes them, so the default here cannot be `[]`.
         to_home_layers=_parse_to_home_layers(spec.get("to_home_layers")),
     )
+
+    # ``spec.engines`` — fold the DEFAULT engine onto the resolved
+    # backend fields so every read surface downstream sees the backend
+    # this agent starts on. PURE: no warning, no probe, no network (see
+    # ``_engine_types.apply_default_engine`` for why those belong on the
+    # START path instead).
+    apply_default_engine(config, engines)
+    return config
 
 
 def _parse_to_home_layers(value: object) -> "list[str] | None":

@@ -89,12 +89,23 @@ def _observe_run(name: str, *, min_ts: float | None = None, wait_s: float = 0.0)
     return read_beat_identity(name, min_ts=min_ts, wait_s=wait_s)
 
 
-def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
+def _restart_locally(
+    name: str, *, as_json: bool, engine: str | None = None
+) -> tuple[dict, bool]:
     """Perform the restart on THIS host (ssh-dispatching to a peer if needed).
 
     Reached only when :func:`._restart_remote.must_broker_to_host` said
     this process can act. Human console output is printed here when ``not
     as_json``; JSON emission is left to the caller.
+
+    ``engine`` (CLI ``--engine <key>``) selects one of the backends the
+    spec declares under ``spec.engines`` for the START leg of this
+    restart. It is honoured on the LOCAL leg only: the cross-host ssh
+    dispatch below re-runs ``sac agents restart`` on the peer through an
+    argv this function does not build, so an engine passed here would be
+    DROPPED and the peer would restart the agent on its default engine —
+    the silent fallback the engine axis exists to refuse. That case fails
+    loud naming the command to run on the peer instead.
     """
     # Set when the start leg no-op'd over a live agent instead of cycling
     # it, or when the postcondition check refuted the cycle; surfaced as
@@ -123,6 +134,18 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
         if spec_peer is not None:
             _handler(spec_peer, {}, peers)
             dispatched = True
+    if dispatched and engine:
+        msg = (
+            f"--engine {engine!r} cannot be honoured for {name!r}: that "
+            "agent runs on a PEER, and the cross-host restart re-runs "
+            "`sac agents restart` there through an argv that carries no "
+            "engine field — the engine would be silently dropped and the "
+            "agent would restart on its DEFAULT engine. Run on the peer "
+            f"that holds it: sac agents restart {name} --engine {engine}"
+        )
+        if not as_json:
+            console.print(f"[red]{msg}[/red]")
+        return {"name": name, "error": msg, "restarted": False}, False
     if dispatched:
         # Trust the PEER'S OWN verdict, not the mere fact that ssh exited
         # 0. The peer runs `sac agents restart --json`, whose envelope
@@ -202,7 +225,7 @@ def _restart_locally(name: str, *, as_json: bool) -> tuple[dict, bool]:
     before = read_run_identity(name)
     session_before = _observe_run(name)
     restart_began = time.time()
-    _result = agent_restart(name)
+    _result = agent_restart(name, engine_override=engine)
     restarted = _result is not False
     if outcome_kind(_result) == KIND_ALREADY_RUNNING:
         restarted = False

@@ -48,6 +48,7 @@ from ._apptainer_auth_bind import (  # noqa: F401 (re-export — see module docs
     ensure_credentials_bind_target,
 )
 from ._apptainer_provider import (
+    engine_env_flags,
     openai_env_flags,
     openai_harness_active,
     provider_active,
@@ -65,22 +66,31 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     launch composed with an Anthropic-compat ``spec.claude.provider``
     override.
     """
+    # PER-ENGINE PARAMETERS first, on EVERY branch. The selected engine
+    # (spec.engines) can carry reasoning_effort / max_context_tokens
+    # whether or not it declares a provider override, so emitting these
+    # inside one of the branches below would silently drop them for the
+    # plain-Anthropic engine — the exact shape of bug this file's
+    # branch order already documents. Empty for every legacy
+    # single-backend spec, so their argv is unchanged.
+    engine_flags = engine_env_flags(config)
+
     if openai_harness_active(config):
         # openai agent-SDK family (openai-compat-3): OPENAI_* columns
         # only. No Anthropic OAuth env and no credentials bind — the
         # helper owns SAC_OPENAI_API_KEY/OPENAI_API_KEY dual injection,
         # the SAC_PROVIDER marker, and the optional routing
         # pass-throughs (base URL / org / project / model).
-        return openai_env_flags(config)
+        return engine_flags + openai_env_flags(config)
 
     if provider_active(config):
         # Provider backend: API key, no OAuth. The provider helper owns
         # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a clean
         # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker). The OAuth
         # creds bind is intentionally NOT emitted.
-        return provider_env_flags(config)
+        return engine_flags + provider_env_flags(config)
 
-    argv: list[str] = []
+    argv: list[str] = list(engine_flags)
 
     # Designated credentials file (spec.claude.credentials_file): the
     # operator names ONE host ``.credentials.json`` to mount writable at

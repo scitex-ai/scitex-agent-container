@@ -15,7 +15,14 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
-from ._provider_types import ProviderSpec
+# ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
+# ``from ...config._types import ProviderSpec`` is an existing import path.
+from ._provider_types import ProviderSpec  # noqa: E402,F401
+
+# EngineSpec — one entry of the MULTI-backend ``spec.engines`` surface.
+# Imported for the ``AgentConfig.engines`` field type; ``_engine_types``
+# imports nothing from this module, so the dependency is one-way.
+from ._engine_types import EngineSpec  # noqa: E402,F401
 
 
 @dataclass
@@ -33,109 +40,11 @@ class ContainerSpec:
     mount_host_claude: bool = False
 
 
-@dataclass
-class ClaudeSpec:
-    # v3-realign: model lives under spec.claude.model (promoted from
-    # top-level spec.model — §3). Empty = runtime default.
-    model: str = ""
-    channels: list[str] = field(default_factory=list)
-    flags: list[str] = field(default_factory=list)
-    # v3 escape hatch (§1 invariant): splat ``**raw_options`` into
-    # ``ClaudeAgentOptions`` so power users can reach any SDK option
-    # sac doesn't model. Merged on top of curated keys; raw_options wins.
-    raw_options: dict = field(default_factory=dict)
-    # Session continuity strategy. One of:
-    #   fresh        never pass ``-c``/``--continue`` — every launch is an
-    #                independent session (DEFAULT). This is the right
-    #                behaviour for experiment trials, where each capsule
-    #                run must be hermetic and must not inherit the prior
-    #                conversation.
-    #   continue     resume the latest session for this cwd (TUI: ``claude
-    #                -c``; SDK: auto-resume the persisted session_id). The
-    #                right behaviour for LONG-LIVED coordinator agents
-    #                (lead/head/worker/telegrammer/project-maintainer/...)
-    #                that must keep their working memory across restarts.
-    #   resume       pass --resume <resume_id> (explicit session ID).
-    # Aliases accepted at load time (parse_claude):
-    #   new-session, new  -> fresh   (back-compat: the pre-2026-06 names)
-    #   continue-or-new   -> continue
-    # NOTE the default flipped from ``continue`` to ``fresh`` (2026-06-22,
-    # "fresh by default, opt-in continue"): a spec that omits ``session``
-    # now starts fresh. Coordinator/long-lived roles are mapped back to
-    # ``continue`` BY ROLE so omitting the field keeps those agents
-    # continuous WITHOUT editing every deployed spec, while experiment
-    # capsules (non-coordinator roles) get fresh. See
-    # ``config/_session_continuity.py`` (``role_wants_continuity`` /
-    # ``default_session_for_role`` / ``_CONTINUITY_ROLES``) for the
-    # role-default, applied in ``config/_loaders.py`` after ``parse_claude``;
-    # and ``runtimes/_apptainer_inner_argv._tui_runner_argv`` for where the
-    # resolved mode becomes ``claude -c`` (continue) or no flag (fresh).
-    session: str = "fresh"
-    # Only resume if the most recent session jsonl is newer than this many minutes.
-    # None = no age check (always resume if session exists).
-    continue_max_age_minutes: int | None = None
-    # Explicit session ID to pass to --resume. Only used when session="resume".
-    resume_id: str = ""
-    auto_accept: bool = True
-    # Saved-account name (from ``sac account list``) whose credential
-    # snapshot this agent runs on. ``""`` = the host's live
-    # ``~/.claude/.credentials.json`` (current default).
-    #
-    # When set, the runtime COPIES that account's ``.credentials.json``
-    # into the agent's own state dir at start (frozen boot-copy, not a
-    # live bind), so two agents pinned to two accounts never fight one
-    # mount. The copy is bound RW so in-container ~1h token refresh keeps
-    # working on the agent's private copy.
-    #
-    # Takes effect on next start/restart — a host ``/login`` does NOT
-    # move a pinned agent (that is the point of pinning), and changing
-    # this field requires ``sac agent restart`` to re-copy the snapshot.
-    account: str = ""
-    # Explicit credentials-file designation (host path to a
-    # ``.credentials.json``). When set, the runtime BIND-MOUNTS that
-    # exact file WRITABLE at the in-container
-    # ``$HOME/.claude/.credentials.json`` — single source of truth, no
-    # copy. The in-container ``claude`` reads/refreshes that file
-    # directly, so an OAuth refresh persists straight back to the
-    # designated file and never desyncs from / corrupts a shared
-    # ``~/.claude/.credentials.json``. Designating different files for
-    # different agents is how multiple accounts run side by side
-    # (rotate by pointing agents at different credential files).
-    #
-    # Precedence: when set, this file-mount REPLACES the account /
-    # host dir-bind auth path (no ``CLAUDE_CONFIG_DIR`` redirect) — the
-    # designated file IS the agent's credentials. Mutually exclusive
-    # with ``provider`` (an API-key backend needs no OAuth file).
-    #
-    # Caveat (documented in ``_apptainer_auth``): a single-file bind is
-    # on the file's inode; a host-side atomic tmp+rename on the source
-    # orphans the bind. In-container ``claude`` refresh that writes
-    # in-place is safe; designate a path NOT concurrently atomic-renamed
-    # by host-side ``sac accounts``/watch-live tooling.
-    credentials_file: str = ""
-    # Account POOL: a list of host paths to ``.credentials.json`` files
-    # (one per saved account). When non-empty, the start pre-flight picks
-    # ONE of them QUOTA-CONDITIONAL — token-fresh, avoiding 5h-blocked
-    # and 7d-near-capped accounts, load-balanced across the fleet per
-    # agent name (see ``_creds.pick_healthy_account`` +
-    # ``_lifecycle._start_preflight._rotate_to_healthy_account``) — and
-    # binds the PICKED file exactly as if it had been named in the singular
-    # ``credentials_file`` field. Each entry's ACCOUNT SLUG is its parent
-    # directory name (the fleet layout is
-    # ``~/.scitex/agent-container/accounts/<slug>/.credentials.json``), and
-    # that slug is the account name the quota-aware picker keys off. The
-    # singular ``credentials_file`` remains supported and is treated as a
-    # 1-element pool (pick returns it) for back-compat. Fail-loud: when NO
-    # listed entry has a usable (non-expired) snapshot the start aborts with
-    # ``_creds.NoHealthyAccountError``. Mutually exclusive with ``provider``
-    # (an API-key backend needs no OAuth).
-    credentials_files: list[str] = field(default_factory=list)
-    # Vendor-agnostic backend override (see :class:`ProviderSpec`).
-    # When set, the SDK session runs against an Anthropic-SDK-compatible
-    # backend (DeepSeek, a gateway, ...) on an API key instead of
-    # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
-    # exclusive with ``account`` (an API-key backend needs no OAuth).
-    provider: ProviderSpec | None = None
+# ClaudeSpec lives in the sibling ``_claude_spec`` module (per-file line
+# cap, same split as ApptainerSpec/ProviderSpec above); re-exported here
+# so ``from ...config._types import ClaudeSpec`` keeps resolving.
+from ._claude_spec import ClaudeSpec  # noqa: E402,F401
+
 
 
 @dataclass
@@ -364,6 +273,27 @@ class AgentConfig:
     harness: AgentHarness = DEFAULT_AGENT_HARNESS
     # Provenance, NOT a spec field: reached only through the alias.
     harness_key_is_legacy: bool = False
+    # ENGINES — the several named backends ``spec.engines`` declares, one
+    # of which THIS start runs on. Empty for a legacy single-backend spec
+    # (the majority of the deployed corpus), which takes the unchanged
+    # path. See ``config._engine_types``: the loader folds the DEFAULT
+    # engine onto ``harness`` / ``claude.model`` / ``claude.provider``,
+    # and ``sac agents start|restart --engine <key>`` re-folds a
+    # different entry for THAT start (operator answer Q2: start time
+    # only — no per-turn hatch, no mid-session rebinding).
+    engines: dict[str, EngineSpec] = field(default_factory=dict)
+    # Which engine key this config resolved to. "" = no engines block;
+    # provenance for the launch env and the birth certificate.
+    engine_key: str = ""
+    # PER-ENGINE PARAMETERS (operator answer Q4 — parameters per model,
+    # reasoning_effort above all). They live on AgentConfig rather than
+    # on ClaudeSpec on purpose: ``_explicit_fields._claude_fields``
+    # derives EVERY ClaudeSpec field as a REQUIRED yaml key, so adding
+    # them there would red-start all ~123 deployed specs for declaring
+    # nothing new. Empty / None = the engine states no opinion. Delivered
+    # to the container by ``runtimes._apptainer_provider.engine_env_flags``.
+    reasoning_effort: str = ""
+    max_context_tokens: int | None = None
     # RESIDENCY: does the daemon outlive its work? "resident" (default)
     # parks awaiting more turns after a conversation completes;
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when

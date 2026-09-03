@@ -74,7 +74,9 @@ from ._selection import (
 )
 
 
-def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
+def _restart_one(
+    name: str, *, as_json: bool, fresh: bool, engine: str | None = None
+) -> tuple[dict, bool]:
     """Restart ONE agent; return ``(json_envelope, ok)``.
 
     ONE decision, made explicitly and logged BEFORE any work: can this
@@ -83,6 +85,14 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
     cannot silently take a route the plain path is locked out of (and
     vice versa — which is how the plain path spent its life reporting
     success for restarts it never performed).
+
+    ``engine`` (``--engine <key>``) reaches only the LOCAL leg. The two
+    other routes carry no engine field in the argv / request body they
+    build — the host-listen broker's POST and the peer's ssh
+    ``sac agents restart`` — so an engine handed to them would be
+    DROPPED and the agent would come back on its default backend. That
+    is the silent fallback this axis exists to refuse, so each route
+    fails loud instead, naming the command that works there.
 
     Never raises for an ordinary restart fault and never calls
     ``sys.exit`` — the caller aggregates the batch exit code.
@@ -109,12 +119,24 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
     # cleaner than an unhandled traceback, and the failure is still reported
     # as a FAILED restart — never swallowed into a success)
     try:
-        if broker:
+        if broker and engine:
+            msg = (
+                f"--engine {engine!r} cannot be honoured from inside a "
+                "container: the restart is brokered to the host's `sac "
+                "listen`, whose request body has no engine field, so the "
+                "engine would be silently dropped and the agent would "
+                "restart on its DEFAULT engine. Run on the host: sac "
+                f"agents start {name} --force --yes --engine {engine}"
+            )
+            if not as_json:
+                console.print(f"[red]{msg}[/red]")
+            out, ok = {"name": name, "error": msg, "restarted": False}, False
+        elif broker:
             out, ok = _restart_via_broker(name, as_json=as_json, fresh=fresh)
         elif fresh:
             out, ok = _refuse_fresh_on_bare_host(name, as_json=as_json)
         else:
-            out, ok = _restart_locally(name, as_json=as_json)
+            out, ok = _restart_locally(name, as_json=as_json, engine=engine)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not as_json:
             console.print(f"[red]Error: {exc}[/red]")
@@ -179,6 +201,26 @@ def _restart_one(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
         "'sac agents start <name> --force --fresh' directly."
     ),
 )
+@click.option(
+    "--engine",
+    "engine",
+    type=str,
+    default=None,
+    metavar="KEY",
+    help=(
+        "Restart on the named engine from the spec's `engines:` block "
+        "(e.g. --engine qwen38-27b) instead of its declared default. START "
+        "TIME ONLY — the choice applies to this restart's start leg and "
+        "never rebinds mid-session. An unknown key, or an engine that "
+        "cannot be honoured (unregistered provider, incomplete inline "
+        "provider, unset auth env var, unknown harness), FAILS the restart "
+        "naming what could not be honoured; sac never falls back to "
+        "another engine. Reachability is not probed unless "
+        "SAC_ENGINE_PROBE=1. Single-agent, local-leg only: a batch "
+        "selection, or an agent that lives on a peer or must be brokered "
+        "to the host, fails loud with the command to run there."
+    ),
+)
 def restart(
     names: tuple[str, ...],
     all_running: bool,
@@ -188,6 +230,7 @@ def restart(
     yes: bool,
     as_json: bool,
     fresh: bool,
+    engine: str | None,
 ) -> None:
     """Restart one or more agents.
 
@@ -233,9 +276,26 @@ def restart(
             console.print("[dim]No agents found to restart.[/dim]")
         return
 
+    # --engine names ONE engine key, and keys are declared per spec, so
+    # one key does not name the same backend across agents. Applying it
+    # to a batch would start some agents on a backend their spec never
+    # declared. Fail loud rather than pick per agent.
+    if engine and len(targets) > 1:
+        click.echo(
+            f"Error: --engine {engine} restarts ONE agent — engine keys are "
+            "declared per spec, so one key does not name the same backend "
+            f"across the {len(targets)} selected agents. Restart each "
+            "separately.",
+            err=True,
+        )
+        raise SystemExit(2)
+
     if dry_run:
         for name in targets:
-            click.echo(f"[dry-run] would restart agent '{name}'")
+            click.echo(
+                f"[dry-run] would restart agent '{name}'"
+                + (f" on engine '{engine}'" if engine else "")
+            )
         return
 
     if not yes:
@@ -254,7 +314,9 @@ def restart(
     results: list[dict] = []
     any_failed = False
     for name in targets:
-        envelope, ok = _restart_one(name, as_json=as_json, fresh=fresh)
+        envelope, ok = _restart_one(
+            name, as_json=as_json, fresh=fresh, engine=engine
+        )
         results.append(envelope)
         if not ok:
             any_failed = True
