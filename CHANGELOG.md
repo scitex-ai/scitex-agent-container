@@ -6,6 +6,59 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`/uvwork` is bound from the host scratch volume instead of accumulating in
+  the apptainer overlay upper on the root LV** (ADR-0024; operator directive
+  2026-09-02 「ディスクは /scratch 使ってくださいね」). Ninety of the 123 agent
+  specs point `TMPDIR`, `UV_CACHE_DIR`, `UV_INSTALL_DIR` and the agent venv at
+  `/uvwork`; the base image creates that directory and **nothing bound it**, so
+  every byte went to `overlays/<agent>/upper/uvwork` on the host's ROOT volume.
+  Measured on `scitex-compute-04` 2026-09-03: 11.7 GB (`sac`), 3.3 GB
+  (`scitex-dev`), 3.0 GB (`scitex-hub`), 2.5 GB (`scitex-cards`), 1.9 GB
+  (`scitex-storage`) — and the root LV filled to 0 **four times** on
+  2026-09-02, while `/scratch` on the same host is a separate 3.0 T volume with
+  2.8 T free.
+  Each start now resolves the host scratch root once, creates
+  `<root>/sac/agents/<agent>/uvwork` (mode 0700, idempotent across restarts)
+  and appends `--bind <that>:/uvwork:rw` in the argv finalize layer, after
+  every spec-declared bind so a spec that binds `/uvwork` itself still wins.
+  No spec changes: `binds:` and `startup_commands` are untouched fleetwide.
+- **`scratch_root:` (and `scratch_root_reason:`) in the per-host
+  `config.yaml`.** An absolute path, or the literal `none` — the written
+  decision that this host keeps `/uvwork` in the overlay, which is **refused
+  without a stated reason**, as is a `scratch_root_reason:` with no
+  `scratch_root:` beside it. With no declaration the default `/scratch` is
+  probed (compute-01 and compute-03 have no `config.yaml` at all, so the
+  default has to work without one); with neither a declaration nor a
+  `/scratch`, sac **REFUSES to start the agent** naming the missing path, the
+  config key, the config file and all three fixes. There is no env-var knob:
+  falling back to the overlay silently is the bug this replaces.
+- **`sac agents scratch-migrate [--agent NAME]… [--apply] [--json]`** — moves
+  each STOPPED agent's `overlays/<agent>/upper/uvwork` to
+  `<scratch_root>/sac/agents/<agent>/uvwork`, so the historical copy stops
+  occupying the root LV and the next start finds uv and the venv already in
+  place. **Dry-run by default**, printing per-agent sizes, per-agent decisions
+  and the total it would move. A RUNNING agent is refused by name (its
+  container has the overlay mounted) and so is one whose liveness the runtime
+  adapter could not determine — "unknown" is not "stopped". Applying copies,
+  **verifies** every path, size and symlink target against the source, and only
+  then removes the overlay copy; a verification mismatch keeps the source and
+  says so. Exit codes: 0 sound, 1 the plan does not describe the sweep, 2
+  refused.
+  Two refusals come straight out of the first real dry-run, which found both:
+  **(a)** run from inside an agent container, the probe called the agent
+  executing it "stopped" and offered its 10.3 GiB — `is_running` is a pid file
+  plus `os.kill(pid, 0)`, the recorded pid was 3190806 and the container's
+  `/proc` topped out at 74275, because the container has its own PID namespace.
+  The verb now abstains whenever `APPTAINER_CONTAINER` /
+  `SINGULARITY_CONTAINER` is set, naming the vantage and saying to run it on
+  the host; sizes still print, since the overlays are read through a bind mount.
+  **(b)** `scitex-hub` and `scitex-hub-mobile-ux` declare ONE `--overlay`, as do
+  `scitex-cards` / `scitex-todo` and eight `handyman-*` specs, so one 2.6 GiB
+  tree was listed as movable twice. Shared sources are now refused on every
+  claiming row, each naming the others, with ownership computed over the whole
+  roster rather than the `--agent` subset.
+
 ### Removed
 - **`state_db.DEFAULT_DB_PATH`, and the ~4900-times-per-run test ceremony that
   rebound it.** The engine deletion below left the PATH behind — a `Path`
