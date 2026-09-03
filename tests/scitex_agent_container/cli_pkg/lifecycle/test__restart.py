@@ -858,6 +858,108 @@ def test_engine_refusal_on_several_names_restarts_nobody():
     assert seen == []
 
 
+def test_engine_refusal_names_the_flag_and_the_one_at_a_time_remedy():
+    # A bare exit 2 is indistinguishable from a click usage error the
+    # operator did not cause, so the refusal must SAY what it refused and
+    # what to do instead. Asserted here so the message cannot decay into a
+    # silent status code while the exit-2 tests stay green.
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(
+            restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"]
+        )
+    # Assert
+    assert "--engine qwen38-27b" in result.output and "one at a time" in result.output
+
+
+def test_engine_with_a_selection_flag_refuses_rather_than_applying_one_key():
+    # The --all family is the OTHER batch shape, and it reaches the loop by
+    # a different route (enumeration, not argv), so "several names refuses"
+    # says nothing about it.
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: ["a1", "a2", "a3"]),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all", "-y", "--engine", "qwen38-27b"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_engine_refusal_on_a_selection_flag_restarts_nobody():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: ["a1", "a2", "a3"]),
+        _swap("_restart_one", _rec),
+    ):
+        runner.invoke(restart, ["--all", "-y", "--engine", "qwen38-27b"])
+    # Assert — the refusal lands BEFORE the fan-out, not part-way through it.
+    assert seen == []
+
+
+def test_engine_with_a_selection_flag_matching_one_agent_still_refuses():
+    # THE SHAPE REFUSES, NOT THE COUNT. --all on a fleet that happens to be
+    # down to a single agent is still "apply one per-spec key to whatever
+    # the registry holds"; honouring it there would make the same command
+    # mean different things on different days, and would silently start
+    # tomorrow's second agent on a backend its spec never declared.
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: ["only-one"]),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all", "-y", "--engine", "qwen38-27b"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_engine_with_a_selection_flag_matching_nobody_still_refuses():
+    # POSITIVE CONTROL for the placement of the guard: an empty enumeration
+    # returns EARLY with exit 0 ("No agents found to restart"), so a guard
+    # sitting after that return would let the unusable combination pass in
+    # silence on an idle fleet.
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: []),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all", "-y", "--engine", "qwen38-27b"])
+    # Assert
+    assert result.exit_code == 2
+
+
+def test_selection_flag_without_engine_still_reports_an_empty_fleet_and_exits_zero():
+    # POSITIVE CONTROL for the test above: moving the engine guard ahead of
+    # the empty-batch return must not turn an ordinary empty --all into a
+    # failure. Without --engine the historical behaviour stands.
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with (
+        _swap("_enumerate_fleet", lambda: []),
+        _swap("_restart_one", _ok_restart_one),
+    ):
+        result = runner.invoke(restart, ["--all", "-y"])
+    # Assert
+    assert result.exit_code == 0
+
+
 def test_all_flag_restarts_every_enumerated_agent():
     # Arrange
     seen: list[str] = []

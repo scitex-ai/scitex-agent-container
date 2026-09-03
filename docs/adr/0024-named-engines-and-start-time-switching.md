@@ -246,7 +246,12 @@ engine silently:
   `sac agents restart` over ssh through an argv this code does not build.
 * `--engine` with directory / multi-agent targets. Engine keys are per-spec, so
   one key does not name the same backend across agents; `_start_parallel` also
-  does not re-append it to each child argv.
+  does not re-append it to each child argv. The refusal is keyed on the SHAPE
+  of the selection, never on how many agents that shape matches today:
+  `restart --all --engine <key>` refuses identically whether the registry
+  currently holds twenty agents, one, or none, so the same command cannot mean
+  two different things on two days. It is also decided BEFORE any agent is
+  touched — refusing part-way would leave the fleet split across backends.
 
 **What is ruled out**
 

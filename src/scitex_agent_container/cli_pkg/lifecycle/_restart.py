@@ -269,26 +269,43 @@ def restart(
         enumerate_running=_enumerate_running,
         enumerate_fleet=_enumerate_fleet,
     )
+    # --engine names ONE engine key, and keys are declared per spec, so
+    # one key does not name the same backend across agents. Applying it
+    # to a batch would start some agents on a backend their spec never
+    # declared. Fail loud rather than pick per agent.
+    #
+    # KEYED ON THE SHAPE OF THE SELECTION, NOT ON TODAY'S FLEET SIZE, and
+    # placed AHEAD of the empty-batch return below for the same reason:
+    # ``--all --engine k`` must refuse identically whether the registry
+    # currently holds twenty agents, one, or none. Keyed on the COUNT it
+    # would quietly honour the flag on a fleet that happens to be down to
+    # one agent, and exit 0 saying nothing on a fleet that is momentarily
+    # empty — the same command meaning two different things on two days.
+    #
+    # NOTHING IS RESTARTED BEFORE THIS POINT, which is the other half of
+    # the contract: refusing halfway through a batch would leave a fleet
+    # split across two backends.
+    if engine and (batch_mode or len(targets) > 1):
+        shape = (
+            "a selection flag (--all / --all-registry / --all-running)"
+            if batch_mode
+            else f"{len(targets)} agent names"
+        )
+        click.echo(
+            f"Error: --engine {engine} restarts ONE agent, and this call "
+            f"names {shape}. Engine keys are declared per spec, so one key "
+            "does not name the same backend across agents. Restart them one "
+            f"at a time: sac agents restart <name> --engine {engine} -y",
+            err=True,
+        )
+        raise SystemExit(2)
+
     if batch_mode and not targets:
         if as_json:
             click.echo(_json.dumps([]))
         else:
             console.print("[dim]No agents found to restart.[/dim]")
         return
-
-    # --engine names ONE engine key, and keys are declared per spec, so
-    # one key does not name the same backend across agents. Applying it
-    # to a batch would start some agents on a backend their spec never
-    # declared. Fail loud rather than pick per agent.
-    if engine and len(targets) > 1:
-        click.echo(
-            f"Error: --engine {engine} restarts ONE agent — engine keys are "
-            "declared per spec, so one key does not name the same backend "
-            f"across the {len(targets)} selected agents. Restart each "
-            "separately.",
-            err=True,
-        )
-        raise SystemExit(2)
 
     if dry_run:
         for name in targets:
