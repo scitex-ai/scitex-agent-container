@@ -99,6 +99,19 @@ a message naming the engine key, HOW it was selected (explicit `--engine`, or
 the spec's default, so the operator knows which line to edit), what was
 unhonourable, and the fix.
 
+**The refusal fires before anything is torn down**, on BOTH shapes, and the
+second one had to be added deliberately. `agent_start` refuses inside its
+pre-launch region, ahead of its own `--force` stop. `agent_restart` is the
+other shape — it stops FIRST and then calls `agent_start` — so the same
+refusal, reached only through that start leg, would fire on an agent that is
+already DOWN and leave it down: one typo in `--engine` and the agent is
+stopped and never comes back. That is the one-way trip
+`incident-agent-self-restart-one-way-20260712` is about, and the
+successor-credential pre-flight already guards exactly this window, so the
+engine check (`_engine_select.check_engine_before_stop`) stands beside it.
+A wrong-backend start is worse than no start; a stopped agent that never
+comes back is worse than both.
+
 ## Reachability: static always, live probe opt-in
 
 This is a deliberate choice and it is stated in the `--engine` help, in

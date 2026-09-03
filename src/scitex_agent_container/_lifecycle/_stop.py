@@ -381,6 +381,19 @@ def agent_restart(
     _auth_check = successor_auth_check or preflight_from_config_path
     _auth_check(config_path)
 
+    # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
+    # reason the credential pre-flight above does. ``agent_start`` refuses
+    # an unhonourable engine before it forces anything down; a RESTART
+    # stops FIRST, so that refusal — reached through the start leg at the
+    # bottom of this function — would fire on an agent that is already
+    # DOWN and leave it down. ``sac agents restart x --engine qwen38-27bb``
+    # (one typo) would have bought exactly that. Refusing here leaves the
+    # OLD process UP and re-startable, which is the whole point of the
+    # one-way-trip guard this stands beside.
+    from ._engine_select import check_engine_before_stop
+
+    check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
     # ad-hoc-launched agents with no row.

@@ -61,6 +61,7 @@ from ..config._engine_types import (
 
 __all__ = [
     "EngineNotHonourableError",
+    "check_engine_before_stop",
     "engine_probe_requested",
     "refusal_message",
     "select_engine_at_start",
@@ -193,3 +194,53 @@ def select_engine_at_start(
         if log:
             _logger().warning(warning)
     return engine
+
+
+def check_engine_before_stop(
+    config_path: str,
+    requested: str | None = None,
+    *,
+    probe: bool | None = None,
+    timeout_s: float = PROBE_TIMEOUT_S,
+    log: bool = True,
+) -> None:
+    """Refuse a RESTART before its stop leg when the engine is unhonourable.
+
+    WHY A SECOND CALL SITE. On ``sac agents start`` the engine refusal
+    already runs before anything is torn down: it sits in
+    :func:`_start_prelaunch.run_prelaunch`, ahead of the ``--force``
+    stop. ``agent_restart`` is the other shape — it stops FIRST and then
+    calls ``agent_start`` — so the same refusal, reached through that
+    path, would fire on an agent that is ALREADY DOWN and leave it down.
+    A wrong-backend start is worse than no start (answer Q3); a stopped
+    agent that never comes back is worse than both, and a bare ``--engine
+    qwen38-27bb`` typo would have bought exactly that.
+
+    This is the same one-way-trip hazard the successor-credential
+    pre-flight was added for (incident
+    ``incident-agent-self-restart-one-way-20260712``), so this check
+    stands beside it, in the same window, for the same reason: everything
+    that can refuse a restart must refuse while the OLD process is still
+    up and re-startable.
+
+    Loads ``config_path`` and runs the ordinary
+    :func:`select_engine_at_start` against a THROWAWAY config — the start
+    leg re-loads and re-selects, so nothing is carried across and the two
+    cannot disagree. A spec with no ``engines:`` block and no ``--engine``
+    returns immediately, so the legacy corpus pays one config load and
+    nothing else.
+
+    Raises the same errors ``select_engine_at_start`` raises —
+    :class:`config._engine_types.UnknownEngineError` and
+    :class:`EngineNotHonourableError` — and returns ``None`` when the
+    engine can be honoured.
+    """
+    # Runs with or without ``--engine``: a spec whose DEFAULT engine has
+    # an unset token takes the agent down just as surely as a typo'd key,
+    # and both are decidable here, before the stop.
+    from ..config import load_config
+
+    config = load_config(config_path)
+    select_engine_at_start(
+        config, requested, probe=probe, timeout_s=timeout_s, log=log
+    )

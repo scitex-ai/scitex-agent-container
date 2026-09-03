@@ -210,7 +210,10 @@ declared keys — it never falls back to the default.
 **Refusing.** An engine that cannot be honoured (unregistered provider name,
 incomplete inline provider, unset `auth_token_env` on this host, unknown
 harness) REFUSES the start, naming the engine, how it was selected, what was
-unhonourable, and the fix. sac never falls back to another engine.
+unhonourable, and the fix. sac never falls back to another engine. On
+`restart` the refusal fires BEFORE the stop leg, so a rejected `--engine`
+leaves the running agent UP rather than stopping it and then declining to
+bring it back.
 
 **Reachability.** STATIC resolution runs on every start and is the whole
 refusal surface by default — no sockets, so a network blip cannot ground the
