@@ -1,10 +1,13 @@
-"""Generic ``ssh + remote curl`` POST helper (ADR-0015 Stage 2).
+"""Generic ``ssh + remote curl`` helpers (ADR-0015 Stage 2): POST and GET.
 
 A single function that does what both the ``/v1/turn`` direct-ssh path
 and the cross-host ``message:send`` forwarder need: open an ssh
 connection (with ControlMaster reuse), invoke ``curl`` on the remote,
 pipe a JSON body into curl's stdin, and surface the curl exit + stdout
-+ stderr to the caller.
++ stderr to the caller. :func:`_get_via_ssh_curl` is its GET sibling —
+same ssh argv (:func:`_ssh_argv`), same bearer discipline — so the
+reachability probe (:mod:`._reachability`) can exercise the forwarder's
+transport rather than an ad-hoc look-alike of it.
 
 Why split this out of :mod:`peer`:
 
@@ -77,9 +80,20 @@ from __future__ import annotations
 import logging
 import subprocess
 
-__all__ = ["_post_via_ssh_curl"]
+__all__ = [
+    "STATUS_MARKER",
+    "_get_via_ssh_curl",
+    "_post_via_ssh_curl",
+    "split_status_line",
+]
 
 log = logging.getLogger(__name__)
+
+#: The line the GET snippet appends after the response body, carrying the
+#: HTTP status curl saw. A marker rather than a bare number because peer
+#: motd/rc noise on stdout can never be mistaken for a status — the same
+#: discipline :mod:`.._hostsync._push_tokens_io` uses for its probe.
+STATUS_MARKER = "SAC_SSH_CURL status="
 
 #: Characters a bearer may not contain, and why. ``\n``/``\r`` would break
 #: the stdin FRAMING (the token is the first line, the body is the rest), so
@@ -191,10 +205,23 @@ def _post_via_ssh_curl(
         )
         stdin_payload = bearer.encode("utf-8") + b"\n" + body
 
+    return _run_ssh(_ssh_argv(host, remote_curl), stdin_payload, timeout_s=timeout_s)
+
+
+def _ssh_argv(host: str, remote_command: str) -> list[str]:
+    """The ONE ssh argv both transports use — byte-identical by construction.
+
+    ``-o BatchMode=yes -o ConnectTimeout=15`` plus
+    :func:`scitex_agent_container._state.host_config.ssh_control_options`,
+    matching the ``/v1/turn`` direct-ssh path verbatim so the same
+    ControlMaster socket is reused by every leg. Shared between the POST
+    and the GET sibling so a probe of the cross-host transport exercises
+    exactly the argv the forwarder dispatches, not a look-alike.
+    """
     # Connection multiplexing — same options as the ``/v1/turn`` path.
     from .._state.host_config import ssh_control_options
 
-    ssh_cmd = [
+    return [
         "ssh",
         "-o",
         "BatchMode=yes",
@@ -202,9 +229,14 @@ def _post_via_ssh_curl(
         "ConnectTimeout=15",
         *ssh_control_options(),
         host,
-        remote_curl,
+        remote_command,
     ]
 
+
+def _run_ssh(
+    ssh_cmd: list[str], stdin_payload: bytes, *, timeout_s: float
+) -> tuple[int, bytes, bytes]:
+    """Run the ssh leg; ``(rc, stdout, stderr)``, rc=124 on a local timeout."""
     try:
         proc = subprocess.run(
             ssh_cmd,
@@ -222,3 +254,95 @@ def _post_via_ssh_curl(
         return (124, exc.stdout or b"", stderr)
 
     return (int(proc.returncode), proc.stdout or b"", proc.stderr or b"")
+
+
+def _remote_curl_get(*, port: int, path: str, timeout_s: float, bearer: bool) -> str:
+    """The remote snippet for a GET. Carries no token in either form.
+
+    With ``bearer=True`` the Authorization header comes from ``curl
+    --config -`` on stdin (the whole stdin stream IS the curl config,
+    there is no body to share it with — the shape
+    :func:`.._hostsync._push_tokens_io.probe_peer_listen_auth` established).
+    ``-w`` appends :data:`STATUS_MARKER` + the HTTP status on its own line
+    AFTER the response body, so the caller gets both the body and the
+    status without a second request.
+    """
+    auth = "--config - " if bearer else ""
+    return (
+        f"curl -sS --max-time {int(timeout_s)} {auth}"
+        f'-w "\\n{STATUS_MARKER}%{{http_code}}\\n" '
+        f"http://127.0.0.1:{port}{path}"
+    )
+
+
+def _get_via_ssh_curl(
+    *,
+    host: str,
+    port: int,
+    path: str,
+    bearer: str | None = None,
+    timeout_s: float = 15.0,
+) -> tuple[int, bytes, bytes]:
+    """ssh into ``host`` and GET ``127.0.0.1:port{path}``. The POST's sibling.
+
+    Same return contract as :func:`_post_via_ssh_curl` — ``(rc, stdout,
+    stderr)`` with rc the ssh process exit (124 on a local timeout) — and
+    the SAME ssh argv via :func:`_ssh_argv`, which is the point: a caller
+    probing whether the cross-host forwarder's transport works must
+    dispatch the argv the forwarder dispatches. ``stdout`` carries the
+    response body followed by a :data:`STATUS_MARKER` line; split it with
+    :func:`split_status_line`.
+
+    ``bearer`` never reaches an argv on either host: it rides stdin as a
+    curl config file (``header = "Authorization: Bearer <value>"``) and a
+    value containing ``"``, ``\\`` or a newline is refused rather than
+    sent mangled, exactly as the POST sibling refuses it.
+    """
+    if not host:
+        raise ValueError("_get_via_ssh_curl: host must be non-empty")
+    if not port or port <= 0:
+        raise ValueError(f"_get_via_ssh_curl: port must be positive (got {port!r})")
+    if not path or not path.startswith("/"):
+        raise ValueError(f"_get_via_ssh_curl: path must start with '/' (got {path!r})")
+
+    stdin_payload = b""
+    if bearer is not None:
+        bad = [ch for ch in _BEARER_FORBIDDEN if ch in bearer]
+        if bad:
+            raise ValueError(
+                "_get_via_ssh_curl: bearer must not contain "
+                + ", ".join(repr(ch) for ch in bad)
+                + " — the value is read into a curl config header on stdin, "
+                "and these characters would break the header parse. (The "
+                "value itself is withheld from this message.)"
+            )
+        stdin_payload = f'header = "Authorization: Bearer {bearer}"\n'.encode("utf-8")
+
+    remote_curl = _remote_curl_get(
+        port=port, path=path, timeout_s=timeout_s, bearer=bearer is not None
+    )
+    return _run_ssh(_ssh_argv(host, remote_curl), stdin_payload, timeout_s=timeout_s)
+
+
+def split_status_line(stdout: bytes) -> tuple[int | None, str]:
+    """``(http_status, body_text)`` from a :func:`_get_via_ssh_curl` stdout.
+
+    ``None`` for the status when no marker line is present — curl never
+    ran, or the remote shell printed something that was not curl's output.
+    That is an UNKNOWN answer the caller must keep distinct from a
+    non-2xx status, which is a measured one. Body is everything before
+    the marker, stripped of the trailing newline ``-w`` inserted.
+    """
+    text = stdout.decode("utf-8", errors="replace")
+    status: int | None = None
+    body_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(STATUS_MARKER):
+            try:
+                status = int(stripped[len(STATUS_MARKER) :])
+            except ValueError:
+                status = None
+            continue
+        body_lines.append(line)
+    return status, "\n".join(body_lines).strip()
