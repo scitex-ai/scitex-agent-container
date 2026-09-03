@@ -148,6 +148,12 @@ BORN_CANONICAL: frozenset[str] = frozenset(
         # which is precisely why a rate-limited fleet stayed stopped for
         # 1h46m. Nothing for a migration to displace.
         "scitex-agent-container-resume-rate-limited-agents",
+        # Added 2026-09-02. Born canonical: no host has ever carried any unit
+        # for it — cross-host a2a reachability was never probed by anything
+        # before this job, which is how two hosts with no config.yaml sent
+        # every cross-host message down a leg that cannot work in
+        # production and nobody knew until a send was tried by hand.
+        "scitex-agent-container-a2a-reachability",
     }
 )
 

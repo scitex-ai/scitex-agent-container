@@ -21,7 +21,18 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     """Return sac's federated scheduled jobs.
 
-    Ten jobs today:
+    Thirteen jobs today (the accounts, maintenance, liveness and
+    reachability groups — one module each):
+
+    * ``scitex-agent-container-a2a-reachability`` (``kind="timer"``) — the
+      every-15-minutes probe of the CROSS-HOST a2a transport, from this host
+      to every peer the fleet knows: ssh to the peer's alias, curl the
+      peer's loopback listen with the peer's bearer — the same leg ``sac
+      listen``'s forwarder takes for a cross-host send. Three-valued per
+      host and never counts UNKNOWN as reachable. MEASURED 2026-09-02: two
+      hosts with no ``config.yaml`` had been sending every cross-host
+      message down a leg that cannot work in production, and nothing said
+      so until a send was tried by hand. See :mod:`._specs_reachability`.
 
     * ``sac.accounts-keepalive`` (``kind="timer"``) — the DISTRIBUTION half
       of the single-refresher model, and the sibling of
@@ -238,6 +249,7 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
     from ._specs_accounts import accounts_jobs
     from ._specs_liveness import liveness_jobs
     from ._specs_maintenance import maintenance_jobs
+    from ._specs_reachability import reachability_jobs
 
     # Each group is one operational concern a reader checks as a unit, and
     # each resolves its own absolute `sac` through :mod:`._sac_bin`. Spliced
@@ -251,6 +263,9 @@ def provide_jobs(*, executable: str | None = None) -> "list[JobSpec]":
         # other covers (corpses vs live-but-wedged), so they are unreadable
         # apart.
         *liveness_jobs(executable=executable),
+        # The cross-host a2a transport probe — appended LAST so every
+        # positional reader above keeps its index.
+        *reachability_jobs(executable=executable),
     ]
 
 
