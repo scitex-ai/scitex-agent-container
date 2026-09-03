@@ -15,6 +15,7 @@ from __future__ import annotations
 from ._account import register_account_tools
 from ._agent import register_agent_tools
 from ._db import register_db_tools
+from ._hooks import register_hooks_tools
 from ._host import register_host_tools
 from ._image import register_image_tools
 from ._info import register_info_tools
@@ -34,6 +35,7 @@ def register_all_tools(mcp) -> None:
     register_template_tools(mcp)
     register_info_tools(mcp)
     register_subagent_tools(mcp)
+    register_hooks_tools(mcp)
 
 
 __all__ = ["register_all_tools"]

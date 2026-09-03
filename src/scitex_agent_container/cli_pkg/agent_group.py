@@ -68,7 +68,10 @@ class _AgentsGroup(HelpRecursiveGroup):
             ],
         ),
         ("Interact", ["send", "attach"]),
-        ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
+        (
+            "Inspect",
+            ["list", "status", "health", "hooks", "auth-status", "tail", "recall"],
+        ),
         ("Preflight", ["check"]),
         ("Discovery", ["find", "roles"]),
         ("Account", ["accounts"]),
@@ -300,5 +303,15 @@ _register_migrate_layers(agent_group)
 from ._declare_a2a_host import declare_a2a_host as _declare_a2a_host_impl  # noqa: E402
 
 agent_group.add_command(_declare_a2a_host_impl)
+
+# `hooks` — what Claude Code hooks are ACTUALLY armed in this container, and
+# does the agent meet the floor its spec declares? Read-only, and measured from
+# INSIDE the container because every host-side proxy for the two stacked home
+# mounts has undercounted (67 vs 71 on 2026-08-10). The same command is what
+# `runtimes._apptainer_inner_argv` runs on the container's own boot path for a
+# spec that declares a floor, so the gate's verdict is reproducible by hand.
+from ._agents_hooks import register as _register_hooks  # noqa: E402
+
+_register_hooks(agent_group)
 
 __all__ = ["agent_group"]

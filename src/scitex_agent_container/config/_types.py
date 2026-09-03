@@ -17,6 +17,18 @@ from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
 from ._provider_types import ProviderSpec
 
+# Supervision-policy dataclasses (health / watchdog / autonomous / restart)
+# extracted to a sibling module for the per-file line cap; re-exported here so
+# every existing ``from ...config._types import HealthSpec`` keeps resolving to
+# the same object — ``_explicit_fields`` derives required spec keys from these
+# via ``dataclasses.fields()``, so the import path is load-bearing.
+from ._supervision_types import (  # noqa: E402,F401
+    AutonomousSpec,
+    HealthSpec,
+    RestartSpec,
+    WatchdogSpec,
+)
+
 
 @dataclass
 class ContainerSpec:
@@ -136,69 +148,6 @@ class ClaudeSpec:
     # Anthropic OAuth. ``None`` = default Anthropic backend. Mutually
     # exclusive with ``account`` (an API-key backend needs no OAuth).
     provider: ProviderSpec | None = None
-
-
-@dataclass
-class HealthSpec:
-    enabled: bool = False
-    interval: int = 30
-    timeout: int = 5
-    method: str = "multiplexer-alive"
-
-
-# Parsed for backward compat but not interpreted by runtime.
-# Watchdog lifecycle is managed externally via hooks.
-@dataclass
-class WatchdogSpec:
-    enabled: bool = False
-    interval: float = 1.5
-    resp_y_n: str = "1"
-    resp_y_y_n: str = "2"
-    resp_waiting: str = "/speak-and-call"
-
-
-# F-CS3 — autonomous drive-until-done.
-#
-# claude-session runners do ONE turn and idle by default; multi-turn
-# tasks have to wrap externally with a2a peer post-turn loops, and
-# every project ends up rewriting that scaffolding. The autonomous
-# block lets the runner natively:
-#
-#   1. Watch each assistant turn for a text match (``drive_until``);
-#      hitting it exits the runner with code 0.
-#   2. After ``idle_kick_after_s`` of no tool activity AND no match,
-#      post ``kick_text`` so the conversation keeps moving.
-#   3. Cap at ``max_turns`` to prevent runaway loops.
-#
-# Phase 1 (this dataclass + parser + validator) lands the schema so
-# yamls can author the contract today; the runner-side enforcement
-# (consume these fields in _runners.claude_session) lands in phase 2.
-# An ``enabled`` row authored under the schema before phase 2 ships
-# is harmless — the runner just ignores it for now.
-@dataclass
-class AutonomousSpec:
-    enabled: bool = False
-    drive_until: str = "DONE"
-    max_turns: int = 50
-    idle_kick_after_s: int = 120
-    kick_text: str = "Continue. Print DONE when finished."
-
-
-@dataclass
-class RestartSpec:
-    policy: str = "never"  # never | on-failure | always
-    max_retries: int = 3
-    backoff_initial: int = 30
-    backoff_max: int = 300
-    backoff_multiplier: int = 2
-    # Inode-hygiene opt-in (sac-runtime-state-hygiene incident): when
-    # True AND ``policy == "never"``, a CLEAN terminal ``sac agents stop``
-    # prunes this agent's runtime dir + overlay so ephemeral capsules
-    # don't accumulate one-per-run forever. EXPLICIT opt-in is required
-    # (default False) — ``policy`` itself DEFAULTS to "never", so a
-    # persistent coordinator that merely omits a ``restart:`` block must
-    # NOT be pruned; only specs that deliberately set this flag are.
-    prune_on_stop: bool = False
 
 
 # Inbound A2A surface for an agent. The SDK runner launches a sidecar
@@ -474,6 +423,23 @@ class AgentConfig:
     # declares them first, and enforcement comes after that. Until then an
     # absent value is warned about, never refused.
     to_home_layers: "list[str] | None" = None
+    # spec.required_claude_hooks — the MINIMUM set of CLAUDE CODE hooks this
+    # agent may not run without, as ``{<event dir>: [<script names>]}``, e.g.
+    # ``{"pre-tool-use": ["enforce_git_dash_C.sh"]}``. Named for Claude Code's
+    # hooks specifically because ``spec.hooks`` above is a different thing
+    # entirely (pre_start / post_stop lifecycle commands run on the host).
+    #
+    # NAMES, never a count. Measured 2026-08-10 the fleet spans 15-71
+    # pre-tool-use hooks with nothing declaring which number is correct, so a
+    # count-based floor would be satisfiable by the wrong 71.
+    #
+    # ``None`` (key absent) = declare nothing, enforce nothing — the position
+    # every spec is in today, and why this lands without touching one of them.
+    # Unlike ``to_home_layers`` there is no fleet-wide flip pending: the
+    # declaration IS the opt-in, so an undeclared spec is never refused and
+    # never warned at. An empty mapping is a legitimate explicit "I require no
+    # hooks" and stays distinguishable from absence.
+    required_claude_hooks: "dict[str, list[str]] | None" = None
 
     def __post_init__(self) -> None:
         if not self.screen_name:
