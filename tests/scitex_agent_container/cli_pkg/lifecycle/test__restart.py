@@ -172,7 +172,7 @@ def test_dry_run_does_not_invoke_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha", "--dry-run"])
     # Assert
     assert called == []
@@ -206,7 +206,7 @@ def test_refuse_without_yes_does_not_invoke_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha"])
     # Assert
     assert called == []
@@ -221,7 +221,7 @@ def test_happy_path_exits_zero():
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert result.exit_code == 0, result.output
@@ -232,7 +232,7 @@ def test_happy_path_forwards_name_to_agent_restart():
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert called == ["alpha"]
@@ -242,7 +242,7 @@ def test_happy_path_reports_success():
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y"])
     # Assert
     assert "restarted" in result.output
@@ -268,7 +268,7 @@ def test_yaml_path_exits_zero(_yaml_path):
     with (
         _swap("resolve_with_prefix", lambda *_a, **_kw: str(_yaml_path)),
         _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved")),
-        _swap("agent_restart", lambda _name: None),
+        _swap("agent_restart", lambda _name, **_kw: None),
     ):
         result = runner.invoke(restart, [str(_yaml_path), "-y"])
     # Assert
@@ -283,7 +283,7 @@ def test_yaml_path_forwards_resolved_name(_yaml_path):
     with (
         _swap("resolve_with_prefix", lambda *_a, **_kw: str(_yaml_path)),
         _swap("load_config", lambda *_a, **_kw: _FakeCfg("resolved")),
-        _swap("agent_restart", lambda name: called.append(name)),
+        _swap("agent_restart", lambda name, **_kw: called.append(name)),
     ):
         runner.invoke(restart, [str(_yaml_path), "-y"])
     # Assert
@@ -296,7 +296,7 @@ def test_yaml_path_forwards_resolved_name(_yaml_path):
 # ---------------------------------------------------------------------------
 
 
-def _boom(_name: Any) -> None:
+def _boom(_name: Any, **_kw: Any) -> None:
     raise RuntimeError("boom")
 
 
@@ -464,7 +464,7 @@ def test_cross_host_restart_does_not_call_local_agent_restart(
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["zeta", "-y"])
     # Assert
     assert called == []
@@ -508,7 +508,7 @@ def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim
     called: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: called.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: called.append(name)):
         runner.invoke(restart, ["solo", "-y"])
     # Assert — local path taken (agent_restart called), no ssh dispatched.
     assert called == ["solo"] and _ssh_invocations(ssh_shim) == []
@@ -522,7 +522,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
     # Arrange — no row; local restart with --json. agent_restart no-op.
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["solo", "-y", "--json"])
     envelope = _json.loads(result.stdout)
     # Assert — JSON envelope reports the local (non-dispatched) restart.
@@ -694,7 +694,7 @@ def test_fresh_does_not_call_local_agent_restart():
     with (
         _swap("must_broker_to_host", lambda: True),
         _swap("brokered_restart", _broker_ok),
-        _swap("agent_restart", lambda name: called.append(name)),
+        _swap("agent_restart", lambda name, **_kw: called.append(name)),
     ):
         runner.invoke(restart, ["alpha", "-y", "--fresh"])
     # Assert
@@ -733,8 +733,16 @@ def test_brokered_restart_threads_fresh_to_the_host_client():
 # ---------------------------------------------------------------------------
 
 
-def _ok_restart_one(name, *, as_json, fresh):
-    """Recorder stand-in for ``_restart_one`` — always succeeds."""
+def _ok_restart_one(name, *, as_json, fresh, engine=None):
+    """Recorder stand-in for ``_restart_one`` — always succeeds.
+
+    Carries ``engine`` because the real ``_restart_one`` takes it
+    (``--engine <key>``, ``spec.engines``) and the command passes it on
+    EVERY call, ``None`` included. A stand-in that omitted the parameter
+    would raise ``TypeError`` inside the CliRunner and turn every
+    loop-level assertion below into a test of the stand-in's signature
+    rather than of the fan-out it exists to exercise.
+    """
     return {"name": name, "restarted": True, "dispatched": False}, True
 
 
@@ -752,7 +760,7 @@ def test_multiple_names_restart_each_once():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -777,11 +785,84 @@ def test_multiple_names_json_emits_array():
     assert isinstance(payload, list) and len(payload) == 2
 
 
+# ---------------------------------------------------------------------------
+# ``--engine <key>`` (spec.engines, ADR-0024). The restart command owns two
+# facts about it: the key REACHES the per-agent restart, and a batch
+# selection REFUSES rather than applying one per-spec key to several specs.
+# Both are pinned here because the ``_restart_one`` seam is where the CLI
+# hands the engine over — the stand-ins above carry ``engine`` for exactly
+# this reason.
+# ---------------------------------------------------------------------------
+
+
+def test_engine_key_reaches_the_per_agent_restart():
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y", "--engine", "qwen38-27b"])
+    # Assert — the key the operator named, verbatim, not the default.
+    assert seen == ["qwen38-27b"]
+
+
+def test_no_engine_flag_hands_the_per_agent_restart_none():
+    # POSITIVE CONTROL for the test above: without the flag the same seam
+    # must receive ``None`` (use the spec's declared default), so
+    # "the key arrives" is a fact about the flag and not about the recorder.
+    # Arrange
+    seen: list[str | None] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(engine)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "-y"])
+    # Assert
+    assert seen == [None]
+
+
+def test_engine_with_several_names_refuses_rather_than_applying_one_key():
+    # Arrange
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _ok_restart_one):
+        result = runner.invoke(
+            restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"]
+        )
+    # Assert — engine keys are per spec; a batch cannot share one.
+    assert result.exit_code == 2
+
+
+def test_engine_refusal_on_several_names_restarts_nobody():
+    # Arrange
+    seen: list[str] = []
+
+    def _rec(name, *, as_json, fresh, engine=None):
+        seen.append(name)
+        return {"name": name, "restarted": True}, True
+
+    runner = CliRunner()
+    # Act
+    with _swap("_restart_one", _rec):
+        runner.invoke(restart, ["alpha", "beta", "-y", "--engine", "qwen38-27b"])
+    # Assert — refusing halfway would leave a split fleet; nobody is touched.
+    assert seen == []
+
+
 def test_all_flag_restarts_every_enumerated_agent():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -844,7 +925,7 @@ def test_one_failure_still_attempts_rest():
     # Arrange
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         if name == "bad":
             return {"name": name, "error": "boom"}, False
@@ -860,7 +941,7 @@ def test_one_failure_still_attempts_rest():
 
 def test_one_failure_exits_nonzero():
     # Arrange
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         if name == "bad":
             return {"name": name, "error": "boom"}, False
         return {"name": name, "restarted": True}, True
@@ -891,7 +972,7 @@ def test_single_name_json_stays_bare_object():
     # Arrange — single explicit name must keep the historical bare-object shape.
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: None):
+    with _swap("agent_restart", lambda _name, **_kw: None):
         result = runner.invoke(restart, ["alpha", "-y", "--json"])
     payload = _json.loads(result.stdout)
     # Assert
@@ -912,7 +993,7 @@ def test_all_running_restarts_only_running_agents():
     # Arrange — --all-running must enumerate via the RUNNING-only seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -932,7 +1013,7 @@ def test_all_registry_restarts_every_agent():
     # Arrange — --all-registry must enumerate via the full-fleet seam.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -953,7 +1034,7 @@ def test_all_alias_matches_all_registry_behaviour():
     # enumerate the FULL fleet, not the running-only subset.
     seen: list[str] = []
 
-    def _rec(name, *, as_json, fresh):
+    def _rec(name, *, as_json, fresh, engine=None):
         seen.append(name)
         return {"name": name, "restarted": True}, True
 
@@ -1131,7 +1212,7 @@ def test_in_sif_restart_of_a_resolvable_agent_is_brokered(in_sif_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker(brokered)),
-        _swap("agent_restart", lambda _name: True),
+        _swap("agent_restart", lambda _name, **_kw: True),
     ):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
@@ -1146,7 +1227,7 @@ def test_in_sif_restart_never_runs_the_local_restart(in_sif_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker([])),
-        _swap("agent_restart", lambda name: local.append(name)),
+        _swap("agent_restart", lambda name, **_kw: local.append(name)),
     ):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
@@ -1161,7 +1242,7 @@ def test_outside_a_sif_restart_runs_locally(bare_host_env):
     # Act
     with (
         _swap("brokered_restart", _record_broker(brokered)),
-        _swap("agent_restart", lambda name: local.append(name)),
+        _swap("agent_restart", lambda name, **_kw: local.append(name)),
     ):
         runner.invoke(restart, ["local-me", "-y"])
     # Assert
@@ -1185,7 +1266,7 @@ def test_in_sif_without_a_listen_url_does_not_fall_back_to_local(
     local: list[str] = []
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda name: local.append(name)):
+    with _swap("agent_restart", lambda name, **_kw: local.append(name)):
         runner.invoke(restart, ["broker-me", "-y"])
     # Assert
     assert local == []
@@ -1317,7 +1398,7 @@ def no_run_marker(runtime_root, isolated_state_db):
     return runtime_root
 
 
-def _noop_restart(_name):
+def _noop_restart(_name, **_kw):
     """A restart that returns happily and changes nothing — the P0's shape."""
     return True
 
@@ -1363,7 +1444,7 @@ def test_restart_that_leaves_the_run_unchanged_reports_the_same_run_both_sides(
 def _cycling_restart_for(root):
     """Build a REAL restart that replaces the marker, as a launch would."""
 
-    def _restart(_name):
+    def _restart(_name, **_kw):
         _write_run_marker(root, "verify-me", "run-2")
         return True
 
@@ -1422,7 +1503,7 @@ def test_unverifiable_restart_is_not_printed_under_the_word_verified(armed_run_m
 
 def test_restart_that_leaves_no_run_at_all_exits_one(armed_run_marker):
     # Arrange — the stop leg ran, the start leg never came back.
-    def _stop_only(_name):
+    def _stop_only(_name, **_kw):
         (armed_run_marker / "verify-me" / "instance_id").unlink()
         return True
 
@@ -1522,7 +1603,7 @@ def test_decision_log_records_a_local_restart(runtime_root):
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: True):
+    with _swap("agent_restart", lambda _name, **_kw: True):
         runner.invoke(restart, ["local-me", "-y"])
     entries = _decision_entries(runtime_root)
     # Assert
@@ -1555,7 +1636,7 @@ def test_decision_log_records_the_outcome_after_the_work(runtime_root):
     # Arrange
     runner = CliRunner()
     # Act
-    with _swap("agent_restart", lambda _name: True):
+    with _swap("agent_restart", lambda _name, **_kw: True):
         runner.invoke(restart, ["local-me", "-y"])
     entries = _decision_entries(runtime_root)
     # Assert — one line for the decision, one for what came of it.

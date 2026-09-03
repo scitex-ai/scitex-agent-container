@@ -230,6 +230,61 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Per-ENGINE parameters (spec.engines.<key>.{reasoning_effort,
+# max_context_tokens}) — operator answer Q4, 2026-09-03.
+# ---------------------------------------------------------------------------
+
+#: Env var carrying the ENGINE KEY this container was started on. Pure
+#: provenance: an operator inside the container can read what backend
+#: the agent was launched against without going back to the spec.
+ENGINE_KEY_ENV = "SAC_ENGINE"
+
+#: Env vars carrying the per-engine parameters into the container.
+#: NAMESPACED under ``SAC_`` deliberately — see ``engine_env_flags``.
+ENGINE_REASONING_EFFORT_ENV = "SAC_ENGINE_REASONING_EFFORT"
+ENGINE_MAX_CONTEXT_TOKENS_ENV = "SAC_ENGINE_MAX_CONTEXT_TOKENS"
+
+
+def engine_env_flags(config: AgentConfig) -> list[str]:
+    """Render the ``--env`` flags carrying the selected engine's parameters.
+
+    Returns ``[]`` for a config with no engine selected and no
+    parameters — every legacy single-backend spec, so the launch argv is
+    byte-identical to what it was before ``spec.engines`` existed.
+
+    WHAT THIS DELIVERS, AND WHAT IT DOES NOT. sac's contract stops at
+    putting the declaration inside the container under a name that says
+    where it came from. Whether the in-container harness ACTS on
+    ``SAC_ENGINE_REASONING_EFFORT`` is the harness's business, and sac
+    does not claim otherwise — which is why these are ``SAC_``-prefixed
+    rather than dressed up as a vendor env var (``MAX_THINKING_TOKENS``,
+    say) that would imply a mapping nobody has measured. Saying so here
+    is the point: a field that VALIDATES is not a field that RUNS, and a
+    green test on this function proves delivery, not effect. Wiring a
+    measured mapping to a specific harness knob is a separate, testable
+    change; inventing one now would be the silent claim this codebase
+    keeps paying for.
+
+    The engine's own ``env:`` map is NOT rendered here — it is merged
+    into ``config.env`` by ``config._engine_types.apply_engine`` and
+    reaches the container through the normal ``effective_env`` path, so
+    an operator can spell a harness's real knob today without waiting
+    for sac to model it.
+    """
+    flags: list[str] = []
+    key = str(getattr(config, "engine_key", "") or "").strip()
+    if key:
+        flags += ["--env", f"{ENGINE_KEY_ENV}={key}"]
+    effort = str(getattr(config, "reasoning_effort", "") or "").strip()
+    if effort:
+        flags += ["--env", f"{ENGINE_REASONING_EFFORT_ENV}={effort}"]
+    max_ctx = getattr(config, "max_context_tokens", None)
+    if max_ctx:
+        flags += ["--env", f"{ENGINE_MAX_CONTEXT_TOKENS_ENV}={int(max_ctx)}"]
+    return flags
+
+
+# ---------------------------------------------------------------------------
 # OpenAI harness columns (spec.harness — the TOP-LEVEL axis).
 # See the "OpenAI harness columns" section of the module docstring.
 # ---------------------------------------------------------------------------
@@ -376,7 +431,11 @@ def openai_env_flags(config: AgentConfig) -> list[str]:
 
 __all__ = [
     "AGENT_HARNESS_ENV",
+    "ENGINE_KEY_ENV",
+    "ENGINE_MAX_CONTEXT_TOKENS_ENV",
+    "ENGINE_REASONING_EFFORT_ENV",
     "ProviderEnvError",
+    "engine_env_flags",
     "openai_env_flags",
     "openai_harness_active",
     "provider_active",

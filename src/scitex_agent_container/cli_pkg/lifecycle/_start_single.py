@@ -67,6 +67,8 @@ def run_single_targets(
     force: bool,
     resume_id: str | None,
     session_mode: str | None,
+    engine: str | None = None,
+    probe_engine: bool | None = None,
     dry_run: bool,
     as_json: bool,
     foreground: bool,
@@ -117,6 +119,15 @@ def run_single_targets(
     host side. Does NOT weaken the human-at-a-TTY default-refuse
     safety net — a real interactive operator invocation never has
     this env var set.
+
+    ``engine`` / ``probe_engine`` (``--engine`` / ``--probe-engine``):
+    forwarded to ``agent_start`` as ``engine_override`` /
+    ``probe_engine``. ``engine`` selects one entry of the spec's
+    ``engines:`` block for THIS start; an unknown key or an engine that
+    cannot be honoured RAISES out of ``agent_start`` and lands in the
+    per-target error branch below — it never degrades to the default.
+    ``probe_engine`` is the opt-in live reachability probe (``None``
+    defers to ``SAC_ENGINE_PROBE``, default off).
 
     ``tail_lines`` (``-n``/``--tail-lines``): forwarded to the
     ``--resume`` preflight's candidate listing — how many trailing
@@ -314,6 +325,8 @@ def run_single_targets(
                     dry_run=dry_run,
                     session_override=session_mode,
                     resume_id_override=resume_id,
+                    engine_override=engine,
+                    probe_engine=probe_engine,
                     foreground=foreground,
                     one_shot=one_shot,
                     assume_yes=effective_yes,

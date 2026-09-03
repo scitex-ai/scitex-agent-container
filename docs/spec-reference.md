@@ -138,6 +138,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `runtime`            | `apptainer` (optional)     | Empty/unset defaults to `apptainer`; any other value is rejected. docker/podman were dropped 2026-05-13 |
 | `harness`            | `anthropic` (default) \| `openai` \| `codex` | **Which agent SDK runs the session** (NOT the same field as `spec.claude.provider`, which points the *Claude* SDK at an Anthropic-compatible inference gateway — the two axes compose). `openai` runs the agent on the `openai-agents` SDK: at launch sac injects `SAC_OPENAI_API_KEY` + `OPENAI_API_KEY` (resolved host-side, shell export > `$HOME/.env`, `SAC_OPENAI_API_KEY` preferred over `OPENAI_API_KEY`) and forwards `OPENAI_BASE_URL` / `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` / `SAC_OPENAI_MODEL` when set on the host; NO Anthropic OAuth env or credentials bind is emitted. Fail-loud when no key resolves or when composed with an active `spec.claude.provider` override. **Launch caveat today — read this before choosing a harness:** the registry has four entries (`claude-code-tui`, `claude-agent-sdk`, `openai-agents`, `codex-sdk`) and `spec.harness` accepts three values, but **only `anthropic` can be STARTED**. `openai` and `codex` both load, validate and resolve to their registry entries, and then every lifecycle launch path REFUSES them — loudly, rather than silently launching a Claude runner under a spec that asked for something else. A2A serving uses the `openai_session` executor (`spec.a2a.handler`), which is the working path for the OpenAI SDK meanwhile; there is no equivalent executor for `codex` yet. **`codex` is also a legal `spec.claude.provider` value and means something different there** — as a HARNESS the Codex agent program runs the loop; as a PROVIDER Claude Code still drives and Codex only answers. **Ops-only override:** exporting `SAC_PROVIDER=openai` (or `anthropic`) in the shell that runs `sac agents start` overrides `spec.harness` for every launch from that shell — an operations escape hatch for emergency flips / A/B smoke tests, never a spec surface; unknown values are rejected loudly. (The env var keeps its older `SAC_PROVIDER` name.) |
 | `provider`           | *(deprecated alias of `harness`)* | The spelling this field had before it was renamed. **Still honoured** — a spec carrying `provider:` loads unchanged and satisfies the explicit-fields requirement for `harness`; starting such an agent logs a one-line deprecation naming the agent. Writing BOTH keys is fine when they carry the same value; writing both with DIFFERENT values is a hard load error naming both, because a spec that says two things does not say which harness it wants. It was renamed because it never named a provider: it selects which agent PROGRAM drives the loop, while `spec.claude.provider` (unchanged, and still correctly named) selects which inference endpoint answers. |
+| `engines`            | mapping `<key>: {harness, model, provider, default, reasoning_effort, max_context_tokens, env}` | **SEVERAL declared backends, ONE picked at start.** Optional — a spec that omits it declares its single backend the old way (`harness` + `spec.claude.model` + `spec.claude.provider`) and is unchanged. See **`spec.engines`** below and ADR-0024. |
 | `residency`          | `resident` (default) \| `one-shot` | **Does the daemon outlive its work?** (v4 residency axis.) `resident` — the fleet posture — keeps the session daemon alive after a conversation completes, parked awaiting more turns; a turn driver that returns on its own is then a residency VIOLATION (ExitRecord `harness-returned`/`crashed`, non-zero exit). `one-shot` makes a normal completion the PLAN: the mission turn carries `exit_after`, and the daemon exits `0` with ExitRecord reason `oneshot-complete` — for experiment trials and one-off workers. Absence/null defaults to `resident` (the axis postdates the live corpus; the v3→v4 converter materializes the explicit line — requiring it is that later step). Illegal values are rejected loudly naming the closed set. Only runner-hosted harnesses honour it: `one-shot` on the interactive TUI (`runtime: tui`, which has no session daemon) or on `kind: AgentProxy` is refused at validation time. |
 | `access`             | `full` (default) \| `capsule` | Host-access posture. `full` (the default; absent → `full`) binds the operator's WHOLE home rw at its canonical path (`/home/<user>:/home/<user>:rw`) so the agent reaches every project + config, and opens `--pwd` at the workdir's **canonical** path (the `/work` alias stays bound for back-compat). The agent's own `$HOME=/home/agent` (credentials / to_home / overlay wiring) is untouched. `capsule` restricts the agent to ONLY the binds explicitly listed in the spec + the `/work` alias (pre-2026-06-19 behaviour) — for leak-prevention agents. |
 | `workdir`            | path                       | Mounted rw at the canonical host path **and** the `/work` alias under `access: full`; at `/work` only under `access: capsule` (default: `~/.scitex/agent-container/runtime/agents/<name>/`). `--pwd` is the canonical path (full) or `/work` (capsule). |
@@ -170,6 +171,66 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `relaxed`     | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). TODO: wire into `ApptainerSpec`. |
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 | `nested_build` | bool (default `false`)       | Enable **NESTED** apptainer build/pull from INSIDE the agent container — a solver reproduces a capsule's pinned env itself (pull a published `docker://` image, or build a Dockerfile-derived def whose `%post` runs as root), then `apptainer exec`s it. Binds `/dev/fuse`, masks `/etc/subuid`+`/etc/subgid` (→ root-mapped + `fakeroot`-command build path; the SIF's `newuidmap` is `agent`-owned so plain `--fakeroot` FATALs), and points `APPTAINER_TMPDIR`/`CACHEDIR` at the real-disk `/tmp` (size via `tmpfs_size` — the 2G default is too small for a multi-GB image). Composes with `access: capsule` (adds **no** host-FS bind). Fail-loud if the host lacks `/dev/fuse`. Build-from-Dockerfile needs the base image to contain `/etc/subuid` (every real distro base does; busybox doesn't). Verified 2026-06-20 inside `sac-scitex.sif`. See [`runtimes/_apptainer_nested.py`](../src/scitex_agent_container/runtimes/_apptainer_nested.py). |
+
+### `spec.engines` — several backends, one picked at start
+
+One spec, several named backends; `--engine <key>` picks one for THAT start.
+Full rationale and the four operator answers behind it: **ADR-0024**.
+
+```yaml
+spec:
+  engines:
+    claude:
+      harness: anthropic
+      model: fable[1m]
+      provider: anthropic
+      default: true
+    qwen38-27b:
+      harness: anthropic
+      model: qwen38-27b
+      provider: { base_url: http://127.0.0.1:18772, auth_token_env: QWEN_GATEWAY_API_KEY }
+      reasoning_effort: low
+      max_context_tokens: 393216
+```
+
+| Entry field          | Type                                | Description |
+|----------------------|-------------------------------------|-------------|
+| `harness`            | same values as `spec.harness`       | Resolves through the SAME harness registry — an engine cannot invent a harness the fleet cannot run. |
+| `model`              | same as `spec.claude.model`         | The model id passed to this engine's endpoint. |
+| `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
+| `default`            | bool                                | Exactly ONE entry may set it. With a single entry it is the default implicitly; two defaults, or two entries with none, are hard load errors naming the offenders. |
+| `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
+| `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |
+| `env`                | mapping                             | Merged OVER `spec.apptainer.env` for this engine only — the escape hatch for a gateway knob sac does not model. |
+
+**Selecting.** `sac agents start|restart <name> --engine <key>`. START TIME
+ONLY: nothing rebinds mid-session. An unknown key fails loud listing the
+declared keys — it never falls back to the default.
+
+**Refusing.** An engine that cannot be honoured (unregistered provider name,
+incomplete inline provider, unset `auth_token_env` on this host, unknown
+harness) REFUSES the start, naming the engine, how it was selected, what was
+unhonourable, and the fix. sac never falls back to another engine. On
+`restart` the refusal fires BEFORE the stop leg, so a rejected `--engine`
+leaves the running agent UP rather than stopping it and then declining to
+bring it back.
+
+**Reachability.** STATIC resolution runs on every start and is the whole
+refusal surface by default — no sockets, so a network blip cannot ground the
+fleet. `--probe-engine` (or `SAC_ENGINE_PROBE=1`) adds ONE bounded TCP connect
+to the engine's `base_url`; only an ACTIVE connection refusal refuses the
+start, while a timeout or DNS failure is reported as "could not tell" with a
+LOUD warning and the start proceeds — never silently treated as honourable.
+
+**Not covered yet** (each fails loud rather than dropping the engine):
+`--engine` from inside a container (the host-listen broker body carries no
+engine field), for an agent that lives on a peer, or with directory /
+multi-agent targets.
+
+**Migration.** A spec with only the legacy single-backend block works unchanged
+and silently. Both blocks that AGREE are accepted; both that DISAGREE are a
+hard load error naming both values. The migration ends when every deployed spec
+declares `engines:`, at which point the legacy reading is deleted.
 
 ### `spec.claude` — SDK knobs
 

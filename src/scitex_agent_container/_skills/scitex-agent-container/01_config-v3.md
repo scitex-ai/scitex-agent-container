@@ -81,6 +81,32 @@ spec:
 | `provider` | string OR `{ base_url, auth_token_env }` | Point the SDK at any Anthropic-compatible backend. **Canonical (ADR-0011 extension, 2026-05-28):** registered name string, e.g. `provider: mimo` / `provider: deepseek`. sac resolves the base URL + auth env var name from the registry at `config/_provider_registry.py`. **Legacy dict shape** still accepted for back-compat: `base_url` endpoint + `auth_token_env` NAME of the host env var holding the key (never the key value). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. Auto-injects `ANTHROPIC_MODEL` from `spec.claude.model` (fixes the pitfall where the SDK's default model id silently won). Adding a new provider = add one entry `{base_url, auth_token_env}` to `PROVIDERS` in `_provider_registry.py`. See ADR-0011. |
 | `raw_options` | dict | Escape hatch — splatted into `ClaudeAgentOptions(**raw_options)` |
 
+### `spec.engines` — several backends, one picked at start (ADR-0024)
+
+OPTIONAL. A spec that omits it declares its single backend the old way
+(`harness` + `spec.claude.model` + `spec.claude.provider`) and is unchanged.
+
+```yaml
+spec:
+  engines:
+    claude:      { harness: anthropic, model: fable[1m], provider: anthropic, default: true }
+    qwen38-27b:  { harness: anthropic, model: qwen38-27b, reasoning_effort: low,
+                   provider: { base_url: http://127.0.0.1:18772, auth_token_env: QWEN_GATEWAY_API_KEY } }
+```
+
+* `sac agents start|restart <name> --engine qwen38-27b` picks one for THAT
+  start. START TIME ONLY — nothing rebinds mid-session.
+* Exactly one entry may set `default: true` (implicit with a single entry);
+  two defaults, or two entries with none, are hard load errors naming both.
+* An unknown `--engine` key fails loud listing the declared keys. An engine
+  that cannot be honoured REFUSES the start naming what was unhonourable.
+  **sac never falls back** — not to the default, not to another engine.
+* Reachability: STATIC resolution always; a live TCP probe only under
+  `--probe-engine` / `SAC_ENGINE_PROBE=1`, where a timeout is "could not
+  tell" (loud warning, start proceeds), not a refusal.
+* Migration: legacy block alone works silently; both blocks AGREEING are
+  accepted; both DISAGREEING is a hard error naming both values.
+
 ## Auto-derived fields
 
 The v3 loader fills in defaults from the agent name (parent-directory stem):

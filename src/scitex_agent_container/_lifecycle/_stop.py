@@ -236,6 +236,8 @@ def agent_restart(
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
     successor_auth_check: Optional[Callable[[str], None]] = None,
     thread_factory: Callable[..., Any] = threading.Thread,
+    engine_override: str | None = None,
+    probe_engine: bool | None = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -306,6 +308,16 @@ def agent_restart(
             :func:`config.resolve_config`). Injected for tests so the
             no-registry-row fallback can be exercised against a real
             on-disk spec without monkeypatching internals.
+        engine_override: Select a DIFFERENT ``spec.engines`` entry for
+            the START leg of this restart (the CLI ``--engine <key>``).
+            Forwarded verbatim to :func:`._start.agent_start`, which
+            refuses rather than falling back when the key is unknown or
+            the engine cannot be honoured. ``None`` restarts on the
+            spec's declared default engine, which is the unchanged
+            behaviour for every legacy single-backend spec.
+        probe_engine: Whether the start leg runs the OPT-IN live
+            reachability probe. ``None`` defers to ``SAC_ENGINE_PROBE``
+            (default OFF — static resolution is the refusal surface).
         wait_for_stop_timeout_s: SIGTERM grace for the previous-runtime
             gate (see "Teardown gate" above) before it escalates to
             SIGKILL. Default 15 s — ~10× a healthy apptainer teardown.
@@ -368,6 +380,19 @@ def agent_restart(
 
     _auth_check = successor_auth_check or preflight_from_config_path
     _auth_check(config_path)
+
+    # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
+    # reason the credential pre-flight above does. ``agent_start`` refuses
+    # an unhonourable engine before it forces anything down; a RESTART
+    # stops FIRST, so that refusal — reached through the start leg at the
+    # bottom of this function — would fire on an agent that is already
+    # DOWN and leave it down. ``sac agents restart x --engine qwen38-27bb``
+    # (one typo) would have bought exactly that. Refusing here leaves the
+    # OLD process UP and re-startable, which is the whole point of the
+    # one-way-trip guard this stands beside.
+    from ._engine_select import check_engine_before_stop
+
+    check_engine_before_stop(config_path, engine_override, probe=probe_engine)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
@@ -449,6 +474,8 @@ def agent_restart(
         registry,
         assume_yes=True,
         force=True,
+        engine_override=engine_override,
+        probe_engine=probe_engine,
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,

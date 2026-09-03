@@ -16,7 +16,9 @@ import click
 
 from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
+from ._start_engine_options import engine_options
 from ._start_gate_options import spec_gate_options, verify_window_option
+from ._start_session_options import session_options
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
 
@@ -43,59 +45,8 @@ from ._start_preflight_gate import make_preflight_runner
     default=False,
     help="If already running or stale, stop first then start fresh.",
 )
-@click.option(
-    "--resume",
-    "resume_id",
-    type=str,
-    default=None,
-    help="Resume a specific Claude Code session by ID (e.g. the UUID of the "
-    "*.jsonl under ~/.claude/projects/<encoded>/). Implies --session resume "
-    "and overrides the YAML's claude.session / claude.resume_id.",
-)
-@click.option(
-    "-n",
-    "--tail-lines",
-    "tail_lines",
-    type=int,
-    default=None,
-    help="Trailing transcript messages to preview per resumable session "
-    "on a stale --resume (sac-session-candidates-tail-preview).",
-)
-@click.option(
-    "--session",
-    "session_mode",
-    type=click.Choice(
-        # ``fresh`` is the canonical "always start a new session" value
-        # (the default since 2026-06-22). ``new-session`` is kept as a
-        # back-compat alias. Legacy ``continue-or-new`` / ``new`` are still
-        # accepted at YAML load time via parse_claude but hidden from the
-        # CLI surface.
-        ["fresh", "continue", "new-session", "resume"],
-        case_sensitive=False,
-    ),
-    default=None,
-    help="Override the YAML's claude.session for this start invocation "
-    "(fresh|continue|resume). Shorthand: --continue / --fresh.",
-)
-@click.option(
-    "-c",
-    "--continue",
-    "continue_session",
-    is_flag=True,
-    default=False,
-    help="Resume the agent's latest session (shorthand for --session "
-    "continue). Overrides a spec that says fresh. For long-lived "
-    "coordinators; experiment trials should stay fresh (the default).",
-)
-@click.option(
-    "--fresh",
-    "fresh_session",
-    is_flag=True,
-    default=False,
-    help="Force a brand-new, independent session (shorthand for --session "
-    "fresh). Overrides a spec that says continue. This is the default when "
-    "no session flag is given.",
-)
+@session_options
+@engine_options
 @click.option(
     "--dry-run",
     "dry_run",
@@ -246,6 +197,8 @@ def start(
     session_mode: str | None,
     continue_session: bool,
     fresh_session: bool,
+    engine: str | None,
+    probe_engine: bool | None,
     dry_run: bool,
     as_json: bool,
     yes: bool,
@@ -408,6 +361,23 @@ def start(
             err=True,
         )
         sys.exit(2)
+    # --engine names ONE engine key, and engine keys are per-spec: the
+    # same key means different backends (or nothing at all) in two
+    # different specs. Applying it across a directory would either start
+    # agents on a backend their spec never declared or fail half of them
+    # mid-sweep. It is also NOT re-appended to the child argv by
+    # ``_start_parallel``, so a multi-target run would silently drop it —
+    # the fallback-by-dropped-field this whole axis refuses. Fail loud on
+    # BOTH shapes instead.
+    if engine and (is_bulk or len(single_targets) > 1):
+        click.echo(
+            f"Error: --engine {engine} cannot be combined with directory or "
+            "multi-agent targets — engine keys are declared per spec, so one "
+            "key does not name the same backend across agents. Start each "
+            "agent separately.",
+            err=True,
+        )
+        sys.exit(2)
     # --foreground semantics:
     #   * single target: pass foreground=True down to the runtime so
     #     the SDK runner attaches its stdio to this terminal.
@@ -506,6 +476,8 @@ def start(
         force=force,
         resume_id=resume_id,
         session_mode=session_mode,
+        engine=engine,
+        probe_engine=probe_engine,
         dry_run=dry_run,
         as_json=as_json,
         foreground=foreground,

@@ -83,7 +83,7 @@ def _local_restart(result) -> Iterator[None]:
     with (
         _swap("try_dispatch_remote", lambda *a, **k: False),
         _swap("spec_host_fallback_peer", lambda *a, **k: None),
-        _swap("agent_restart", lambda name: result),
+        _swap("agent_restart", lambda name, **_kw: result),
     ):
         yield
 

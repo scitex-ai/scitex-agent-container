@@ -44,8 +44,9 @@ def validate_proxy_coupling(spec: dict, kind: object) -> list[str]:
 
     AgentProxy has NO SDK — it's a thin HTTP forwarder. So:
       * spec.proxy is REQUIRED (no upstream → nothing to forward to)
-      * spec.claude / spec.startup_prompts / spec.startup_commands are
-        IGNORED (no SDK to configure / prompt); authoring them is a
+      * spec.claude / spec.engines / spec.startup_prompts /
+        spec.startup_commands are IGNORED (no SDK to configure / prompt,
+        and therefore no backend to select); authoring them is a
         category error surfaced loudly.
     The mirror also holds for kind: Agent — spec.proxy is rejected there
     because the SDK runner doesn't read it.
@@ -64,7 +65,17 @@ def validate_proxy_coupling(spec: dict, kind: object) -> list[str]:
                 "declare the forwarding target explicitly:\n"
                 "  proxy:\n    upstream: http://127.0.0.1:9000"
             )
-        for forbidden in ("claude", "startup_prompts", "startup_commands"):
+        # ``engines`` joins the list for exactly the reason ``claude``
+        # is on it: an AgentProxy runs no SDK session, so declaring the
+        # backends it could run one on is the same category error one
+        # noun later. Silently ignoring the block would let a proxy spec
+        # carry a Qwen engine nothing will ever start.
+        for forbidden in (
+            "claude",
+            "engines",
+            "startup_prompts",
+            "startup_commands",
+        ):
             val = spec.get(forbidden)
             if val:
                 errors.append(
