@@ -61,9 +61,11 @@ import logging
 from pathlib import Path
 
 from ..config import AgentConfig
+from ._baseline_hook_assets import deploy_baseline_hook_assets
 from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_mcp
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._github_token import ensure_github_token
+from ._hook_exec_bit import ensure_armed_hooks_executable
 from ._hook_origin_manifest import write_hook_manifest
 from ._host_commands import deploy_host_claude_commands
 from ._host_skills import deploy_host_skills
@@ -277,6 +279,18 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         )
     if root is not None:
         _walk_and_apply(root, root, dest, config=config, composed_dsts=composed_dsts)
+    # SAC'S OWN PACKAGED HOOK ASSETS — the layer that was missing. The layers
+    # walked above bottom out in the operator's dotfiles tree, which is a
+    # hand-maintained COPY of _baseline_assets/, so a hook fix merged into sac
+    # reached no agent until someone re-copied it by hand. Deployed AFTER the
+    # walk so the canonical version wins over that stale mirror, and BEFORE
+    # _apply_host_merge_with_drift_guard so the real files we lay down are
+    # visible to its agent-layer-wins check (a host hook of the same basename
+    # is then correctly skipped rather than double-armed). Never raises — a
+    # hook sits on the send path of the operator's only channel, so a failed
+    # deploy must leave the previous hook running and the agent bootable.
+    # See :mod:`._baseline_hook_assets`.
+    deploy_baseline_hook_assets(dest)
     # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
     # → the spec's _shared baseline → the agent's workdir (the project's OWN
     # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
@@ -332,6 +346,15 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
     settings_provenance = deploy_settings_cascade(dest, settings_layer_dirs(config))
+    # ...then make sure every hook we JUST ARMED can actually run. settings.json
+    # arms most hooks by BARE PATH, which Claude Code execs directly, so a file
+    # without the execute bit is dead — with perfect bytes, at exactly the armed
+    # path, invisible to any content check and to `git diff`. Measured in the
+    # dotfiles baseline feeding this cascade: 18 of 43 bare-path-armed hooks are
+    # tracked 100644, so a fresh clone or rebuilt container arms 18 dead guards.
+    # Runs AFTER the cascade because the deployed settings.json is what says
+    # which paths are armed. See :mod:`._hook_exec_bit`.
+    ensure_armed_hooks_executable(dest)
     # ...then record WHICH layer armed each hook, to runtime (not to the home
     # we just wrote). The deployed settings.json is the flattened result, so it
     # cannot answer "where is this hook coming from?" — the origin only exists
