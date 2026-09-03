@@ -20,11 +20,22 @@ WHY A TIMER, AND NOT A CHECK ON SEND
 
 CADENCE
     Every 15 minutes: an alias or token gap is a config fact that stays
-    broken until fixed, so a faster tick buys only more identical records;
-    slower, and a peer can be silently unreachable for most of an hour. A
-    pass is one ssh+curl per peer, run in parallel, bounded per host by the
-    verb's ``--timeout`` (10 s curl + 15 s ssh), so the 180 s command bound
-    covers the whole fleet including every peer being down at once.
+    broken until fixed, so a faster tick buys nothing (per-host event
+    records are written on TRANSITION only; the ``--record`` file carries
+    every pass); slower, and a peer can be silently unreachable for most of
+    an hour. A pass is one ssh+curl per peer, run in parallel, bounded per
+    host by the verb's ``--timeout`` (10 s curl + 15 s ssh), so the 180 s
+    command bound covers the whole fleet including every peer being down at
+    once.
+
+WHAT "REACHABLE" PROVES
+    The probe hits the peer listen's ``/v1/health``, a PUBLIC path
+    (``BearerAuthMiddleware.PUBLIC_PATHS``) answered before the bearer is
+    checked. Reachable therefore means: the ssh alias resolves (through the
+    forwarder's own resolver), the tunnel connects, and a ``sac-listen`` is
+    up on the peer's loopback. It does NOT prove the peer token is valid —
+    a stale ``peer-tokens/<host>.token`` reads reachable here and 401s on a
+    real send. An authenticated probe path is the proposed follow-up.
 """
 
 from __future__ import annotations
@@ -65,16 +76,20 @@ def reachability_jobs(*, executable: str | None = None) -> "list[JobSpec]":
             ),
             description=(
                 "Probes the cross-host a2a transport from this host to every "
-                "peer the fleet knows (config.yaml peers + the host registry): "
-                "ssh to the peer's alias, curl 127.0.0.1:7878/v1/health on the "
-                "peer with that peer's bearer — the SAME leg sac listen's "
-                "forwarder takes for a cross-host send. Three-valued per host "
-                "(reachable / unreachable / unknown — no alias, no peer token, "
-                "or this host); unknown is never counted as reachable. Records "
-                "each verdict in sac's event log (subsystem a2a-reachability) "
-                "and the full report to runtime/a2a-reachability.json for "
-                "`sac a2a reachability --last`. Exit 0 all reachable, 1 any "
-                "unreachable, 3 nothing measurable. Mutates nothing on any peer."
+                "peer the fleet knows, resolving each peer's ssh alias through "
+                "sac listen's forwarder's OWN resolver (config.yaml peers + the "
+                "host registry): ssh to that alias, curl 127.0.0.1:7878/v1/health "
+                "on the peer with that peer's bearer — the SAME leg a cross-host "
+                "send takes. Three-valued per host (reachable / unreachable / "
+                "unknown — no alias, no peer token, or this host); unknown is "
+                "never counted as reachable. /v1/health is a PUBLIC listen path, "
+                "so reachable proves alias + tunnel + listen up, NOT that the "
+                "peer token is valid. Records state TRANSITIONS per host in sac's "
+                "event log (subsystem a2a-reachability) plus a pass-completed "
+                "record every pass, and the full report to "
+                "runtime/a2a-reachability.json for `sac a2a reachability --last`. "
+                "Exit 0 all reachable, 1 any unreachable, 3 nothing measurable. "
+                "Mutates nothing on any peer."
             ),
             kind="timer",
             # 5min after boot: the listen and ssh agent have settled, and a

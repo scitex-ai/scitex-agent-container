@@ -80,10 +80,10 @@ def fleet(tmp_path: Path, env_save_restore) -> Path:
     return home
 
 
-def _seed_token(home: Path) -> None:
-    """Give ``peer-with-alias`` a peer token, so its leg gets DISPATCHED."""
+def _seed_token(home: Path, host: str = "peer-with-alias") -> None:
+    """Give ``host`` a peer token, so its leg gets DISPATCHED."""
     write_peer_token(
-        peer_host="peer-with-alias",
+        peer_host=host,
         token="t0k3n",
         tokens_dir=home / ".scitex" / "agent-container" / "peer-tokens",
     )
@@ -130,6 +130,29 @@ def test_this_host_is_reported_unknown_over_no_transport(fleet):
     assert _rows(result)["probe-box"]["transport"] == "none"
 
 
+def test_this_host_row_says_local(fleet):
+    # Arrange — the alarm skips the self row by this flag, not by name.
+    args = ["--all", "--json"]
+    # Act
+    result = _run(args)
+    # Assert
+    assert _rows(result)["probe-box"]["local"] is True
+
+
+def test_this_host_is_never_dialled_even_with_an_alias_and_a_token(
+    fleet, subprocess_shim
+):
+    # Arrange — probe-box has a registry alias AND now a peer token, so only
+    # the local skip stands between the verb and an ssh to itself. No other
+    # host has a token, so any ssh on PATH is a self-dial.
+    _seed_token(fleet, "probe-box")
+    subprocess_shim.install("ssh", exit=0, stdout=_HEALTHY)
+    # Act
+    result = _run(["--all", "--json"])
+    # Assert
+    assert (subprocess_shim.call_count("ssh"), result.exit_code) == (0, 3)
+
+
 def test_a_registry_row_without_alias_is_unknown_and_names_the_registry(fleet):
     # Arrange
     args = ["--all", "--json"]
@@ -148,7 +171,7 @@ def test_a_missing_peer_token_is_unknown_and_names_the_add_peer_fix(fleet):
     assert "sac host add-peer" in _rows(result)["peer-with-alias"]["error"]
 
 
-def test_each_json_row_carries_exactly_the_six_declared_fields(fleet):
+def test_each_json_row_carries_exactly_the_seven_declared_fields(fleet):
     # Arrange
     args = ["--all", "--json"]
     # Act
@@ -157,7 +180,15 @@ def test_each_json_row_carries_exactly_the_six_declared_fields(fleet):
     # Assert
     assert shapes == {
         frozenset(
-            {"host", "ssh_alias", "transport", "reachable", "elapsed_ms", "error"}
+            {
+                "host",
+                "ssh_alias",
+                "transport",
+                "reachable",
+                "elapsed_ms",
+                "error",
+                "local",
+            }
         )
     }
 
@@ -200,6 +231,40 @@ def test_ssh_leg_dials_the_registry_alias_not_the_host_name(fleet, subprocess_sh
     _run(["--host", "peer-with-alias", "--json", "--timeout", "1"])
     # Assert
     assert "peer-with-alias-ssh" in subprocess_shim.argv_for("ssh")
+
+
+def test_ssh_leg_dials_the_alias_config_yaml_overrides_exactly_as_the_forwarder(
+    fleet, subprocess_shim, tmp_path
+):
+    # Arrange — config.yaml wins over the registry for the forwarder; the
+    # probe must dial the same override, because it asks the same resolver.
+    (tmp_path / "config.yaml").write_text(
+        _CONFIG_YAML + "peers:\n  peer-with-alias:\n    ssh: cfg-route\n"
+    )
+    _seed_token(fleet)
+    subprocess_shim.install("ssh", exit=255, stderr="refused")
+    # Act
+    _run(["--host", "peer-with-alias", "--json", "--timeout", "1"])
+    # Assert
+    assert "cfg-route" in subprocess_shim.argv_for("ssh")
+
+
+def test_a_repeated_failed_leg_is_recorded_degraded_once_not_per_pass(
+    fleet, subprocess_shim
+):
+    # Arrange — two scheduled ticks seeing the same unreachable peer.
+    _seed_token(fleet)
+    subprocess_shim.install("ssh", exit=255, stderr="ssh: connect: refused")
+    # Act
+    _run(["--all", "--json", "--timeout", "1"])
+    _run(["--all", "--json", "--timeout", "1"])
+    degraded = [
+        e
+        for e in read_events(path=Path(os.environ[EVENT_LOG_ENV]))
+        if e.event == SUBJECT_DEGRADED
+    ]
+    # Assert
+    assert len(degraded) == 1
 
 
 # ---------------------------------------------------------------------------

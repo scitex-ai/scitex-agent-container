@@ -32,7 +32,10 @@ _STYLE = {
 def _print_row(row) -> None:
     colour, label = _STYLE[row.reachable]
     ms = f"{row.elapsed_ms} ms" if row.elapsed_ms is not None else "-"
-    alias = f"ssh://{row.ssh_alias}" if row.ssh_alias else "(no ssh alias)"
+    if row.local:
+        alias = "(this host)"
+    else:
+        alias = f"ssh://{row.ssh_alias}" if row.ssh_alias else "(no ssh alias)"
     # soft_wrap: a wrapped host name is one you cannot grep out of a log.
     console.print(
         f"[{colour}]{label:<12}[/{colour}] {row.host:<20} {alias:<28} {ms}",
@@ -133,9 +136,10 @@ def a2a_reachability(
     """Probe the cross-host a2a transport to every peer, from THIS host.
 
     Exercises exactly what ``sac listen``'s forwarder does for a cross-host
-    send — ssh to the peer's alias, curl ``127.0.0.1:<port>/v1/health`` on
-    the peer with that peer's bearer from ``peer-tokens/<host>.token`` —
-    and reports one three-valued row per host.
+    send — the peer's ssh alias from the forwarder's OWN resolver
+    (config.yaml peers + the host registry), then curl
+    ``127.0.0.1:<port>/v1/health`` on the peer with that peer's bearer from
+    ``peer-tokens/<host>.token`` — and reports one three-valued row per host.
 
     \b
     Verdicts, per host:
@@ -145,15 +149,24 @@ def a2a_reachability(
                    registry, no peer token, or the host is this machine.
                    NEVER counted as reachable.
     \b
+    What REACHABLE proves — and does not: /v1/health is a PUBLIC path on the
+    listen (answered before the bearer is checked), so REACHABLE means the
+    ssh alias, the tunnel and the peer's listen are up. It does NOT prove the
+    peer token is VALID: a stale token still reads REACHABLE here and 401s
+    on a real send. A missing token is still UNKNOWN (the forwarder refuses
+    to send without one).
+    \b
     Exit codes:
       0  every measured host is REACHABLE
       1  at least one host is UNREACHABLE
       3  nothing measurable — every host is UNKNOWN (not a success)
       (2 is Click's usage error and carries no fleet meaning)
     \b
-    Every run also records each verdict in sac's own event log
-    (runtime/sac-events.jsonl, subsystem a2a-reachability): unreachable and
-    unknown hosts on every pass, a recovery on the transition back.
+    Every run also records in sac's own event log (runtime/sac-events.jsonl,
+    subsystem a2a-reachability) — per host on TRANSITION only: the first time
+    a host is seen unreachable or unknown, every change of state after, and
+    a recovery on the way back; plus one pass-completed record with counts
+    every pass. The full per-pass picture is the --record file.
     \b
     Examples:
       $ sac a2a reachability
@@ -197,11 +210,11 @@ def a2a_reachability(
     from .._state.host_config import load as _load_cfg
     from .lifecycle._host_identity import _local_host_names
 
-    cfg = _load_cfg()
-    probed_from = cfg.canonical_host()
+    probed_from = _load_cfg().canonical_host()
     try:
+        # No peer map is handed in: the probe resolves each host through the
+        # forwarder's own resolver, which reads config.yaml + the registry.
         report = run_probe(
-            peers=cfg.peers,
             local_names=_local_host_names(probed_from),
             probed_from=probed_from,
             only=list(hosts) if hosts else None,
@@ -212,9 +225,10 @@ def a2a_reachability(
         raise click.UsageError(str(exc.args[0]) if exc.args else str(exc)) from exc
 
     # Make the shout DURABLE, in both output modes: the record is independent
-    # of whatever the console prints. A subset run only touches the hosts it
-    # probed, so a by-hand `--host x` can never record a recovery for a peer
-    # it did not look at.
+    # of whatever the console prints. Per host it is a TRANSITION record (see
+    # _reachability_alarm); the full pass is the --record file. A subset run
+    # only touches the hosts it probed, so a by-hand `--host x` can never
+    # record a recovery for a peer it did not look at.
     mode = "subset" if hosts else "all"
     outcome = record_report(report)
     record_pass_completed(report, mode=mode)
