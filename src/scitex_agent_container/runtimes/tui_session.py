@@ -294,35 +294,15 @@ class TuiSessionRuntime(
             write_redacted_argv(state_dir / "apptainer_run.argv.txt", argv)
             return True
 
-        # OVERLAY VENV INVALIDATION CONTRACT — parity with the SDK runtime (see
-        # ``_apptainer_runtime.start`` for the full why-here). Past the
-        # duplicate-session guard above, so no container of this agent holds the
-        # overlay mounted; past the dry-run return, so ``--dry-run`` mutates
-        # nothing; and BEFORE the entry-point probe below, so that probe
-        # measures the RECONCILED union rather than the stale one.
-        # The SIF is read OUT OF THE LAUNCH ARGV rather than re-resolved. Same
-        # reasoning as ``_entry_point_gate.probe_argv_from_launch``: a second
-        # resolution is free to drift from the one that actually launches, and
-        # reconciling against a DIFFERENT image than the container mounts would
-        # stamp the overlay with an identity it never ran on — which then reads
-        # as reconciled forever. Deriving it makes divergence impossible.
-        from .._maintenance._overlay_venv_invalidate import (
-            reconcile_overlay_venv_for_launch,
-        )
+        # LAUNCH GATE — the /uvwork scratch bind (ADR-0024), the overlay-venv
+        # reconcile and the entry-point probe. All three are launch-time acts
+        # that write to the host or refuse to start, so all three live past the
+        # dry-run return and past the duplicate-session guard above, never
+        # inside ``build_run_argv`` (which ``sac agents explain`` also calls).
+        # Order and derivation rationale: :mod:`._tui_launch_gate`.
+        from ._tui_launch_gate import run_launch_gate
 
-        launch_sif = next((a for a in argv if str(a).endswith(".sif")), None)
-        if launch_sif is not None:
-            reconcile_overlay_venv_for_launch(
-                config, launch_sif, state_dir_for_config(config)
-            )
-
-        # The console script must RUN in the union we are about to launch, not
-        # merely import in the image. Called after argv exists (so the probe
-        # inherits the real overlay) and after the dry-run return (so
-        # ``--dry-run`` stays subprocess-free).
-        from ._entry_point_gate import assert_entry_point_runs
-
-        assert_entry_point_runs(config.name, argv)
+        run_launch_gate(config, argv, state_dir=state_dir_for_config(config))
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
         # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).

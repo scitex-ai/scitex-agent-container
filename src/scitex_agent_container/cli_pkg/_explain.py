@@ -85,6 +85,23 @@ def _annotate(src: str, dst: str) -> str:
     return ""
 
 
+def _uvwork_line(config: AgentConfig) -> str:
+    """One line saying where ``/uvwork`` comes from — ADR-0024.
+
+    ``explain`` renders binds by walking the argv, so the ONE outcome it could
+    not show is the one that emits no bind: a host with no resolvable scratch
+    root. That is precisely the case an operator needs named, because
+    ``start`` will REFUSE on it (``_apptainer_scratch.ensure_uvwork_for_launch``)
+    while ``explain`` stays read-only. So the plan states the decision itself
+    rather than leaving the reader to notice an absence.
+    """
+    from ..runtimes._apptainer_scratch import plan_uvwork_bind
+
+    plan = plan_uvwork_bind(config)
+    prefix = "⚠ /uvwork — `start` WILL REFUSE" if plan.refused else "/uvwork"
+    return f"{prefix}: {plan.reason}"
+
+
 def _pwd_is_backed(pwd: str, binds: list[tuple[str, str, str]]) -> bool:
     """True iff ``--pwd`` is at/under some bind target (so the cwd exists)."""
     for _src, dst, _mode in binds:
@@ -230,6 +247,9 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
         note = _annotate(src, dst)
         note = f"   [{note}]" if note else ""
         lines.append(f"  {src:<{width}}  →  {dst}  ({mode}){note}")
+
+    lines.append("")
+    lines.append(_uvwork_line(config))
 
     envs = _envs(argv)
     if envs:

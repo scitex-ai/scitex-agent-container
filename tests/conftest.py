@@ -195,6 +195,30 @@ os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(_SAC_STATE_FLOOR / "regi
 # touch the LIVE `sac listen` PIDFILE. It now honours this same variable.
 os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = str(_SAC_STATE_FLOOR / "runtime")
 
+# --- NEVER let a test create an agent's /uvwork under the REAL /scratch ------
+# ADR-0024: every `build_run_argv` resolves the host scratch root and CREATES
+# `<root>/sac/agents/<name>/uvwork` before emitting the bind. With no
+# `config.yaml` in reach the resolver probes the real `/scratch` — present on
+# every compute host and inside every agent container — so ~20 test modules
+# that assemble a launch argv would each leave `sac/agents/agt/uvwork` on the
+# operator's scratch volume; and on a box WITHOUT `/scratch` the same tests
+# would refuse the launch instead, which is the resolver doing its job on the
+# wrong population. Both are answered by the ONE knob the resolver reads: a
+# per-worker `config.yaml` declaring `scratch_root:` inside the floor, reached
+# through the same `$SCITEX_AGENT_CONTAINER_CONFIG` override the config tests
+# already use (a test that sets it itself still wins — its fixture runs later).
+# The declared root must EXIST (a declaration that cannot be honoured is a
+# refusal by design), so it is created here too. Force-set like its siblings.
+_SAC_SCRATCH_FLOOR = _SAC_STATE_FLOOR / "scratch"
+_SAC_SCRATCH_FLOOR.mkdir(parents=True, exist_ok=True)
+_SAC_CONFIG_FLOOR = _SAC_STATE_FLOOR / "config.yaml"
+_SAC_CONFIG_FLOOR.write_text(
+    "# written by tests/conftest.py — the per-worker test floor, never a source\n"
+    f"scratch_root: {_SAC_SCRATCH_FLOOR}\n",
+    encoding="utf-8",
+)
+os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(_SAC_CONFIG_FLOOR)
+
 # --- NEVER let a test touch the REAL card board ---------------------------
 # INCIDENT 2026-07-20: the fleet's live board went from ~2777 cards to SIX.
 # Five of the six survivors were OUR fixtures — `other-agent-card-0/1` and

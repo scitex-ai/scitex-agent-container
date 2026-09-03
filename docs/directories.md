@@ -7,7 +7,8 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 ```
 ~/.scitex/agent-container/ or <project>/.scitex/agent-container/
 ├── config.yaml                ← host identity, host.aliases, peers (F-CS12),
-│                                listen.{host,port}, a2a.port_range
+│                                listen.{host,port}, a2a.port_range,
+│                                scratch_root (+ scratch_root_reason)
 ├── agents/<name>/             ← per-agent declarations (you write these)
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
 │   └── to_home/               ← optional: mirrored into the agent $HOME at start.
@@ -53,6 +54,23 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
     │   └── <agent>.jsonl
     └── cache/                   snapshot cache for the dashboard / `sac agents diff`
         └── <agent>.{latest,prev,diff}.json
+```
+
+Not under this root, and deliberately so — the SCRATCH volume (ADR-0024):
+
+```
+<scratch_root>/                ← `scratch_root:` in config.yaml, else /scratch
+└── sac/agents/<name>/uvwork   ← bound at /uvwork inside the container (0700).
+                                 uv itself, the uv cache, TMPDIR and the agent
+                                 venv (/uvwork/venv-agent). It lives HERE rather
+                                 than in the overlay upper because the overlay
+                                 is on the host's ROOT LV, which filled to 0
+                                 four times on scitex-compute-04 on 2026-09-02
+                                 (11.7 GB of it was one agent's /uvwork).
+                                 Regenerable: the spec rebuilds it on the next
+                                 start if it is missing. Move an existing
+                                 overlay copy across with
+                                 `sac agents scratch-migrate`.
 ```
 
 ## Configuration cascade

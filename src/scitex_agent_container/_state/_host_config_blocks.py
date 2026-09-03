@@ -1,4 +1,5 @@
-"""The optional typed blocks of ``config.yaml`` — ``resolve:`` and ``lead:``.
+"""The optional typed blocks of ``config.yaml`` — ``resolve:``, ``lead:`` and
+``scratch_root:``.
 
 Extracted from :mod:`.host_config` so that file stays under the project's
 512-line ceiling (it had 8 lines of headroom left, which is not headroom).
@@ -171,10 +172,103 @@ def _parse_resolve(name: str, raw) -> ResolveSpec | None:
     return ResolveSpec(source=source, reservation=reservation)
 
 
+#: The literal ``scratch_root:`` value that means "this host keeps ``/uvwork``
+#: in the apptainer overlay upper" — a WRITTEN decision, never a default.
+SCRATCH_ROOT_NONE = "none"
+
+
+@dataclass(frozen=True)
+class ScratchBlock:
+    """``scratch_root:`` (+ ``scratch_root_reason:``) — where ``/uvwork`` lives.
+
+    Every agent's ``/uvwork`` (uv itself, the agent venv, ``TMPDIR``, the uv
+    cache) is bound from ``<scratch_root>/sac/agents/<agent>/uvwork`` on the
+    host (see :mod:`..runtimes._apptainer_scratch`). Without that bind it
+    lands in the apptainer overlay upper on the ROOT volume — the volume that
+    filled to 0 four times on ``scitex-compute-04`` on 2026-09-02, with
+    ``overlays/<agent>/upper/uvwork`` measured at 11.7 GB (sac), 3.3 GB
+    (scitex-dev), 3.0 GB (scitex-hub), 2.5 GB (scitex-cards).
+
+    Two shapes, both explicit:
+
+      scratch_root: /scratch              # an ABSOLUTE path that exists
+      scratch_root: none                  # keep /uvwork in the overlay ...
+      scratch_root_reason: <why>          # ... which needs a stated reason
+
+    A host with NO ``scratch_root:`` line resolves the default ``/scratch``
+    when that is a mount point or directory, and REFUSES to start any agent
+    otherwise — see :func:`.host_scratch.resolve_scratch_root`. The literal
+    ``none`` exists so that keeping ``/uvwork`` on the root volume is a
+    decision someone wrote down, not the shape a missing line falls into.
+    """
+
+    root: str
+    """Absolute path, or the literal :data:`SCRATCH_ROOT_NONE`."""
+
+    reason: str = ""
+    """Free text; REQUIRED when ``root`` is ``none``, optional otherwise."""
+
+    @property
+    def is_none(self) -> bool:
+        return self.root == SCRATCH_ROOT_NONE
+
+
+def _parse_scratch(raw_root, raw_reason, *, source_path: Path) -> ScratchBlock | None:
+    """Normalize ``scratch_root:`` / ``scratch_root_reason:`` into a block.
+
+    Missing ``scratch_root:`` → ``None`` (the resolver then probes the
+    default ``/scratch``). Present → strict: a non-empty string that is
+    either an absolute path or the literal ``none``; ``none`` additionally
+    requires a non-empty ``scratch_root_reason:``. A ``scratch_root_reason:``
+    with no ``scratch_root:`` is an orphan and is refused too — it reads as a
+    decision that was half-written. Every refusal names ``source_path`` and
+    the offending value so the fix is a one-line edit of that file.
+    """
+    key = "scratch_root"
+    if raw_root is None:
+        if raw_reason is not None:
+            raise ValueError(
+                f"config.yaml at {source_path}: 'scratch_root_reason' is set "
+                f"but 'scratch_root' is not — the reason belongs to a "
+                f"'scratch_root: none' line; add that line or drop the reason"
+            )
+        return None
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise ValueError(
+            f"config.yaml at {source_path}: '{key}' must be an absolute path "
+            f"or the literal 'none' (got {raw_root!r})"
+        )
+    root = raw_root.strip()
+    if raw_reason is not None and not isinstance(raw_reason, str):
+        raise ValueError(
+            f"config.yaml at {source_path}: 'scratch_root_reason' must be a "
+            f"string (got {type(raw_reason).__name__})"
+        )
+    reason = (raw_reason or "").strip()
+    if root == SCRATCH_ROOT_NONE:
+        if not reason:
+            raise ValueError(
+                f"config.yaml at {source_path}: '{key}: none' keeps every "
+                f"agent's /uvwork in the apptainer overlay upper on this "
+                f"host's root volume; that is a written decision and needs a "
+                f"'scratch_root_reason: <why>' line next to it"
+            )
+        return ScratchBlock(root=SCRATCH_ROOT_NONE, reason=reason)
+    if not root.startswith("/"):
+        raise ValueError(
+            f"config.yaml at {source_path}: '{key}' must be an absolute path "
+            f"or the literal 'none' (got {root!r})"
+        )
+    return ScratchBlock(root=root, reason=reason)
+
+
 __all__ = [
     "LeadConfig",
     "ResolveSpec",
+    "SCRATCH_ROOT_NONE",
+    "ScratchBlock",
     "_RESOLVE_ALLOWED_SOURCES",
     "_parse_lead",
     "_parse_resolve",
+    "_parse_scratch",
 ]

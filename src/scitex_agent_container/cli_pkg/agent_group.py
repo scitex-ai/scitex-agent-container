@@ -80,6 +80,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "refresh-acl",
                 "declare-a2a-host",
                 "migrate-layers",
+                "scratch-migrate",
             ],
         ),
     ]
@@ -290,6 +291,15 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_migrate_layers import register as _register_migrate_layers  # noqa: E402
 
 _register_migrate_layers(agent_group)
+
+# `scratch-migrate` — ADR-0024: move each STOPPED agent's overlay-upper
+# ``/uvwork`` (11.7 GB for sac alone on the root LV, measured 2026-09-03)
+# onto the host scratch volume where sac now binds ``/uvwork`` from. Same
+# shape as `migrate-layers`: dry-run by default, `--apply` is the act,
+# running agents refused by name, `--json` for machines.
+from ._agents_scratch_migrate import register as _register_scratch_migrate  # noqa: E402
+
+_register_scratch_migrate(agent_group)
 
 # `declare-a2a-host` — one-shot fleet sweep making every spec state its own
 # a2a bind address instead of inheriting one from a code default. Sits beside

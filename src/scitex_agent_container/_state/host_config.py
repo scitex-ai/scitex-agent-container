@@ -33,6 +33,13 @@ while addressing a different host. :mod:`.moving_alias` holds the registry and
       host: mba                     # Peer key for transport + peer-tokens.
       a2a_port: 8642                # Lead's sac listen port (host-bound).
 
+    scratch_root: /scratch          # ADR-0024 — where every agent's /uvwork is
+                                    #   bound from (<root>/sac/agents/<agent>/
+                                    #   uvwork). Absent: /scratch if it exists,
+                                    #   else REFUSE to start. The literal
+                                    #   `none` keeps /uvwork in the overlay and
+                                    #   requires `scratch_root_reason:`.
+
 Resolution chain for the local canonical hostname (used by every
 state.db write so cross-host queries scope correctly):
 
@@ -67,8 +74,10 @@ from .._env import getenv as _sac_env
 from ._host_config_blocks import (  # noqa: F401
     LeadConfig,
     ResolveSpec,
+    ScratchBlock,
     _parse_lead,
     _parse_resolve,
+    _parse_scratch,
 )
 from .moving_alias import MovingAliasError, moving_alias_hint
 
@@ -176,6 +185,7 @@ class Config:
     host: HostBlock = field(default_factory=HostBlock)
     peers: dict[str, PeerSpec] = field(default_factory=dict)
     lead: LeadConfig | None = None
+    scratch: ScratchBlock | None = None  # scratch_root: / scratch_root_reason:
     source_path: Path | None = None
 
     def canonical_host(self) -> str:
@@ -358,8 +368,11 @@ def load(path: Path | None = None) -> Config:
         peers[str(name)] = PeerSpec.from_dict(spec, name=str(name))
 
     lead = _parse_lead(raw.get("lead"), source_path=p)
+    scratch = _parse_scratch(
+        raw.get("scratch_root"), raw.get("scratch_root_reason"), source_path=p
+    )
 
-    cfg = Config(host=host, peers=peers, lead=lead, source_path=p)
+    cfg = Config(host=host, peers=peers, lead=lead, scratch=scratch, source_path=p)
     if _key is not None:
         # Bounded: one entry per (path, mtime, size) actually parsed. In
         # practice one live entry plus a short tail of superseded ones after an

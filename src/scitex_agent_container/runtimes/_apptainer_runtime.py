@@ -219,6 +219,19 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         verify_tmpfs_headroom(config, state_dir)
 
+        # /uvwork LIVES ON SCRATCH (ADR-0024) — create the bind source, and
+        # REFUSE when this host has nowhere to put it.
+        #
+        # HERE for the same reason as the two neighbours: `build_run_argv`
+        # emitted the bind read-only (it is reached by `sac agents explain`
+        # and by the dry-run path above), so the mkdir and the refusal both
+        # belong past the dry_run return. The directory created is the one
+        # THIS argv mounts — the source is read back out of `argv` — so a
+        # spec that declared its own /uvwork bind is left to its owner.
+        from ._apptainer_scratch import ensure_uvwork_for_launch
+
+        ensure_uvwork_for_launch(config, argv)
+
         # OVERLAY VENV INVALIDATION CONTRACT — an image rebuild must invalidate
         # the `venv-sac` slice of this agent's overlay, or the overlay's stale
         # site-packages shadow the new image forever. Contract, measurement and

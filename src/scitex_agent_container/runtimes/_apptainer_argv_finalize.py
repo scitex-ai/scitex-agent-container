@@ -18,12 +18,17 @@ those invariants only hold if the whole region is already present.
    never used for scitex).
 3. **Bind the overlay upper-home** over the container ``$HOME``, after
    ``raw_args`` so it wins over a raw-arg ``--home`` tmpfs.
-4. **Lift secret-shaped ``--env`` into a 0600 env-file**, after every
+4. **Bind ``/uvwork`` from the host scratch volume** (ADR-0024), after
+   every spec-declared bind so an explicit spec bind to ``/uvwork`` wins.
+   READ-ONLY here — the source directory is created, and a host with no
+   scratch root refused, on the real launch path only
+   (``_apptainer_scratch.ensure_uvwork_for_launch``).
+5. **Lift secret-shaped ``--env`` into a 0600 env-file**, after every
    ``--env`` source so nothing is missed, before the creds bind so that
    bind stays last.
-5. **Emit the designated credentials bind last**, so no earlier bind can
+6. **Emit the designated credentials bind last**, so no earlier bind can
    shadow it.
-6. **Validate the flag region** as a whole, which is only meaningful once
+7. **Validate the flag region** as a whole, which is only meaningful once
    it is complete.
 
 ``finalize_flag_argv`` is pure with respect to its ``argv`` argument (a
@@ -106,6 +111,35 @@ def finalize_flag_argv(
 
         container_home = resolve_container_home(config)
         argv += ["--bind", f"{upper_home}:{container_home}"]
+
+    # /uvwork → the host SCRATCH volume, not the overlay upper (ADR-0024).
+    # Every spec's startup_commands put uv, the uv cache, TMPDIR and the
+    # agent venv under /uvwork; the image creates that directory and
+    # nothing bound it, so all of it accumulated in overlays/<agent>/upper
+    # on the host's ROOT LV — measured 11.7 GB for sac alone, and the root
+    # LV on scitex-compute-04 filled to 0 four times on 2026-09-02. The
+    # resolver reads config.yaml's `scratch_root:` (else probes /scratch)
+    # and the helper emits `--bind <root>/sac/agents/<name>/uvwork:/uvwork`.
+    # Placed after raw_args and the spec binds so an explicit spec bind to
+    # /uvwork still wins (first bind to a destination wins in apptainer),
+    # and before the secret lift so the creds bind below stays LAST. The
+    # bind reaches the on-disk argv record with every other bind.
+    #
+    # READ-ONLY, deliberately. This function is on `build_run_argv`, which
+    # `sac agents explain` and `sac agents start --dry-run` also call, and
+    # neither starts anything: the call below creates no directory, and a
+    # host with no resolvable scratch root gets a WARNING plus an argv with
+    # no /uvwork bind rather than an exception. The REFUSAL — the point of
+    # ADR-0024 — and the mkdir both live in
+    # `_apptainer_scratch.ensure_uvwork_for_launch`, called from
+    # `_apptainer_runtime.start` and `tui_session.start` past their dry_run
+    # return. That is where `verify_tmpfs_headroom` and
+    # `reconcile_overlay_venv_for_launch` already sit, for the reason
+    # `_apptainer_tmpfs` records: a launch-time check inside argv assembly
+    # made `explain` fail on exactly the full host it would have diagnosed.
+    from ._apptainer_scratch import uvwork_bind_flags
+
+    argv += uvwork_bind_flags(config, argv)
 
     # SECURITY (P1 credential fix): lift secret-shaped ``--env KEY=VALUE``
     # pairs out of the WORLD-READABLE argv (it becomes a tmux ``bash -c``
