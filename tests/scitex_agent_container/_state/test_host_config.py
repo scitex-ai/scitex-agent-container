@@ -487,6 +487,16 @@ def test_host_exec_passes_ssh_target_to_ssh(cfg_path: Path, subprocess_shim):
 
 
 def test_host_exec_appends_command_after_double_dash(cfg_path: Path, subprocess_shim):
+    """The ssh options end at ``--`` and the user's command is what follows.
+
+    Assertion SHAPE changed (was ``argv[-3:] == ["--", "echo", "hello"]``)
+    because ``build_ssh_argv`` now emits the command as ONE shlex-joined
+    element rather than N raw tokens — ssh word-joins everything after the
+    host anyway, and quoting it once here is what makes a whitespace-bearing
+    argument survive. The PROPERTY is unchanged and still the point: the
+    ``--`` separator is present, the dispatched command sits immediately
+    after it, and nothing is appended past the command.
+    """
     # Arrange
     cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
     subprocess_shim.install("ssh", exit=0)
@@ -496,7 +506,7 @@ def test_host_exec_appends_command_after_double_dash(cfg_path: Path, subprocess_
     CliRunner().invoke(host_exec, ["mba", "--", "echo", "hello"])
     # Assert
     argv = subprocess_shim.argv_for("ssh")
-    assert argv[-3:] == ["--", "echo", "hello"]
+    assert argv[-2:] == ["--", "echo hello"]
 
 
 def test_host_probe_reports_reachable_with_remote_canonical(
@@ -634,6 +644,17 @@ def test_dispatch_remote_unknown_peer_returns_2(cfg_path: Path):
 def test_dispatch_remote_invokes_ssh_with_remote_sac_command(
     cfg_path: Path, subprocess_shim
 ):
+    """``--on <peer> agent list`` runs ``sac agent list`` on the remote.
+
+    Assertion SHAPE changed (was ``["sac", "agent", "list"]``) because
+    ``build_ssh_argv`` now renders the command as ONE shlex-joined element
+    instead of N raw tokens. The PROPERTY is unchanged: everything after the
+    ``--`` separator is the remote command line, and dispatch re-prefixes the
+    local subcommand with ``sac`` so the peer runs the CLI rather than a bare
+    ``agent list``. Compared against the literal wire string on purpose — a
+    test that recomputed it with ``shlex.join`` would be parameterised by the
+    code under test and could not fail.
+    """
     # Arrange
     cfg_path.write_text("peers:\n  mba: { ssh: ywatanabe@mba.local }\n")
     subprocess_shim.install("ssh", exit=7)
@@ -644,7 +665,7 @@ def test_dispatch_remote_invokes_ssh_with_remote_sac_command(
     # Assert
     argv = subprocess_shim.argv_for("ssh")
     sep = argv.index("--")
-    assert argv[sep + 1 :] == ["sac", "agent", "list"]
+    assert argv[sep + 1 :] == ["sac agent list"]
 
 
 def test_dispatch_remote_propagates_ssh_exit_code(cfg_path: Path, subprocess_shim):

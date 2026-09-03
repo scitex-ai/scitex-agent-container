@@ -22,6 +22,7 @@ EXPLICITLY, and never expands ``~`` on the local machine.
 from __future__ import annotations
 
 import os
+import shlex
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
@@ -125,9 +126,36 @@ def _peers() -> dict[str, PeerSpec]:
     }
 
 
-def _remote_cmd(argv: list[str]) -> list[str]:
-    """The command portion of an ssh argv (everything past the ``--``)."""
-    return argv[argv.index("--") + 1 :]
+def _remote_command_line(argv: list[str]) -> str:
+    """The command line ssh actually puts on the wire, from either branch.
+
+    This used to slice the raw tokens past the ``--``. Since 2026-08-17
+    ``build_ssh_argv`` owns the quoting and emits the whole remote command
+    as ONE ``shlex.join``-ed element in BOTH branches (previously the
+    preamble branch shlex-joined while the bare branch appended raw
+    tokens, so no caller could satisfy both — that disagreement double-
+    quoted ``sh -c '…'`` into rc=127 on every preamble peer).
+
+    Asserting on the joined string is not a concession to the new shape:
+    ssh word-joins everything after the host and hands the result to the
+    remote user's shell, so this string IS what the remote parses — the
+    thing every assertion below was ever a proxy for. Peers carrying an
+    ``env_preamble`` wrap it in ``bash -c '<preamble> && <cmd>'``; unwrap
+    that so both dispatch paths are compared on the same footing.
+
+    JOIN EVERYTHING PAST THE ``--``, not just the first element. ssh
+    word-joins the WHOLE tail, so reading only ``argv[i + 1]`` would be
+    blind to any extra trailing token — and extra trailing tokens DO
+    reach the remote shell. Caught by mutation testing: a build_ssh_argv
+    that emits the joined element AND THEN appends the raw tokens (so the
+    remote runs the command twice) left every assertion in this file
+    green while the helper read one element, and fails four of them once
+    the whole tail is joined.
+    """
+    line = " ".join(argv[argv.index("--") + 1 :])
+    if line.startswith("bash -c "):
+        return shlex.split(line)[2]
+    return line
 
 
 def test_registry_rows_are_read_through_the_ssot(registry: Path) -> None:
@@ -199,18 +227,20 @@ def test_compute_node_inherits_root_via_chain(registry: Path) -> None:
 
 
 def test_sac_invocation_is_registry_pinned(registry: Path) -> None:
+    """A registry-known peer's sac run reaches the remote shell pinned.
+
+    The pin is a SHELL ASSIGNMENT PREFIX, so what matters is that the
+    remote shell parses ``SCITEX_DIR=<root>`` immediately before ``sac``
+    — assert the whole remote command line, not the local token slice
+    (the argv now carries it as one joined element).
+    """
     # Arrange
     peers = _peers()
+    expected = f"SCITEX_DIR={SPARTAN_ROOT} sac agents start a"
     # Act
     argv = build_ssh_argv("spartan", ["sac", "agents", "start", "a"], peers)
     # Assert
-    assert _remote_cmd(argv) == [
-        f"SCITEX_DIR={SPARTAN_ROOT}",
-        "sac",
-        "agents",
-        "start",
-        "a",
-    ]
+    assert _remote_command_line(argv) == expected
 
 
 def test_pin_survives_the_lmod_preamble_wrapper(registry: Path) -> None:
@@ -229,33 +259,53 @@ def test_pin_survives_the_lmod_preamble_wrapper(registry: Path) -> None:
 
 
 def test_home_rooted_peer_argv_is_byte_identical(registry: Path) -> None:
-    """No regression for mba / nas: their registry root IS ``~/.scitex``."""
+    """No regression for mba / nas: their registry root IS ``~/.scitex``.
+
+    Home-relative means the registry has no absolute answer, and sac must
+    not invent one — the peer keeps the dispatch it had before the pin
+    existed. Assertion shape changed 2026-08-17 (one joined element in
+    place of N tokens); the property is unchanged and still the point:
+    registry pinning does not alter an UNPINNED peer's remote command
+    line.
+    """
     # Arrange
     peers = _peers()
     # Act
     argv = build_ssh_argv("mba", ["sac", "agents", "start", "a"], peers)
     # Assert
-    assert _remote_cmd(argv) == ["sac", "agents", "start", "a"]
+    assert _remote_command_line(argv) == "sac agents start a"
 
 
 def test_non_sac_command_is_never_touched(registry: Path) -> None:
-    """``sac host exec <peer> -- <arbitrary>`` must pass through unchanged."""
+    """``sac host exec <peer> -- <arbitrary>`` must pass through unchanged.
+
+    Spartan IS registry-pinned, so this proves the pin is gated on the
+    command being a sac run and not on the peer. Asserted on the remote
+    command line (one joined element since 2026-08-17): the arbitrary
+    command reaches the remote shell with no ``SCITEX_DIR=`` prefix.
+    """
     # Arrange
     peers = _peers()
     # Act
     argv = build_ssh_argv("spartan", ["hostname", "-s"], peers)
     # Assert
-    assert _remote_cmd(argv) == ["hostname", "-s"]
+    assert _remote_command_line(argv) == "hostname -s"
 
 
 def test_absolute_path_to_sac_is_still_detected(registry: Path) -> None:
-    """Spartan invokes ``/home/ywatanabe/.env-3.11/bin/sac`` — still a sac run."""
+    """Spartan invokes ``/home/ywatanabe/.env-3.11/bin/sac`` — still a sac run.
+
+    Detection, not exact rendering, is what this pins: the assertion asks
+    only that the remote command line OPENS with the pin (it used to ask
+    the same of the first raw token, before the command became one joined
+    element on 2026-08-17).
+    """
     # Arrange
     peers = _peers()
     # Act
     argv = build_ssh_argv("spartan", ["/home/x/.env-3.11/bin/sac", "agents"], peers)
     # Assert
-    assert _remote_cmd(argv)[0] == f"SCITEX_DIR={SPARTAN_ROOT}"
+    assert _remote_command_line(argv).startswith(f"SCITEX_DIR={SPARTAN_ROOT} ")
 
 
 def test_peer_absent_from_registry_is_never_pinned(
@@ -267,13 +317,18 @@ def test_peer_absent_from_registry_is_never_pinned(
     it has no better answer than it had before, so the remote keeps
     expanding its own ``~/.scitex``. Guessing here is precisely the class
     of bug this whole change exists to kill.
+
+    Same peer and same command as the pinned test above, differing only
+    in the registry fixture, so the un-pinned remote command line is the
+    contrast that carries the meaning. (Assertion shape changed
+    2026-08-17: one joined element, same property.)
     """
     # Arrange
     peers = _peers()
     # Act
     argv = build_ssh_argv("spartan", ["sac", "agents", "start", "a"], peers)
     # Assert
-    assert _remote_cmd(argv) == ["sac", "agents", "start", "a"]
+    assert _remote_command_line(argv) == "sac agents start a"
 
 
 # EOF

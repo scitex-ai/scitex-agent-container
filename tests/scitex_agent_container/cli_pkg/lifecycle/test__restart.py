@@ -24,6 +24,7 @@ Same-shape invariants over a single arrange/act collapse into
 from __future__ import annotations
 
 import os
+import shlex
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
@@ -416,6 +417,25 @@ def _ssh_invocations(bin_dir):
     return [_json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
 
 
+def _remote_argv(argv):
+    """Tokens of the command line the PEER runs, recovered from an ssh argv.
+
+    ssh word-joins everything after the host and hands the result to the
+    remote shell, so ``build_ssh_argv`` owns the quoting and emits the whole
+    remote command as ONE shlex-joined trailing element (a peer carrying an
+    ``env_preamble`` gets that wrapped in ``bash -c '<preamble> && <cmd>'``).
+    The command's tokens are therefore no longer separate members of the
+    local ssh argv, and an ``x in argv`` membership test — which was always
+    a proxy for "x is on the remote command line" — can no longer see them.
+    This recovers the real remote command line so assertions keep talking
+    about what the peer actually executes.
+    """
+    tail = argv[-1]
+    if tail.startswith("bash -c "):
+        return shlex.split(shlex.split(tail)[2])
+    return shlex.split(tail)
+
+
 def test_cross_host_restart_dispatches_via_ssh(remote_row_for_zeta, ssh_shim):
     # Arrange
     runner = CliRunner()
@@ -452,9 +472,13 @@ def test_cross_host_restart_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh
     runner = CliRunner()
     # Act
     runner.invoke(restart, ["zeta", "-y"])
-    argv = _ssh_invocations(ssh_shim)[-1]
-    # Assert
-    assert "--json" in argv
+    remote = _remote_argv(_ssh_invocations(ssh_shim)[-1])
+    # Assert — the lead parses the peer's envelope to update its own row, so
+    # ``--json`` must reach the REMOTE command line. Membership was asserted
+    # on the raw ssh argv while the command still travelled as separate argv
+    # members; build_ssh_argv now joins it into one element, so the same
+    # property is asserted against the recovered remote command line.
+    assert "--json" in remote
 
 
 def test_cross_host_restart_does_not_call_local_agent_restart(
