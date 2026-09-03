@@ -178,7 +178,9 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:375",
         "scitex_agent_container/_listen/_deploy_freshness.py:227",
         "scitex_agent_container/_listen/_liveness_tick.py:123",
-        "scitex_agent_container/_listen/_node_channel_forwarders.py:177",
+        # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason
+        # now names where the tolerated non-JSON body goes (the a2a response
+        # the sender receives) instead of claiming it is "surfaced".
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:193",
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:226",
         "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
@@ -312,7 +314,7 @@ def test_no_new_unnamed_delivery_claim():
         "These `stx-allow` reasons claim the failure is logged/alerted/"
         "reported but name no sink. Name the path or channel in the comment "
         "(e.g. 'logged to runtime/logs/<name>.log') so the claim can be "
-        f"re-checked later:\n  " + "\n  ".join(sorted(new))
+        "re-checked later:\n  " + "\n  ".join(sorted(new))
     )
 
 
