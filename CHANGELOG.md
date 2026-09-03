@@ -18,10 +18,19 @@ versioning follows [SemVer](https://semver.org/).
   (`scitex-storage`) — and the root LV filled to 0 **four times** on
   2026-09-02, while `/scratch` on the same host is a separate 3.0 T volume with
   2.8 T free.
-  Each start now resolves the host scratch root once, creates
-  `<root>/sac/agents/<agent>/uvwork` (mode 0700, idempotent across restarts)
-  and appends `--bind <that>:/uvwork:rw` in the argv finalize layer, after
-  every spec-declared bind so a spec that binds `/uvwork` itself still wins.
+  Each start now resolves the host scratch root once and appends
+  `--bind <root>/sac/agents/<agent>/uvwork:/uvwork:rw` in the argv finalize
+  layer, after every spec-declared bind so a spec that binds `/uvwork` itself
+  still wins. The directory (mode 0700, idempotent across restarts) is created
+  on the REAL launch path only — `build_run_argv` is also what `sac agents
+  explain` and `sac agents start --dry-run` call, and a read-only command must
+  neither write to the host nor fail on a launch-time host condition; on a
+  host with no scratch root those two show the refusal a start would hit
+  instead of raising it. The per-agent directory is derived by ONE function
+  (`scratch_uvwork_dir_for`, keyed on the effective `config.name`) that the
+  launch bind and `scratch-migrate` both call, so the two cannot disagree —
+  they would for every `hosts:` spec, whose effective id carries a
+  `-<hostname>` suffix its spec directory name does not.
   No spec changes: `binds:` and `startup_commands` are untouched fleetwide.
 - **`scratch_root:` (and `scratch_root_reason:`) in the per-host
   `config.yaml`.** An absolute path, or the literal `none` — the written

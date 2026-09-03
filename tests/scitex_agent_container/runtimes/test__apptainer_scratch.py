@@ -21,6 +21,12 @@ detail:
   first bind to a destination and this default must behave like every other
   fleet default.
 
+Emitting the bind is READ-ONLY — one row here pins that no directory appears
+under the scratch root — and the rest of that split (the launch hook that
+creates the source and REFUSES on a host with nowhere to put it, and what a
+host with no scratch root at all does to each surface) lives in
+``test__apptainer_scratch_launch.py`` beside this file.
+
 No mocks (PA-306): real spec files, the real loader, real directories, the
 real argv builder. The only injected value is ``ScratchRoot`` — the
 resolver's own answer type, passed through the documented ``scratch``
@@ -36,7 +42,6 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container.config import load_config
 from scitex_agent_container._state.host_scratch import ScratchRoot, ScratchRootError
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes._apptainer_scratch import (
@@ -46,43 +51,16 @@ from scitex_agent_container.runtimes._apptainer_scratch import (
     scratch_uvwork_dir,
     uvwork_bind_flags,
 )
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
-_BASE_SPEC = """\
-apiVersion: scitex-agent-container/v3
-kind: Agent
-metadata:
-  labels:
-    project: t
-    sac-builtin: "off"
-spec:
-  runtime: tui
-  host: ${HOSTNAME}
-  workdir: /tmp/agt-work
-  apptainer:
-    image: /x.sif
-    binds: []
-  health:
-    enabled: true
-    interval: 60
-  restart:
-    policy: on-failure
-    max_retries: 3
-  claude:
-    model: claude-opus-4-8[1m]
-    flags:
-      - --dangerously-skip-permissions
-"""
+from tests.scitex_agent_container._helpers.scratch_agent import (
+    load_uvwork_agent,
+    uvwork_binds,
+)
 
 
 @pytest.fixture
 def agent_config(tmp_path: Path):
     """A real, loadable spec named ``agt`` (the directory name is the name)."""
-    spec_dir = tmp_path / "agents" / "agt"
-    spec_dir.mkdir(parents=True)
-    spec = spec_dir / "spec.yaml"
-    spec.write_text(explicitize_yaml(_BASE_SPEC), encoding="utf-8")
-    return load_config(str(spec))
+    return load_uvwork_agent(tmp_path)
 
 
 @pytest.fixture
@@ -233,17 +211,6 @@ def test_the_flags_bind_the_per_agent_directory_read_write(
     assert flags == ["--bind", expected]
 
 
-def test_emitting_the_flags_creates_the_source(
-    agent_config, scratch: ScratchRoot
-) -> None:
-    # Arrange — a bind whose source does not exist is a FATAL at exec.
-    target = scratch.root / "sac" / "agents" / "agt" / "uvwork"
-    # Act
-    uvwork_bind_flags(agent_config, [], scratch=scratch)
-    # Assert
-    assert target.is_dir()
-
-
 def test_a_written_none_decision_emits_no_bind(
     agent_config, no_scratch: ScratchRoot
 ) -> None:
@@ -304,17 +271,6 @@ def test_a_bind_whose_SOURCE_is_uvwork_does_not_suppress_the_default(
 # ---------------------------------------------------------------------------
 
 
-def _uvwork_binds(argv: list[str]) -> list[str]:
-    """Every ``--bind`` value in ``argv`` whose DESTINATION is ``/uvwork``."""
-    out = []
-    for i, arg in enumerate(argv):
-        if arg == "--bind" and i + 1 < len(argv):
-            parts = argv[i + 1].split(":")
-            if (parts[1] if len(parts) > 1 else parts[0]) == UVWORK_CONTAINER_PATH:
-                out.append(argv[i + 1])
-    return out
-
-
 @pytest.fixture
 def host_declares_scratch(tmp_path: Path, env_save_restore) -> Path:
     """A real config.yaml declaring a real scratch root for THIS host."""
@@ -350,7 +306,7 @@ def test_build_run_argv_binds_uvwork_from_the_host_scratch_root(
         tui=True,
     )
     # Assert
-    assert _uvwork_binds(argv) == [expected]
+    assert uvwork_binds(argv) == [expected]
 
 
 def test_build_run_argv_emits_no_uvwork_bind_on_a_none_host(
@@ -366,4 +322,22 @@ def test_build_run_argv_emits_no_uvwork_bind_on_a_none_host(
         tui=True,
     )
     # Assert
-    assert _uvwork_binds(argv) == []
+    assert uvwork_binds(argv) == []
+
+
+def test_build_run_argv_creates_nothing_under_the_scratch_root(
+    agent_config, tmp_path: Path, host_declares_scratch: Path
+) -> None:
+    # Arrange — `sac agents explain` and `sac agents start --dry-run` both
+    # call this builder and start nothing. The rest of that split, and the
+    # host with no scratch root at all, are in
+    # ``test__apptainer_scratch_launch.py`` beside this file.
+    # Act
+    build_run_argv(
+        agent_config,
+        state_dir=tmp_path / "state3",
+        sif_path=Path("/img/sac.sif"),
+        tui=True,
+    )
+    # Assert
+    assert list(host_declares_scratch.rglob("uvwork")) == []

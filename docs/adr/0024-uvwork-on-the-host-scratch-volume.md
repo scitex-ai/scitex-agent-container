@@ -111,14 +111,39 @@ write the `none` decision down).
 
 ### 2.3 The bind
 
-When a root resolves, `runtimes/_apptainer_scratch` creates
+When a root resolves, `runtimes/_apptainer_scratch` appends
+`--bind <that>:/uvwork:rw` to the flag argv, where *that* is
 
 ```
 <scratch_root>/sac/agents/<agent-name>/uvwork      mode 0700
 ```
 
-before exec and appends `--bind <that>:/uvwork:rw` to the flag argv. Notes
-that are decisions rather than details:
+and creates it — but the two halves happen at different moments, which is a
+decision, not an implementation detail. Notes that are decisions rather than
+details:
+
+* **The `<agent-name>` in that path is the EFFECTIVE id (`config.name`), and
+  exactly one function spells it** — `scratch_uvwork_dir_for`. The launch
+  bind and `sac agents scratch-migrate` both call it. They must, because for
+  a `hosts:` spec the effective id carries a `-<hostname>` suffix that the
+  spec *directory* name does not: two independent spellings would send the
+  migration's bytes to a path no launch ever mounts, and every step would
+  report success.
+* **The argv layer emits the bind READ-ONLY; the launch creates and
+  refuses.** `build_run_argv` is also what `sac agents explain` and
+  `sac agents start --dry-run` call, and neither starts anything. So
+  emitting the flag creates no directory and never raises on a host
+  condition: a host with no resolvable root gets a `WARNING`, an argv
+  without the bind, and an `explain` plan that names the refusal a real
+  start would hit. The mkdir and the `ScratchRootError` live in
+  `ensure_uvwork_for_launch`, called from `_apptainer_runtime.start` and
+  `tui_session.start` past their `dry_run` return — the placement
+  `verify_tmpfs_headroom` and `reconcile_overlay_venv_for_launch` already
+  use, for the reason the first of those records: a launch-time check inside
+  argv assembly made `explain` fail on exactly the full host it would have
+  diagnosed. The directory created is the one *that argv mounts* (the bind
+  source is read back out of it), so a spec that declared its own `/uvwork`
+  bind is left to its owner.
 
 * **Per agent.** An agent's venv, uv cache and `TMPDIR` are its private
   working set; two agents sharing one directory would share a venv.

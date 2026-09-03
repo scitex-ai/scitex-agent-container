@@ -353,3 +353,71 @@ def test_an_unselected_unreadable_spec_does_not_make_the_plan_unsafe(
     assert plan.safe_to_apply is True
 
 
+# ---------------------------------------------------------------------------
+# The destination is the LAUNCH's bind source — one derivation, not two
+# ---------------------------------------------------------------------------
+#
+# A ``hosts:`` spec's EFFECTIVE id carries a ``-<hostname>`` suffix, so its
+# spec DIRECTORY name and its ``config.name`` are different strings. The plan
+# used to key the destination on the directory name while the launch bind
+# keyed on ``config.name``: for every multi-instance agent on the fleet the
+# sweep would copy the tree to a path no launch will ever mount, verify the
+# copy against its source, delete the overlay original and report success.
+# Nothing fails; the next start just rebuilds uv and the venv from nothing.
+#
+# Three rows, one fact each: the fixture really is the divergent shape, the
+# destination really is the launch's bind source, and the ``host:`` shape —
+# where the two names coincide, and so where a same-key bug would hide —
+# still agrees.
+
+
+def _launch_bind_source(config, scratch: ScratchRoot) -> str:
+    """The ``--bind`` SOURCE the real argv builder would mount at /uvwork."""
+    from scitex_agent_container.runtimes._apptainer_scratch import uvwork_bind_flags
+
+    flags = uvwork_bind_flags(config, [], scratch=scratch)
+    return flags[1].split(":")[0]
+
+
+def test_a_hosts_spec_has_an_effective_name_the_directory_name_is_not(
+    fleet: Path,
+) -> None:
+    # Arrange — the positive control for the two rows below: without this
+    # difference they would pass against the very bug they exist to catch.
+    from scitex_agent_container.config import load_config
+
+    _write_agent(fleet, "multi", uvwork={"bin/uv": "x"}, multi_host=True)
+    # Act
+    config = load_config(str(fleet / "multi" / "spec.yaml"))
+    # Assert
+    assert config.name != "multi"
+
+
+def test_the_destination_for_a_hosts_spec_is_the_launch_bind_source(
+    fleet: Path, scratch: ScratchRoot
+) -> None:
+    # Arrange
+    from scitex_agent_container.config import load_config
+
+    _write_agent(fleet, "multi", uvwork={"bin/uv": "x"}, multi_host=True)
+    config = load_config(str(fleet / "multi" / "spec.yaml"))
+    # Act
+    plan = plan_scratch_migration(scratch, agents_root=fleet, liveness=STOPPED)
+    # Assert
+    assert str(_row(plan, "multi").dest) == _launch_bind_source(config, scratch)
+
+
+def test_the_destination_for_a_host_spec_is_the_launch_bind_source(
+    fleet: Path, scratch: ScratchRoot
+) -> None:
+    # Arrange — the singleton shape, where directory name == effective name.
+    from scitex_agent_container.config import load_config
+
+    _write_agent(fleet, "alpha", uvwork={"bin/uv": "x"})
+    config = load_config(str(fleet / "alpha" / "spec.yaml"))
+    # Act
+    plan = plan_scratch_migration(scratch, agents_root=fleet, liveness=STOPPED)
+    # Assert
+    assert str(_row(plan, "alpha").dest) == _launch_bind_source(config, scratch)
+
+

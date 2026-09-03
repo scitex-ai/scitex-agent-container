@@ -38,6 +38,7 @@ def write_scratch_agent(
     overlay: bool = True,
     overlay_size: str = "",
     overlay_dir: Path | None = None,
+    multi_host: bool = False,
 ) -> Path:
     """A real spec plus (optionally) a real overlay upper with real files.
 
@@ -46,6 +47,12 @@ def write_scratch_agent(
     fleet. ``overlay_size`` makes it a loopback IMAGE overlay, whose upper
     the host cannot walk. Returns the overlay's ``upper/uvwork`` path — the
     tree the sweep would move.
+
+    ``multi_host=True`` writes ``hosts:`` instead of ``host:`` — the
+    multi-instance shape, whose EFFECTIVE id is ``<dir>-<hostname>`` and so
+    differs from the spec directory name. That difference is the whole point
+    of the fixture: it is the only shape in which "keyed on the directory
+    name" and "keyed on the effective name" can disagree.
     """
     agent_dir = agents_dir / name
     agent_dir.mkdir(parents=True)
@@ -55,7 +62,10 @@ def write_scratch_agent(
         ap["overlay"] = str(overlay_root)
     if overlay_size:
         ap["overlay_size"] = overlay_size
-    doc = explicit_doc({"runtime": "tui", "workdir": str(agent_dir), "apptainer": ap})
+    spec: dict = {"runtime": "tui", "workdir": str(agent_dir), "apptainer": ap}
+    if multi_host:
+        spec["hosts"] = ["${HOSTNAME}"]
+    doc = explicit_doc(spec)
     (agent_dir / "spec.yaml").write_text(yaml.safe_dump(doc, sort_keys=False))
     source = overlay_root / "upper" / "uvwork"
     if uvwork is not None:

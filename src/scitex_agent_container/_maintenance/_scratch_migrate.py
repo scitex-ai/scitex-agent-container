@@ -29,6 +29,13 @@ What the plan refuses, and names:
 * an image (loopback) overlay — its upper is inside an ext3 image the host
   cannot walk.
 
+The destination is NOT computed here. It comes from
+:func:`..runtimes._apptainer_scratch.scratch_uvwork_dir_for`, the same call the
+launch bind makes, so "where the migration puts it" and "where the launch
+mounts from" cannot be two answers. They were: this module keyed on the spec
+DIRECTORY name while the bind keyed on the effective ``config.name``, which
+differ for every ``hosts:`` spec (``-<hostname>`` suffix).
+
 A spec that cannot be loaded is ``unreadable`` and makes the plan unsafe, the
 same distinction :mod:`._layers_migration_model` draws: a refusal is a spec the
 sweep looked at and declined; unreadable means the plan does not describe the
@@ -49,7 +56,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 from .._state.host_scratch import ScratchRoot
-from ..runtimes._apptainer_scratch import UVWORK_DIR_MODE, scratch_uvwork_dir
+from ..runtimes._apptainer_scratch import UVWORK_DIR_MODE, scratch_uvwork_dir_for
 from ._roster_state import RosterState, inspect_roster
 from ._scratch_migrate_liveness import (  # noqa: F401
     CONTAINER_MARKER_ENV,
@@ -183,7 +190,15 @@ def _row_for(
     agent: str, spec_path: Path, config, scratch_root: Path, liveness
 ) -> UvworkRow:
     source, why = _overlay_uvwork(config)
-    dest = scratch_uvwork_dir(scratch_root, agent)
+    # The destination is derived from the CONFIG, through the same function the
+    # launch bind calls — never re-spelled from ``agent`` (the spec DIRECTORY
+    # name). The two are the same string for a ``host:`` spec and DIFFERENT for
+    # a ``hosts:`` one, whose effective id carries a ``-<hostname>`` suffix, so
+    # keying the destination on the directory name moved every multi-instance
+    # agent's tree to a path no launch would ever mount: copy verified, overlay
+    # original deleted, "migrated" reported, and the next start rebuilding uv
+    # and the venv from scratch anyway. See ``_apptainer_scratch``'s docstring.
+    dest = scratch_uvwork_dir_for(scratch_root, config)
     if source is None:
         return UvworkRow(agent, spec_path, None, dest, 0, 0, None, "nothing", why)
     if not source.is_dir():

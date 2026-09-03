@@ -2455,12 +2455,7 @@ def test_default_listen_url_injected_when_no_config(tmp_path: Path) -> None:
 def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
     # Arrange
     cfg_yaml = tmp_path / "config.yaml"
-    # This test writes its OWN config.yaml and so overrides the conftest
-    # scratch_root floor. build_run_argv now resolves where /uvwork lives
-    # and REFUSES when neither /scratch nor a declared root exists -- that
-    # refusal is the point of the change, and CI has no /scratch. Declaring
-    # a root the test owns keeps it hermetic on any host.
-    cfg_yaml.write_text(f"scratch_root: {tmp_path}\nlisten:\n  port: 9090\n")
+    cfg_yaml.write_text("listen:\n  port: 9090\n")
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
@@ -2475,10 +2470,7 @@ def test_config_listen_port_propagates_to_env(tmp_path: Path, env_save_restore) 
 def test_config_listen_host_propagates_to_env(tmp_path: Path, env_save_restore) -> None:
     # Arrange
     cfg_yaml = tmp_path / "config.yaml"
-    # Same reason as the port test above: own config, own scratch_root.
-    cfg_yaml.write_text(
-        f"scratch_root: {tmp_path}\nlisten:\n  host: 100.64.1.2\n  port: 7878\n"
-    )
+    cfg_yaml.write_text("listen:\n  host: 100.64.1.2\n  port: 7878\n")
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg_yaml))
     rt = ApptainerContainerRuntime()
     cfg = _config(tmp_path)
