@@ -149,25 +149,24 @@ def _check_host_route(config) -> bool:
     operator might have chosen. It is a wrong answer to the only question this
     command exists to ask.
 
-    MEASURED 2026-09-05. ``scitex-orochi`` pins ``host: scitex-02`` and
-    ``compute-pilot-01`` pins ``host: scitex-01``. Both names were retired on
-    2026-08-12 when the peer table was re-keyed to ``scitex-compute-0N``
-    (config.yaml records why: the short forms resolve nowhere in DNS). The
-    re-key updated the registry and left these two specs pointing at names
-    that no longer exist::
+    MEASURED 2026-09-05. Two live specs pinned ``host: scitex-02`` and
+    ``host: scitex-01``. Both names were retired on 2026-08-12 when the peer
+    table was re-keyed to ``scitex-compute-0N`` (config.yaml records why: the
+    short forms resolve nowhere in DNS). The re-key updated the registry and
+    left those two specs pointing at names that no longer exist::
 
-        sac agents start scitex-orochi
+        sac agents start <agent>
             -> spec.host is neither this machine nor a registered peer
-        agent_spawn scitex-orochi
+        agent_spawn <agent>
             -> ssh: Could not resolve hostname scitex-02 (rc=255)
-        sac agents check scitex-orochi
+        sac agents check <agent>
             -> exit 0, "Ready to deploy."          <-- the bug this closes
 
     Both runtime paths failed correctly and loudly for two months. Only the
-    preflight was green, so scitex-orochi read as an agent that COULD start
-    and simply had not. Another agent's card waited on a review from it for
-    two months and was nearly closed as "orochi did not respond" rather than
-    "orochi could not be started" -- two very different records.
+    preflight was green, so an agent that COULD NOT start read as one that
+    simply had not. A peer's card waited on a review from one of them for two
+    months and was nearly closed as "the agent did not respond" rather than
+    "the agent could not be started" -- two very different records.
 
     NO REACHABILITY PROBE, deliberately. The resolver is called without an
     oracle, so a registered peer that is merely DOWN stays UNKNOWN, and UNKNOWN

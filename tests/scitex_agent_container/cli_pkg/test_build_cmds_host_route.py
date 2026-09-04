@@ -2,30 +2,38 @@
 
 THE BUG THESE PIN. Until 2026-09-05 the preflight validated the container
 backend, python, bind-path conventions and ``raw_args``, and never looked at
-``spec.host``. Two live specs pinned ``scitex-02`` / ``scitex-01`` -- names
-retired on 2026-08-12 when the peer table was re-keyed to
-``scitex-compute-0N``. Every runtime path refused them loudly::
+``spec.host``. Two live specs pinned host names retired on 2026-08-12, when the
+peer table was re-keyed to ``scitex-compute-0N``. Every runtime path refused
+them loudly::
 
-    sac agents start scitex-orochi
+    sac agents start <agent>
         -> spec.host is neither this machine nor a registered peer
-    agent_spawn scitex-orochi
+    agent_spawn <agent>
         -> ssh: Could not resolve hostname scitex-02 (rc=255)
 
 while the preflight answered ``exit 0, "Ready to deploy."``. So an agent that
 could not be launched at all read as one that simply had not been, for two
-months, and another agent nearly closed its blocked card as "orochi did not
-respond" rather than "orochi could not be started".
+months, and a peer nearly closed its blocked card as "the agent did not
+respond" rather than "the agent could not be started".
 
-THE PEER TABLE IS SUPPLIED PER TEST, on purpose. Under pytest the config
-cascade resolves to a temp root with no ``config.yaml``, so ``peers`` is empty
-and the check degrades to a WARN -- correctly, since an empty registry cannot
-convict a name. Every FAIL test therefore plants a real ``config.yaml`` and
-points ``$SCITEX_AGENT_CONTAINER_CONFIG`` at it, and one test pins the
-empty-registry degrade itself so that behaviour cannot silently become a FAIL.
+THESE TESTS ASSERT ON THE ``host:`` LINE, NOT ON THE OVERALL VERDICT, and that
+is deliberate. The overall verdict also depends on whether apptainer exists on
+the machine running the tests -- it does not exist on the CI runner, so every
+run there ends "Preflight checks failed" for an unrelated reason. Asserting the
+final verdict would make these tests report the state of the RUNNER rather than
+the behaviour under test. The green-path verdict is already covered by
+``test_build_cmds``, which plants a fake backend on ``PATH``.
 
-No mocks (PA-306), consistent with ``test_build_cmds``: real YAML on disk, real
-``load_config``, real routing. The network-purity test plants a real fake
-``ssh`` on ``PATH`` and asserts production code never invoked it.
+THE PEER TABLE IS SUPPLIED PER TEST. Under pytest the config cascade resolves
+to a temp root with no ``config.yaml``, so ``peers`` is empty and the check
+degrades to a WARN -- correctly, since an empty registry cannot convict a name.
+Every FAIL test therefore plants a real ``config.yaml``, and one test pins the
+empty-registry degrade so it cannot silently become a FAIL.
+
+No mocks (PA-306): real YAML on disk, real ``load_config``, real routing, and a
+plain ``os.environ`` save/restore fixture rather than ``monkeypatch``, which
+PA-306 §3 forbids. The network-purity test plants a real fake ``ssh`` on
+``PATH`` and asserts production code never invoked it.
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.build_cmds import check
@@ -52,6 +61,32 @@ peers:
   scitex-compute-02:
     ssh: scitex-compute-02
 """
+
+_HOST_LINE = "host:"
+
+
+@pytest.fixture
+def env_revert():
+    """Set env vars and revert them in teardown, without ``monkeypatch``.
+
+    PA-306 §3 forbids the ``monkeypatch`` fixture, so this mirrors the
+    class-scoped helper in ``runtimes/test_tui_session_real_smoke.py``: write
+    to ``os.environ`` directly, remember what was there, put it back.
+    """
+    saved: dict[str, str | None] = {}
+
+    def _set(key: str, value: str) -> None:
+        if key not in saved:
+            saved[key] = os.environ.get(key)
+        os.environ[key] = value
+
+    yield _set
+
+    for key, previous in saved.items():
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
 
 
 def _spec_body(host: str) -> str:
@@ -83,16 +118,35 @@ def _write(tmp_path: Path, host: str) -> Path:
     return spec
 
 
-def _register_peers(tmp_path: Path, monkeypatch) -> None:
+def _register_peers(tmp_path: Path, env_revert) -> None:
     """Give this test a real peer registry to judge the pin against."""
     cfg = tmp_path / "config.yaml"
     cfg.write_text(_PEER_CONFIG)
-    monkeypatch.setenv("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
+    env_revert("SCITEX_AGENT_CONTAINER_CONFIG", str(cfg))
 
 
-def test_check_with_unroutable_host_exits_one(tmp_path, monkeypatch):
+def _host_line(output: str) -> str:
+    """The one preflight line this module is about."""
+    for line in output.splitlines():
+        if line.strip().startswith(_HOST_LINE):
+            return line
+    return ""
+
+
+def test_check_with_unroutable_host_fails_the_host_line(tmp_path, env_revert):
     # Arrange
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
+    spec = _write(tmp_path, _UNROUTABLE)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(check, [str(spec)])
+    # Assert
+    assert "FAIL" in _host_line(result.output)
+
+
+def test_check_with_unroutable_host_exits_one(tmp_path, env_revert):
+    # Arrange
+    _register_peers(tmp_path, env_revert)
     spec = _write(tmp_path, _UNROUTABLE)
     runner = CliRunner()
     # Act
@@ -102,10 +156,10 @@ def test_check_with_unroutable_host_exits_one(tmp_path, monkeypatch):
 
 
 def test_check_with_unroutable_host_never_says_ready_to_deploy(
-    tmp_path, monkeypatch
+    tmp_path, env_revert
 ):
     # Arrange -- the regression this whole module exists for.
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
     spec = _write(tmp_path, _UNROUTABLE)
     runner = CliRunner()
     # Act
@@ -115,10 +169,10 @@ def test_check_with_unroutable_host_never_says_ready_to_deploy(
 
 
 def test_check_with_unroutable_host_names_the_offending_host(
-    tmp_path, monkeypatch
+    tmp_path, env_revert
 ):
     # Arrange
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
     spec = _write(tmp_path, _UNROUTABLE)
     runner = CliRunner()
     # Act
@@ -128,10 +182,10 @@ def test_check_with_unroutable_host_names_the_offending_host(
 
 
 def test_check_with_unroutable_host_lists_the_registered_peers(
-    tmp_path, monkeypatch
+    tmp_path, env_revert
 ):
     # Arrange -- an error must say what WOULD have been accepted.
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
     spec = _write(tmp_path, _UNROUTABLE)
     runner = CliRunner()
     # Act
@@ -140,27 +194,27 @@ def test_check_with_unroutable_host_lists_the_registered_peers(
     assert "scitex-compute-01" in result.output
 
 
-def test_check_with_registered_peer_host_reports_ready_to_deploy(
-    tmp_path, monkeypatch
+def test_check_with_a_registered_peer_passes_the_host_line(
+    tmp_path, env_revert
 ):
     # Arrange -- over-rejection control: a real peer must stay green.
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
     spec = _write(tmp_path, "scitex-compute-02")
     runner = CliRunner()
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
-    assert "Ready to deploy" in result.output
+    assert "OK" in _host_line(result.output)
 
 
-def test_check_with_no_peers_registered_degrades_to_warn(tmp_path):
+def test_check_with_no_peers_registered_warns_instead_of_failing(tmp_path):
     # Arrange -- an EMPTY registry is absence of evidence, not a bad pin.
     spec = _write(tmp_path, _UNROUTABLE)
     runner = CliRunner()
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
-    assert result.exit_code == 0
+    assert "WARN" in _host_line(result.output)
 
 
 def test_check_with_no_peers_registered_says_why_it_could_not_judge(tmp_path):
@@ -173,17 +227,17 @@ def test_check_with_no_peers_registered_says_why_it_could_not_judge(tmp_path):
     assert "no peers" in result.output
 
 
-def test_check_with_local_host_still_reports_ready_to_deploy(tmp_path):
+def test_check_with_the_local_host_passes_the_host_line(tmp_path):
     # Arrange -- this machine, named explicitly, is always routable.
     spec = _write(tmp_path, "${HOSTNAME}")
     runner = CliRunner()
     # Act
     result = runner.invoke(check, [str(spec)])
     # Assert
-    assert "Ready to deploy" in result.output
+    assert "OK" in _host_line(result.output)
 
 
-def test_check_with_local_host_reports_the_host_line_ok(tmp_path):
+def test_check_with_the_local_host_says_it_is_this_machine(tmp_path):
     # Arrange
     spec = _write(tmp_path, "${HOSTNAME}")
     runner = CliRunner()
@@ -193,18 +247,16 @@ def test_check_with_local_host_reports_the_host_line_ok(tmp_path):
     assert "this machine" in result.output
 
 
-def test_check_never_invokes_ssh(tmp_path, monkeypatch):
+def test_check_never_invokes_ssh(tmp_path, env_revert):
     # Arrange -- a REAL fake ssh on PATH; if the preflight probes, it runs.
-    _register_peers(tmp_path, monkeypatch)
+    _register_peers(tmp_path, env_revert)
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sentinel = tmp_path / "ssh-was-called"
     fake = bindir / "ssh"
     fake.write_text(f"#!/bin/sh\ntouch {sentinel}\nexit 0\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv(
-        "PATH", os.pathsep.join([str(bindir), os.environ.get("PATH", "")])
-    )
+    env_revert("PATH", os.pathsep.join([str(bindir), os.environ.get("PATH", "")]))
     spec = _write(tmp_path, "scitex-compute-02")
     runner = CliRunner()
     # Act
