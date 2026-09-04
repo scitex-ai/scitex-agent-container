@@ -68,6 +68,7 @@ def _dispatch_remote_start(
     *,
     dry_run: bool = False,
     force: bool = False,
+    engine: str | None = None,
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
@@ -176,11 +177,16 @@ def _dispatch_remote_start(
     # is pinned inside ``build_ssh_argv`` — the single choke point every
     # remote-sac invocation funnels through — so it is NOT injected here.
     # See ``_state/_host_ssh._scitex_dir_prefix``.
-    ssh_argv = build_ssh_argv(
-        peer,
-        ["sac", "agents", "start", name, "--no-redispatch", "--json"],
-        peers_map,
-    )
+    # THE ENGINE TRAVELS WITH THE VERB, same rule as the restart dispatch.
+    # This argv was a literal until 2026-09-05, so
+    # `sac agents start <peer-pinned-agent> --engine <e>` dropped the engine
+    # here and started the agent on its DEFAULT, with NO message at all. The
+    # restart path at least printed something; this one was silent, which is
+    # worse: the agent comes up, looks healthy, and runs the wrong backend.
+    remote_argv = ["sac", "agents", "start", name, "--no-redispatch", "--json"]
+    if engine:
+        remote_argv += ["--engine", engine]
+    ssh_argv = build_ssh_argv(peer, remote_argv, peers_map)
     ssh_result = subprocess.run(
         ssh_argv,
         capture_output=True,
@@ -264,6 +270,7 @@ def try_dispatch(
     *,
     dry_run: bool,
     force: bool,
+    engine: str | None = None,
     local_names: "Collection[str] | None" = None,
     reachability: "ReachabilityOracle | None" = None,
     dispatcher: "Callable[..., int] | None" = None,
@@ -311,6 +318,12 @@ def try_dispatch(
     :func:`_dispatch_remote_start` — injection seams so tests exercise the
     routing decision hermetically, with no network and no PATH shim.
 
+    ``engine`` is the CLI ``--engine <key>`` and is FORWARDED to the peer, so a
+    named engine survives the hop. An injected ``dispatcher`` therefore has to
+    accept the keyword; that is intentional, because a test double that silently
+    ignored it would pass while the production argv dropped it, which is exactly
+    the defect this parameter exists to close.
+
     Raises:
         RuntimeError: ``spec.host`` resolves nowhere usable (message body from
             ``_host_routing.format_route_error``).
@@ -337,6 +350,7 @@ def try_dispatch(
             peer=dispatch_peer,
             dry_run=dry_run,
             force=force,
+            engine=engine,
         )
     except Exception:
         # The failure is re-raised UNCHANGED — this only adds the sentence the

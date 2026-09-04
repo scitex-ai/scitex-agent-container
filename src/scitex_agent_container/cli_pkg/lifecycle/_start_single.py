@@ -198,6 +198,7 @@ def run_single_targets(
                         peers,
                         dry_run=dry_run,
                         force=force,
+                        engine=engine,
                     ):
                         continue
                 if skip:
