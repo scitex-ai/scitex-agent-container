@@ -100,6 +100,12 @@ def check(name_or_path: str) -> None:
     if not _check_raw_args(config):
         all_ok = False
 
+    # `host:` as a ROUTE, not merely a string. Every runtime path already
+    # refuses an unroutable pin; until this call existed the PREFLIGHT was the
+    # one place that said "Ready to deploy" about an agent nobody could start.
+    if not _check_host_route(config):
+        all_ok = False
+
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
     else:
@@ -131,6 +137,119 @@ def _check_raw_args(config) -> bool:
         console.print(f"[red]{exc}[/red]")
         return False
     console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
+    return True
+
+
+def _check_host_route(config) -> bool:
+    """Report whether ``spec.host`` names a machine sac can dispatch to.
+
+    FAILS the preflight rather than warning, for the same reason
+    :func:`_check_raw_args` does: every runtime path already treats an
+    unroutable ``host:`` as fatal, so passing one is not a deviation the
+    operator might have chosen. It is a wrong answer to the only question this
+    command exists to ask.
+
+    MEASURED 2026-09-05. ``scitex-orochi`` pins ``host: scitex-02`` and
+    ``compute-pilot-01`` pins ``host: scitex-01``. Both names were retired on
+    2026-08-12 when the peer table was re-keyed to ``scitex-compute-0N``
+    (config.yaml records why: the short forms resolve nowhere in DNS). The
+    re-key updated the registry and left these two specs pointing at names
+    that no longer exist::
+
+        sac agents start scitex-orochi
+            -> spec.host is neither this machine nor a registered peer
+        agent_spawn scitex-orochi
+            -> ssh: Could not resolve hostname scitex-02 (rc=255)
+        sac agents check scitex-orochi
+            -> exit 0, "Ready to deploy."          <-- the bug this closes
+
+    Both runtime paths failed correctly and loudly for two months. Only the
+    preflight was green, so scitex-orochi read as an agent that COULD start
+    and simply had not. Another agent's card waited on a review from it for
+    two months and was nearly closed as "orochi did not respond" rather than
+    "orochi could not be started" -- two very different records.
+
+    NO REACHABILITY PROBE, deliberately. The resolver is called without an
+    oracle, so a registered peer that is merely DOWN stays UNKNOWN, and UNKNOWN
+    never rejects (see :mod:`.lifecycle._host_chain`). This command answers "is
+    this spec well-formed?"; "is that machine up right now?" is
+    ``sac host probe``'s question. Folding them would cost an ssh round-trip
+    per check and fail preflights on a transient blip -- turning a spec
+    validator into a fleet monitor.
+
+    Degrades to WARN when the peer table or this machine's own hostname cannot
+    be resolved. With no registry to judge against there is no EVIDENCE of a
+    bad name, and rejecting on absent evidence is the exact UNKNOWN-collapse
+    the routing modules forbid.
+    """
+    from .lifecycle._host_chain import UNROUTABLE, chain_hosts
+
+    spec_host = getattr(getattr(config, "hosts_spec", None), "host", None)
+    if not chain_hosts(spec_host):
+        console.print(
+            f"  {'host:':30s} [green]OK (unpinned - starts on this machine)"
+            f"[/green]"
+        )
+        return True
+
+    # stx-allow: fallback (reason: an unloadable peer table or unresolvable
+    # local hostname is absence of evidence, not evidence of a bad pin; the
+    # check degrades to a warning rather than rejecting a spec it cannot judge)
+    try:
+        from .._state.host_config import load as _load_host_config
+        from ..config._host import resolve_hostname
+        from .lifecycle._host_identity import _local_host_names
+
+        peers = _load_host_config().peers
+        current_host = resolve_hostname()
+        local_names = _local_host_names(current_host)
+    except Exception as exc:
+        console.print(
+            f"  {'host:':30s} [yellow]WARN (cannot verify pin: {exc})[/yellow]"
+        )
+        return True
+
+    from .lifecycle._host_routing import (
+        format_route_error,
+        resolve_spec_host_route,
+    )
+
+    route = resolve_spec_host_route(
+        spec_host, current_host, peers, local_names=local_names
+    )
+    if route.kind == UNROUTABLE and not peers:
+        # An EMPTY peer table cannot convict a name. On a machine that has
+        # never been given a `peers:` section every non-local pin would
+        # otherwise fail here, turning \"this fleet is not configured yet\"
+        # into \"your spec is wrong\" -- the misattributed-error shape this
+        # whole check exists to remove.
+        console.print(
+            f"  {'host:':30s} [yellow]WARN (not this machine, and no peers "
+            f"are registered to check it against)[/yellow]"
+        )
+        return True
+
+    if route.kind == UNROUTABLE:
+        console.print(f"  {'host:':30s} [red]FAIL[/red]")
+        console.print(
+            "[red]"
+            + format_route_error(
+                config.name,
+                spec_host,
+                route,
+                peers,
+                verb="start",
+                current_host=current_host or "",
+                local_names=local_names,
+            )
+            + "[/red]"
+        )
+        return False
+
+    where = "this machine" if route.kind == "local" else f"peer {route.peer}"
+    console.print(
+        f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]"
+    )
     return True
 
 
