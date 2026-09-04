@@ -223,7 +223,7 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:157",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:186",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",
-        "scitex_agent_container/cli_pkg/build_cmds.py:198",
+        "scitex_agent_container/cli_pkg/build_cmds.py:316",
         "scitex_agent_container/cli_pkg/hook_cmds.py:46",
         # _tui_outbound.py and _tui_turn_bridge.py LEFT THIS SET 2026-08-20 —
         # both reasons now name their sink. MEASURED before writing it, because
