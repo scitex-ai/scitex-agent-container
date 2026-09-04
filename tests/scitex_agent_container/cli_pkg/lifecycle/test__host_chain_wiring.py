@@ -60,14 +60,31 @@ def _oracle(**verdicts: str):
 
 
 def _recorder():
-    """Recording stand-in for ``_dispatch_remote_start`` (the ssh handoff)."""
-    seen: list[str] = []
+    """Recording stand-in for ``_dispatch_remote_start`` (the ssh handoff).
 
-    def _fn(*, name: str, peer: str, dry_run: bool, force: bool) -> int:
+    ``engine`` is accepted and RECORDED rather than swallowed by a ``**kwargs``.
+    A double that quietly absorbed it would keep passing while the production
+    argv dropped the flag, which is the exact defect the parameter closes: the
+    cross-host dispatch built a literal argv with no engine field, so an
+    ``--engine`` chosen on the lead never reached the peer.
+    """
+    seen: list[str] = []
+    engines: list[str | None] = []
+
+    def _fn(
+        *,
+        name: str,
+        peer: str,
+        dry_run: bool,
+        force: bool,
+        engine: str | None = None,
+    ) -> int:
         seen.append(peer)
+        engines.append(engine)
         return 0
 
     _fn.seen = seen  # type: ignore[attr-defined]
+    _fn.engines = engines  # type: ignore[attr-defined]
     return _fn
 
 

@@ -89,8 +89,45 @@ def log_restart_decision(**entry: Any) -> None:
         logger.warning("restart decision log append failed at %s: %s", path, exc)
 
 
-def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> dict:
+def remote_restart_argv(name: str, engine: str | None = None) -> list[str]:
+    """The argv the peer runs for a cross-host restart.
+
+    Split out from :func:`_dispatch_remote_restart` so the forwarding can be
+    asserted without an ssh round-trip. That matters more than it looks: the
+    defect this closes was invisible precisely because the argv was a literal
+    buried inside a function whose other half does network IO and database
+    writes, so nothing could examine it cheaply.
+
+    THE ENGINE TRAVELS WITH THE VERB. Until 2026-09-05 this list had no engine
+    field, and ``--engine`` was answered on the LEAD by a refusal printed AFTER
+    the dispatch had already restarted the agent on its default engine.
+    Forwarding it is the fix: the flag now means the same thing from any host,
+    which is the only way ``sac agents restart <a> --engine <e>`` can be one
+    command rather than a command plus a note about which machine to type it on.
+
+    A peer whose sac predates ``--engine`` REFUSES the unknown option, and the
+    caller raises with its stderr. That is deliberate. A silent start on the
+    wrong engine is the failure being removed, so a loud "no such option" is
+    strictly better than the peer quietly obeying half the request.
+    """
+    argv = ["sac", "agents", "restart", name, "--yes", "--json"]
+    if engine:
+        argv += ["--engine", engine]
+    return argv
+
+
+def _dispatch_remote_restart(
+    peer: str,
+    row: dict,
+    peers: dict,
+    name: str,
+    engine: str | None = None,
+) -> dict:
     """SSH into ``peer`` and run ``sac agents restart <name> --yes --json``.
+
+    ``engine`` (CLI ``--engine <key>``) is appended to the remote argv when
+    set, so a named engine chosen on the lead reaches the machine that
+    actually performs the restart.
 
     The remote restart closes the agent's old instance row and opens a
     fresh one on the peer. Mirror that on the lead side: close the stale
@@ -102,11 +139,7 @@ def _dispatch_remote_restart(peer: str, row: dict, peers: dict, name: str) -> di
     (no-silent-fallback rule). Returns the parsed JSON envelope from the
     peer's stdout.
     """
-    ssh_argv = build_ssh_argv(
-        peer,
-        ["sac", "agents", "restart", name, "--yes", "--json"],
-        peers,
-    )
+    ssh_argv = build_ssh_argv(peer, remote_restart_argv(name, engine), peers)
     result = subprocess.run(
         ssh_argv,
         capture_output=True,

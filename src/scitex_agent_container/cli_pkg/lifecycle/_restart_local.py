@@ -100,12 +100,19 @@ def _restart_locally(
 
     ``engine`` (CLI ``--engine <key>``) selects one of the backends the
     spec declares under ``spec.engines`` for the START leg of this
-    restart. It is honoured on the LOCAL leg only: the cross-host ssh
-    dispatch below re-runs ``sac agents restart`` on the peer through an
-    argv this function does not build, so an engine passed here would be
-    DROPPED and the peer would restart the agent on its default engine —
-    the silent fallback the engine axis exists to refuse. That case fails
-    loud naming the command to run on the peer instead.
+    restart, and it is honoured on BOTH legs. The cross-host ssh dispatch
+    below FORWARDS it to the peer, so the flag means the same thing
+    wherever the command is typed.
+
+    IT DID NOT UNTIL 2026-09-05, AND THE OLD SHAPE IS WORTH RECORDING. The
+    dispatch ran first and a refusal was printed afterwards, saying the
+    engine "would be silently dropped" — future conditional, for something
+    that had already happened. By the time anyone read it the peer had
+    restarted the agent on its DEFAULT engine, the lead had closed the old
+    instances row and opened a new one, and the CLI reported
+    ``restarted: false``. The message described a hypothetical while the real
+    state had already moved, and "the flag was refused" and "the flag was
+    ignored and the work was done anyway" are not the same event.
     """
     # Set when the start leg no-op'd over a live agent instead of cycling
     # it, or when the postcondition check refuted the cycle; surfaced as
@@ -122,8 +129,10 @@ def _restart_locally(
     peers = _load_host_config().peers
     envelope_holder: dict = {}
 
-    def _handler(peer, row, ps, _name=name, _holder=envelope_holder):
-        _holder.update(_dispatch_remote_restart(peer, row, ps, _name))
+    def _handler(
+        peer, row, ps, _name=name, _holder=envelope_holder, _engine=engine
+    ):
+        _holder.update(_dispatch_remote_restart(peer, row, ps, _name, _engine))
         _holder["_peer"] = peer
 
     dispatched = try_dispatch_remote(name, "restart", peers, handler=_handler)
@@ -134,18 +143,6 @@ def _restart_locally(
         if spec_peer is not None:
             _handler(spec_peer, {}, peers)
             dispatched = True
-    if dispatched and engine:
-        msg = (
-            f"--engine {engine!r} cannot be honoured for {name!r}: that "
-            "agent runs on a PEER, and the cross-host restart re-runs "
-            "`sac agents restart` there through an argv that carries no "
-            "engine field — the engine would be silently dropped and the "
-            "agent would restart on its DEFAULT engine. Run on the peer "
-            f"that holds it: sac agents restart {name} --engine {engine}"
-        )
-        if not as_json:
-            console.print(f"[red]{msg}[/red]")
-        return {"name": name, "error": msg, "restarted": False}, False
     if dispatched:
         # Trust the PEER'S OWN verdict, not the mere fact that ssh exited
         # 0. The peer runs `sac agents restart --json`, whose envelope
