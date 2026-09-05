@@ -92,6 +92,8 @@ a forked child (the concurrency tests use ``multiprocessing``) never reuses
 
 from __future__ import annotations
 
+import logging
+
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -102,6 +104,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: greppable across the migration and in operator muscle memory.
 #: ``scitex_dev.store`` renders it as four physical tables (``<name>_rows``,
 #: ``_oplog``, ``_identity``, ``_cursor``).
+logger = logging.getLogger(__name__)
+
 STORE_NAME = "a2a_ports"
 
 #: Recorded on every write as the acting component.
@@ -246,7 +250,21 @@ def port_store() -> "Store":
         if _STORE_CACHE is not None:
             cached_key, cached_pid, cached = _STORE_CACHE
             if cached_key == target and cached_pid == pid:
-                return cached
+                if not _handle_is_closed(cached):
+                    return cached
+                # The peer closed the connection under the cache (a pooler
+                # or server restart, an idle cut) and psycopg has already
+                # marked it closed. Every later call would raise
+                # "the connection is closed" forever — measured 2026-09-05:
+                # the tui-bridge-supervisor skipped every tick for two hours
+                # on two hosts (card sac-tui-bridge-supervisor-skips-every-
+                # tick-after-its-db-connection-closes-20260905). A closed
+                # handle is not a handle; reopen and say so once.
+                logger.warning(
+                    "port_store: the cached claim-ledger connection is "
+                    "closed (pid %d); reopening it",
+                    pid,
+                )
             # A fork inherited the parent's connection through the same fd:
             # closing it HERE would send a termination on the parent's
             # socket. Only the same process that opened a handle may close
@@ -257,6 +275,20 @@ def port_store() -> "Store":
         fresh = open_port_store()
         _STORE_CACHE = (target, pid, fresh)
         return fresh
+
+
+def _handle_is_closed(store: "Store") -> bool:
+    """True when the store's psycopg connection reports itself closed.
+
+    A LOCAL check, no round trip: psycopg sets ``connection.closed`` the
+    moment an operation finds the peer gone, and the message every later
+    call raises ("the connection is closed") is exactly this flag. A
+    handle with no such attribute (a dialect that is not psycopg) is
+    treated as open — this guard exists for the one failure that was
+    measured, not to second-guess every backend.
+    """
+    connection = getattr(store, "_connection", None)
+    return bool(getattr(connection, "closed", False))
 
 
 def _reset_store_cache() -> None:
