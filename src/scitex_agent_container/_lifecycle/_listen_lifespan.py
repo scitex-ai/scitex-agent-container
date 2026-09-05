@@ -196,7 +196,7 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         # Liveness-tick reconciler (card sac-card-anchored-stop-reconciler):
         # deterministic alarm-engine producer — reads cards (truth) vs.
         # real agent activity and emits an anomaly on the
-        # ``scitex_todo.hooks`` bus when an OPEN, unblocked card's owner is
+        # ``scitex_cards.hooks`` bus when an OPEN, unblocked card's owner is
         # dead/idle past the stale threshold. Its FS/registry reads route
         # through ``_off_loop`` so it can never starve the bind. Honour
         # SAC_LIVENESS_TICK_DISABLED=1 to skip launching.
@@ -223,7 +223,7 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         # Each tick does a ``git fetch`` + ``rev-list`` (OFF the event loop
         # via ``_off_loop`` so a wedged fetch can never starve the bind) and,
         # when the checkout is behind origin/develop, FAILS LOUD: a warning
-        # log + an anomaly on the ``scitex_todo.hooks`` bus. Sleeps before
+        # log + an anomaly on the ``scitex_cards.hooks`` bus. Sleeps before
         # the first tick. Honour SAC_DEPLOY_FRESHNESS_DISABLED=1 to skip.
         if os.environ.get(DEPLOY_FRESHNESS_ENV_DISABLED, "") != "1":
             df_task = asyncio.create_task(

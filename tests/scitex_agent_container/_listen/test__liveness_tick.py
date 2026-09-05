@@ -109,13 +109,13 @@ class TestDefaults:
         # Assert
         assert observed == 3600.0
 
-    def test_entry_point_group_is_scitex_todo_hooks(self) -> None:
+    def test_entry_point_group_is_scitex_cards_hooks(self) -> None:
         # Arrange
         constant = HOOKS_ENTRY_POINT_GROUP
         # Act
         observed = constant
         # Assert
-        assert observed == "scitex_todo.hooks"
+        assert observed == "scitex_cards.hooks"
 
 
 # ===========================================================================

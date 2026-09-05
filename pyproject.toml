@@ -530,45 +530,18 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # a2a port is unreachable inbound) still receives it. The consumer
 # filters for the card-event kinds and ignores everything else, incl.
 # sac's OWN liveness-tick anomaly events on the same bus. Bus-only
-# contract: no import of scitex_todo.
-# DECLARED IN BOTH GROUPS, and the duplication is the correct migration
-# state — not an oversight to tidy up later.
+# contract: no import of scitex_cards.
 #
-# MEASURED 2026-08-20 by scitex-cards: this consumer has NEVER been invoked in
-# production. The running notify daemon executes scitex-cards 0.42.0, whose
-# `_hooks/_plugins.py` reads `scitex_cards.hooks` and has ZERO references to
-# the retired group. sac was registered only under the retired name, so every
-# card event was dispatched to an EMPTY SET — succeeded, reported success,
-# called nobody. Corroborating symptoms, all explained by that one fact:
-#
-#     notifyd-liveness.json  last_delivery_at: null   never delivered, ever
-#     local inbox            150 rows, all unseen     enqueued, never pushed
-#     agents still get cards                          the PULL rail is separate
-#
-# Nothing anywhere reported a failure. That is the signature of this defect
-# class, and scitex-cards' own docstring recorded the identical state on
-# 2026-08-17 — the fix shipped in 0.48.0 and has never executed, because the
-# unit whose Description reads "supervised so a package upgrade actually
-# reaches it" points ExecStart at a hand-made venv that `pip install -U` never
-# touches.
-#
-# WHY BOTH RATHER THAN A MOVE. 0.42.0 (running now) reads only the new group,
-# so adding it revives delivery immediately. 0.48.0 reads both and dedupes, so
-# nothing double-fires. And leaving the retired entry in place preserves the
-# fleet's only registration under that name, which is what lets scitex-cards
-# verify the alias actually works when 0.48.0 finally runs — deleting it would
-# make "the alias works" indistinguishable from "nobody was left".
-#
-# THE NAME AND THE DOTTED PATH MUST STAY BYTE-IDENTICAL between the two
-# blocks. 0.48.0 dedupes on the tuple `(ep.name, ep.value)`:
-#
-#     seen  = {(ep.name, ep.value) for ep in current}
-#     extra = [ep for ep in retired if (ep.name, ep.value) not in seen]
-#
-# so renaming the entry or moving the callable on one side only turns the
-# alias meant to FIX delivery into a double-delivery bug. A migration is
-# exactly when tidying a name is tempting; do not, until the retired block
-# goes away entirely.
+# HISTORY. Until 2026-09-05 this consumer was ALSO registered under the retired
+# group name `scitex_todo.hooks`: scitex-cards 0.42.0 read only the new group
+# (so the new block revived delivery), and 0.46.0+ read both and deduped on
+# `(ep.name, ep.value)`, so the duplicate dispatched exactly once per event
+# while giving scitex-cards a live registration to verify the alias against.
+# scitex-cards confirmed on 2026-09-05 that the alias had been exercised on
+# every card event for three weeks and declared the retired group closed, so
+# the duplicate was removed. Do not re-add it: a second registration whose
+# name or dotted path drifts from this one turns the dedupe into a
+# double-delivery bug.
 #
 # C10 — sac's consumer on the shared card-event bus. When the board emits a
 # card-event (commented / created / reassigned / status_changed / completed /
@@ -581,13 +554,6 @@ scitex-agent-container = "scitex_agent_container._store_plugin:provide"
 # anomaly events on the same bus. Bus-only contract: no import of the board
 # package.
 [project.entry-points."scitex_cards.hooks"]
-scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
-
-# The retired spelling, kept deliberately. See the note above: it is the
-# fleet's only registration under this group and therefore the only way to
-# verify the 0.48.0 alias when it runs. Remove it only once that verification
-# has happened and scitex-cards says the group is closed.
-[project.entry-points."scitex_todo.hooks"]
 scitex-agent-container = "scitex_agent_container._listen._card_event_delivery:deliver_card_event"
 
 # Claude Code hook RULES sac declares about its own surfaces. sac owns the

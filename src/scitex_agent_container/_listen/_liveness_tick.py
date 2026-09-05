@@ -9,7 +9,7 @@ a stuck/crashed agent can never sit silent.
 
 SEPARATION OF CONCERNS (locked with the scitex-todo team): **sac only
 DETECTS and EMITS.** sac does NOT write to the card store. We emit an
-anomaly event on the ``scitex_todo.hooks`` entry-point bus; scitex-todo's
+anomaly event on the ``scitex_cards.hooks`` entry-point bus; scitex-todo's
 own consumer (registered separately, on their side) turns it into a card
 record + operator push. Nothing here writes ``tasks.yaml``.
 
@@ -73,14 +73,14 @@ DEFAULT_RENOTIFY_S = 3600.0
 # its consumer here (separately, on their side); sac is the FIRST
 # producer — until a consumer is registered the emit degrades to a logged
 # line.
-HOOKS_ENTRY_POINT_GROUP = "scitex_todo.hooks"
+HOOKS_ENTRY_POINT_GROUP = "scitex_cards.hooks"
 
 
 # --- bus emit (degrade gracefully) ------------------------------------------
 
 
 def _load_hook_consumers() -> list[Callable[[dict], Any]]:
-    """Load every callable registered on the ``scitex_todo.hooks`` group.
+    """Load every callable registered on the ``scitex_cards.hooks`` group.
 
     Uses the stdlib selectable ``entry_points`` API. Fail-soft per entry:
     one un-loadable entry-point contributes nothing. Returns ``[]`` when
@@ -122,7 +122,7 @@ def emit_anomaly(event: dict, consumers: Iterable[Callable[[dict], Any]]) -> int
             delivered += 1
         except Exception as exc:  # stx-allow: fallback (a consumer failure must never crash the alarm loop)
             logger.warning(
-                "liveness_tick: scitex_todo.hooks consumer %r raised on emit "
+                "liveness_tick: scitex_cards.hooks consumer %r raised on emit "
                 "(%s); continuing — the alarm loop must stay up",
                 getattr(fn, "__name__", fn),
                 exc,
@@ -156,7 +156,7 @@ async def liveness_tick_reconciler_loop(
     Each tick: resolve ``tasks.yaml`` + owner liveness OFF the event loop
     (bind-safe), run the pure :func:`find_stuck_cards` rule, and emit one
     anomaly event per newly-stuck ``(agent, card_id)`` onto the
-    ``scitex_todo.hooks`` bus. DEDUP: at most one emit per ``(agent,
+    ``scitex_cards.hooks`` bus. DEDUP: at most one emit per ``(agent,
     card_id)`` per ``renotify_s`` cooldown (in-memory; the daemon is
     long-running), so a persistently-stuck card does NOT spam per tick.
 

@@ -1,4 +1,4 @@
-"""Unit tests for the C10 ``scitex_todo.hooks`` consumer.
+"""Unit tests for the C10 ``scitex_cards.hooks`` consumer.
 
 Mirrors ``src/scitex_agent_container/_listen/_card_event_delivery.py``
 (PS-204 §2).
