@@ -19,6 +19,7 @@ and a descriptive name (TQ003).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,34 @@ def test_provider_argv_omits_oauth_config_dir(
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
     # Assert
     assert "CLAUDE_CONFIG_DIR=/tmp/sac-claude" not in argv
+
+
+def test_provider_argv_binds_the_seeded_config_dir(
+    tmp_path: Path, home_redirect: Path, env_save_restore
+):
+    # Arrange — the per-agent CLAUDE_CONFIG_DIR must be backed by a host dir,
+    # or the TUI boots into an empty one and runs first-run onboarding.
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-deepseek-secret")
+    cfg = _provider_config(tmp_path / "wd")
+    # Act
+    argv = auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    assert f"{tmp_path / 'state' / 'provider-cfg'}:/tmp/sac-ds-provider-cfg:rw" in argv
+
+
+def test_provider_argv_seeds_onboarding_into_that_dir(
+    tmp_path: Path, home_redirect: Path, env_save_restore
+):
+    # Arrange
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-deepseek-secret")
+    cfg = _provider_config(tmp_path / "wd")
+    # Act
+    auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    seeded = json.loads(
+        (tmp_path / "state" / "provider-cfg" / ".claude.json").read_text()
+    )
+    assert seeded["hasCompletedOnboarding"] is True
 
 
 # ---------------------------------------------------------------------------

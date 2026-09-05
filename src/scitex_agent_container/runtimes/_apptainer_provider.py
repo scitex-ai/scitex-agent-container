@@ -117,6 +117,7 @@ from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 from ..config._harness_registry import known_harnesses
+from ._apptainer_provider_cfg import container_config_dir
 
 
 class ProviderEnvError(RuntimeError):
@@ -138,6 +139,47 @@ def provider_active(config: AgentConfig) -> bool:
     """
     provider = _provider_spec(config)
     return bool(provider is not None and getattr(provider, "base_url", ""))
+
+
+def resolve_provider_api_key(config: AgentConfig) -> str:
+    """Resolve the provider API key VALUE for ``config`` (fail-loud).
+
+    Shared by :func:`provider_env_flags` (which injects it into the
+    container env) and :mod:`._apptainer_provider_cfg` (which pre-approves
+    it in the config dir), so the two can never disagree about which key
+    the agent runs on. Raises :class:`ProviderEnvError` when
+    ``provider.auth_token_env`` is empty or resolves to nothing after the
+    scitex-config cascade (see module docstring). The value is never
+    logged by sac.
+    """
+    provider = _provider_spec(config)
+    auth_token_env = getattr(provider, "auth_token_env", "")
+    if not auth_token_env:
+        raise ProviderEnvError(
+            "spec.claude.provider.auth_token_env is empty; cannot resolve "
+            "the backend API key. Set it to the NAME of the host env var "
+            "holding the key (e.g. DEEPSEEK_API_KEY)."
+        )
+
+    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
+    # load_dotenv() is no-op-safe — already-set process env always wins,
+    # so calling it on every provider-env resolution is cheap and
+    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
+    # surprise of the default load_dotenv() search order.
+    load_dotenv(dotenv_path=str(Path.home() / ".env"))
+    resolver = PriorityConfig(auto_uppercase=False)
+    api_key = resolver.resolve(key=auth_token_env, default="")
+    if not api_key:
+        raise ProviderEnvError(
+            f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
+            "not be resolved through scitex-config (direct → config → env "
+            "→ default cascade). Set the key by EITHER exporting "
+            f"{auth_token_env} in the shell that runs `sac agents start` "
+            f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
+            "(chmod 0600). sac reads the value at start and never logs "
+            "it; PriorityConfig auto-masks it in the resolution log."
+        )
+    return api_key
 
 
 def provider_env_flags(config: AgentConfig) -> list[str]:
@@ -167,36 +209,11 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
         )
 
     base_url = getattr(provider, "base_url", "")
-    auth_token_env = getattr(provider, "auth_token_env", "")
-    if not auth_token_env:
-        raise ProviderEnvError(
-            "spec.claude.provider.auth_token_env is empty; cannot resolve "
-            "the backend API key. Set it to the NAME of the host env var "
-            "holding the key (e.g. DEEPSEEK_API_KEY)."
-        )
-
-    # SciTeX-ecosystem precedence: shell-export > $HOME/.env > default.
-    # load_dotenv() is no-op-safe — already-set process env always wins,
-    # so calling it on every provider-env resolution is cheap and
-    # idempotent. Path is pinned to $HOME/.env to avoid the cwd-first
-    # surprise of the default load_dotenv() search order.
-    load_dotenv(dotenv_path=str(Path.home() / ".env"))
-    resolver = PriorityConfig(auto_uppercase=False)
-    api_key = resolver.resolve(key=auth_token_env, default="")
-    if not api_key:
-        raise ProviderEnvError(
-            f"spec.claude.provider.auth_token_env='{auth_token_env}' could "
-            "not be resolved through scitex-config (direct → config → env "
-            "→ default cascade). Set the key by EITHER exporting "
-            f"{auth_token_env} in the shell that runs `sac agents start` "
-            f"OR adding the line `{auth_token_env}=...` to $HOME/.env "
-            "(chmod 0600). sac reads the value at start and never logs "
-            "it; PriorityConfig auto-masks it in the resolution log."
-        )
+    api_key = resolve_provider_api_key(config)
 
     # Per-agent clean config dir — the conflict-breaker. Distinct from the
     # OAuth path's /tmp/sac-claude so a stale OAuth bind can never win.
-    config_dir = f"/tmp/sac-{config.name}-provider-cfg"
+    config_dir = container_config_dir(config.name)
     flags = [
         "--env",
         f"ANTHROPIC_BASE_URL={base_url}",
@@ -440,5 +457,6 @@ __all__ = [
     "openai_harness_active",
     "provider_active",
     "provider_env_flags",
+    "resolve_provider_api_key",
     "resolve_agent_harness",
 ]
