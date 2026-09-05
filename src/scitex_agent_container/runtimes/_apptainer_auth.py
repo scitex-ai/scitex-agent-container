@@ -56,6 +56,19 @@ from ._apptainer_provider import (
     resolve_provider_api_key,
 )
 from ._apptainer_provider_cfg import provider_config_dir_flags
+from ._to_home_overlay import resolve_container_home
+
+
+def _transcript_home(config: AgentConfig) -> Path | None:
+    """The host dir backing the container home, most specific first, or None.
+
+    Reuses the TUI argv gate's candidate list so the place a provider agent's
+    conversation store is linked to is the same place ``-c`` looks for one.
+    """
+    from ._apptainer_inner_argv_tui import _candidate_transcript_homes
+
+    homes = _candidate_transcript_homes(config)
+    return Path(homes[0]) if homes else None
 
 
 def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
@@ -106,6 +119,8 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
                 name=config.name,
                 workdir=str(workdir),
                 api_key=resolve_provider_api_key(config),
+                container_home=resolve_container_home(config),
+                transcript_home=_transcript_home(config),
             )
         )
 

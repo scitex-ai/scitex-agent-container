@@ -20,6 +20,7 @@ and a descriptive name (TQ003).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -142,6 +143,20 @@ def test_provider_argv_seeds_onboarding_into_that_dir(
         (tmp_path / "state" / "provider-cfg" / ".claude.json").read_text()
     )
     assert seeded["hasCompletedOnboarding"] is True
+
+
+def test_provider_argv_links_the_conversation_store(
+    tmp_path: Path, home_redirect: Path, env_save_restore
+):
+    # Arrange — a resume-pinned spec must find its transcript under the
+    # provider config dir, i.e. the container home's own store.
+    env_save_restore.set("DEEPSEEK_API_KEY", "sk-deepseek-secret")
+    cfg = _provider_config(tmp_path / "wd")
+    # Act
+    auth_argv(cfg, state_dir=tmp_path / "state")
+    # Assert
+    link = tmp_path / "state" / "provider-cfg" / "projects"
+    assert os.readlink(link) == "/home/agent/.claude/projects"
 
 
 # ---------------------------------------------------------------------------
