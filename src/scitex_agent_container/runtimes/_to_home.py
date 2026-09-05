@@ -65,7 +65,11 @@ from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_m
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._github_token import ensure_github_token
 from ._hook_origin_manifest import write_hook_manifest
-from ._host_commands import deploy_host_claude_commands
+from ._host_commands import (
+    deploy_host_claude_commands,
+    host_claude_commands_dir,
+    snapshot_drift,
+)
 from ._host_skills import deploy_host_skills
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_deployers import (
@@ -277,6 +281,20 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         )
     if root is not None:
         _walk_and_apply(root, root, dest, config=config, composed_dsts=composed_dsts)
+    # Launch-time snapshot drift (card sac-launch-compares-the-copied-
+    # commands-snapshot-to-the-dotfiles-ref-and-logs-divergence-20260905):
+    # the commands the agent will read from the runtime home may differ
+    # from the operator's live host (dotfiles) commands of the same name
+    # — the cop copies once at launch and nothing refreshes until a
+    # restart. Name each divergent file in the start log, through the
+    # log the launcher already uses; print NOTHING when there is no
+    # drift. No re-copy into a running session and no periodic check:
+    # a live rewrite under a session that already read the file is
+    # worse than a stale one — the honest fix is "restart to pick up",
+    # said out loud.
+    for _drift_line in snapshot_drift(_command_source_pairs(dest)):
+        logger.warning("to_home: %s", _drift_line)
+
     # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
     # → the spec's _shared baseline → the agent's workdir (the project's OWN
     # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
@@ -371,6 +389,27 @@ def _apply_host_merge_with_drift_guard(config: AgentConfig, dest: Path) -> None:
             f"host deep-merge still drifted after re-materialize for agent "
             f"{config.name!r} at {dest}/.claude:\n  - {bullet}"
         )
+
+
+def _command_source_pairs(dest: Path) -> list[tuple[Path, Path]]:
+    """(snapshot, source) pairs for the launch-time snapshot-drift check.
+
+    Every ``*.md`` under the materialized ``.claude/commands/`` that has a
+    same-name file in the host ``~/.claude/commands/`` (the operator's live
+    dotfiles ref — the ``deploy_host_claude_commands`` source) yields one
+    pair. A command with no same-name host counterpart was copied from a
+    to_home layer and is byte-identical to that fresh copy, so it has no
+    host ref to name against and yields no pair.
+    """
+    cmd = dest / ".claude" / "commands"
+    host = host_claude_commands_dir()
+    if host is None or not cmd.is_dir():
+        return []
+    return [
+        (p, host / p.name)
+        for p in sorted(cmd.iterdir())
+        if p.suffix == ".md" and p.is_file() and (host / p.name).is_file()
+    ]
 
 
 # --- traversal -------------------------------------------------------------
