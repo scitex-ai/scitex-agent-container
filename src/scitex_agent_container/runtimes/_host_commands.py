@@ -27,8 +27,10 @@ empty ``commands/`` dir fabricated). Non-``*.md`` entries (e.g.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -103,4 +105,60 @@ def deploy_host_claude_commands(workspace_home: Path) -> None:
         logger.info("to_home: host command %s -> %s", src.name, dst)
 
 
-__all__ = ["deploy_host_claude_commands", "host_claude_commands_dir"]
+# --- Launch-time snapshot drift ----------------------------------------------
+
+
+def _hash_lines(path: Path) -> tuple[str, int]:
+    """Return (sha256-8, line count) of ``path`` (read-only).
+
+    The 8-hex prefix is the file identity the card measurement names
+    (af83523b / 879b6fff).
+    """
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()[:8]
+    count = len(data.decode("utf-8", errors="replace").splitlines())
+    return digest, count
+
+
+def snapshot_drift(pairs: Iterable[tuple[Path, Path]]) -> list[str]:
+    """One human line per (snapshot, source) pair that diverges.
+
+    ``snapshot`` is the file the agent will read (the materialized runtime
+    home); ``source`` is the dotfiles / host original it should match.
+    A pair with an identical sha256 contributes no line; a pair whose
+    source is missing gets a line saying so. Pure: reads files, writes
+    nothing, logs nothing.
+
+    Line shape (card sac-launch-compares-…-20260905)::
+
+        commands/constitution.md: snapshot 879b6fff (452 lines)
+          != source af83523b (449 lines) — restart to pick up
+    """
+    lines: list[str] = []
+    for snapshot, source in pairs:
+        label = f"commands/{snapshot.name}"
+        snap_hash, snap_count = _hash_lines(snapshot)
+        if not source.is_file():
+            lines.append(
+                f"{label}: snapshot {snap_hash} "
+                f"({snap_count} line{'s' if snap_count != 1 else ''}) — "
+                "source missing — restart to pick up"
+            )
+            continue
+        src_hash, src_count = _hash_lines(source)
+        if src_hash == snap_hash:
+            continue
+        lines.append(
+            f"{label}: snapshot {snap_hash} "
+            f"({snap_count} line{'s' if snap_count != 1 else ''}) != "
+            f"source {src_hash} ({src_count} "
+            f"line{'s' if src_count != 1 else ''}) — restart to pick up"
+        )
+    return lines
+
+
+__all__ = [
+    "deploy_host_claude_commands",
+    "host_claude_commands_dir",
+    "snapshot_drift",
+]
