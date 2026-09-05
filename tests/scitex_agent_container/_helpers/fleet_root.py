@@ -375,7 +375,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
       RECONCILES, so isolating only the YAML meant a five-card tmp doc
       deleted 2,772 real cards. See the inline note below.
 
-    * **the notification rail** — sac registers a ``scitex_todo.hooks``
+    * **the notification rail** — sac registers a ``scitex_cards.hooks``
       consumer (``_listen._card_event_delivery``), so every real
       ``reassign_task`` emits a ``reassigned`` event which that consumer
       turns into an HTTP POST to the LOCAL ``sac listen`` daemon on

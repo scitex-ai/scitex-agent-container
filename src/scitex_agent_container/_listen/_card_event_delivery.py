@@ -1,16 +1,16 @@
-"""C10 — sac's ``scitex_todo.hooks`` consumer: deliver card-events to agents.
+"""C10 — sac's ``scitex_cards.hooks`` consumer: deliver card-events to agents.
 
 The problem this closes
 =======================
 scitex-todo's board emits canonical card-events on the shared
-``scitex_todo.hooks`` entry-point bus (its C5, already deployed): kinds
+``scitex_cards.hooks`` entry-point bus (its C5, already deployed): kinds
 ``commented`` / ``created`` / ``reassigned`` / ``status_changed`` /
 ``completed`` (and C6 adds ``committed`` / ``pushed`` / ``merged``). Each
 event names the card + its owner / collaborators / subscribers.
 
 sac REGISTERS this module's :func:`deliver_card_event` as a consumer in
 that entry-point group (see this repo's ``pyproject.toml``
-``[project.entry-points."scitex_todo.hooks"]``). When scitex-todo emits a
+``[project.entry-points."scitex_cards.hooks"]``). When scitex-todo emits a
 card-event, this consumer is invoked IN THE EMITTING PROCESS (the board's
 process — the same host that runs ``sac listen``). It resolves the target
 agent(s) from the event and delivers the notification to each.
@@ -30,7 +30,7 @@ the daemon PUBLISHES down it, so a direct POST to the agent's own
 
 The bus is shared in BOTH directions
 =====================================
-sac ITSELF emits anomaly events on ``scitex_todo.hooks`` (the
+sac ITSELF emits anomaly events on ``scitex_cards.hooks`` (the
 liveness-tick producer in :mod:`._liveness_tick`). Those have a
 ``reason`` / ``severity`` shape, NOT one of the card-event kinds above.
 :func:`deliver_card_event` FILTERS for the card-event kinds and IGNORES
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 # The card-event kinds this consumer recognises. Anything else — most
 # importantly sac's OWN liveness-tick anomaly events on the same bus, plus
 # any future kind we don't yet handle — is ignored (no-op) so the two
-# flows sharing ``scitex_todo.hooks`` never cross-wire.
+# flows sharing ``scitex_cards.hooks`` never cross-wire.
 CARD_EVENT_KINDS = frozenset(
     {
         "commented",
@@ -269,10 +269,10 @@ def _post_notify(
 
 
 def deliver_card_event(event: Any) -> int:
-    """``scitex_todo.hooks`` consumer entry-point — deliver a card-event.
+    """``scitex_cards.hooks`` consumer entry-point — deliver a card-event.
 
     Registered via ``pyproject.toml``
-    ``[project.entry-points."scitex_todo.hooks"]``. Invoked by
+    ``[project.entry-points."scitex_cards.hooks"]``. Invoked by
     scitex-todo's board (and ignored-by-design when sac's own
     liveness-tick fires on the same bus). Contract:
 

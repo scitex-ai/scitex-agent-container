@@ -18,7 +18,7 @@ SEPARATION OF CONCERNS (same as the liveness-tick producer): **sac only
 DETECTS and EMITS.** sac does NOT pull, reset, or otherwise mutate the
 checkout — a deploy-freshness alarm is a report, not an action. We (1) log
 a LOUD warning naming how-many-behind + the newest undeployed commit
-subjects, and (2) emit an anomaly event on the SAME ``scitex_todo.hooks``
+subjects, and (2) emit an anomaly event on the SAME ``scitex_cards.hooks``
 entry-point bus the liveness-tick reconciler uses. scitex-todo's own
 consumer (registered separately, on their side) turns it into a card
 record + operator push. Nothing here writes ``tasks.yaml`` or touches git
@@ -76,7 +76,7 @@ MAX_SUBJECTS = 5
 # The entry-point bus sac emits an anomaly onto — the SAME group the
 # liveness-tick reconciler uses. scitex-todo registers its consumer here
 # (separately, on their side); until then the emit degrades to the loud log.
-HOOKS_ENTRY_POINT_GROUP = "scitex_todo.hooks"
+HOOKS_ENTRY_POINT_GROUP = "scitex_cards.hooks"
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ def reconcile_deploy_freshness(
         production this is :func:`production_count_behind` bound to the
         resolved checkout; a broken git read returns ``(0, [])`` so a
         degraded read can NEVER raise a false alarm.
-      * ``emit(alarm)`` → deliver the alarm onto the ``scitex_todo.hooks``
+      * ``emit(alarm)`` → deliver the alarm onto the ``scitex_cards.hooks``
         bus. In production this is :func:`production_emit`.
       * ``log`` → the logger to scream on (defaults to the module logger).
 
@@ -256,12 +256,12 @@ def production_count_behind_or_zero() -> tuple[int, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# production emit — reuse the SAME scitex_todo.hooks bus as liveness-tick
+# production emit — reuse the SAME scitex_cards.hooks bus as liveness-tick
 # ---------------------------------------------------------------------------
 
 
 def production_emit(alarm: dict) -> int:
-    """Emit ``alarm`` onto the ``scitex_todo.hooks`` bus. Returns delivered count.
+    """Emit ``alarm`` onto the ``scitex_cards.hooks`` bus. Returns delivered count.
 
     Reuses the liveness-tick producer's graceful bus plumbing verbatim
     (``_load_hook_consumers`` + ``emit_anomaly``) rather than re-deriving
@@ -296,7 +296,7 @@ async def deploy_freshness_loop(
 
     Each tick runs one deploy-freshness reconcile pass and, when the
     checkout is behind ``origin/develop``, FAILS LOUD (a warning log +
-    an emit on ``scitex_todo.hooks``).
+    an emit on ``scitex_cards.hooks``).
 
     Two lessons baked in (both cost the fleet an incident already):
 
