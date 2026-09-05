@@ -34,6 +34,8 @@ from pathlib import Path
 from .._logging import get_logger
 
 __all__ = [
+    "EXCLUDED_ENV_NAMES",
+    "EXCLUDED_ENV_PREFIXES",
     "adapt_hook_commands",
     "inherited_env_names",
     "main",
@@ -128,29 +130,48 @@ def _servers(document: object) -> dict[str, dict]:
     )
 
 
-#: Prefixes of the fleet variables an MCP server may read from its inherited
-#: environment. Claude Code hands its own environment to every stdio MCP
-#: server it spawns; Codex passes ONLY the declared ``env`` plus the names in
-#: ``env_vars``, so a server that reads an inherited variable dies. Measured
-#: on the first codex pane (handyman-01, 2026-09-05 10:10 UTC): the
-#: telegrammer server exited with "No database connection string. Set
-#: SCITEX_STORE_DSN (the fleet-wide switch) or CCT_STORE_DSN" although
-#: SCITEX_STORE_DSN was present in the pane. Names only ever reach the argv.
-INHERITED_ENV_PREFIXES = ("SCITEX_", "CCT_", "SAC_")
+#: Names the child must NOT be handed: the ones Codex sets for the child
+#: itself, and the ones that mean nothing outside the shell that exported
+#: them. Everything else in the pane is forwarded by name.
+#:
+#: Claude Code hands its OWN environment to every stdio MCP server it spawns;
+#: Codex passes ONLY the declared ``env`` plus the names in ``env_vars``. A
+#: hand-picked allowlist therefore turns every variable it forgets into a
+#: separate production incident, discovered one at a time. Three in one
+#: morning on handyman-01 (2026-09-05): unexpanded ``${VAR}`` placeholders
+#: (#1302); ``SCITEX_STORE_DSN`` absent, so the telegrammer exited with "No
+#: database connection string" (#1303); then ``PGUSER`` and ``PGPASSFILE``
+#: absent, so the scitex-cards channel connected to pgbouncer as the wrong
+#: user and every drain tick failed with "FATAL: bouncer config error" —
+#: measured at 11:12 UTC as 27 variables in the child against 55 in the pane.
+#: Forwarding everything ends the class instead of its third instance.
+EXCLUDED_ENV_PREFIXES = ("CODEX_", "BASH_FUNC_")
+EXCLUDED_ENV_NAMES = frozenset({"_", "OLDPWD", "PWD", "SHLVL"})
+
+#: An exported shell FUNCTION is not a variable name (bash spells it
+#: ``BASH_FUNC_x%%``); forwarding one would put a name Codex cannot read in
+#: the argv.
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def inherited_env_names(environ: dict | None = None) -> list[str]:
-    """Fleet variable NAMES present in this pane, for Codex's ``env_vars``."""
+    """Every pane variable NAME an MCP server inherits, as Claude Code does."""
     source = os.environ if environ is None else environ
-    return sorted(name for name in source if name.startswith(INHERITED_ENV_PREFIXES))
+    return sorted(
+        name
+        for name in source
+        if _ENV_NAME.match(name)
+        and name not in EXCLUDED_ENV_NAMES
+        and not name.startswith(EXCLUDED_ENV_PREFIXES)
+    )
 
 
 def mcp_overrides(documents: list[object], *, environ: dict | None = None) -> list[str]:
     """``-c mcp_servers.<name>.<field>=<toml>`` flags for every server given.
 
-    ``environ`` is the pane environment whose fleet variable NAMES are
-    forwarded to each server (default: this process's). Injectable so a test
-    states the environment it means instead of inheriting the runner's.
+    ``environ`` is the pane environment whose variable NAMES are forwarded
+    to each server (default: this process's). Injectable so a test states the
+    environment it means instead of inheriting the runner's.
     """
     flags: list[str] = []
     for document in documents:
@@ -176,9 +197,9 @@ def mcp_overrides(documents: list[object], *, environ: dict | None = None) -> li
             literal, forwarded = split_env_placeholders(entry.get("env") or {})
             if literal:
                 flags += ["-c", f"{key}.env={_toml(literal)}"]
-            # The declared placeholders PLUS the fleet variables this pane
+            # The declared placeholders PLUS every variable this pane
             # carries, so a server that reads an inherited variable behaves as
-            # it does under Claude Code (see INHERITED_ENV_PREFIXES).
+            # it does under Claude Code (see EXCLUDED_ENV_PREFIXES).
             names = sorted(set(forwarded) | set(inherited_env_names(environ)))
             if names:
                 flags += ["-c", f"{key}.env_vars={_toml(names)}"]

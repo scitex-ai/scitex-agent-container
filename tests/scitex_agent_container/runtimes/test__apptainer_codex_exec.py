@@ -234,21 +234,50 @@ def test_other_hooks_are_copied_unchanged():
     assert adapted == hooks
 
 
-def test_fleet_variable_names_are_collected_for_forwarding():
-    # Arrange -- a pane environment shaped like the real one.
+def test_every_pane_variable_name_is_collected_for_forwarding():
+    # Arrange -- a pane environment shaped like the real one. PGUSER is the
+    # variable whose absence broke the scitex-cards channel under Codex.
     environ = {
         "SCITEX_STORE_DSN": "x",
         "CCT_AGENT_ID": "y",
         "SAC_NAME": "z",
+        "PGUSER": "ywatanabe__handyman-01",
         "PATH": "/bin",
     }
     # Act
     names = inherited_env_names(environ)
-    # Assert -- fleet names only; PATH and friends are Codex's own business.
-    assert names == ["CCT_AGENT_ID", "SAC_NAME", "SCITEX_STORE_DSN"]
+    # Assert
+    assert names == ["CCT_AGENT_ID", "PATH", "PGUSER", "SAC_NAME", "SCITEX_STORE_DSN"]
 
 
-def test_mcp_env_vars_include_the_inherited_fleet_names():
+def test_codex_own_variables_are_not_forwarded_back_to_it():
+    # Arrange -- CODEX_HOME is Codex's to set for the child.
+    environ = {"CODEX_HOME": "/tmp/sac-x-codex-home", "SAC_NAME": "x"}
+    # Act
+    names = inherited_env_names(environ)
+    # Assert
+    assert names == ["SAC_NAME"]
+
+
+def test_an_exported_shell_function_is_not_a_forwardable_name():
+    # Arrange -- bash exports a function under a name with '%' in it.
+    environ = {"BASH_FUNC_which%%": "() { ... }", "SAC_NAME": "x"}
+    # Act
+    names = inherited_env_names(environ)
+    # Assert
+    assert names == ["SAC_NAME"]
+
+
+def test_shell_bookkeeping_names_are_not_forwarded():
+    # Arrange -- PWD and friends mean nothing to a child started elsewhere.
+    environ = {"PWD": "/home/agent", "SHLVL": "2", "_": "/bin/env", "SAC_NAME": "x"}
+    # Act
+    names = inherited_env_names(environ)
+    # Assert
+    assert names == ["SAC_NAME"]
+
+
+def test_mcp_env_vars_include_the_inherited_pane_names():
     # Arrange -- Codex passes only what is declared, so a server that reads an
     # inherited variable (the telegrammer's SCITEX_STORE_DSN) must get its name.
     document = {
