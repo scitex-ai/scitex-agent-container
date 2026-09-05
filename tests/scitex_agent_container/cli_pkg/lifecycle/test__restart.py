@@ -447,14 +447,26 @@ def test_cross_host_restart_ssh_argv_carries_restart_verb(
     assert "sac agents restart zeta" in argv
 
 
+def _remote_command_line(argv: list[str]) -> str:
+    """What the peer's shell runs: the `bash -lc` payload when wrapped, else the tail."""
+    import shlex as _shlex
+
+    if argv and argv[-1].startswith("bash -lc "):
+        return _shlex.split(argv[-1])[2]
+    return " ".join(argv[argv.index("--") + 1 :]) if "--" in argv else " ".join(argv)
+
+
 def test_cross_host_restart_ssh_argv_includes_json_flag(remote_row_for_zeta, ssh_shim):
-    # Arrange
+    # Arrange -- since 2026-09-05 the remote verb rides inside ONE
+    # `bash -lc '<cmd>'` element (the peer's login profile carries the fleet
+    # secrets an engine needs), so the flag is asserted on that inner command.
     runner = CliRunner()
     # Act
     runner.invoke(restart, ["zeta", "-y"])
     argv = _ssh_invocations(ssh_shim)[-1]
+    inner = _remote_command_line(argv)
     # Assert
-    assert "--json" in argv
+    assert "--json" in inner.split()
 
 
 def test_cross_host_restart_does_not_call_local_agent_restart(
