@@ -99,11 +99,17 @@ __all__ = [
 #: Directory names never shipped and never compared — peer-side runtime
 #: state and build caches. Matched at ANY depth, which is what rsync's
 #: ``--exclude=runtime/`` did too.
+#:
+#: ``.old`` is the fleet's archive-on-edit convention (``.old/<timestamp>/``).
+#: An archive is superseded by definition, so the peer never needs it -- and
+#: comparing it is how a start got refused for "drift" in a snapshot while
+#: the spec itself was identical on both hosts (2026-09-05, business).
 EXCLUDED_NAMES: tuple[str, ...] = (
     "runtime",
     "__pycache__",
     ".pytest_cache",
     "_sphinx_html",
+    ".old",
 )
 
 
