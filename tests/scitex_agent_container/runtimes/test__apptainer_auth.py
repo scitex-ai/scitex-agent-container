@@ -303,3 +303,64 @@ def test_default_family_argv_omits_openai_key(
     argv = auth_argv(cfg, state_dir=tmp_path / "state")
     # Assert
     assert not any(a.startswith("SAC_OPENAI_API_KEY=") for a in argv)
+
+
+# ---------------------------------------------------------------------------
+# The codex harness branch (2026-09-05)
+# ---------------------------------------------------------------------------
+
+
+def _codex_config(workdir: Path) -> AgentConfig:
+    claude = ClaudeSpec(
+        model="qwen38-27b",
+        provider=ProviderSpec(
+            base_url="http://100.64.0.1:18772", auth_token_env="FLEET_GATEWAY_KEY"
+        ),
+    )
+    return AgentConfig(
+        name="hm", runtime="tui", workdir=str(workdir), harness="codex", claude=claude
+    )
+
+
+def _env_of(flags: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for i, a in enumerate(flags):
+        if a == "--env" and i + 1 < len(flags):
+            k, _, v = flags[i + 1].partition("=")
+            out[k] = v
+    return out
+
+
+def test_codex_harness_gets_the_provider_key_under_the_env_key_name(
+    tmp_path, env_save_restore
+):
+    # Arrange -- the rendered config names SAC_CODEX_API_KEY as env_key.
+    env_save_restore.set("FLEET_GATEWAY_KEY", "fleet-secret")
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _codex_config(tmp_path)
+    # Act
+    env = _env_of(auth_argv(config, tmp_path))
+    # Assert
+    assert env["SAC_CODEX_API_KEY"] == "fleet-secret"
+
+
+def test_codex_harness_gets_no_anthropic_base_url(tmp_path, env_save_restore):
+    # Arrange -- Codex reads its provider from config; no Anthropic routing env.
+    env_save_restore.set("FLEET_GATEWAY_KEY", "fleet-secret")
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _codex_config(tmp_path)
+    # Act
+    env = _env_of(auth_argv(config, tmp_path))
+    # Assert
+    assert "ANTHROPIC_BASE_URL" not in env
+
+
+def test_codex_harness_binds_codex_home(tmp_path, env_save_restore):
+    # Arrange
+    env_save_restore.set("FLEET_GATEWAY_KEY", "fleet-secret")
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _codex_config(tmp_path)
+    # Act
+    env = _env_of(auth_argv(config, tmp_path))
+    # Assert
+    assert env["CODEX_HOME"] == "/home/agent/.codex"

@@ -53,12 +53,19 @@ import os
 from pathlib import Path
 
 from ..config._types import AgentConfig
-from ._apptainer_provider import ProviderEnvError, provider_active, resolve_agent_harness
+from ._apptainer_provider import (
+    ProviderEnvError,
+    _provider_spec,
+    provider_active,
+    resolve_agent_harness,
+    resolve_provider_api_key,
+)
 
 __all__ = [
     "CODEX_HOME_ENV",
     "codex_env_flags",
     "codex_harness_active",
+    "codex_provider_key_flags",
     "resolve_codex_home",
 ]
 
@@ -93,6 +100,50 @@ _ROUTING_ENVS = (
     "SAC_CODEX_MODEL_PROVIDER",
     "SAC_CODEX_SANDBOX",
 )
+
+
+def _is_registry_codex_backend(config: AgentConfig) -> bool:
+    """True when the active provider IS ``spec.claude.provider: codex``.
+
+    That named backend is the scitex-genai gateway translating Anthropic
+    Messages to a ChatGPT Codex subscription with Claude Code driving —
+    the two-axis collision the docstring above describes. An INLINE
+    provider (``base_url`` + ``auth_token_env``, the engines surface) is
+    the opposite case: it is the inference endpoint the codex harness
+    itself is pointed at (2026-09-05), so it composes.
+    """
+    from ..config._provider_registry import resolve_provider
+
+    named = resolve_provider("codex")
+    active = _provider_spec(config)
+    if named is None or active is None:
+        return False
+    named_url = (
+        named.get("base_url", "")
+        if isinstance(named, dict)
+        else getattr(named, "base_url", "")
+    )
+    return str(getattr(active, "base_url", "")).rstrip("/") == str(named_url).rstrip(
+        "/"
+    )
+
+
+def codex_provider_key_flags(config: AgentConfig) -> list[str]:
+    """``--env SAC_CODEX_API_KEY=<key>`` from the engine's provider block.
+
+    The rendered Codex config names this env var as the provider's
+    ``env_key`` (``_apptainer_inner_argv_codex.CODEX_KEY_ENV``); the value
+    is the same resolved key the Claude path would put in
+    ANTHROPIC_API_KEY. Empty when no inline provider is active — then the
+    binary's own key names (``_KEY_ENVS``) are all there is.
+    """
+    if not codex_harness_active(config) or not provider_active(config):
+        return []
+    if _is_registry_codex_backend(config):
+        return []
+    from ._apptainer_inner_argv_codex import CODEX_KEY_ENV
+
+    return ["--env", f"{CODEX_KEY_ENV}={resolve_provider_api_key(config)}"]
 
 
 def codex_harness_active(config: AgentConfig) -> bool:
@@ -139,7 +190,7 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
     if not codex_harness_active(config):
         return []
 
-    if provider_active(config):
+    if provider_active(config) and _is_registry_codex_backend(config):
         raise ProviderEnvError(
             "spec.harness: codex cannot compose with an active "
             "spec.claude.provider backend override — the nested override "

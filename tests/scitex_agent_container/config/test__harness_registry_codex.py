@@ -31,6 +31,7 @@ from scitex_agent_container.config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
     CODEX_SDK,
+    CODEX_TUI,
     HARNESS_DESCRIPTORS,
     OPENAI_AGENTS,
     UnmappableHarnessError,
@@ -161,8 +162,8 @@ def test_resolve_maps_the_codex_harness_to_its_key():
     spec = {"harness": "codex"}
     # Act
     key = resolve_harness_key(spec)
-    # Assert
-    assert key == CODEX_SDK
+    # Assert -- since 2026-09-05 the family's default is the pane, as for Claude.
+    assert key == CODEX_TUI
 
 
 def test_resolve_honours_the_legacy_provider_alias_for_codex():
@@ -172,7 +173,7 @@ def test_resolve_honours_the_legacy_provider_alias_for_codex():
     # Act
     key = resolve_harness_key(spec)
     # Assert
-    assert key == CODEX_SDK
+    assert key == CODEX_TUI
 
 
 def test_resolve_accepts_a_loaded_config_codex_harness():
@@ -181,7 +182,7 @@ def test_resolve_accepts_a_loaded_config_codex_harness():
     # Act
     key = resolve_harness_key(config)
     # Assert
-    assert key == CODEX_SDK
+    assert key == CODEX_TUI
 
 
 def test_resolve_refuses_the_registry_key_spelling_as_a_harness_name():
@@ -258,9 +259,11 @@ def test_adding_codex_did_not_widen_the_runtime_spellings():
     assert spellings == expected
 
 
-def test_the_registry_holds_exactly_the_four_known_harness_keys():
+def test_the_registry_holds_exactly_the_five_known_harness_keys():
     # Arrange
-    expected = sorted([CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK])
+    expected = sorted(
+        [CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK, CODEX_TUI]
+    )
     # Act
     keys = sorted(HARNESS_DESCRIPTORS)
     # Assert

@@ -93,15 +93,21 @@ def build_run_argv(
     # function reads ``config.harness`` CORRECTLY. That split-brain is
     # exactly the bug this guard retires: OPENAI_* auth env provisioned,
     # Claude runner launched, no error anywhere.
+    from ..config._harness_registry import CODEX_TUI
     from ..config._harness_types import ensure_harness_matches_claude_launch
+    from ._apptainer_codex_env import codex_harness_active
 
+    codex_pane = bool(tui) and codex_harness_active(config)
     ensure_harness_matches_claude_launch(
         config,
         launching=(
-            "the interactive claude TUI"
+            "the interactive codex TUI"
+            if codex_pane
+            else "the interactive claude TUI"
             if tui
             else f"runner module {RUNNER_MODULE!r}"
         ),
+        launching_key=CODEX_TUI if codex_pane else "",
     )
 
     # Hardened isolation by default — see _apptainer_iso_flags for the

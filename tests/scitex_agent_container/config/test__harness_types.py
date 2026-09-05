@@ -19,10 +19,11 @@ import dataclasses
 import pytest
 import yaml
 
-from scitex_agent_container.config import load_config
+from scitex_agent_container.config import AgentConfig, load_config
 from scitex_agent_container.config._explicit_validation import (
     explicit_spec_defaults,
 )
+from scitex_agent_container.config._harness_registry import CODEX_TUI
 from scitex_agent_container.config._harness_types import (
     DEFAULT_AGENT_HARNESS,
     V4_HARNESS_DISPATCH_CARD,
@@ -475,3 +476,52 @@ def test_the_guard_passes_an_anthropic_spec_untouched(tmp_path):
     exc = _refusal(config)
     # Assert
     assert exc is None
+
+
+# ---------------------------------------------------------------------------
+# The guard learns which entry the caller launches (codex-tui, 2026-09-05)
+# ---------------------------------------------------------------------------
+
+
+def test_guard_passes_a_codex_spec_headed_for_the_codex_tui():
+    # Arrange
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    outcome = ensure_harness_matches_claude_launch(
+        config,
+        launching="the interactive codex TUI",
+        launching_key=CODEX_TUI,
+        log=False,
+    )
+    # Assert
+    assert outcome is None
+
+
+def test_guard_still_refuses_a_codex_spec_headed_for_a_claude_launch():
+    # Arrange -- the same spec on a Claude code path is the wrong-vendor case.
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    try:
+        ensure_harness_matches_claude_launch(
+            config, launching="the interactive claude TUI", log=False
+        )
+        message = ""
+    except HarnessRuntimeMismatchError as exc:
+        message = str(exc)
+    # Assert
+    assert "codex" in message
+
+
+def test_guard_refuses_an_openai_spec_even_when_told_codex_tui():
+    # Arrange -- the early return is keyed on the harness AND the entry.
+    config = AgentConfig(name="oa", runtime="", workdir="/tmp/oa", harness="openai")
+    # Act
+    try:
+        ensure_harness_matches_claude_launch(
+            config, launching="x", launching_key=CODEX_TUI, log=False
+        )
+        raised = None
+    except HarnessRuntimeMismatchError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)
