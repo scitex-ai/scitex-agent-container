@@ -139,7 +139,12 @@ def _dispatch_remote_restart(
     (no-silent-fallback rule). Returns the parsed JSON envelope from the
     peer's stdout.
     """
-    ssh_argv = build_ssh_argv(peer, remote_restart_argv(name, engine), peers)
+    # login=True: the peer's login profile carries the fleet secrets the
+    # restart needs (the engine's auth_token_env among them); a bare ssh
+    # command sees none of them and the peer refuses the engine as "unset".
+    ssh_argv = build_ssh_argv(
+        peer, remote_restart_argv(name, engine), peers, login=True
+    )
     result = subprocess.run(
         ssh_argv,
         capture_output=True,

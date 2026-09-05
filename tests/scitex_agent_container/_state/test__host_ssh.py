@@ -160,3 +160,64 @@ def test_a_bare_peer_gets_no_preamble_wrapper(peers):
     argv = build_ssh_argv(_BARE_PEER, command, peers)
     # Assert
     assert not argv[-1].startswith("bash -c ")
+
+
+# ---------------------------------------------------------------------------
+# login=True: an agent start on a peer runs under the peer's LOGIN profile.
+# Measured 2026-09-05 on scitex-compute-01: a bare `ssh host cmd` carries no
+# ~/.bash.d/secrets variable at all (0 CCT_*, no gateway key); `bash -lc`
+# carries every one. The engine honour check on the peer read "unset".
+# ---------------------------------------------------------------------------
+def test_login_wraps_a_bare_peers_command_in_a_login_shell(peers):
+    # Arrange
+    command = ["sac", "agents", "restart", "business", "--yes", "--json"]
+
+    # Act
+    argv = build_ssh_argv(_BARE_PEER, command, peers, login=True)
+
+    # Assert
+    assert argv[-1].startswith("bash -lc ")
+
+
+def test_login_keeps_the_command_intact_inside_the_login_shell(peers):
+    # Arrange
+    command = ["sac", "agents", "restart", "business", "--yes", "--json"]
+
+    # Act
+    inner = shlex.split(build_ssh_argv(_BARE_PEER, command, peers, login=True)[-1])[2]
+
+    # Assert
+    assert inner.endswith("sac agents restart business --yes --json")
+
+
+def test_login_is_one_argv_element_so_ssh_cannot_split_it(peers):
+    # Arrange
+    command = ["sac", "agents", "start", "business", "--engine", "qwen38-27b"]
+
+    # Act
+    argv = build_ssh_argv(_BARE_PEER, command, peers, login=True)
+
+    # Assert
+    assert argv[argv.index("--") + 1 :] == [argv[-1]]
+
+
+def test_login_leaves_a_preamble_peer_on_the_plain_shell(peers):
+    # Arrange -- the HPC bashrc kill is why a preamble peer never gets -l
+    command = ["sac", "agents", "start", "spartan-dev"]
+
+    # Act
+    argv = build_ssh_argv(_PREAMBLE_PEER, command, peers, login=True)
+
+    # Assert
+    assert argv[-1].startswith("bash -c ")
+
+
+def test_login_off_is_the_pre_existing_bare_shape(peers):
+    # Arrange
+    command = ["sac", "agents", "list"]
+
+    # Act
+    argv = build_ssh_argv(_BARE_PEER, command, peers)
+
+    # Assert
+    assert argv[argv.index("--") + 1 :][-3:] == ["sac", "agents", "list"]
