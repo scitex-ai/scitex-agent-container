@@ -116,6 +116,15 @@ class PeerSpec:
     static fallback — Phase 2 will decide the precedence rule. See
     :class:`ResolveSpec` for the field shape.
 
+    ``login_shell`` (default False) says the peer's login profile may be
+    sourced by an agent start/restart dispatched to it. On this fleet the
+    profile is the ONLY carrier of ~/.bash.d/secrets (measured 2026-09-05
+    on scitex-compute-01: zero CCT_* / no gateway key under a bare or
+    ``bash -c`` command, all of them under ``bash -lc``), so a peer that
+    also needs an ``env_preamble`` for PATH must opt in here or every
+    engine with an ``auth_token_env`` is refused there as "unset". HPC
+    peers stay False: sourcing their profile kills the login.
+
     ``reverse_ssh`` names the PEER's ssh route back to the master; the
     push-config renderer falls back to the master's name when empty.
     """
@@ -125,6 +134,10 @@ class PeerSpec:
     via: tuple[str, ...] = ()  # ssh ProxyJump chain by peer name
     env_preamble: tuple[str, ...] = ()  # remote shell snippets joined by &&
     resolve: ResolveSpec | None = None  # dispatch-time target resolution
+    # A preamble peer whose LOGIN profile is safe to source and carries the
+    # fleet secrets (the compute hosts). False keeps the preamble branch on a
+    # plain `bash -c` -- the HPC compute-node bashrc kill (see _host_ssh).
+    login_shell: bool = False
     reverse_ssh: str = ""  # peer→master ssh target (sac host push-config)
 
     @classmethod
@@ -151,6 +164,7 @@ class PeerSpec:
             env_preamble=_parse_env_preamble(name, spec.get("env_preamble")),
             resolve=_parse_resolve(name, spec.get("resolve")),
             reverse_ssh=str(spec.get("reverse_ssh") or ""),
+            login_shell=bool(spec.get("login_shell", False)),
         )
 
     def jump_chain(self, peers: dict[str, "PeerSpec"]) -> list[str]:
