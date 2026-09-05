@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..config import AgentConfig
 from ._skills_boot_log import log_effective_skills
+from ._stale_poller_pidfiles import clear_stale_poller_pidfiles
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from .claude_md import setup_claude_md
@@ -76,6 +77,10 @@ def materialize_workspace(
         return None
     home_dir = state_dir_for_config(config) / "home"
     home_dir.mkdir(parents=True, exist_ok=True)
+    # A previous incarnation's telegrammer pidfile can only name a pid the new
+    # container is about to reuse - clear it before anything in the new
+    # namespace can be mistaken for a poller (see _stale_poller_pidfiles).
+    clear_stale_poller_pidfiles(home_dir)
     setup_claude_md(config, str(home_dir))
     deploy_to_home(config, str(home_dir))
     log_effective_skills(config, home_dir)
@@ -90,6 +95,7 @@ def materialize_workspace(
     ensure_project_onboarding(workdir, home=home_dir)
     upper_home = resolve_overlay_upper_home(config)
     if upper_home is not None and upper_home.is_dir():
+        clear_stale_poller_pidfiles(upper_home)
         ensure_project_onboarding(workdir, home=upper_home)
         setup_settings_json(config, str(upper_home), filename="settings.json")
     return home_dir
