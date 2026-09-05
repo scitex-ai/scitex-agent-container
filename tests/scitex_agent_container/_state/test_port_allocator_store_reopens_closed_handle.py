@@ -12,33 +12,60 @@ the connection is closed for real, not faked.
 
 from __future__ import annotations
 
+import pytest
+
 from scitex_agent_container._state import port_allocator as pa
 from scitex_agent_container._state import port_allocator_store as pas
 
 
-def test_port_store_reopens_after_its_connection_was_closed(pg_schema: str) -> None:
-    # Arrange: a cached handle whose connection the peer (here: we) closed.
+@pytest.fixture
+def closed_first_handle(pg_schema: str) -> object:
+    """A cached handle whose connection the peer (here: we) closed for real."""
     pas._reset_store_cache()
     first = pas.port_store()
     first._connection.close()
-    assert pas._handle_is_closed(first)
+    return first
 
-    # Act: the next caller asks the cache.
+
+def test_closed_flag_is_seen_on_the_cached_handle(closed_first_handle: object) -> None:
+    # Arrange: fixture closed the connection.
+    # Act
+    closed = pas._handle_is_closed(closed_first_handle)
+    # Assert
+    assert closed
+
+
+def test_port_store_returns_a_different_handle_after_a_close(
+    closed_first_handle: object,
+) -> None:
+    # Arrange: fixture closed the connection.
+    # Act
     second = pas.port_store()
+    # Assert
+    assert second is not closed_first_handle
 
-    # Assert: a fresh, open handle — and the allocator works again on it.
-    assert second is not first
+
+def test_port_store_reopened_handle_is_open(closed_first_handle: object) -> None:
+    # Arrange: fixture closed the connection.
+    # Act
+    second = pas.port_store()
+    # Assert
     assert not pas._handle_is_closed(second)
-    assert pa.get_port("nobody-claimed-this") is None
+
+
+def test_allocator_works_again_after_the_reopen(closed_first_handle: object) -> None:
+    # Arrange: fixture closed the connection.
+    # Act
+    port = pa.get_port("nobody-claimed-this")
+    # Assert
+    assert port is None
 
 
 def test_port_store_keeps_an_open_cached_handle(pg_schema: str) -> None:
     # Arrange
     pas._reset_store_cache()
     first = pas.port_store()
-
     # Act
     second = pas.port_store()
-
     # Assert: the cache still saves the connect when nothing is wrong.
     assert second is first
