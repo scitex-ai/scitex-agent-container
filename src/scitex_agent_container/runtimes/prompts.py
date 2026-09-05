@@ -282,18 +282,72 @@ def _detect_resume_session(content: str) -> bool:
     )
 
 
-def _detect_done(content: str) -> bool:
-    """Check if claude is at the main input prompt (all TUI prompts done).
+def _detect_codex_dir_trust(content: str) -> bool:
+    """Codex's first-boot directory-trust picker (harness codex, 2026-09-05).
 
-    The status bar shows "bypass permissions" when ready.
+    "Do you trust the contents of this directory? ... 1. Yes, continue /
+    2. No, quit / Press enter to continue" — the cursor already sits on
+    option 1, so Enter alone accepts.
     """
-    return "bypass permissions" in content and "Enter to confirm" not in content
+    return (
+        "Do you trust the contents of this directory" in content
+        and "1. Yes, continue" in content
+    )
+
+
+def _detect_codex_hooks_review(content: str) -> bool:
+    """Codex's "Hooks need review" picker (harness codex, 2026-09-05).
+
+    Shown once sac has copied the fleet's hooks into CODEX_HOME/hooks.json,
+    and again whenever one of them changes. The hooks ARE the fleet's own
+    (~/.claude/hooks, the same files the Claude pane runs), so option 2 is
+    the correct answer; option 3 would run the agent without them, silently.
+    """
+    return "Hooks need review" in content and "2. Trust all and continue" in content
+
+
+def _detect_codex_done(content: str) -> bool:
+    """Codex is at its input prompt: its banner is up and no picker remains.
+
+    The Codex TUI never prints Claude's "bypass permissions" status line; its
+    ready state is the "OpenAI Codex (vX)" box with a permissions row ("YOLO
+    mode" when sac turns the sandbox off).
+    """
+    return (
+        "OpenAI Codex (v" in content
+        and "permissions:" in content
+        and "Press enter to continue" not in content
+        and "Press enter to confirm" not in content
+    )
+
+
+def _detect_done(content: str) -> bool:
+    """Check if the TUI is at its main input prompt (all prompts done).
+
+    Claude's status bar shows "bypass permissions" when ready; Codex has its
+    own banner (:func:`_detect_codex_done`).
+    """
+    if "bypass permissions" in content and "Enter to confirm" not in content:
+        return True
+    return _detect_codex_done(content)
 
 
 # Default prompt handlers — checked by priority, order-agnostic.
 # Detection uses numbered options + prompt text for reliability.
 # To add a new prompt, append a PromptHandler or call register_prompt().
 PROMPT_HANDLERS: list[PromptHandler] = [
+    PromptHandler(
+        name="codex-dir-trust",
+        detect=_detect_codex_dir_trust,
+        keys=["Enter"],  # cursor already on "1. Yes, continue"
+        priority=1,
+    ),
+    PromptHandler(
+        name="codex-hooks-review",
+        detect=_detect_codex_hooks_review,
+        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
+        priority=1,
+    ),
     PromptHandler(
         name="bypass-permissions",
         detect=_detect_bypass_permissions,
