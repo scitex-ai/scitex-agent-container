@@ -107,7 +107,7 @@ class StartupPromptInjectorMixin:
                 self._mux.send_text_literal(name, prompt)
                 # (b)+(c) submit ONLY when idle, verify advancement, retry
                 # bounded, then fail LOUD. No blind/defensive Enter.
-                submitted = self._verify_submitted(name)
+                submitted = self._verify_submitted(name, pasted=prompt)
                 log.info(
                     "TuiSessionRuntime: injected startup_prompt %d/%d "
                     "(%d chars) into %s — idle-gated submit %s",
@@ -151,6 +151,7 @@ class StartupPromptInjectorMixin:
         self,
         name: str,
         *,
+        pasted: str | None = None,
         max_resends: int = 8,
         poll_s: float = 0.6,
         appear_timeout_s: float = 5.0,
@@ -166,6 +167,7 @@ class StartupPromptInjectorMixin:
             name,
             capture_fn=self._mux.capture_content,
             send_keys_fn=lambda key: self._mux.send_keys(name, key),
+            pending_fragment=pasted,
             max_resends=max_resends,
             poll_s=poll_s,
             appear_timeout_s=appear_timeout_s,

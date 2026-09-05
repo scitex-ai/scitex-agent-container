@@ -307,6 +307,7 @@ def deliver_via_tui(
         session,
         capture_fn=tap,
         send_keys_fn=lambda key: send_keys_fn(session, key),
+        pending_fragment=token,
         max_resends=max_resends,
         poll_s=poll_s,
         idle_wait_s=idle_wait_s,
