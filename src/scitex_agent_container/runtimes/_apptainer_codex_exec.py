@@ -145,8 +145,13 @@ def inherited_env_names(environ: dict | None = None) -> list[str]:
     return sorted(name for name in source if name.startswith(INHERITED_ENV_PREFIXES))
 
 
-def mcp_overrides(documents: list[object]) -> list[str]:
-    """``-c mcp_servers.<name>.<field>=<toml>`` flags for every server given."""
+def mcp_overrides(documents: list[object], *, environ: dict | None = None) -> list[str]:
+    """``-c mcp_servers.<name>.<field>=<toml>`` flags for every server given.
+
+    ``environ`` is the pane environment whose fleet variable NAMES are
+    forwarded to each server (default: this process's). Injectable so a test
+    states the environment it means instead of inheriting the runner's.
+    """
     flags: list[str] = []
     for document in documents:
         for name, entry in _servers(document).items():
@@ -174,7 +179,7 @@ def mcp_overrides(documents: list[object]) -> list[str]:
             # The declared placeholders PLUS the fleet variables this pane
             # carries, so a server that reads an inherited variable behaves as
             # it does under Claude Code (see INHERITED_ENV_PREFIXES).
-            names = sorted(set(forwarded) | set(inherited_env_names()))
+            names = sorted(set(forwarded) | set(inherited_env_names(environ)))
             if names:
                 flags += ["-c", f"{key}.env_vars={_toml(names)}"]
     return flags

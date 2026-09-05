@@ -19,9 +19,17 @@ from scitex_agent_container.runtimes._apptainer_codex_exec import (
 )
 
 
-def _flags(documents: list[object]) -> dict[str, str]:
+def _flags(documents: list[object], environ: dict | None = None) -> dict[str, str]:
+    """Rendered flags for ``documents`` under a STATED pane environment.
+
+    The default is an EMPTY environment. The inherited-name forwarding reads
+    the pane's variables, so a test that inherits the RUNNER's environment
+    asserts something different on a developer box and on CI — measured
+    2026-09-05: two exact-equality assertions passed locally and failed in CI
+    for exactly that reason.
+    """
     out: dict[str, str] = {}
-    flags = mcp_overrides(documents)
+    flags = mcp_overrides(documents, environ={} if environ is None else environ)
     for i, a in enumerate(flags):
         if a == "-c" and i + 1 < len(flags):
             k, _, v = flags[i + 1].partition("=")
@@ -84,8 +92,8 @@ def test_documents_are_merged_in_order():
     second = {"two": {"command": "two"}}
     # Act
     seen = _flags([first, second])
-    # Assert
-    assert sorted(k.split(".")[1] for k in seen) == ["one", "two"]
+    # Assert -- both documents contributed a server (each renders >1 flag).
+    assert sorted({k.split(".")[1] for k in seen}) == ["one", "two"]
 
 
 def test_an_operator_set_binary_path_wins(env_save_restore):
@@ -240,16 +248,15 @@ def test_fleet_variable_names_are_collected_for_forwarding():
     assert names == ["CCT_AGENT_ID", "SAC_NAME", "SCITEX_STORE_DSN"]
 
 
-def test_mcp_env_vars_include_the_inherited_fleet_names(env_save_restore):
+def test_mcp_env_vars_include_the_inherited_fleet_names():
     # Arrange -- Codex passes only what is declared, so a server that reads an
     # inherited variable (the telegrammer's SCITEX_STORE_DSN) must get its name.
-    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://example/db")
     document = {
         "mcpServers": {
             "tg": {"command": "bun", "env": {"CCT_AGENT_ID": "${CCT_AGENT_ID}"}}
         }
     }
     # Act
-    seen = _flags([document])
+    seen = _flags([document], {"SCITEX_STORE_DSN": "postgresql://example/db"})
     # Assert
-    assert "SCITEX_STORE_DSN" in seen["mcp_servers.tg.env_vars"]
+    assert seen["mcp_servers.tg.env_vars"] == '["CCT_AGENT_ID", "SCITEX_STORE_DSN"]'
