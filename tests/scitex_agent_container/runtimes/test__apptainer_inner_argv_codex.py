@@ -200,3 +200,13 @@ def test_argv_starts_fresh_without_a_session_directive():
     argv = codex_tui_argv(config)
     # Assert -- the first thing after the separator is an override, not `resume`.
     assert argv[argv.index("--") + 1] == "-c"
+
+
+def test_argv_hands_the_settings_to_the_shim_for_hooks():
+    # Arrange -- the same settings path the Claude TUI launches with.
+    config = _config()
+    # Act
+    argv = codex_tui_argv(config, settings="/home/agent/.claude/settings.json")
+    # Assert
+    assert argv[3:5] == ["--hooks-from", "/home/agent/.claude/settings.json"]
+

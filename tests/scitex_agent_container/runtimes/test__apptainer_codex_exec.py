@@ -6,10 +6,13 @@ resolution); ``execv`` replaces the process and is not called by a test.
 
 from __future__ import annotations
 
+import json
+
 from scitex_agent_container.runtimes._apptainer_codex_exec import (
     CODEX_BIN_ENV,
     mcp_overrides,
     resolve_codex_binary,
+    write_hooks_from,
 )
 
 
@@ -98,3 +101,55 @@ def test_the_bundled_binary_is_the_default(env_save_restore):
     binary = resolve_codex_binary()
     # Assert
     assert binary.endswith("/codex")
+
+
+def _settings(tmp_path, document: dict):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def test_hooks_block_is_copied_into_codex_home(tmp_path):
+    # Arrange -- the fleet's shape: event -> matcher -> command hooks.
+    block = {
+        "PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo hi"}]}
+        ]
+    }
+    settings = _settings(tmp_path, {"hooks": block, "other": 1})
+    home = tmp_path / "codex-home"
+    # Act
+    written = write_hooks_from(str(settings), str(home))
+    # Assert
+    assert json.loads(written.read_text()) == {"hooks": block}
+
+
+def test_settings_without_hooks_write_nothing(tmp_path):
+    # Arrange
+    settings = _settings(tmp_path, {"permissions": {}})
+    home = tmp_path / "codex-home"
+    # Act
+    written = write_hooks_from(str(settings), str(home))
+    # Assert
+    assert written is None
+
+
+def test_absent_settings_write_nothing(tmp_path):
+    # Arrange
+    home = tmp_path / "codex-home"
+    # Act
+    written = write_hooks_from(str(tmp_path / "missing.json"), str(home))
+    # Assert
+    assert written is None
+
+
+def test_hooks_file_is_rewritten_from_the_settings_each_boot(tmp_path):
+    # Arrange -- a stale hooks.json from a previous boot must not win.
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "hooks.json").write_text('{"hooks": {"Stop": []}}', encoding="utf-8")
+    settings = _settings(tmp_path, {"hooks": {"PreToolUse": []}})
+    # Act
+    written = write_hooks_from(str(settings), str(home))
+    # Assert
+    assert json.loads(written.read_text()) == {"hooks": {"PreToolUse": []}}

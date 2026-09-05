@@ -148,6 +148,7 @@ def codex_tui_argv(
     *,
     mcp_config: str | None = None,
     channel_mcp: str | None = None,
+    settings: str | None = None,
 ) -> list[str]:
     """Argv for the interactive ``codex`` TUI (pre-shell-wrap).
 
@@ -155,13 +156,21 @@ def codex_tui_argv(
     sac materialised; ``channel_mcp`` the inline JSON registering the
     ``sac mcp channel`` subscriber. Both are handed to the in-container shim,
     which turns them into ``-c mcp_servers.*`` overrides the way the Claude
-    TUI receives them as ``--mcp-config`` flags.
+    TUI receives them as ``--mcp-config`` flags. ``settings`` is the
+    in-container path of the Claude ``settings.json`` the TUI would launch
+    with: its ``hooks`` block is copied into ``$CODEX_HOME/hooks.json`` by
+    the shim — Codex's hooks engine reads the same event -> matcher ->
+    command shape (measured 2026-09-05: its diagnostics name `matcher`,
+    "empty hook command", and skip prompt/agent/async hook TYPES by their
+    Claude names), so the fleet's hooks port by copy, not by rewrite.
     """
     argv: list[str] = ["python3", "-m", CODEX_EXEC_MODULE]
     if mcp_config:
         argv += ["--mcp-config", mcp_config]
     if channel_mcp:
         argv += ["--mcp-json", channel_mcp]
+    if settings:
+        argv += ["--hooks-from", settings]
     argv.append("--")
     argv += _session_args(config)
     argv += codex_config_overrides(config)
