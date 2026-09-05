@@ -53,7 +53,9 @@ from ._apptainer_provider import (
     openai_harness_active,
     provider_active,
     provider_env_flags,
+    resolve_provider_api_key,
 )
+from ._apptainer_provider_cfg import provider_config_dir_flags
 
 
 def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
@@ -85,10 +87,27 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
 
     if provider_active(config):
         # Provider backend: API key, no OAuth. The provider helper owns
-        # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a clean
-        # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker). The OAuth
-        # creds bind is intentionally NOT emitted.
-        return engine_flags + provider_env_flags(config)
+        # ANTHROPIC_BASE_URL + SAC_ANTHROPIC_API_KEY + a per-agent
+        # CLAUDE_CONFIG_DIR (the last-wins conflict-breaker); the cfg helper
+        # seeds that dir on the host (onboarding gate + approved key) and
+        # binds it there, so the TUI boots to the prompt instead of the
+        # first-run sign-in screen. The OAuth creds bind is intentionally
+        # NOT emitted.
+        workdir = (
+            getattr(config, "expanded_workdir", "")
+            or getattr(config, "workdir", "")
+            or "/tmp"
+        )
+        return (
+            engine_flags
+            + provider_env_flags(config)
+            + provider_config_dir_flags(
+                state_dir=state_dir,
+                name=config.name,
+                workdir=str(workdir),
+                api_key=resolve_provider_api_key(config),
+            )
+        )
 
     argv: list[str] = list(engine_flags)
 
