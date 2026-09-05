@@ -34,6 +34,7 @@ from pathlib import Path
 from .._logging import get_logger
 
 __all__ = [
+    "adapt_hook_commands",
     "main",
     "mcp_overrides",
     "resolve_codex_binary",
@@ -157,6 +158,43 @@ def mcp_overrides(documents: list[object]) -> list[str]:
     return flags
 
 
+#: Hook commands whose stdout carries ``updatedInput`` without an explicit
+#: ``permissionDecision`` — Claude Code implies allow, Codex refuses. Measured
+#: 2026-09-05: the rtk command-rewrite hook is the one such hook in the fleet.
+_OUTPUT_ADAPTED_COMMANDS = ("rtk hook claude",)
+_OUTPUT_ADAPTER = "python3 -m scitex_agent_container.runtimes._codex_hook_output"
+
+
+def adapt_hook_commands(hooks: dict) -> dict:
+    """Pipe the hooks Codex would misread through the output adapter.
+
+    Only the commands listed in ``_OUTPUT_ADAPTED_COMMANDS`` are wrapped;
+    every other hook runs exactly as it does under Claude Code.
+    """
+    adapted: dict = {}
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            adapted[event] = groups
+            continue
+        new_groups = []
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                new_groups.append(group)
+                continue
+            new_hooks = []
+            for hook in group["hooks"]:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                if (
+                    isinstance(command, str)
+                    and command.strip() in _OUTPUT_ADAPTED_COMMANDS
+                ):
+                    hook = {**hook, "command": f"{command} | {_OUTPUT_ADAPTER}"}
+                new_hooks.append(hook)
+            new_groups.append({**group, "hooks": new_hooks})
+        adapted[event] = new_groups
+    return adapted
+
+
 def write_hooks_from(settings_path: str, codex_home: str) -> Path | None:
     """Copy the Claude ``settings.json`` hooks block into ``$CODEX_HOME/hooks.json``.
 
@@ -185,6 +223,7 @@ def write_hooks_from(settings_path: str, codex_home: str) -> Path | None:
     hooks = document.get("hooks") if isinstance(document, dict) else None
     if not isinstance(hooks, dict) or not hooks:
         return None
+    hooks = adapt_hook_commands(hooks)
     target = Path(codex_home) / HOOKS_FILENAME
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")

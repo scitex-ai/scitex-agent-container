@@ -10,6 +10,7 @@ import json
 
 from scitex_agent_container.runtimes._apptainer_codex_exec import (
     CODEX_BIN_ENV,
+    adapt_hook_commands,
     mcp_overrides,
     resolve_codex_binary,
     split_env_placeholders,
@@ -195,3 +196,30 @@ def test_mcp_overrides_emit_env_vars_for_placeholders():
     seen = _flags([document])
     # Assert
     assert seen["mcp_servers.tg.env_vars"] == '["CCT_AGENT_ID"]'
+
+
+def test_the_rtk_hook_is_piped_through_the_output_adapter():
+    # Arrange -- the one fleet hook whose stdout Codex misreads.
+    hooks = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": "rtk hook claude"}],
+            }
+        ]
+    }
+    # Act
+    adapted = adapt_hook_commands(hooks)
+    # Assert
+    assert adapted["PreToolUse"][0]["hooks"][0]["command"].startswith(
+        "rtk hook claude | python3 -m "
+    )
+
+
+def test_other_hooks_are_copied_unchanged():
+    # Arrange
+    hooks = {"Stop": [{"hooks": [{"type": "command", "command": "sac never-stop"}]}]}
+    # Act
+    adapted = adapt_hook_commands(hooks)
+    # Assert
+    assert adapted == hooks
