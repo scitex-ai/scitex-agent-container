@@ -22,7 +22,10 @@ import pytest
 from scitex_agent_container.config import AgentConfig, ClaudeSpec, ProviderSpec
 from scitex_agent_container.config._parsers._claude import _parse_provider
 from scitex_agent_container.runtimes._apptainer_provider import (
+    CLAUDE_CODE_MAX_CONTEXT_ENV,
+    ENGINE_MAX_CONTEXT_TOKENS_ENV,
     ProviderEnvError,
+    engine_env_flags,
     provider_active,
     provider_env_flags,
 )
@@ -317,3 +320,60 @@ def test_flags_omit_anthropic_model_when_spec_model_empty(env_save_restore):
     env = _env_dict(provider_env_flags(cfg))
     # Assert
     assert "ANTHROPIC_MODEL" not in env
+
+
+# ---------------------------------------------------------------------------
+# engine_env_flags: the one MEASURED harness mapping (max_context_tokens)
+# ---------------------------------------------------------------------------
+
+
+def _engine_config(harness: str, max_ctx: int | None) -> AgentConfig:
+    """A config as the engine fold leaves it: parameters on the CONFIG."""
+    config = AgentConfig(
+        name="eng", runtime="apptainer", workdir="/tmp/eng-wd", harness=harness
+    )
+    config.engine_key = "qwen38-27b"
+    config.max_context_tokens = max_ctx
+    return config
+
+
+def test_anthropic_harness_also_gets_the_claude_code_context_window(
+    monkeypatch,
+):
+    # Arrange -- the fleet's real shape: a 1M-window engine on Claude Code.
+    monkeypatch.delenv("SAC_PROVIDER", raising=False)
+    config = _engine_config("anthropic", 1048576)
+
+    # Act
+    env = _env_dict(engine_env_flags(config))
+
+    # Assert -- BOTH names carry it: the SAC_ provenance name and the
+    # harness's own knob, which is what actually moves auto-compact.
+    assert env[ENGINE_MAX_CONTEXT_TOKENS_ENV] == "1048576"
+    assert env[CLAUDE_CODE_MAX_CONTEXT_ENV] == "1048576"
+
+
+def test_openai_harness_gets_the_sac_name_only(monkeypatch):
+    # Arrange -- a harness nobody has measured this knob against.
+    monkeypatch.delenv("SAC_PROVIDER", raising=False)
+    config = _engine_config("openai", 1048576)
+
+    # Act
+    env = _env_dict(engine_env_flags(config))
+
+    # Assert -- delivery yes, invented vendor mapping no.
+    assert env[ENGINE_MAX_CONTEXT_TOKENS_ENV] == "1048576"
+    assert CLAUDE_CODE_MAX_CONTEXT_ENV not in env
+
+
+def test_engine_without_a_declared_window_sets_neither_name(monkeypatch):
+    # Arrange -- the legacy single-backend spec: no window declared.
+    monkeypatch.delenv("SAC_PROVIDER", raising=False)
+    config = _engine_config("anthropic", None)
+
+    # Act
+    env = _env_dict(engine_env_flags(config))
+
+    # Assert -- argv unchanged for every spec that declares nothing.
+    assert ENGINE_MAX_CONTEXT_TOKENS_ENV not in env
+    assert CLAUDE_CODE_MAX_CONTEXT_ENV not in env
