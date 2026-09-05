@@ -167,8 +167,8 @@ def _dispatch_remote_start(
     # env_preamble is honoured by build_ssh_argv (bash -lc wrapper).
     import json as _json
 
-    from ..._state.host_config import build_ssh_argv
     from ..._state._remote_sac_hint import remote_sac_not_found_hint
+    from ..._state.host_config import build_ssh_argv
     from ..._state.host_config import load as _load_host_config
     from ..._state.state_db import record_instance_start
 
