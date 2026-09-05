@@ -363,4 +363,4 @@ def test_codex_harness_binds_codex_home(tmp_path, env_save_restore):
     # Act
     env = _env_of(auth_argv(config, tmp_path))
     # Assert
-    assert env["CODEX_HOME"] == "/home/agent/.codex"
+    assert env["CODEX_HOME"] == "/tmp/sac-hm-codex-home"

@@ -297,7 +297,7 @@ def test_codex_env_flags_bind_the_codex_home_directory(
     # Act
     argv = codex_env.codex_env_flags(config, tmp_path)
     # Assert
-    assert f"{codex_home}:{codex_env.CONTAINER_CODEX_HOME}" in argv
+    assert f"{codex_home}:{codex_env.container_codex_home('t')}" in argv
 
 
 def test_codex_env_flags_export_the_in_container_codex_home(
@@ -309,7 +309,7 @@ def test_codex_env_flags_export_the_in_container_codex_home(
     # Act
     argv = codex_env.codex_env_flags(config, tmp_path)
     # Assert
-    assert f"{codex_env.CODEX_HOME_ENV}={codex_env.CONTAINER_CODEX_HOME}" in argv
+    assert f"{codex_env.CODEX_HOME_ENV}={codex_env.container_codex_home('t')}" in argv
 
 
 @pytest.fixture
@@ -414,3 +414,33 @@ def test_the_two_axis_refusal_message_names_the_harness_axis(
         message = str(exc)
     # Assert
     assert "spec.harness: codex" in message
+
+
+def test_codex_env_flags_create_the_codex_home_when_absent(
+    tmp_path, no_harness_override
+):
+    # Arrange -- a host that has never run codex: the bind source is absent
+    # (no CODEX_HOME override, so the agent's own state-dir home is used).
+    previous = os.environ.pop(codex_env.CODEX_HOME_ENV, None)
+    config = AgentConfig(name="t", harness="codex")
+    # Act
+    try:
+        codex_env.codex_env_flags(config, tmp_path)
+    finally:
+        if previous is not None:
+            os.environ[codex_env.CODEX_HOME_ENV] = previous
+    # Assert
+    assert (tmp_path / "codex-home").is_dir()
+
+
+def test_codex_env_flags_bind_into_tmp_where_the_image_has_a_mount_point(
+    tmp_path, no_harness_override, codex_home
+):
+    # Arrange -- apptainer refuses a bind whose destination is absent in the
+    # image; /tmp exists, /home/agent/.codex did not (handyman-01, 08:59Z).
+    config = AgentConfig(name="hm", harness="codex")
+    # Act
+    argv = codex_env.codex_env_flags(config, tmp_path)
+    # Assert
+    assert argv[argv.index("--bind") + 1].endswith(":/tmp/sac-hm-codex-home")
+
