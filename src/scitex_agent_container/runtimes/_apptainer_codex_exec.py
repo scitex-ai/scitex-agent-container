@@ -7,7 +7,8 @@ server files the Claude TUI receives as ``--mcp-config`` flags into Codex's
 pane holds ``codex`` itself, not a python parent.
 
     python3 -m scitex_agent_container.runtimes._apptainer_codex_exec \\
-        [--mcp-config PATH]... [--mcp-json JSON]... -- <codex args...>
+        [--mcp-config PATH]... [--mcp-json JSON]... [--hooks-from SETTINGS] \\
+        -- <codex args...>
 
 Why here and not on the host: ``~/.mcp.json`` and the inline channel JSON
 exist only in the container, and ``codex_cli_bin.bundled_codex_path()`` on
@@ -31,7 +32,11 @@ from pathlib import Path
 
 from .._logging import get_logger
 
-__all__ = ["main", "mcp_overrides", "resolve_codex_binary"]
+__all__ = ["main", "mcp_overrides", "resolve_codex_binary", "write_hooks_from"]
+
+#: Codex reads its hooks from this file under CODEX_HOME (measured in the
+#: 0.147 binary: "hooks/hooks.json", "failed to serialize hooks.json").
+HOOKS_FILENAME = "hooks.json"
 
 _log = get_logger(__name__)
 
@@ -107,6 +112,40 @@ def mcp_overrides(documents: list[object]) -> list[str]:
     return flags
 
 
+def write_hooks_from(settings_path: str, codex_home: str) -> Path | None:
+    """Copy the Claude ``settings.json`` hooks block into ``$CODEX_HOME/hooks.json``.
+
+    Returns the file written, or ``None`` when there was nothing to copy
+    (no settings file, no ``hooks`` block, or no CODEX_HOME). The settings
+    are the source of truth: the file is rewritten on every boot so a hook
+    added to the fleet reaches the codex pane at its next restart, the same
+    way it reaches the Claude pane. Codex's engine reads this shape — event
+    name -> [{matcher, hooks: [{type: "command", command, timeout}]}] — and
+    skips the hook TYPES it does not run yet (prompt / agent / async) with a
+    named diagnostic rather than failing, so the block is copied whole.
+    """
+    if not settings_path or not codex_home:
+        return None
+    source = Path(settings_path)
+    if not source.is_file():
+        _log.warning(
+            "codex-exec: settings %s is absent; no hooks copied", settings_path
+        )
+        return None
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        _log.warning("codex-exec: settings %s is not JSON (%s)", settings_path, exc)
+        return None
+    hooks = document.get("hooks") if isinstance(document, dict) else None
+    if not isinstance(hooks, dict) or not hooks:
+        return None
+    target = Path(codex_home) / HOOKS_FILENAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def _load_documents(paths: list[str], inline: list[str]) -> list[object]:
     documents: list[object] = []
     for path in paths:
@@ -132,18 +171,23 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     paths: list[str] = []
     inline: list[str] = []
+    hooks_from = ""
     while args and args[0] != "--":
         flag = args.pop(0)
         if flag == "--mcp-config" and args:
             paths.append(args.pop(0))
         elif flag == "--mcp-json" and args:
             inline.append(args.pop(0))
+        elif flag == "--hooks-from" and args:
+            hooks_from = args.pop(0)
         else:
             _log.error("codex-exec: unexpected argument %r", flag)
             return 2
     if args and args[0] == "--":
         args.pop(0)
     binary = resolve_codex_binary()
+    if hooks_from:
+        write_hooks_from(hooks_from, os.environ.get("CODEX_HOME", ""))
     codex_argv = [binary, *args, *mcp_overrides(_load_documents(paths, inline))]
     try:
         os.execv(binary, codex_argv)

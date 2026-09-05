@@ -166,6 +166,7 @@ def _codex_tui_inner_argv(
         config,
         mcp_config=options.get("tui_mcp_config"),  # type: ignore[arg-type]
         channel_mcp=options.get("tui_channel_mcp"),  # type: ignore[arg-type]
+        settings=options.get("tui_settings"),  # type: ignore[arg-type]
     )
 
 
