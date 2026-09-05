@@ -242,8 +242,7 @@ def parse_engines(spec: Mapping) -> dict[str, EngineSpec]:
     if not isinstance(block, Mapping):
         return {}
     return {
-        str(key): parse_engine_entry(str(key), value)
-        for key, value in block.items()
+        str(key): parse_engine_entry(str(key), value) for key, value in block.items()
     }
 
 
@@ -351,6 +350,17 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     if claude is not None:
         claude.model = engine.model
         claude.provider = engine.provider
+        # A provider-backed engine authenticates with the provider's API key;
+        # the OAuth account the DEFAULT engine pins is not this start's, and
+        # the runtime refuses the two together (_apptainer_provider:
+        # "provider and account are mutually exclusive"). Measured
+        # 2026-09-05: `business --engine qwen38-27b` was refused on the peer
+        # with exactly that message while its spec was correct -- the fold
+        # had left the account in place. Clearing it here keeps the rule
+        # true for what actually runs; an engine without a provider keeps
+        # the account, because OAuth is then the only auth it has.
+        if engine.provider is not None:
+            claude.account = ""
     if engine.env:
         merged = dict(getattr(config, "env", {}) or {})
         merged.update(engine.env)

@@ -22,6 +22,7 @@ from scitex_agent_container.config import load_config
 from scitex_agent_container.config._engine_types import (
     EngineDefaultError,
     UnknownEngineError,
+    apply_engine,
     default_engine,
     legacy_conflict_messages,
     parse_engines,
@@ -444,3 +445,37 @@ def test_a_known_harness_inside_an_engine_entry_is_accepted():
     errors = validate_raw(doc, "spec.yaml")
     # Assert
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# A provider-backed engine clears the OAuth account the default engine pins.
+# Measured 2026-09-05: `business --engine qwen38-27b` was refused at runtime
+# ("provider and account are mutually exclusive") while its spec was correct,
+# because the fold left spec.claude.account in place.
+# ---------------------------------------------------------------------------
+def test_selecting_a_provider_engine_clears_the_oauth_account(tmp_path):
+    # Arrange
+    path = _write(
+        tmp_path,
+        "eng-prov-acct",
+        {"engines": _two_engines(), "claude": {"account": "acct-a"}},
+    )
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "qwen38-27b"))
+    # Assert
+    assert config.claude.account == ""
+
+
+def test_selecting_the_oauth_engine_keeps_the_account(tmp_path):
+    # Arrange
+    path = _write(
+        tmp_path,
+        "eng-oauth-acct",
+        {"engines": _two_engines(), "claude": {"account": "acct-a"}},
+    )
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "claude"))
+    # Assert
+    assert config.claude.account == "acct-a"
