@@ -337,43 +337,61 @@ def _engine_config(harness: str, max_ctx: int | None) -> AgentConfig:
     return config
 
 
-def test_anthropic_harness_also_gets_the_claude_code_context_window(
-    monkeypatch,
-):
+def test_anthropic_harness_gets_the_sac_provenance_name(env_save_restore):
     # Arrange -- the fleet's real shape: a 1M-window engine on Claude Code.
-    monkeypatch.delenv("SAC_PROVIDER", raising=False)
-    config = _engine_config("anthropic", 1048576)
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _engine_config("anthropic", 1_048_576)
 
     # Act
     env = _env_dict(engine_env_flags(config))
 
-    # Assert -- BOTH names carry it: the SAC_ provenance name and the
-    # harness's own knob, which is what actually moves auto-compact.
+    # Assert -- delivery under the SAC_ name is unchanged by the mapping.
     assert env[ENGINE_MAX_CONTEXT_TOKENS_ENV] == "1048576"
+
+
+def test_anthropic_harness_gets_the_claude_code_context_window(env_save_restore):
+    # Arrange -- same engine; the harness's own knob is what moves auto-compact.
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _engine_config("anthropic", 1_048_576)
+
+    # Act
+    env = _env_dict(engine_env_flags(config))
+
+    # Assert -- the measured mapping runs.
     assert env[CLAUDE_CODE_MAX_CONTEXT_ENV] == "1048576"
 
 
-def test_openai_harness_gets_the_sac_name_only(monkeypatch):
+def test_openai_harness_still_gets_the_sac_name(env_save_restore):
     # Arrange -- a harness nobody has measured this knob against.
-    monkeypatch.delenv("SAC_PROVIDER", raising=False)
-    config = _engine_config("openai", 1048576)
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _engine_config("openai", 1_048_576)
 
     # Act
     env = _env_dict(engine_env_flags(config))
 
-    # Assert -- delivery yes, invented vendor mapping no.
+    # Assert -- delivery yes.
     assert env[ENGINE_MAX_CONTEXT_TOKENS_ENV] == "1048576"
+
+
+def test_openai_harness_gets_no_invented_claude_code_mapping(env_save_restore):
+    # Arrange -- same unmeasured harness.
+    env_save_restore.delete("SAC_PROVIDER")
+    config = _engine_config("openai", 1_048_576)
+
+    # Act
+    env = _env_dict(engine_env_flags(config))
+
+    # Assert -- no vendor knob is invented for it.
     assert CLAUDE_CODE_MAX_CONTEXT_ENV not in env
 
 
-def test_engine_without_a_declared_window_sets_neither_name(monkeypatch):
+def test_engine_without_a_declared_window_sets_no_claude_code_knob(env_save_restore):
     # Arrange -- the legacy single-backend spec: no window declared.
-    monkeypatch.delenv("SAC_PROVIDER", raising=False)
+    env_save_restore.delete("SAC_PROVIDER")
     config = _engine_config("anthropic", None)
 
     # Act
     env = _env_dict(engine_env_flags(config))
 
     # Assert -- argv unchanged for every spec that declares nothing.
-    assert ENGINE_MAX_CONTEXT_TOKENS_ENV not in env
     assert CLAUDE_CODE_MAX_CONTEXT_ENV not in env
