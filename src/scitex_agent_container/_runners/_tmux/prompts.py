@@ -285,6 +285,20 @@ def _detect_codex_dir_trust(content: str) -> bool:
     )
 
 
+def _detect_codex_hooks_review(content: str) -> bool:
+    """Codex's "Hooks need review" picker (harness codex, 2026-09-05).
+
+    Shown once the shim has copied the fleet's hooks into CODEX_HOME/hooks.json:
+    "49 hooks are new or changed. Hooks can run outside the sandbox after you
+    trust them. 1. Review hooks / 2. Trust all and continue / 3. Continue
+    without trusting (hooks won't run)". The hooks ARE the fleet's own
+    (~/.claude/hooks, the same files the Claude pane runs), so option 2 is
+    the correct answer; option 3 would silently run the agent without them.
+    Measured on handyman-01 at 09:36 UTC.
+    """
+    return "Hooks need review" in content and "2. Trust all and continue" in content
+
+
 def _detect_codex_done(content: str) -> bool:
     """Codex is at its input prompt: the banner box is up and no picker remains.
 
@@ -360,6 +374,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         name="codex-dir-trust",
         detect=_detect_codex_dir_trust,
         keys=["Enter"],  # cursor already on "1. Yes, continue"
+        priority=1,
+    ),
+    PromptHandler(
+        name="codex-hooks-review",
+        detect=_detect_codex_hooks_review,
+        keys=["2", "Enter"],  # "2. Trust all and continue" — the fleet's own hooks
         priority=1,
     ),
     PromptHandler(

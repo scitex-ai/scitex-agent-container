@@ -63,3 +63,41 @@ def test_codex_banner_is_ready():
     ready = is_ready(content)
     # Assert
     assert ready is True
+
+
+_HOOKS_SCREEN = """
+  Hooks need review
+  49 hooks are new or changed.
+  Hooks can run outside the sandbox after you trust them.
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+  Press enter to confirm or esc to go back
+"""
+
+
+def test_codex_hooks_review_picker_is_detected():
+    # Arrange -- the screen after the shim copied the fleet's hooks in.
+    handler = _handler("codex-hooks-review")
+    # Act
+    seen = handler.detect(_HOOKS_SCREEN)
+    # Assert
+    assert seen is True
+
+
+def test_codex_hooks_review_picker_trusts_all():
+    # Arrange -- option 3 would run the agent without its hooks, silently.
+    handler = _handler("codex-hooks-review")
+    # Act
+    keys = handler.keys
+    # Assert
+    assert keys == ["2", "Enter"]
+
+
+def test_codex_hooks_review_screen_is_not_ready():
+    # Arrange
+    content = _HOOKS_SCREEN
+    # Act
+    ready = is_ready(content)
+    # Assert
+    assert ready is False
