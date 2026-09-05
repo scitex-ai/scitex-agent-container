@@ -107,6 +107,26 @@ def test_the_tail_is_taken_from_the_end_of_the_payload():
     assert tail == "THEEND"
 
 
+def test_an_unknown_composer_is_reported_pending_not_clear():
+    # Arrange -- a pane from some third TUI: our payload is on screen, but
+    # nothing draws a marker either harness would recognise.
+    pane = "some other TUI\n  CHANNEL CHECK: answer with ARRIVED\n  status line\n"
+    # Act
+    held = composer_holds_fragment(pane, "answer with ARRIVED")
+    # Assert -- pending, so the caller presses Enter and can fail LOUD,
+    # rather than reporting a success nobody verified.
+    assert held is True
+
+
+def test_an_unknown_pane_without_our_payload_is_not_pending():
+    # Arrange
+    pane = "some other TUI\n  unrelated output\n  status line\n"
+    # Act
+    held = composer_holds_fragment(pane, "answer with ARRIVED")
+    # Assert
+    assert held is False
+
+
 def test_a_payload_hard_wrapped_mid_word_still_reads_as_pending():
     # Arrange -- capture-pane without -J splits "ARRIVED" across two rows.
     pane = (

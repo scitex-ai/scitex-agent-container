@@ -143,7 +143,15 @@ def composer_holds_fragment(pane: str, fragment: str) -> bool:
     for index in range(len(rows) - 1, -1, -1):
         if any(marker in rows[index] for marker in _COMPOSE_MARKERS):
             return fragment in _squeeze("".join(rows[index:]))
-    return False
+    # No marker we recognise. Returning False here would be the very trap
+    # this function exists to remove, one level down: a pane whose composer
+    # is drawn by a THIRD TUI would again answer "nothing pending" and the
+    # caller would again read that as "submitted". So answer with what can
+    # still be seen -- our own text anywhere on screen. The cost of being
+    # wrong is now an Enter into an idle pane and, if it truly never
+    # advances, a LOUD failure with the pane dumped; the cost of the old
+    # answer was a silent success over a message nobody received.
+    return fragment in _squeeze(pane)
 
 
 def _pane_is_input_idle(pane: str) -> bool:
