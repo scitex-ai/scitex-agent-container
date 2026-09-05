@@ -401,3 +401,46 @@ def test_get_runtime_returns_claude_session_for_anthropic_harness():
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, ClaudeSessionRuntime)
+
+
+# ---------------------------------------------------------------------------
+# codex-tui (2026-09-05): the selector maps the codex pane to the TUI runtime
+# ---------------------------------------------------------------------------
+
+
+def test_get_runtime_returns_tui_session_for_harness_codex():
+    # Arrange -- a spec that only flipped harness: anthropic -> codex.
+    config = AgentConfig(name="hm", runtime="", workdir="/tmp/hm", harness="codex")
+    # Act
+    rt = _get_runtime(config)
+    # Assert
+    assert isinstance(rt, TuiSessionRuntime)
+
+
+def test_get_runtime_still_refuses_the_headless_codex_runner():
+    # Arrange -- registered but without a lifecycle adapter, the headless
+    # runner claims no runtime spelling, so its name is unmappable: loud.
+    config = AgentConfig(
+        name="hm", runtime="codex-sdk", workdir="/tmp/hm", harness="codex"
+    )
+    # Act
+    try:
+        _get_runtime(config)
+        message = ""
+    except ValueError as exc:
+        message = str(exc)
+    # Assert
+    assert "codex-sdk" in message
+
+
+def test_get_runtime_still_refuses_the_openai_harness():
+    # Arrange -- the vendor guard is untouched for every other family.
+    config = AgentConfig(name="oa", runtime="", workdir="/tmp/oa", harness="openai")
+    # Act
+    try:
+        _get_runtime(config)
+        raised = None
+    except HarnessRuntimeMismatchError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, HarnessRuntimeMismatchError)

@@ -20,6 +20,7 @@ from scitex_agent_container.config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
     CODEX_SDK,
+    CODEX_TUI,
     HARNESS_DESCRIPTORS,
     OPENAI_AGENTS,
     UnmappableHarnessError,
@@ -260,13 +261,14 @@ def test_resolve_config_and_mapping_surfaces_agree():
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_exactly_the_four_real_entries():
+def test_registry_has_exactly_the_five_real_entries():
     # Arrange — CODEX_SDK joined on 2026-08-14 (card
     # sac-codex-python-sdk-harness-20260814), the first vendor added
     # since the registry landed. A closed-set assertion like this one is
     # deliberately allowed to break when a row is added: the break is
     # the review prompt asking whether the new entry was intended.
-    expected = {CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK}
+    # CODEX_TUI joined on 2026-09-05 (the operator's move off Claude Code).
+    expected = {CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK, CODEX_TUI}
     # Act
     keys = set(HARNESS_DESCRIPTORS)
     # Assert
@@ -698,3 +700,61 @@ def test_get_runtime_proxy_resolves_by_launch_mode_alone():
     adapter = _get_runtime(cfg)
     # Assert
     assert isinstance(adapter, TuiSessionRuntime)
+
+
+# ---------------------------------------------------------------------------
+# codex-tui (2026-09-05): the first non-Anthropic entry with a launch path
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_harness_codex_maps_to_the_codex_tui_key():
+    # Arrange -- a spec that only flipped harness: anthropic -> codex.
+    spec = {"harness": "codex"}
+    # Act
+    key = resolve_harness_key(spec)
+    # Assert
+    assert key == CODEX_TUI
+
+
+def test_resolve_harness_codex_runtime_tui_maps_to_the_codex_tui_key():
+    # Arrange
+    spec = {"harness": "codex", "runtime": "tui"}
+    # Act
+    key = resolve_harness_key(spec)
+    # Assert
+    assert key == CODEX_TUI
+
+
+def test_resolve_harness_codex_has_no_runtime_spelling_for_the_headless_runner():
+    # Arrange -- codex-sdk has no lifecycle adapter, so no spelling selects it.
+    spec = {"harness": "codex", "runtime": "codex-sdk"}
+    # Act
+    try:
+        resolve_harness_key(spec)
+        message = ""
+    except UnmappableHarnessError as exc:
+        message = str(exc)
+    # Assert
+    assert "codex-sdk" in message
+
+
+def test_resolve_harness_codex_legacy_apptainer_runtime_is_unmappable():
+    # Arrange -- "apptainer" spells the CLAUDE sdk runner, not a codex mode.
+    spec = {"harness": "codex", "runtime": "apptainer"}
+    # Act
+    try:
+        resolve_harness_key(spec)
+        message = ""
+    except UnmappableHarnessError as exc:
+        message = str(exc)
+    # Assert
+    assert "apptainer" in message
+
+
+def test_codex_tui_entry_is_host_probed_like_the_claude_tui():
+    # Arrange
+    descriptor = HARNESS_DESCRIPTORS[CODEX_TUI]
+    # Act
+    writer = descriptor.beat_writer
+    # Assert
+    assert writer == "host-probe"

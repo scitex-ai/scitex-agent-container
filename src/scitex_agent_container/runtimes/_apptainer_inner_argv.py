@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from ..config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
+    CODEX_TUI,
     HARNESS_DESCRIPTORS,
     OPENAI_AGENTS,
 )
@@ -168,26 +169,35 @@ def build_inner_argv(
     """
     kind = getattr(config, "kind", "Agent")
     if tui:
-        # Same v4 step-2 guard as the SDK branch below: the interactive
-        # claude TUI is just as wrong a vendor for a non-Anthropic
-        # harness (and this branch never had even the dead check).
-        ensure_harness_matches_claude_launch(
-            config, launching="the interactive claude TUI"
-        )
+        tui_options = {
+            "tui_mcp_config": tui_mcp_config,
+            "tui_channel_mcp": tui_channel_mcp,
+            "tui_dev_channels": tui_dev_channels,
+            "tui_settings": tui_settings,
+        }
         # v4 step 4: the registry entry owns the argv shape. The entry is
         # keyed by the caller's already-decided launch mode (``tui=True``
         # came from TuiSessionRuntime), never re-derived from the config —
         # direct/dry-run callers pass configs whose ``runtime`` field this
-        # builder must not second-guess.
-        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
-            config,
-            {
-                "tui_mcp_config": tui_mcp_config,
-                "tui_channel_mcp": tui_channel_mcp,
-                "tui_dev_channels": tui_dev_channels,
-                "tui_settings": tui_settings,
-            },
-        )
+        # builder must not second-guess. The HARNESS axis picks the pane's
+        # program: codex (2026-09-05) or Claude Code.
+        from ._apptainer_codex_env import codex_harness_active
+
+        if codex_harness_active(config):
+            ensure_harness_matches_claude_launch(
+                config, launching="the interactive codex TUI", launching_key=CODEX_TUI
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CODEX_TUI].inner_argv(config, tui_options)
+        else:
+            # Same v4 step-2 guard as the SDK branch below: the interactive
+            # claude TUI is just as wrong a vendor for a non-Anthropic
+            # harness (and this branch never had even the dead check).
+            ensure_harness_matches_claude_launch(
+                config, launching="the interactive claude TUI"
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CLAUDE_CODE_TUI].inner_argv(
+                config, tui_options
+            )
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:

@@ -47,6 +47,11 @@ from ._apptainer_auth_bind import (  # noqa: F401 (re-export — see module docs
     credentials_file_bind,
     ensure_credentials_bind_target,
 )
+from ._apptainer_codex_env import (
+    codex_env_flags,
+    codex_harness_active,
+    codex_provider_key_flags,
+)
 from ._apptainer_provider import (
     engine_env_flags,
     openai_env_flags,
@@ -89,6 +94,18 @@ def auth_argv(config: AgentConfig, state_dir: Path) -> list[str]:
     # branch order already documents. Empty for every legacy
     # single-backend spec, so their argv is unchanged.
     engine_flags = engine_env_flags(config)
+
+    if codex_harness_active(config):
+        # codex harness (2026-09-05): CODEX_HOME bind + the binary's own
+        # key names, plus the engine's resolved provider key under the
+        # env name the rendered config.toml points at (env_key). No
+        # Anthropic OAuth env, no ANTHROPIC_BASE_URL — Codex reads its
+        # provider from config only (OPENAI_BASE_URL is ignored).
+        return (
+            engine_flags
+            + codex_env_flags(config, state_dir)
+            + codex_provider_key_flags(config)
+        )
 
     if openai_harness_active(config):
         # openai agent-SDK family (openai-compat-3): OPENAI_* columns

@@ -114,9 +114,7 @@ class HarnessRuntimeMismatchError(RuntimeError):
 #: The v4 card tracking harness-aware runtime dispatch (migration step 4,
 #: the descriptor registry). Until it lands, sac VALIDATES ``harness:
 #: openai`` but cannot LAUNCH it through the lifecycle runtime path.
-V4_HARNESS_DISPATCH_CARD = (
-    "sac-v4-layering-refactor-harness-runtime-inference-20260813"
-)
+V4_HARNESS_DISPATCH_CARD = "sac-v4-layering-refactor-harness-runtime-inference-20260813"
 
 
 def is_known_harness(name: str) -> bool:
@@ -221,7 +219,7 @@ def _harness_logger():
 
 
 def ensure_harness_matches_claude_launch(
-    config, *, launching: str, log: bool = True
+    config, *, launching: str, log: bool = True, launching_key: str = ""
 ) -> None:
     """Refuse LOUDLY when ``config.harness`` is non-Anthropic but the
     calling code path is about to launch ``launching`` — a Claude-family
@@ -258,13 +256,21 @@ def ensure_harness_matches_claude_launch(
     (d) the v4 gap card id.
     """
     harness = (
-        str(getattr(config, "harness", "") or DEFAULT_AGENT_HARNESS)
-        .strip()
-        .lower()
+        str(getattr(config, "harness", "") or DEFAULT_AGENT_HARNESS).strip().lower()
     )
     if harness == DEFAULT_AGENT_HARNESS:
         return
     if getattr(config, "kind", "Agent") == "AgentProxy":
+        return
+    # 2026-09-05: the first non-Anthropic entry with a full launch path.
+    # The caller states WHICH registry entry it is about to launch
+    # (``launching_key``); a codex spec headed for the codex TUI is a
+    # correct routing, not a wrong-vendor one. Every other non-Anthropic
+    # combination still refuses below — the predicate stays "is the
+    # declared harness what this path launches?", answered per entry.
+    from ._harness_registry import CODEX_TUI
+
+    if harness == "codex" and launching_key == CODEX_TUI:
         return
     caller = sys._getframe(1)
     site = f"{caller.f_code.co_filename}:{caller.f_lineno}"

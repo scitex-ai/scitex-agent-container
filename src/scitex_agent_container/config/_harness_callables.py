@@ -150,6 +150,25 @@ def _codex_sdk_inner_argv(
     return _session_runner_inner_argv(config, CODEX_SESSION_RUNNER, options)
 
 
+def _codex_tui_inner_argv(
+    config: "AgentConfig", options: "Mapping[str, object] | None" = None
+) -> list[str]:
+    """Inner argv for the interactive ``codex`` TUI (pre-shell-wrap).
+
+    Takes the SAME option keys as the Claude TUI entry (the workspace
+    ``.mcp.json`` path and the inline channel-subscriber JSON) so the
+    TUI branch of ``build_inner_argv`` dispatches both entries alike.
+    """
+    options = options or {}
+    from ..runtimes._apptainer_inner_argv_codex import codex_tui_argv
+
+    return codex_tui_argv(
+        config,
+        mcp_config=options.get("tui_mcp_config"),  # type: ignore[arg-type]
+        channel_mcp=options.get("tui_channel_mcp"),  # type: ignore[arg-type]
+    )
+
+
 # ---------------------------------------------------------------------------
 # env_and_binds
 # ---------------------------------------------------------------------------

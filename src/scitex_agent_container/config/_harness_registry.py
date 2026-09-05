@@ -69,6 +69,7 @@ __all__ = [
     "CLAUDE_AGENT_SDK",
     "CLAUDE_CODE_TUI",
     "CODEX_SDK",
+    "CODEX_TUI",
     "HARNESS_DESCRIPTORS",
     "HarnessDescriptor",
     "OPENAI_AGENTS",
@@ -112,6 +113,13 @@ OPENAI_AGENTS = "openai-agents"
 #: ``runtimes._apptainer_codex_env.codex_env_flags``).
 CODEX_SDK = "codex-sdk"
 
+#: The interactive ``codex`` TUI in a tmux PTY (``spec.harness: codex`` with
+#: ``spec.runtime: tui`` / unset). The shape 107 of 119 fleet specs run
+#: Claude Code in, opened to the codex harness on 2026-09-05 (operator
+#: ruling: the fleet prepares to leave Claude Code, gradually). Renders
+#: through ``runtimes._apptainer_inner_argv_codex``.
+CODEX_TUI = "codex-tui"
+
 
 class UnmappableHarnessError(ValueError):
     """``spec.harness`` + ``spec.runtime`` select no registered harness.
@@ -149,6 +157,7 @@ from ._harness_callables import (  # noqa: F401 (re-export)
     _claude_tui_inner_argv,
     _codex_env_and_binds,
     _codex_sdk_inner_argv,
+    _codex_tui_inner_argv,
     _noop_prepare_home,
     _openai_agents_inner_argv,
     _openai_env_and_binds,
@@ -262,11 +271,28 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             env_and_binds=_openai_env_and_binds,
         ),
         HarnessDescriptor(
+            key=CODEX_TUI,
+            spec_harness="codex",
+            # Mirrors claude-code-tui: an unset ``runtime`` selects the
+            # interactive pane (operator directive 2026-06-15), so a spec
+            # that flips ``harness: anthropic`` to ``codex`` keeps its shape.
+            spec_runtimes=frozenset({"", "tui"}),
+            runner_module=None,  # inner process is the `codex` binary
+            inner_argv=_codex_tui_inner_argv,
+            hosted="external",
+            beat_writer="host-probe",  # pane-activity epoch, host-stamped
+            can_resume=True,  # `codex resume <id>` / `resume --last`
+            env_and_binds=_codex_env_and_binds,
+        ),
+        HarnessDescriptor(
             key=CODEX_SDK,
             spec_harness="codex",
-            # Sole entry of its family, like openai-agents: the runtime
-            # axis spells ANTHROPIC launch modes ("tui" / the legacy
-            # container-engine values), so it cannot discriminate here.
+            # No longer the sole entry of its family (codex-tui above), and
+            # still without a lifecycle adapter: it claims NO runtime
+            # spelling, so an unset / "tui" ``runtime`` selects the pane and
+            # nothing on the runtime axis can select this headless runner
+            # until the adapter that launches it exists (a2a.handler /
+            # ``python -m`` remain its entry, as before).
             spec_runtimes=frozenset(),
             runner_module=_CODEX_SESSION_RUNNER,
             inner_argv=_codex_sdk_inner_argv,
@@ -340,9 +366,7 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
         from ._harness_types import DEFAULT_AGENT_HARNESS
 
         harness = (
-            str(getattr(spec, "harness", "") or DEFAULT_AGENT_HARNESS)
-            .strip()
-            .lower()
+            str(getattr(spec, "harness", "") or DEFAULT_AGENT_HARNESS).strip().lower()
         )
         runtime = str(getattr(spec, "runtime", "") or "")
 
@@ -363,9 +387,7 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
     for descriptor in family:
         if runtime in descriptor.spec_runtimes:
             return descriptor.key
-    mappings = "; ".join(
-        f"{sorted(d.spec_runtimes)} → {d.key!r}" for d in family
-    )
+    mappings = "; ".join(f"{sorted(d.spec_runtimes)} → {d.key!r}" for d in family)
     raise UnmappableHarnessError(
         f"Unsupported runtime: spec.runtime={runtime!r} maps to no "
         f"registered harness under spec.harness={harness!r}. Accepted "
