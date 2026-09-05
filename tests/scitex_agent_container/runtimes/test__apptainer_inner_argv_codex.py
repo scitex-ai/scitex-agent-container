@@ -210,3 +210,12 @@ def test_argv_hands_the_settings_to_the_shim_for_hooks():
     # Assert
     assert argv[3:5] == ["--hooks-from", "/home/agent/.claude/settings.json"]
 
+
+def test_overrides_trust_the_workdir_up_front():
+    # Arrange -- otherwise Codex parks on its directory-trust picker at boot.
+    config = _config()
+    # Act
+    seen = _overrides(codex_config_overrides(config))
+    # Assert
+    assert seen['projects."/tmp/hm-wd".trust_level'] == '"trusted"'
+

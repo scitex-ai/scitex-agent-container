@@ -121,6 +121,15 @@ def codex_config_overrides(config: AgentConfig) -> list[str]:
     flags += _override("model", model)
     flags += _override("sandbox_mode", _SANDBOX)
     flags += _override("approval_policy", "never")
+    # Trust the workdir up front: without it Codex parks on "Do you trust the
+    # contents of this directory?" at first boot in every new cwd (measured on
+    # handyman-01, 2026-09-05). This is the entry Codex itself writes to
+    # config.toml when the operator answers "Yes, continue".
+    workdir = str(
+        getattr(config, "expanded_workdir", "") or getattr(config, "workdir", "") or ""
+    ).strip()
+    if workdir:
+        flags += ["-c", f'projects.{json.dumps(workdir)}.trust_level="trusted"']
     max_ctx = getattr(config, "max_context_tokens", None)
     if max_ctx:
         flags += _override("model_context_window", int(max_ctx))
