@@ -66,17 +66,27 @@ __all__ = [
     "codex_env_flags",
     "codex_harness_active",
     "codex_provider_key_flags",
+    "container_codex_home",
     "resolve_codex_home",
 ]
 
 #: The env var the ``codex`` binary reads its config+creds directory from.
 CODEX_HOME_ENV = "CODEX_HOME"
 
-#: Path INSIDE the container the host's codex home is bound to. Fixed
-#: rather than mirroring the host path so the in-container ``CODEX_HOME``
-#: is the same string on every host (the agent's own ``$HOME`` differs
-#: per-agent; the credential directory should not have to).
-CONTAINER_CODEX_HOME = "/home/agent/.codex"
+#: Prefix of the path INSIDE the container the host's codex home is bound
+#: to: ``/tmp/sac-<name>-codex-home``. Under ``/tmp`` — which exists in the
+#: image — because apptainer refuses a bind whose DESTINATION is absent
+#: ("destination /home/agent/.codex doesn't exist in container", measured
+#: on the first live codex start, handyman-01, 2026-09-05 08:59 UTC), and
+#: per agent so two codex agents on one host never share a session store.
+#: The same shape ``_apptainer_provider_cfg.container_config_dir`` uses.
+CONTAINER_CODEX_HOME_PREFIX = "/tmp/sac-"
+
+
+def container_codex_home(name: str) -> str:
+    """The in-container ``CODEX_HOME`` for agent ``name``."""
+    return f"{CONTAINER_CODEX_HOME_PREFIX}{name}-codex-home"
+
 
 #: API-key env vars, in resolution order. ``SAC_CODEX_API_KEY`` is sac's
 #: own override; ``CODEX_API_KEY`` is the binary's; ``OPENAI_API_KEY`` is
@@ -151,16 +161,20 @@ def codex_harness_active(config: AgentConfig) -> bool:
     return resolve_agent_harness(config) == "codex"
 
 
-def resolve_codex_home() -> Path:
-    """The HOST directory holding ``auth.json`` + ``config.toml``.
+def resolve_codex_home(state_dir: Path | None = None) -> Path:
+    """The HOST directory holding codex's config, auth and session rollouts.
 
     ``$CODEX_HOME`` when exported (the binary's own override — honoured
     so an operator who already relocated it does not have to say so
-    twice), else ``~/.codex``.
+    twice), else the agent's own ``<state_dir>/codex-home`` (2026-09-05:
+    per agent, like the provider config dir, so sessions never mix), else
+    ``~/.codex`` when no state dir is known.
     """
     override = os.environ.get(CODEX_HOME_ENV, "").strip()
     if override:
         return Path(override).expanduser()
+    if state_dir is not None:
+        return Path(state_dir).expanduser() / "codex-home"
     return Path.home() / ".codex"
 
 
@@ -204,14 +218,20 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
             "about who runs the loop. Remove one of the two declarations."
         )
 
-    del state_dir  # codex creds live in CODEX_HOME, not the agent state dir
-
-    codex_home = resolve_codex_home()
+    codex_home = resolve_codex_home(state_dir)
+    # The bind SOURCE must exist or apptainer refuses the whole container
+    # ("mount source ... no such file or directory", measured on the first
+    # live codex start, handyman-01, 2026-09-05 08:57 UTC: the host had never
+    # run codex, so the directory was absent and the pane died before boot).
+    # This is the directory codex itself would create on first run; sac
+    # creates it, private to the user, so a fresh host starts like a used one.
+    codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    inside = container_codex_home(config.name)
     argv: list[str] = [
         "--bind",
-        f"{codex_home}:{CONTAINER_CODEX_HOME}",
+        f"{codex_home}:{inside}",
         "--env",
-        f"{CODEX_HOME_ENV}={CONTAINER_CODEX_HOME}",
+        f"{CODEX_HOME_ENV}={inside}",
     ]
 
     for env_name in _KEY_ENVS:
