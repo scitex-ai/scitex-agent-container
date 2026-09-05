@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ def _instances_store(pg_schema: str):
     happens to point at.
     """
     yield
+
 
 # ---------------------------------------------------------------------------
 # Shim helpers — dual-behavior rsync (dry-run vs real) plus a fake ssh.
@@ -277,6 +279,7 @@ _PEER_DRIFTED = f"{'0' * 32}  ./spec.yaml\n"
 
 _OK_JSON = '{"a2a_port": 47213, "started_at": "2026-05-16T00:00:00Z"}'
 
+
 def _peer_that_delivers(**start_kwargs) -> dict[str, Any]:
     """A peer whose handoff genuinely succeeds, varying only its start reply.
 
@@ -299,7 +302,9 @@ _SK_OK = _peer_that_delivers(stdout=_OK_JSON, exit=0)
 
 
 class TestDispatchDriftBlocksWithoutForce:
-    def test_drift_without_force_raises_runtime_error(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_drift_without_force_raises_runtime_error(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange — the peer holds a DIFFERENT spec.yaml.
         sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
@@ -307,7 +312,9 @@ class TestDispatchDriftBlocksWithoutForce:
         # Assert
         assert isinstance(scen.raised, RuntimeError)
 
-    def test_drift_message_mentions_spec_drift(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_drift_message_mentions_spec_drift(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
@@ -315,7 +322,9 @@ class TestDispatchDriftBlocksWithoutForce:
         # Assert
         assert "Spec drift" in scen.message
 
-    def test_drift_message_names_the_differing_file(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_drift_message_names_the_differing_file(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest=_PEER_DRIFTED)
         # Act
@@ -348,7 +357,9 @@ class TestDispatchDriftBlocksWithoutForce:
 
 
 class TestDispatchDryRunMode:
-    def test_dry_run_mode_does_not_raise(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_dry_run_mode_does_not_raise(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest="")
         # Act
@@ -356,7 +367,9 @@ class TestDispatchDryRunMode:
         # Assert
         assert scen.raised is None
 
-    def test_dry_run_mode_returns_zero_exit(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_dry_run_mode_returns_zero_exit(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest="")
         # Act
@@ -364,7 +377,9 @@ class TestDispatchDryRunMode:
         # Assert
         assert scen.returned == 0
 
-    def test_dry_run_mode_prints_dispatch_marker(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_dry_run_mode_prints_dispatch_marker(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest="")
         # Act
@@ -372,7 +387,9 @@ class TestDispatchDryRunMode:
         # Assert
         assert "[dispatch] dry-run" in scen.captured_stdout
 
-    def test_dry_run_mode_ships_nothing(self, spec_dir, shim_bin, registered_peer, capsys):
+    def test_dry_run_mode_ships_nothing(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         # Arrange
         sk = dict(peer_manifest="")
         # Act
@@ -978,7 +995,15 @@ class TestTryDispatchClassification:
         # verb (the earlier calls are the manifest read, the transfer and the
         # post-transfer verification).
         ssh_calls = _ssh_invocations(shim_bin)
-        assert out is True and ssh_calls[-1][-6:] == [
+        # Since 2026-09-05 the verb rides inside ONE `bash -lc '<cmd>'`
+        # element so the peer's login profile (its secrets) is sourced first.
+        last = ssh_calls[-1][-1]
+        inner = (
+            shlex.split(last)[2]
+            if last.startswith("bash -lc ")
+            else " ".join(ssh_calls[-1])
+        )
+        assert out is True and inner.split()[-6:] == [
             "sac",
             "agents",
             "start",

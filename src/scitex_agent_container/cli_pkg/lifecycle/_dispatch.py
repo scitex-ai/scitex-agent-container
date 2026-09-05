@@ -167,8 +167,8 @@ def _dispatch_remote_start(
     # env_preamble is honoured by build_ssh_argv (bash -lc wrapper).
     import json as _json
 
-    from ..._state.host_config import build_ssh_argv
     from ..._state._remote_sac_hint import remote_sac_not_found_hint
+    from ..._state.host_config import build_ssh_argv
     from ..._state.host_config import load as _load_host_config
     from ..._state.state_db import record_instance_start
 
@@ -186,7 +186,9 @@ def _dispatch_remote_start(
     remote_argv = ["sac", "agents", "start", name, "--no-redispatch", "--json"]
     if engine:
         remote_argv += ["--engine", engine]
-    ssh_argv = build_ssh_argv(peer, remote_argv, peers_map)
+    # login=True for the same reason as the restart dispatch: an agent start
+    # on the peer needs the secrets only its login profile carries.
+    ssh_argv = build_ssh_argv(peer, remote_argv, peers_map, login=True)
     ssh_result = subprocess.run(
         ssh_argv,
         capture_output=True,
@@ -355,9 +357,7 @@ def try_dispatch(
     except Exception:
         # The failure is re-raised UNCHANGED — this only adds the sentence the
         # operator needs to attribute it. See :func:`_explain_pinned_hop_failure`.
-        _explain_pinned_hop_failure(
-            config.name, config.hosts_spec.host, dispatch_peer
-        )
+        _explain_pinned_hop_failure(config.name, config.hosts_spec.host, dispatch_peer)
         raise
     return True
 
