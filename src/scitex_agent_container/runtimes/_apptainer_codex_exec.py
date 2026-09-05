@@ -35,6 +35,7 @@ from .._logging import get_logger
 
 __all__ = [
     "adapt_hook_commands",
+    "inherited_env_names",
     "main",
     "mcp_overrides",
     "resolve_codex_binary",
@@ -127,6 +128,23 @@ def _servers(document: object) -> dict[str, dict]:
     )
 
 
+#: Prefixes of the fleet variables an MCP server may read from its inherited
+#: environment. Claude Code hands its own environment to every stdio MCP
+#: server it spawns; Codex passes ONLY the declared ``env`` plus the names in
+#: ``env_vars``, so a server that reads an inherited variable dies. Measured
+#: on the first codex pane (handyman-01, 2026-09-05 10:10 UTC): the
+#: telegrammer server exited with "No database connection string. Set
+#: SCITEX_STORE_DSN (the fleet-wide switch) or CCT_STORE_DSN" although
+#: SCITEX_STORE_DSN was present in the pane. Names only ever reach the argv.
+INHERITED_ENV_PREFIXES = ("SCITEX_", "CCT_", "SAC_")
+
+
+def inherited_env_names(environ: dict | None = None) -> list[str]:
+    """Fleet variable NAMES present in this pane, for Codex's ``env_vars``."""
+    source = os.environ if environ is None else environ
+    return sorted(name for name in source if name.startswith(INHERITED_ENV_PREFIXES))
+
+
 def mcp_overrides(documents: list[object]) -> list[str]:
     """``-c mcp_servers.<name>.<field>=<toml>`` flags for every server given."""
     flags: list[str] = []
@@ -153,8 +171,12 @@ def mcp_overrides(documents: list[object]) -> list[str]:
             literal, forwarded = split_env_placeholders(entry.get("env") or {})
             if literal:
                 flags += ["-c", f"{key}.env={_toml(literal)}"]
-            if forwarded:
-                flags += ["-c", f"{key}.env_vars={_toml(forwarded)}"]
+            # The declared placeholders PLUS the fleet variables this pane
+            # carries, so a server that reads an inherited variable behaves as
+            # it does under Claude Code (see INHERITED_ENV_PREFIXES).
+            names = sorted(set(forwarded) | set(inherited_env_names()))
+            if names:
+                flags += ["-c", f"{key}.env_vars={_toml(names)}"]
     return flags
 
 

@@ -11,6 +11,7 @@ import json
 from scitex_agent_container.runtimes._apptainer_codex_exec import (
     CODEX_BIN_ENV,
     adapt_hook_commands,
+    inherited_env_names,
     mcp_overrides,
     resolve_codex_binary,
     split_env_placeholders,
@@ -223,3 +224,32 @@ def test_other_hooks_are_copied_unchanged():
     adapted = adapt_hook_commands(hooks)
     # Assert
     assert adapted == hooks
+
+
+def test_fleet_variable_names_are_collected_for_forwarding():
+    # Arrange -- a pane environment shaped like the real one.
+    environ = {
+        "SCITEX_STORE_DSN": "x",
+        "CCT_AGENT_ID": "y",
+        "SAC_NAME": "z",
+        "PATH": "/bin",
+    }
+    # Act
+    names = inherited_env_names(environ)
+    # Assert -- fleet names only; PATH and friends are Codex's own business.
+    assert names == ["CCT_AGENT_ID", "SAC_NAME", "SCITEX_STORE_DSN"]
+
+
+def test_mcp_env_vars_include_the_inherited_fleet_names(env_save_restore):
+    # Arrange -- Codex passes only what is declared, so a server that reads an
+    # inherited variable (the telegrammer's SCITEX_STORE_DSN) must get its name.
+    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://example/db")
+    document = {
+        "mcpServers": {
+            "tg": {"command": "bun", "env": {"CCT_AGENT_ID": "${CCT_AGENT_ID}"}}
+        }
+    }
+    # Act
+    seen = _flags([document])
+    # Assert
+    assert "SCITEX_STORE_DSN" in seen["mcp_servers.tg.env_vars"]
