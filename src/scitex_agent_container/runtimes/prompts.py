@@ -12,6 +12,7 @@ Add new handlers by appending to PROMPT_HANDLERS or calling register_prompt().
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -306,19 +307,34 @@ def _detect_codex_hooks_review(content: str) -> bool:
     return "Hooks need review" in content and "2. Trust all and continue" in content
 
 
-def _detect_codex_done(content: str) -> bool:
-    """Codex is at its input prompt: its banner is up and no picker remains.
+#: The Codex composer row and the footer under it, as they look once the boot
+#: banner has scrolled away: ``› Use /skills to list available skills`` over
+#: ``qwen38-27b default · /home/ywatanabe/proj/local-coder``. The footer's
+#: second word is the reasoning effort Codex is running with.
+_CODEX_COMPOSER_MARKER = "\u203a"
+_CODEX_FOOTER = re.compile(
+    r"^\s*\S+ (?:default|minimal|low|medium|high|xhigh) \u00b7 /", re.M
+)
+_CODEX_TAIL_ROWS = 8
 
-    The Codex TUI never prints Claude's "bypass permissions" status line; its
-    ready state is the "OpenAI Codex (vX)" box with a permissions row ("YOLO
-    mode" when sac turns the sandbox off).
+
+def _detect_codex_done(content: str) -> bool:
+    """Codex is at its input prompt and no picker remains.
+
+    Two shapes, both measured. At boot the "OpenAI Codex (vX)" box with a
+    permissions row ("YOLO mode" when sac turns the sandbox off) is on screen.
+    After the first turn that box has scrolled away for good, and the idle
+    screen is the composer row (``›``) with the model/effort/cwd footer under
+    it. Until 2026-09-05 only the first shape counted, so every dispatch to a
+    Codex agent after its first turn was refused as "a modal is blocking the
+    input" — measured on handyman-01, which had been idle at its composer.
     """
-    return (
-        "OpenAI Codex (v" in content
-        and "permissions:" in content
-        and "Press enter to continue" not in content
-        and "Press enter to confirm" not in content
-    )
+    if "Press enter to continue" in content or "Press enter to confirm" in content:
+        return False
+    if "OpenAI Codex (v" in content and "permissions:" in content:
+        return True
+    tail = "\n".join(content.rstrip().splitlines()[-_CODEX_TAIL_ROWS:])
+    return _CODEX_COMPOSER_MARKER in tail and _CODEX_FOOTER.search(tail) is not None
 
 
 def _detect_done(content: str) -> bool:
