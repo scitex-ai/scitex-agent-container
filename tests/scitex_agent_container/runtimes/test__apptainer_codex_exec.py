@@ -10,8 +10,10 @@ import json
 
 from scitex_agent_container.runtimes._apptainer_codex_exec import (
     CODEX_BIN_ENV,
+    adapt_hook_commands,
     mcp_overrides,
     resolve_codex_binary,
+    split_env_placeholders,
     write_hooks_from,
 )
 
@@ -153,3 +155,71 @@ def test_hooks_file_is_rewritten_from_the_settings_each_boot(tmp_path):
     written = write_hooks_from(str(settings), str(home))
     # Assert
     assert json.loads(written.read_text()) == {"hooks": {"PreToolUse": []}}
+
+
+def test_whole_placeholder_env_values_are_forwarded_by_name():
+    # Arrange -- the telegrammer's shape: every value is ${NAME}.
+    env = {"CCT_AGENT_ID": "${CCT_AGENT_ID}", "CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"}
+    # Act
+    literal, forwarded = split_env_placeholders(env)
+    # Assert -- names only; no value ever reaches the argv.
+    assert (literal, forwarded) == ({}, ["CCT_AGENT_ID", "CCT_BOT_TOKEN"])
+
+
+def test_plain_env_values_stay_literal():
+    # Arrange
+    env = {"SCITEX_TODO_CHANNEL_SOURCE": "cards"}
+    # Act
+    literal, forwarded = split_env_placeholders(env)
+    # Assert
+    assert (literal, forwarded) == ({"SCITEX_TODO_CHANNEL_SOURCE": "cards"}, [])
+
+
+def test_embedded_placeholders_expand_from_the_environment(env_save_restore):
+    # Arrange -- a placeholder inside more text cannot be forwarded by name.
+    env_save_restore.set("SAC_TEST_HOST", "compute-04")
+    env = {"URL": "http://${SAC_TEST_HOST}:19001/mcp"}
+    # Act
+    literal, _ = split_env_placeholders(env)
+    # Assert
+    assert literal == {"URL": "http://compute-04:19001/mcp"}
+
+
+def test_mcp_overrides_emit_env_vars_for_placeholders():
+    # Arrange
+    document = {
+        "mcpServers": {
+            "tg": {"command": "bun", "env": {"CCT_AGENT_ID": "${CCT_AGENT_ID}"}}
+        }
+    }
+    # Act
+    seen = _flags([document])
+    # Assert
+    assert seen["mcp_servers.tg.env_vars"] == '["CCT_AGENT_ID"]'
+
+
+def test_the_rtk_hook_is_piped_through_the_output_adapter():
+    # Arrange -- the one fleet hook whose stdout Codex misreads.
+    hooks = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": "rtk hook claude"}],
+            }
+        ]
+    }
+    # Act
+    adapted = adapt_hook_commands(hooks)
+    # Assert
+    assert adapted["PreToolUse"][0]["hooks"][0]["command"].startswith(
+        "rtk hook claude | python3 -m "
+    )
+
+
+def test_other_hooks_are_copied_unchanged():
+    # Arrange
+    hooks = {"Stop": [{"hooks": [{"type": "command", "command": "sac never-stop"}]}]}
+    # Act
+    adapted = adapt_hook_commands(hooks)
+    # Assert
+    assert adapted == hooks
