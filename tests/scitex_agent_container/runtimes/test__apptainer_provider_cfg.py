@@ -14,6 +14,7 @@ One observable fact per test, AAA markers, descriptive names.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from scitex_agent_container.runtimes._apptainer_provider_cfg import (
@@ -22,6 +23,7 @@ from scitex_agent_container.runtimes._apptainer_provider_cfg import (
     container_config_dir,
     host_config_dir,
     legacy_scratch_config_dir,
+    link_conversation_store,
     provider_config_dir_flags,
     seed_provider_config_dir,
 )
@@ -201,6 +203,78 @@ def test_an_existing_host_dir_is_never_replaced_by_the_legacy_one(tmp_path: Path
     _seed(tmp_path)
     # Assert
     assert (host / "history.jsonl").read_text() == "live\n"
+
+
+# ---------------------------------------------------------------------------
+# Conversation store (the transcripts every engine shares)
+# ---------------------------------------------------------------------------
+
+
+def test_seed_links_projects_to_the_container_homes_store(tmp_path: Path):
+    # Arrange
+    state = tmp_path / "state"
+    # Act
+    _seed(tmp_path)
+    # Assert
+    assert (
+        os.readlink(host_config_dir(state) / "projects")
+        == "/home/agent/.claude/projects"
+    )
+
+
+def test_seed_honours_a_relaxed_container_home(tmp_path: Path):
+    # Arrange
+    state = tmp_path / "state"
+    # Act
+    seed_provider_config_dir(
+        state_dir=state,
+        name="biz",
+        workdir=str(tmp_path / "wd"),
+        api_key=KEY,
+        container_home="/home/ywatanabe",
+    )
+    # Assert
+    assert (
+        os.readlink(host_config_dir(state) / "projects")
+        == "/home/ywatanabe/.claude/projects"
+    )
+
+
+def test_seed_creates_the_store_in_the_transcript_home(tmp_path: Path):
+    # Arrange — a fresh provider agent whose overlay home has no .claude yet.
+    transcript_home = tmp_path / "overlay" / "upper" / "home" / "agent"
+    # Act
+    seed_provider_config_dir(
+        state_dir=tmp_path / "state",
+        name="biz",
+        workdir=str(tmp_path / "wd"),
+        api_key=KEY,
+        transcript_home=transcript_home,
+    )
+    # Assert
+    assert (transcript_home / ".claude" / "projects").is_dir()
+
+
+def test_an_existing_real_projects_dir_is_left_alone(tmp_path: Path):
+    # Arrange — handyman-01's shape: conversations already in the config dir.
+    host = host_config_dir(tmp_path / "state")
+    (host / "projects" / "-wd").mkdir(parents=True)
+    (host / "projects" / "-wd" / "abc.jsonl").write_text("{}\n")
+    # Act
+    _seed(tmp_path)
+    # Assert
+    assert (host / "projects").is_symlink() is False
+
+
+def test_link_reports_no_change_when_already_linked(tmp_path: Path):
+    # Arrange
+    host = tmp_path / "cfg"
+    host.mkdir()
+    link_conversation_store(host, "/home/agent")
+    # Act
+    created = link_conversation_store(host, "/home/agent")
+    # Assert
+    assert created is False
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,15 @@ This module makes the dir sac's own:
 
 A dir left at the legacy scratch location is moved into place once, so an
 agent's history and file-history survive the change.
+
+The CONVERSATION STORE is shared, not seeded. Claude Code keeps transcripts
+under ``$CLAUDE_CONFIG_DIR/projects``; a provider config dir would start with
+none, so a spec pinned to ``session: resume`` exits at boot with "No
+conversation found with session ID" (measured 2026-09-05 04:44 UTC, business:
+its 129 MB transcript sat in the overlay home's ``.claude/projects``). The seed
+therefore makes ``projects`` a symlink to ``<container_home>/.claude/projects``
+-- the store every other engine writes -- so a conversation survives an
+engine switch in both directions.
 """
 
 from __future__ import annotations
@@ -45,6 +54,7 @@ import os
 import shutil
 from pathlib import Path
 
+from ._to_home_overlay import DEFAULT_CONTAINER_HOME
 from .onboarding import ensure_project_onboarding
 
 logger = logging.getLogger(__name__)
@@ -127,8 +137,50 @@ def approve_api_key(claude_json: Path, api_key: str) -> bool:
         return False
 
 
+def link_conversation_store(
+    host: Path, container_home: str, transcript_home: Path | None = None
+) -> bool:
+    """Make ``<host>/projects`` resolve to the agent's own transcript store.
+
+    The link targets the CONTAINER path ``<container_home>/.claude/projects``
+    (it dangles on the host by design). ``transcript_home`` is the host dir
+    backing the container home, when known; its ``.claude/projects`` is
+    created so the link never dangles inside the container either -- Node's
+    recursive mkdir refuses to create a directory through a dangling link,
+    which would strand a provider agent that has never run another engine.
+
+    A real ``projects`` directory already present (an agent that ran on a
+    provider before the bind) is left alone: its conversations live there.
+
+    Returns:
+        True iff the link was created by this call.
+    """
+    if transcript_home is not None:
+        try:
+            (Path(transcript_home) / ".claude" / "projects").mkdir(
+                parents=True, exist_ok=True
+            )
+        except OSError as exc:
+            logger.warning(
+                "cannot create the transcript store under %s: %s", transcript_home, exc
+            )
+    link = host / "projects"
+    if link.exists() or link.is_symlink():
+        return False
+    target = f"{container_home.rstrip('/')}/.claude/projects"
+    link.symlink_to(target, target_is_directory=True)
+    logger.info("provider config dir %s: projects -> %s", host, target)
+    return True
+
+
 def seed_provider_config_dir(
-    *, state_dir: Path, name: str, workdir: str, api_key: str
+    *,
+    state_dir: Path,
+    name: str,
+    workdir: str,
+    api_key: str,
+    container_home: str = DEFAULT_CONTAINER_HOME,
+    transcript_home: Path | None = None,
 ) -> Path:
     """Materialise and seed the host config dir for a provider agent.
 
@@ -147,18 +199,30 @@ def seed_provider_config_dir(
     host.mkdir(parents=True, exist_ok=True)
     ensure_project_onboarding(workdir, home=host)
     approve_api_key(host / ".claude.json", api_key)
+    link_conversation_store(host, container_home, transcript_home)
     return host
 
 
 def provider_config_dir_flags(
-    *, state_dir: Path, name: str, workdir: str, api_key: str
+    *,
+    state_dir: Path,
+    name: str,
+    workdir: str,
+    api_key: str,
+    container_home: str = DEFAULT_CONTAINER_HOME,
+    transcript_home: Path | None = None,
 ) -> list[str]:
     """Seed the host dir and render the ``--bind`` that mounts it.
 
     Writable: Claude Code keeps its history and stats there.
     """
     host = seed_provider_config_dir(
-        state_dir=state_dir, name=name, workdir=workdir, api_key=api_key
+        state_dir=state_dir,
+        name=name,
+        workdir=workdir,
+        api_key=api_key,
+        container_home=container_home,
+        transcript_home=transcript_home,
     )
     return ["--bind", f"{host}:{container_config_dir(name)}:rw"]
 
@@ -170,6 +234,7 @@ __all__ = [
     "container_config_dir",
     "host_config_dir",
     "legacy_scratch_config_dir",
+    "link_conversation_store",
     "provider_config_dir_flags",
     "seed_provider_config_dir",
 ]
