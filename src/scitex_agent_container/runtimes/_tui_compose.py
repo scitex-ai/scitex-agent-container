@@ -98,14 +98,23 @@ _WS_RUN_RE = re.compile(r"[\s\xa0]+")
 FRAGMENT_TAIL_CHARS = 60
 
 
-def _normalise(text: str) -> str:
-    """Collapse every whitespace run (NBSP included) to one space."""
-    return _WS_RUN_RE.sub(" ", text or "").strip()
+def _squeeze(text: str) -> str:
+    """Drop every whitespace character (NBSP included).
+
+    Not "collapse to one space": the pane is captured with ``capture-pane
+    -p`` and NO ``-J``, so a long composer line arrives HARD-WRAPPED and the
+    wrap can fall mid-word ("...is NO" / "T in this session"). Collapsing
+    would leave that split as a space and the payload would not match its
+    own text. Removing whitespace entirely makes the comparison indifferent
+    to where the terminal chose to break, and to the two-space indent Codex
+    puts on continuation rows.
+    """
+    return _WS_RUN_RE.sub("", text or "")
 
 
 def fragment_tail(text: str, limit: int = FRAGMENT_TAIL_CHARS) -> str:
-    """The trailing, whitespace-normalised slice of a pasted payload."""
-    return _normalise(text)[-limit:]
+    """The trailing, whitespace-free slice of a pasted payload."""
+    return _squeeze(text)[-limit:]
 
 
 def composer_holds_fragment(pane: str, fragment: str) -> bool:
@@ -127,13 +136,13 @@ def composer_holds_fragment(pane: str, fragment: str) -> bool:
     turn. A caller that knows what it pasted can say so, and the check
     stops depending on which TUI drew the box.
     """
-    fragment = _normalise(fragment)
+    fragment = _squeeze(fragment)
     if not fragment:
         return False
     rows = (pane or "").splitlines()
     for index in range(len(rows) - 1, -1, -1):
         if any(marker in rows[index] for marker in _COMPOSE_MARKERS):
-            return fragment in _normalise(" ".join(rows[index:]))
+            return fragment in _squeeze("".join(rows[index:]))
     return False
 
 

@@ -102,9 +102,22 @@ def test_the_tail_is_taken_from_the_end_of_the_payload():
     # Arrange
     payload = "x" * 200 + "THE END"
     # Act
-    tail = fragment_tail(payload, limit=7)
+    tail = fragment_tail(payload, limit=6)
+    # Assert -- whitespace-free, so a terminal wrap cannot break the match.
+    assert tail == "THEEND"
+
+
+def test_a_payload_hard_wrapped_mid_word_still_reads_as_pending():
+    # Arrange -- capture-pane without -J splits "ARRIVED" across two rows.
+    pane = (
+        "› CHANNEL CHECK: answer with the single word ARRI\n"
+        "  VED and stop.\n"
+        "  qwen38-27b default · /home/ywatanabe/proj/local-coder\n"
+    )
+    # Act
+    held = composer_holds_fragment(pane, "the single word ARRIVED and stop.")
     # Assert
-    assert tail == "THE END"
+    assert held is True
 
 
 def test_the_verifier_sends_enter_into_a_codex_composer():
