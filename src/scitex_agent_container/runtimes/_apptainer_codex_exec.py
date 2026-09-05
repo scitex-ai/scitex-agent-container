@@ -27,12 +27,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from .._logging import get_logger
 
-__all__ = ["main", "mcp_overrides", "resolve_codex_binary", "write_hooks_from"]
+__all__ = [
+    "main",
+    "mcp_overrides",
+    "resolve_codex_binary",
+    "split_env_placeholders",
+    "write_hooks_from",
+]
 
 #: Codex reads its hooks from this file under CODEX_HOME (measured in the
 #: 0.147 binary: "hooks/hooks.json", "failed to serialize hooks.json").
@@ -72,6 +79,42 @@ def _toml(value: object) -> str:
     return json.dumps(str(value))
 
 
+_PLACEHOLDER = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+_EMBEDDED = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def split_env_placeholders(env: dict) -> tuple[dict[str, str], list[str]]:
+    """Claude's ``${VAR}`` env placeholders, the way Codex can honour them.
+
+    Claude Code expands ``${VAR}`` in a ``.mcp.json`` ``env`` map from its own
+    environment; Codex passes the text through literally, and the first live
+    codex pane showed the cost (handyman-01, 2026-09-05 09:36 UTC): the
+    telegrammer server refused to start with "unexpanded ${...}
+    placeholder(s) in env: CCT_AGENT_ID=${CCT_AGENT_ID} ...".
+
+    A value that is exactly ``${NAME}`` becomes an ``env_vars`` entry —
+    Codex forwards that variable BY NAME from the pane's environment, so the
+    value (often a token) never lands in the argv. A value with a placeholder
+    embedded in more text is expanded here from the shim's own environment
+    (``${NAME:-default}`` honoured); a plain value stays a plain ``env``
+    entry.
+    """
+    literal: dict[str, str] = {}
+    forwarded: list[str] = []
+    for name, value in env.items():
+        text = str(value)
+        whole = _PLACEHOLDER.match(text)
+        if whole:
+            forwarded.append(whole.group(1))
+            continue
+        if "${" in text:
+            text = _EMBEDDED.sub(
+                lambda m: os.environ.get(m.group(1), m.group(2) or ""), text
+            )
+        literal[str(name)] = text
+    return literal, forwarded
+
+
 def _servers(document: object) -> dict[str, dict]:
     if not isinstance(document, dict):
         return {}
@@ -106,9 +149,11 @@ def mcp_overrides(documents: list[object]) -> list[str]:
             args = entry.get("args") or []
             if args:
                 flags += ["-c", f"{key}.args={_toml(list(args))}"]
-            env = entry.get("env") or {}
-            if env:
-                flags += ["-c", f"{key}.env={_toml(dict(env))}"]
+            literal, forwarded = split_env_placeholders(entry.get("env") or {})
+            if literal:
+                flags += ["-c", f"{key}.env={_toml(literal)}"]
+            if forwarded:
+                flags += ["-c", f"{key}.env_vars={_toml(forwarded)}"]
     return flags
 
 
