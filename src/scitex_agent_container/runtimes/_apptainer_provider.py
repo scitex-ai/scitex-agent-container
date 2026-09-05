@@ -117,6 +117,7 @@ from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 from ..config._harness_registry import known_harnesses
+from ..config._harness_types import DEFAULT_AGENT_HARNESS
 from ._apptainer_provider_cfg import container_config_dir
 
 
@@ -261,6 +262,19 @@ ENGINE_KEY_ENV = "SAC_ENGINE"
 ENGINE_REASONING_EFFORT_ENV = "SAC_ENGINE_REASONING_EFFORT"
 ENGINE_MAX_CONTEXT_TOKENS_ENV = "SAC_ENGINE_MAX_CONTEXT_TOKENS"
 
+#: The Claude-family harness's OWN name for the context window, and the one
+#: mapping in this module that is MEASURED rather than assumed (2026-09-05).
+#: Claude Code assumes 200,000 tokens for a model name it does not recognise
+#: and auto-compacts at that boundary; its own notice says so and names this
+#: variable as the fix ("set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real
+#: window ... Until then auto-compact keeps this session within <N> tokens
+#: (the context window it assumes)") -- read out of the 2.1.258 binary the
+#: agent image ships. Effect measured on the live fleet the same day: agent
+#: `business` on qwen38-27b (served window 1048576) read ctx:100% and looped
+#: on failed compactions; with this variable set to 1048576 the SAME pinned
+#: transcript read ctx:64% and stopped compacting.
+CLAUDE_CODE_MAX_CONTEXT_ENV = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+
 
 def engine_env_flags(config: AgentConfig) -> list[str]:
     """Render the ``--env`` flags carrying the selected engine's parameters.
@@ -277,10 +291,17 @@ def engine_env_flags(config: AgentConfig) -> list[str]:
     rather than dressed up as a vendor env var (``MAX_THINKING_TOKENS``,
     say) that would imply a mapping nobody has measured. Saying so here
     is the point: a field that VALIDATES is not a field that RUNS, and a
-    green test on this function proves delivery, not effect. Wiring a
-    measured mapping to a specific harness knob is a separate, testable
-    change; inventing one now would be the silent claim this codebase
-    keeps paying for.
+    green test on this function proves delivery, not effect.
+
+    ONE MAPPING IS NOW MEASURED, and only one. ``max_context_tokens``
+    ALSO renders the Claude-family harness's own variable
+    (:data:`CLAUDE_CODE_MAX_CONTEXT_ENV`) when the launch resolves to the
+    ``anthropic`` harness -- see that constant for the binary text and the
+    fleet measurement behind it. ``reasoning_effort`` keeps its
+    ``SAC_``-only delivery: no equivalent measurement exists for it yet,
+    and inventing one would be the silent claim this codebase keeps
+    paying for. The openai / codex harnesses get the ``SAC_`` name only;
+    a Codex mapping belongs to whoever measures Codex.
 
     The engine's own ``env:`` map is NOT rendered here — it is merged
     into ``config.env`` by ``config._engine_types.apply_engine`` and
@@ -298,6 +319,11 @@ def engine_env_flags(config: AgentConfig) -> list[str]:
     max_ctx = getattr(config, "max_context_tokens", None)
     if max_ctx:
         flags += ["--env", f"{ENGINE_MAX_CONTEXT_TOKENS_ENV}={int(max_ctx)}"]
+        if resolve_agent_harness(config) == DEFAULT_AGENT_HARNESS:
+            flags += [
+                "--env",
+                f"{CLAUDE_CODE_MAX_CONTEXT_ENV}={int(max_ctx)}",
+            ]
     return flags
 
 
