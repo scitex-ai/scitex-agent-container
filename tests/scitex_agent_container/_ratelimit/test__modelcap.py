@@ -239,3 +239,57 @@ def test_an_uncapturable_pane_verifies_nothing() -> None:
     evidence = _verify(None, kick_submitted=True)
     # Assert
     assert evidence.switched is None
+
+
+class TestTheSessionsOwnConfirmationLine:
+    """The operator's fourth step: trust what the SESSION printed, not what sac typed.
+
+    2026-09-06, verbatim in substance: "the Set model to ... line would be
+    useful for final confirmation". It is the strongest rung available because
+    sac types ``/model opus[1m]`` and never the phrase "Set model to", so this
+    evidence cannot be sac's own echo — which is the trap every other rung of
+    this ladder has to do arithmetic to avoid.
+    """
+
+    def test_the_confirmation_line_proves_the_switch(self) -> None:
+        # Arrange
+        pane = "❯ /model opus[1m]\n  Set model to Opus 5 (1M context) opus[1m]\n❯ "
+        # Act
+        evidence = verify_switch(
+            pane,
+            target_model="opus[1m]",
+            sent_texts=("/model opus[1m]",),
+            kick_submitted=None,
+            now=NOW,
+        )
+        # Assert
+        assert evidence.switched is True
+
+    def test_it_outranks_the_echo_arithmetic(self) -> None:
+        # Arrange — the target appears ONLY as sac's own echo, which the
+        # counting rung would refuse; the confirmation line still decides.
+        pane = "❯ /model opus[1m]\n  Set model to opus[1m]\n❯ "
+        # Act
+        evidence = verify_switch(
+            pane,
+            target_model="opus[1m]",
+            sent_texts=("/model opus[1m]", "Set model to opus[1m]"),
+            kick_submitted=False,
+            now=NOW,
+        )
+        # Assert
+        assert evidence.switched is True
+
+    def test_a_confirmation_naming_another_model_is_not_our_switch(self) -> None:
+        # Arrange — the session confirms a DIFFERENT model; the target is absent.
+        pane = "❯ /model haiku\n  Set model to haiku\n❯ "
+        # Act
+        evidence = verify_switch(
+            pane,
+            target_model="opus[1m]",
+            sent_texts=("/model opus[1m]",),
+            kick_submitted=None,
+            now=NOW,
+        )
+        # Assert
+        assert evidence.switched is None

@@ -268,6 +268,10 @@ def verify_switch(
     * pane unreadable                 -> ``None``. We could not look.
     * the cap banner is STILL rendered -> ``False``. Whatever we typed, the
       wall is still on the screen.
+    * the session's OWN confirmation line ("Set model to") is present
+      alongside the target -> ``True``. sac never types that phrase, so it
+      cannot be our echo; this is the session reporting the change. The
+      operator asked for this rung by name as the fourth step of the switch.
     * the target appears MORE times than we typed it -> ``True``. Something
       other than our own echo is naming the target model.
     * the cap is gone AND the kick was PROVEN to leave the compose box ->
@@ -298,6 +302,34 @@ def verify_switch(
             f"the cap banner is STILL rendered after all three steps "
             f"({still_capped.detail}) — the switch did not take, and this "
             f"agent is still silent",
+        )
+
+    # THE SESSION'S OWN CONFIRMATION, and the strongest rung there is: the TUI
+    # prints "Set model to <name>" ITSELF after a successful /model. sac never
+    # types that phrase — it types "/model opus[1m]" — so unlike the target id
+    # it cannot be our own echo, and it needs no arithmetic to be trustworthy.
+    # The operator asked for exactly this as a fourth step (2026-09-06: "the
+    # Set model to ... line would be useful for final confirmation"), and he is
+    # right that it is better evidence than anything inferred: it is the
+    # session reporting the state change rather than us deducing it. Matched on
+    # the FLATTENED pane so an Ink soft-wrap in the middle of the phrase cannot
+    # hide it, and paired with the target so a switch to some OTHER model is
+    # not read as success.
+    flat_pane_for_confirm = flatten_pane(pane)
+    confirm_needle = flatten_pane("Set model to")
+    target_needle = flatten_pane(target_model)
+    if (
+        confirm_needle
+        and confirm_needle in flat_pane_for_confirm
+        and target_needle
+        and target_needle in flat_pane_for_confirm
+    ):
+        return SwitchEvidence(
+            True,
+            f"the session printed its own confirmation line ('Set model to') "
+            f"and {target_model!r} is on the pane — sac never types that "
+            f"phrase, so this is the session reporting the change rather than "
+            f"our keystrokes echoing back",
         )
 
     # ``ours`` counts only the sent texts that are ACTUALLY on this screen.
