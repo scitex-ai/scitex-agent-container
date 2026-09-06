@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 
 from scitex_agent_container._lifecycle._twin import (
+    CARDS_AGENT_ENV,
+    RETIRED_AGENT_ENV,
     TWIN_PARENT_ENV,
     TwinSeedError,
     build_twin_boot_kick,
@@ -56,7 +58,7 @@ def _parent_doc() -> dict:
                 "channels": ["server:sac", "server:claude-code-telegrammer"],
             },
             "env": {
-                "SCITEX_TODO_AGENT_ID": "parent",
+                "SCITEX_CARDS_AGENT_ID": "parent",
                 "SAC_NAME": "parent",
                 "FOO": "bar",
             },
@@ -99,13 +101,33 @@ def test_resolve_twin_name_honours_explicit_request():
 # ─── derive_twin_spec: identity split (safety-critical) ───────────────────
 
 
-def test_derive_sets_todo_author_to_twin():
+def test_derive_sets_cards_author_to_twin():
     # Arrange
     doc = _parent_doc()
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    # Assert — the CANONICAL board-identity key, never the retired one.
+    assert out["spec"]["env"][CARDS_AGENT_ENV] == "parent-twin"
+
+
+def test_derive_never_writes_the_retired_author_key():
+    # Arrange
+    doc = _parent_doc()
+    # Act
+    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    # Assert — a generated spec must not re-declare the retired name.
+    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
+
+
+def test_derive_drops_an_inherited_retired_author_key():
+    # Arrange — a parent still launched from an old-name spec. Left in place
+    # the key would carry the PARENT's name into the twin.
+    doc = _parent_doc()
+    doc["spec"]["env"][RETIRED_AGENT_ENV] = "parent"
+    # Act
+    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["env"]["SCITEX_TODO_AGENT_ID"] == "parent-twin"
+    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
 
 
 def test_derive_sets_twin_parent_env_to_parent():
@@ -246,7 +268,7 @@ def test_derive_does_not_mutate_parent_doc():
     # Act
     derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert doc["spec"]["env"]["SCITEX_TODO_AGENT_ID"] == "parent"
+    assert doc["spec"]["env"][CARDS_AGENT_ENV] == "parent"
 
 
 # ─── build_twin_boot_kick ─────────────────────────────────────────────────

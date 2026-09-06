@@ -28,6 +28,18 @@ _MOVEMENT_DEFAULTS: dict = {
     "heartbeat_at": "",
 }
 
+# Board identity, CANONICAL FIRST; the retired predecessor is a fallback only.
+_BOARD_ID_ENVS = ("SCITEX_CARDS_AGENT_ID", "SCITEX_TODO_AGENT_ID")
+
+
+def _board_identity() -> str:
+    """This process's board identity, or ``""`` when neither var is set."""
+    for var in _BOARD_ID_ENVS:
+        value = os.environ.get(var, "")
+        if value:
+            return value
+    return ""
+
 
 def _movement_fields(name: str) -> dict:
     """Return the three movement keys for ``name`` (always all-present).
@@ -131,10 +143,16 @@ def build_agent_row(
     # into something the OUTPUT ITSELF reveals, which is the only version of
     # that rule that survives being forgotten.
     #
-    # Identity comes from SCITEX_TODO_AGENT_ID, the same variable every agent
+    # Identity comes from SCITEX_CARDS_AGENT_ID, the same variable every agent
     # already stamps its card writes with — deliberately NOT the hostname or
     # the spec, because those answer a different question. When it is unset
     # (a human at a shell), no row is marked and nothing changes.
-    if name and name == os.environ.get("SCITEX_TODO_AGENT_ID", ""):
+    #
+    # CANONICAL FIRST. This read used to name only the RETIRED
+    # SCITEX_TODO_AGENT_ID, so the self row was never marked in a container
+    # launched from a current spec — the exact case the marker exists for.
+    # The retired name stays as a fallback for containers still running an
+    # old-name spec, and goes away with the legacy shim.
+    if name and name == _board_identity():
         row["is_self"] = True
     return row

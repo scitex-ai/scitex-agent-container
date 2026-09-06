@@ -22,13 +22,18 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
 from scitex_agent_container.cli_pkg._helpers._agent_list_row import build_agent_row
 
-_VAR = "SCITEX_TODO_AGENT_ID"
+# The CANONICAL board identity, read first, and its RETIRED predecessor, read
+# only as a fallback for a container still launched from an old-name spec.
+_VAR = "SCITEX_CARDS_AGENT_ID"
+_RETIRED_VAR = "SCITEX_TODO_AGENT_ID"
 _ME = "scitex-agent-container"
+_SOMEONE_ELSE = "handyman-01"
 
 _ROW_KWARGS = dict(
     status_val="running",
@@ -47,30 +52,56 @@ _ROW_KWARGS = dict(
 )
 
 
-@pytest.fixture
-def identified_as_me() -> Iterator[None]:
-    """Set the real agent-identity variable, restore whatever was there."""
-    previous = os.environ.get(_VAR)
-    os.environ[_VAR] = _ME
+@contextmanager
+def _identity_env(**values: str | None) -> Iterator[None]:
+    """Pin BOTH identity vars for real, restore whatever was there.
+
+    Every var not named in ``values`` is REMOVED, so a test never inherits
+    the runner's own live identity through the variable it is not pinning.
+    """
+    previous = {var: os.environ.get(var) for var in (_VAR, _RETIRED_VAR)}
+    for var in previous:
+        value = values.get(var)
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
     try:
         yield
     finally:
-        if previous is None:
-            os.environ.pop(_VAR, None)
-        else:
-            os.environ[_VAR] = previous
+        for var, value in previous.items():
+            if value is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = value
+
+
+@pytest.fixture
+def identified_as_me() -> Iterator[None]:
+    """Canonical variable only — how a current spec identifies its agent."""
+    with _identity_env(**{_VAR: _ME}):
+        yield
+
+
+@pytest.fixture
+def identified_by_the_retired_var() -> Iterator[None]:
+    """Retired variable only — a container still on an old-name spec."""
+    with _identity_env(**{_RETIRED_VAR: _ME}):
+        yield
+
+
+@pytest.fixture
+def identified_by_both() -> Iterator[None]:
+    """Both set, DISAGREEING — a spec caught mid-migration."""
+    with _identity_env(**{_VAR: _ME, _RETIRED_VAR: _SOMEONE_ELSE}):
+        yield
 
 
 @pytest.fixture
 def identified_as_nobody() -> Iterator[None]:
     """Remove the identity entirely — a human at a shell, not an agent."""
-    previous = os.environ.get(_VAR)
-    os.environ.pop(_VAR, None)
-    try:
+    with _identity_env():
         yield
-    finally:
-        if previous is not None:
-            os.environ[_VAR] = previous
 
 
 def test_marks_the_caller(identified_as_me: None) -> None:
@@ -82,10 +113,42 @@ def test_marks_the_caller(identified_as_me: None) -> None:
     assert row["is_self"] is True
 
 
+def test_marks_the_caller_from_the_retired_var(
+    identified_by_the_retired_var: None,
+) -> None:
+    # Arrange — a container still launched from an old-name spec carries only
+    # the retired variable; the control must not vanish for it.
+    name = _ME
+    # Act
+    row = build_agent_row(name=name, **_ROW_KWARGS)
+    # Assert
+    assert row["is_self"] is True
+
+
+def test_canonical_var_wins_over_the_retired_one(identified_by_both: None) -> None:
+    # Arrange — both set and disagreeing: the CANONICAL name is the identity,
+    # so the row it names is the caller's.
+    name = _ME
+    # Act
+    row = build_agent_row(name=name, **_ROW_KWARGS)
+    # Assert
+    assert row["is_self"] is True
+
+
+def test_retired_var_does_not_mark_a_peer_row(identified_by_both: None) -> None:
+    # Arrange — the stale value must not mark a SECOND row as the caller; two
+    # self rows would destroy the control the marker exists to provide.
+    name = _SOMEONE_ELSE
+    # Act
+    row = build_agent_row(name=name, **_ROW_KWARGS)
+    # Assert
+    assert "is_self" not in row
+
+
 def test_omits_for_peers(identified_as_me: None) -> None:
     # Arrange — a peer's row must NOT claim to be the caller, or the control is
     # worse than useless: it would validate the listing against the wrong agent.
-    name = "handyman-01"
+    name = _SOMEONE_ELSE
     # Act
     row = build_agent_row(name=name, **_ROW_KWARGS)
     # Assert

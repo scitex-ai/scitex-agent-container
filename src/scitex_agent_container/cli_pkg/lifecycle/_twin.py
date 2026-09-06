@@ -170,7 +170,7 @@ def twin(
     session) and then diverges. PARENT is never touched. Repo / workdir /
     image / binds / model are inherited verbatim; the twin gets its own
     name, a fresh a2a port, ``session: continue`` (seeded from the parent at
-    first boot), and the identity-split env (``SCITEX_TODO_AGENT_ID`` = twin,
+    first boot), and the identity-split env (``SCITEX_CARDS_AGENT_ID`` = twin,
     ``SAC_TWIN_PARENT`` = parent).
 
     \b
