@@ -4,22 +4,36 @@ Pure. No YAML parsing, no line numbers, no I/O — it takes the backend a spec
 already declares, as primitives, and returns the entries plus the exact lines
 to write. :mod:`._engines_line` owns the text surgery that puts them in a file.
 
-THE DERIVATION, and what each half is allowed to invent (nothing):
+ONE ENTRY, AND IT INVENTS NOTHING. A swept spec gets exactly one engine: its
+own backend, restated. The ``model`` is the spec's own ``spec.claude.model``
+text copied verbatim and the ``provider`` is ``spec.claude.provider`` copied
+verbatim, so a spec whose provider points at a local endpoint keeps pointing
+there. ``provider: anthropic`` is written ONLY when the spec declared no
+provider at all — that is the registry's own sentinel for "the default
+Anthropic OAuth backend", it is what the spec already resolves to, and
+writing it is how the entry avoids the other failure: an unstated provider
+that silently defaults to a vendor.
 
-* **The DEFAULT entry is the spec's own backend, restated.** Its ``harness``
-  is what :func:`._harness_types.resolve_spec_harness` already resolves, its
-  ``model`` is the spec's own ``spec.claude.model`` text copied verbatim, and
-  its ``provider`` is ``spec.claude.provider`` copied verbatim. A spec whose
-  provider points at a local endpoint keeps pointing there. ``provider:
-  anthropic`` is written ONLY when the spec declared no provider at all —
-  that is the registry's own sentinel for "the default Anthropic OAuth
-  backend", it is what the spec already resolves to, and writing it is how
-  the entry avoids the other failure: an unstated provider that silently
-  defaults to a vendor.
+NO SECOND ENTRY IS COPIED IN. The sweep used to append a whole ``qwen38-27b``
+entry to every spec it touched. That definition now lives ONCE in the fleet
+engine library (:mod:`._engine_library`), where ``--engine qwen38-27b``
+reaches it through the merged namespace and where one ``engine:`` line moves
+the fleet. 119 identical copies of a row is the shape a library exists to
+delete, and a copy also stops being the definition the moment the library's
+row changes.
 
-* **The ALTERNATE entry is the fleet Qwen gateway**, named by
-  :data:`._qwen_gateway.QWEN_GATEWAY_PROVIDER` rather than by address, so the
-  address stays in one module instead of in 119 spec files.
+TWO FIELDS THIS DELIBERATELY DOES NOT WRITE, both deprecated by the
+harness/engine split (see :data:`._engine_types.ENGINE_ENTRY_KEYS`):
+
+* **``harness:``** — an entry that states one claims the HARNESS axis, which
+  is the coupling the split removes. The spec's own ``spec.harness`` line is
+  left stated and untouched, so the harness still resolves exactly as before;
+  the entry simply states no opinion about it.
+* **``default: true``** — a spec-local ``default:`` OUTRANKS the fleet
+  library in :mod:`._engine_precedence`, so writing it on every swept spec
+  would trade 119 legacy pins for 119 engine pins and leave a fleet-wide flip
+  still a 119-file edit. A block with exactly ONE entry needs no marker:
+  precedence step 3 starts on it because it cannot be ambiguous.
 
 THE ENTRY KEY. ``claude`` when the backend is the plain Anthropic OAuth path
 AND the harness is the Anthropic one — the name the operator's own
@@ -27,12 +41,12 @@ already-migrated ``business`` spec uses — and a slug of the model otherwise,
 because "claude" is a false name for an entry holding Qwen, a vendor name is
 a claim about scope, and a Codex session is not the vendor that name states.
 
-WHEN THE TWO COLLIDE. A spec that ALREADY runs ``qwen38-27b`` derives the
-alternate's own key, and one mapping cannot hold two entries under one key.
-Such a spec gets a single-engine block naming the backend it already has, and
-the migration reports it as its own outcome rather than pretending it wrote
-two. Repointing that spec's inline loopback URL at the fleet gateway would be
-a behaviour change dressed as a migration, so it is not done here.
+A KEY THE FLEET LIBRARY ALSO USES IS NOT A COLLISION. A spec already running
+``qwen38-27b`` derives that key for its own entry, and
+:func:`._engine_library.resolve_engine_namespace` gives the SPEC-LOCAL entry
+precedence — which is the right answer: the 8 handymen reach the gateway over
+a loopback forward, and repointing them at the fleet address would be a
+behaviour change dressed as a migration.
 """
 
 from __future__ import annotations
@@ -41,14 +55,6 @@ import re
 from dataclasses import dataclass
 
 from ._harness_types import DEFAULT_AGENT_HARNESS
-from ._qwen_gateway import (
-    QWEN_ENGINE_HARNESS,
-    QWEN_ENGINE_KEY,
-    QWEN_ENGINE_MAX_CONTEXT_TOKENS,
-    QWEN_ENGINE_MODEL,
-    QWEN_ENGINE_REASONING_EFFORT,
-    QWEN_GATEWAY_PROVIDER,
-)
 
 __all__ = [
     "CLAUDE_ENGINE_KEY",
@@ -117,10 +123,21 @@ def engine_key_for(
 
 @dataclass(frozen=True)
 class EngineEntry:
-    """ONE rendered engine entry. ``provider_lines`` holds the nested form."""
+    """ONE rendered engine entry. ``provider_lines`` holds the nested form.
+
+    THE FIELDS ARE EXACTLY WHAT A MIGRATION CAN DERIVE, and no more. There is
+    no ``harness`` and no ``is_default``, because both are deprecated inside
+    an entry and a renderer that could HOLD them would be a renderer that
+    could WRITE them (see the module docstring). There is no
+    ``reasoning_effort`` and no ``max_context_tokens`` either, for a quieter
+    reason: the legacy single-backend surface has no such fields, so a
+    restatement of it cannot honestly carry them. They were here only to
+    render the copied ``qwen38-27b`` entry, and that entry now lives in the
+    fleet engine library — which declares them in YAML, where the operator
+    can change them without a release.
+    """
 
     key: str
-    harness: str
     model: str
     #: The scalar written after ``provider:``. None when the provider is a
     #: nested block, in which case ``provider_lines`` carries its children
@@ -129,21 +146,6 @@ class EngineEntry:
     #: as a nested mapping rather than being flattened into siblings.
     provider_scalar: "str | None" = None
     provider_lines: "tuple[str, ...]" = ()
-    reasoning_effort: str = ""
-    max_context_tokens: "int | None" = None
-    is_default: bool = False
-
-
-def qwen_entry() -> EngineEntry:
-    """The fleet-gateway alternate, identical in every migrated spec."""
-    return EngineEntry(
-        key=QWEN_ENGINE_KEY,
-        harness=QWEN_ENGINE_HARNESS,
-        model=QWEN_ENGINE_MODEL,
-        provider_scalar=QWEN_GATEWAY_PROVIDER,
-        reasoning_effort=QWEN_ENGINE_REASONING_EFFORT,
-        max_context_tokens=QWEN_ENGINE_MAX_CONTEXT_TOKENS,
-    )
 
 
 def derive_entries(
@@ -160,6 +162,16 @@ def derive_entries(
     ``(entries, "")``. ``provider_scalar`` / ``provider_lines`` are the
     VERBATIM text the caller lifted out of the spec, so the restated backend
     is byte-for-byte the one that was already there.
+
+    EXACTLY ONE ENTRY today — the spec's own backend. The plural shape is not
+    hedging: ``engines:`` is a MAPPING, the renderer below writes N of them,
+    and every alternate a spec could name now comes from the fleet engine
+    library rather than from a copy this function makes.
+
+    ``harness`` is an INPUT and not an output. It decides the entry's KEY
+    (``claude`` is only right on the Anthropic path) and whether stating the
+    ``anthropic`` provider sentinel would be a true claim; the entry itself
+    stays silent about the harness axis.
     """
     key = engine_key_for(model, provider_declared, harness)
     if not key:
@@ -183,18 +195,14 @@ def derive_entries(
         # exactly what the spec said: nothing.
         scalar = ANTHROPIC_PROVIDER
 
-    default = EngineEntry(
-        key=key,
-        harness=harness,
-        model=model,
-        provider_scalar=scalar,
-        provider_lines=tuple(provider_lines),
-        is_default=True,
-    )
-    if key == QWEN_ENGINE_KEY:
-        # This spec already IS the Qwen engine. See the module docstring.
-        return (default,), ""
-    return (default, qwen_entry()), ""
+    return (
+        EngineEntry(
+            key=key,
+            model=model,
+            provider_scalar=scalar,
+            provider_lines=tuple(provider_lines),
+        ),
+    ), ""
 
 
 def render_engines_block(
@@ -220,7 +228,6 @@ def render_engines_block(
     out.append(f"{indent}engines:")
     for entry in entries:
         out.append(f"{key_indent}{entry.key}:")
-        out.append(f"{field_indent}harness: {entry.harness}")
         out.append(f"{field_indent}model: {entry.model}")
         if entry.provider_lines:
             out.append(f"{field_indent}provider:")
@@ -233,10 +240,4 @@ def render_engines_block(
             )
         elif entry.provider_scalar is not None:
             out.append(f"{field_indent}provider: {entry.provider_scalar}")
-        if entry.reasoning_effort:
-            out.append(f"{field_indent}reasoning_effort: {entry.reasoning_effort}")
-        if entry.max_context_tokens:
-            out.append(f"{field_indent}max_context_tokens: {entry.max_context_tokens}")
-        if entry.is_default:
-            out.append(f"{field_indent}default: true")
     return out

@@ -17,21 +17,20 @@ from __future__ import annotations
 
 import yaml
 
-from scitex_agent_container.config._engine_types import (
-    default_engine,
-    parse_engines,
-    select_engine,
-)
+from scitex_agent_container.config._engine_types import default_engine, parse_engines
 from scitex_agent_container.config._engine_validation import validate_engines
 from scitex_agent_container.config._engines_line import (
     REFUSED_ALREADY_DECLARED,
     migrate_engines_block,
 )
-from scitex_agent_container.config._qwen_gateway import (
-    QWEN_ENGINE_KEY,
-    QWEN_GATEWAY_HOST,
-    QWEN_GATEWAY_PROVIDER,
-)
+from scitex_agent_container.config._harness_types import resolve_spec_harness
+from scitex_agent_container.config._qwen_gateway import QWEN_GATEWAY_HOST
+
+#: The fleet engine library's own key for the gateway engine. Spelled as a
+#: LITERAL here on purpose: the sweep no longer imports it from anywhere, and
+#: a test that re-derived it from the code under test could not notice the
+#: sweep starting to write a copy of that entry again.
+FLEET_QWEN_KEY = "qwen38-27b"
 
 # The 107-spec majority shape: Claude model, no provider override. The two
 # comments are load-bearing for these tests — one introduces a key INSIDE the
@@ -94,6 +93,11 @@ def _engines_of(text: str) -> dict:
     return parse_engines(_spec_of(text))
 
 
+def _raw_entry(text: str, key: str) -> dict:
+    """ONE engine entry as WRITTEN — the raw mapping, before any folding."""
+    return _spec_of(text)["engines"][key]
+
+
 def _comments(text: str) -> "set[str]":
     return {line.strip() for line in text.splitlines() if line.strip().startswith("#")}
 
@@ -103,13 +107,15 @@ def _comments(text: str) -> "set[str]":
 # ---------------------------------------------------------------------------
 
 
-def test_a_claude_backed_spec_gains_both_a_claude_and_a_qwen_engine() -> None:
-    # Arrange
+def test_a_claude_backed_spec_gains_exactly_one_engine() -> None:
+    # Arrange — its OWN backend. The sweep used to append a second, copied
+    # `qwen38-27b` entry to every spec it touched; that definition lives once
+    # in the fleet engine library now.
     text = CLAUDE_SPEC
     # Act
     edit = migrate_engines_block(text)
     # Assert
-    assert edit.engine_keys == ("claude", QWEN_ENGINE_KEY)
+    assert edit.engine_keys == ("claude",)
 
 
 def test_the_default_engine_restates_the_specs_own_model() -> None:
@@ -121,13 +127,25 @@ def test_the_default_engine_restates_the_specs_own_model() -> None:
     assert engines["claude"].model == "opus[1m]"
 
 
-def test_the_default_engine_restates_the_specs_own_harness() -> None:
-    # Arrange
+def test_the_entry_states_no_harness_of_its_own() -> None:
+    # Arrange — an entry that states one claims the HARNESS axis, which is
+    # the coupling the split removes. None means "inherit spec.harness".
     edit = migrate_engines_block(CLAUDE_SPEC)
     # Act
     engines = _engines_of(edit.text)
     # Assert
-    assert engines["claude"].harness == "anthropic"
+    assert engines["claude"].harness is None
+
+
+def test_no_harness_key_is_written_into_the_entry_at_all() -> None:
+    # Arrange — the raw mapping, not the folded EngineSpec: the parser turns
+    # an ABSENT `harness` and a written `harness: null` into the same None,
+    # so only the raw keys can tell "states nothing" from "states null".
+    edit = migrate_engines_block(CLAUDE_SPEC)
+    # Act
+    entry = _raw_entry(edit.text, "claude")
+    # Assert
+    assert "harness" not in entry
 
 
 def test_a_spec_with_no_provider_states_anthropic_rather_than_nothing() -> None:
@@ -140,13 +158,24 @@ def test_a_spec_with_no_provider_states_anthropic_rather_than_nothing() -> None:
     assert engines["claude"].provider_declared == "anthropic"
 
 
-def test_the_claude_entry_is_marked_default() -> None:
-    # Arrange
+def test_the_claude_entry_is_the_one_the_spec_starts_on() -> None:
+    # Arrange — by being the block's ONLY entry, not by carrying a marker.
     edit = migrate_engines_block(CLAUDE_SPEC)
     # Act
     chosen = default_engine(_engines_of(edit.text))
     # Assert
     assert chosen.key == "claude"
+
+
+def test_no_default_key_is_written_into_the_entry() -> None:
+    # Arrange — a spec-local `default:` OUTRANKS the fleet engine library, so
+    # writing one on every swept spec would trade 119 legacy pins for 119
+    # engine pins and leave a fleet-wide flip still a 119-file edit.
+    edit = migrate_engines_block(CLAUDE_SPEC)
+    # Act
+    entry = _raw_entry(edit.text, "claude")
+    # Assert
+    assert "default" not in entry
 
 
 def test_a_local_provider_dict_is_restated_verbatim() -> None:
@@ -176,15 +205,16 @@ def test_a_local_provider_spec_is_keyed_by_its_model_not_by_claude() -> None:
     assert edit.default_key == "qwen36-35b-a3b"
 
 
-def test_a_codex_harness_is_restated_on_the_default_engine() -> None:
-    # Arrange — an engine entry omitting harness defaults to anthropic and
-    # would then hard-error as a legacy conflict against `harness: codex`.
+def test_a_codex_spec_keeps_resolving_to_the_codex_harness() -> None:
+    # Arrange — the entry states no harness, so the axis has to survive on
+    # `spec.harness` alone. Measured through the production resolver, which
+    # is what the runtime reads.
     text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
     edit = migrate_engines_block(text)
     # Act
-    engines = _engines_of(edit.text)
+    harness = resolve_spec_harness(_spec_of(edit.text))
     # Assert
-    assert engines[edit.default_key].harness == "codex"
+    assert harness == "codex"
 
 
 def test_a_codex_harness_spec_is_not_keyed_by_a_vendor_name() -> None:
@@ -209,27 +239,32 @@ def test_a_codex_harness_spec_does_not_claim_the_anthropic_provider() -> None:
     assert engines[edit.default_key].provider_declared is None
 
 
-def test_a_spec_already_running_the_gateway_model_gets_one_engine() -> None:
-    # Arrange — the 8 handymen. Two entries cannot share the alternate's key.
-    text = LOCAL_SPEC.replace("qwen36-35b-a3b", QWEN_ENGINE_KEY)
-    # Act
+def test_a_spec_already_running_the_gateway_model_keeps_its_own_entry() -> None:
+    # Arrange — the 8 handymen reach the gateway over a loopback forward.
+    # Their key collides with the fleet library's, and spec-local wins:
+    # repointing them at the fleet address would be a behaviour change.
+    text = LOCAL_SPEC.replace("qwen36-35b-a3b", FLEET_QWEN_KEY)
     edit = migrate_engines_block(text)
-    # Assert
-    assert edit.engine_keys == (QWEN_ENGINE_KEY,)
-
-
-# ---------------------------------------------------------------------------
-# The gateway address lives in ONE place
-# ---------------------------------------------------------------------------
-
-
-def test_the_qwen_entry_names_the_gateway_by_provider_name() -> None:
-    # Arrange
-    edit = migrate_engines_block(CLAUDE_SPEC)
     # Act
     engines = _engines_of(edit.text)
     # Assert
-    assert engines[QWEN_ENGINE_KEY].provider_declared == QWEN_GATEWAY_PROVIDER
+    assert engines[FLEET_QWEN_KEY].provider.base_url == "http://127.0.0.1:4000"
+
+
+# ---------------------------------------------------------------------------
+# The alternates are NOT copied in — they live in the fleet engine library
+# ---------------------------------------------------------------------------
+
+
+def test_no_fleet_gateway_entry_is_copied_into_the_spec() -> None:
+    # Arrange — 119 identical copies of one row is the shape a library
+    # exists to delete, and a copy stops being the definition the moment
+    # the library's row changes.
+    edit = migrate_engines_block(CLAUDE_SPEC)
+    # Act
+    spec = _spec_of(edit.text)
+    # Assert
+    assert FLEET_QWEN_KEY not in spec["engines"]
 
 
 def test_the_gateway_address_is_not_written_into_the_spec() -> None:
@@ -241,13 +276,14 @@ def test_the_gateway_address_is_not_written_into_the_spec() -> None:
     assert QWEN_GATEWAY_HOST not in edit.text
 
 
-def test_the_qwen_entry_still_resolves_to_an_endpoint() -> None:
-    # Arrange — naming it by reference must not mean naming nothing.
+def test_the_block_names_the_fleet_library_as_where_the_others_live() -> None:
+    # Arrange — a reader who finds ONE engine here must be told where the
+    # rest are, or the block reads as "this agent has no alternatives".
     edit = migrate_engines_block(CLAUDE_SPEC)
     # Act
-    engines = _engines_of(edit.text)
+    text = edit.text
     # Assert
-    assert engines[QWEN_ENGINE_KEY].provider.base_url
+    assert "engines.yaml" in text
 
 
 # ---------------------------------------------------------------------------
@@ -374,31 +410,16 @@ def test_validate_engines_accepts_the_emitted_block() -> None:
     assert errors == []
 
 
-def test_select_engine_can_pick_the_qwen_entry() -> None:
-    # Arrange
-    engines = _engines_of(migrate_engines_block(CLAUDE_SPEC).text)
+def test_the_emitted_block_survives_the_legacy_reconciliation() -> None:
+    # Arrange — `spec.harness` stays stated beside a harness-SILENT entry.
+    # Before the split that pair was a hard load error (the entry's
+    # manufactured "anthropic" versus the spec's own value).
+    text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
+    edit = migrate_engines_block(text)
     # Act
-    picked = select_engine(engines, QWEN_ENGINE_KEY)
+    errors = validate_engines(_spec_of(edit.text))
     # Assert
-    assert picked.model == QWEN_ENGINE_KEY
-
-
-def test_the_qwen_entry_carries_the_measured_context_window() -> None:
-    # Arrange
-    edit = migrate_engines_block(CLAUDE_SPEC)
-    # Act
-    engines = _engines_of(edit.text)
-    # Assert
-    assert engines[QWEN_ENGINE_KEY].max_context_tokens == 1048576
-
-
-def test_the_qwen_entry_runs_at_low_reasoning_effort() -> None:
-    # Arrange
-    edit = migrate_engines_block(CLAUDE_SPEC)
-    # Act
-    engines = _engines_of(edit.text)
-    # Assert
-    assert engines[QWEN_ENGINE_KEY].reasoning_effort == "low"
+    assert errors == []
 
 
 # ---------------------------------------------------------------------------

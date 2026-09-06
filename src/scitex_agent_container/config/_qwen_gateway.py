@@ -10,12 +10,23 @@ which one is wrong depends on where the agent starts. ``handyman-08`` also
 names a different ``auth_token_env`` than its seven siblings, which is what
 copy-paste drift looks like when it is silent.
 
-``sac agents migrate-engines`` adds a Qwen engine to every fleet spec. If it
-wrote the address, the fleet would hold 119 copies of a value that moves,
-and a gateway move would then be a 119-file edit. So the migration writes a
-provider NAME — :data:`QWEN_GATEWAY_PROVIDER` — which resolves through
-``_provider_registry.resolve_provider`` at start time, on whichever host the
-agent actually starts on. The address lives here and nowhere else.
+THE FLEET ENGINE LIBRARY declares the Qwen engine ONCE
+(``$SCITEX_DIR/agent-container/engines.yaml``, :mod:`._engine_library`) and
+names its backend by provider NAME — :data:`QWEN_GATEWAY_PROVIDER` — which
+resolves through ``_provider_registry.resolve_provider`` at start time, on
+whichever host the agent actually starts on. The address lives here and
+nowhere else, so a gateway move is an edit to THIS file rather than to 119
+spec files.
+
+WHAT THIS MODULE NO LONGER OWNS. It used to carry the ENGINE half too
+(``QWEN_ENGINE_KEY`` / ``_MODEL`` / ``_HARNESS`` / ``_REASONING_EFFORT`` /
+``_MAX_CONTEXT_TOKENS``), because ``sac agents migrate-engines`` copied a
+whole ``qwen38-27b`` entry into every spec it swept. That entry is data, and
+data belongs in the engine library where one line moves the whole fleet — a
+Python constant naming a model, an effort and a context window was a second
+place to say what a YAML row already says. The engine definition moved
+there; the ADDRESS stayed here, because an address that must resolve
+differently per host is code, not data.
 
 THE SPELLING IS LOAD-BEARING. Measured by scitex-hub on 2026-09-05:
 
@@ -48,11 +59,6 @@ import os
 __all__ = [
     "DEFAULT_QWEN_GATEWAY_TOKEN_ENV",
     "DEFAULT_QWEN_GATEWAY_URL",
-    "QWEN_ENGINE_HARNESS",
-    "QWEN_ENGINE_KEY",
-    "QWEN_ENGINE_MAX_CONTEXT_TOKENS",
-    "QWEN_ENGINE_MODEL",
-    "QWEN_ENGINE_REASONING_EFFORT",
     "QWEN_GATEWAY_HOST",
     "QWEN_GATEWAY_PORT",
     "QWEN_GATEWAY_PROBE_PATH",
@@ -91,31 +97,6 @@ QWEN_GATEWAY_URL_ENV = "SAC_QWEN_GATEWAY_URL"
 #: itself a variable name, which is how ``handyman-08``'s divergent
 #: ``SAC_LOCAL_GPTOSS_KEY`` can be honoured on one host without editing specs.
 QWEN_GATEWAY_TOKEN_ENV_ENV = "SAC_QWEN_GATEWAY_TOKEN_ENV"
-
-#: The engine key the migration writes, and the model it names. They are the
-#: same string on purpose: the operator's already-migrated ``business`` spec
-#: names its Qwen engine after the model, and one spelling is easier to type
-#: after ``--engine`` than two.
-QWEN_ENGINE_KEY = "qwen38-27b"
-QWEN_ENGINE_MODEL = "qwen38-27b"
-
-#: The gateway speaks the Anthropic Messages transport, so Claude Code stays
-#: the harness. HARNESS and ENGINE are separate axes and this is the whole
-#: point of the split: swapping the engine does not swap the harness.
-QWEN_ENGINE_HARNESS = "anthropic"
-
-#: Q4 (operator, 2026-09-03): Qwen is expected to run at low effort
-#: permanently.
-QWEN_ENGINE_REASONING_EFFORT = "low"
-
-#: The window the gateway actually serves (serve conf MAX_MODEL_LEN=1048576).
-#: Claude Code assumes 200k for a model it does not recognise and auto-compacts
-#: at that boundary; on ``business``'s resumed 1M session the compaction
-#: request itself crashed the engine. sac renders this as
-#: ``SAC_ENGINE_MAX_CONTEXT_TOKENS`` and, on the anthropic harness, as
-#: ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` — the knob the harness names in its own
-#: error text (``runtimes._apptainer_provider.engine_env_flags``).
-QWEN_ENGINE_MAX_CONTEXT_TOKENS = 1048576
 
 
 def qwen_gateway_url() -> str:

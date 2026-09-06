@@ -1,0 +1,76 @@
+# THE FLEET ENGINE LIBRARY — the engines an agent can name, declared ONCE.
+#
+# WHERE THIS FILE BELONGS. Here, tracked, beside `agents/` — the same
+# `.scitex/agent-container/` layout `config/_engine_library.py` resolves, so
+# the reviewed copy and the deployed copy are the SAME shape and a diff
+# between them is readable. It is tracked because it is a fleet-wide
+# decision: `engine:` below repoints every agent that has not pinned itself,
+# and a decision that large does not belong in an untracked file on one host.
+#
+# HOW IT IS FOUND AT RUNTIME, stated rather than assumed
+# (`_engine_library.fleet_engines_path`, measured on this host 2026-09-06):
+#
+#     $SAC_ENGINES_FILE            unset  — ops/test override only, never a
+#                                           spec surface, and nothing in the
+#                                           sweep may depend on it
+#     $SCITEX_DIR                  unset  — so `state_paths.scitex_dir()`
+#                                           takes its DOCUMENTED default,
+#                                           ~/.scitex
+#     => ~/.scitex/agent-container/engines.yaml
+#
+# That path already holds `agents/`, `accounts/`, `containers/` and
+# `runtime/` on every fleet host, so the library lands beside the state it
+# describes. `$SCITEX_DIR` being unset is the default case, not a gap: the
+# resolver names `~/.scitex` explicitly and a relocated state root (Spartan
+# exports one) takes the library with it. This file is DEPLOYED to that path
+# like every other spec; the deployed copy is a synced copy and is never
+# hand-edited.
+#
+# A MISSING LIBRARY IS LEGAL AND SILENT — every spec then resolves exactly as
+# it did before. An unreadable or self-contradictory one is a LOAD ERROR
+# naming this path, never an empty default.
+
+apiVersion: scitex-agent-container/v3
+kind: EngineLibrary
+
+# THE FLEET DEFAULT is deliberately NOT set here. Uncommenting one line moves
+# every agent that pins nothing onto that engine, and picking which one is the
+# operator's call, not the migration's:
+#
+#   engine: qwen38-27b
+#
+# Note the precedence (`_engine_precedence`): a spec's own `engine:` pin, a
+# spec-local engines block, and a legacy `spec.claude` backend all sit ABOVE
+# this line, so writing it changes nothing for a spec that still states its
+# own backend. It becomes real one agent at a time, as the sweep clears each
+# legacy pin.
+
+engines:
+  # The fleet Qwen gateway, declared ONCE instead of copied into 119 specs —
+  # which is what `sac agents migrate-engines` used to do, and why this file
+  # exists. Selectable anywhere with `--engine qwen38-27b`; pinnable in one
+  # spec with `engine: qwen38-27b` at the top of its `spec:`.
+  qwen38-27b:
+    model: qwen38-27b
+
+    # NAMED, not addressed. `qwen-gateway` resolves through
+    # `config/_provider_registry` at START time, on whichever host the agent
+    # actually starts on, so the ADDRESS lives in `config/_qwen_gateway.py`
+    # and moving the gateway is an edit there rather than here. A host that
+    # reaches it by another route overrides $SAC_QWEN_GATEWAY_URL without
+    # anyone editing YAML.
+    provider: qwen-gateway
+
+    # Q4 (operator, 2026-09-03): Qwen runs at low effort permanently.
+    reasoning_effort: low
+
+    # The window the gateway actually serves (serve conf
+    # MAX_MODEL_LEN=1048576). Claude Code assumes 200k for a model it does
+    # not recognise and auto-compacts at that boundary; on `business`'s
+    # resumed 1M session the compaction request itself crashed the engine.
+    max_context_tokens: 1048576
+
+    # NO `harness:` LINE, deliberately. An entry that states one claims the
+    # HARNESS axis — the coupling the harness/engine split removes. Stating
+    # none means "no opinion", so the spec's own `harness:` wins and this ONE
+    # entry serves a Claude-Code agent and a Codex agent unchanged.

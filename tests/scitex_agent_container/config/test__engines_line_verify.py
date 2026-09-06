@@ -18,6 +18,8 @@ STX-NM002: no mocks. STX-TQ002 / TQ007: AAA markers, one fact per test.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import yaml
 
 from scitex_agent_container.config._engine_types import parse_engines
@@ -301,15 +303,29 @@ def test_backend_drift_reports_a_changed_model() -> None:
     assert "model would change" in drift
 
 
-def test_backend_drift_reports_a_changed_harness() -> None:
-    # Arrange
+def test_backend_drift_reports_a_harness_an_entry_states_differently() -> None:
+    # Arrange — the sweep no longer writes `harness:` into an entry, but the
+    # predicate stays total: an entry that DOES claim the axis must at least
+    # claim it correctly. `replace` builds a real EngineSpec, not a mock.
     engine = _engines_of(migrate_engines_block(CLAUDE_SPEC).text)["claude"]
-    old_spec = _spec_of(CLAUDE_SPEC)
-    old_spec["harness"] = "codex"
+    stating_codex = replace(engine, harness="codex")
     # Act
-    drift = _backend_drift(old_spec, engine)
+    drift = _backend_drift(_spec_of(CLAUDE_SPEC), stating_codex)
     # Assert
     assert "harness would change" in drift
+
+
+def test_a_harness_silent_entry_inherits_rather_than_drifting() -> None:
+    # Arrange — a codex spec whose entry deliberately states no harness. A
+    # comparison written against the pre-split dataclass (where `harness`
+    # defaulted to "anthropic") reported drift on EVERY spec the sweep
+    # touched, which is a check that always fires — i.e. no check at all.
+    text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
+    engine = _engines_of(migrate_engines_block(text).text)["opus-1m"]
+    # Act
+    drift = _backend_drift(_spec_of(text), engine)
+    # Assert
+    assert drift == ""
 
 
 def test_backend_drift_reports_a_changed_provider() -> None:

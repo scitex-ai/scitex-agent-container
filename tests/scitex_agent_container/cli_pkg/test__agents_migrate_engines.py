@@ -29,7 +29,6 @@ import yaml
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._agents_migrate_engines import migrate_engines
-from scitex_agent_container.config._qwen_gateway import QWEN_ENGINE_KEY
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _SETTINGS = {"hooks": {"PreToolUse": [{"hooks": [{"command": "guard.sh"}]}]}}
@@ -322,16 +321,15 @@ def test_apply_writes_the_engines_block(fleet: Path) -> None:
     assert "engines" in yaml.safe_load(spec.read_text())["spec"]
 
 
-def test_apply_writes_both_engines(fleet: Path) -> None:
-    # Arrange
+def test_apply_writes_exactly_the_specs_own_backend(fleet: Path) -> None:
+    # Arrange — and nothing else. The sweep used to copy a `qwen38-27b`
+    # entry into every spec; that definition lives once in the fleet engine
+    # library now, reachable with `--engine` without being duplicated here.
     spec = _write_spec(fleet, "alpha")
     # Act
     _run("--apply", "--no-diff", "--json")
     # Assert
-    assert list(yaml.safe_load(spec.read_text())["spec"]["engines"]) == [
-        "claude",
-        QWEN_ENGINE_KEY,
-    ]
+    assert list(yaml.safe_load(spec.read_text())["spec"]["engines"]) == ["claude"]
 
 
 def test_apply_reports_what_it_wrote(fleet: Path) -> None:

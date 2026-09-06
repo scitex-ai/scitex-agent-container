@@ -60,10 +60,21 @@ proof the two axes are orthogonal:
 
 #### The fleet engine library — `$SCITEX_DIR/agent-container/engines.yaml`
 
-Source of truth: `~/.dotfiles/src/.scitex/agent-container/engines.yaml`, deployed
-like every other spec. `$SCITEX_DIR/agent-container/` is a **synced copy**, never
-hand-edited. `$SAC_ENGINES_FILE` overrides the path for one process (ops/test
-only — never a spec surface).
+Source of truth: [`.scitex/agent-container/engines.yaml`](../.scitex/agent-container/engines.yaml)
+**in this repo**, tracked beside the code that defines the provider names it
+uses — so the library and `config/_provider_registry` are reviewed in one diff
+instead of drifting across two repos. It is deployed to
+`$SCITEX_DIR/agent-container/engines.yaml`; that copy is a **synced copy**,
+never hand-edited.
+
+How that path is resolved, with nothing assumed (`fleet_engines_path`):
+`$SAC_ENGINES_FILE` wins if set — an ops/test override for ONE process, never a
+spec surface — otherwise `$SCITEX_DIR` (documented default `~/.scitex`) plus
+`agent-container/engines.yaml`. Both variables are unset on the fleet hosts, so
+the library lands at `~/.scitex/agent-container/engines.yaml`, beside the
+`agents/` directory it describes. That is the default case, not a gap: a host
+that relocates its state root (Spartan exports `$SCITEX_DIR`) takes the library
+with it.
 
 ```yaml
 apiVersion: scitex-agent-container/v3

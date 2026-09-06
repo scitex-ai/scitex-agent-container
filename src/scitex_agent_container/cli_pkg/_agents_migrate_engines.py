@@ -348,12 +348,14 @@ def migrate_engines(
 ) -> None:
     """Declare HARNESS x ENGINE in every spec. Dry-run by default.
 
-    Each spec's CURRENT backend becomes the DEFAULT engine, restated verbatim,
-    and a `qwen38-27b` entry is added pointing at the fleet gateway by NAME —
-    the address stays in config/_provider_registry, not in 119 files.
-    `spec.claude.model` and `spec.claude.provider` are emptied because the
-    engines now carry them; `spec.harness` stays and agrees with the default
-    engine. Comments are preserved, and the edit verifies that itself.
+    Each spec's CURRENT backend becomes ONE named engine, restated verbatim —
+    no `harness:` and no `default:` inside the entry, both deprecated by the
+    split. Alternates are NOT copied in: they live once in the fleet engine
+    library ($SCITEX_DIR/agent-container/engines.yaml) and stay reachable with
+    `--engine <key>`. `spec.claude.model` and `spec.claude.provider` are
+    emptied because the engine now carries them; `spec.harness` stays stated
+    and the entry inherits it. Comments are preserved, and the edit verifies
+    that itself.
 
     \b
     Preview (read-only — the DEFAULT):

@@ -29,14 +29,23 @@ the legacy single-backend reading of ``spec.claude.model`` and
 ``spec.claude.provider``, so both are EMPTIED — the explicit-spec ruling
 (2026-07-21) requires the keys to stay written, so "removed" means "present
 and stating nothing", exactly as the operator's own migrated ``business``
-spec spells it. Leaving a value in either one builds a wall: the day
-``default: true`` moves to the Qwen entry, a stated legacy model becomes a
+spec spells it. Leaving a value in either one builds a wall: the day the spec
+pins another engine with ``spec.engine:``, a stated legacy model becomes a
 hard load error from ``legacy_conflict_messages``.
 
-``spec.harness`` is NOT emptied. It is the one legacy field the engine entry
-restates verbatim, so the two AGREE — the case ``_engine_types`` blesses
-explicitly ("BOTH, agreeing → accepted, silently") — and it stays readable by
-every reader that asks a raw spec what harness it declares.
+``spec.harness`` is NOT emptied, and the engine entry does NOT restate it.
+The harness is the OTHER axis: the entry states no opinion about it (a
+``harness:`` inside an entry is deprecated — ``_engine_types``), the spec's
+own line keeps stating it, and ``legacy_conflict_messages`` skips the field
+precisely because a harness-silent engine INHERITS rather than disagrees. So
+the raw-spec readers keep their answer and the two axes stay uncoupled.
+
+ONE ENTRY, NOT TWO, AND NO ``default:``. The block this writes names the
+spec's own backend and nothing else; every alternate — ``qwen38-27b``
+included — comes from the fleet engine library, resolvable with ``--engine``
+through the merged namespace. A single entry needs no ``default: true``
+marker, and writing one would OUTRANK the fleet library in the precedence,
+turning 119 legacy pins into 119 engine pins. See ``_engines_derive``.
 """
 
 from __future__ import annotations
@@ -47,17 +56,16 @@ from dataclasses import dataclass
 import yaml
 
 from ._engine_types import (
+    ENGINE_PIN_KEY,
     ENGINES_KEY,
     EngineError,
     default_engine,
     parse_engines,
-    select_engine,
 )
 from ._engine_validation import validate_engines
 from ._engines_derive import derive_entries, render_engines_block
 from ._harness_types import LEGACY_HARNESS_KEY, resolve_spec_harness
 from ._provider_parse import provider_identity
-from ._qwen_gateway import QWEN_ENGINE_KEY, QWEN_GATEWAY_URL_ENV
 from ._yaml_line_edit import (
     find_block,
     find_key,
@@ -123,20 +131,17 @@ REFUSED_VERIFY_FAILED = "the migrated text failed its own verification"
 _MODEL_MARK = "# explicit-empty (2026-07-21 rule): the engines carry the models"
 _PROVIDER_MARK = "# explicit-empty (2026-07-21 rule): the engines carry the providers"
 
-_HEADER_PAIR = (
+_HEADER = (
     "spec.engines (written by `sac agents migrate-engines`). HARNESS and ENGINE",
-    "are separate axes. The DEFAULT entry below is this spec's own backend,",
-    f"restated verbatim; `{QWEN_ENGINE_KEY}` is the fleet-gateway alternate, picked",
-    f"at start with `--engine {QWEN_ENGINE_KEY}`. The gateway ADDRESS is NOT written",
-    "here: the provider NAME resolves through config/_provider_registry, and is",
-    f"overridable per host with ${QWEN_GATEWAY_URL_ENV}.",
-)
-_HEADER_SOLO = (
-    "spec.engines (written by `sac agents migrate-engines`). HARNESS and ENGINE",
-    "are separate axes. This spec ALREADY runs the gateway model, so its own",
-    "backend is the engine, restated verbatim — no second entry could carry the",
-    "same key, and repointing this one at another endpoint would be a behaviour",
-    "change rather than a migration.",
+    "are separate axes: the entry below is this spec's own BACKEND, restated",
+    "verbatim, and it states no `harness:` on purpose — `spec.harness` still",
+    "owns that axis and the entry inherits whatever it says.",
+    "",
+    "Other engines are NOT copied in here. They live once in the fleet engine",
+    "library ($SCITEX_DIR/agent-container/engines.yaml) and are selectable at",
+    "start with `--engine <key>`. To PIN this agent to one of them, add",
+    f"`{ENGINE_PIN_KEY}: <key>` at the top of spec: — one line, and it outranks",
+    "the fleet default without touching anything below.",
 )
 
 
@@ -343,9 +348,8 @@ def migrate_engines_block(text: str, *, path: str = "<spec>") -> EnginesEdit:
         return _refuse(text, REFUSED_UNNAMEABLE, why)
 
     step = len(claude.child_indent) - len(claude.indent)
-    header = _HEADER_PAIR if len(entries) > 1 else _HEADER_SOLO
     block = render_engines_block(
-        entries, indent=claude.indent, step=step, header=header
+        entries, indent=claude.indent, step=step, header=_HEADER
     )
     ending = _dominant_ending(lines)
 
@@ -437,12 +441,24 @@ def _verify(before, after, old_doc, kind, entries, path) -> str:
         return f"default_engine refused the block: {exc}"
     if chosen is None or chosen.key != expected[0]:
         return f"the default engine is {chosen and chosen.key!r}, not {expected[0]!r}"
-    if QWEN_ENGINE_KEY in expected:
-        picked = select_engine(engines, QWEN_ENGINE_KEY)
-        if picked is None or picked.key != QWEN_ENGINE_KEY:
-            return f"select_engine could not pick {QWEN_ENGINE_KEY!r}"
-        if picked.provider is None or not picked.provider.base_url:
-            return f"the {QWEN_ENGINE_KEY!r} entry resolves to no endpoint"
+    if chosen.harness is not None:
+        # The single-entry shape states no harness. A stated one here would
+        # mean the renderer had claimed the harness axis for the engine —
+        # the coupling the split removes — and would silently overwrite a
+        # `harness: codex` spec through ``apply_engine``.
+        return (
+            f"the {chosen.key!r} entry states harness={chosen.harness!r}; a "
+            "migrated entry must state none and inherit spec.harness"
+        )
+    if chosen.is_default:
+        # A spec-local `default:` OUTRANKS the fleet library, so writing one
+        # here would trade a legacy pin for an engine pin rather than clear
+        # it. Caught on the emitted TEXT, not argued in the renderer.
+        return (
+            f"the {chosen.key!r} entry is marked `default: true`; a "
+            "single-entry block must state no default so the fleet engine "
+            f"library stays reachable through `{ENGINE_PIN_KEY}:`"
+        )
 
     drift = _backend_drift(old_doc["spec"], chosen)
     if drift:
@@ -467,9 +483,18 @@ def _backend_drift(old_spec, engine) -> str:
     changes what a spec SAYS, never what an agent RUNS. Compared through the
     production readers, and the provider through ``provider_identity`` so a
     registry name and the dict it stands for are correctly equal.
+
+    THE HARNESS FIELD IS NULLABLE NOW, and ``None`` is not drift. An engine
+    that states no harness states NO OPINION and inherits ``spec.harness``,
+    which this edit leaves stated and untouched — so the effective harness is
+    the one the spec already resolved. Comparing ``None`` against that value
+    would report drift on every single spec the sweep touches, which is what
+    a check written against the pre-split dataclass (where ``harness``
+    defaulted to ``"anthropic"``) would now do. A STATED harness is still
+    compared: an entry that claims the axis must at least claim it correctly.
     """
     old_harness = resolve_spec_harness(old_spec)
-    if engine.harness != old_harness:
+    if engine.harness is not None and engine.harness != old_harness:
         return f"harness would change: {old_harness!r} -> {engine.harness!r}"
     old_claude = old_spec.get("claude") or {}
     old_model = str(old_claude.get("model") or "").strip()

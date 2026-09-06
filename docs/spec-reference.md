@@ -243,34 +243,26 @@ declares `engines:`, at which point the legacy reading is deleted.
 **The sweep that gets there:** `sac agents migrate-engines`. Dry-run by
 DEFAULT — it writes nothing and prints a unified diff per spec — with
 `--apply` as the deliberate act and `--agent` / `--host` / `--limit` for
-batching. Each spec's CURRENT backend becomes its DEFAULT engine, restated
-verbatim, and a `qwen38-27b` alternate is added pointing at the fleet gateway
-by NAME (`provider: qwen-gateway`), so the address lives in
-[`config/_qwen_gateway.py`](../src/scitex_agent_container/config/_qwen_gateway.py)
-— overridable per host with `$SAC_QWEN_GATEWAY_URL` — instead of being copied
-into 119 files. `spec.claude.model` and `spec.claude.provider` are EMPTIED
-(present, stating nothing — the explicit-spec ruling keeps the keys) because
-the engines now carry them; `spec.harness` stays stated and agrees with the
-default engine. The edit is line surgery, not a YAML round-trip, so operator
-comments survive, and it re-parses its own output through `parse_engines`,
-`validate_engines` and `legacy_conflict_messages` before returning. The apply
-loads every spec before and after and restores every original unless the
-effective backend is unchanged.
+batching. Each spec's CURRENT backend becomes ONE named engine, restated
+verbatim; `spec.claude.model` and `spec.claude.provider` are EMPTIED (present,
+stating nothing — the explicit-spec ruling keeps the keys) while `spec.harness`
+stays stated and the entry inherits it. The edit is line surgery, so comments
+survive, and it re-parses its own output through `parse_engines`,
+`validate_engines` and `legacy_conflict_messages` first. The apply loads every
+spec before and after and restores every original unless the effective backend
+is unchanged. Precedence, the worked YAML cases and the harness × engine
+refusal table: [`harness-and-engine.md`](harness-and-engine.md).
 
-**KNOWN MISMATCH, stated rather than shipped silently.** The sweep as it stands
-today still writes the two entry fields the table above marks DEPRECATED —
-`default: true` on the chosen entry, and a per-entry `harness:` — and it copies
-a `qwen38-27b` entry into every spec rather than leaving that definition to the
-fleet engine library. All three still parse and still behave correctly, so
-nothing is broken; but a spec-local `default:` OUTRANKS the fleet library in
-precedence, so a sweep run before the adaptation lands would trade 119 legacy
-pins for 119 engines pins and leave a fleet-wide engine flip still a 119-file
-edit. Retargeting the sweep's write side onto the `spec.engine:` /
-fleet-library grammar is tracked as the follow-up to this merge; until it
-lands, read the sweep's output as "clears the legacy block", not as "adopts the
-new grammar". The precedence order, the three worked YAML cases and the
-harness × engine refusal table are in
-[`harness-and-engine.md`](harness-and-engine.md).
+**What it deliberately does NOT write:** no per-entry `harness:` (that claims
+the HARNESS axis); no `default: true` (a spec-local default OUTRANKS the fleet
+library — `engine: <key>` at the top of `spec:` is the one-line pin); and no
+copied `qwen38-27b`, which lives once in the tracked
+[fleet library](../.scitex/agent-container/engines.yaml), deployed to
+`$SCITEX_DIR/agent-container/engines.yaml` (`$SAC_ENGINES_FILE` unset,
+`$SCITEX_DIR` at its documented `~/.scitex` default) and reached with `--engine
+qwen38-27b`. Its ADDRESS stays in
+[`_qwen_gateway.py`](../src/scitex_agent_container/config/_qwen_gateway.py) as
+`provider: qwen-gateway`, overridable per host with `$SAC_QWEN_GATEWAY_URL`.
 
 **A version floor, enforced at plan time.** A sac older than 2026-09-03
 (commit `0d61e077`) does not ignore an unknown `engines:` key — it REJECTS the
