@@ -169,12 +169,50 @@ def select_engine_at_start(
     # changed.
     spec_harness = str(getattr(config, "harness", "") or "").strip().lower()
 
+    # The engine the SPEC selects, captured BEFORE the fold for the same
+    # reason as the harness above: ``apply_engine`` overwrites
+    # ``engine_key``, so reading it afterwards would report this start's
+    # choice back to itself and the contradiction below could never fire.
+    #
+    # Read the FIELD, never re-derived from ``config.engines``: that
+    # mapping is the MERGED namespace (fleet library UNION spec-local),
+    # and resolving a default from it attributes fleet engines to this
+    # spec. ``engine_key`` was written by the loader from the same
+    # ``resolve_default_for_spec`` used here, so it is the spec's answer
+    # by construction.
+    spec_default = str(getattr(config, "engine_key", "") or "").strip()
+
     # Raises UnknownEngineError listing the declared keys. Deliberately
     # NOT caught: degrading to the default here is the exact silent
     # fallback the operator ruled out.
     engine = select_engine(engines, requested)
     if engine is None:
         return None
+
+    # A RECORD, NOT A GATE, and deliberately so: honouring an explicit
+    # --engine is correct, and refusing here would make the override
+    # useless. What was missing is that the override was SILENT. On
+    # 2026-09-05 `business` was restarted with `--engine claude` while
+    # its own spec declares qwen38-27b with `default: true` and carries
+    # an operator ruling saying Qwen ONLY; it ran 27 hours that way and
+    # nothing anywhere said the spec had been overruled. This line is
+    # read by a person during an incident -- that is its consumer, and
+    # it is the only one it claims.
+    if explicit and spec_default and spec_default != engine.key:
+        if log:
+            _logger().warning(
+                "agent %r: starting on engine %r by explicit --engine, "
+                "OVERRULING this spec's declared default %r "
+                "(spec.%s.%s). The override applies to THIS start only; "
+                "the spec is unchanged and the next start without "
+                "--engine will select %r again.",
+                getattr(config, "name", "<unknown>"),
+                engine.key,
+                spec_default,
+                ENGINES_KEY,
+                spec_default,
+                spec_default,
+            )
 
     # Re-fold even when the loader already applied this same entry: the
     # config may have been mutated between load and start, and applying

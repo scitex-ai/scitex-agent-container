@@ -457,3 +457,67 @@ def test_a_legacy_spec_emits_no_engine_env_flags_at_all(tmp_path):
     argv = auth_argv(config, tmp_path / "state")
     # Assert
     assert not any(a.startswith("SAC_ENGINE") for a in argv)
+
+
+def test_an_explicit_engine_overruling_the_spec_default_is_recorded(
+    tmp_path, token_exported, caplog
+):
+    # Arrange
+    import logging
+
+    config = load_config(_write(tmp_path, "overruled", _engines()))
+
+    # Act
+    with caplog.at_level(logging.WARNING):
+        select_engine_at_start(config, "qwen38-27b")
+
+    # Assert
+    assert "OVERRULING" in caplog.text
+
+
+def test_an_explicit_engine_agreeing_with_the_spec_default_is_not_recorded(
+    tmp_path, token_exported, caplog
+):
+    # Arrange
+    import logging
+
+    config = load_config(_write(tmp_path, "agreeing", _engines()))
+
+    # Act
+    with caplog.at_level(logging.WARNING):
+        select_engine_at_start(config, "claude")
+
+    # Assert
+    assert "OVERRULING" not in caplog.text
+
+
+def test_a_start_with_no_explicit_engine_is_not_recorded_as_an_override(
+    tmp_path, token_exported, caplog
+):
+    # Arrange
+    import logging
+
+    config = load_config(_write(tmp_path, "plain", _engines()))
+
+    # Act
+    with caplog.at_level(logging.WARNING):
+        select_engine_at_start(config, None)
+
+    # Assert
+    assert "OVERRULING" not in caplog.text
+
+
+def test_the_override_record_names_the_engine_the_spec_declared(
+    tmp_path, token_exported, caplog
+):
+    # Arrange
+    import logging
+
+    config = load_config(_write(tmp_path, "named", _engines()))
+
+    # Act
+    with caplog.at_level(logging.WARNING):
+        select_engine_at_start(config, "qwen38-27b")
+
+    # Assert
+    assert "'claude'" in caplog.text
