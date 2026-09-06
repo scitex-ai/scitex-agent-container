@@ -281,17 +281,14 @@ def image_bake_remote(
     # and restarted, which is precisely the loop this prevents. Nothing
     # went wrong when a second bake declines — the first one is doing the
     # work.
-    lock_dir = Path.home() / ".scitex" / "agent-container" / "runtime"
-    lock_dir.mkdir(parents=True, exist_ok=True)
+    containers_dir.mkdir(parents=True, exist_ok=True)
     try:
         # Held for the lifetime of this one-shot command. The kernel
         # releases the flock when the process exits — including SIGKILL
         # and OOM — so a crashed bake never jams the pipeline and no
         # stale-lock reconciliation is needed. Bound to a name so the fd
         # is not garbage-collected (closing it would release the lock).
-        _bake_lock = acquire_bake_lock(
-            containers_dir=containers_dir, lock_dir=lock_dir
-        )
+        _bake_lock = acquire_bake_lock(containers_dir=containers_dir)
     except BakeAlreadyRunningError as exc:
         click.echo(str(exc), err=True)
         raise SystemExit(0) from exc
