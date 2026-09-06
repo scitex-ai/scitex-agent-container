@@ -161,6 +161,37 @@ class PRGate:
         }
 
 
+def _protection_payload_is_error(payload: dict) -> bool:
+    """True when GitHub answered with an ERROR OBJECT, not a protection body.
+
+    ``gh api`` prints a 404/403 body to STDOUT and exits non-zero, and
+    :func:`run_gh` deliberately returns stdout whenever it is non-empty (so
+    that ``gh pr checks`` can fail loudly and still hand back its JSON). The
+    consequence for THIS call is that an unreadable branch never raises: the
+    error body parses as valid JSON, carries no ``contexts``/``checks``, and
+    an unguarded reader turns it into an empty required-list — i.e. "clean".
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "contexts" in payload or "checks" in payload:
+        return False
+    return "message" in payload
+
+
+def _branch_is_simply_unprotected(payload: dict) -> bool:
+    """True for the ONE error that is a real answer: no protection exists.
+
+    An unprotected branch requires nothing, so an empty list is the correct
+    verdict and no silent block is possible. GitHub says this with 404 and a
+    ``Branch not protected`` message. Every OTHER error — 403 (no rights to
+    read protection), a renamed branch, a network failure — means we could not
+    look, which is not the same fact and must never render as clean.
+    """
+    msg = str(payload.get("message") or "").lower()
+    status = str(payload.get("status") or "")
+    return status in ("", "404") and "not protected" in msg
+
+
 def required_contexts(
     branch: str, *, run_gh: GhRunner = run_gh, repo: Optional[str] = None
 ) -> list[str]:
@@ -169,21 +200,43 @@ def required_contexts(
     This is the half of the comparison that cannot be derived from the PR: it
     says what SHOULD report. An unprotected branch requires nothing, which is a
     real answer (no possible silent block), not an error.
+
+    COULD-NOT-READ IS NOT THE SAME ANSWER AS NOTHING-IS-REQUIRED, and this
+    function used to return ``[]`` for both. That is the whole bug: with an
+    empty required-list no context can be ``NEVER_STARTED``, so
+    :attr:`PRGate.silently_blocked` is False and the PR reads as CLEAN --
+    exactly the claim the old comment here said must never be made.
+
+    It also defeated a CORRECT guard one layer up: ``sac ci blocked`` already
+    catches :class:`CIWhyError` with "UNKNOWN is not green: never degrade into
+    'nothing blocked'". Swallowing the error here meant that guard could not
+    fire for this path -- a gate made unreachable by a well-meant except.
+    So this function now RAISES, and lets the existing guard do its job.
+
+    (Reported by scitex-ui, 2026-09-06, from the third of three
+    generalisations they drew after getting their own merge gate wrong four
+    times: separate CANNOT-TELL from NOT-GREEN in the output.)
     """
     owner_repo = repo if repo else "{owner}/{repo}"
     path = f"repos/{owner_repo}/branches/{branch}/protection/required_status_checks"
-    try:
-        raw = run_gh(["api", path])
-    except CIWhyError:
-        # No protection, or no admin rights to read it. Either way this tool
-        # cannot judge the branch — and must not claim it is clean.
-        return []
+    raw = run_gh(["api", path])
     try:
         payload = json.loads(raw or "{}")
     except ValueError as exc:
         raise CIWhyError(
             f"could not parse branch-protection JSON for {branch}"
         ) from exc
+
+    if _protection_payload_is_error(payload):
+        if _branch_is_simply_unprotected(payload):
+            return []
+        raise CIWhyError(
+            f"could not read branch protection for {branch}: "
+            f"{payload.get('message')!r}. This is NOT a verdict -- the branch "
+            f"may still have required checks that never started. Check `gh "
+            f"auth status` and that the token can read branch protection on "
+            f"this repo."
+        )
 
     names: list[str] = []
     for c in payload.get("contexts") or []:

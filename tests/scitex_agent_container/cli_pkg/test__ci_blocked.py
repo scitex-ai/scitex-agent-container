@@ -19,6 +19,7 @@ use) stands in for the network. AAA, one assertion per test.
 from __future__ import annotations
 
 import json
+from functools import partial
 
 import pytest
 
@@ -62,8 +63,15 @@ def _pr(
     }
 
 
-def _gh(prs, contexts=REQUIRED, protection_raises=False):
-    """A gh seam answering both `pr list` and the branch-protection API."""
+def _gh(prs, contexts=REQUIRED, protection_raises=False, protection_body=None):
+    """A gh seam answering both `pr list` and the branch-protection API.
+
+    ``protection_body`` models the case that actually happens in production and
+    that ``protection_raises`` does NOT: ``gh api`` prints a 404/403 error body
+    to STDOUT and exits non-zero, and ``run_gh`` returns stdout whenever it is
+    non-empty. So an unreadable branch arrives here as parseable JSON, not as
+    an exception.
+    """
 
     def _router(argv: list[str]) -> str:
         if argv and argv[0] == "pr":
@@ -71,6 +79,8 @@ def _gh(prs, contexts=REQUIRED, protection_raises=False):
         if argv and argv[0] == "api":
             if protection_raises:
                 raise CIWhyError("404 Not Found")
+            if protection_body is not None:
+                return json.dumps(protection_body)
             return json.dumps({"strict": False, "contexts": contexts})
         raise AssertionError(f"unexpected gh call: {argv}")
 
@@ -279,15 +289,53 @@ def test_required_contexts_also_reads_the_newer_checks_form():
     assert names == ["c1"]
 
 
+UNPROTECTED_BODY = {"message": "Branch not protected", "status": "404"}
+UNREADABLE_BODY = {"message": "Resource not accessible by integration", "status": "403"}
+
+
 def test_an_unprotected_base_requires_nothing_and_is_not_flagged():
-    # Arrange — no protection to read: no required name can be missing.
-    gh = _gh([_pr([])], protection_raises=True)
+    # Arrange — GitHub's real "no protection" answer: a 404 BODY on stdout.
+    gh = _gh([_pr([])], protection_body=UNPROTECTED_BODY)
 
     # Act
     gates = audit_blocked(run_gh=gh)
 
     # Assert
     assert gates[0].silently_blocked is False
+
+
+def test_unreadable_protection_raises_rather_than_reading_clean():
+    """THE BUG. A 403 body parsed as data yielded [] -> nothing required ->
+    nothing can be NEVER_STARTED -> `silently_blocked` False -> CLEAN.
+
+    Not-permitted-to-look is not the same fact as nothing-is-required, and only
+    one of them is a verdict.
+    """
+    # Arrange
+    gh = _gh([_pr([])], protection_body=UNREADABLE_BODY)
+
+    # Act
+    audit = partial(audit_blocked, run_gh=gh)
+
+    # Assert
+    with pytest.raises(CIWhyError, match="could not read branch protection"):
+        audit()
+
+
+def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
+    """The sibling route to the same wrong verdict: `run_gh` raising was
+    swallowed here, which also defeated the CORRECT guard in `sac ci blocked`
+    ("UNKNOWN is not green"). That guard could not fire for this path.
+    """
+    # Arrange
+    gh = _gh([_pr([])], protection_raises=True)
+
+    # Act
+    audit = partial(audit_blocked, run_gh=gh)
+
+    # Assert
+    with pytest.raises(CIWhyError):
+        audit()
 
 
 def test_base_filter_selects_only_matching_prs():
