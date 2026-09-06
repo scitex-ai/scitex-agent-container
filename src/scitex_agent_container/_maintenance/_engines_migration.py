@@ -42,7 +42,8 @@ import yaml
 
 from ..config._engines_line import REFUSED_ALREADY_DECLARED, migrate_engines_block
 from ._engines_apply import ApplyResult, apply_engines_migration
-from ._roster_state import inspect_roster
+from ._engines_floor import EngineFloor
+from ._roster_state import inspect_roster, inspect_roster_over_roots
 
 __all__ = [
     "STATE_ALREADY",
@@ -57,6 +58,7 @@ __all__ = [
     "plan_engines_migration",
     "read_spec_text",
     "select_spec_paths",
+    "select_spec_paths_over_roots",
 ]
 
 STATE_MIGRATED = "migrated"
@@ -184,6 +186,25 @@ def read_spec_text(path: Path) -> str:
         return handle.read()
 
 
+def _spec_hosts_from_text(text: str) -> "set[str] | None":
+    """Every host the spec TEXT places itself on. ``None`` when unparsable.
+
+    Takes text rather than a path so the caller that has already read the
+    file judges the SAME bytes it will edit. Re-reading to answer a second
+    question is how one file yields two answers.
+    """
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:  # stx-allow: fallback (reason: an unparsable spec must reach the PLAN as "host unknown", not vanish from the selection filter)
+        return None
+    spec = (doc or {}).get("spec") or {}
+    hosts = {str(spec.get("host"))} if spec.get("host") else set()
+    declared = spec.get("hosts")
+    if isinstance(declared, list):
+        hosts |= {str(h) for h in declared if h}
+    return hosts
+
+
 def _spec_hosts(path: Path) -> "set[str] | None":
     """Every host a spec places itself on.
 
@@ -195,19 +216,13 @@ def _spec_hosts(path: Path) -> "set[str] | None":
     unsafe apply.
     """
     try:
-        doc = yaml.safe_load(read_spec_text(path))
+        text = read_spec_text(path)
     except (
         OSError,
         UnicodeDecodeError,
-        yaml.YAMLError,
     ):  # stx-allow: fallback (reason: an unreadable spec must reach the PLAN as unreadable, not vanish from the selection filter)
         return None
-    spec = (doc or {}).get("spec") or {}
-    hosts = {str(spec.get("host"))} if spec.get("host") else set()
-    declared = spec.get("hosts")
-    if isinstance(declared, list):
-        hosts |= {str(h) for h in declared if h}
-    return hosts
+    return _spec_hosts_from_text(text)
 
 
 def _on_a_wanted_host(path: Path, wanted: "set[str]") -> bool:
@@ -250,8 +265,57 @@ def select_spec_paths(
     return picked, ([] if templates else skipped)
 
 
-def plan_spec(path: Path) -> SpecOutcome:
-    """Plan ONE spec. Reads it; writes nothing."""
+def select_spec_paths_over_roots(
+    roots: "tuple[Path, ...]",
+    *,
+    hosts: "tuple[str, ...]" = (),
+    agents: "tuple[str, ...]" = (),
+    templates: bool = False,
+) -> "tuple[list[Path], list[str]]":
+    """:func:`select_spec_paths` over SEVERAL roots, de-duped by AGENT NAME.
+
+    The resolver that produces those roots says in its own docstring that
+    callers de-duplicate, and by NAME rather than by path is the only
+    de-duplication that means anything here: the same agent appears under two
+    roots as two different paths, and writing both would migrate one agent
+    twice — once into the copy that is actually loaded and once into a stale
+    one, which is how two answers about one agent get created.
+
+    EARLIER ROOTS WIN, in the order the resolver hands them over. That is a
+    conservative choice, not a claim to know which copy loads: on a genuine
+    name collision between a project-local registry and the fleet,
+    ``config._resolve.resolve_config`` REFUSES to pick and raises
+    ``AmbiguousRegistryScope``. A colliding name is therefore a pre-existing
+    fleet fault this sweep must not paper over — so it writes exactly one
+    file for that agent and the report names every root it searched.
+    """
+    picked: "list[Path]" = []
+    skipped: "list[str]" = []
+    seen: "set[str]" = set()
+    for root in roots:
+        paths, root_skipped = select_spec_paths(
+            root, hosts=hosts, agents=agents, templates=templates
+        )
+        for path in paths:
+            if path.parent.name in seen:
+                continue
+            seen.add(path.parent.name)
+            picked.append(path)
+        for name in root_skipped:
+            if name not in skipped:
+                skipped.append(name)
+    return picked, skipped
+
+
+def plan_spec(path: Path, *, floor: "EngineFloor | None" = None) -> SpecOutcome:
+    """Plan ONE spec. Reads it; writes nothing.
+
+    ``floor`` is the VERSION FLOOR (:mod:`._engines_floor`). It is consulted
+    only where it can change the outcome — where a block WOULD be written,
+    and where one is already declared on a host that cannot parse it. A spec
+    the editor refuses for its own reason gets no block either way, so the
+    editor's reason is the actionable one and is left in place.
+    """
     agent = path.parent.name
     try:
         before = read_spec_text(path)
@@ -262,6 +326,9 @@ def plan_spec(path: Path) -> SpecOutcome:
         return SpecOutcome(agent, path, STATE_UNREADABLE, detail=str(exc))
 
     edit = migrate_engines_block(before, path=str(path))
+    blocked = _floor_refusal(agent, path, before, edit, floor)
+    if blocked is not None:
+        return blocked
     if not edit.changed:
         state = (
             STATE_ALREADY if edit.reason == REFUSED_ALREADY_DECLARED else STATE_REFUSED
@@ -285,6 +352,38 @@ def plan_spec(path: Path) -> SpecOutcome:
         default_key=edit.default_key,
         new_text=edit.text,
         diff=diff,
+    )
+
+
+#: Appended when the floor blocks a spec that ALREADY declares engines. That
+#: is not a migration this sweep would make — it is a spec which cannot load
+#: on its own host TODAY, and reporting it as "already migrated" would file a
+#: live incident under the one bucket that means "finished".
+_ALREADY_ON_AN_INCAPABLE_HOST = (
+    " This spec ALREADY declares spec.engines, so it does not load on that "
+    "host today — nothing here writes it, and a human has to resolve it."
+)
+
+
+def _floor_refusal(
+    agent: str,
+    path: Path,
+    text: str,
+    edit,
+    floor: "EngineFloor | None",
+) -> "SpecOutcome | None":
+    """The floor's refusal for this spec, or None to leave the outcome alone."""
+    if floor is None:
+        return None
+    already = edit.reason == REFUSED_ALREADY_DECLARED
+    if not edit.changed and not already:
+        return None
+    verdict = floor.verdict_for(_spec_hosts_from_text(text))
+    if not verdict.blocks:
+        return None
+    detail = verdict.detail + (_ALREADY_ON_AN_INCAPABLE_HOST if already else "")
+    return SpecOutcome(
+        agent, path, STATE_REFUSED, reason=verdict.reason, detail=detail
     )
 
 
@@ -326,10 +425,22 @@ def plan_engines_migration(
     spec_paths: "list[Path]",
     *,
     root: "Path | None" = None,
+    roots: "tuple[Path, ...] | None" = None,
     skipped_templates: "list[str]" = (),
     limit: "int | None" = None,
+    floor: "EngineFloor | None" = None,
 ) -> EnginesPlan:
-    """What the sweep WOULD do over ``spec_paths``. Reads only."""
+    """What the sweep WOULD do over ``spec_paths``. Reads only.
+
+    ``roots`` is the several-roots form of ``root`` and takes precedence when
+    given: the default sweep searches every user-scope root rather than one,
+    and a roster that named only the first of them would be a report about a
+    directory the sweep did not confine itself to.
+
+    ``floor`` is the version floor. Passing None disables it entirely, which
+    is what the unit tests of the OTHER buckets want; the CLI always passes
+    one, so the fleet path is never floorless.
+    """
     if limit is not None and limit < 1:
         raise ValueError(
             f"limit must be a positive count of specs to write; got {limit!r}. "
@@ -337,8 +448,13 @@ def plan_engines_migration(
             "the LAST spec instead of taking the first one."
         )
     paths = list(spec_paths)
+    roster = (
+        inspect_roster_over_roots(roots, paths)
+        if roots is not None
+        else inspect_roster(root, paths)
+    )
     return EnginesPlan(
-        outcomes=_cap_batch(tuple(plan_spec(p) for p in paths), limit),
-        roster=inspect_roster(root, paths),
+        outcomes=_cap_batch(tuple(plan_spec(p, floor=floor) for p in paths), limit),
+        roster=roster,
         skipped_templates=tuple(skipped_templates),
     )

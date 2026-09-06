@@ -32,10 +32,19 @@ skipping is how a sweep reports 118 done over a fleet of 119. No filter may
 make one vanish either: ``--host`` KEEPS a spec it could not read, so it
 reaches the plan as unreadable rather than out of the count.
 
+**A VERSION FLOOR, ENFORCED AT PLAN TIME.** A sac that predates engines
+support REJECTS an unknown ``engines:`` key rather than ignoring it, so
+writing the block into a spec pinned on such a host stops that agent
+starting. The floor refuses those specs by name BEFORE the write — see
+:mod:`..._maintenance._engines_floor` for the measurement, the fleet roster
+and the fail-closed rule (an unmeasured host is refused, never assumed
+capable). ``--host-supports-engines HOST`` lifts it for a named machine.
+
 **Where it writes.** ``--root``, else ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR``,
-else ``$HOME/.scitex/agent-container/agents`` — the LIVE copy, which is not a
-git checkout and, inside a container, is not the host's ``$HOME``. Every
-report names the root it searched.
+else EVERY user-scope root the rest of the CLI resolves, de-duplicated by
+agent name. The old default read a different env var and landed on the
+container's own ``$HOME`` — one spec next to the fleet's 123, reported as a
+finished sweep. Every report names the roots it searched.
 
 **Exit codes.** ``0`` the plan is sound (a named refusal is NOT a failure),
 ``1`` a spec is unreadable or no roster was searched, ``2`` the apply was
@@ -47,8 +56,10 @@ a run whose every spec was refused also exits 0. ``migration_complete`` in
 NAMED state rather than a boolean, because the two failure shapes look
 identical through curl: ``scitex-compute-04:18772`` answers 401 (reachable
 and auth-gating) while ``compute-04:18772`` answers ``000`` — which reads as
-"the gateway is down" and means "the hostname does not resolve". See
-:mod:`...config._engine_reach`.
+"the gateway is down" and means "the hostname does not resolve". It dials
+``/v1/models`` rather than the base, which answers 404: a 401 there proves
+the inference API is present AND gating, while the base's 404 proves only
+that some process holds the port. See :mod:`...config._engine_reach`.
 """
 
 from __future__ import annotations
@@ -59,10 +70,11 @@ from pathlib import Path as _Path
 
 import click
 
+from .._maintenance._engines_floor import EngineFloor
 from .._maintenance._engines_migration import (
     apply_engines_migration,
     plan_engines_migration,
-    select_spec_paths,
+    select_spec_paths_over_roots,
 )
 from ._agents_migrate_engines_report import (
     plan_payload,
@@ -77,6 +89,43 @@ from ._helpers import _json_flag, console
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1
 _EXIT_APPLY_REFUSED = 2
+
+#: The one env var the RUNTIME actually exports for this purpose.
+_AGENTS_DIR_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
+
+
+def default_spec_roots() -> "tuple[_Path, ...]":
+    """Where to sweep when neither ``--root`` nor the env var says.
+
+    EVERY user-scope root, not one. Measured inside this container on
+    2026-09-06, with ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR`` unset and
+    ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` set by the runtime to the
+    operator's tree::
+
+        fleet_agents_dir() -> /home/agent/.scitex/…/agents            1 spec
+        user_scope_roots() -> /home/agent/.scitex/…/agents            1 spec
+                              …/.worktrees/…/.scitex/…/agents         2 specs
+                              /home/ywatanabe/.scitex/…/agents      123 specs
+
+    ``fleet_agents_dir`` reads a DIFFERENT variable, which the runtime does
+    not set, and lands on the container's own ``$HOME`` — a root holding one
+    spec, next to the fleet's 123. A sweep defaulting there does not refuse:
+    it reports one spec and exits 0, which is the shape of a finished
+    migration. ``user_scope_roots`` is the resolver ``sac agents find`` and
+    ``sac agents start`` already use, so the sweep sees the agents the rest
+    of the CLI sees.
+
+    ``fleet_agents_dir`` is deliberately NOT fixed here — four other callers
+    share it and that consolidation is its own card.
+    """
+    import os
+
+    override = (os.environ.get(_AGENTS_DIR_ENV) or "").strip()
+    if override:
+        return (_Path(override).expanduser(),)
+    from ._helpers._agent_list_roots import user_scope_roots
+
+    return tuple(_Path(r) for r in user_scope_roots())
 
 
 def _archive_dir():
@@ -148,8 +197,19 @@ def _complete_after_apply(plan, result) -> bool:
     metavar="DIR",
     help=(
         "The agents/ directory to sweep. Defaults to "
-        "$SCITEX_AGENT_CONTAINER_AGENTS_DIR, else $HOME/.scitex/agent-container"
-        "/agents — which inside a container is NOT the host's."
+        "$SCITEX_AGENT_CONTAINER_AGENTS_DIR, else EVERY user-scope root the "
+        "rest of the CLI resolves, de-duplicated by agent name."
+    ),
+)
+@click.option(
+    "--host-supports-engines",
+    "floor_overrides",
+    multiple=True,
+    metavar="HOST",
+    help=(
+        "Assert that HOST runs a sac new enough to parse spec.engines, "
+        "lifting the version floor for the specs pinned there. Repeatable. "
+        "Per-host on purpose: the claim is explicit and lands in --json."
     ),
 )
 @click.option(
@@ -179,6 +239,7 @@ def migrate_engines(
     hosts: "tuple[str, ...]",
     limit: "int | None",
     root_opt: "_Path | None",
+    floor_overrides: "tuple[str, ...]",
     templates: bool,
     diff: bool,
     preflight: bool,
@@ -205,14 +266,22 @@ def migrate_engines(
     Somewhere other than the live copy:
       $ sac agents migrate-engines --root ~/.dotfiles/src/.scitex/agent-container/agents
     \b
-    Gateway reachability, three-valued:
+    Gateway reachability, named states (it dials /v1/models, not the base):
       $ sac agents migrate-engines --preflight --no-diff
+    \b
+    Lifting the version floor for a host you have checked yourself:
+      $ sac agents migrate-engines --host-supports-engines scitex-compute-02
 
     WHERE IT WRITES. `--root`, else $SCITEX_AGENT_CONTAINER_AGENTS_DIR, else
-    $HOME/.scitex/agent-container/agents — the LIVE copy, which is not a git
-    checkout and, inside a container, is not the host's $HOME either. Every
-    report names the root it searched; pass `--root` to sweep the tracked
-    tree instead.
+    EVERY user-scope root the rest of the CLI resolves, de-duplicated by agent
+    name. Every report names the roots it searched; pass `--root` to sweep the
+    tracked tree instead.
+
+    THE VERSION FLOOR. A sac older than 2026-09-03 rejects `engines:` as an
+    unknown spec field, so a spec written for such a host stops loading and
+    the agent stops starting. Specs pinned on a host measured as pre-engines,
+    or on one nobody measured, are REFUSED by name before anything is written
+    — fail closed. `--host-supports-engines HOST` lifts it per machine.
 
     Exits 0 when the plan is sound (a named REFUSAL is not a failure), 1 when a
     spec is unreadable or no roster was searched, 2 when the apply was refused
@@ -232,16 +301,16 @@ def migrate_engines(
             f"--limit must be a positive number of specs to write; got {limit}."
         )
 
-    from .._maintenance._layers_migration_plan import fleet_agents_dir
-
-    root = _Path(root_opt) if root_opt is not None else fleet_agents_dir()
-    paths, skipped = select_spec_paths(
-        root, hosts=hosts, agents=agents, templates=templates
+    roots = (_Path(root_opt),) if root_opt is not None else default_spec_roots()
+    floor = EngineFloor.with_overrides(floor_overrides)
+    paths, skipped = select_spec_paths_over_roots(
+        roots, hosts=hosts, agents=agents, templates=templates
     )
     plan = plan_engines_migration(
-        paths, root=root, skipped_templates=skipped, limit=limit
+        paths, roots=roots, skipped_templates=skipped, limit=limit, floor=floor
     )
-    payload = plan_payload(plan, root)
+    payload = plan_payload(plan, roots)
+    payload["engine_floor_overrides"] = sorted(set(floor.allowed))
     payload["mode"] = "apply" if apply else "dry-run"
     payload["preflight"] = preflight_payload() if preflight else None
 

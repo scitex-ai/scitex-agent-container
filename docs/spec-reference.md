@@ -249,10 +249,32 @@ comments survive, and it re-parses its own output through `parse_engines`,
 loads every spec before and after and restores every original unless the
 effective backend is unchanged.
 
+**A version floor, enforced at plan time.** A sac older than 2026-09-03
+(commit `0d61e077`) does not ignore an unknown `engines:` key — it REJECTS the
+spec. Measured by running that commit's PARENT validator over a real fleet
+spec: 0 errors without the block, exactly one with it
+(`Unknown spec field 'engines'`). So writing the block into a spec pinned on
+such a host stops that agent starting, at a validator on a machine nobody is
+watching. The sweep therefore REFUSES those specs by name BEFORE the write,
+against a recorded roster of measured hosts in
+[`_maintenance/_engines_floor.py`](../src/scitex_agent_container/_maintenance/_engines_floor.py)
+— measured by FIX PRESENCE (is `apply_default_engine` in that host's own
+`config/_engine_types.py`), not by a version string. It **fails closed**: a
+host absent from the roster is refused, never assumed capable, and so is a
+spec that names no host at all. `--host-supports-engines HOST` (repeatable)
+lifts the floor for a machine you have checked yourself, and the claim is
+recorded in `engine_floor_overrides` in `--json`. A floor refusal is a NAMED
+refusal like any other: it does not fail the exit code and does not make the
+plan unsafe to apply — it just means those specs are not written.
+
 **Where it writes, and how a batch advances.** The root is `--root DIR`, else
-`$SCITEX_AGENT_CONTAINER_AGENTS_DIR`, else `$HOME/.scitex/agent-container/agents`
-— the LIVE copy, which is not a git checkout, and inside a container is not the
-host's `$HOME` either. Every report names the root it searched; pass `--root` to
+`$SCITEX_AGENT_CONTAINER_AGENTS_DIR`, else EVERY user-scope root the rest of
+the CLI resolves (`sac agents find` / `sac agents start` share that resolver),
+de-duplicated by agent name with the earlier root winning. The old default
+read a different env var and landed on `$HOME/.scitex/agent-container/agents`,
+which inside a container is the container's own home — measured, one spec
+beside the fleet's 123, reported as a finished sweep. Every report names the
+roots it searched (`roots` in `--json`); pass `--root` to
 sweep the git-tracked tree instead. `--limit N` caps what is WRITTEN, not what is
 examined: already-migrated and refused specs do not consume the cap, so running
 the same command again takes the NEXT N and the specs past the cap are reported

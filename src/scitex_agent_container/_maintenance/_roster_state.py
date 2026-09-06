@@ -64,6 +64,11 @@ class RosterState:
     root: Path
     state: str
     n_specs: int = 0
+    #: Every root searched, when the sweep searched more than one. ``root``
+    #: stays the representative (first) one rather than being widened into a
+    #: joined string, because a caller that treats it as a path must keep
+    #: getting a path.
+    roots: "tuple[Path, ...]" = ()
 
     def __post_init__(self) -> None:
         if self.state not in ROSTER_STATES:
@@ -76,6 +81,18 @@ class RosterState:
         """True only when a count of zero may be reported as a fact."""
         return self.state == "populated"
 
+    @property
+    def where(self) -> str:
+        """Every root searched, named. Never just the first of several.
+
+        A report that names one root out of three is the same class of defect
+        as one that names none: the reader cannot tell which directories the
+        count is a fact about.
+        """
+        if self.roots:
+            return ", ".join(str(r) for r in self.roots)
+        return str(self.root)
+
     def describe(self) -> str:
         """One line naming the state AND the root, because the root is the bug.
 
@@ -84,15 +101,16 @@ class RosterState:
         and a total discovery failure.
         """
         if self.state == "absent":
+            plural = "directories do" if self.roots else "directory does"
             return (
-                f"no spec roster at {self.root} — the directory does not exist, "
+                f"no spec roster at {self.where} — the {plural} not exist, "
                 f"so nothing was searched. This is NOT an empty fleet. Set "
                 f"SCITEX_AGENT_CONTAINER_AGENTS_DIR to the registry you mean "
                 f"(inside a container $HOME is not the host's)."
             )
         if self.state == "empty":
-            return f"{self.root} exists but holds no specs — the registry is empty"
-        return f"{self.n_specs} spec(s) under {self.root}"
+            return f"{self.where} exists but holds no specs — the registry is empty"
+        return f"{self.n_specs} spec(s) under {self.where}"
 
 
 def inspect_roster(root: "Path | None", spec_paths) -> RosterState:
@@ -121,4 +139,38 @@ def inspect_roster(root: "Path | None", spec_paths) -> RosterState:
     return RosterState(root=Path(root), state="populated", n_specs=len(paths))
 
 
-__all__ = ["ROSTER_STATES", "RosterState", "inspect_roster"]
+def inspect_roster_over_roots(roots, spec_paths) -> RosterState:
+    """Classify a roster gathered from SEVERAL roots at once.
+
+    The three states keep their meanings, widened by exactly one word:
+    ``absent`` is now "NONE of the roots is a directory" — the same "I looked
+    nowhere" that must never be reported as an empty fleet. A run where one
+    root of three exists but holds nothing DID look somewhere, so it is
+    ``empty``, which is a reportable fact rather than a discovery failure.
+
+    Only the directories that EXIST are carried into ``roots`` for the
+    report: naming a root that is not there alongside two that are invites
+    the reader to conclude the count came from all three.
+    """
+    every = [Path(r) for r in roots]
+    if not every:
+        return inspect_roster(None, spec_paths)
+    paths = list(spec_paths)
+    present = tuple(r for r in every if r.is_dir())
+    if not present:
+        return RosterState(
+            root=every[0], state="absent", n_specs=0, roots=tuple(every)
+        )
+    if not paths:
+        return RosterState(root=present[0], state="empty", n_specs=0, roots=present)
+    return RosterState(
+        root=present[0], state="populated", n_specs=len(paths), roots=present
+    )
+
+
+__all__ = [
+    "ROSTER_STATES",
+    "RosterState",
+    "inspect_roster",
+    "inspect_roster_over_roots",
+]

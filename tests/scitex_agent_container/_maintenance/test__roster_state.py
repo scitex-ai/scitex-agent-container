@@ -20,6 +20,7 @@ from scitex_agent_container._maintenance._layers_migration_model import (
 from scitex_agent_container._maintenance._roster_state import (
     RosterState,
     inspect_roster,
+    inspect_roster_over_roots,
 )
 
 
@@ -229,3 +230,81 @@ class TestPlanSafety:
         summary = plan.summary()
         # Assert
         assert str(missing) in summary
+
+
+class TestSeveralRootsAtOnce:
+    """The engines sweep searches EVERY user-scope root, not one.
+
+    The three states keep their meanings, widened by one word: ``absent``
+    becomes "NONE of them is a directory". A run where one root of two exists
+    but holds nothing DID look somewhere, so it is ``empty`` — a reportable
+    fact rather than a discovery failure.
+    """
+
+    def test_no_root_existing_is_absent(self, tmp_path):
+        # Arrange
+        roots = [tmp_path / "nowhere", tmp_path / "also-nowhere"]
+        # Act
+        roster = inspect_roster_over_roots(roots, [])
+        # Assert
+        assert roster.state == "absent"
+
+    def test_one_root_existing_and_empty_is_empty_not_absent(
+        self, tmp_path, root
+    ):
+        # Arrange — it DID look somewhere; "nothing here" is a fact.
+        roots = [tmp_path / "nowhere", root]
+        # Act
+        roster = inspect_roster_over_roots(roots, [])
+        # Assert
+        assert roster.state == "empty"
+
+    def test_specs_found_across_roots_is_populated(self, tmp_path, root):
+        # Arrange
+        roots = [root, tmp_path / "nowhere"]
+        # Act
+        roster = inspect_roster_over_roots(roots, [root / "a" / "spec.yaml"])
+        # Assert
+        assert roster.state == "populated"
+
+    def test_the_populated_description_names_every_searched_root(
+        self, tmp_path, root
+    ):
+        # Arrange — a count naming one root of two is as unreadable as one
+        # naming none.
+        second = tmp_path / "second"
+        second.mkdir()
+        roster = inspect_roster_over_roots([root, second], [root / "a" / "spec.yaml"])
+        # Act
+        described = roster.describe()
+        # Assert
+        assert str(root) in described and str(second) in described
+
+    def test_an_absent_root_is_not_named_among_the_searched(self, tmp_path, root):
+        # Arrange — naming a root that is not there beside one that is invites
+        # the reader to conclude the count came from both.
+        roster = inspect_roster_over_roots(
+            [root, tmp_path / "nowhere"], [root / "a" / "spec.yaml"]
+        )
+        # Act
+        described = roster.describe()
+        # Assert
+        assert str(tmp_path / "nowhere") not in described
+
+    def test_no_roots_at_all_falls_back_to_the_explicit_paths_shape(self):
+        # Arrange — an empty root list claims no directory, so nothing may be
+        # called absent.
+        roots = []
+        # Act
+        roster = inspect_roster_over_roots(roots, [])
+        # Assert
+        assert roster.state == "empty"
+
+    def test_the_representative_root_stays_a_path(self, tmp_path, root):
+        # Arrange — widening ``root`` into a joined string would be a type lie
+        # for every caller that treats it as a path.
+        roots = [root, tmp_path / "nowhere"]
+        # Act
+        roster = inspect_roster_over_roots(roots, [root / "a" / "spec.yaml"])
+        # Assert
+        assert roster.root == root

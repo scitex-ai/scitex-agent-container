@@ -25,9 +25,11 @@ from scitex_agent_container.config._qwen_gateway import (
     DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     DEFAULT_QWEN_GATEWAY_URL,
     QWEN_GATEWAY_HOST,
+    QWEN_GATEWAY_PROBE_PATH,
     QWEN_GATEWAY_PROVIDER,
     QWEN_GATEWAY_TOKEN_ENV_ENV,
     QWEN_GATEWAY_URL_ENV,
+    qwen_gateway_probe_url,
     qwen_gateway_token_env,
     qwen_gateway_url,
 )
@@ -138,3 +140,56 @@ def test_an_unregistered_provider_still_resolves_to_nothing() -> None:
     entry = resolve_provider(unknown)
     # Assert
     assert entry is None
+
+
+# ---------------------------------------------------------------------------
+# The PROBE address is not the base — measured 2026-09-06:
+#     /            404   listening, but this path does not exist
+#     /v1/models   401   REACHABLE + AUTH-GATED
+# ---------------------------------------------------------------------------
+
+
+def test_the_probe_path_is_the_models_endpoint() -> None:
+    # Arrange — not /health: a 200 there is a gate that cannot fail.
+    path = QWEN_GATEWAY_PROBE_PATH
+    # Act
+    chosen = path
+    # Assert
+    assert chosen == "/v1/models"
+
+
+def test_the_probe_url_is_the_default_base_plus_the_path(clean_env) -> None:
+    # Arrange
+    _ = clean_env
+    # Act
+    url = qwen_gateway_probe_url()
+    # Assert
+    assert url == f"{DEFAULT_QWEN_GATEWAY_URL}/v1/models"
+
+
+def test_the_probe_url_honours_the_address_override(clean_env) -> None:
+    # Arrange — a peer reaching the gateway by another route probes THAT one.
+    clean_env[QWEN_GATEWAY_URL_ENV] = "http://100.64.0.1:18772"
+    # Act
+    url = qwen_gateway_probe_url()
+    # Assert
+    assert url == "http://100.64.0.1:18772/v1/models"
+
+
+def test_a_trailing_slash_does_not_double_up(clean_env) -> None:
+    # Arrange — a shell export with a trailing slash is ordinary.
+    clean_env[QWEN_GATEWAY_URL_ENV] = "http://100.64.0.1:18772/"
+    # Act
+    url = qwen_gateway_probe_url()
+    # Assert
+    assert url == "http://100.64.0.1:18772/v1/models"
+
+
+def test_a_base_carrying_a_path_prefix_keeps_it(clean_env) -> None:
+    # Arrange — a reverse proxy mounting the gateway under a prefix. urljoin
+    # would DISCARD the prefix and probe the wrong place.
+    clean_env[QWEN_GATEWAY_URL_ENV] = "http://proxy.example:8443/qwen"
+    # Act
+    url = qwen_gateway_probe_url()
+    # Assert
+    assert url == "http://proxy.example:8443/qwen/v1/models"

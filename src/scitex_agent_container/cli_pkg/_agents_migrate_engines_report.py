@@ -44,27 +44,49 @@ def _lit(text: str) -> str:
 
 
 def preflight_payload() -> dict:
-    """Probe the gateway the migration writes into every spec."""
-    from ..config._engine_reach import reach_verdict
-    from ..config._qwen_gateway import QWEN_GATEWAY_PROVIDER, qwen_gateway_url
+    """Probe the gateway the migration writes into every spec.
 
-    url = qwen_gateway_url()
+    ``/v1/models``, NOT the base. The base answers 404 — measured — and a
+    preflight that dials it reports "something is listening" from a path the
+    gateway does not serve. Both addresses are in the payload so a reader can
+    see which one was dialled rather than inferring it.
+    """
+    from ..config._engine_reach import reach_verdict
+    from ..config._qwen_gateway import (
+        QWEN_GATEWAY_PROBE_PATH,
+        QWEN_GATEWAY_PROVIDER,
+        qwen_gateway_probe_url,
+        qwen_gateway_url,
+    )
+
+    url = qwen_gateway_probe_url()
     verdict = reach_verdict(url)
     return {
         "provider": QWEN_GATEWAY_PROVIDER,
         "url": url,
+        "base_url": qwen_gateway_url(),
+        "probe_path": QWEN_GATEWAY_PROBE_PATH,
         "state": verdict.state,
         "detail": verdict.detail,
         "http_status": verdict.http_status,
         "proves_listening": verdict.proves_listening,
+        # The load-bearing one: is the INFERENCE API served at that address?
+        # ``proves_listening`` is true of a 404 too, and a 404 is what the
+        # base returns, so a report keying on it goes green on no evidence.
+        "serves_endpoint": verdict.serves_endpoint,
         "proves_absent": verdict.proves_absent,
         "undetermined": verdict.undetermined,
     }
 
 
 def render_preflight(payload: dict) -> None:
-    colour = "green" if payload["proves_listening"] else "red"
-    if payload["undetermined"]:
+    if payload["serves_endpoint"]:
+        colour = "green"
+    elif payload["proves_absent"]:
+        colour = "red"
+    else:
+        # Undetermined AND listening-wrong-path land here. Neither is a
+        # negative and neither is evidence the API is there.
         colour = "yellow"
     console.print(
         f"[bold]gateway preflight[/bold] {_lit(payload['url'])} "
@@ -81,8 +103,26 @@ def render_preflight(payload: dict) -> None:
 
 
 def plan_payload(plan, root) -> dict:
+    """``root`` is one root or several — the report names every one of them.
+
+    The default sweep searches EVERY user-scope root, so a payload carrying
+    the first of them would be a claim about a directory the sweep did not
+    confine itself to. ``roots`` is every root RESOLVED, in order;
+    ``roots_absent`` is the subset that is not a directory, named rather than
+    quietly dropped — an operator whose tree was resolved and found missing
+    has to be able to see that, and it is the same distinction
+    :mod:`..._maintenance._roster_state` draws between "empty" and "absent".
+    ``root`` stays the human line and names them all.
+    """
+    from pathlib import Path
+
+    given = list(root) if isinstance(root, (list, tuple)) else [root]
+    roots = [str(r) for r in given]
+    absent = [str(r) for r in given if not Path(r).is_dir()]
     return {
-        "root": str(root),
+        "root": ", ".join(roots),
+        "roots": roots,
+        "roots_absent": absent,
         "roster": plan.roster.state if plan.roster else None,
         "specs": len(plan.outcomes),
         "would_migrate": len(plan.migrated),
@@ -124,6 +164,16 @@ def render_plan(plan, payload: dict, *, diff: bool) -> None:
     )
     for keys, count in payload["engine_sets"].items():
         console.print(f"  [green]{count:4d}[/green]  engines: {_lit(keys)}")
+    if payload.get("roots_absent"):
+        # A resolved root that is not there was NOT searched. Dropping it from
+        # the report would let an operator whose tree is missing read the
+        # count as covering it.
+        console.print(
+            f"[yellow]NOT SEARCHED[/yellow] "
+            f"{len(payload['roots_absent'])} resolved root(s) do not exist "
+            f"({_lit(', '.join(payload['roots_absent']))}).\n",
+            soft_wrap=True,
+        )
     if payload["already_migrated"]:
         console.print(
             f"\n[dim]{len(payload['already_migrated'])} spec(s) already declare "

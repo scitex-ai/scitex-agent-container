@@ -19,13 +19,39 @@ fleet's ``-lan`` naming convention gets ``000`` from a gateway that is up.
 Collapsing those into one boolean is how a correct migration gets abandoned on
 a false negative — so this module refuses to.
 
-THE STATES, and the three the measurement above forced apart:
+**A 404 IS NOT AN ANSWER ABOUT THE ENDPOINT.** Measured from
+scitex-compute-04, 2026-09-06, against the same gateway::
+
+    /                       404   listening, but this path does not exist
+    /v1/models              401   REACHABLE + AUTH-GATED — the informative one
+    /v1/chat/completions    401   same
+    /health                 200   a real health endpoint exists
+    /healthz                404   does not exist
+    /v1                     307   redirect
+    CONTROL http://scitex-compute-99:18772/v1/models -> 000 (name unresolvable)
+
+Folding that 404 into ``listening`` made the gateway BASE — which is what a
+preflight naturally probes — report a green "something is listening" from a
+path the gateway does not serve. It says a process holds the port; it says
+nothing about whether the inference API is there. So it gets its own state,
+and callers that need the API to exist ask :attr:`ReachVerdict.serves_endpoint`
+rather than :attr:`ReachVerdict.proves_listening`.
+
+``/health`` is deliberately NOT the probe: a 200 there proves the process is
+up and says nothing about whether ``/v1`` is served or auth is wired — a gate
+that cannot fail. ``/v1/models`` is the one whose 401 proves both.
+
+THE STATES, and the four the measurements above forced apart:
 
   ``reachable-but-unauthorized``  the endpoint answered 401/403. Something IS
-                                  listening and IS demanding a key. REACHABLE.
-  ``listening``                   the endpoint answered anything else. Also
-                                  reachable; kept apart from the 401 case only
-                                  so a report can say which one it saw.
+                                  listening and IS demanding a key. REACHABLE,
+                                  and the probed path IS served.
+  ``listening``                   the endpoint answered some other status. Also
+                                  reachable and served; kept apart from the 401
+                                  case only so a report can say which it saw.
+  ``listening-wrong-path``        HTTP 404. Something holds the port and it does
+                                  NOT serve this path. Reachable at the address,
+                                  but no evidence about the API.
   ``connection-refused``          the name resolved, the port answered, and it
                                   said closed. A DEFINITE negative.
   ``name-does-not-resolve``       DNS gave nothing. This says NOTHING about the
@@ -64,12 +90,15 @@ __all__ = [
     "REACH_TIMED_OUT",
     "REACH_TRANSPORT_ERROR",
     "REACH_UNAUTHORIZED",
+    "REACH_WRONG_PATH",
     "ReachVerdict",
     "reach_verdict",
 ]
 
 REACH_LISTENING = "listening"
 REACH_UNAUTHORIZED = "reachable-but-unauthorized"
+#: HTTP 404 — something holds the port, this path is not served.
+REACH_WRONG_PATH = "listening-wrong-path"
 REACH_REFUSED = "connection-refused"
 REACH_NAME_UNRESOLVED = "name-does-not-resolve"
 REACH_TIMED_OUT = "timed-out"
@@ -81,6 +110,7 @@ REACH_TRANSPORT_ERROR = "transport-error"
 REACH_STATES = (
     REACH_LISTENING,
     REACH_UNAUTHORIZED,
+    REACH_WRONG_PATH,
     REACH_REFUSED,
     REACH_NAME_UNRESOLVED,
     REACH_TIMED_OUT,
@@ -96,6 +126,12 @@ _SENTENCES = {
     REACH_UNAUTHORIZED: (
         "reachable but unauthorized (401) — this is the CORRECT answer for a "
         "live gateway: something is listening and demanding a key"
+    ),
+    REACH_WRONG_PATH: (
+        "listening, but this PATH is not served (404) — a process holds the "
+        "port, and that says nothing about whether the inference API is "
+        "there. The gateway BASE answers exactly this; the path that answers "
+        "informatively is /v1/models"
     ),
     REACH_REFUSED: (
         "connection refused — the name resolved and the host actively said the "
@@ -138,7 +174,22 @@ class ReachVerdict:
 
     @property
     def proves_listening(self) -> bool:
-        """Something IS there. A 401 counts — that is the whole point."""
+        """Something IS at this ADDRESS. A 401 counts — that is the whole point.
+
+        A 404 counts too: a process answered HTTP, so the port is held. It is
+        the weaker fact, and :attr:`serves_endpoint` is the one to ask when
+        the question is whether the API is there.
+        """
+        return self.state in (REACH_LISTENING, REACH_UNAUTHORIZED, REACH_WRONG_PATH)
+
+    @property
+    def serves_endpoint(self) -> bool:
+        """The PROBED PATH is served. Gated counts; missing does not.
+
+        401/403 is a served path refusing an unauthenticated caller, which is
+        exactly what an engine entry needs to see. 404 is the path not being
+        there, and no amount of listening makes that evidence about the API.
+        """
         return self.state in (REACH_LISTENING, REACH_UNAUTHORIZED)
 
     @property
@@ -154,6 +205,20 @@ class ReachVerdict:
     def describe(self) -> str:
         where = f"{self.host}:{self.port}" if self.host else self.url
         return f"{where} -> {self.state}: {self.detail}"
+
+
+def _http_state(code: int) -> str:
+    """Which state an HTTP status earns. Three outcomes, not two.
+
+    401/403 is the informative success — a served, gated path. 404 is the
+    address answering while the path is absent. Everything else is a served
+    path answering something.
+    """
+    if code in (401, 403):
+        return REACH_UNAUTHORIZED
+    if code == 404:
+        return REACH_WRONG_PATH
+    return REACH_LISTENING
 
 
 def _verdict(url, state, *, host="", port=0, status=None, extra="") -> ReachVerdict:
@@ -198,10 +263,15 @@ def reach_verdict(url: str, *, timeout_s: float = REACH_TIMEOUT_S) -> ReachVerdi
                 status=getattr(response, "status", None),
             )
     except urllib.error.HTTPError as exc:
-        # An HTTP status IS an answer, so every one of these is REACHABLE.
-        state = REACH_UNAUTHORIZED if exc.code in (401, 403) else REACH_LISTENING
+        # An HTTP status IS an answer, so every one of these is REACHABLE at
+        # the ADDRESS. Only 404 fails to say the PATH is served.
         return _verdict(
-            url, state, host=host, port=port, status=exc.code, extra=f"HTTP {exc.code}"
+            url,
+            _http_state(exc.code),
+            host=host,
+            port=port,
+            status=exc.code,
+            extra=f"HTTP {exc.code}",
         )
     except urllib.error.URLError as exc:
         return _classify_url_error(url, exc.reason, host, port)

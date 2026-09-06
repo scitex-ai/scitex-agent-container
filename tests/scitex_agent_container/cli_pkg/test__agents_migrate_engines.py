@@ -41,11 +41,18 @@ def _write_settings(to_home: Path) -> None:
     (claude / "settings.json").write_text(json.dumps(_SETTINGS))
 
 
+#: A host the version floor records as engines-capable. Fixtures name one
+#: because the floor is fail-closed: ``explicit_doc``'s ``${HOSTNAME}``
+#: placeholder names no machine anyone measured, so a spec carrying it is
+#: REFUSED — correctly, since which sac would parse it is unknowable.
+CAPABLE_HOST = "scitex-compute-04"
+
+
 def _write_spec(agents_dir: Path, name: str, *, model="opus[1m]", **overrides) -> Path:
     agent_dir = agents_dir / name
     agent_dir.mkdir(parents=True)
     _write_settings(agent_dir / "to_home")
-    spec = {"to_home": "./to_home", "claude": {"model": model}}
+    spec = {"to_home": "./to_home", "claude": {"model": model}, "host": CAPABLE_HOST}
     spec.update(overrides)
     doc = explicit_doc(spec)
     path = agent_dir / "spec.yaml"

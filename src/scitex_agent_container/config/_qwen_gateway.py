@@ -55,9 +55,11 @@ __all__ = [
     "QWEN_ENGINE_REASONING_EFFORT",
     "QWEN_GATEWAY_HOST",
     "QWEN_GATEWAY_PORT",
+    "QWEN_GATEWAY_PROBE_PATH",
     "QWEN_GATEWAY_PROVIDER",
     "QWEN_GATEWAY_TOKEN_ENV_ENV",
     "QWEN_GATEWAY_URL_ENV",
+    "qwen_gateway_probe_url",
     "qwen_gateway_provider_entry",
     "qwen_gateway_token_env",
     "qwen_gateway_url",
@@ -127,6 +129,36 @@ def qwen_gateway_url() -> str:
     return (os.environ.get(QWEN_GATEWAY_URL_ENV) or "").strip() or (
         DEFAULT_QWEN_GATEWAY_URL
     )
+
+
+#: The path a PREFLIGHT asks for, and it is not the base. Measured from
+#: scitex-compute-04 on 2026-09-06 against this very gateway:
+#:
+#:     /                     404   listening, but this path does not exist
+#:     /v1/models            401   REACHABLE + AUTH-GATED — the informative one
+#:     /v1/chat/completions   401   same
+#:     /health               200   a real health endpoint exists
+#:     /healthz              404   does not exist
+#:     /v1                   307   redirect
+#:     CONTROL scitex-compute-99:18772/v1/models -> 000 (name unresolvable)
+#:
+#: A 401 HERE proves the inference API is present AND gating, which is exactly
+#: what an engine entry needs. ``/health`` is deliberately not it: a 200 there
+#: proves the process is up and says nothing about whether ``/v1`` is served
+#: or auth is wired — a gate that cannot fail.
+QWEN_GATEWAY_PROBE_PATH = "/v1/models"
+
+
+def qwen_gateway_probe_url() -> str:
+    """The address a reachability probe should actually dial.
+
+    The base URL answers 404, which :mod:`._engine_reach` now names
+    ``listening-wrong-path`` rather than passing off as a healthy gateway.
+    Joined by hand rather than with ``urljoin`` so a base carrying a path
+    prefix (a reverse proxy mounting the gateway under ``/qwen``) keeps it —
+    ``urljoin`` would discard the prefix and probe the wrong place.
+    """
+    return f"{qwen_gateway_url().rstrip('/')}{QWEN_GATEWAY_PROBE_PATH}"
 
 
 def qwen_gateway_token_env() -> str:
