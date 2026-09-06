@@ -28,7 +28,10 @@ from scitex_agent_container._account.rate_limit_classifier import (
     Mode,
     classify_rate_limit_signal,
 )
-from scitex_agent_container._account.rate_limit_signals import RateLimitSignal
+from scitex_agent_container._account.rate_limit_signals import (
+    RateLimitSignal,
+    detect_signal_from_text,
+)
 
 # ---------------------------------------------------------------------------
 # Mode enum — value contract
@@ -241,5 +244,25 @@ def test_auth_event_at_zero_usage_still_returns_rotate():
     snapshot = AccountUsageSnapshot()
     # Act
     mode = classify_rate_limit_signal(RateLimitSignal.AUTH_EVENT, snapshot)
+    # Assert
+    assert mode is Mode.ROTATE
+
+
+def test_per_model_limit_banner_reaches_the_rotate_action():
+    # Arrange — the end-to-end wiring the operator asked about: a regex in
+    # rate_limit_signals, and the action taken when it matches. The usage
+    # snapshot is deliberately HEALTHY (17% / 80%, the real reading taken
+    # minutes after a Fable limit fired) because the per-model budget is
+    # invisible to those subscription windows. If this signal were gated on
+    # usage% the way HTTP_429 is, a genuine cap would be classified as a
+    # transient burst and retried straight back into the same wall.
+    text = (
+        "You have reached your Fable limit. Run /usage-credits to "
+        "continue or switch models with /model."
+    )
+    signal = detect_signal_from_text(text)
+    usage = AccountUsageSnapshot(used_pct_5h=17.0, used_pct_7d=80.0)
+    # Act
+    mode = classify_rate_limit_signal(signal[0], usage)
     # Assert
     assert mode is Mode.ROTATE

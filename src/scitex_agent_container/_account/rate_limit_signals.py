@@ -152,6 +152,26 @@ DEFAULT_TEXTUAL_PATTERNS: tuple[str, ...] = (
     r"organization .*? rate limit",
     # Generic "quota exhausted" / "quota exceeded".
     r"quota (?:exhausted|exceeded|reached)",
+    # PER-MODEL budget, distinct from the subscription windows above.
+    # Measured 2026-09-03: a session was stopped by
+    #   "You've reached your Fable limit. Run /usage-credits to continue
+    #    or switch models with /model."
+    # and NONE of the patterns above match it -- it says "limit", not
+    # "quota"; "Fable", not "weekly" or "usage". So the cap check fell
+    # through and the supervisor's NEXT classifier saw the wreckage, which
+    # is auth-shaped: subagents reported "Login expired - Please run
+    # /login" while the account was healthy and answering. Catching it here
+    # matters because this check runs BEFORE that auth classification, so
+    # one data line is the difference between "capped" and an afternoon
+    # spent re-authenticating a working credential.
+    #
+    # Model-agnostic on purpose: the same sentence is issued per model, and
+    # tying it to one name guarantees a re-fix on the next one.
+    r"reached your \w+ limit",
+    # The remedy the same banner offers, as a second, independent marker.
+    # A cap detector that depends on one sentence surviving a copy edit is
+    # one A/B test away from silence.
+    r"/usage-credits",
 )
 
 
