@@ -289,12 +289,41 @@ def test_a_registered_provider_with_its_token_exported_is_honourable(
     deepseek_token_exported,
 ):
     # POSITIVE CONTROL for the two verdicts above.
+    # Arrange -- the harness is passed because an engine that states none
+    # INHERITS the spec's (the harness/engine split); with neither stated
+    # the pairing is genuinely undetermined and must say so.
+    engine = parse_engines({"engines": {"e": {"provider": "deepseek"}}})["e"]
+    # Act
+    verdict = static_verdict(engine, "anthropic")
+    # Assert
+    assert verdict.verdict == VERDICT_HONOURABLE
+
+
+def test_a_declaration_fault_outranks_an_undetermined_harness(
+    deepseek_token_exported,
+):
+    """A DEFINITE answer beats "I could not tell": an unregistered
+    provider name is wrong whatever the harness turns out to be, so the
+    undetermined pairing must not hide it."""
+    # Arrange
+    engine = parse_engines({"engines": {"e": {"provider": "no-such-backend"}}})["e"]
+    # Act
+    verdict = static_verdict(engine)
+    # Assert
+    assert verdict.verdict == VERDICT_NOT_HONOURABLE
+
+
+def test_a_clean_engine_with_no_harness_anywhere_is_could_not_tell(
+    deepseek_token_exported,
+):
+    """...and when nothing definite is found, the undetermined pairing is
+    RETURNED, not discarded. "I do not know" never renders as "fine"."""
     # Arrange
     engine = parse_engines({"engines": {"e": {"provider": "deepseek"}}})["e"]
     # Act
     verdict = static_verdict(engine)
     # Assert
-    assert verdict.verdict == VERDICT_HONOURABLE
+    assert verdict.undetermined
 
 
 def test_an_unresolvable_host_in_base_url_is_could_not_tell_not_a_refusal():

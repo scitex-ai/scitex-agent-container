@@ -519,8 +519,11 @@ def test_build_inner_argv_embeds_the_registry_built_sdk_tail():
 
 
 def test_valid_runtime_spellings_is_the_union_of_the_entries():
-    # Arrange
-    expected = frozenset({"", "tui", "apptainer", "claude-agent-sdk"})
+    # Arrange — "headless" is the vendor-NEUTRAL spelling of the SDK
+    # launch mode, added beside the two vendor-shaped ones it replaces
+    # ("claude-agent-sdk" names a vendor SDK, "apptainer" a container
+    # engine; a LAUNCH MODE is neither). All three select one entry.
+    expected = frozenset({"", "tui", "apptainer", "claude-agent-sdk", "headless"})
     # Act
     spellings = valid_runtime_spellings()
     # Assert
@@ -547,8 +550,8 @@ def test_tui_spellings_cover_default_and_explicit():
 
 
 def test_sdk_spellings_cover_current_and_legacy():
-    # Arrange
-    expected = frozenset({"apptainer", "claude-agent-sdk"})
+    # Arrange — neutral spelling + the two it is replacing.
+    expected = frozenset({"apptainer", "claude-agent-sdk", "headless"})
     # Act
     spellings = runtime_spellings_for(CLAUDE_AGENT_SDK)
     # Assert

@@ -252,7 +252,9 @@ def test_provider_modules_harness_set_also_derived_the_new_family():
 def test_adding_codex_did_not_widen_the_runtime_spellings():
     # Arrange — the runtime axis is untouched by a new harness family;
     # a regression here would mean the row leaked into launch modes.
-    expected = frozenset({"", "apptainer", "claude-agent-sdk", "tui"})
+    expected = frozenset(
+        {"", "apptainer", "claude-agent-sdk", "headless", "tui"}
+    )
     # Act
     spellings = valid_runtime_spellings()
     # Assert

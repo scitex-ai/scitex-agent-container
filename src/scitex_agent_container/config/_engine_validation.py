@@ -17,8 +17,14 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+from ._engine_library import (
+    load_fleet_library,
+    resolve_engine_namespace,
+    spec_engine_key,
+)
 from ._engine_types import (
     ENGINE_ENTRY_KEYS,
+    ENGINE_PIN_KEY,
     ENGINES_KEY,
     EngineDefaultError,
     default_engine,
@@ -28,7 +34,7 @@ from ._engine_types import (
 from ._harness_types import is_known_harness, list_harnesses
 from ._provider_validation import validate_provider
 
-__all__ = ["validate_engines"]
+__all__ = ["validate_engine_pin", "validate_engines"]
 
 # Engine keys name a backend on a command line
 # (``--engine qwen38-27b``), so they stay shell-plain. Dots are allowed
@@ -85,7 +91,9 @@ def _validate_entry(key: str, raw: object) -> list[str]:
     if default is not None and not isinstance(default, bool):
         errors.append(
             f"{path}.default must be true or false, got "
-            f"{type(default).__name__}."
+            f"{type(default).__name__}. (DEPRECATED: `{ENGINE_PIN_KEY}: "
+            f"<key>` at the top of spec: says the same thing without making "
+            "the CHOICE a property of the CHOSEN.)"
         )
 
     effort = raw.get("reasoning_effort")
@@ -163,3 +171,64 @@ def validate_engines(spec: dict, kind: object = "Agent") -> list[str]:
 
     errors += legacy_conflict_messages(spec)
     return errors
+
+
+def validate_engine_pin(spec: dict, kind: object = "Agent") -> list[str]:
+    """Return ``spec.engine`` errors (empty = valid).
+
+    THREE THINGS ARE DECIDABLE FROM THE TEXT PLUS THE FLEET FILE, so all
+    three are load errors and none of them evaporates:
+
+      * the pin is not a string — a list or mapping there is a typo, not
+        a backend;
+      * the pin names an engine NEITHER this spec NOR the fleet library
+        declares — the error lists both sources, because knowing WHICH
+        file to edit is most of the fix;
+      * the fleet library itself is unreadable, malformed, or names a
+        default engine it does not declare. A library that cannot be
+        read decides nothing, and a spec that would have followed it must
+        not silently start on something else instead.
+
+    A spec with no ``engine:`` line and a healthy (or absent) library
+    produces nothing — which is every spec deployed today.
+    """
+    if not isinstance(spec, dict):
+        return []
+
+    errors: list[str] = []
+    library = load_fleet_library()
+    pinned_raw = spec.get(ENGINE_PIN_KEY, None)
+    depends_on_library = bool(str(pinned_raw or "").strip()) or not parse_engines(spec)
+    if library.errors and depends_on_library:
+        errors += list(library.errors)
+
+    if pinned_raw is None:
+        return errors
+    if not isinstance(pinned_raw, str):
+        return errors + [
+            f"spec.{ENGINE_PIN_KEY} must be a string naming ONE engine key "
+            f"(e.g. `{ENGINE_PIN_KEY}: qwen38-27b`), got "
+            f"{type(pinned_raw).__name__}. To declare the engine itself, use "
+            f"the `{ENGINES_KEY}:` block; this key only CHOOSES."
+        ]
+
+    key = spec_engine_key(spec)
+    if not key:
+        # Written empty = "I know about the pin and state none" — the
+        # explicit posture, and it falls through to the fleet default.
+        return errors
+
+    namespace = resolve_engine_namespace(spec)
+    if key in namespace:
+        return errors
+
+    local = sorted(parse_engines(spec))
+    fleet = sorted(library.engines)
+    return errors + [
+        f"spec.{ENGINE_PIN_KEY}={key!r} names an engine nothing declares. "
+        f"This spec's own `{ENGINES_KEY}:` block declares: "
+        f"{local or '(none)'}. The fleet engine library "
+        f"({library.path}) declares: {fleet or '(none)'}. Add the engine to "
+        "whichever of the two it belongs in — sac will not guess which "
+        "backend was meant, and will not fall back to another one."
+    ]

@@ -205,14 +205,39 @@ def test_spec_carrying_both_keys_is_not_flagged_as_legacy():
 
 
 def test_the_harness_registry_is_exactly_anthropic_openai_and_codex():
-    # Arrange — the set is DERIVED from config._harness_registry, so
+    # Arrange — the FAMILIES are DERIVED from config._harness_registry, so
     # "codex" appearing here is the fourth row's doing, not an edit of
     # the harness-types module (that derivation is the point).
+    from scitex_agent_container.config._harness_registry import known_harnesses
+
     expected = {"anthropic", "openai", "codex"}
+    # Act
+    names = set(known_harnesses())
+    # Assert
+    assert names == expected
+
+
+def test_list_harnesses_also_offers_the_program_name_spellings():
+    """``anthropic`` is a VENDOR word standing in for a PROGRAM, and this
+    axis names programs. Both spellings are accepted for the migration
+    window, so the "unknown harness" error must name both — an error that
+    listed only the vendor words would exclude spellings the loader
+    happily accepts."""
+    # Arrange
+    expected = {"anthropic", "claude", "claude-code", "codex", "openai", "openai-agents"}
     # Act
     names = set(list_harnesses())
     # Assert
     assert names == expected
+
+
+def test_a_program_name_spelling_resolves_to_its_family():
+    # Arrange
+    spec = {"harness": "claude-code"}
+    # Act
+    resolved = resolve_spec_harness(spec)
+    # Assert
+    assert resolved == "anthropic"
 
 
 def test_list_harnesses_returns_sorted_order():
