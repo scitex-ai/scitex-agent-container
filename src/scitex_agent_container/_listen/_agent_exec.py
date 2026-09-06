@@ -24,8 +24,8 @@ from starlette.responses import JSONResponse
 from .._sac_binary import SacBinaryNotFoundError, sac_binary
 from ._acl import check_spawn, deny_response
 from ._agent_exec_liveness import (
-    _POST_ACK_LIVENESS_TIMEOUT_S,
     _probe_post_ack_liveness,
+    post_ack_timeout_from_env,
 )
 from ._agent_exec_send import _find_claude_binary, agent_send
 from ._inline_spec import materialize_inline_spec
@@ -419,18 +419,12 @@ async def agents_start(request: Request) -> JSONResponse:
     from .._runners._session_state import state_dir_for
 
     runtime_dir = state_dir_for(name)
-    # Test escape hatch: ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` env
-    # var lets the suite skip / shorten the probe (≤0 → skip entirely).
-    # Production callers leave it unset and get the default grace window.
-    try:
-        env_timeout = float(
-            os.environ.get(
-                "SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S",
-                str(_POST_ACK_LIVENESS_TIMEOUT_S),
-            )
-        )
-    except ValueError:
-        env_timeout = _POST_ACK_LIVENESS_TIMEOUT_S
+    # Test escape hatch: ``SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S`` env var lets
+    # the suite skip / shorten the probe (<= 0 -> skip entirely). Production
+    # callers leave it unset and get the default grace window. Resolved by the
+    # SHARED helper so the detached post-202 path (``_spawn_detach``) probes on
+    # exactly this budget rather than a second, drifting copy of it.
+    env_timeout = post_ack_timeout_from_env()
     # Passing ``name`` is load-bearing: it lets the probe pick the check that is
     # VALID for this agent's runtime. Without it, the probe waits for an
     # ``apptainer_pid`` file that a ``tui`` agent — the fleet's DEFAULT runtime —
