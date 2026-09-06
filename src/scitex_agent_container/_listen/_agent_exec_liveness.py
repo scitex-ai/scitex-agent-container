@@ -42,9 +42,11 @@ from typing import Callable
 __all__ = [
     "_POST_ACK_LIVENESS_TIMEOUT_S",
     "_POST_ACK_LIVENESS_POLL_INTERVAL_S",
+    "POST_ACK_LIVENESS_TIMEOUT_ENV",
     "_pid_alive",
     "_probe_post_ack_liveness",
     "_runtime_writes_apptainer_pidfile",
+    "post_ack_timeout_from_env",
 ]
 
 # Grace window the listen waits AFTER `sac agents start <child>` returns rc=0
@@ -60,6 +62,30 @@ _POST_ACK_LIVENESS_TIMEOUT_S = 20.0
 
 # How often to re-check the apptainer_pid file inside the grace window.
 _POST_ACK_LIVENESS_POLL_INTERVAL_S = 0.1
+
+
+# Env knob the suite uses to shorten (or, at <= 0, skip) the grace window.
+POST_ACK_LIVENESS_TIMEOUT_ENV = "SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S"
+
+
+def post_ack_timeout_from_env() -> float:
+    """Resolve the post-ack grace window from the environment.
+
+    ONE definition, deliberately: the synchronous ``POST /agents`` path and the
+    detached post-202 path must probe on the SAME budget, or the 202 becomes a
+    degraded mode again by the back door — a caller could not tell whether the
+    absence of a ``startup_failed`` marker meant "healthy" or "the other path
+    used a different (or zero) window". A malformed value falls back to the
+    default rather than crashing a launch that has already been accepted.
+    """
+    try:
+        return float(
+            os.environ.get(
+                POST_ACK_LIVENESS_TIMEOUT_ENV, str(_POST_ACK_LIVENESS_TIMEOUT_S)
+            )
+        )
+    except ValueError:  # stx-allow: fallback (reason: a malformed operator knob must not break the probe; the documented default is the safe reading)
+        return _POST_ACK_LIVENESS_TIMEOUT_S
 
 
 def _runtime_writes_apptainer_pidfile(name: str) -> bool | None:
