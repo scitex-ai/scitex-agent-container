@@ -64,7 +64,7 @@ def _print_version(ctx: click.Context, param, value) -> None:
 COMMAND_CATEGORIES = [
     ("Agent", ["agents", "subagent"]),
     ("Lifecycle (multiplexer)", ["auto-accept"]),
-    ("Account", ["accounts"]),
+    ("Account", ["accounts", "creds"]),
     (
         "Network & Peer",
         ["host", "peer", "a2a", "fleet", "listen"],
@@ -121,6 +121,12 @@ class _MainGroup(LazyGroup):
         # not agent-scoped. Reuses the underlying `account` click group;
         # `accounts` is just the plural surface name.
         "accounts": f"{_PKG}.account_group:account",
+        # Credential STATE — what this host needs, what it has, and what
+        # is missing, answered from declared rows plus a live measurement
+        # rather than by a human looking at files. Distinct from
+        # ``accounts``, which manages the material: ``creds`` never reads
+        # a credential's value and never copies one.
+        "creds": f"{_PKG}.creds_cmds:creds",
         "a2a": f"{_PKG}.a2a_group:a2a",
         "mcp": f"{_PKG}.mcp_group:mcp",
         "peer": f"{_PKG}.peer_group:peer_group",
@@ -247,6 +253,7 @@ class _MainGroup(LazyGroup):
     LAZY_SHORT_HELPS = {
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
+        "creds": "Credential state: what this host needs, has, and is missing.",
         "db": "Inspect and maintain the sac state database (state.db).",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",

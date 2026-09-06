@@ -167,6 +167,19 @@ codex = [
     # NOT the same thing as `codex-sdk` below — see that extra's comment.
     "scitex-genai[gateway]>=0.1.4",
 ]
+state = [
+    # Credential STATE lives in the per-host postgres on 55432 (ADR-0022 §2;
+    # 5432 is never used for scitex). psycopg 3 is the driver ADR-0022 §4
+    # names, and it is already present in the sac base image because
+    # scitex-cards needs it.
+    #
+    # OPTIONAL on purpose. sac's core install has never opened a network
+    # database, and a host that only starts agents must keep working without
+    # one; `_credstate._store` imports psycopg lazily and raises a named
+    # DriverMissingError pointing here. Making it a hard dependency would
+    # put a database driver in the path of `sac agents start`.
+    "psycopg[binary]>=3.1",
+]
 codex-sdk = [
     # sac's FOURTH harness (card sac-codex-python-sdk-harness-20260814):
     # `spec.harness: codex`, backing `_runners/codex_session.py`
@@ -430,6 +443,7 @@ all = [
     # the real openai-agents SDK paths; the bare install stays Claude-only.
     "scitex-agent-container[openai]",
     "scitex-agent-container[codex]",
+    "scitex-agent-container[state]",
     # PRESENT BECAUSE THE POLICY REQUIRES IT, not because the tests need
     # it. PS-221 §3 (public-extra-not-closed-under-all): every PUBLIC
     # extra must be a subset of `all`, so `pip install <pkg>[all]` really
