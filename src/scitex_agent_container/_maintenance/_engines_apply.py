@@ -147,7 +147,7 @@ def _restore(targets, archive_dir: Path) -> "list[str]":
         except (
             OSError,
             shutil.Error,
-        ) as exc:  # stx-allow: fallback (reason: one spec that cannot be restored must not abandon the rest; it is named and reported)
+        ) as exc:  # stx-allow: fallback (reason: one spec that cannot be restored must not abandon the rest; it is named into the returned failures list, which becomes MigrationApply.errors and is reported on stdout by `sac agents migrate-engines`)
             failures.append(f"{outcome.agent}: could not be restored: {exc}")
     return failures
 

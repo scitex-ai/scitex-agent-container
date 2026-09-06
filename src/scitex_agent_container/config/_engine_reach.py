@@ -277,7 +277,7 @@ def reach_verdict(url: str, *, timeout_s: float = REACH_TIMEOUT_S) -> ReachVerdi
         return _classify_url_error(url, exc.reason, host, port)
     except (TimeoutError, socket.timeout) as exc:
         return _verdict(url, REACH_TIMED_OUT, host=host, port=port, extra=str(exc))
-    except OSError as exc:  # stx-allow: fallback (reason: an unreachable endpoint is an ANSWER; a socket fault must be reported as undetermined, never raised into a caller that asked a yes/no question)
+    except OSError as exc:  # stx-allow: fallback (reason: an unreachable endpoint is an ANSWER; a socket fault becomes a REACH_TRANSPORT_ERROR verdict carrying str(exc), reported on stdout by `sac agents migrate-engines --preflight` (render_preflight), never raised into a caller that asked a yes/no question)
         return _verdict(
             url, REACH_TRANSPORT_ERROR, host=host, port=port, extra=str(exc)
         )
