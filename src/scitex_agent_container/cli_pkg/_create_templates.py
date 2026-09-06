@@ -176,7 +176,7 @@ _FULL_TEMPLATE = """\
 #   * relaxed + directory overlay persistent per-agent $HOME / installs
 #   * full host reach at the canonical path (so ~/proj/... paths match)
 #   * fleet push channels         server:sac + server:scitex-todo + telegrammer
-#   * SCITEX_TODO_AGENT_ID        todo-store writes attribute to THIS agent
+#   * SCITEX_CARDS_AGENT_ID       card-store writes attribute to THIS agent
 #   * editable install of the agent's own repo (live dev loop)
 #   * a generic "Start or continue." kick + metadata.labels + opus model
 # EVERY field is written explicitly (red-start ruling 2026-07-21); the
@@ -249,12 +249,14 @@ spec:
     binds:
       - {home}:{home}:rw
 
-    # Per-agent env. SCITEX_TODO_AGENT_ID makes scitex-todo writes
-    # attribute to THIS agent. (sac AUTO-injects
-    # SCITEX_AGENT_CONTAINER_STATE_DB + binds the per-agent state dir, so
-    # the state DB needs no manual entry here.)
+    # Per-agent env. SCITEX_CARDS_AGENT_ID makes scitex-cards writes
+    # attribute to THIS agent; it is the CANONICAL board-identity name (its
+    # predecessor SCITEX_TODO_AGENT_ID is retired and must not be emitted
+    # into a new spec). (sac AUTO-injects SCITEX_AGENT_CONTAINER_STATE_DB +
+    # binds the per-agent state dir, so the state DB needs no manual entry
+    # here.)
     env:
-      SCITEX_TODO_AGENT_ID: {name}
+      SCITEX_CARDS_AGENT_ID: {name}
 
     # Relaxed mode skips sac's curated isolation prepend, so re-declare the
     # user namespace, filesystem isolation, and the canonical container HOME

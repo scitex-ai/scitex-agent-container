@@ -62,20 +62,22 @@ START_MARKER_PREFIX = "<!-- Start of scitex-agent-container generated section"
 # ``${RUNTIME:VAR}`` for their identity vars — that migration + removal is a
 # separate follow-up PR.
 # Legacy pre-0.7.30 identity ALIASES — deprecated names that a downstream
-# consumer now HARD-REJECTS if present. scitex-todo's MCP server refuses any
-# call when ``SCITEX_TODO_AGENT`` is set ("was renamed to
-# ``SCITEX_TODO_AGENT_ID``; unset the old var"), so a stale copy of one of
-# these baked into a materialized/folded ``.env`` is not merely redundant like
-# the current ``_ID`` names — it is FATAL to the consumer (live write-outage,
-# INCIDENT 2026-07-05/06). Kept as its OWN named subset (unioned into
-# :data:`_RUNTIME_ONLY_VARS` below, so the name list is defined ONCE) precisely
-# so the ``.env``-fold guard in :mod:`_envrc` can drop ONLY these legacy
-# aliases while the CURRENT identity vars (``SCITEX_TODO_AGENT_ID`` / ``CCT_*``
-# / ``SAC_NAME``) legitimately REMAIN in the ``--env-file`` the container needs
-# at runtime (the materialized ``.mcp.json`` expands ``${SCITEX_TODO_AGENT_ID}``
-# from that container env). Dropping the current vars from the fold too would
-# strip the agent's live identity — a second outage — so the fold must NOT use
-# the broad :func:`_is_runtime_only_var`.
+# consumer now HARD-REJECTS if present. The card MCP server refuses any call
+# when ``SCITEX_TODO_AGENT`` is set (its message, verbatim at the time: "was
+# renamed to ``SCITEX_TODO_AGENT_ID``; unset the old var" — that successor has
+# since itself been retired in favour of ``SCITEX_CARDS_AGENT_ID``), so a
+# stale copy of one of these baked into a materialized/folded ``.env`` is not
+# merely redundant like the current ``_ID`` names — it is FATAL to the
+# consumer (live write-outage, INCIDENT 2026-07-05/06). Kept as its OWN named
+# subset (unioned into :data:`_RUNTIME_ONLY_VARS` below, so the name list is
+# defined ONCE) precisely so the ``.env``-fold guard in :mod:`_envrc` can drop
+# ONLY these legacy aliases while the CURRENT identity vars
+# (``SCITEX_CARDS_AGENT_ID`` / ``CCT_*`` / ``SAC_NAME``) legitimately REMAIN in
+# the ``--env-file`` the container needs at runtime (the materialized
+# ``.mcp.json`` expands ``${SCITEX_CARDS_AGENT_ID}`` from that container env).
+# Dropping the current vars from the fold too would strip the agent's live
+# identity — a second outage — so the fold must NOT use the broad
+# :func:`_is_runtime_only_var`.
 _LEGACY_IDENTITY_VARS = frozenset(
     {
         "SCITEX_TODO_AGENT",
@@ -176,8 +178,16 @@ _RUNTIME_ONLY_VARS = (
             # incident this whole mechanism exists to prevent, re-entered
             # through the migration meant to close it.
             "SCITEX_CARDS_AGENT_ID",
-            # scitex-todo >= 0.7.30 names
+            # RETIRED board identity — kept here ON PURPOSE. sac no longer
+            # WRITES it (specs, twins and `agents create` emit the canonical
+            # name only), but the host baseline ``.mcp.json`` copies still
+            # reference ``${SCITEX_TODO_AGENT_ID}``; dropping the entry before
+            # that baseline is DELIVERED would let deploy-time interpolation
+            # bake the deploying process's identity into every materialized
+            # file — the 2026-07-02 incident described just above. Remove it
+            # with the legacy shim, not before.
             "SCITEX_TODO_AGENT_ID",
+            # scitex-todo >= 0.7.30 name
             "SCITEX_TODO_TASKS_YAML_SHARED",
             "SAC_NAME",
             "CLAUDE_AGENT_ID",

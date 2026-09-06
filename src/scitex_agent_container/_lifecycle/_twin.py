@@ -24,12 +24,12 @@ Two halves live here:
   own env — a strict no-op for every non-twin start.
 
 IDENTITY SPLIT — safety-critical:
-  * author = the TWIN — ``SCITEX_TODO_AGENT_ID = <twin>`` in its env block,
-    so scitex-todo writes attribute to the twin (the operator's ask).
-  * owner = the PARENT — but scitex-todo has NO env knob for the default
+  * author = the TWIN — ``SCITEX_CARDS_AGENT_ID = <twin>`` in its env block,
+    so scitex-cards writes attribute to the twin (the operator's ask).
+  * owner = the PARENT — but scitex-cards has NO env knob for the default
     card owner (``add_task`` fails loud without an explicit ``assignee``;
-    ``SCITEX_TODO_AGENT_ID`` feeds ONLY the author path — verified against
-    scitex_todo._store). So owner=parent CANNOT be enforced from env; it is
+    ``SCITEX_CARDS_AGENT_ID`` feeds ONLY the author path — verified against
+    the card store). So owner=parent CANNOT be enforced from env; it is
     a HARD CONVENTION — the twin passes ``assignee=<parent>`` (==
     ``$SAC_TWIN_PARENT``, injected here) on EVERY card write. WHY: an
     ephemeral twin that owns cards then exits orphans them (the drift
@@ -49,8 +49,17 @@ logger = logging.getLogger(__name__)
 # AND is the value the twin passes as ``assignee=`` to keep card ownership
 # with the parent.
 TWIN_PARENT_ENV = "SAC_TWIN_PARENT"
-# scitex-todo author-identity var — set to the TWIN so writes attribute to it.
-TODO_AGENT_ENV = "SCITEX_TODO_AGENT_ID"
+# scitex-cards author-identity var — set to the TWIN so writes attribute to it.
+# CANONICAL name only: the retired ``SCITEX_TODO_AGENT_ID`` must never be
+# written into a spec sac generates (a spec that declares it is what keeps the
+# legacy alias alive).
+CARDS_AGENT_ENV = "SCITEX_CARDS_AGENT_ID"
+# Retired predecessor of :data:`CARDS_AGENT_ENV`. DROPPED from an inherited
+# twin env for the same reason ``SAC_NAME`` is: the parent's copy carries the
+# PARENT's name, so leaving it would hand any consumer still reading the old
+# name the wrong author — and would re-create a legacy-declaring spec on every
+# twin spawn, which is what keeps the alias alive.
+RETIRED_AGENT_ENV = "SCITEX_TODO_AGENT_ID"
 # sac self-name var — owned by ``listen_env_flags`` (injected from config.name),
 # so we must not let an inherited spec.env copy shadow it with the parent's.
 SELF_NAME_ENV = "SAC_NAME"
@@ -165,10 +174,11 @@ def derive_twin_spec(
         + copies that transcript at FIRST start (:func:`seed_twin_from_parent`),
         so it inherits the freshest context; on later restarts ``continue``
         resumes the twin's OWN diverged session (not a re-fork of the parent).
-      * ``spec.env`` — ``SCITEX_TODO_AGENT_ID = <twin>`` (author = twin),
+      * ``spec.env`` — ``SCITEX_CARDS_AGENT_ID = <twin>`` (author = twin),
         ``SAC_TWIN_PARENT = <parent>`` (owner-convention value + twin
         trigger); any inherited ``SAC_NAME`` is dropped (``listen_env_flags``
-        injects it from the twin's own name).
+        injects it from the twin's own name), as is any inherited
+        ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the PARENT's name).
       * ``spec.restart.policy`` — ``always`` when ``persist`` else ``never``
         (ephemeral default: a stopped twin does not come back).
       * ``spec.a2a.port = "auto"`` — a fresh sidecar port, never the
@@ -214,9 +224,10 @@ def derive_twin_spec(
 
     env = spec.setdefault("env", {})
     if isinstance(env, dict):
-        env[TODO_AGENT_ENV] = twin_name
+        env[CARDS_AGENT_ENV] = twin_name
         env[TWIN_PARENT_ENV] = parent_name
         env.pop(SELF_NAME_ENV, None)
+        env.pop(RETIRED_AGENT_ENV, None)
 
     restart = spec.setdefault("restart", {})
     if isinstance(restart, dict):
@@ -229,7 +240,7 @@ def derive_twin_spec(
     # Reuse the PARENT's to_home tree (skills / hooks / .mcp.json) verbatim
     # via its absolute host path, so the twin has the SAME capabilities and
     # MCP wiring as the parent. Per-agent identity in those files is
-    # runtime-only (``${SCITEX_TODO_AGENT_ID}`` etc.) and expands from the
+    # runtime-only (``${SCITEX_CARDS_AGENT_ID}`` etc.) and expands from the
     # twin's OWN container env at boot, so sharing the tree is correct — the
     # author still resolves to the twin. Left unset (parent default) when the
     # caller could not resolve the parent's to_home dir.
