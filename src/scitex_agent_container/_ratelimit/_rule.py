@@ -87,6 +87,20 @@ class Verdict(str, Enum):
     CAPPED = "CAPPED"  # this pass's cap spent; next pass retries
     BUDGET_UNKNOWN = "BUDGET-UNKNOWN"  # cannot read our OWN memory → refuse
 
+    # --- the MODEL-CAP branch (:mod:`._switch_rule`, :mod:`._switch`) ------
+    # A second remedy for a THIRD-AND-A-HALF shape: a wall that a model
+    # SWITCH ends now, rather than one that only time ends. It shares this
+    # vocabulary rather than growing a second one so the pass's counts, exit
+    # code, event records and CLI rendering keep working unchanged — an
+    # enforcer with two verdict alphabets is one whose reports cannot be
+    # added up.
+    SWITCH_MODEL = "SWITCH-MODEL"  # capped on a Fable model → switch it
+    ALREADY_ON_TARGET = "ALREADY-ON-TARGET"  # already on the target → idempotent
+    WOULD_SWITCH = "WOULD-SWITCH"  # --check: reported, not performed
+    SWITCHED = "SWITCHED"  # switched, and the switch was VERIFIED
+    SWITCH_FAILED = "SWITCH-FAILED"  # we switched and the cap is still up
+    SWITCH_UNVERIFIED = "SWITCH-UNVERIFIED"  # we acted, we cannot prove it took
+
 
 @dataclass(frozen=True)
 class Decision:
