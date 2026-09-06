@@ -21,98 +21,175 @@ from scitex_agent_container.cli_pkg._bake_lock import (
 )
 
 
-def test_a_first_bake_acquires_the_lock(tmp_path: Path) -> None:
-    lock_dir = tmp_path / "runtime"
-    lock_dir.mkdir()
-    containers = tmp_path / "containers"
-    containers.mkdir()
+@pytest.fixture
+def lock_dir(tmp_path: Path) -> Path:
+    """Directory holding the pidfile; the caller owns creating it."""
+    path = tmp_path / "runtime"
+    path.mkdir()
+    return path
 
-    handle = acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
+
+@pytest.fixture
+def containers_dir(tmp_path: Path) -> Path:
+    """The bake destination the lock is scoped to."""
+    path = tmp_path / "containers"
+    path.mkdir()
+    return path
+
+
+def test_the_first_bake_creates_its_pidfile(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    # Arrange
+    handle = None
+    # Act
+    handle = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    # Assert
     try:
         assert handle.pid_file.is_file()
-        assert handle.pid_file.read_text().strip() == str(os.getpid())
     finally:
         release_bake_lock(handle)
 
 
-def test_a_second_bake_into_the_same_dir_is_REFUSED(tmp_path: Path) -> None:
+def test_the_first_bake_stamps_its_own_pid(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    # Arrange
+    expected = str(os.getpid())
+    # Act
+    handle = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    # Assert
+    try:
+        assert handle.pid_file.read_text().strip() == expected
+    finally:
+        release_bake_lock(handle)
+
+
+def test_a_second_bake_into_the_same_dir_is_refused(
+    lock_dir: Path, containers_dir: Path
+) -> None:
     """The whole point: the second concurrent pull must not start."""
-    lock_dir = tmp_path / "runtime"
-    lock_dir.mkdir()
-    containers = tmp_path / "containers"
-    containers.mkdir()
-
-    first = acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
+    # Arrange
+    first = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    # Act
+    # Assert
     try:
-        with pytest.raises(BakeAlreadyRunningError) as excinfo:
-            acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
-        message = str(excinfo.value)
-        # The refusal must be actionable: name the holder and the file.
-        assert str(os.getpid()) in message
-        assert str(first.pid_file) in message
-        assert "declining" in message
+        with pytest.raises(BakeAlreadyRunningError):
+            acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
     finally:
         release_bake_lock(first)
 
 
-def test_a_bake_into_a_DIFFERENT_containers_dir_is_allowed(tmp_path: Path) -> None:
+def test_the_refusal_names_the_holding_pid(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    """`kill <pid>` must be actionable without lsof."""
+    # Arrange
+    first = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    message = ""
+    # Act
+    try:
+        acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    except BakeAlreadyRunningError as exc:
+        message = str(exc)
+    finally:
+        release_bake_lock(first)
+    # Assert
+    assert str(os.getpid()) in message
+
+
+def test_the_refusal_says_it_is_declining_not_failing(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    """A supervised caller must not read this as a crash."""
+    # Arrange
+    first = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    message = ""
+    # Act
+    try:
+        acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    except BakeAlreadyRunningError as exc:
+        message = str(exc)
+    finally:
+        release_bake_lock(first)
+    # Assert
+    assert "declining" in message
+
+
+def test_a_bake_into_a_different_containers_dir_is_allowed(
+    lock_dir: Path, tmp_path: Path
+) -> None:
     """Scoped per containers dir — unrelated bakes must not block."""
-    lock_dir = tmp_path / "runtime"
-    lock_dir.mkdir()
+    # Arrange
     one = tmp_path / "containers-one"
     one.mkdir()
     two = tmp_path / "containers-two"
     two.mkdir()
-
     first = acquire_bake_lock(containers_dir=one, lock_dir=lock_dir)
+    # Act
+    second = acquire_bake_lock(containers_dir=two, lock_dir=lock_dir)
+    # Assert
     try:
-        second = acquire_bake_lock(containers_dir=two, lock_dir=lock_dir)
-        release_bake_lock(second)
+        assert second.pid_file != first.pid_file
     finally:
+        release_bake_lock(second)
         release_bake_lock(first)
 
 
-def test_the_lock_is_reacquirable_after_release(tmp_path: Path) -> None:
+def test_the_lock_is_reacquirable_after_release(
+    lock_dir: Path, containers_dir: Path
+) -> None:
     """A finished bake must not jam the next one."""
-    lock_dir = tmp_path / "runtime"
-    lock_dir.mkdir()
-    containers = tmp_path / "containers"
-    containers.mkdir()
-
-    first = acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
+    # Arrange
+    first = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
     release_bake_lock(first)
-    second = acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
-    release_bake_lock(second)
+    # Act
+    second = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    # Assert
+    try:
+        assert second.pid_file.read_text().strip() == str(os.getpid())
+    finally:
+        release_bake_lock(second)
 
 
-def test_a_stale_pidfile_with_no_live_holder_does_not_jam(tmp_path: Path) -> None:
-    """A crashed bake leaves a PID behind but no flock — the next must proceed.
+def test_a_stale_pidfile_with_no_live_holder_does_not_jam(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    """A crashed bake leaves a PID behind but no flock — the next proceeds.
 
-    This is the case that would otherwise require stale-lock
-    reconciliation; the kernel releasing the flock on exit is what makes
-    that unnecessary.
+    The kernel releasing the flock on exit is what makes stale-lock
+    reconciliation unnecessary.
     """
-    lock_dir = tmp_path / "runtime"
-    lock_dir.mkdir()
-    containers = tmp_path / "containers"
-    containers.mkdir()
-
-    stale = bake_lock_path(containers, lock_dir)
-    stale.write_text("999999\n")  # a PID nothing holds a flock for
-
-    handle = acquire_bake_lock(containers_dir=containers, lock_dir=lock_dir)
+    # Arrange
+    stale = bake_lock_path(containers_dir, lock_dir)
+    stale.write_text("999999\n")
+    # Act
+    handle = acquire_bake_lock(containers_dir=containers_dir, lock_dir=lock_dir)
+    # Assert
     try:
         assert handle.pid_file.read_text().strip() == str(os.getpid())
     finally:
         release_bake_lock(handle)
 
 
-def test_the_lock_path_is_stable_and_dir_scoped(tmp_path: Path) -> None:
-    lock_dir = tmp_path / "runtime"
+def test_the_lock_path_is_stable_for_one_dir(
+    lock_dir: Path, containers_dir: Path
+) -> None:
+    # Arrange
+    first = bake_lock_path(containers_dir, lock_dir)
+    # Act
+    second = bake_lock_path(containers_dir, lock_dir)
+    # Assert
+    assert first == second
+
+
+def test_the_lock_path_differs_between_dirs(lock_dir: Path, tmp_path: Path) -> None:
+    # Arrange
     one = tmp_path / "containers-one"
     one.mkdir()
     two = tmp_path / "containers-two"
     two.mkdir()
-
-    assert bake_lock_path(one, lock_dir) == bake_lock_path(one, lock_dir)
-    assert bake_lock_path(one, lock_dir) != bake_lock_path(two, lock_dir)
+    # Act
+    paths = (bake_lock_path(one, lock_dir), bake_lock_path(two, lock_dir))
+    # Assert
+    assert paths[0] != paths[1]
