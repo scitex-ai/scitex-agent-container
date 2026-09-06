@@ -477,6 +477,15 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     overlay_masking = overlay_masking_payload(name, config)
 
+    # Observation-only like the two above. Answers the question no other
+    # surface answered: which backend is this agent ACTUALLY running on?
+    # Read from the running process, never re-derived from the spec — a
+    # reading derived from the spec would agree with the spec and could
+    # never report the disagreement. See :mod:`._health_engine`.
+    from ._health_engine import engine_payload, print_engine
+
+    engine = engine_payload(name, config)
+
     if use_json:
         click.echo(
             json_mod.dumps(
@@ -489,6 +498,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "fault": inbox_fault,
                     "liveness": liveness,
                     "overlay_masking": overlay_masking,
+                    "engine": engine,
                 },
                 indent=2,
             )
@@ -504,6 +514,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
 
     print_liveness(console, liveness)
     print_overlay_masking(console, overlay_masking)
+    print_engine(console, engine)
     print_inbox(console, name, subscribers, reachable, inbox_fault)
 
     if not is_healthy:
