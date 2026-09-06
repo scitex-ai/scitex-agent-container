@@ -19,6 +19,7 @@ use) stands in for the network. AAA, one assertion per test.
 from __future__ import annotations
 
 import json
+from functools import partial
 
 import pytest
 
@@ -314,11 +315,11 @@ def test_unreadable_protection_raises_rather_than_reading_clean():
     gh = _gh([_pr([])], protection_body=UNREADABLE_BODY)
 
     # Act
-    with pytest.raises(CIWhyError) as excinfo:
-        audit_blocked(run_gh=gh)
+    audit = partial(audit_blocked, run_gh=gh)
 
     # Assert
-    assert "could not read branch protection" in str(excinfo.value)
+    with pytest.raises(CIWhyError, match="could not read branch protection"):
+        audit()
 
 
 def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
@@ -330,11 +331,11 @@ def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
     gh = _gh([_pr([])], protection_raises=True)
 
     # Act
-    with pytest.raises(CIWhyError) as excinfo:
-        audit_blocked(run_gh=gh)
+    audit = partial(audit_blocked, run_gh=gh)
 
     # Assert
-    assert excinfo.value is not None
+    with pytest.raises(CIWhyError):
+        audit()
 
 
 def test_base_filter_selects_only_matching_prs():
