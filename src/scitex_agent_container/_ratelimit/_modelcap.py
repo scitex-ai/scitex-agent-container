@@ -46,6 +46,20 @@ time at all, so :mod:`._banner`'s waiting machinery has nothing to wait for and
 a cap with no published end is not a pause to wait out, it is a wall to walk
 around — and the banner itself says how, by naming ``/model``.
 
+THE OTHER MATCHER FOR THE SAME SENTENCE, and why it is not reused
+------------------------------------------------------------------
+``_account/rate_limit_signals.py`` (PR #1288, merged 2026-09-06) added
+``reached your \\w+ limit`` and ``/usage-credits`` to
+``DEFAULT_TEXTUAL_PATTERNS`` from the same banner. That is not a duplicate of
+this one and neither should collapse into the other: it scans ERROR TEXT to
+answer *should this ACCOUNT be rotated or paused*, and it deliberately fires
+on the whole family of cap phrasings (``weekly limit``, ``usage limit``,
+``quota exceeded``). This one scans a tmux PANE to answer *should this
+AGENT's model be changed*, and the widening that is right there would be
+wrong here: firing a model switch on every weekly-window phrasing would move
+agents off models that were never capped. Two consumers, two populations, one
+sentence they happen to share.
+
 WHAT THIS MODULE REFUSES TO DO
 ------------------------------
 It never claims a switch SUCCEEDED from the absence of a banner alone, and it
