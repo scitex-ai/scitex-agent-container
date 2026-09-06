@@ -203,12 +203,10 @@ spec:
 
 | Entry field          | Type                                | Description |
 |----------------------|-------------------------------------|-------------|
-| `harness`            | same values as `spec.harness`       | Resolves through the SAME harness registry — an engine cannot invent a harness the fleet cannot run. |
+| `harness`            | *(deprecated inside an entry)*      | An entry that states one claims the HARNESS axis, which is the coupling this design removes. Omit it: no value means *inherit the spec's*. Still accepted while the legacy block lives, and still resolved through the SAME harness registry — an engine cannot invent a harness the fleet cannot run. |
 | `model`              | same as `spec.claude.model`         | The model id passed to this engine's endpoint. |
 | `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
-| `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. |
-| `harness`            | *(deprecated inside an entry)*      | An entry that states one claims the HARNESS axis, which is the coupling this design removes. Omit it: no value means *inherit the spec's*. |
-| `default`            | bool                                | Exactly ONE entry may set it. With a single entry it is the default implicitly; two defaults, or two entries with none, are hard load errors naming the offenders. |
+| `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. While it is accepted, exactly ONE entry may set it: with a single entry it is the default implicitly, and two defaults, or two entries with none, are hard load errors naming the offenders. |
 | `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
 | `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |
 | `env`                | mapping                             | Merged OVER `spec.apptainer.env` for this engine only — the escape hatch for a gateway knob sac does not model. |
@@ -241,6 +239,74 @@ multi-agent targets.
 and silently. Both blocks that AGREE are accepted; both that DISAGREE are a
 hard load error naming both values. The migration ends when every deployed spec
 declares `engines:`, at which point the legacy reading is deleted.
+
+**The sweep that gets there:** `sac agents migrate-engines`. Dry-run by
+DEFAULT — it writes nothing and prints a unified diff per spec — with
+`--apply` as the deliberate act and `--agent` / `--host` / `--limit` for
+batching. Each spec's CURRENT backend becomes ONE named engine, restated
+verbatim; `spec.claude.model` and `spec.claude.provider` are EMPTIED (present,
+stating nothing — the explicit-spec ruling keeps the keys) while `spec.harness`
+stays stated and the entry inherits it. The edit is line surgery, so comments
+survive, and it re-parses its own output through `parse_engines`,
+`validate_engines` and `legacy_conflict_messages` first. The apply loads every
+spec before and after and restores every original unless the effective backend
+is unchanged. Precedence, the worked YAML cases and the harness × engine
+refusal table: [`harness-and-engine.md`](harness-and-engine.md).
+
+**What it deliberately does NOT write:** no per-entry `harness:` (that claims
+the HARNESS axis); no `default: true` (a spec-local default OUTRANKS the fleet
+library — `engine: <key>` at the top of `spec:` is the one-line pin); and no
+copied `qwen38-27b`, which lives once in the tracked
+[fleet library](../.scitex/agent-container/engines.yaml), deployed to
+`$SCITEX_DIR/agent-container/engines.yaml` (`$SAC_ENGINES_FILE` unset,
+`$SCITEX_DIR` at its documented `~/.scitex` default) and reached with `--engine
+qwen38-27b`. Its ADDRESS stays in
+[`_qwen_gateway.py`](../src/scitex_agent_container/config/_qwen_gateway.py) as
+`provider: qwen-gateway`, overridable per host with `$SAC_QWEN_GATEWAY_URL`.
+
+**A version floor, enforced at plan time.** A sac older than 2026-09-03
+(commit `0d61e077`) does not ignore an unknown `engines:` key — it REJECTS the
+spec. Measured by running that commit's PARENT validator over a real fleet
+spec: 0 errors without the block, exactly one with it
+(`Unknown spec field 'engines'`). So writing the block into a spec pinned on
+such a host stops that agent starting, at a validator on a machine nobody is
+watching. The sweep therefore REFUSES those specs by name BEFORE the write,
+against a recorded roster of measured hosts in
+[`_maintenance/_engines_floor.py`](../src/scitex_agent_container/_maintenance/_engines_floor.py)
+— measured by FIX PRESENCE (is `apply_default_engine` in that host's own
+`config/_engine_types.py`), not by a version string. It **fails closed**: a
+host absent from the roster is refused, never assumed capable, and so is a
+spec that names no host at all. `--host-supports-engines HOST` (repeatable)
+lifts the floor for a machine you have checked yourself, and the claim is
+recorded in `engine_floor_overrides` in `--json`. A floor refusal is a NAMED
+refusal like any other: it does not fail the exit code and does not make the
+plan unsafe to apply — it just means those specs are not written.
+
+**Where it writes, and how a batch advances.** The root is `--root DIR`, else
+`$SCITEX_AGENT_CONTAINER_AGENTS_DIR`, else EVERY user-scope root the rest of
+the CLI resolves (`sac agents find` / `sac agents start` share that resolver),
+de-duplicated by agent name with the earlier root winning. The old default
+read a different env var and landed on `$HOME/.scitex/agent-container/agents`,
+which inside a container is the container's own home — measured, one spec
+beside the fleet's 123, reported as a finished sweep. Every report names the
+roots it searched (`roots` in `--json`); pass `--root` to
+sweep the git-tracked tree instead. `--limit N` caps what is WRITTEN, not what is
+examined: already-migrated and refused specs do not consume the cap, so running
+the same command again takes the NEXT N and the specs past the cap are reported
+as `held_back` rather than dropped. `--host` reads each spec to decide, and one
+it cannot read is KEPT so it reaches the plan as `unreadable` — a filter that
+excluded it would be the flag that disables the guard blocking an unsafe apply.
+In `--json`, `migration_complete` is the answer to "is the sweep finished"; the
+exit code is not, because a run that wrote nothing because every spec was
+refused also exits 0.
+
+**Preflight, three-valued:** `sac agents migrate-engines --preflight` names
+what the gateway did rather than returning a boolean —
+`reachable-but-unauthorized` (a 401 proves something is listening and
+demanding a key), `connection-refused` (the one definite negative), or
+`name-does-not-resolve` (undetermined: `curl` prints `000` for a hostname
+typo and for a dead host alike). The spelling that resolves fleet-wide is
+`scitex-compute-04`; `compute-04` and `compute-04-lan` do not.
 
 ### `spec.claude` — SDK knobs
 

@@ -15,7 +15,7 @@ from ._host import (
     substitute_hostnames,
 )
 from ._parsers import (
-    MODEL_DISPLAY_NAMES,
+    MODEL_ENV_KEY,
     interpolate_mcp_servers,
     parse_a2a,
     parse_apptainer,
@@ -34,6 +34,7 @@ from ._parsers import (
     parse_skills,
     parse_startup_commands,
     parse_watchdog,
+    resolve_model_surface,
 )
 from ._types import AgentConfig, HostsSpec
 
@@ -312,9 +313,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
             "SCITEX_AGENT_CONTAINER_ROLE"
         ) or labels.get("role")
         claude_spec.session = default_session_for_role(_role)
-    model = claude_spec.model or "sonnet"
-    display_model = MODEL_DISPLAY_NAMES.get(model, model)
-    auto_env["SCITEX_AGENT_CONTAINER_MODEL"] = display_model
+    # The LEGACY reading of the model. A spec declaring ``spec.engines``
+    # states nothing here on purpose (the engines carry the models), so this
+    # pair is provisional: ``apply_default_engine`` below folds the default
+    # engine's model over both halves. Computing it here anyway keeps a spec
+    # with no engines block on exactly the path it has always had.
+    model, display_model = resolve_model_surface(claude_spec.model)
+    auto_env[MODEL_ENV_KEY] = display_model
 
     # CLAUDE_AGENT_ACCOUNT — operator #16 self-awareness requirement.
     # Propagate the per-agent account dir-name (e.g. "alpha-example-com")

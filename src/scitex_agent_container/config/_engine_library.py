@@ -50,10 +50,22 @@ which the spec validator surfaces as a load error naming this path.
 WHERE IT LIVES, AND WHERE IT IS EDITED. Resolved through
 ``_state.state_paths`` exactly like ``agents/`` is (so ``$SCITEX_DIR``
 is honoured and a relocated state root takes its library with it). The
-SOURCE OF TRUTH is ``~/.dotfiles/src/.scitex/agent-container/engines.yaml``
-and it is deployed from there — ``$SCITEX_DIR/agent-container`` is a
-synced copy, never hand-edited, the same standing rule agent specs
-follow.
+SOURCE OF TRUTH is ``.scitex/agent-container/engines.yaml`` IN THIS
+REPO, tracked beside :mod:`._provider_registry`, which defines the
+provider names the library's entries use — one diff reviews both, where
+a copy in another repo would let the two drift. It is deployed from
+there; ``$SCITEX_DIR/agent-container`` is a synced copy, never
+hand-edited, the same standing rule agent specs follow.
+
+NOTHING SILENTLY DEPENDS ON AN UNSET VARIABLE. Measured on the fleet
+hosts 2026-09-06: ``$SAC_ENGINES_FILE`` and ``$SCITEX_DIR`` are both
+unset, so :func:`fleet_engines_path` takes ``scitex_dir()``'s DOCUMENTED
+``~/.scitex`` default and lands on ``~/.scitex/agent-container/
+engines.yaml`` — the directory that already holds ``agents/``,
+``accounts/``, ``containers/`` and ``runtime/``. Unset is the ordinary
+case here, not a hole: the default is written down in
+``_state.state_paths``, and a host that exports ``$SCITEX_DIR``
+(Spartan) moves the library with the rest of its state.
 
 ``$SAC_ENGINES_FILE`` overrides the path for one process. It is an
 OPS/TEST surface, not a spec surface: a spec must not be able to point
