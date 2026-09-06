@@ -26,9 +26,25 @@ as no provider at all.
 Aliases (e.g. ``"xiaomi"`` → same metadata as ``"mimo"``) are
 intentional duplicates rather than indirection: the registry stays a
 flat read so no caller has to chase aliases.
+
+ONE ENTRY IS RESOLVED, NOT READ — see :data:`_DYNAMIC_PROVIDERS`. The
+fleet Qwen gateway moves with the host that serves it, so its address is
+owned by :mod:`._qwen_gateway` and overridable from the environment. Its
+row in :data:`PROVIDERS` below is the DEFAULT, kept there so
+:func:`list_providers` names it and the shape of the table stays uniform;
+every read must go through :func:`resolve_provider`, which applies the
+override. Reading :data:`PROVIDERS` directly would silently ignore a
+per-host override — no caller in this package does.
 """
 
 from __future__ import annotations
+
+from ._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    DEFAULT_QWEN_GATEWAY_URL,
+    QWEN_GATEWAY_PROVIDER,
+    qwen_gateway_provider_entry,
+)
 
 PROVIDERS: dict[str, dict[str, str | None]] = {
     "anthropic": {
@@ -55,7 +71,26 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": "https://token-plan-sgp.xiaomimimo.com/anthropic",
         "auth_token_env": "XIAOMI_API_KEY",
     },
+    # The fleet Qwen gateway. THE DEFAULT ONLY — resolved through
+    # _DYNAMIC_PROVIDERS below so $SAC_QWEN_GATEWAY_URL wins on a host that
+    # reaches it another way. Written into every migrated spec as the bare
+    # name `qwen-gateway`, so the address is in this file and not in 119
+    # spec.yaml files.
+    QWEN_GATEWAY_PROVIDER: {
+        "base_url": DEFAULT_QWEN_GATEWAY_URL,
+        "auth_token_env": DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    },
 }
+
+#: Providers whose metadata is HOST-DEPENDENT and therefore computed on each
+#: read instead of frozen in :data:`PROVIDERS`. Keyed by provider name, valued
+#: by a zero-argument callable returning the same two-field dict.
+#:
+#: A frozen constant cannot honour an environment variable exported after
+#: import, and sac is imported long before a launch resolves a provider. One
+#: member today; the mechanism is general so a second movable backend does not
+#: become a second special case in :func:`resolve_provider`.
+_DYNAMIC_PROVIDERS = {QWEN_GATEWAY_PROVIDER: qwen_gateway_provider_entry}
 
 
 def resolve_provider(name: str) -> dict[str, str | None] | None:
@@ -68,11 +103,18 @@ def resolve_provider(name: str) -> dict[str, str | None] | None:
 
     The returned dict is a copy — callers may mutate it without
     disturbing the registry.
+
+    A name in :data:`_DYNAMIC_PROVIDERS` is RESOLVED here rather than read
+    from :data:`PROVIDERS`, so a per-host override is honoured by every
+    caller (the parser, the validator, the honourability verdict and the
+    launch argv all arrive through this one function).
     """
-    entry = PROVIDERS.get(name)
-    if entry is None:
+    if name not in PROVIDERS:
         return None
-    return dict(entry)
+    dynamic = _DYNAMIC_PROVIDERS.get(name)
+    if dynamic is not None:
+        return dict(dynamic())
+    return dict(PROVIDERS[name])
 
 
 def list_providers() -> list[str]:

@@ -60,10 +60,53 @@ def _indent_of(body: str) -> str:
     return body[: len(body) - len(body.lstrip(" \t"))]
 
 
-def _is_skippable(body: str) -> bool:
-    """True for blank and comment-only lines — they carry no structure."""
+def is_skippable(body: str) -> bool:
+    """True for blank and comment-only lines — they carry no structure.
+
+    Public because two things outside this module need the SAME answer: an
+    editor walking back over the comment block that belongs to the key it is
+    inserting above, and one locating where a block's real content ends. A
+    second spelling of "is this line structure?" is exactly the drift this
+    module was created to prevent.
+    """
     stripped = body.strip()
     return not stripped or stripped.startswith("#")
+
+
+@dataclass(frozen=True)
+class KeyLine:
+    """A parsed ``<indent><key>: <value>`` line. ``value`` is "" for a block."""
+
+    indent: str
+    key: str
+    value: str
+
+
+def parse_key_line(body: str) -> "KeyLine | None":
+    """Split one line into indent / key / value, or None if it is not a key.
+
+    The same strict :data:`_KEY_RE` :func:`find_key` matches on, exposed so a
+    caller reading a VALUE (rather than locating a key) does not reach for a
+    regex of its own and quietly accept a shape this module refuses.
+    """
+    m = _KEY_RE.match(body)
+    if m is None:
+        return None
+    return KeyLine(m.group("indent"), m.group("key"), m.group("value") or "")
+
+
+def last_content_line(bodies: "list[str]", start: int, stop: int) -> "int | None":
+    """Index of the last line carrying structure in ``[start, stop)``.
+
+    A block's ``stop`` is the next SIBLING key, so the lines between a block's
+    final child and its ``stop`` are the blank and comment lines that visually
+    introduce that sibling. Replacing through ``stop`` would eat them; this is
+    where a replacement must end instead.
+    """
+    for i in range(stop - 1, start - 1, -1):
+        if not is_skippable(bodies[i]):
+            return i
+    return None
 
 
 @dataclass(frozen=True)
@@ -95,7 +138,7 @@ def _block_extent(bodies: "list[str]", key_line: int, indent: str) -> int:
     """
     for i in range(key_line + 1, len(bodies)):
         body = bodies[i]
-        if _is_skippable(body):
+        if is_skippable(body):
             continue
         if len(_indent_of(body)) <= len(indent):
             return i
@@ -107,7 +150,7 @@ def _first_child_indent(
 ) -> "str | None":
     for i in range(start, stop):
         body = bodies[i]
-        if _is_skippable(body):
+        if is_skippable(body):
             continue
         child = _indent_of(body)
         return child if len(child) > len(indent) else None
@@ -124,7 +167,7 @@ def find_key(
     """
     for i in range(start, stop):
         body = bodies[i]
-        if _is_skippable(body):
+        if is_skippable(body):
             continue
         m = _KEY_RE.match(body)
         if m is None or m.group("indent") != indent or m.group("key") != key:
@@ -203,8 +246,12 @@ def insert_after(
 
 __all__ = [
     "Block",
+    "KeyLine",
     "find_block",
     "find_key",
     "insert_after",
+    "is_skippable",
+    "last_content_line",
+    "parse_key_line",
     "split_ending",
 ]

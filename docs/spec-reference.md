@@ -232,6 +232,31 @@ and silently. Both blocks that AGREE are accepted; both that DISAGREE are a
 hard load error naming both values. The migration ends when every deployed spec
 declares `engines:`, at which point the legacy reading is deleted.
 
+**The sweep that gets there:** `sac agents migrate-engines`. Dry-run by
+DEFAULT — it writes nothing and prints a unified diff per spec — with
+`--apply` as the deliberate act and `--agent` / `--host` / `--limit` for
+batching. Each spec's CURRENT backend becomes its DEFAULT engine, restated
+verbatim, and a `qwen38-27b` alternate is added pointing at the fleet gateway
+by NAME (`provider: qwen-gateway`), so the address lives in
+[`config/_qwen_gateway.py`](../src/scitex_agent_container/config/_qwen_gateway.py)
+— overridable per host with `$SAC_QWEN_GATEWAY_URL` — instead of being copied
+into 119 files. `spec.claude.model` and `spec.claude.provider` are EMPTIED
+(present, stating nothing — the explicit-spec ruling keeps the keys) because
+the engines now carry them; `spec.harness` stays stated and agrees with the
+default engine. The edit is line surgery, not a YAML round-trip, so operator
+comments survive, and it re-parses its own output through `parse_engines`,
+`validate_engines` and `legacy_conflict_messages` before returning. The apply
+loads every spec before and after and restores every original unless the
+effective backend is unchanged.
+
+**Preflight, three-valued:** `sac agents migrate-engines --preflight` names
+what the gateway did rather than returning a boolean —
+`reachable-but-unauthorized` (a 401 proves something is listening and
+demanding a key), `connection-refused` (the one definite negative), or
+`name-does-not-resolve` (undetermined: `curl` prints `000` for a hostname
+typo and for a dead host alike). The spelling that resolves fleet-wide is
+`scitex-compute-04`; `compute-04` and `compute-04-lan` do not.
+
 ### `spec.claude` — SDK knobs
 
 | Field                       | Type                                  | Description                                                       |

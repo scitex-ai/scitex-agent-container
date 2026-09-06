@@ -80,6 +80,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "refresh-acl",
                 "declare-a2a-host",
                 "migrate-layers",
+                "migrate-engines",
                 "scratch-migrate",
             ],
         ),
@@ -291,6 +292,18 @@ agent_group.add_command(_refresh_acl_impl)
 from ._agents_migrate_layers import register as _register_migrate_layers  # noqa: E402
 
 _register_migrate_layers(agent_group)
+
+# `migrate-engines` — the roll-over `config._engine_types` names but does not
+# ship: give every spec a `spec.engines` block so HARNESS and ENGINE are
+# separate axes and any agent can start on the Qwen gateway instead of Claude.
+# 1 of 119 specs declares the block today. Same shape as `migrate-layers`
+# (dry-run by default, `--apply` is the act, `--json` for machines) plus the
+# two things a 119-file rewrite needs and a one-line insert did not: a unified
+# diff per spec, and batching by --agent / --host / --limit. Agent-spec-scoped,
+# so it lives here rather than under a new top-level noun.
+from ._agents_migrate_engines import register as _register_migrate_engines  # noqa: E402
+
+_register_migrate_engines(agent_group)
 
 # `scratch-migrate` — ADR-0024: move each STOPPED agent's overlay-upper
 # ``/uvwork`` (11.7 GB for sac alone on the root LV, measured 2026-09-03)
