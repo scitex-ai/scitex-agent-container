@@ -178,13 +178,25 @@ def test_unknown_engine_key_raises_rather_than_using_the_default(tmp_path):
         act()
 
 
-def test_unknown_engine_error_says_the_key_is_not_declared(tmp_path):
+def test_unknown_engine_error_says_the_key_resolves_to_no_engine(tmp_path):
+    """The message widened when the FLEET engine library became a second
+    source of keys: "not declared by this spec" was true and unhelpful
+    once a key could equally belong in the library."""
     # Arrange
     name = "eng-unknown-msg"
     # Act
     message = _unknown_engine_message(tmp_path, name)
     # Assert
-    assert "is not declared by this spec" in message
+    assert "resolves to no engine" in message
+
+
+def test_unknown_engine_error_names_the_fleet_library_as_a_source(tmp_path):
+    # Arrange
+    name = "eng-unknown-src"
+    # Act
+    message = _unknown_engine_message(tmp_path, name)
+    # Assert
+    assert "fleet" in message
 
 
 def test_unknown_engine_error_lists_the_declared_keys(tmp_path):
@@ -224,10 +236,14 @@ def test_exactly_one_default_produces_no_default_error():
 
 
 def test_two_engines_with_no_default_is_a_hard_error():
+    """sac does not pick: taking the first would make the backend depend
+    on YAML ordering. The REMEDY the message names changed from
+    ``default: true`` on an entry to one ``engine:`` line at the top of
+    spec:, so the assertion follows the remedy, not the old spelling."""
     # Arrange
     doc = _doc({"engines": _two_engines(default_on=None)})
     # Act
-    errors = [e for e in validate_raw(doc, "spec.yaml") if "default: true" in e]
+    errors = [e for e in validate_raw(doc, "spec.yaml") if "engine: <key>" in e]
     # Assert
     assert errors
 

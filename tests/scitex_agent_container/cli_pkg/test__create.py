@@ -167,13 +167,38 @@ def test_full_template_full_home_bind_at_canonical_path(tmp_path: Path) -> None:
     assert f"{home}:{home}:rw" in binds
 
 
-def test_full_template_model_is_opus(tmp_path: Path) -> None:
+def test_full_template_leaves_the_model_to_the_engine(tmp_path: Path) -> None:
+    """A scaffolded spec must be born ABLE TO FOLLOW A FLEET-WIDE BACKEND
+    SWITCH. A model written in ``spec.claude.model`` is read as a LEGACY
+    backend pin and outranks the fleet default, so scaffolding one would
+    mint an agent that can never be moved by editing the fleet engine
+    library — the exact thing the harness/engine split exists to enable.
+    The model now comes from the ENGINE; pin a backend with
+    ``engine: <key>``, never by writing a model down here."""
     # Arrange
     doc = _render_full(tmp_path)
     # Act
     model = doc["spec"]["claude"]["model"]
-    # Assert — opus (dev workhorse), not the stale 'sonnet'.
-    assert model.startswith("opus")
+    # Assert
+    assert model == ""
+
+
+def test_full_template_leaves_the_endpoint_to_the_engine(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    provider = doc["spec"]["claude"]["provider"]
+    # Assert
+    assert provider is None
+
+
+def test_full_template_states_the_harness_axis(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    harness = doc["spec"]["harness"]
+    # Assert
+    assert harness == "anthropic"
 
 
 def test_full_template_workdir_under_home_matches_agent(tmp_path: Path) -> None:

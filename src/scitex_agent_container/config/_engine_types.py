@@ -83,12 +83,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from ._harness_types import DEFAULT_AGENT_HARNESS
 from ._provider_parse import parse_provider_value
 from ._provider_types import ProviderSpec
 
 __all__ = [
     "ENGINES_KEY",
+    "ENGINE_PIN_KEY",
     "ENGINE_ENTRY_KEYS",
     "MIGRATION_END_CONDITION",
     "EngineDefaultError",
@@ -98,6 +98,7 @@ __all__ = [
     "apply_default_engine",
     "apply_engine",
     "default_engine",
+    "resolve_default",
     "legacy_backend",
     "legacy_conflict_messages",
     "parse_engines",
@@ -107,10 +108,33 @@ __all__ = [
 #: The top-level spec key holding the named engines.
 ENGINES_KEY = "engines"
 
+#: THE WHOLE GRAMMAR CHANGE, one scalar: the top-level spec key that PINS
+#: which engine this agent runs (``spec.engine: qwen38-27b``). Spelled
+#: identically at the top of the fleet engine library, where it names the
+#: FLEET default, because it means the same thing in both places: "the
+#: engine to run when nothing more specific is stated". Flipping one
+#: agent onto another backend is this ONE line; flipping the whole fleet
+#: is this ONE line in the library.
+ENGINE_PIN_KEY = "engine"
+
 #: The keys ONE engine entry may carry. ``harness`` / ``model`` /
-#: ``provider`` are the single-backend surface's own words; ``default``
-#: marks the entry used when no ``--engine`` is given; the rest are the
-#: per-engine parameters (Q4).
+#: ``provider`` are the single-backend surface's own words; the rest are
+#: the per-engine parameters (Q4).
+#:
+#: ``default`` is DEPRECATED — superseded by the top-level
+#: :data:`ENGINE_PIN_KEY` (``spec.engine: <key>``), which says the same
+#: thing without making the CHOICE a property of the CHOSEN. It stays
+#: accepted, silently, for the specs already written with it: a hard
+#: removal would boot-red them, and this axis exists to make switching
+#: backends cheap, not to make it a flag day. It is deleted in the same
+#: PR that deletes the legacy single-backend reading — see
+#: :data:`MIGRATION_END_CONDITION`.
+#:
+#: ``harness`` inside an entry is deprecated for the same window and for
+#: a sharper reason: after the split, an entry that states a harness is
+#: an ENGINE claiming ownership of the HARNESS axis, which is precisely
+#: the coupling this design removes. It survives only so a spec that
+#: already writes it keeps loading.
 ENGINE_ENTRY_KEYS = frozenset(
     {
         "harness",
@@ -156,10 +180,21 @@ class EngineSpec:
     different information: the fold collapses both an unregistered name
     and the ``anthropic`` sentinel to ``None``, and the refusal path has
     to tell those apart to say WHAT could not be honoured.
+
+    THE HARNESS FIELD IS NULLABLE, AND THAT NULL IS THE WHOLE
+    HARNESS/ENGINE SPLIT. It used to default to
+    ``DEFAULT_AGENT_HARNESS``, which meant an entry that said nothing
+    about the harness SAID ANTHROPIC — and :func:`apply_engine` then
+    wrote that manufactured value over a spec that had declared
+    ``harness: codex``. One engine definition could therefore not serve
+    a Claude-Code agent and a Codex agent, which is exactly what a fleet
+    engine library has to do. ``None`` now means NO OPINION: the engine
+    names the model endpoint, the spec names the program that runs the
+    loop, and neither overwrites the other.
     """
 
     key: str
-    harness: str = DEFAULT_AGENT_HARNESS
+    harness: str | None = None
     model: str = ""
     provider: ProviderSpec | None = None
     provider_declared: Any = None
@@ -219,7 +254,7 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
         env = {str(k): str(v) for k, v in raw_env.items() if v is not None}
     return EngineSpec(
         key=key,
-        harness=(harness or DEFAULT_AGENT_HARNESS).lower(),
+        harness=harness.lower() if harness else None,
         model=_stated(entry.get("model")) or "",
         provider=parse_provider_value(provider_declared),
         provider_declared=provider_declared,
@@ -247,42 +282,17 @@ def parse_engines(spec: Mapping) -> dict[str, EngineSpec]:
 
 
 def default_engine(engines: Mapping[str, EngineSpec]) -> EngineSpec | None:
-    """The engine used when no ``--engine`` is given.
+    """See :func:`_engine_precedence.default_engine`."""
+    from ._engine_precedence import default_engine as _impl
 
-    * no engines            → ``None`` (the legacy path).
-    * exactly one entry     → that entry, default marker or not. One
-      declared backend cannot be ambiguous, so demanding ``default:
-      true`` on it would be ceremony.
-    * exactly one marked    → that entry.
-    * two or more marked    → :class:`EngineDefaultError` NAMING BOTH.
-    * two or more, none marked → :class:`EngineDefaultError`. sac does
-      not pick for you: silently taking the first would make the
-      default depend on YAML ordering, which is exactly the "guessed a
-      backend" failure Q3 forbids.
-    """
-    if not engines:
-        return None
-    marked = [eng for eng in engines.values() if eng.is_default]
-    if len(marked) > 1:
-        names = ", ".join(repr(eng.key) for eng in marked)
-        raise EngineDefaultError(
-            f"spec.{ENGINES_KEY} marks {len(marked)} engines as "
-            f"`default: true` ({names}); exactly one may. Delete "
-            "`default: true` from all but the engine this agent should "
-            "start on when no --engine is given."
-        )
-    if len(marked) == 1:
-        return marked[0]
-    if len(engines) == 1:
-        return next(iter(engines.values()))
-    names = ", ".join(repr(key) for key in engines)
-    raise EngineDefaultError(
-        f"spec.{ENGINES_KEY} declares {len(engines)} engines ({names}) "
-        "but none sets `default: true`, so there is no engine to start "
-        "on without --engine. sac does not pick one for you — taking the "
-        "first would make the default depend on YAML ordering. Add "
-        "`default: true` to exactly one entry."
-    )
+    return _impl(engines)
+
+
+def resolve_default(engines: Mapping[str, EngineSpec], **kwargs: Any):
+    """See :func:`_engine_precedence.resolve_default`."""
+    from ._engine_precedence import resolve_default as _impl
+
+    return _impl(engines, **kwargs)
 
 
 def select_engine(
@@ -309,9 +319,13 @@ def select_engine(
     if key not in engines:
         declared = ", ".join(repr(name) for name in engines)
         raise UnknownEngineError(
-            f"--engine {key!r} is not declared by this spec. Declared "
-            f"engines: {declared}. sac will NOT fall back to the default "
-            "engine when an explicit --engine was given."
+            f"--engine {key!r} resolves to no engine. Resolvable engines "
+            f"(this spec's own `{ENGINES_KEY}:` block UNION the fleet "
+            f"engine library): {declared}. Declare it in whichever of the "
+            "two the key belongs to — `sac agents explain <agent>` prints "
+            "the library path and which entries came from where. sac will "
+            "NOT fall back to the default engine when an explicit --engine "
+            "was given."
         )
     return engines[key]
 
@@ -343,7 +357,14 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     agent-wide value it was written to displace.
     """
     config.engine_key = engine.key
-    config.harness = engine.harness
+    # THE SPLIT. An engine that states NO harness states no opinion, and
+    # an opinion nobody stated must not be written over one that was:
+    # this line used to assign a manufactured "anthropic" onto a spec
+    # that had declared ``harness: codex``. Only a harness the entry
+    # ACTUALLY names is applied — which is what lets ONE fleet engine
+    # entry serve a Claude-Code agent and a Codex agent unchanged.
+    if engine.harness is not None:
+        config.harness = engine.harness
     config.reasoning_effort = engine.reasoning_effort
     config.max_context_tokens = engine.max_context_tokens
     claude = getattr(config, "claude", None)
@@ -361,6 +382,18 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
         # the account, because OAuth is then the only auth it has.
         if engine.provider is not None:
             claude.account = ""
+            # ...and the ROTATION POOL with it. The exclusion the runtime
+            # enforces is provider-vs-OAuth, not provider-vs-``account``:
+            # ``_claude_validation`` asserts it over ``credentials_files``
+            # too, but only on the RAW spec, never on the folded config.
+            # A spec declaring four credentials_files beside a
+            # provider-backed engine therefore passed validation and then
+            # composed the two at launch. Clearing both here keeps the
+            # rule true for WHAT ACTUALLY RUNS.
+            if hasattr(claude, "credentials_files"):
+                claude.credentials_files = []
+            if hasattr(claude, "credentials_file"):
+                claude.credentials_file = ""
     if engine.env:
         merged = dict(getattr(config, "env", {}) or {})
         merged.update(engine.env)
@@ -368,7 +401,9 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
 
 
 def apply_default_engine(
-    config: Any, engines: Mapping[str, EngineSpec]
+    config: Any,
+    engines: Mapping[str, EngineSpec],
+    spec: Mapping | None = None,
 ) -> EngineSpec | None:
     """Fold the DEFAULT engine onto ``config`` at LOAD time; return it.
 
@@ -390,9 +425,21 @@ def apply_default_engine(
     """
     if not engines:
         return None
+    from ._engine_precedence import default_engine as _spec_local_default
+    from ._engine_precedence import resolve_default_for_spec
+
     try:
-        selected = default_engine(engines)
-    except EngineDefaultError:
+        if spec is None:
+            # No spec handed over: answer the narrower SPEC-LOCAL
+            # question. Reading the fleet default here would be worse
+            # than useless — it would apply a fleet-wide backend to a
+            # hand-built config whose legacy pin this function cannot
+            # see, which is precisely the silent repointing the
+            # precedence exists to prevent.
+            selected = _spec_local_default(engines)
+        else:
+            selected = resolve_default_for_spec(spec, engines)
+    except (EngineDefaultError, UnknownEngineError):
         return None
     if selected is not None:
         apply_engine(config, selected)

@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._explicit_validation import validate as _validate_explicit_fields
-from ._engine_types import apply_default_engine, parse_engines
+from ._engine_library import resolve_engine_namespace
+from ._engine_types import apply_default_engine
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._residency_types import resolve_spec_residency
 from ._host import (
@@ -384,7 +385,11 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
                 "args": ["mcp", "start"],
             }
 
-    engines = parse_engines(spec)
+    # The engine NAMESPACE this spec can name: the fleet engine library
+    # UNION the spec's own ``engines:`` block, spec-local winning a
+    # collision. Merged here so ``--engine <key>`` can select a fleet
+    # engine without the spec having to copy it first.
+    engines = resolve_engine_namespace(spec)
     config = AgentConfig(
         name=name,
         runtime=str(spec.get("runtime") or "tui"),
@@ -454,7 +459,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # this agent starts on. PURE: no warning, no probe, no network (see
     # ``_engine_types.apply_default_engine`` for why those belong on the
     # START path instead).
-    apply_default_engine(config, engines)
+    apply_default_engine(config, engines, spec)
     return config
 
 

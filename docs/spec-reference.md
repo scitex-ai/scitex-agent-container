@@ -172,6 +172,14 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
 | `nested_build` | bool (default `false`)       | Enable **NESTED** apptainer build/pull from INSIDE the agent container — a solver reproduces a capsule's pinned env itself (pull a published `docker://` image, or build a Dockerfile-derived def whose `%post` runs as root), then `apptainer exec`s it. Binds `/dev/fuse`, masks `/etc/subuid`+`/etc/subgid` (→ root-mapped + `fakeroot`-command build path; the SIF's `newuidmap` is `agent`-owned so plain `--fakeroot` FATALs), and points `APPTAINER_TMPDIR`/`CACHEDIR` at the real-disk `/tmp` (size via `tmpfs_size` — the 2G default is too small for a multi-GB image). Composes with `access: capsule` (adds **no** host-FS bind). Fail-loud if the host lacks `/dev/fuse`. Build-from-Dockerfile needs the base image to contain `/etc/subuid` (every real distro base does; busybox doesn't). Verified 2026-06-20 inside `sac-scitex.sif`. See [`runtimes/_apptainer_nested.py`](../src/scitex_agent_container/runtimes/_apptainer_nested.py). |
 
+### `spec.harness` + `spec.engine` — TWO AXES, TWO LINES
+
+`harness:` names the PROGRAM that runs the loop; `engine:` names the MODEL
+ENDPOINT that answers it. They are independent — either flips without touching
+the other, in one line — and the fleet-wide default engine lives in one line of
+one file. **Full reference, the three worked YAML cases, the precedence, and the
+harness × engine refusal table: [harness-and-engine.md](harness-and-engine.md).**
+
 ### `spec.engines` — several backends, one picked at start
 
 One spec, several named backends; `--engine <key>` picks one for THAT start.
@@ -198,6 +206,8 @@ spec:
 | `harness`            | same values as `spec.harness`       | Resolves through the SAME harness registry — an engine cannot invent a harness the fleet cannot run. |
 | `model`              | same as `spec.claude.model`         | The model id passed to this engine's endpoint. |
 | `provider`           | same as `spec.claude.provider`      | Registered NAME or inline `{base_url, auth_token_env}`; validated by the same validator. |
+| `default`            | bool                                | **DEPRECATED** — `spec.engine: <key>` says the same thing without making the CHOICE a property of the CHOSEN. Still accepted; removed with the legacy block. |
+| `harness`            | *(deprecated inside an entry)*      | An entry that states one claims the HARNESS axis, which is the coupling this design removes. Omit it: no value means *inherit the spec's*. |
 | `default`            | bool                                | Exactly ONE entry may set it. With a single entry it is the default implicitly; two defaults, or two entries with none, are hard load errors naming the offenders. |
 | `reasoning_effort`   | `none`\|`low`\|`medium`\|`high`     | Delivered as `SAC_ENGINE_REASONING_EFFORT`. |
 | `max_context_tokens` | positive int                        | Delivered as `SAC_ENGINE_MAX_CONTEXT_TOKENS`. |

@@ -27,8 +27,25 @@ apiVersion: scitex-agent-container/v3
 kind: Agent
 
 spec:
-  runtime: apptainer
+  # ---------------------------------------------------------------------
+  # TWO AXES, TWO LINES. `harness:` names the PROGRAM that runs the loop;
+  # `engine:` names the MODEL ENDPOINT that answers it. They are
+  # independent: either can be flipped without touching the other, and
+  # that is the whole point of the split.
+  #
+  #   harness: anthropic | codex        (anthropic == claude-code)
+  #   runtime: tui | headless           (launch mode within the harness)
+  #   engine:  <key from the fleet engine library, or from `engines:` below>
+  #
+  # Moving THIS agent onto Qwen is ONE line:  engine: qwen38-27b
+  # Moving the WHOLE FLEET onto Qwen is ONE line, in the fleet library
+  # ($SCITEX_DIR/agent-container/engines.yaml), not here.
+  # ---------------------------------------------------------------------
+  runtime: headless
   harness: anthropic
+  # No `engine:` line = follow the fleet default. Uncomment to PIN this
+  # agent to one backend, immune to any fleet-wide edit:
+  # engine: qwen38-27b
   # Placement: the RESOLVED hostname of the machine this agent runs on
   # (filled with the creating host at render time; `host: local` is
   # banned). Edit to a `sac host list` peer name to pin it elsewhere,
@@ -70,7 +87,14 @@ spec:
     nested_build: false
 
   claude:
-    model: haiku
+    # EXPLICIT-EMPTY, and that is the new grammar, not an omission: the
+    # ENGINE carries the model and the endpoint (see `engine:` at the top
+    # of spec:). A value written HERE is read as a LEGACY backend pin and
+    # takes precedence over the fleet default, which is exactly what a
+    # freshly scaffolded spec should NOT do — it would be born unable to
+    # follow a fleet-wide backend switch. Pin a backend with
+    # `engine: <key>`, never by writing a model down here.
+    model: ""
     flags:
       - --dangerously-skip-permissions
     channels: []
@@ -199,8 +223,13 @@ metadata:
     cardinality: singleton
 
 spec:
+  # TWO AXES, TWO LINES — `harness:` is the PROGRAM, `engine:` is the
+  # MODEL ENDPOINT, and neither implies the other. Flipping this agent to
+  # a local Qwen is one added line (`engine: qwen38-27b`); flipping the
+  # whole fleet is one line in the fleet engine library, not here.
   runtime: tui
   harness: anthropic
+  # engine: <key>   # omitted = follow the fleet default; state it to PIN.
   # RESOLVED placement (creating host at render time; `local` is banned).
   host: {host}
 
@@ -275,7 +304,14 @@ spec:
     nested_build: false
 
   claude:
-    model: opus[1m]
+    # EXPLICIT-EMPTY, and that is the new grammar, not an omission: the
+    # ENGINE carries the model and the endpoint (see `engine:` at the top
+    # of spec:). A value written HERE is read as a LEGACY backend pin and
+    # takes precedence over the fleet default, which is exactly what a
+    # freshly scaffolded spec should NOT do — it would be born unable to
+    # follow a fleet-wide backend switch. Pin a backend with
+    # `engine: <key>`, never by writing a model down here.
+    model: ""
     flags:
       - --dangerously-skip-permissions
     # resume, always — see the note on the other template above.

@@ -53,6 +53,7 @@ from ..config._engine_honour import (
     engine_verdict,
 )
 from ..config._engine_types import (
+    ENGINE_PIN_KEY,
     ENGINES_KEY,
     EngineSpec,
     apply_engine,
@@ -119,7 +120,11 @@ def refusal_message(
     how = (
         f"--engine {verdict.engine}"
         if explicit
-        else f"the spec's default engine (spec.{ENGINES_KEY}.{verdict.engine})"
+        else (
+            f"the engine this spec resolves to ({verdict.engine!r} — from "
+            f"spec.{ENGINE_PIN_KEY}, spec.{ENGINES_KEY}, or the fleet engine "
+            "library; `sac agents explain` prints which)"
+        )
     )
     probed = " (live endpoint probe)" if verdict.probed else " (static resolution)"
     return (
@@ -157,6 +162,13 @@ def select_engine_at_start(
     if not engines and not explicit:
         return None
 
+    # The harness the SPEC declares, captured BEFORE the fold. An engine
+    # that states no harness inherits this one; reading it after
+    # ``apply_engine`` would work today only because the fold no longer
+    # overwrites it, and would silently start lying the moment that
+    # changed.
+    spec_harness = str(getattr(config, "harness", "") or "").strip().lower()
+
     # Raises UnknownEngineError listing the declared keys. Deliberately
     # NOT caught: degrading to the default here is the exact silent
     # fallback the operator ruled out.
@@ -170,7 +182,10 @@ def select_engine_at_start(
     apply_engine(config, engine)
 
     verdict = engine_verdict(
-        engine, probe=engine_probe_requested(probe), timeout_s=timeout_s
+        engine,
+        harness=spec_harness,
+        probe=engine_probe_requested(probe),
+        timeout_s=timeout_s,
     )
     agent_name = getattr(config, "name", "<unknown>")
     if verdict.refuses:

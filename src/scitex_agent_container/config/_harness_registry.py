@@ -221,6 +221,34 @@ class HarnessDescriptor:
     #: the shared ``to_home`` machinery. Default no-op (per the design).
     prepare_home: Callable[..., None] = field(default=_noop_prepare_home)
 
+    #: THIS harness's OWN name for "how big is the context window", or
+    #: ``None`` when it does not take one through the environment.
+    #:
+    #: It lives in the descriptor because the alternative was a branch:
+    #: ``runtimes/_apptainer_provider`` used to emit
+    #: ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` only when the launch resolved to
+    #: the DEFAULT harness — so an engine's ``max_context_tokens`` reached
+    #: one vendor's program and silently reached nobody else's. That is a
+    #: privilege granted by an ``if``, not by a measurement. As a
+    #: descriptor column every harness answers the same question in the
+    #: same place, and a harness that answers ``None`` says so explicitly
+    #: (codex takes its window as ``-c model_context_window`` on the argv,
+    #: rendered by ``runtimes/_apptainer_inner_argv_codex``).
+    context_window_env: str | None = None
+
+    #: ADDITIONAL ``spec.harness`` spellings that select this entry.
+    #:
+    #: THE PROGRAM NAMES ARE THE HONEST ONES. ``anthropic`` is a VENDOR
+    #: word standing in for a PROGRAM, and this axis names programs —
+    #: ``codex`` already does, which is why it reads correctly and its
+    #: siblings do not. Both spellings are accepted for the compatibility
+    #: window (the same window ``spec.provider`` has), so a spec may be
+    #: written ``harness: claude-code`` today. THE DIRECTION REVERSES in
+    #: the deletion PR that closes this migration: the program name
+    #: becomes canonical and the vendor word becomes the alias. Aliasing
+    #: first, flipping second, keeps the corpus loading through it.
+    spec_harness_aliases: frozenset[str] = field(default_factory=frozenset)
+
 
 #: THE registry. One entry per harness; a fourth harness is one more row.
 HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
@@ -229,6 +257,8 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
         HarnessDescriptor(
             key=CLAUDE_CODE_TUI,
             spec_harness="anthropic",
+            spec_harness_aliases=frozenset({"claude-code", "claude"}),
+            context_window_env="CLAUDE_CODE_MAX_CONTEXT_TOKENS",
             spec_runtimes=frozenset({"", "tui"}),
             runner_module=None,  # inner process is the `claude` binary
             inner_argv=_claude_tui_inner_argv,
@@ -243,7 +273,14 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             # "apptainer" is the pre-2026-06-13 container-engine spelling,
             # honoured as a back-compat alias of the SDK runner (see
             # _runtime_select.warn_if_legacy_apptainer_runtime).
-            spec_runtimes=frozenset({"apptainer", "claude-agent-sdk"}),
+            spec_harness_aliases=frozenset({"claude-code", "claude"}),
+            context_window_env="CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            # "headless" is the vendor-NEUTRAL spelling of this launch
+            # mode; "claude-agent-sdk" names a vendor SDK and "apptainer"
+            # a container engine — neither is what a LAUNCH MODE is. All
+            # three are accepted; new specs are scaffolded with the
+            # neutral one.
+            spec_runtimes=frozenset({"apptainer", "claude-agent-sdk", "headless"}),
             runner_module=_CLAUDE_SESSION_RUNNER,
             inner_argv=_claude_sdk_inner_argv,
             hosted="runner",
@@ -254,6 +291,7 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
         HarnessDescriptor(
             key=OPENAI_AGENTS,
             spec_harness="openai",
+            spec_harness_aliases=frozenset({"openai-agents"}),
             # Sole entry of its family — the harness axis alone selects it
             # (the runtime axis names Anthropic launch modes; #1039's
             # refusal keeps those paths from ever launching this entry).
@@ -370,6 +408,9 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
         )
         runtime = str(getattr(spec, "runtime", "") or "")
 
+    from ._harness_lookup import canonical_harness
+
+    harness = canonical_harness(harness) or harness
     family = [
         descriptor
         for descriptor in HARNESS_DESCRIPTORS.values()
