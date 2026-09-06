@@ -311,3 +311,50 @@ def test_detect_signal_from_text_returns_the_matched_pattern():
     result = detect_signal_from_text(text)
     # Assert
     assert result is not None and result[1] == "overloaded_error"
+
+
+def test_per_model_limit_banner_is_a_cap_not_an_auth_failure():
+    # Arrange — the exact banner that stopped a session on 2026-09-03.
+    # Before this pattern existed nothing here matched it, so the cap
+    # check fell through and the supervisor's NEXT classifier judged the
+    # auth-shaped wreckage instead.
+    text = (
+        "You have reached your Fable limit. Run /usage-credits to "
+        "continue or switch models with /model."
+    )
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
+
+
+def test_per_model_limit_pattern_is_not_tied_to_one_model_name():
+    # Arrange — the same sentence is issued per model; pinning the name
+    # guarantees a re-fix on the next one.
+    text = "You have reached your Mythos limit."
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
+
+
+def test_the_remedy_link_is_an_independent_second_marker():
+    # Arrange — a detector resting on one sentence is one copy edit away
+    # from silence, so the remedy the banner offers is matched too.
+    text = "Run /usage-credits to continue."
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is not None and result[0] is RateLimitSignal.TEXTUAL_MATCH
+
+
+def test_an_auth_banner_alone_is_still_not_a_cap():
+    # Arrange — the control. "Login expired" accompanies this cap, but it
+    # also accompanies a REAL expired credential. If the cap scan claimed
+    # it, every genuine auth failure would be misrouted to backoff/rotate
+    # and the credential would never be refreshed.
+    text = "Login expired - Please run /login"
+    # Act
+    result = detect_signal_from_text(text)
+    # Assert
+    assert result is None
