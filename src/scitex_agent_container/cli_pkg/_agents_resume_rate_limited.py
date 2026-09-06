@@ -155,8 +155,12 @@ def resume_rate_limited(
     opus[1m] instead of waited on: /model opus[1m], Enter to confirm, then a
     kick, THREE SECONDS APART, and finally a fresh capture that must PROVE
     the cap is gone. A switch that cannot be proven is SWITCH-UNVERIFIED and
-    exits 2 — never a claimed recovery. Only agents on a Fable-family model
-    are touched; every other agent keeps the verdict it has today.
+    exits 2 — never a claimed recovery. Only an agent whose model family sac
+    can NAME is touched — its spec on a Fable model, or its spec on another
+    Claude family while the pane's banner names Fable (a spec lags a switch
+    made in the TUI). An agent sac cannot name a family for — a local-model
+    agent, or a spec carrying no model — is NEVER switched, however its pane
+    reads; every other agent keeps the verdict it has today.
 
     The agent is CONTINUED, never restarted: its session, context and
     conversation all survived the wall. Rate-limited exactly like its siblings

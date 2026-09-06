@@ -142,11 +142,46 @@ def test_a_non_fable_agent_keeps_todays_verdict() -> None:
 def test_the_banner_outranks_a_stale_spec() -> None:
     # Arrange — the spec says Sonnet and the PANE says Fable. A spec records
     # what the agent was LAUNCHED on and can lag a switch made in the TUI, so
-    # the screen wins: the agent visibly capped on Fable is on Fable.
+    # the screen wins: the agent visibly capped on Fable is on Fable. This is
+    # the OUTER edge of that leg — the spec still names a Claude family sac
+    # can read. A spec it cannot read is refused below, whatever the pane says.
     # Act
     decision = _decide(spec_model="claude-sonnet-4-5", pane=FABLE_PANE)
     # Assert
     assert decision.verdict is Verdict.SWITCH_MODEL
+
+
+def test_an_unnameable_spec_family_is_never_switched() -> None:
+    # Arrange — a local-model agent whose pane carries the provider's cap
+    # sentence VERBATIM, which is exactly what an agent that read sac's own
+    # specimens and then went idle looks like: frozen, same line on both
+    # reads. model_family("qwen38-27b") is "", so the banner is the only
+    # evidence, and a banner alone must never re-home a non-Anthropic agent
+    # onto Opus — the operator's standing rule is that business never falls
+    # back to Claude.
+    # Act
+    decision = _decide(spec_model="qwen38-27b", pane=FABLE_PANE)
+    # Assert
+    assert decision.fires is False
+
+
+def test_an_unnameable_spec_family_is_named_as_such() -> None:
+    # Arrange — the refusal reports under its OWN reason, so a reader can
+    # tell "we cannot name this agent's model" apart from "capped on a
+    # family this remedy does not apply to".
+    # Act
+    decision = _decide(spec_model="qwen38-27b", pane=FABLE_PANE)
+    # Assert
+    assert decision.reason == "unknown-model-family"
+
+
+def test_a_spec_with_no_model_is_never_switched() -> None:
+    # Arrange — a spec carrying no model at all is the same blindness with a
+    # different shape, and blindness is never a licence to retype a model.
+    # Act
+    decision = _decide(spec_model="", pane=FABLE_PANE)
+    # Assert
+    assert decision.fires is False
 
 
 # --- NO SECOND FIRE --------------------------------------------------------

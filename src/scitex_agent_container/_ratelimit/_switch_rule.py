@@ -27,11 +27,25 @@ lift* but *can we step around it right now*.
 
 THE PRINCIPLES THIS TABLE ENCODES
 ---------------------------------
-1. **Only a Fable-family agent is switched.** The remedy is "get off the
-   capped model", so it is meaningless on an agent that is not on it. An
-   agent capped on any other model keeps TODAY'S verdict — the pass falls
-   back to :func:`._rule.decide`, unchanged. This rule never widens the
-   population it acts on; it only ever carves a switchable subset out of it.
+1. **A NAMEABLE family, capped on Fable.** The remedy is "get off the capped
+   model", so it is meaningless on an agent that is not on it, and an agent
+   capped on anything else keeps TODAY'S verdict — the pass falls back to
+   :func:`._rule.decide`, unchanged. Two facts can put an agent in: its SPEC
+   names the capped family, or the spec names some OTHER family sac can read
+   while the BANNER names the capped one. That second leg is not generosity,
+   it is the only leg that reaches the measured incident: a spec records what
+   the agent was LAUNCHED on and lags a switch made in the TUI, and measured
+   2026-09-06 not ONE of the fleet's 119 specs names ``fable`` at all, so a
+   spec-only gate would be a guard that can never fire.
+   A spec whose family sac CANNOT name is out, unconditionally, and that
+   refusal is what makes the second leg safe: the banner is corroboration,
+   never authority, because the provider's cap sentence lives VERBATIM in
+   this repository (:data:`._modelcap.CAPPED_SPECIMEN_PANES`, two module
+   docstrings, three test modules) and an agent that read one of those files
+   and then went idle carries the trigger frozen on its own pane. Keeping the
+   unnameable family out is what stops that from re-homing a local-model
+   agent onto Anthropic Opus. This rule never widens the population it acts
+   on; it only ever carves a switchable subset out of it.
 2. **Idempotence is a rule, not a hope.** An agent already on the target is
    :attr:`._rule.Verdict.ALREADY_ON_TARGET` and is never touched. Sending
    ``/model opus[1m]`` to an agent already on ``opus[1m]`` would spend three
@@ -232,13 +246,27 @@ def decide_switch(
             f"is already running would spend a real turn to achieve nothing",
         )
 
+    if not family:
+        return SwitchDecision(
+            Verdict.NOT_LIMITED,
+            "unknown-model-family",
+            f"{name}'s spec names {spec_model or 'no model at all'!r}, whose "
+            f"family sac cannot read, so the banner would be the ONLY evidence "
+            f"— and a banner is corroboration, never authority. The provider's "
+            f"cap sentence is carried VERBATIM in this repository (specimens, "
+            f"docstrings, tests), so any agent that read one of those files and "
+            f"then went idle has a matching line frozen on its pane, at the "
+            f"same index on both reads. Acting on that alone would retype the "
+            f"model of a local-model agent onto Anthropic Opus, which is the "
+            f"one class where falling back to Claude is never wanted",
+        )
     banner_family = model_family(second.subject)
     if family not in CAPPED_FAMILIES and banner_family not in CAPPED_FAMILIES:
         return SwitchDecision(
             Verdict.NOT_LIMITED,
             "not-a-capped-family",
-            f"{name} is capped, but on {spec_model or 'an unnamed model'!r} "
-            f"(family {family or 'unknown'!r}) and the banner names "
+            f"{name} is capped, but on {spec_model!r} "
+            f"(family {family!r}) and the banner names "
             f"{second.subject!r} — neither is one of {CAPPED_FAMILIES}. This "
             f"remedy is 'get off the capped model'; it means nothing here, so "
             f"the rate-wall verdict stands",

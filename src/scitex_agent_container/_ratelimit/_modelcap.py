@@ -86,9 +86,16 @@ __all__ = [
 #: renderings use different verbs, and a matcher fitted to one of them reports
 #: a healthy fleet through an outage of the other. Anchored on the provider's
 #: own first-person sentence, exactly as ``_banner.LIMIT_RE`` is, so an agent
-#: writing PROSE about the incident ("switcher fired on the Fable limit") does
-#: not match. Both apostrophes — ASCII and U+2019 — because the capture shows
-#: whichever the renderer chose, and a detector that silently stopped matching
+#: PARAPHRASING the incident ("switcher fired on the Fable limit") does not
+#: match. It does NOT — and cannot — tell a real banner from a VERBATIM
+#: quotation of one: this repository alone carries that sentence in six places
+#: (:data:`CAPPED_SPECIMEN_PANES`, this module's docstring and
+#: :mod:`._switch_rule`'s, and three test modules), so an agent that read one
+#: of those files and then went idle has a matching line frozen on its pane.
+#: That is why :mod:`._switch_rule` treats a match here as CORROBORATION and
+#: never as authority, and refuses outright when it cannot name the agent's
+#: own model family. Both apostrophes — ASCII and U+2019 — because the capture
+#: shows whichever the renderer chose, and a detector that silently stopped matching
 #: on a typographic quote is a detector that reports good news during an
 #: outage.
 MODEL_CAP_RE = re.compile(
