@@ -133,8 +133,19 @@ class PassOutcome:
         record for a run it could not START at all. See :mod:`._alarm` for
         why that log, and not this package's own event log, is the reader of
         record.
+
+        SWITCH_UNVERIFIED joins the TWOs for the same reason RESET_UNKNOWN is
+        there: we typed three steps into an agent's pane and the pane will not
+        say whether the model changed. That is an unresolved reading, not a
+        known-bad outcome, and it is the one state of this remedy a human must
+        actually look at.
         """
-        if self.of(Verdict.UNREADABLE, Verdict.RESET_UNKNOWN, Verdict.BUDGET_UNKNOWN):
+        if self.of(
+            Verdict.UNREADABLE,
+            Verdict.RESET_UNKNOWN,
+            Verdict.BUDGET_UNKNOWN,
+            Verdict.SWITCH_UNVERIFIED,
+        ):
             return 2
         if self.of(
             Verdict.FAILED,
@@ -142,6 +153,8 @@ class PassOutcome:
             Verdict.COOLING_DOWN,
             Verdict.CAPPED,
             Verdict.WOULD_RESUME,
+            Verdict.SWITCH_FAILED,
+            Verdict.WOULD_SWITCH,
         ):
             return 1
         return 0
@@ -219,6 +232,9 @@ def resume_pass(
     interval: float = DEFAULT_INTERVAL,
     capture_fn: Callable[[], dict[str, tuple[str | None, str | None]]] | None = None,
     resume_fn: Callable[[str], bool] | None = None,
+    switch_model: bool = False,
+    switch_fn: Callable[[str, str], bool | None] | None = None,
+    switch_history_file: Path | None = None,
     default_tz: timezone = timezone.utc,
     err_stream: Any = None,
 ) -> PassOutcome:
@@ -238,13 +254,36 @@ def resume_pass(
     capture_fn, resume_fn
         The two live seams. Defaults are the real two-capture tmux read and
         the real verified delivery.
+    switch_model
+        Also handle the MODEL-CAP shape: an agent frozen behind a Fable cap
+        is moved onto ``opus[1m]`` and kicked (:mod:`._switch_rule`,
+        :mod:`._switch`). Default ``False``, and that default is
+        load-bearing rather than shy — with it off this pass behaves
+        EXACTLY as it did before the branch existed, down to the exit code,
+        so enabling the switcher is a decision the operator makes and can
+        unmake. ``--apply`` is still required for anything to be typed.
+    switch_fn, switch_history_file
+        The model-switch seams: the three-step mutation and the ledger that
+        remembers whose model this pass already changed. That ledger is
+        SEPARATE from the resume one — see :mod:`._switch_pass`.
     """
-    from ..config import load_config
     from .._reconcile._pass import fleet_spec_paths
+    from ..config import load_config
+    from ._modelcap import observe_model_cap
+    from ._switch import real_switch
+    from ._switch_pass import (
+        SWITCH_SPENT,
+        already_switched,
+        record_switch,
+        switch_history_path,
+        switch_report,
+    )
+    from ._switch_rule import decide_switch
 
     now = now if now is not None else time.time()
     moment = datetime.fromtimestamp(now, tz=timezone.utc)
     resume_fn = resume_fn if resume_fn is not None else real_resume
+    switch_fn = switch_fn if switch_fn is not None else real_switch
     history_file = history_file if history_file is not None else history_path()
     stream = err_stream if err_stream is not None else sys.stderr
 
@@ -255,6 +294,30 @@ def resume_pass(
     budget = Budget(read.history, pass_cap=limit) if read.enforceable else None
     if budget is None:
         print(f"[{SUBSYSTEM}] REFUSING to wake anything: {read.detail}", file=stream)
+
+    # The model-switch remedy carries its OWN ledger, read only when the
+    # remedy is armed. Two remedies sharing one flat ``{agent: [epoch, ...]}``
+    # file would consume each other's budget: a resume would then look, to
+    # this branch, like a switch it had already performed.
+    switch_history_file = (
+        switch_history_file
+        if switch_history_file is not None
+        else switch_history_path()
+    )
+    switch_budget: Budget | None = None
+    if switch_model:
+        switch_read = read_history(switch_history_file)
+        switch_budget = (
+            Budget(switch_read.history, pass_cap=limit)
+            if switch_read.enforceable
+            else None
+        )
+        if switch_budget is None:
+            print(
+                f"[{SUBSYSTEM}] REFUSING to switch any model: "
+                f"{switch_read.detail}",
+                file=stream,
+            )
 
     # A capture that RAISED is not an empty fleet. Carrying that distinction is
     # what makes the rule's ``sessions-unreadable`` leg reachable from
@@ -301,14 +364,66 @@ def resume_pass(
         name = config.name
         policy = config.restart.policy
         pane1, pane2 = captures.get(name, (None, None))
+        session_present = (name in captures) if sessions_readable else None
         decision = decide(
             name=name,
             policy=policy,
-            session_present=(name in captures) if sessions_readable else None,
+            session_present=session_present,
             first=observe_pane(pane1, now=moment, default_tz=default_tz),
             second=observe_pane(pane2, now=moment, default_tz=default_tz),
             now=moment,
         )
+
+        # THE MODEL-CAP BRANCH. Evaluated only when armed, so with the flag
+        # off this pass is byte-for-byte the pass it was before the branch
+        # existed. Two ways it can change the outcome, and no third:
+        #   * it FIRES — the agent is frozen behind a cap on a switchable
+        #     model, and the switch replaces today's verdict entirely; or
+        #   * today's rule found NOTHING to say ("no rate wall") while a cap
+        #     IS visibly rendered, in which case reporting "nothing to do"
+        #     would be the silence this whole command exists to abolish.
+        # In every other case today's verdict stands untouched.
+        if switch_model:
+            switch = decide_switch(
+                name=name,
+                policy=policy,
+                session_present=session_present,
+                spec_model=config.claude.model,
+                first=observe_model_cap(pane1, now=moment, default_tz=default_tz),
+                second=observe_model_cap(pane2, now=moment, default_tz=default_tz),
+                now=moment,
+                already_switched=already_switched(switch_budget, name, now),
+            )
+            if switch.fires:
+                done = switch_report(
+                    name,
+                    switch,
+                    budget=switch_budget,
+                    apply=apply,
+                    now=now,
+                    switch_fn=switch_fn,
+                )
+                if switch_budget is not None and done.verdict in SWITCH_SPENT:
+                    record_switch(
+                        switch_history_file,
+                        switch_budget,
+                        name=name,
+                        now=now,
+                        stream=stream,
+                    )
+                reports.append(
+                    AgentReport(name, done.verdict, done.reason, done.detail)
+                )
+                continue
+            if (
+                decision.verdict is Verdict.NOT_LIMITED
+                and switch.verdict is not Verdict.NOT_LIMITED
+            ):
+                reports.append(
+                    AgentReport(name, switch.verdict, switch.reason, switch.detail)
+                )
+                continue
+
         if decision.verdict is not Verdict.RESUME:
             reports.append(
                 AgentReport(name, decision.verdict, decision.reason, decision.detail)

@@ -237,12 +237,21 @@ def _stamp_owner(worktree_path: str) -> None:
     ``<checkout>/.git`` for a primary checkout) is OUTSIDE the working
     tree, so git never stages it.
 
-    Owner id = ``$SCITEX_TODO_AGENT_ID`` (the agent's board identity,
-    which equals its ``config.name``). Best-effort: a failure here must
-    NEVER break worktree creation, whose SDK contract is to echo the
-    path. An empty/unset agent id is left UNSTAMPED.
+    Owner id = ``$SCITEX_CARDS_AGENT_ID`` (the agent's board identity,
+    which equals its ``config.name``), falling back to the RETIRED
+    ``$SCITEX_TODO_AGENT_ID`` only for a container still launched from an
+    old-name spec. Canonical FIRST: reading the retired name alone left the
+    stamp unwritten in every container that carries only the current one.
+    Best-effort: a failure here must NEVER break worktree creation, whose
+    SDK contract is to echo the path. An empty/unset agent id is left
+    UNSTAMPED.
     """
-    owner = os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
+    owner = (
+        os.environ.get("SCITEX_CARDS_AGENT_ID", "").strip()
+        # Retired predecessor — kept ONLY so a container still launched from
+        # an old-name spec keeps stamping. Drop with the shim.
+        or os.environ.get("SCITEX_TODO_AGENT_ID", "").strip()
+    )
     if not owner:
         return
     try:

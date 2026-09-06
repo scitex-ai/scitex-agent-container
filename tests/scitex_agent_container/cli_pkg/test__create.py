@@ -67,7 +67,7 @@ def test_create_full_template_passes_v3_validator(tmp_path: Path) -> None:
 # sac-agents-new-template-stale; operator 2026-06-25 "very general, just
 # developer like existing ones"). It must render a READY dev agent, not the
 # stale generic skeleton (runtime apptainer, model sonnet, binds [],
-# placeholder prompt, NO overlay / SCITEX_TODO_AGENT_ID / channels /
+# placeholder prompt, NO overlay / SCITEX_CARDS_AGENT_ID / channels /
 # editable-install / dev labels). These tests pin every load-bearing field
 # the card flagged as missing — they FAIL against the old template.
 # ---------------------------------------------------------------------------
@@ -108,13 +108,24 @@ def test_full_template_declares_directory_overlay(tmp_path: Path) -> None:
     assert overlay.endswith("/overlays/proj-x/")
 
 
-def test_full_template_wires_scitex_todo_agent_id(tmp_path: Path) -> None:
+def test_full_template_wires_scitex_cards_agent_id(tmp_path: Path) -> None:
     # Arrange
     doc = _render_full(tmp_path)
     # Act
     env = doc["spec"]["apptainer"]["env"]
-    # Assert — todo-store writes attribute to THIS agent (MISSING before).
-    assert env["SCITEX_TODO_AGENT_ID"] == "proj-x"
+    # Assert — card-store writes attribute to THIS agent, under the CANONICAL
+    # board-identity key.
+    assert env["SCITEX_CARDS_AGENT_ID"] == "proj-x"
+
+
+def test_full_template_never_emits_the_retired_agent_id(tmp_path: Path) -> None:
+    # Arrange
+    doc = _render_full(tmp_path)
+    # Act
+    env = doc["spec"]["apptainer"]["env"]
+    # Assert — a spec that declares the retired name is what keeps the legacy
+    # alias alive; `sac agents create` must not generate one.
+    assert "SCITEX_TODO_AGENT_ID" not in env
 
 
 def test_full_template_lists_the_three_fleet_channels(tmp_path: Path) -> None:

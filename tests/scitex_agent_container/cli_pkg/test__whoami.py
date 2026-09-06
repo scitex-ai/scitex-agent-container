@@ -66,6 +66,10 @@ def _blank_env(tmp_path: Path, **overrides) -> dict:
         "CLAUDE_AGENT_ROLE": None,
         "SAC_ROLE": None,
         "SCITEX_AGENT_CONTAINER_ROLE": None,
+        # BOTH board-identity vars: whoami reads the canonical one first and
+        # the retired one as a fallback, so leaving either set would leak the
+        # runner's own live identity into a "hermetic" case.
+        "SCITEX_CARDS_AGENT_ID": None,
         "SCITEX_TODO_AGENT_ID": None,
         "SAC_MODEL": None,
         "SCITEX_AGENT_CONTAINER_MODEL": None,
@@ -195,11 +199,51 @@ def test_whoami_reports_agent_name_from_env(tmp_path):
 
 def test_whoami_reports_board_id_from_env(tmp_path):
     # Arrange
-    env = _blank_env(tmp_path, SCITEX_TODO_AGENT_ID="board-id-77")
+    env = _blank_env(tmp_path, SCITEX_CARDS_AGENT_ID="board-id-77")
     # Act
     result = _invoke(env)
     # Assert
     assert "board-id-77" in _line(result.output, "board-id:")
+
+
+def test_whoami_names_the_canonical_board_id_var(tmp_path):
+    # Arrange
+    env = _blank_env(tmp_path, SCITEX_CARDS_AGENT_ID="board-id-77")
+    # Act
+    result = _invoke(env)
+    # Assert — the hint names the var the value actually came from.
+    assert "SCITEX_CARDS_AGENT_ID" in _line(result.output, "board-id:")
+
+
+def test_whoami_falls_back_to_the_retired_board_id_var(tmp_path):
+    # Arrange — a container still launched from an old-name spec.
+    env = _blank_env(tmp_path, SCITEX_TODO_AGENT_ID="board-id-legacy")
+    # Act
+    result = _invoke(env)
+    # Assert
+    assert "board-id-legacy" in _line(result.output, "board-id:")
+
+
+def test_whoami_prefers_the_canonical_board_id_var(tmp_path):
+    # Arrange — both set and disagreeing (a spec mid-migration).
+    env = _blank_env(
+        tmp_path,
+        SCITEX_CARDS_AGENT_ID="board-id-canonical",
+        SCITEX_TODO_AGENT_ID="board-id-legacy",
+    )
+    # Act
+    result = _invoke(env)
+    # Assert
+    assert "board-id-canonical" in _line(result.output, "board-id:")
+
+
+def test_whoami_reports_no_board_id_when_neither_var_is_set(tmp_path):
+    # Arrange — a human at a shell; an honest placeholder, never a guess.
+    env = _blank_env(tmp_path)
+    # Act
+    facts = json.loads(_invoke(env, "--json").output)
+    # Assert
+    assert facts["identity"]["board_id"] is None
 
 
 def test_whoami_reports_listen_url_from_env(tmp_path):
@@ -445,7 +489,7 @@ def test_whoami_howto_points_at_bundled_skills(tmp_path):
 
 def test_whoami_howto_scope_uses_board_id(tmp_path):
     # Arrange
-    env = _blank_env(tmp_path, SCITEX_TODO_AGENT_ID="board-id-42")
+    env = _blank_env(tmp_path, SCITEX_CARDS_AGENT_ID="board-id-42")
     # Act
     result = _invoke(env)
     # Assert

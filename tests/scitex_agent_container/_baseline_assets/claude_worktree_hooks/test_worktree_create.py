@@ -25,6 +25,16 @@ from .conftest import (
     _run_hook,
 )
 
+# Both board-identity variables the hook reads. The runner's own container
+# exports the canonical one, so an owner-stamp test that only strips the
+# retired name would inherit a live identity and stamp when it must not.
+_AGENT_ID_ENVS = ("SCITEX_CARDS_AGENT_ID", "SCITEX_TODO_AGENT_ID")
+
+
+def _env_without_agent_ids() -> dict:
+    """A copy of the ambient env with EVERY board-identity var removed."""
+    return {k: v for k, v in os.environ.items() if k not in _AGENT_ID_ENVS}
+
 # ---------------------------------------------------------------------------
 # Relocation invariant — target lands under .worktrees/, NOT .claude/worktrees
 # ---------------------------------------------------------------------------
@@ -260,10 +270,10 @@ class TestWorktreeCreateBaseResolution:
 
 class TestWorktreeCreateOwnerStamp:
     def test_owner_stamp_written_to_private_gitdir(self, ephemeral_repo: Path) -> None:
-        # Arrange — SCITEX_TODO_AGENT_ID identifies the owning agent; the
+        # Arrange — SCITEX_CARDS_AGENT_ID identifies the owning agent; the
         # hook must stamp it into the worktree's PRIVATE gitdir.
         payload = _create_payload("stamp-probe", ephemeral_repo)
-        env = {**os.environ, "SCITEX_TODO_AGENT_ID": "stampy-agent"}
+        env = {**_env_without_agent_ids(), "SCITEX_CARDS_AGENT_ID": "stampy-agent"}
         # Act
         result = _run_hook(CREATE_SCRIPT, payload, env=env)
         target = Path(result.stdout.strip())
@@ -277,18 +287,49 @@ class TestWorktreeCreateOwnerStamp:
         # Arrange — the marker MUST live outside the working tree so the
         # rescue's ``git add -A`` can never stage it.
         payload = _create_payload("stamp-outside-probe", ephemeral_repo)
-        env = {**os.environ, "SCITEX_TODO_AGENT_ID": "stampy-agent"}
+        env = {**_env_without_agent_ids(), "SCITEX_CARDS_AGENT_ID": "stampy-agent"}
         # Act
         result = _run_hook(CREATE_SCRIPT, payload, env=env)
         target = Path(result.stdout.strip())
         # Assert — no sac-owner file in the worktree's working directory.
         assert not (target / "sac-owner").exists()
 
+    def test_owner_stamp_falls_back_to_the_retired_agent_id(
+        self, ephemeral_repo: Path
+    ) -> None:
+        # Arrange — a container still launched from an old-name spec carries
+        # ONLY the retired variable; it must keep stamping.
+        payload = _create_payload("stamp-legacy-probe", ephemeral_repo)
+        env = {**_env_without_agent_ids(), "SCITEX_TODO_AGENT_ID": "legacy-agent"}
+        # Act
+        result = _run_hook(CREATE_SCRIPT, payload, env=env)
+        target = Path(result.stdout.strip())
+        git_dir = _git(target, "rev-parse", "--absolute-git-dir")
+        # Assert
+        assert (Path(git_dir) / "sac-owner").read_text().strip() == "legacy-agent"
+
+    def test_owner_stamp_prefers_the_canonical_agent_id(
+        self, ephemeral_repo: Path
+    ) -> None:
+        # Arrange — both set (a spec mid-migration): the CANONICAL name wins.
+        payload = _create_payload("stamp-both-probe", ephemeral_repo)
+        env = {
+            **_env_without_agent_ids(),
+            "SCITEX_CARDS_AGENT_ID": "canonical-agent",
+            "SCITEX_TODO_AGENT_ID": "legacy-agent",
+        }
+        # Act
+        result = _run_hook(CREATE_SCRIPT, payload, env=env)
+        target = Path(result.stdout.strip())
+        git_dir = _git(target, "rev-parse", "--absolute-git-dir")
+        # Assert
+        assert (Path(git_dir) / "sac-owner").read_text().strip() == "canonical-agent"
+
     def test_no_owner_stamp_when_agent_id_unset(self, ephemeral_repo: Path) -> None:
         # Arrange — an unset agent id leaves the worktree UNSTAMPED (the
         # rescue then default-denies it) rather than stamping an empty id.
         payload = _create_payload("no-stamp-probe", ephemeral_repo)
-        env = {k: v for k, v in os.environ.items() if k != "SCITEX_TODO_AGENT_ID"}
+        env = _env_without_agent_ids()
         # Act
         result = _run_hook(CREATE_SCRIPT, payload, env=env)
         target = Path(result.stdout.strip())
