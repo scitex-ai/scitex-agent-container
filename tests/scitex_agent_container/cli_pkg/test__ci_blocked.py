@@ -313,9 +313,12 @@ def test_unreadable_protection_raises_rather_than_reading_clean():
     # Arrange
     gh = _gh([_pr([])], protection_body=UNREADABLE_BODY)
 
-    # Act / Assert
-    with pytest.raises(CIWhyError, match="could not read branch protection"):
+    # Act
+    with pytest.raises(CIWhyError) as excinfo:
         audit_blocked(run_gh=gh)
+
+    # Assert
+    assert "could not read branch protection" in str(excinfo.value)
 
 
 def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
@@ -326,9 +329,12 @@ def test_a_hard_protection_failure_propagates_rather_than_reading_clean():
     # Arrange
     gh = _gh([_pr([])], protection_raises=True)
 
-    # Act / Assert
-    with pytest.raises(CIWhyError):
+    # Act
+    with pytest.raises(CIWhyError) as excinfo:
         audit_blocked(run_gh=gh)
+
+    # Assert
+    assert excinfo.value is not None
 
 
 def test_base_filter_selects_only_matching_prs():
