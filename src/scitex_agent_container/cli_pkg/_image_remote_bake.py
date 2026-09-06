@@ -282,81 +282,91 @@ def image_bake_remote(
     # went wrong when a second bake declines — the first one is doing the
     # work.
     containers_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        # Held for the lifetime of this one-shot command. The kernel
-        # releases the flock when the process exits — including SIGKILL
-        # and OOM — so a crashed bake never jams the pipeline and no
-        # stale-lock reconciliation is needed. Bound to a name so the fd
-        # is not garbage-collected (closing it would release the lock).
-        _bake_lock = acquire_bake_lock(containers_dir=containers_dir)
-    except BakeAlreadyRunningError as exc:
-        click.echo(str(exc), err=True)
-        raise SystemExit(0) from exc
 
-    try:
-        failures: list[str] = []
-        # One-line-per-failure summaries for the headline. The full reason is
-        # multi-line by design (remote stderr, remedy), and a headline that
-        # ends at the colon is unreadable in a journal: `bake-remote FAILED:`
-        # matched a grep and told the reader NOTHING.
-        failure_heads: list[str] = []
-        for layer in layers:
-            click.echo(f"=== bake-remote: layer={layer} host={host} ===")
-            try:
-                outcome = run_remote_bake(
-                    host=host,
-                    layer=layer,
-                    lease_name=lease_name,
-                    remote_workdir=remote_workdir,
-                    branch=branch,
-                    retain=retain,
-                    force=force,
-                    timeout=ssh_timeout,
-                )
-            except subprocess.TimeoutExpired:
-                failure_heads.append(
-                    f"{layer}: remote bake exceeded --ssh-timeout={ssh_timeout}s"
-                )
-                failures.append(failure_heads[-1])
-                click.echo(failures[-1], err=True)
-                continue
-            if outcome.verdict in (BakeVerdict.FAILED, BakeVerdict.NO_RESULT):
-                failure_heads.append(
-                    f"{layer}: bake {outcome.verdict.value} — {_first_line(outcome.detail)}"
-                )
-                failures.append(f"{layer}: bake {outcome.verdict.value}\n{outcome.detail}")
-                click.echo(failures[-1], err=True)
-                continue
-            click.echo(f"bake: {outcome.verdict.value} {outcome.sif}")
-            if bake_only:
-                continue
-            pull = core.pull_and_publish(
-                host=host, outcome=outcome, containers_dir=containers_dir, retain=retain
+    failures: list[str] = []
+    # One-line-per-failure summaries for the headline. The full reason is
+    # multi-line by design (remote stderr, remedy), and a headline that
+    # ends at the colon is unreadable in a journal: `bake-remote FAILED:`
+    # matched a grep and told the reader NOTHING.
+    failure_heads: list[str] = []
+    for layer in layers:
+        click.echo(f"=== bake-remote: layer={layer} host={host} ===")
+        try:
+            outcome = run_remote_bake(
+                host=host,
+                layer=layer,
+                lease_name=lease_name,
+                remote_workdir=remote_workdir,
+                branch=branch,
+                retain=retain,
+                force=force,
+                timeout=ssh_timeout,
             )
-            click.echo(f"publish: {pull.verdict.value} — {pull.detail}")
-            if pull.verdict is PullVerdict.FAILED:
-                failure_heads.append(
-                    f"{layer}: publish FAILED — {_first_line(pull.detail)}"
-                )
-                failures.append(f"{layer}: publish FAILED ({pull.detail})")
+        except subprocess.TimeoutExpired:
+            failure_heads.append(
+                f"{layer}: remote bake exceeded --ssh-timeout={ssh_timeout}s"
+            )
+            failures.append(failure_heads[-1])
+            click.echo(failures[-1], err=True)
+            continue
+        if outcome.verdict in (BakeVerdict.FAILED, BakeVerdict.NO_RESULT):
+            failure_heads.append(
+                f"{layer}: bake {outcome.verdict.value} — {_first_line(outcome.detail)}"
+            )
+            failures.append(f"{layer}: bake {outcome.verdict.value}\n{outcome.detail}")
+            click.echo(failures[-1], err=True)
+            continue
+        click.echo(f"bake: {outcome.verdict.value} {outcome.sif}")
+        if bake_only:
+            continue
+        # ONE PULL AT A TIME PER CONTAINERS DIR — the lock wraps the
+        # TRANSFER it guards, not the whole command. Measured: a supervisor
+        # restart began a SECOND ~7.6G rsync of the same artifact while the
+        # first ran; both use --partial, so the newcomer resumed from the
+        # incumbent's partial AND wrote its own temp. compute-03 went 17G
+        # free -> 3.8G with three concurrent pulls.
+        #
+        # WHY NOT AT THE TOP OF THE COMMAND, measured the hard way: `--bake
+        # -only` never pulls and a FAILED bake never reaches here, so an
+        # earlier lock guarded paths that touch no disk — and did it on the
+        # DEFAULT containers dir under $HOME, which CI's two matrix legs
+        # share on one self-hosted runner. Four unrelated tests declined and
+        # develop went red. Scoping to the transfer fixes both: nothing that
+        # does not pull ever waits, and every caller reaching here passes an
+        # explicit dir, so tests isolate by construction.
+        #
+        # DECLINING IS NOT FAILING — a supervised job under Restart=always
+        # must not read "someone else is fetching this" as a crash.
+        try:
+            _pull_lock = acquire_bake_lock(containers_dir=containers_dir)
+        except BakeAlreadyRunningError as exc:
+            click.echo(f"publish: SKIPPED — {exc}")
+            continue
+        try:
+            pull = core.pull_and_publish(
+                host=host,
+                outcome=outcome,
+                containers_dir=containers_dir,
+                retain=retain,
+            )
+        finally:
+            release_bake_lock(_pull_lock)
+        click.echo(f"publish: {pull.verdict.value} — {pull.detail}")
+        if pull.verdict is PullVerdict.FAILED:
+            failure_heads.append(
+                f"{layer}: publish FAILED — {_first_line(pull.detail)}"
+            )
+            failures.append(f"{layer}: publish FAILED ({pull.detail})")
 
-        if failures:
-            # The headline itself names what broke. Anything less makes the
-            # whole message invisible to the grep that a tired operator at
-            # 03:00 actually runs.
-            click.echo(f"bake-remote FAILED: {'; '.join(failure_heads)}", err=True)
-            for f in failures:
-                click.echo(f"  - {f}", err=True)
-            raise SystemExit(1)
-        click.echo("bake-remote: all layers ok")
-    finally:
-        # Explicit release so a second invocation IN THE SAME PROCESS
-        # (CliRunner, a future in-process caller) can acquire. Relying
-        # on process exit alone was measured wrong here: the existing
-        # CliRunner tests share one process, so the first invocation
-        # held the lock and every later one silently declined with
-        # exit 0. The kernel still covers dirty exit.
-        release_bake_lock(_bake_lock)
+    if failures:
+        # The headline itself names what broke. Anything less makes the
+        # whole message invisible to the grep that a tired operator at
+        # 03:00 actually runs.
+        click.echo(f"bake-remote FAILED: {'; '.join(failure_heads)}", err=True)
+        for f in failures:
+            click.echo(f"  - {f}", err=True)
+        raise SystemExit(1)
+    click.echo("bake-remote: all layers ok")
 
 
 __all__ = ["image_bake_remote", "run_remote_bake"]
