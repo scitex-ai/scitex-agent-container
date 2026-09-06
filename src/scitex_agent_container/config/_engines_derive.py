@@ -22,9 +22,10 @@ THE DERIVATION, and what each half is allowed to invent (nothing):
   address stays in one module instead of in 119 spec files.
 
 THE ENTRY KEY. ``claude`` when the backend is the plain Anthropic OAuth path
-— the name the operator's own already-migrated ``business`` spec uses — and
-a slug of the model otherwise, because "claude" is a false name for an entry
-holding Qwen and a vendor name is a claim about scope.
+AND the harness is the Anthropic one — the name the operator's own
+already-migrated ``business`` spec uses — and a slug of the model otherwise,
+because "claude" is a false name for an entry holding Qwen, a vendor name is
+a claim about scope, and a Codex session is not the vendor that name states.
 
 WHEN THE TWO COLLIDE. A spec that ALREADY runs ``qwen38-27b`` derives the
 alternate's own key, and one mapping cannot hold two entries under one key.
@@ -39,6 +40,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ._harness_types import DEFAULT_AGENT_HARNESS
 from ._qwen_gateway import (
     QWEN_ENGINE_HARNESS,
     QWEN_ENGINE_KEY,
@@ -85,14 +87,30 @@ def slug_engine_key(model: str) -> str:
     return slug
 
 
-def engine_key_for(model: str, provider_declared: object) -> str:
-    """The key the DEFAULT entry gets. ``""`` when the model yields no slug."""
+def _is_anthropic_oauth(provider_declared: object) -> bool:
+    """Does this declared provider mean "the plain Anthropic OAuth path"?"""
     if provider_declared is None:
-        return CLAUDE_ENGINE_KEY
-    if (
+        return True
+    return (
         isinstance(provider_declared, str)
         and provider_declared.strip().lower() == ANTHROPIC_PROVIDER
-    ):
+    )
+
+
+def engine_key_for(
+    model: str,
+    provider_declared: object,
+    harness: str = DEFAULT_AGENT_HARNESS,
+) -> str:
+    """The key the DEFAULT entry gets. ``""`` when the model yields no slug.
+
+    HARNESS IS PART OF THE QUESTION. ``claude`` is the right name only for
+    the Anthropic OAuth path; on a ``harness: codex`` spec it is a vendor
+    name attached to something that is not that vendor, which is exactly the
+    claim-about-scope failure this axis exists to remove. Such a spec gets a
+    slug of its model, like every other non-Anthropic backend.
+    """
+    if harness == DEFAULT_AGENT_HARNESS and _is_anthropic_oauth(provider_declared):
         return CLAUDE_ENGINE_KEY
     return slug_engine_key(model)
 
@@ -106,7 +124,9 @@ class EngineEntry:
     model: str
     #: The scalar written after ``provider:``. None when the provider is a
     #: nested block, in which case ``provider_lines`` carries its children
-    #: with their original indentation already stripped.
+    #: with the block's own first-child indent removed and everything
+    #: DEEPER than that kept — a nested mapping under the provider survives
+    #: as a nested mapping rather than being flattened into siblings.
     provider_scalar: "str | None" = None
     provider_lines: "tuple[str, ...]" = ()
     reasoning_effort: str = ""
@@ -141,15 +161,26 @@ def derive_entries(
     VERBATIM text the caller lifted out of the spec, so the restated backend
     is byte-for-byte the one that was already there.
     """
-    key = engine_key_for(model, provider_declared)
+    key = engine_key_for(model, provider_declared, harness)
     if not key:
         return (), "the model yields no usable engine key"
 
     scalar = provider_scalar
-    if provider_declared is None and not provider_lines:
+    if (
+        provider_declared is None
+        and not provider_lines
+        and harness == DEFAULT_AGENT_HARNESS
+    ):
         # Stated explicitly rather than left empty: an omitted provider reads
         # as "no opinion", and an entry with no opinion about its backend is
         # the ambiguity this axis exists to remove.
+        #
+        # ONLY ON THE ANTHROPIC HARNESS. ``anthropic`` is this registry's
+        # sentinel for the Anthropic OAuth backend; writing it under a
+        # ``harness: codex`` entry states the WRONG vendor, which is worse
+        # than stating none — and the entry then reads as a claim nobody
+        # made. A non-Anthropic harness with no declared provider keeps
+        # exactly what the spec said: nothing.
         scalar = ANTHROPIC_PROVIDER
 
     default = EngineEntry(
@@ -193,7 +224,13 @@ def render_engines_block(
         out.append(f"{field_indent}model: {entry.model}")
         if entry.provider_lines:
             out.append(f"{field_indent}provider:")
-            out.extend(f"{child_indent}{line}" for line in entry.provider_lines)
+            # ``rstrip`` so a blank line copied out of the original block
+            # comes back blank rather than as an indent-only line, and each
+            # child keeps whatever extra indentation it carried RELATIVE to
+            # the block's first child — that relative depth is the nesting.
+            out.extend(
+                f"{child_indent}{line}".rstrip() for line in entry.provider_lines
+            )
         elif entry.provider_scalar is not None:
             out.append(f"{field_indent}provider: {entry.provider_scalar}")
         if entry.reasoning_effort:

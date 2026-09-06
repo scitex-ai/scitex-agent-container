@@ -1,4 +1,4 @@
-"""Plan and apply the ``spec.engines`` sweep — three outcomes, never two.
+"""Plan the ``spec.engines`` sweep — five outcomes, never two.
 
 The ``to_home_layers`` kit next door plans a ONE-LINE insert, so its
 :class:`.._layers_migration_model.MigrationPlan` calls any edit touching other
@@ -18,34 +18,35 @@ reported:
   ``unreadable``        the file could not be read at all. This never reached
                         the editor, so the plan does not describe the sweep;
                         it makes the plan unsafe.
+  ``held-back``         migratable, and past this run's ``--limit``. Counted
+                        and named, because a batch that does not say what it
+                        deferred reads exactly like a finished sweep.
 
-THE APPLY GATE IS A MEASUREMENT, NOT AN ARGUMENT. The edit restates the
-backend a spec already declares, so it cannot change what an agent starts on
-— that is the argument, and an argument has never stopped a bulk edit from
-being wrong. So the apply loads every selected spec through the production
-loader BEFORE writing, writes, loads them all again, and RESTORES EVERY
-ORIGINAL unless the effective backend (harness, model, provider endpoint,
-pinned account) is identical for every one. A spec it could not load on
-either side blocks the sweep instead of being skipped.
+NO FILTER MAY SILENTLY DROP A SPEC. ``--host`` reads each spec to decide,
+and a spec it cannot read is KEPT rather than excluded — an unreadable spec
+that vanishes from the selection is the "118 done over a fleet of 119"
+failure, and it would make the batching flag the thing that disarms the
+guard against an unsafe apply.
 
-Originals are archived before the first byte changes, so the rollback is a
-copy-back and not a reconstruction.
+The writing half — the archive, the atomic write, the measured gate and the
+rollback — lives in :mod:`._engines_apply`.
 """
 
 from __future__ import annotations
 
 import difflib
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 from ..config._engines_line import REFUSED_ALREADY_DECLARED, migrate_engines_block
+from ._engines_apply import ApplyResult, apply_engines_migration
 from ._roster_state import inspect_roster
 
 __all__ = [
     "STATE_ALREADY",
+    "STATE_HELD_BACK",
     "STATE_MIGRATED",
     "STATE_REFUSED",
     "STATE_UNREADABLE",
@@ -54,6 +55,7 @@ __all__ = [
     "SpecOutcome",
     "apply_engines_migration",
     "plan_engines_migration",
+    "read_spec_text",
     "select_spec_paths",
 ]
 
@@ -61,6 +63,10 @@ STATE_MIGRATED = "migrated"
 STATE_ALREADY = "already-migrated"
 STATE_REFUSED = "refused"
 STATE_UNREADABLE = "unreadable"
+#: Migratable, but beyond this run's ``--limit``. A fifth bucket rather than
+#: a silent drop: a batch that does not say what it held back is a batch a
+#: scheduled runner mistakes for a finished sweep.
+STATE_HELD_BACK = "held-back"
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,23 @@ class EnginesPlan:
         return self._of(STATE_UNREADABLE)
 
     @property
+    def held_back(self) -> "tuple[SpecOutcome, ...]":
+        return self._of(STATE_HELD_BACK)
+
+    @property
+    def is_complete(self) -> bool:
+        """Is there NOTHING left for a further run of this sweep to do?
+
+        The only question a scheduled runner actually wants answered, and it
+        is not ``exit 0`` and not ``applied``. A run that wrote nothing
+        because everything was refused, or because ``--limit`` held the rest
+        back, is a run that did its job and left the migration unfinished.
+        """
+        if self.roster is not None and not self.roster.is_populated:
+            return False
+        return not (self.migrated or self.held_back or self.refused or self.unreadable)
+
+    @property
     def safe_to_apply(self) -> bool:
         """Refusals do NOT make a plan unsafe. An unsearched roster does.
 
@@ -133,6 +156,11 @@ class EnginesPlan:
             f"{len(self.migrated)} would be migrated",
             f"{len(self.already)} already migrated",
         ]
+        if self.held_back:
+            parts.append(
+                f"{len(self.held_back)} held back by --limit — run again to "
+                f"take the next batch"
+            )
         if self.refused:
             names = ", ".join(sorted(o.agent for o in self.refused))
             parts.append(f"{len(self.refused)} REFUSED ({names})")
@@ -141,16 +169,39 @@ class EnginesPlan:
         return "; ".join(parts)
 
 
-def _spec_hosts(path: Path) -> "set[str]":
-    """Every host a spec places itself on. Empty when it says nothing."""
+def read_spec_text(path: Path) -> str:
+    """A spec's text with its LINE ENDINGS INTACT.
+
+    ``Path.read_text`` opens in universal-newline mode, which silently turns
+    every ``\\r\\n`` into ``\\n`` before the caller sees a byte. A CRLF spec
+    read that way and written back is rewritten END TO END — the
+    unreviewable whole-file diff the operator asked this sweep to avoid —
+    and ``_yaml_line_edit.split_ending``'s CRLF handling becomes unreachable
+    because the ``\\r`` is already gone. ``newline=""`` is what makes that
+    machinery real rather than decorative.
+    """
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _spec_hosts(path: Path) -> "set[str] | None":
+    """Every host a spec places itself on.
+
+    ``set()`` means the spec was read and places itself nowhere. ``None``
+    means it COULD NOT BE READ — a different answer, and the one the host
+    filter must not confuse with "no match": an unreadable spec that vanishes
+    from the selection is the "118 done over a fleet of 119" failure, and
+    ``--host`` would then be the flag that disables the guard blocking an
+    unsafe apply.
+    """
     try:
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(read_spec_text(path))
     except (
         OSError,
         UnicodeDecodeError,
         yaml.YAMLError,
     ):  # stx-allow: fallback (reason: an unreadable spec must reach the PLAN as unreadable, not vanish from the selection filter)
-        return set()
+        return None
     spec = (doc or {}).get("spec") or {}
     hosts = {str(spec.get("host"))} if spec.get("host") else set()
     declared = spec.get("hosts")
@@ -159,21 +210,33 @@ def _spec_hosts(path: Path) -> "set[str]":
     return hosts
 
 
+def _on_a_wanted_host(path: Path, wanted: "set[str]") -> bool:
+    """Keep a spec the host filter cannot rule out, so the PLAN reports it."""
+    hosts = _spec_hosts(path)
+    if hosts is None:
+        return True
+    return bool(hosts & wanted)
+
+
 def select_spec_paths(
     root: Path,
     *,
     hosts: "tuple[str, ...]" = (),
     agents: "tuple[str, ...]" = (),
     templates: bool = False,
-    limit: "int | None" = None,
 ) -> "tuple[list[Path], list[str]]":
     """Which specs THIS run touches, plus the template names it left out.
 
     Batching is the operator's own condition for trusting a 119-file rewrite:
-    ``agents`` names an explicit set, ``hosts`` takes one machine at a time,
-    and ``limit`` caps the batch whatever the other two selected. The order is
-    sorted so a dry-run and the apply that follows it agree on which specs the
-    cap kept.
+    ``agents`` names an explicit set and ``hosts`` takes one machine at a
+    time. The order is sorted so a dry-run and the apply that follows it
+    agree on what they are looking at.
+
+    THE BATCH SIZE IS NOT HERE. ``--limit`` caps what gets WRITTEN, and
+    which specs those are is only knowable after planning — see
+    :func:`plan_engines_migration`. Capping the glob instead re-selected the
+    same first N on every run, so the second batch wrote nothing and
+    reported the sweep complete.
     """
     every = sorted(Path(root).glob("*/spec.yaml"))
     skipped = [p.parent.name for p in every if p.parent.name.startswith("_")]
@@ -183,9 +246,7 @@ def select_spec_paths(
         picked = [p for p in picked if p.parent.name in wanted]
     if hosts:
         wanted_hosts = set(hosts)
-        picked = [p for p in picked if _spec_hosts(p) & wanted_hosts]
-    if limit is not None:
-        picked = picked[:limit]
+        picked = [p for p in picked if _on_a_wanted_host(p, wanted_hosts)]
     return picked, ([] if templates else skipped)
 
 
@@ -193,7 +254,7 @@ def plan_spec(path: Path) -> SpecOutcome:
     """Plan ONE spec. Reads it; writes nothing."""
     agent = path.parent.name
     try:
-        before = path.read_text()
+        before = read_spec_text(path)
     except (
         OSError,
         UnicodeDecodeError,
@@ -227,113 +288,57 @@ def plan_spec(path: Path) -> SpecOutcome:
     )
 
 
+def _cap_batch(
+    outcomes: "tuple[SpecOutcome, ...]", limit: "int | None"
+) -> "tuple[SpecOutcome, ...]":
+    """Hold back every migratable outcome past the ``limit``-th one.
+
+    THE CAP IS ON WHAT IS WRITTEN, not on what is looked at, and that is the
+    whole difference between a batch flag that advances and one that cannot.
+    Already-migrated, refused and unreadable specs do not consume the budget:
+    they cost no write, and letting them consume it is how ``--limit 2``
+    stalls forever on two permanently-refused specs.
+    """
+    if limit is None:
+        return outcomes
+    budget = limit
+    capped: list[SpecOutcome] = []
+    for outcome in outcomes:
+        if outcome.state == STATE_MIGRATED:
+            if budget <= 0:
+                capped.append(
+                    SpecOutcome(
+                        outcome.agent,
+                        outcome.path,
+                        STATE_HELD_BACK,
+                        reason="held back by --limit",
+                        engine_keys=outcome.engine_keys,
+                        default_key=outcome.default_key,
+                    )
+                )
+                continue
+            budget -= 1
+        capped.append(outcome)
+    return tuple(capped)
+
+
 def plan_engines_migration(
     spec_paths: "list[Path]",
     *,
     root: "Path | None" = None,
     skipped_templates: "list[str]" = (),
+    limit: "int | None" = None,
 ) -> EnginesPlan:
     """What the sweep WOULD do over ``spec_paths``. Reads only."""
+    if limit is not None and limit < 1:
+        raise ValueError(
+            f"limit must be a positive count of specs to write; got {limit!r}. "
+            "A Python slice accepts a negative bound and would silently drop "
+            "the LAST spec instead of taking the first one."
+        )
     paths = list(spec_paths)
     return EnginesPlan(
-        outcomes=tuple(plan_spec(p) for p in paths),
+        outcomes=_cap_batch(tuple(plan_spec(p) for p in paths), limit),
         roster=inspect_roster(root, paths),
         skipped_templates=tuple(skipped_templates),
-    )
-
-
-@dataclass(frozen=True)
-class ApplyResult:
-    """What the apply actually did."""
-
-    written: "tuple[str, ...]" = ()
-    archive_dir: "Path | None" = None
-    applied: bool = False
-    refused: str = ""
-    rolled_back: str = ""
-    drift: "tuple[str, ...]" = ()
-
-
-def _backend_snapshot(path: Path):
-    """The effective backend this spec resolves to, through the real loader."""
-    from ..config import load_config
-
-    config = load_config(path)
-    claude = getattr(config, "claude", None)
-    provider = getattr(claude, "provider", None)
-    endpoint = None
-    if provider is not None:
-        endpoint = (
-            str(getattr(provider, "base_url", "") or ""),
-            str(getattr(provider, "auth_token_env", "") or ""),
-        )
-    return (
-        str(getattr(config, "harness", "") or ""),
-        str(getattr(claude, "model", "") or ""),
-        endpoint,
-        str(getattr(claude, "account", "") or ""),
-    )
-
-
-def _snapshot_all(paths):
-    """``(snapshots, unmeasurable)`` — a spec that will not load is named."""
-    snapshots: dict[str, object] = {}
-    unmeasurable: list[str] = []
-    for path in paths:
-        try:
-            snapshots[str(path)] = _backend_snapshot(path)
-        except Exception as exc:  # stx-allow: fallback (reason: a spec the loader rejects is UNMEASURABLE, the honest third value; enumerating loader exception types would turn any new one into a crash mid-sweep)
-            unmeasurable.append(f"{path.parent.name}: {type(exc).__name__}: {exc}")
-    return snapshots, unmeasurable
-
-
-def apply_engines_migration(plan: EnginesPlan, archive_dir: Path) -> ApplyResult:
-    """Archive, write, re-measure, and undo unless the backends are identical."""
-    targets = list(plan.migrated)
-    if not targets:
-        return ApplyResult(applied=True)
-    paths = [o.path for o in targets]
-
-    before, unmeasurable = _snapshot_all(paths)
-    if unmeasurable:
-        # Refuse BEFORE writing. The gate would catch this afterwards too, but
-        # writing N files to learn something knowable beforehand is a rollback
-        # waiting to be needed, not a safety property.
-        return ApplyResult(
-            refused=(
-                f"{len(unmeasurable)} spec(s) could not be loaded BEFORE the "
-                f"sweep, so no post-write comparison could prove them "
-                f"unchanged: " + "; ".join(unmeasurable)
-            )
-        )
-
-    archive_dir = Path(archive_dir)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    for outcome in targets:
-        shutil.copy2(outcome.path, archive_dir / f"{outcome.agent}.spec.yaml")
-    for outcome in targets:
-        outcome.path.write_text(outcome.new_text or "")
-
-    after, still_unmeasurable = _snapshot_all(paths)
-    drift = [
-        f"{Path(key).parent.name}: {before[key]!r} -> {after[key]!r}"
-        for key in before
-        if key in after and after[key] != before[key]
-    ]
-    if still_unmeasurable or drift:
-        for outcome in targets:
-            shutil.copy2(archive_dir / f"{outcome.agent}.spec.yaml", outcome.path)
-        return ApplyResult(
-            archive_dir=archive_dir,
-            rolled_back=(
-                f"{len(drift)} spec(s) changed backend and "
-                f"{len(still_unmeasurable)} stopped loading; every original was "
-                f"restored from {archive_dir}"
-            ),
-            drift=tuple(drift + still_unmeasurable),
-        )
-    return ApplyResult(
-        written=tuple(o.agent for o in targets),
-        archive_dir=archive_dir,
-        applied=True,
     )

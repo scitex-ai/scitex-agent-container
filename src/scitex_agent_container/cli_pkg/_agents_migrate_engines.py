@@ -15,20 +15,33 @@ answer that and they are the command's shape:
 
   * **Dry-run is the DEFAULT.** ``--apply`` is the deliberate act, and the
     dry-run prints a real unified diff per spec rather than a count to trust.
-  * **Batches.** ``--agent`` names an explicit set, ``--host`` takes one
-    machine at a time, ``--limit`` caps whatever those selected. Nobody has
-    to rewrite 119 files to rewrite one.
+  * **Batches that ADVANCE.** ``--agent`` names an explicit set, ``--host``
+    takes one machine at a time, and ``--limit N`` caps what gets WRITTEN —
+    not what gets examined — so running the same command again takes the
+    NEXT N. Capping the selection instead re-picked the same first N
+    forever: batch two wrote nothing and announced a completed sweep.
   * **A measured gate on the apply.** Every selected spec is loaded through
     the production loader before the write and again after; unless the
     effective backend is identical for every one, every original is restored
-    from the archive taken first.
+    from the archive taken first. Every write is a temp file plus
+    ``os.replace``, and a failure part-way rolls the batch back instead of
+    aborting the process on a traceback over a half-migrated fleet.
 
 An unmigratable spec is REFUSED BY NAME with its reason, never skipped —
-skipping is how a sweep reports 118 done over a fleet of 119.
+skipping is how a sweep reports 118 done over a fleet of 119. No filter may
+make one vanish either: ``--host`` KEEPS a spec it could not read, so it
+reaches the plan as unreadable rather than out of the count.
+
+**Where it writes.** ``--root``, else ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR``,
+else ``$HOME/.scitex/agent-container/agents`` — the LIVE copy, which is not a
+git checkout and, inside a container, is not the host's ``$HOME``. Every
+report names the root it searched.
 
 **Exit codes.** ``0`` the plan is sound (a named refusal is NOT a failure),
 ``1`` a spec is unreadable or no roster was searched, ``2`` the apply was
-refused or rolled back.
+refused or rolled back. ``exit 0`` does NOT mean the migration is finished —
+a run whose every spec was refused also exits 0. ``migration_complete`` in
+``--json`` is the field that answers that question.
 
 ``--preflight`` probes the gateway the migration points at and reports a
 NAMED state rather than a boolean, because the two failure shapes look
@@ -42,31 +55,28 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from pathlib import Path as _Path
 
 import click
-from rich.markup import escape
 
 from .._maintenance._engines_migration import (
     apply_engines_migration,
     plan_engines_migration,
     select_spec_paths,
 )
+from ._agents_migrate_engines_report import (
+    plan_payload,
+    preflight_payload,
+    render_apply,
+    render_diffs,
+    render_plan,
+    render_preflight,
+)
 from ._helpers import _json_flag, console
 
 _EXIT_OK = 0
 _EXIT_PLAN_UNSOUND = 1
 _EXIT_APPLY_REFUSED = 2
-
-
-def _lit(text: str) -> str:
-    """Escape before printing through rich.
-
-    Not habit — MEASURED on the sibling sweep: a value rendering as
-    ``[user-shared]`` is parsed by rich as a style tag and SWALLOWED, so a
-    report printed a correct histogram with every row blank. Engine keys and
-    model ids here include ``opus[1m]``, which is exactly that shape.
-    """
-    return escape(str(text))
 
 
 def _archive_dir():
@@ -76,149 +86,18 @@ def _archive_dir():
     return runtime_base_dir() / "engines-migration" / stamp
 
 
-def _preflight_payload() -> dict:
-    """Probe the gateway the migration writes into every spec."""
-    from ..config._engine_reach import reach_verdict
-    from ..config._qwen_gateway import QWEN_GATEWAY_PROVIDER, qwen_gateway_url
+def _complete_after_apply(plan, result) -> bool:
+    """Is the migration finished, given what this apply actually did?
 
-    url = qwen_gateway_url()
-    verdict = reach_verdict(url)
-    return {
-        "provider": QWEN_GATEWAY_PROVIDER,
-        "url": url,
-        "state": verdict.state,
-        "detail": verdict.detail,
-        "http_status": verdict.http_status,
-        "proves_listening": verdict.proves_listening,
-        "proves_absent": verdict.proves_absent,
-        "undetermined": verdict.undetermined,
-    }
-
-
-def _render_preflight(payload: dict) -> None:
-    colour = "green" if payload["proves_listening"] else "red"
-    if payload["undetermined"]:
-        colour = "yellow"
-    console.print(
-        f"[bold]gateway preflight[/bold] {_lit(payload['url'])} "
-        f"([{colour}]{_lit(payload['state'])}[/{colour}])\n"
-        f"  {_lit(payload['detail'])}",
-        soft_wrap=True,
-    )
-    if payload["undetermined"]:
-        console.print(
-            "  [dim]UNDETERMINED is not a negative. Nothing here says the "
-            "gateway is down.[/dim]",
-            soft_wrap=True,
-        )
-
-
-def _plan_payload(plan, root) -> dict:
-    return {
-        "root": str(root),
-        "roster": plan.roster.state if plan.roster else None,
-        "specs": len(plan.outcomes),
-        "would_migrate": len(plan.migrated),
-        "already_migrated": [o.agent for o in plan.already],
-        "refused": [
-            {"agent": o.agent, "reason": o.reason, "detail": o.detail}
-            for o in plan.refused
-        ],
-        "unreadable": [{"agent": o.agent, "detail": o.detail} for o in plan.unreadable],
-        "skipped_templates": list(plan.skipped_templates),
-        "engine_sets": _engine_histogram(plan),
-        "safe_to_apply": plan.safe_to_apply,
-        "summary": plan.summary(),
-    }
-
-
-def _engine_histogram(plan) -> "dict[str, int]":
-    hist: dict[str, int] = {}
-    for outcome in plan.migrated:
-        key = ", ".join(outcome.engine_keys)
-        hist[key] = hist.get(key, 0) + 1
-    return dict(sorted(hist.items(), key=lambda kv: (-kv[1], kv[0])))
-
-
-def _render_plan(plan, payload: dict, *, diff: bool) -> None:
+    Distinct from ``plan.is_complete``, which is the question BEFORE the
+    write: a successful apply retires the ``migrated`` bucket, and what is
+    left is whatever no further write of this batch can clear.
+    """
+    if not result.applied:
+        return False
     if plan.roster is not None and not plan.roster.is_populated:
-        console.print(f"[red]NO ROSTER SEARCHED[/red] — {_lit(plan.roster.describe())}")
-        return
-    console.print(
-        f"[bold]{payload['specs']} spec(s)[/bold] under {_lit(payload['root'])} — "
-        f"{payload['would_migrate']} would gain a spec.engines block\n"
-    )
-    for keys, count in payload["engine_sets"].items():
-        console.print(f"  [green]{count:4d}[/green]  engines: {_lit(keys)}")
-    if payload["already_migrated"]:
-        console.print(
-            f"\n[dim]{len(payload['already_migrated'])} spec(s) already declare "
-            f"spec.engines — nothing to do for those.[/dim]"
-        )
-    for entry in payload["refused"]:
-        console.print(
-            f"\n[yellow]REFUSED[/yellow] {_lit(entry['agent'])}: "
-            f"{_lit(entry['reason'])}",
-            soft_wrap=True,
-        )
-        if entry["detail"]:
-            console.print(f"    [dim]{_lit(entry['detail'])}[/dim]", soft_wrap=True)
-    for entry in payload["unreadable"]:
-        console.print(
-            f"\n[red]UNREADABLE[/red] {_lit(entry['agent'])}: {_lit(entry['detail'])}",
-            soft_wrap=True,
-        )
-    if payload["skipped_templates"]:
-        # Named, never silent: `sac agents create` copies these, so a template
-        # left behind re-introduces the legacy shape on every agent made after
-        # the sweep — the migration would then never finish.
-        console.print(
-            f"\n[yellow]NOT SEARCHED[/yellow] "
-            f"{len(payload['skipped_templates'])} template spec(s) "
-            f"({_lit(', '.join(payload['skipped_templates']))}). "
-            f"`sac agents create` copies them, so an unmigrated template "
-            f"re-introduces the legacy shape on every new agent. Pass "
-            f"--templates to include them.",
-            soft_wrap=True,
-        )
-    if diff:
-        for outcome in plan.migrated:
-            console.print(f"\n[bold]{_lit(outcome.agent)}[/bold]")
-            console.print(_lit(outcome.diff), soft_wrap=True, highlight=False)
-    console.print(f"\n[bold]{_lit(payload['summary'])}[/bold]")
-
-
-def _render_apply(result, payload: dict) -> None:
-    if result.applied and not result.written:
-        # Names the population it is making this claim about. The unqualified
-        # form of this sentence was printed by a sibling sweep that had
-        # discovered ZERO specs; an assertion that a migration is FINISHED is
-        # the last place to omit what it counted.
-        console.print(
-            f"[green]Nothing to write[/green] — all "
-            f"{payload['specs']} spec(s) under {_lit(payload['root'])} already "
-            f"declare spec.engines. The sweep is idempotent; this is what a "
-            f"completed one looks like."
-        )
-        return
-    if result.applied:
-        console.print(
-            f"[green]APPLIED[/green] {len(result.written)} spec(s) written and "
-            f"verified — every one still resolves the SAME backend.\n"
-            f"  [dim]originals archived at {_lit(result.archive_dir)}[/dim]"
-        )
-        return
-    if result.rolled_back:
-        console.print(
-            f"[red]ROLLED BACK[/red] — {_lit(result.rolled_back)}", soft_wrap=True
-        )
-        for entry in result.drift:
-            console.print(f"    [magenta]{_lit(entry)}[/magenta]", soft_wrap=True)
-        return
-    console.print(
-        f"[red]REFUSED[/red] — nothing was written.\n  {_lit(result.refused)}",
-        soft_wrap=True,
-    )
+        return False
+    return not (plan.held_back or plan.refused or plan.unreadable)
 
 
 @click.command(name="migrate-engines")
@@ -256,7 +135,22 @@ def _render_apply(result, payload: dict) -> None:
     type=int,
     default=None,
     metavar="N",
-    help="Cap the batch at N specs, after --agent/--host have selected.",
+    help=(
+        "Write at most N specs this run. Already-migrated and refused specs "
+        "do not consume the cap, so repeating the command ADVANCES."
+    ),
+)
+@click.option(
+    "--root",
+    "root_opt",
+    type=click.Path(file_okay=False, path_type=_Path),
+    default=None,
+    metavar="DIR",
+    help=(
+        "The agents/ directory to sweep. Defaults to "
+        "$SCITEX_AGENT_CONTAINER_AGENTS_DIR, else $HOME/.scitex/agent-container"
+        "/agents — which inside a container is NOT the host's."
+    ),
 )
 @click.option(
     "--templates",
@@ -284,6 +178,7 @@ def migrate_engines(
     agents: "tuple[str, ...]",
     hosts: "tuple[str, ...]",
     limit: "int | None",
+    root_opt: "_Path | None",
     templates: bool,
     diff: bool,
     preflight: bool,
@@ -303,47 +198,67 @@ def migrate_engines(
       $ sac agents migrate-engines
       $ sac agents migrate-engines --no-diff --json
     \b
-    In batches:
+    In batches (`--limit` advances: run it again for the next N):
       $ sac agents migrate-engines -a business -a handyman-02
       $ sac agents migrate-engines --host scitex-compute-04 --limit 5 --apply
+    \b
+    Somewhere other than the live copy:
+      $ sac agents migrate-engines --root ~/.dotfiles/src/.scitex/agent-container/agents
     \b
     Gateway reachability, three-valued:
       $ sac agents migrate-engines --preflight --no-diff
 
+    WHERE IT WRITES. `--root`, else $SCITEX_AGENT_CONTAINER_AGENTS_DIR, else
+    $HOME/.scitex/agent-container/agents — the LIVE copy, which is not a git
+    checkout and, inside a container, is not the host's $HOME either. Every
+    report names the root it searched; pass `--root` to sweep the tracked
+    tree instead.
+
     Exits 0 when the plan is sound (a named REFUSAL is not a failure), 1 when a
     spec is unreadable or no roster was searched, 2 when the apply was refused
-    or rolled back.
+    or rolled back. `migration_complete` in --json is the answer to "is the
+    sweep finished" — the exit code is not.
     """
     if apply and dry_run:
         raise click.UsageError(
             "--apply and --dry-run are contradictory. Dry-run is the DEFAULT: "
             "drop both flags to preview, pass --apply to write."
         )
+    if limit is not None and limit < 1:
+        # A bare slice accepted this: `--limit -1` silently dropped the LAST
+        # spec and reported success, so a typo turned "one spec" into "all
+        # but one".
+        raise click.UsageError(
+            f"--limit must be a positive number of specs to write; got {limit}."
+        )
 
     from .._maintenance._layers_migration_plan import fleet_agents_dir
 
-    root = fleet_agents_dir()
+    root = _Path(root_opt) if root_opt is not None else fleet_agents_dir()
     paths, skipped = select_spec_paths(
-        root, hosts=hosts, agents=agents, templates=templates, limit=limit
+        root, hosts=hosts, agents=agents, templates=templates
     )
-    plan = plan_engines_migration(paths, root=root, skipped_templates=skipped)
-    payload = _plan_payload(plan, root)
+    plan = plan_engines_migration(
+        paths, root=root, skipped_templates=skipped, limit=limit
+    )
+    payload = plan_payload(plan, root)
     payload["mode"] = "apply" if apply else "dry-run"
-    payload["preflight"] = _preflight_payload() if preflight else None
+    payload["preflight"] = preflight_payload() if preflight else None
+
+    if diff:
+        payload["diffs"] = {o.agent: o.diff for o in plan.migrated}
 
     if not apply:
         code = _EXIT_OK if plan.safe_to_apply else _EXIT_PLAN_UNSOUND
         payload["exit_code"] = code
-        if diff:
-            payload["diffs"] = {o.agent: o.diff for o in plan.migrated}
         if _json_flag(ctx, as_json):
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(code)
         console.print("[bold]sac agents migrate-engines[/bold]  dry-run (read-only)\n")
         if payload["preflight"]:
-            _render_preflight(payload["preflight"])
+            render_preflight(payload["preflight"])
             console.print("")
-        _render_plan(plan, payload, diff=diff)
+        render_plan(plan, payload, diff=diff)
         if plan.migrated:
             console.print(
                 "\nNothing was written — this is a dry-run. To act:\n"
@@ -358,7 +273,7 @@ def migrate_engines(
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_PLAN_UNSOUND)
         console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
-        _render_plan(plan, payload, diff=False)
+        render_plan(plan, payload, diff=diff)
         console.print(
             "\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
             "describe every spec does not describe the sweep."
@@ -375,6 +290,8 @@ def migrate_engines(
             "apply_refused": result.refused,
             "rolled_back": result.rolled_back,
             "drift": list(result.drift),
+            "errors": list(result.errors),
+            "migration_complete": _complete_after_apply(plan, result),
             "exit_code": code,
         }
     )
@@ -382,7 +299,13 @@ def migrate_engines(
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
     console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
-    _render_apply(result, payload)
+    if diff:
+        # `--diff` is on by DEFAULT and its help calls it "the whole point".
+        # It used to be accepted and dropped on this path, so an operator who
+        # believed they were reviewing what was written saw nothing at all.
+        render_diffs(plan)
+        console.print("")
+    render_apply(result, payload)
     raise SystemExit(code)
 
 

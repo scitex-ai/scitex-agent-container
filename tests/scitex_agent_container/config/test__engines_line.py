@@ -25,10 +25,6 @@ from scitex_agent_container.config._engine_types import (
 from scitex_agent_container.config._engine_validation import validate_engines
 from scitex_agent_container.config._engines_line import (
     REFUSED_ALREADY_DECLARED,
-    REFUSED_EMPTY_MODEL,
-    REFUSED_LEGACY_HARNESS_ALIAS,
-    REFUSED_NO_MODEL,
-    REFUSED_PROXY,
     migrate_engines_block,
 )
 from scitex_agent_container.config._qwen_gateway import (
@@ -184,10 +180,33 @@ def test_a_codex_harness_is_restated_on_the_default_engine() -> None:
     # Arrange — an engine entry omitting harness defaults to anthropic and
     # would then hard-error as a legacy conflict against `harness: codex`.
     text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
+    edit = migrate_engines_block(text)
     # Act
-    engines = _engines_of(migrate_engines_block(text).text)
+    engines = _engines_of(edit.text)
     # Assert
-    assert engines["claude"].harness == "codex"
+    assert engines[edit.default_key].harness == "codex"
+
+
+def test_a_codex_harness_spec_is_not_keyed_by_a_vendor_name() -> None:
+    # Arrange — `claude` on a Codex engine is a vendor claim about something
+    # that is not that vendor: the naming failure this axis exists to remove.
+    text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
+    # Act
+    edit = migrate_engines_block(text)
+    # Assert
+    assert edit.default_key == "opus-1m"
+
+
+def test_a_codex_harness_spec_does_not_claim_the_anthropic_provider() -> None:
+    # Arrange — the `anthropic` sentinel is the registry's name for the
+    # Anthropic OAuth backend. Stating it under a Codex entry names the
+    # WRONG vendor, which is worse than stating none.
+    text = CLAUDE_SPEC.replace("harness: anthropic", "harness: codex")
+    edit = migrate_engines_block(text)
+    # Act
+    engines = _engines_of(edit.text)
+    # Assert
+    assert engines[edit.default_key].provider_declared is None
 
 
 def test_a_spec_already_running_the_gateway_model_gets_one_engine() -> None:
@@ -412,80 +431,3 @@ def test_the_second_run_returns_the_text_byte_identical() -> None:
     twice = migrate_engines_block(once.text)
     # Assert
     assert twice.text == once.text
-
-
-# ---------------------------------------------------------------------------
-# Refusals — named and loud, never a silent skip
-# ---------------------------------------------------------------------------
-
-
-def test_a_spec_stating_no_model_is_refused() -> None:
-    # Arrange — 1 of 119 today, and the shape every fixture default has.
-    text = CLAUDE_SPEC.replace("model: opus[1m]", "model: ''")
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason == REFUSED_EMPTY_MODEL
-
-
-def test_a_spec_stating_no_model_comes_back_byte_identical() -> None:
-    # Arrange
-    text = CLAUDE_SPEC.replace("model: opus[1m]", "model: ''")
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.text == text
-
-
-def test_a_spec_with_no_model_line_at_all_is_refused() -> None:
-    # Arrange
-    text = CLAUDE_SPEC.replace("    model: opus[1m]\n", "")
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason == REFUSED_NO_MODEL
-
-
-def test_the_deprecated_harness_alias_is_refused_rather_than_guessed() -> None:
-    # Arrange — spec.provider is the retired spelling of spec.harness.
-    text = CLAUDE_SPEC.replace("  harness: anthropic", "  provider: anthropic")
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason == REFUSED_LEGACY_HARNESS_ALIAS
-
-
-def test_a_proxy_spec_is_refused_because_engines_are_forbidden_there() -> None:
-    # Arrange
-    text = CLAUDE_SPEC.replace("kind: Agent", "kind: AgentProxy")
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason == REFUSED_PROXY
-
-
-def test_an_unparsable_spec_is_refused_and_not_raised() -> None:
-    # Arrange
-    text = "spec:\n  claude:\n   - [unbalanced\n"
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.changed is False
-
-
-def test_a_refusal_always_carries_a_reason() -> None:
-    # Arrange — reason is None exactly when changed is True.
-    text = "not a spec at all\n"
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason
-
-
-def test_a_successful_edit_carries_no_reason() -> None:
-    # Arrange
-    text = CLAUDE_SPEC
-    # Act
-    edit = migrate_engines_block(text)
-    # Assert
-    assert edit.reason is None

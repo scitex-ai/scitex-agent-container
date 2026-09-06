@@ -17,11 +17,14 @@ from ._container import parse_container
 from ._extensions import parse_extensions
 from ._health import parse_health
 from ._helpers import (
+    DEFAULT_MODEL,
     HOOK_KEYS,
     MODEL_DISPLAY_NAMES,
+    MODEL_ENV_KEY,
     _parse_command_list,
     get_nested,
     interpolate_metadata,
+    resolve_model_surface,
 )
 from ._hooks import parse_hooks
 from ._hosts import _VALID_SCHEDULING_MODES, parse_hosts_spec, parse_scheduling
@@ -34,8 +37,10 @@ from ._startup import parse_startup_commands
 from ._watchdog import parse_watchdog
 
 __all__ = [
+    "DEFAULT_MODEL",
     "HOOK_KEYS",
     "MODEL_DISPLAY_NAMES",
+    "MODEL_ENV_KEY",
     "get_nested",
     "interpolate_mcp_servers",
     "interpolate_metadata",
@@ -57,4 +62,5 @@ __all__ = [
     "parse_skills",
     "parse_startup_commands",
     "parse_watchdog",
+    "resolve_model_surface",
 ]

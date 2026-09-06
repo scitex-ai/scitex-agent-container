@@ -15,6 +15,9 @@ from scitex_agent_container.config._yaml_line_edit import (
     find_block,
     find_key,
     insert_after,
+    is_skippable,
+    last_content_line,
+    parse_key_line,
     split_ending,
 )
 
@@ -148,3 +151,139 @@ def test_an_unterminated_anchor_gains_a_terminator() -> None:
     insert_after(lines, 2, "    ", "host", "127.0.0.1")
     # Assert
     assert "".join(lines).endswith("    port: auto\n    host: 127.0.0.1\n")
+
+
+# ---------------------------------------------------------------------------
+# parse_key_line — the ONE regex a value-reader is allowed to use
+# ---------------------------------------------------------------------------
+
+
+def test_parse_key_line_returns_the_value() -> None:
+    # Arrange
+    body = "    model: opus[1m]"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed.value == "opus[1m]"
+
+
+def test_parse_key_line_returns_the_key() -> None:
+    # Arrange
+    body = "    model: opus[1m]"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed.key == "model"
+
+
+def test_parse_key_line_returns_the_indent() -> None:
+    # Arrange
+    body = "    model: opus[1m]"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed.indent == "    "
+
+
+def test_parse_key_line_reports_a_block_key_as_an_empty_value() -> None:
+    # Arrange — "" is what tells a caller this key opens a block.
+    body = "  claude:"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed.value == ""
+
+
+def test_parse_key_line_refuses_a_sequence_item() -> None:
+    # Arrange — an unfamiliar shape must become a refusal, not a guess.
+    body = "  - command: run"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed is None
+
+
+def test_parse_key_line_refuses_a_comment() -> None:
+    # Arrange
+    body = "  # model: opus[1m]"
+    # Act
+    parsed = parse_key_line(body)
+    # Assert
+    assert parsed is None
+
+
+# ---------------------------------------------------------------------------
+# last_content_line — where a multi-line replacement must STOP
+# ---------------------------------------------------------------------------
+
+_BLOCK = """\
+spec:
+  provider:
+    base_url: http://127.0.0.1:4000
+    auth_token_env: TOKEN
+
+  # the account below is pinned deliberately
+  account: ''
+"""
+
+
+def test_last_content_line_finds_the_final_child() -> None:
+    # Arrange — the block's `stop` is the next SIBLING key, so replacing
+    # through it would eat the blank and comment introducing that sibling.
+    bodies = _bodies(_BLOCK)
+    block = find_block(bodies, ("spec", "provider"))
+    # Act
+    end = last_content_line(bodies, block.start, block.stop)
+    # Assert
+    assert bodies[end] == "    auth_token_env: TOKEN"
+
+
+def test_last_content_line_stops_before_the_next_keys_comment() -> None:
+    # Arrange — this is the riskiest span computation in the engines edit.
+    bodies = _bodies(_BLOCK)
+    block = find_block(bodies, ("spec", "provider"))
+    # Act
+    end = last_content_line(bodies, block.start, block.stop)
+    # Assert
+    assert "# the account below" not in "".join(bodies[block.start : end + 1])
+
+
+def test_last_content_line_is_none_when_the_range_is_all_skippable() -> None:
+    # Arrange
+    bodies = ["", "  # nothing but a note", "   "]
+    # Act
+    end = last_content_line(bodies, 0, 3)
+    # Assert
+    assert end is None
+
+
+# ---------------------------------------------------------------------------
+# is_skippable — "does this line carry structure?", asked once
+# ---------------------------------------------------------------------------
+
+
+def test_a_blank_line_is_skippable() -> None:
+    # Arrange
+    body = "   "
+    # Act
+    answer = is_skippable(body)
+    # Assert
+    assert answer is True
+
+
+def test_a_comment_line_is_skippable() -> None:
+    # Arrange
+    body = "  # PINNED 2026-08-14"
+    # Act
+    answer = is_skippable(body)
+    # Assert
+    assert answer is True
+
+
+def test_a_key_line_is_not_skippable() -> None:
+    # Arrange
+    body = "  claude:"
+    # Act
+    answer = is_skippable(body)
+    # Assert
+    assert answer is False

@@ -341,11 +341,27 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     ``env`` merges ON TOP of ``spec.apptainer.env`` — a per-engine env
     entry is a deliberate override for THIS backend, so it wins over the
     agent-wide value it was written to displace.
+
+    THE TOP-LEVEL MODEL SURFACE FOLLOWS TOO, and it is not decoration.
+    ``_loaders`` derives ``AgentConfig.model`` and the injected
+    ``SCITEX_AGENT_CONTAINER_MODEL`` from the RAW ``spec.claude.model``,
+    which a spec declaring ``engines:`` deliberately leaves empty — so
+    without this the whole fleet reported the ``sonnet`` default while
+    running something else. Measured over the 119-spec corpus: 117 specs
+    flipped to ``'sonnet'`` / ``'Claude Sonnet'`` on migration while
+    ``claude.model`` stayed correct. ``sac agents list`` reads
+    ``config.model`` (``_lifecycle._status``), the tmux runner builds
+    ``--model`` from it, and ``sac whoami`` prints the env — three
+    surfaces lying about one backend.
     """
+    from ._parsers import MODEL_ENV_KEY, resolve_model_surface
+
     config.engine_key = engine.key
     config.harness = engine.harness
     config.reasoning_effort = engine.reasoning_effort
     config.max_context_tokens = engine.max_context_tokens
+    resolved_model, display_model = resolve_model_surface(engine.model)
+    config.model = resolved_model
     claude = getattr(config, "claude", None)
     if claude is not None:
         claude.model = engine.model
@@ -361,10 +377,16 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
         # the account, because OAuth is then the only auth it has.
         if engine.provider is not None:
             claude.account = ""
+    merged = dict(getattr(config, "env", {}) or {})
+    # An EXPLICIT ``spec.apptainer.env`` entry still wins, exactly as it does
+    # over the loader's auto-derived value: this refreshes the DERIVED half,
+    # it does not overrule an author who wrote the key themselves.
+    declared_env = getattr(getattr(config, "apptainer", None), "env", None) or {}
+    if MODEL_ENV_KEY not in declared_env:
+        merged[MODEL_ENV_KEY] = display_model
     if engine.env:
-        merged = dict(getattr(config, "env", {}) or {})
         merged.update(engine.env)
-        config.env = merged
+    config.env = merged
 
 
 def apply_default_engine(

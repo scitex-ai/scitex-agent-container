@@ -65,12 +65,17 @@ def gated_url():
 
 @pytest.fixture
 def closed_url():
-    """A loopback port nothing is listening on — bound, read, then released."""
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    port = probe.getsockname()[1]
-    probe.close()
-    return f"http://127.0.0.1:{port}"
+    """A loopback port nothing is listening on — bound, read, then released.
+
+    The bind is inside a ``with`` so the socket is released even if
+    ``getsockname`` raises, and the fixture ``yield``s rather than returns:
+    a fixture that acquires an external resource and hands it back with
+    ``return`` has no teardown edge at all (STX-TQ005).
+    """
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    yield f"http://127.0.0.1:{port}"
 
 
 # ---------------------------------------------------------------------------

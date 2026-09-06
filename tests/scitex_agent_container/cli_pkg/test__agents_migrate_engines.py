@@ -199,13 +199,23 @@ def test_a_batch_by_host_selects_only_that_hosts_specs(fleet: Path) -> None:
 
 
 def test_limit_caps_the_batch(fleet: Path) -> None:
-    # Arrange
+    # Arrange — the cap is on what gets WRITTEN, not on what is looked at.
     for name in ("alpha", "beta", "gamma"):
         _write_spec(fleet, name)
     # Act
     payload = json.loads(_run("--no-diff", "--json", "--limit", "2").stdout)
     # Assert
-    assert payload["specs"] == 2
+    assert payload["would_migrate"] == 2
+
+
+def test_limit_still_examines_every_selected_spec(fleet: Path) -> None:
+    # Arrange — capping the GLOB is what made a second batch impossible.
+    for name in ("alpha", "beta", "gamma"):
+        _write_spec(fleet, name)
+    # Act
+    payload = json.loads(_run("--no-diff", "--json", "--limit", "2").stdout)
+    # Assert
+    assert payload["specs"] == 3
 
 
 def test_template_specs_are_named_as_not_searched(fleet: Path) -> None:

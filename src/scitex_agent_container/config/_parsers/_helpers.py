@@ -39,6 +39,29 @@ MODEL_DISPLAY_NAMES: dict[str, str] = {
     "haiku": "Claude Haiku",
 }
 
+#: What ``model`` resolves to when nothing states one. Named rather than
+#: repeated: it is applied in TWO places now — the legacy read in
+#: ``_loaders`` and the engine fold in ``_engine_types.apply_engine`` — and
+#: two spellings of a default is how they drift apart.
+DEFAULT_MODEL = "sonnet"
+
+#: The auto-derived env var carrying the DISPLAY form of the resolved model
+#: into the container. Injected into every agent (``SAC_SPEC_ENV_KEYS``) and
+#: printed by ``sac whoami``.
+MODEL_ENV_KEY = "SCITEX_AGENT_CONTAINER_MODEL"
+
+
+def resolve_model_surface(model: "str | None") -> "tuple[str, str]":
+    """``(model, display)`` — the pair every read surface shows.
+
+    One function because the two halves must never disagree: ``sac agents
+    list`` prints the first and the container receives the second, and a
+    model resolved twice by two rules is a fleet reporting one thing and
+    running another.
+    """
+    resolved = str(model or "").strip() or DEFAULT_MODEL
+    return resolved, MODEL_DISPLAY_NAMES.get(resolved, resolved)
+
 
 def get_nested(data: dict, key: str, default: Any = None) -> Any:
     """Traverse a dot-separated key path in a nested dict."""

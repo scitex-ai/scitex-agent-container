@@ -78,11 +78,13 @@ __all__ = [
     "REFUSED_NO_MODEL",
     "REFUSED_NO_SPEC_BLOCK",
     "REFUSED_PROVIDER_COMMENT",
+    "REFUSED_PROVIDER_SHAPE",
     "REFUSED_PROXY",
     "REFUSED_TRAILING_COMMENT",
     "REFUSED_UNNAMEABLE",
     "REFUSED_UNPARSABLE",
     "REFUSED_VERIFY_FAILED",
+    "lost_comment_lines",
     "migrate_engines_block",
 ]
 
@@ -110,6 +112,10 @@ REFUSED_TRAILING_COMMENT = (
 )
 REFUSED_PROVIDER_COMMENT = (
     "spec.claude.provider carries a comment the edit would destroy"
+)
+REFUSED_PROVIDER_SHAPE = (
+    "spec.claude.provider has a child line indented less than its first "
+    "child, a shape this edit will not re-indent blind"
 )
 REFUSED_UNNAMEABLE = "the model yields no usable engine key"
 REFUSED_VERIFY_FAILED = "the migrated text failed its own verification"
@@ -205,10 +211,22 @@ def _insertion_point(bodies: "list[str]", key_line: int, floor: int) -> int:
     and comment run keeps every comment attached to what it describes, and
     lands the block after the previous sibling — the placement the operator's
     own migrated spec uses.
+
+    A COMMENT GLUED TO THE PREVIOUS CONTENT LINE IS NOT AN INTRODUCTION. It
+    is that block's own trailing note (``# ^ the overlay above is per-agent
+    ...``), and hoisting it above 20 lines of engines block makes it a note
+    about the wrong key. Nothing downstream would catch that: ``_verify``
+    compares MULTISETS of comment text, so a comment that MOVED is invisible
+    to it — only a DELETED one is caught. The blank line is the tell: a
+    comment separated from what precedes it introduces what follows, and a
+    comment touching it belongs to it.
     """
     index = key_line
     while index - 1 >= floor and is_skippable(bodies[index - 1]):
         index -= 1
+    if index > floor and not is_skippable(bodies[index - 1]):
+        while index < key_line and bodies[index].strip().startswith("#"):
+            index += 1
     return index
 
 
@@ -234,13 +252,29 @@ def _provider_text(bodies, claude_doc):
     if end is None or not isinstance(declared, dict):
         return None, (), None, ""
     children: list[str] = []
+    base: "str | None" = None
     for i in range(block.start, end + 1):
         body = bodies[i]
-        if not body.strip():
-            continue
         if body.strip().startswith("#"):
             return None, (), None, REFUSED_PROVIDER_COMMENT
-        children.append(body.strip())
+        if not body.strip():
+            # A blank line INSIDE the block, kept so the restated block is
+            # what "verbatim" claims. ``last_content_line`` already excluded
+            # the trailing run, so this is only ever an interior one.
+            children.append("")
+            continue
+        indent = body[: len(body) - len(body.lstrip(" \t"))]
+        if base is None:
+            base = indent
+        if not indent.startswith(base):
+            return None, (), None, REFUSED_PROVIDER_SHAPE
+        # RELATIVE to the block's first child, not stripped bare. Stripping
+        # every child FLATTENED a nested mapping — `extra_headers:` with two
+        # keys under it came out as three siblings, one of them null — while
+        # the original block was deleted and `_backend_drift` (which compares
+        # only base_url and auth_token_env through ``provider_identity``)
+        # reported no change.
+        children.append(body[len(base) :])
     return None, tuple(children), (block.key_line, end + 1), ""
 
 
@@ -362,6 +396,18 @@ def _comment_counts(text: str) -> Counter:
     )
 
 
+def lost_comment_lines(before: str, after: str) -> "list[str]":
+    """Comment lines present in ``before`` and missing from ``after``.
+
+    Public so the guard is testable as a unit. It compares MULTISETS of
+    comment TEXT, which catches a deleted comment and — deliberately — not a
+    moved one: keeping a comment attached to the key it describes is
+    :func:`_insertion_point`'s job, and a check that cannot tell the two
+    apart would report a false loss on every legitimate reflow.
+    """
+    return sorted(_comment_counts(before) - _comment_counts(after))
+
+
 def _verify(before, after, old_doc, kind, entries, path) -> str:
     """Everything that must hold. Returns "" when it all does.
 
@@ -402,9 +448,9 @@ def _verify(before, after, old_doc, kind, entries, path) -> str:
     if drift:
         return drift
 
-    lost = _comment_counts(before) - _comment_counts(after)
+    lost = lost_comment_lines(before, after)
     if lost:
-        return "comment line(s) lost: " + "; ".join(sorted(lost))
+        return "comment line(s) lost: " + "; ".join(lost)
 
     from ._validation import validate_raw
 

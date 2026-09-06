@@ -479,3 +479,90 @@ def test_selecting_the_oauth_engine_keeps_the_account(tmp_path):
     apply_engine(config, select_engine(config.engines, "claude"))
     # Assert
     assert config.claude.account == "acct-a"
+
+
+# ---------------------------------------------------------------------------
+# The engine fold reaches the TOP-LEVEL model surface too
+# ---------------------------------------------------------------------------
+
+# The shape the migration writes, and the one the operator's hand-migrated
+# `business` spec already had: the engines carry the model and
+# `spec.claude.model` states nothing. `_loaders` derives AgentConfig.model
+# and the injected SCITEX_AGENT_CONTAINER_MODEL from that RAW field, so
+# without the fold both fall to the "sonnet" default while the agent runs
+# something else. Measured over the 119-spec corpus: 117 flipped.
+_MIGRATED = {
+    "claude": {"model": "", "provider": None},
+    "engines": {"claude": {"harness": "anthropic", "model": "opus[1m]", "default": True}},
+}
+
+
+def test_the_default_engines_model_becomes_the_top_level_model(tmp_path):
+    # Arrange — `sac agents list` and the tmux runner both read this field.
+    path = _write(tmp_path, "eng-model-surface", _MIGRATED)
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.model == "opus[1m]"
+
+
+def test_the_default_engines_model_becomes_the_injected_model_env(tmp_path):
+    # Arrange — injected into every container; `sac whoami` prints it.
+    path = _write(tmp_path, "eng-model-env", _MIGRATED)
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "Claude Opus (1M)"
+
+
+def test_a_selected_engines_model_becomes_the_top_level_model(tmp_path):
+    # Arrange — the same must hold for `--engine <key>` at start, not only
+    # for the load-time default fold.
+    path = _write(tmp_path, "eng-model-selected", {"engines": _two_engines()})
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "qwen38-27b"))
+    # Assert
+    assert config.model == "qwen38-27b"
+
+
+def test_a_selected_engines_model_becomes_the_injected_model_env(tmp_path):
+    # Arrange
+    path = _write(tmp_path, "eng-env-selected", {"engines": _two_engines()})
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "qwen38-27b"))
+    # Assert
+    assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "qwen38-27b"
+
+
+def test_an_engine_stating_no_model_falls_back_to_the_documented_default(tmp_path):
+    # Arrange — the positive control for the fold's own default: "" means
+    # "use the runtime default", which is the same `sonnet` the legacy read
+    # applies, not an empty model string.
+    path = _write(
+        tmp_path,
+        "eng-model-unstated",
+        {"claude": {"model": ""}, "engines": {"solo": {"harness": "anthropic"}}},
+    )
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.model == "sonnet"
+
+
+def test_an_explicit_env_declaration_still_wins_over_the_fold(tmp_path):
+    # Arrange — the loader's rule is that user values override auto-derived
+    # ones, and refreshing the DERIVED half must not overrule an author.
+    path = _write(
+        tmp_path,
+        "eng-model-env-declared",
+        deep_merge(
+            _MIGRATED,
+            {"apptainer": {"env": {"SCITEX_AGENT_CONTAINER_MODEL": "hand-written"}}},
+        ),
+    )
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "hand-written"

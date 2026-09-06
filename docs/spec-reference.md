@@ -249,6 +249,20 @@ comments survive, and it re-parses its own output through `parse_engines`,
 loads every spec before and after and restores every original unless the
 effective backend is unchanged.
 
+**Where it writes, and how a batch advances.** The root is `--root DIR`, else
+`$SCITEX_AGENT_CONTAINER_AGENTS_DIR`, else `$HOME/.scitex/agent-container/agents`
+— the LIVE copy, which is not a git checkout, and inside a container is not the
+host's `$HOME` either. Every report names the root it searched; pass `--root` to
+sweep the git-tracked tree instead. `--limit N` caps what is WRITTEN, not what is
+examined: already-migrated and refused specs do not consume the cap, so running
+the same command again takes the NEXT N and the specs past the cap are reported
+as `held_back` rather than dropped. `--host` reads each spec to decide, and one
+it cannot read is KEPT so it reaches the plan as `unreadable` — a filter that
+excluded it would be the flag that disables the guard blocking an unsafe apply.
+In `--json`, `migration_complete` is the answer to "is the sweep finished"; the
+exit code is not, because a run that wrote nothing because every spec was
+refused also exits 0.
+
 **Preflight, three-valued:** `sac agents migrate-engines --preflight` names
 what the gateway did rather than returning a boolean —
 `reachable-but-unauthorized` (a 401 proves something is listening and
