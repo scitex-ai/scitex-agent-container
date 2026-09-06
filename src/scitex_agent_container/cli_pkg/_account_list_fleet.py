@@ -298,10 +298,16 @@ def run_fleet_account_list(
         # the same blank table is an UNOBSERVED fleet, and telling him to go
         # create an account would be advice derived from a reading nobody took.
         if listing.responded == listing.total:
-            click.echo(
-                "No accounts stored or active. Use: "
-                "scitex-agent-container account save <name>"
+            # Every host answered, so the fleet's emptiness is observed —
+            # EXCEPT for the local host, whose answer came from a store this
+            # process may not be able to reach at all (container $HOME).
+            # Say which of those two this is rather than advising a fix.
+            from .._state.account_store_state import (
+                classify_store,
+                no_accounts_message,
             )
+
+            click.echo(no_accounts_message(classify_store()))
         else:
             missing = ", ".join(r.host for r in listing.unanswered)
             console.print(
