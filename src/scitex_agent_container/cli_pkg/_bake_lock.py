@@ -37,7 +37,6 @@ and a global lock would make an unrelated dev bake block the timer.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,16 +69,23 @@ class BakeAlreadyRunningError(RuntimeError):
     """
 
 
-def bake_lock_path(containers_dir: Path, lock_dir: Path) -> Path:
-    """Lock path for ``containers_dir``, hashed so it is filesystem-safe.
+def bake_lock_path(containers_dir: Path) -> Path:
+    """The lock file for ``containers_dir`` — INSIDE it, deliberately.
 
-    The absolute containers dir is the identity — a short digest of it
-    names the file, because the path itself contains separators and can
-    be long. Deterministic, so two invocations naming the same dir by
-    the same absolute path collide as intended.
+    An earlier version put this under ``~/.scitex/.../runtime/`` keyed by
+    a digest of the containers dir. That was wrong in a way only CI
+    showed: the two matrix legs run CONCURRENTLY on the same self-hosted
+    runner, sharing one ``$HOME``, so their bake tests contended on one
+    real lock file and whichever started second DECLINED — turning a
+    correct guard into four red tests on develop. A local run passed
+    because only one suite ran at a time.
+
+    Putting the lock beside the artifacts it guards fixes both halves:
+    production still gets exactly one lock per containers dir, and a test
+    passing a ``tmp_path`` containers dir is isolated BY CONSTRUCTION
+    rather than by remembering to redirect ``$HOME``.
     """
-    digest = hashlib.sha256(str(containers_dir.resolve()).encode()).hexdigest()[:16]
-    return lock_dir / f"bake-remote-{digest}.pid"
+    return containers_dir / ".bake-remote.lock"
 
 
 def _read_holding_pid(fd: int) -> str:
@@ -94,21 +100,17 @@ def _read_holding_pid(fd: int) -> str:
         return "<unreadable>"
 
 
-def acquire_bake_lock(
-    *,
-    containers_dir: Path,
-    lock_dir: Path,
-) -> BakeLockHandle:
+def acquire_bake_lock(*, containers_dir: Path) -> BakeLockHandle:
     """Take the exclusive bake lock for ``containers_dir``.
 
-    ``lock_dir`` must exist; the caller owns creating it, so tests can
-    isolate without touching ``$HOME``.
+    ``containers_dir`` must exist — it is where the artifacts land, so
+    the caller has already created it.
 
     Raises :class:`BakeAlreadyRunningError` when another bake holds it.
     Refusing is correct: a second concurrent pull of a multi-GB artifact
     cannot help and demonstrably fills the disk.
     """
-    pid_file = bake_lock_path(containers_dir, lock_dir)
+    pid_file = bake_lock_path(containers_dir)
     fd = os.open(str(pid_file), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
