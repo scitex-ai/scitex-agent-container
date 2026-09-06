@@ -27,7 +27,7 @@ from ._acl_validation import validate_phase3_acl
 # back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
-from ._engine_validation import validate_engines
+from ._engine_validation import validate_engine_pin, validate_engines
 from ._container_engine import container_runtime_removed_error
 from ._labels_validation import validate_labels
 from ._placement_validation import validate_placement
@@ -388,6 +388,7 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         # answer) refuses on the START path instead. See
         # config._engine_validation for why that split is load-bearing.
         errors.extend(validate_engines(spec, kind))
+        errors.extend(validate_engine_pin(spec, kind))
 
         # spec.startup_commands destructive-command guard — REJECT an
         # unguarded recursive-force ``rm`` on a variable target (the

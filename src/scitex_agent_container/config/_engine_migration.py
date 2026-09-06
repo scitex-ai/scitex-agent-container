@@ -127,6 +127,14 @@ def legacy_conflict_messages(spec: Mapping) -> list[str]:
         stated = legacy[field_name]
         if stated is None:
             continue
+        if field_name == "harness" and engine_value is None:
+            # AFTER THE HARNESS/ENGINE SPLIT an engine that states no
+            # harness states NO OPINION and INHERITS the spec's, so there
+            # is nothing for the legacy value to disagree with. Before
+            # the split this compared against a manufactured
+            # "anthropic", which turned every `harness: codex` spec with
+            # a harness-silent engine into a spurious conflict.
+            continue
         if str(stated).strip().lower() != str(engine_value).strip().lower():
             messages.append(
                 _conflict_message(

@@ -15,10 +15,13 @@ resolved value rather than merely the absence of an error.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import yaml
 
 from scitex_agent_container.config import load_config
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._engine_types import (
     EngineDefaultError,
     UnknownEngineError,
@@ -38,6 +41,35 @@ _QWEN_PROVIDER = {
     "base_url": "http://127.0.0.1:18772",
     "auth_token_env": "SAC_TEST_QWEN_KEY",
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_fleet_engine_library(tmp_path_factory):
+    """Pin the fleet library at a path that does not exist, for every test here.
+
+    HERMETICITY, not decoration. Default resolution now walks the
+    precedence chain in ``_engine_precedence.resolve_default_for_spec``,
+    whose last step calls ``_engine_library.fleet_default_key()`` — and
+    that reads ``$SAC_ENGINES_FILE`` (else
+    ``$SCITEX_DIR/agent-container/engines.yaml``) from the REAL
+    environment of whatever host runs the suite. Nothing else in this
+    module pins it, so without this fixture a developer machine that
+    happens to carry a fleet ``engines.yaml`` gets different answers from
+    one that does not. Every spec in this file declares its own engines
+    and resolves at an EARLIER precedence step, so the library must
+    contribute nothing here — pointing it at a nonexistent file is how we
+    assert that rather than assume it.
+    """
+    missing = tmp_path_factory.mktemp("no-fleet-library") / "engines.yaml"
+    previous = os.environ.get(FLEET_ENGINES_ENV)
+    os.environ[FLEET_ENGINES_ENV] = str(missing)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(FLEET_ENGINES_ENV, None)
+        else:
+            os.environ[FLEET_ENGINES_ENV] = previous
 
 
 def _doc(overrides: dict, *, kind: str = "Agent") -> dict:
@@ -178,13 +210,25 @@ def test_unknown_engine_key_raises_rather_than_using_the_default(tmp_path):
         act()
 
 
-def test_unknown_engine_error_says_the_key_is_not_declared(tmp_path):
+def test_unknown_engine_error_says_the_key_resolves_to_no_engine(tmp_path):
+    """The message widened when the FLEET engine library became a second
+    source of keys: "not declared by this spec" was true and unhelpful
+    once a key could equally belong in the library."""
     # Arrange
     name = "eng-unknown-msg"
     # Act
     message = _unknown_engine_message(tmp_path, name)
     # Assert
-    assert "is not declared by this spec" in message
+    assert "resolves to no engine" in message
+
+
+def test_unknown_engine_error_names_the_fleet_library_as_a_source(tmp_path):
+    # Arrange
+    name = "eng-unknown-src"
+    # Act
+    message = _unknown_engine_message(tmp_path, name)
+    # Assert
+    assert "fleet" in message
 
 
 def test_unknown_engine_error_lists_the_declared_keys(tmp_path):
@@ -224,10 +268,14 @@ def test_exactly_one_default_produces_no_default_error():
 
 
 def test_two_engines_with_no_default_is_a_hard_error():
+    """sac does not pick: taking the first would make the backend depend
+    on YAML ordering. The REMEDY the message names changed from
+    ``default: true`` on an entry to one ``engine:`` line at the top of
+    spec:, so the assertion follows the remedy, not the old spelling."""
     # Arrange
     doc = _doc({"engines": _two_engines(default_on=None)})
     # Act
-    errors = [e for e in validate_raw(doc, "spec.yaml") if "default: true" in e]
+    errors = [e for e in validate_raw(doc, "spec.yaml") if "engine: <key>" in e]
     # Assert
     assert errors
 
@@ -566,3 +614,114 @@ def test_an_explicit_env_declaration_still_wins_over_the_fold(tmp_path):
     config = load_config(path)
     # Assert
     assert config.env["SCITEX_AGENT_CONTAINER_MODEL"] == "hand-written"
+
+
+# ---------------------------------------------------------------------------
+# THE TWO AXES DO NOT TOUCH. An entry that states no harness states no
+# opinion about the harness, and the model fold happens anyway. This is the
+# fleet-library entry shape — one definition serving a Claude-Code agent and
+# a Codex agent unchanged — and every other engine test in this file states
+# `harness: anthropic`, so without these two the harness-less shape is
+# untested here.
+# ---------------------------------------------------------------------------
+
+_HARNESSLESS = {
+    "harness": "codex",
+    "claude": {"model": "", "provider": None},
+    "engines": {"solo": {"model": "opus[1m]"}},
+}
+
+
+def test_an_engine_stating_no_harness_leaves_the_specs_declared_harness(tmp_path):
+    # Arrange — the regression the nullable field exists to prevent: the fold
+    # used to write a manufactured "anthropic" over a spec that said `codex`.
+    path = _write(tmp_path, "eng-harnessless-axis", _HARNESSLESS)
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.harness == "codex"
+
+
+def test_an_engine_stating_no_harness_still_folds_its_model(tmp_path):
+    # Arrange — the positive control for the test above: leaving the harness
+    # alone must not mean leaving the ENTRY alone.
+    path = _write(tmp_path, "eng-harnessless-model", _HARNESSLESS)
+    # Act
+    config = load_config(path)
+    # Assert
+    assert config.model == "opus[1m]"
+
+
+def test_an_engine_that_does_state_a_harness_still_writes_it(tmp_path):
+    # Arrange — POSITIVE CONTROL for "leaves the declared harness alone":
+    # `codex` surviving proves nothing unless a STATED harness demonstrably
+    # replaces it through the SAME branch. It has to be applied rather than
+    # loaded: a spec whose legacy `harness:` disagrees with its DEFAULT
+    # engine's is a hard load error (`legacy_conflict_messages`), so the only
+    # way an entry's harness differs from the spec's is `--engine <key>`
+    # picking a NON-default entry at start.
+    path = _write(tmp_path, "eng-harness-stated", _HARNESSLESS)
+    config = load_config(path)
+    other = parse_engines({"engines": {"other": {"harness": "anthropic"}}})
+    # Act
+    apply_engine(config, select_engine(other, "other"))
+    # Assert
+    assert config.harness == "anthropic"
+
+
+# ---------------------------------------------------------------------------
+# ONE FOLD, BOTH AXES — the merge guard. `apply_engine` carries two
+# independently-developed changes on the same few lines (the model surface,
+# and clearing the OAuth rotation pool for a provider-backed engine).
+# Resolving that region by taking either side wholesale loses one of them,
+# and losing the pool-clearing half is SILENT unless something asserts both
+# after the SAME call. These two do.
+# ---------------------------------------------------------------------------
+
+
+def test_a_provider_engine_clears_the_whole_rotation_pool(tmp_path):
+    # Arrange — a pool beside a provider-backed engine composed an API-key
+    # provider with OAuth credentials at launch; validation never saw it,
+    # because it asserts the exclusion on the RAW spec, not the folded config.
+    path = _write(
+        tmp_path,
+        "eng-pool-cleared",
+        {"engines": _two_engines(), "claude": {"credentials_files": ["a.json"]}},
+    )
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "qwen38-27b"))
+    # Assert
+    assert config.claude.credentials_files == []
+
+
+def test_an_oauth_engine_leaves_the_rotation_pool_populated(tmp_path):
+    # Arrange — POSITIVE CONTROL for the test above. `credentials_files == []`
+    # would also pass if the loader simply never carried the pool onto the
+    # config, so the pool has to be shown SURVIVING an engine that declares
+    # no provider before its clearing means anything.
+    path = _write(
+        tmp_path,
+        "eng-pool-kept",
+        {"engines": _two_engines(), "claude": {"credentials_files": ["a.json"]}},
+    )
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "claude"))
+    # Assert
+    assert config.claude.credentials_files == ["a.json"]
+
+
+def test_the_same_fold_also_writes_the_top_level_model(tmp_path):
+    # Arrange — the other half of the same statement, asserted after the same
+    # call so a one-sided resolution of that region cannot pass both.
+    path = _write(
+        tmp_path,
+        "eng-pool-cleared-model",
+        {"engines": _two_engines(), "claude": {"credentials_files": ["a.json"]}},
+    )
+    config = load_config(path)
+    # Act
+    apply_engine(config, select_engine(config.engines, "qwen38-27b"))
+    # Assert
+    assert config.model == "qwen38-27b"

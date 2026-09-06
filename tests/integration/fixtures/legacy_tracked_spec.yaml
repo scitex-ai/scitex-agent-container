@@ -1,0 +1,172 @@
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: dotfiles
+    purpose: dotfiles-maintainer
+    role: project-maintainer
+    groups:
+    - developer
+    - infra
+    cardinality: singleton
+spec:
+  runtime: tui
+  host: scitex-compute-04
+  workdir: /home/ywatanabe/.dotfiles
+  extensions:
+    responsibilities:
+    - Dotfiles repository maintainer (~/.dotfiles) — shell, config, agent specs, hooks source
+    - Owns commits/pushes to the dotfiles + the src->home materialization it feeds
+    - Keeps the shared ~/.dotfiles working tree committed as changes arrive from any agent — nobody else
+      is expected to clean up after themselves there
+    - Splits incoming changes into LOGICAL commits, one concern each; never one sweeping commit, and never
+      mixing another agent's in-flight work with its own
+    - Excludes live runtime state (card store, account session/cache data, rotation logs) from those commits
+      — config is tracked, runtime is not
+    - Attributes work it merely records rather than authored, so a commit never implies ownership of someone
+      else's change
+    - FLEET SYNCHRONISATION of ~/.dotfiles across every host — push, pull and conflict resolution, so a change committed on one machine reaches the others. Named by the operator 2026-08-20 —「そういうのって全部Filesエージェントが責任を持つはずなんですよ」— and asked for as a fast loop —「GitHubを介して全部のホストでプッシュしたり、プルしたり、マジコンフリックと直したりっていうのをすごく高速にやってほしい」. Other agents may rely on it; when a change cannot reach a host, saying so is part of the job
+    - Separates STALENESS from a HOST-LOCAL EDIT before overwriting anything — content matching some earlier commit is stale and may be overwritten, content matching no commit is a deliberate edit and is refused rather than destroyed. A person reading a diff cannot tell those apart; the object store can. Implemented in src/.bin/sync-agent-specs.sh (PR #348), written after that tool silently reverted three real edits
+    - Treats MERGED and PULLED as distinct from DEPLOYED — several tracked trees reach a host only as copies, so a successful `git pull` can leave the file that actually runs unchanged. Measured on both ~/.local/bin and ~/.claude. A sync that stops at the pull reports work it did not do
+    - Reports an UNREACHABLE host as unreachable rather than folding it into in-sync — reachability varies with time, and scitex-laptop-01 answered twice then failed six consecutive attempts from this container on 2026-08-20 while staying reachable from another agent. Absence of a reading is not a clean reading
+  apptainer:
+    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    relaxed: true
+    binds:
+    - /scratch:/scratch:rw
+    - /home/ywatanabe:/home/ywatanabe:rw
+    - /home/ywatanabe/.ssh:/home/agent/.ssh:ro
+    - /home/ywatanabe/.config/gh:/home/agent/.config/gh:ro
+    raw_args:
+    - --userns
+    - --containall
+    - --home
+    - /home/agent
+    - --overlay
+    - /home/ywatanabe/.scitex/agent-container/containers/overlays/dotfiles/
+    - --env
+    - SCITEX_AGENT_CONTAINER_STATE_DB=/state/dotfiles/state.db
+    - --env
+    - SCITEX_CARDS_AGENT_ID=dotfiles
+    - --env
+    - SCITEX_CARDS_DB=postgresql://127.0.0.1:55432/scitex_cards
+    - --env
+    - PGPASSFILE=/home/ywatanabe/.pgpass
+    - --env
+    - GIT_AUTHOR_NAME=dotfiles
+    - --env
+    - GIT_AUTHOR_EMAIL=agent@scitex.ai
+    - --env
+    - GIT_COMMITTER_NAME=dotfiles
+    - --env
+    - GIT_COMMITTER_EMAIL=agent@scitex.ai
+    - --env
+    - GIT_SSH_COMMAND=ssh -o ControlMaster=no -o ControlPath=none
+    env: {}
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    fakeroot: false
+    jail: false
+    nested_build: false
+  claude:
+    model: opus[1m]
+    credentials_files:
+    - /home/ywatanabe/.scitex/agent-container/accounts/scitex-01-scitex-ai/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/wyusuuke-gmail-com/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/ywata1989-gmail-com/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/ywatanabe-scitex-ai/.credentials.json
+    flags:
+    - --dangerously-skip-permissions
+    - --effort=max
+    channels:
+    - server:claude-code-telegrammer
+    - server:sac
+    - server:scitex-cards
+    raw_options: {}
+    session: null
+    continue_max_age_minutes: null
+    resume_id: ''
+    auto_accept: true
+    account: ''
+    credentials_file: ''
+    provider: null
+  a2a:
+    port: auto
+    host: 127.0.0.1
+  startup_commands:
+  - command: '[ -L "$HOME/proj" ] && rm -f "$HOME/proj"; ln -sfn /home/ywatanabe/proj "$HOME/proj"'
+  startup_prompts:
+  - Start or continue. Scan your scitex-cards slices, resume any in-flight or assigned work (hold idle
+    if none), then report readiness. Follow CLAUDE.md + your skills; don't restate, don't invent scope.
+  - Read and follow /home/ywatanabe/.claude/commands/constitution.md.
+  health:
+    enabled: true
+    interval: 60
+    timeout: 5
+    method: sdk-alive
+  restart:
+    policy: on-failure
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+    prune_on_stop: false
+  harness: anthropic
+  python-venv: ''
+  listen: []
+  mcp_servers: {}
+  user: ''
+  to_home: ./to_home
+  to_home_layers: [user-shared, per-agent]
+  container:
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: '1'
+      y_y_n: '2'
+      waiting: /speak-and-call
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+  lineage:
+    group: ''
+    may_spawn: true

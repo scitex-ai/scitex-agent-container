@@ -118,17 +118,30 @@ V4_HARNESS_DISPATCH_CARD = "sac-v4-layering-refactor-harness-runtime-inference-2
 
 
 def is_known_harness(name: str) -> bool:
-    """True when ``name`` is a recognized harness."""
-    return name in AGENT_HARNESSES
+    """True when ``name`` is a recognized harness SPELLING.
+
+    Accepts the canonical family names AND the registry's accepted
+    aliases, so ``claude-code`` (the program name) and ``anthropic`` (the
+    vendor word it is replacing) are both legal for the compatibility
+    window. See ``HarnessDescriptor.spec_harness_aliases`` for why the
+    program names are the honest ones and when the direction reverses.
+    """
+    from ._harness_lookup import canonical_harness
+
+    return canonical_harness(name) is not None
 
 
 def list_harnesses() -> list[str]:
-    """Return the recognized harnesses, sorted.
+    """Return every ACCEPTED harness spelling, sorted.
 
     Used by the spec validator's "unknown harness" error so the operator
-    sees the exact set they can pick from without reading the source.
+    sees the exact set they can pick from without reading the source —
+    which must include the aliases, or the error would name a set that
+    excludes spellings the loader happily accepts.
     """
-    return sorted(AGENT_HARNESSES)
+    from ._harness_lookup import accepted_harness_spellings
+
+    return sorted(accepted_harness_spellings())
 
 
 def _stated(spec: Mapping, key: str) -> str | None:
@@ -167,8 +180,21 @@ def resolve_spec_harness(spec: Mapping) -> str:
     """The harness for this spec, defaulting when it states none.
 
     Raises :class:`HarnessKeyConflictError` on a stated disagreement.
+
+    CANONICALISES the spelling: ``harness: claude-code`` and
+    ``harness: anthropic`` both resolve to the one family value every
+    downstream reader branches on, so an alias can be written in a spec
+    without every consumer having to learn it. An UNRECOGNISED spelling
+    is returned untouched — the validator owns that diagnostic, and
+    silently folding a typo into the default is the guess this axis
+    exists to refuse.
     """
-    return declared_harness(spec) or DEFAULT_AGENT_HARNESS
+    from ._harness_lookup import canonical_harness
+
+    stated = declared_harness(spec)
+    if stated is None:
+        return DEFAULT_AGENT_HARNESS
+    return canonical_harness(stated) or stated
 
 
 def uses_legacy_harness_key(spec: Mapping) -> bool:

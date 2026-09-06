@@ -1,0 +1,203 @@
+apiVersion: scitex-agent-container/v3
+kind: Agent
+metadata:
+  labels:
+    project: business
+    purpose: business
+    role: project-maintainer
+    groups:
+    - generalist
+    - privileged
+    - developer
+    - researcher
+    - active
+    - business
+    cardinality: singleton
+spec:
+  runtime: tui
+  host: scitex-compute-01
+  workdir: /home/ywatanabe/proj/business
+  apptainer:
+    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    relaxed: true
+    binds:
+    - /scratch:/scratch:rw
+    - /home/ywatanabe:/home/ywatanabe:rw
+    - /home/ywatanabe/.ssh:/home/agent/.ssh:ro
+    - /home/ywatanabe/.config/gh:/home/agent/.config/gh:ro
+    raw_args:
+    - --userns
+    - --containall
+    - --home
+    - /home/agent
+    - --overlay
+    - /home/ywatanabe/.scitex/agent-container/containers/overlays/business/
+    - --env
+    - BUN_BIN=/home/ywatanabe/.bun/bin/bun
+    - --env
+    - SCITEX_CARDS_AGENT_ID=business
+    - --env
+    - SCITEX_CARDS_DB=postgresql://scitex-primary:55432/scitex
+    - --env
+    - PGPASSFILE=/home/ywatanabe/.pgpass
+    - --env
+    - GIT_AUTHOR_NAME=business
+    - --env
+    - GIT_AUTHOR_EMAIL=agent@scitex.ai
+    - --env
+    - GIT_COMMITTER_NAME=business
+    - --env
+    - GIT_COMMITTER_EMAIL=agent@scitex.ai
+    - --env
+    - GIT_SSH_COMMAND=ssh -o ControlMaster=no -o ControlPath=none
+    env: {}
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    fakeroot: false
+    jail: false
+    nested_build: false
+  # Named engines (sac PR #1287). The fleet address, not 127.0.0.1: business
+  # runs on scitex-compute-01 and the gateway runs on scitex-compute-04, so a
+  # loopback URL here would point at nothing. 100.64.0.1 is compute-04 on the
+  # overlay. The token env is the same one the loose proxy required.
+  engines:
+    claude:
+      model: opus[1m]
+      provider: anthropic
+    qwen38-27b:
+      model: qwen38-27b
+      provider:
+        base_url: http://100.64.0.1:18772
+        auth_token_env: SCITEX_GENAI_GATEWAY_API_KEY
+      # 2026-09-05 (operator, Telegram 19223/19236): business runs on Qwen ONLY. The
+      # engine is the spec's DEFAULT so a plain `sac agents start` on ANY host
+      # honours it; `--engine` at start was not durable and a start from compute-01
+      # brought Claude back at 05:56Z.
+      default: true
+      # 2026-09-05 (operator, Telegram 19244/19247): the served window is 1M
+      # (serve conf MAX_MODEL_LEN=1048576). Claude Code assumes 200k for a
+      # model it does not know and auto-compacts at that boundary; on the
+      # resumed 1M session the compaction request itself crashed the engine
+      # (EngineCore assert under n-gram) and the pane looped at 95%. The
+      # harness names its own knob for this case: CLAUDE_CODE_MAX_CONTEXT_TOKENS.
+      # sac delivers max_context_tokens as SAC_ENGINE_MAX_CONTEXT_TOKENS only
+      # (unmapped by design until measured), so the harness knob is spelled
+      # in env: as well; the sac mapping PR retires that second line.
+      max_context_tokens: 1048576
+      env:
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576"
+        # 2026-09-05 08:30 UTC (operator: "business is stuck"): at ~650k tokens of
+        # context a single turn on this engine runs past ten minutes ("Thought
+        # for 7m 18s" on the pane, then generation). Claude Code's default API
+        # timeout is shorter, so it gave up with "check your network", re-sent
+        # the same 650k-token request, and looped while the replica was still
+        # busy with the abandoned one. The harness names the knob in its own
+        # error text ("API_TIMEOUT_MS=<n>ms, try increasing it"). 30 minutes.
+        API_TIMEOUT_MS: "1800000"
+
+  claude:
+    model: ''   # explicit-empty (2026-07-21 rule): the engines carry the models
+    credentials_files:
+    - /home/ywatanabe/.scitex/agent-container/accounts/scitex-01-scitex-ai/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/wyusuuke-gmail-com/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/ywata1989-gmail-com/.credentials.json
+    - /home/ywatanabe/.scitex/agent-container/accounts/ywatanabe-scitex-ai/.credentials.json
+    flags:
+    - --dangerously-skip-permissions
+    channels:
+    - server:claude-code-telegrammer
+    - server:sac
+    - server:scitex-cards
+    raw_options: {}
+    session: resume
+    continue_max_age_minutes: null
+    resume_id: d3f1702b-18ad-424e-b8c5-4ebcf8dd2097
+    auto_accept: true
+    account: scitex-01-scitex-ai
+    credentials_file: ''
+    provider: null
+  a2a:
+    port: auto
+    host: 127.0.0.1
+  startup_commands:
+  - command: '[ -L "$HOME/proj" ] && rm -f "$HOME/proj"; ln -sfn /home/ywatanabe/proj "$HOME/proj"'
+  - command: mkdir -p /uvwork/tmp /uvwork/bin && export TMPDIR=/uvwork/tmp UV_INSTALL_DIR=/uvwork/bin
+      UV_CACHE_DIR=/uvwork/uvcache PATH=/uvwork/bin:$PATH && { [ -x /uvwork/bin/uv ] || curl -LsSf https://astral.sh/uv/install.sh
+      | env TMPDIR=/uvwork/tmp UV_INSTALL_DIR=/uvwork/bin sh; }
+  - command: bash /home/ywatanabe/proj/business/scitex-kk/scripts/tools/ensure_daemons.sh >>"$HOME/.scitex/ensure_daemons.boot.log" 2>&1 || true
+  startup_prompts:
+  - Start or continue. Scan your scitex-cards slices, resume any in-flight or assigned work (hold idle
+    if none), then report readiness. Follow CLAUDE.md + your skills; don't restate, don't invent scope.
+  - Read and follow /home/ywatanabe/.claude/commands/constitution.md.
+  health:
+    enabled: true
+    interval: 60
+    timeout: 5
+    method: sdk-alive
+  restart:
+    policy: on-failure
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+    prune_on_stop: false
+  harness: anthropic
+  python-venv: ''
+  listen: []
+  extensions: {}
+  mcp_servers: {}
+  user: ''
+  to_home: ./to_home
+  to_home_layers: [user-shared]
+  container:
+    image: scitex-agent-container:latest
+    volumes: []
+    network: host
+    mount_host_claude: false
+  watchdog:
+    enabled: false
+    interval: 1.5
+    responses:
+      y_n: '1'
+      y_y_n: '2'
+      waiting: /speak-and-call
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+  context_management:
+    trigger_at_percent: 70.0
+    strategy: noop
+    warn_before_n_checks: 0
+    check_interval_seconds: 300
+    state_file: ~/.scitex/agent-container/state/<agent>.json
+  comms:
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+  lineage:
+    group: ''
+    may_spawn: true

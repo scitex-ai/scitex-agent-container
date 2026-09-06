@@ -33,13 +33,18 @@ from ._helpers import _json_flag, console
 #: as a clean line.
 _STYLE = {
     Verdict.RESUMED: ("green", "RESUMED"),
+    Verdict.SWITCHED: ("green", "SWITCHED"),
     Verdict.WAITING: ("cyan", "WAITING"),
+    Verdict.ALREADY_ON_TARGET: ("cyan", "ALREADY-ON-TARGET"),
     Verdict.WOULD_RESUME: ("yellow", "WOULD-RESUME"),
+    Verdict.WOULD_SWITCH: ("yellow", "WOULD-SWITCH"),
     Verdict.COOLING_DOWN: ("yellow", "COOLING-DOWN"),
     Verdict.CAPPED: ("yellow", "CAPPED"),
     Verdict.OVER_BUDGET: ("red", "OVER-BUDGET"),
     Verdict.FAILED: ("red", "FAILED"),
+    Verdict.SWITCH_FAILED: ("red", "SWITCH-FAILED"),
     Verdict.RESET_UNKNOWN: ("magenta", "RESET-UNKNOWN"),
+    Verdict.SWITCH_UNVERIFIED: ("magenta", "SWITCH-UNVERIFIED"),
     Verdict.UNREADABLE: ("magenta", "UNREADABLE"),
     Verdict.BUDGET_UNKNOWN: ("magenta", "BUDGET-UNKNOWN"),
 }
@@ -90,6 +95,16 @@ def _print_report(report) -> None:
     show_default=True,
     help="Seconds between the two pane captures used for the frozen check.",
 )
+@click.option(
+    "--switch-model",
+    "switch_model",
+    is_flag=True,
+    default=False,
+    help="Also handle the MODEL-CAP shape: an agent frozen behind a Fable cap "
+    "is moved onto opus[1m] and kicked. OFF by default — without it this "
+    "command behaves exactly as it did before the branch existed. Needs "
+    "--apply to type anything.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (for timers).")
 @click.pass_context
 def resume_rate_limited(
@@ -98,6 +113,7 @@ def resume_rate_limited(
     check: bool,
     limit: int,
     interval: float,
+    switch_model: bool,
     as_json: bool,
 ) -> None:
     """Resume LIVE agents parked behind a provider rate wall that has RESET.
@@ -126,6 +142,26 @@ def resume_rate_limited(
                           merely lands in the composer and is never submitted
                           is indistinguishable from the outage itself.
 
+    \b
+    THE MODEL-CAP BRANCH (--switch-model, OFF by default):
+      $ sac agents resume-rate-limited --switch-model
+      $ sac agents resume-rate-limited --apply --switch-model
+
+    A rate wall publishes an end; a MODEL cap does not. Measured 2026-09-06:
+    a Fable-family agent answered the operator's messages with "You've
+    reached your Fable limit ... switch models with /model" — no reset
+    clause, so the rule above correctly reports NOT-LIMITED and the agent
+    stays silent forever. With --switch-model such an agent is moved onto
+    opus[1m] instead of waited on: /model opus[1m], Enter to confirm, then a
+    kick, THREE SECONDS APART, and finally a fresh capture that must PROVE
+    the cap is gone. A switch that cannot be proven is SWITCH-UNVERIFIED and
+    exits 2 — never a claimed recovery. Only an agent whose model family sac
+    can NAME is touched — its spec on a Fable model, or its spec on another
+    Claude family while the pane's banner names Fable (a spec lags a switch
+    made in the TUI). An agent sac cannot name a family for — a local-model
+    agent, or a spec carrying no model — is NEVER switched, however its pane
+    reads; every other agent keeps the verdict it has today.
+
     The agent is CONTINUED, never restarted: its session, context and
     conversation all survived the wall. Rate-limited exactly like its siblings
     (30-min/agent debounce, <=2/agent/hour, --limit per pass); an agent that
@@ -142,7 +178,9 @@ def resume_rate_limited(
             "drop both flags to preview, pass --apply to resume."
         )
 
-    outcome = resume_pass(apply=apply, limit=limit, interval=interval)
+    outcome = resume_pass(
+        apply=apply, limit=limit, interval=interval, switch_model=switch_model
+    )
     code = outcome.exit_code()
 
     if _json_flag(ctx, as_json):
@@ -150,6 +188,7 @@ def resume_rate_limited(
             json.dumps(
                 {
                     "mode": "apply" if apply else "check",
+                    "switch_model": switch_model,
                     "exit_code": code,
                     "counts": outcome.counts(),
                     "pass_recorded": outcome.heartbeat_ok,
@@ -176,19 +215,23 @@ def resume_rate_limited(
             "\n" + "  ".join(f"{k.lower()}={v}" for k, v in sorted(counts.items()))
         )
 
-    stuck = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET)
+    stuck = outcome.of(Verdict.FAILED, Verdict.OVER_BUDGET, Verdict.SWITCH_FAILED)
     if stuck:
         console.print(
             f"\n[red]{len(stuck)} agent(s) are STILL parked and sac could not "
             f"get them working again.[/red] Each is recorded as degraded.",
             soft_wrap=True,
         )
-    blind = outcome.of(Verdict.RESET_UNKNOWN, Verdict.UNREADABLE)
+    blind = outcome.of(
+        Verdict.RESET_UNKNOWN, Verdict.UNREADABLE, Verdict.SWITCH_UNVERIFIED
+    )
     if blind:
         console.print(
             f"\n[magenta]{len(blind)} agent(s) could not be DETERMINED.[/magenta] "
             f"A wall whose reset clause does not parse needs a new pattern in "
-            f"_ratelimit._banner; nothing here can resolve it by guessing.",
+            f"_ratelimit._banner; a switch whose outcome the pane will not show "
+            f"needs a human to look at that pane. Nothing here can resolve "
+            f"either by guessing.",
             soft_wrap=True,
         )
     if not outcome.heartbeat_ok:

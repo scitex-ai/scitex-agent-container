@@ -55,7 +55,6 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from ._engine_types import ENGINES_KEY, EngineSpec
-from ._harness_types import is_known_harness, list_harnesses
 from ._provider_registry import list_providers, resolve_provider
 
 __all__ = [
@@ -64,6 +63,7 @@ __all__ = [
     "VERDICT_NOT_HONOURABLE",
     "VERDICT_UNKNOWN",
     "EngineVerdict",
+    "effective_harness",
     "engine_verdict",
     "probe_verdict",
     "static_verdict",
@@ -129,21 +129,52 @@ def _no(engine: EngineSpec, reason: str, fix: str) -> EngineVerdict:
     return EngineVerdict(engine.key, VERDICT_NOT_HONOURABLE, reason, fix)
 
 
-def static_verdict(engine: EngineSpec) -> EngineVerdict:
+def effective_harness(engine: EngineSpec, harness: str | None = None) -> str:
+    """The harness this start actually runs: the ENGINE's, else the SPEC's.
+
+    An engine that states no harness states NO OPINION (that is the
+    harness/engine split), so the spec's own ``harness:`` stands. Returns
+    ``""`` when neither says anything, which the combination check reads
+    as ``could-not-tell`` rather than as a vendor default.
+    """
+    if engine.harness:
+        return str(engine.harness).strip().lower()
+    return str(harness or "").strip().lower()
+
+
+def static_verdict(
+    engine: EngineSpec, harness: str | None = None
+) -> EngineVerdict:
     """Resolve ``engine`` against the spec text and the host environment.
 
     NO SOCKETS. Every ``not-honourable`` returned here is a fact about
-    the declaration (an unregistered name, an incomplete dict, an unset
-    env var, an unknown harness), so it is stable: re-running gives the
-    same answer until someone changes the spec or the environment.
+    the declaration (an unrunnable pairing, an unregistered name, an
+    incomplete dict, an unset env var), so it is stable: re-running gives
+    the same answer until someone changes the spec or the environment.
+
+    ``harness`` is the SPEC's harness, used when the engine states none.
+
+    THE PAIRING IS CHECKED FIRST, deliberately: an unsupported
+    combination must be named AS a combination. Reporting it as "the
+    provider dict is incomplete" would send the operator to fix a field
+    that is not the problem.
+
+    A ``could-not-tell`` PAIRING DOES NOT SHORT-CIRCUIT, and the
+    asymmetry is the point: not knowing the HARNESS is not knowing one
+    thing, and the declaration checks below can still return a DEFINITE
+    "this is wrong" (an unregistered provider name, an incomplete inline
+    dict, an unset token) that holds whatever the harness turns out to
+    be. A definite answer outranks an undetermined one, so the
+    undetermined verdict is HELD BACK and returned only when nothing
+    definite was found — never discarded, because that would turn "I do
+    not know" into "it is fine".
     """
-    if not is_known_harness(engine.harness):
-        return _no(
-            engine,
-            f"harness={engine.harness!r} is not a harness sac can run",
-            f"set spec.{ENGINES_KEY}.{engine.key}.harness to one of "
-            f"{list_harnesses()}",
-        )
+    from ._engine_harness_combos import combination_verdict
+
+    combo = combination_verdict(engine, effective_harness(engine, harness))
+    if combo.refuses:
+        return combo
+    undetermined = combo if combo.undetermined else None
 
     declared = engine.provider_declared
     if isinstance(declared, str) and declared.strip():
@@ -176,9 +207,9 @@ def static_verdict(engine: EngineSpec) -> EngineVerdict:
 
     provider = engine.provider
     if provider is None:
-        # No backend override: the default Anthropic OAuth path, which
-        # this engine axis does not add a failure mode to.
-        return _ok(engine)
+        # No backend override: the harness's own built-in auth path,
+        # which this engine axis does not add a failure mode to.
+        return undetermined or _ok(engine)
 
     token_env = str(getattr(provider, "auth_token_env", "") or "").strip()
     if not token_env:
@@ -199,7 +230,7 @@ def static_verdict(engine: EngineSpec) -> EngineVerdict:
             f"`{token_env}=...` to $HOME/.env (chmod 0600). sac reads the "
             "value at start and never logs it",
         )
-    return _ok(engine)
+    return undetermined or _ok(engine)
 
 
 def probe_verdict(
@@ -264,7 +295,11 @@ def probe_verdict(
 
 
 def engine_verdict(
-    engine: EngineSpec, *, probe: bool = False, timeout_s: float = PROBE_TIMEOUT_S
+    engine: EngineSpec,
+    *,
+    harness: str | None = None,
+    probe: bool = False,
+    timeout_s: float = PROBE_TIMEOUT_S,
 ) -> EngineVerdict:
     """Static resolution always; the live probe only when ``probe`` is set.
 
@@ -273,7 +308,7 @@ def engine_verdict(
     and dialling a socket to discover that would be slower and less
     specific.
     """
-    verdict = static_verdict(engine)
+    verdict = static_verdict(engine, harness)
     if not verdict.honourable or not probe:
         return verdict
     return probe_verdict(engine, timeout_s=timeout_s)

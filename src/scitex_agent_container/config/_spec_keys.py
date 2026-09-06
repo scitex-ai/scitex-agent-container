@@ -41,6 +41,14 @@ _KNOWN_SPEC_KEYS = frozenset(
         "container",
         "screen",  # legacy: agent metadata (screen_name) — no longer drives a multiplexer
         "claude",
+        # THE ENGINE PIN — one scalar naming which engine this agent runs
+        # (``engine: qwen38-27b``). OPTIONAL for the same reason
+        # ``engines`` is: a spec that states nothing follows the fleet
+        # engine library, and before that its own legacy block, so 131
+        # deployed specs keep starting on exactly what they start on
+        # today. It is ABSENT from the explicit-required map in
+        # ``_explicit_fields`` deliberately. See ``config._engine_library``.
+        "engine",
         "engines",  # MULTI-backend surface: several named engines, one
         # picked at start (``--engine <key>``). OPTIONAL, deliberately —
         # it is ABSENT from the explicit-required map in

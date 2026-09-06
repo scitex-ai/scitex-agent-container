@@ -117,7 +117,7 @@ from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
 from ..config._harness_registry import known_harnesses
-from ..config._harness_types import DEFAULT_AGENT_HARNESS
+from ._apptainer_context_window import context_window_env
 from ._apptainer_provider_cfg import container_config_dir
 
 
@@ -319,11 +319,19 @@ def engine_env_flags(config: AgentConfig) -> list[str]:
     max_ctx = getattr(config, "max_context_tokens", None)
     if max_ctx:
         flags += ["--env", f"{ENGINE_MAX_CONTEXT_TOKENS_ENV}={int(max_ctx)}"]
-        if resolve_agent_harness(config) == DEFAULT_AGENT_HARNESS:
-            flags += [
-                "--env",
-                f"{CLAUDE_CODE_MAX_CONTEXT_ENV}={int(max_ctx)}",
-            ]
+        # ASK THE HARNESS, DO NOT TEST FOR A VENDOR. This used to read
+        # ``if resolve_agent_harness(config) == DEFAULT_AGENT_HARNESS``,
+        # which handed the engine's declared window to ONE program and
+        # silently dropped it for every other — a privilege granted by an
+        # ``if``, not by a measurement. Each descriptor now spells its own
+        # context-window variable (``context_window_env``), and a harness
+        # that takes its window some other way answers ``None`` explicitly
+        # (codex renders ``-c model_context_window`` onto the argv
+        # instead). Adding a harness that needs an env var is one registry
+        # column, not an edit here.
+        context_env = context_window_env(config, resolve_agent_harness(config))
+        if context_env:
+            flags += ["--env", f"{context_env}={int(max_ctx)}"]
     return flags
 
 

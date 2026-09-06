@@ -17,6 +17,7 @@ import click
 from .._state._meta.secrets import _redact_env_entry as _redact
 from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
 from ..config import AgentConfig, load_config
+from ._explain_engine import engine_lines
 
 
 def _spec_path_for(name: str) -> Path | None:
@@ -236,6 +237,11 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     claude = getattr(config, "claude", None)
 
     lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
+
+    # WHICH ENGINE, AND WHO DECIDED — the only defence against a fleet
+    # engine library that has diverged between hosts. See _explain_engine.
+    lines.append("")
+    lines += engine_lines(config, spec_path)
 
     lines.append("")
     lines.append(_workdir_line(pwd, binds))
