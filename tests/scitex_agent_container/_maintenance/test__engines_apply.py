@@ -27,6 +27,7 @@ from scitex_agent_container._maintenance._engines_apply import (
     _backend_snapshot,
     apply_engines_migration,
 )
+from scitex_agent_container._maintenance._engines_floor import EngineFloor
 from scitex_agent_container._maintenance._engines_migration import (
     STATE_MIGRATED,
     EnginesPlan,
@@ -82,7 +83,13 @@ def fleet(tmp_path: Path):
 
 
 def _plan(fleet: Path, **kwargs) -> EnginesPlan:
+    # These tests are about the WRITE — the archive, the atomic replace, the
+    # measured gate and the rollback — not about host capability, so the floor
+    # is disabled EXPLICITLY. It is a required argument: omitting it used to
+    # disable it silently, which is how the public planner came to report a
+    # pre-engines-host spec as safe to write.
     paths, skipped = select_spec_paths(fleet)
+    kwargs.setdefault("floor", EngineFloor.disabled())
     return plan_engines_migration(
         paths, root=fleet, skipped_templates=skipped, **kwargs
     )

@@ -22,11 +22,24 @@ reported:
                         and named, because a batch that does not say what it
                         deferred reads exactly like a finished sweep.
 
-NO FILTER MAY SILENTLY DROP A SPEC. ``--host`` reads each spec to decide,
-and a spec it cannot read is KEPT rather than excluded — an unreadable spec
-that vanishes from the selection is the "118 done over a fleet of 119"
-failure, and it would make the batching flag the thing that disarms the
-guard against an unsafe apply.
+NO FILTER MAY SILENTLY DROP A SPEC, and nothing else may either. Which specs
+this run looks at — and everything it declined to look at, from a shadowed
+second copy to a ``--agent`` value that matched nothing — is
+:mod:`._engines_selection`'s job.
+
+WHAT NARROWS THE RUN NARROWS THE CLAIM. Whatever the selection left out is
+carried onto the plan and consumed by :attr:`EnginesPlan.outstanding`, so the
+one boolean a scheduled runner reads cannot disagree with the prose a human
+reads. That disagreement is the defect this module keeps re-learning: the
+templates and the ``--agent`` filter were both printed and both invisible to
+``migration_complete``.
+
+THE VERSION FLOOR IS NOT OPTIONAL HERE. :func:`plan_engines_migration` REQUIRES
+a ``floor``; it used to default to None, and the documented public planner then
+planned a spec pinned on a pre-engines host as migrated and ``safe_to_apply``.
+The guard belonged in the data path rather than in the one caller that
+remembered to pass it. ``EngineFloor.disabled()`` is how a caller says "no
+floor" out loud.
 
 The writing half — the archive, the atomic write, the measured gate and the
 rollback — lives in :mod:`._engines_apply`.
@@ -38,11 +51,17 @@ import difflib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
 from ..config._engines_line import REFUSED_ALREADY_DECLARED, migrate_engines_block
 from ._engines_apply import ApplyResult, apply_engines_migration
-from ._engines_floor import EngineFloor
+from ._engines_floor import REFUSED_HOST_PREDATES_ENGINES, EngineFloor
+from ._engines_selection import (
+    ShadowedSpec,
+    SpecSelection,
+    read_spec_text,
+    select_spec_paths,
+    select_spec_paths_over_roots,
+    spec_hosts_from_text,
+)
 from ._roster_state import inspect_roster, inspect_roster_over_roots
 
 __all__ = [
@@ -53,7 +72,9 @@ __all__ = [
     "STATE_UNREADABLE",
     "ApplyResult",
     "EnginesPlan",
+    "ShadowedSpec",
     "SpecOutcome",
+    "SpecSelection",
     "apply_engines_migration",
     "plan_engines_migration",
     "read_spec_text",
@@ -84,6 +105,12 @@ class SpecOutcome:
     default_key: str = ""
     new_text: "str | None" = None
     diff: str = ""
+    #: Every host THIS spec's text places itself on, sorted. ``None`` means
+    #: they could not be read — kept apart from ``()`` ("it names none") for
+    #: the reason ``_engines_selection.spec_hosts`` states, and carried on the
+    #: outcome so the report can roll up the floor's basis without re-reading
+    #: the file and risking two answers about one spec.
+    hosts: "tuple[str, ...] | None" = None
 
     @property
     def will_write(self) -> bool:
@@ -101,6 +128,18 @@ class EnginesPlan:
     #: these, so an unmigrated template re-introduces the legacy shape on
     #: every agent created after the sweep.
     skipped_templates: "tuple[str, ...]" = field(default=())
+    #: Spec files a LATER root held for an agent an earlier root already
+    #: supplied. Exactly one copy is written; the other is a real file this
+    #: run never looked at, and no later run can reach it either.
+    shadowed: "tuple[ShadowedSpec, ...]" = field(default=())
+    #: The narrowing selectors this run was given, spelled as the flags that
+    #: produced them (``--agent business``). Non-empty means the census
+    #: describes a SUBSET of the roster, which is why it costs completeness.
+    selectors: "tuple[str, ...]" = field(default=())
+    #: ``--agent`` values that matched no spec under any root.
+    unmatched_agents: "tuple[str, ...]" = field(default=())
+    #: ``--host`` values no selected spec places itself on.
+    unmatched_hosts: "tuple[str, ...]" = field(default=())
 
     def _of(self, state: str) -> "tuple[SpecOutcome, ...]":
         return tuple(o for o in self.outcomes if o.state == state)
@@ -125,6 +164,57 @@ class EnginesPlan:
     def held_back(self) -> "tuple[SpecOutcome, ...]":
         return self._of(STATE_HELD_BACK)
 
+    def remaining(self, *, migrated_written: bool = False) -> "tuple[str, ...]":
+        """Everything a further run still has to do, each named in one line.
+
+        :attr:`is_complete` is exactly "this is empty", so the boolean the
+        machine reads and the prose the human reads cannot drift apart —
+        which they did: the skipped templates and the ``--agent`` filter were
+        both printed to a human and both invisible to the boolean.
+
+        ``migrated_written`` is the ONE difference between the question
+        before a write and the question after a successful one: a completed
+        apply retires the ``migrated`` bucket and nothing else. The caller
+        that answers the second question passes this flag rather than
+        re-listing the conditions, because re-listing them is how the two
+        answers drifted apart in the first place.
+        """
+        left: "list[str]" = []
+        if self.roster is not None and not self.roster.is_populated:
+            left.append(self.roster.describe())
+        if self.selectors:
+            left.append(
+                f"this run was NARROWED to {', '.join(self.selectors)} — the "
+                f"rest of the roster was never examined"
+            )
+        if self.skipped_templates:
+            left.append(
+                f"{len(self.skipped_templates)} template spec(s) not migrated "
+                f"({', '.join(self.skipped_templates)}) — `sac agents create` "
+                f"copies them, so every agent minted after this sweep "
+                f"re-introduces the legacy shape"
+            )
+        if self.shadowed:
+            left.append(
+                f"{len(self.shadowed)} spec file(s) shadowed by an earlier root "
+                f"({', '.join(s.agent for s in self.shadowed)}) — still on disk, "
+                f"still legacy, and no run of this sweep can reach them"
+            )
+        if self.migrated and not migrated_written:
+            left.append(f"{len(self.migrated)} spec(s) still to write")
+        if self.held_back:
+            left.append(f"{len(self.held_back)} spec(s) held back by --limit")
+        if self.refused:
+            left.append(f"{len(self.refused)} spec(s) REFUSED")
+        if self.unreadable:
+            left.append(f"{len(self.unreadable)} spec(s) unreadable")
+        return tuple(left)
+
+    @property
+    def outstanding(self) -> "tuple[str, ...]":
+        """:meth:`remaining` for the question BEFORE any write."""
+        return self.remaining()
+
     @property
     def is_complete(self) -> bool:
         """Is there NOTHING left for a further run of this sweep to do?
@@ -133,10 +223,16 @@ class EnginesPlan:
         is not ``exit 0`` and not ``applied``. A run that wrote nothing
         because everything was refused, or because ``--limit`` held the rest
         back, is a run that did its job and left the migration unfinished.
+
+        A NARROWED run is likewise not a finished migration, and that is the
+        exact shape this field exists to stop: ``-a business --apply`` over a
+        113-spec root printed "this is what a completed one looks like",
+        named the FULL root it had not covered, and reported
+        ``migration_complete: true``. The templates and a shadowed second copy
+        are the same failure in two other costumes — work left behind that the
+        prose already reported and the boolean did not.
         """
-        if self.roster is not None and not self.roster.is_populated:
-            return False
-        return not (self.migrated or self.held_back or self.refused or self.unreadable)
+        return not self.outstanding
 
     @property
     def safe_to_apply(self) -> bool:
@@ -168,152 +264,24 @@ class EnginesPlan:
             parts.append(f"{len(self.refused)} REFUSED ({names})")
         if self.unreadable:
             parts.append(f"{len(self.unreadable)} unreadable — do not apply")
+        if self.selectors:
+            parts.append(
+                f"NARROWED by {', '.join(self.selectors)} — not a census of "
+                f"the roster"
+            )
+        if self.shadowed:
+            parts.append(f"{len(self.shadowed)} shadowed by an earlier root")
         return "; ".join(parts)
 
 
-def read_spec_text(path: Path) -> str:
-    """A spec's text with its LINE ENDINGS INTACT.
-
-    ``Path.read_text`` opens in universal-newline mode, which silently turns
-    every ``\\r\\n`` into ``\\n`` before the caller sees a byte. A CRLF spec
-    read that way and written back is rewritten END TO END — the
-    unreviewable whole-file diff the operator asked this sweep to avoid —
-    and ``_yaml_line_edit.split_ending``'s CRLF handling becomes unreachable
-    because the ``\\r`` is already gone. ``newline=""`` is what makes that
-    machinery real rather than decorative.
-    """
-    with Path(path).open("r", encoding="utf-8", newline="") as handle:
-        return handle.read()
-
-
-def _spec_hosts_from_text(text: str) -> "set[str] | None":
-    """Every host the spec TEXT places itself on. ``None`` when unparsable.
-
-    Takes text rather than a path so the caller that has already read the
-    file judges the SAME bytes it will edit. Re-reading to answer a second
-    question is how one file yields two answers.
-    """
-    try:
-        doc = yaml.safe_load(text)
-    except yaml.YAMLError:  # stx-allow: fallback (reason: an unparsable spec must reach the PLAN as "host unknown", not vanish from the selection filter)
-        return None
-    spec = (doc or {}).get("spec") or {}
-    hosts = {str(spec.get("host"))} if spec.get("host") else set()
-    declared = spec.get("hosts")
-    if isinstance(declared, list):
-        hosts |= {str(h) for h in declared if h}
-    return hosts
-
-
-def _spec_hosts(path: Path) -> "set[str] | None":
-    """Every host a spec places itself on.
-
-    ``set()`` means the spec was read and places itself nowhere. ``None``
-    means it COULD NOT BE READ — a different answer, and the one the host
-    filter must not confuse with "no match": an unreadable spec that vanishes
-    from the selection is the "118 done over a fleet of 119" failure, and
-    ``--host`` would then be the flag that disables the guard blocking an
-    unsafe apply.
-    """
-    try:
-        text = read_spec_text(path)
-    except (
-        OSError,
-        UnicodeDecodeError,
-    ):  # stx-allow: fallback (reason: an unreadable spec must reach the PLAN as unreadable, not vanish from the selection filter)
-        return None
-    return _spec_hosts_from_text(text)
-
-
-def _on_a_wanted_host(path: Path, wanted: "set[str]") -> bool:
-    """Keep a spec the host filter cannot rule out, so the PLAN reports it."""
-    hosts = _spec_hosts(path)
-    if hosts is None:
-        return True
-    return bool(hosts & wanted)
-
-
-def select_spec_paths(
-    root: Path,
-    *,
-    hosts: "tuple[str, ...]" = (),
-    agents: "tuple[str, ...]" = (),
-    templates: bool = False,
-) -> "tuple[list[Path], list[str]]":
-    """Which specs THIS run touches, plus the template names it left out.
-
-    Batching is the operator's own condition for trusting a 119-file rewrite:
-    ``agents`` names an explicit set and ``hosts`` takes one machine at a
-    time. The order is sorted so a dry-run and the apply that follows it
-    agree on what they are looking at.
-
-    THE BATCH SIZE IS NOT HERE. ``--limit`` caps what gets WRITTEN, and
-    which specs those are is only knowable after planning — see
-    :func:`plan_engines_migration`. Capping the glob instead re-selected the
-    same first N on every run, so the second batch wrote nothing and
-    reported the sweep complete.
-    """
-    every = sorted(Path(root).glob("*/spec.yaml"))
-    skipped = [p.parent.name for p in every if p.parent.name.startswith("_")]
-    picked = [p for p in every if templates or not p.parent.name.startswith("_")]
-    if agents:
-        wanted = set(agents)
-        picked = [p for p in picked if p.parent.name in wanted]
-    if hosts:
-        wanted_hosts = set(hosts)
-        picked = [p for p in picked if _on_a_wanted_host(p, wanted_hosts)]
-    return picked, ([] if templates else skipped)
-
-
-def select_spec_paths_over_roots(
-    roots: "tuple[Path, ...]",
-    *,
-    hosts: "tuple[str, ...]" = (),
-    agents: "tuple[str, ...]" = (),
-    templates: bool = False,
-) -> "tuple[list[Path], list[str]]":
-    """:func:`select_spec_paths` over SEVERAL roots, de-duped by AGENT NAME.
-
-    The resolver that produces those roots says in its own docstring that
-    callers de-duplicate, and by NAME rather than by path is the only
-    de-duplication that means anything here: the same agent appears under two
-    roots as two different paths, and writing both would migrate one agent
-    twice — once into the copy that is actually loaded and once into a stale
-    one, which is how two answers about one agent get created.
-
-    EARLIER ROOTS WIN, in the order the resolver hands them over. That is a
-    conservative choice, not a claim to know which copy loads: on a genuine
-    name collision between a project-local registry and the fleet,
-    ``config._resolve.resolve_config`` REFUSES to pick and raises
-    ``AmbiguousRegistryScope``. A colliding name is therefore a pre-existing
-    fleet fault this sweep must not paper over — so it writes exactly one
-    file for that agent and the report names every root it searched.
-    """
-    picked: "list[Path]" = []
-    skipped: "list[str]" = []
-    seen: "set[str]" = set()
-    for root in roots:
-        paths, root_skipped = select_spec_paths(
-            root, hosts=hosts, agents=agents, templates=templates
-        )
-        for path in paths:
-            if path.parent.name in seen:
-                continue
-            seen.add(path.parent.name)
-            picked.append(path)
-        for name in root_skipped:
-            if name not in skipped:
-                skipped.append(name)
-    return picked, skipped
-
-
-def plan_spec(path: Path, *, floor: "EngineFloor | None" = None) -> SpecOutcome:
+def plan_spec(path: Path, *, floor: EngineFloor) -> SpecOutcome:
     """Plan ONE spec. Reads it; writes nothing.
 
-    ``floor`` is the VERSION FLOOR (:mod:`._engines_floor`). It is consulted
-    only where it can change the outcome — where a block WOULD be written,
-    and where one is already declared on a host that cannot parse it. A spec
-    the editor refuses for its own reason gets no block either way, so the
+    ``floor`` is the VERSION FLOOR (:mod:`._engines_floor`) and is REQUIRED —
+    pass ``EngineFloor.disabled()`` to plan without one. It is consulted only
+    where it can change the outcome: where a block WOULD be written, and
+    where one is already declared on a host that cannot parse it. A spec the
+    editor refuses for its own reason gets no block either way, so the
     editor's reason is the actionable one and is left in place.
     """
     agent = path.parent.name
@@ -325,8 +293,10 @@ def plan_spec(path: Path, *, floor: "EngineFloor | None" = None) -> SpecOutcome:
     ) as exc:  # stx-allow: fallback (reason: one unreadable spec must not abort a 119-spec sweep; it is recorded and makes the plan unsafe)
         return SpecOutcome(agent, path, STATE_UNREADABLE, detail=str(exc))
 
+    hosts = spec_hosts_from_text(before)
+    declared = None if hosts is None else tuple(sorted(hosts))
     edit = migrate_engines_block(before, path=str(path))
-    blocked = _floor_refusal(agent, path, before, edit, floor)
+    blocked = _floor_refusal(agent, path, hosts, edit, floor)
     if blocked is not None:
         return blocked
     if not edit.changed:
@@ -334,7 +304,12 @@ def plan_spec(path: Path, *, floor: "EngineFloor | None" = None) -> SpecOutcome:
             STATE_ALREADY if edit.reason == REFUSED_ALREADY_DECLARED else STATE_REFUSED
         )
         return SpecOutcome(
-            agent, path, state, reason=edit.reason or "", detail=edit.detail
+            agent,
+            path,
+            state,
+            reason=edit.reason or "",
+            detail=edit.detail,
+            hosts=declared,
         )
     diff = "".join(
         difflib.unified_diff(
@@ -352,13 +327,23 @@ def plan_spec(path: Path, *, floor: "EngineFloor | None" = None) -> SpecOutcome:
         default_key=edit.default_key,
         new_text=edit.text,
         diff=diff,
+        hosts=declared,
     )
 
 
-#: Appended when the floor blocks a spec that ALREADY declares engines. That
-#: is not a migration this sweep would make — it is a spec which cannot load
-#: on its own host TODAY, and reporting it as "already migrated" would file a
-#: live incident under the one bucket that means "finished".
+#: Appended when the floor blocks a spec that ALREADY declares engines ON A
+#: HOST MEASURED AS PRE-ENGINES. That is not a migration this sweep would make
+#: — it is a spec which cannot load on its own host TODAY, and reporting it as
+#: "already migrated" would file a live incident under the one bucket that
+#: means "finished".
+#:
+#: ONLY that branch. It used to be appended to every floor refusal of an
+#: already-declaring spec, so the not-measured and no-host refusals asserted as
+#: fact the very thing their own preceding sentence says nobody knows: "absent
+#: from the measured roster … This spec ALREADY declares spec.engines, so it
+#: does not load on that host today." Nobody measured that host; nothing had
+#: established any load failure on it. And under the no-host reason there is no
+#: "that host" to refer to at all.
 _ALREADY_ON_AN_INCAPABLE_HOST = (
     " This spec ALREADY declares spec.engines, so it does not load on that "
     "host today — nothing here writes it, and a human has to resolve it."
@@ -368,22 +353,27 @@ _ALREADY_ON_AN_INCAPABLE_HOST = (
 def _floor_refusal(
     agent: str,
     path: Path,
-    text: str,
+    hosts: "set[str] | None",
     edit,
-    floor: "EngineFloor | None",
+    floor: EngineFloor,
 ) -> "SpecOutcome | None":
     """The floor's refusal for this spec, or None to leave the outcome alone."""
-    if floor is None:
-        return None
     already = edit.reason == REFUSED_ALREADY_DECLARED
     if not edit.changed and not already:
         return None
-    verdict = floor.verdict_for(_spec_hosts_from_text(text))
+    verdict = floor.verdict_for(hosts)
     if not verdict.blocks:
         return None
-    detail = verdict.detail + (_ALREADY_ON_AN_INCAPABLE_HOST if already else "")
+    detail = verdict.detail
+    if already and verdict.reason == REFUSED_HOST_PREDATES_ENGINES:
+        detail += _ALREADY_ON_AN_INCAPABLE_HOST
     return SpecOutcome(
-        agent, path, STATE_REFUSED, reason=verdict.reason, detail=detail
+        agent,
+        path,
+        STATE_REFUSED,
+        reason=verdict.reason,
+        detail=detail,
+        hosts=None if hosts is None else tuple(sorted(hosts)),
     )
 
 
@@ -413,6 +403,7 @@ def _cap_batch(
                         reason="held back by --limit",
                         engine_keys=outcome.engine_keys,
                         default_key=outcome.default_key,
+                        hosts=outcome.hosts,
                     )
                 )
                 continue
@@ -424,11 +415,15 @@ def _cap_batch(
 def plan_engines_migration(
     spec_paths: "list[Path]",
     *,
+    floor: EngineFloor,
     root: "Path | None" = None,
     roots: "tuple[Path, ...] | None" = None,
     skipped_templates: "list[str]" = (),
+    shadowed: "tuple[ShadowedSpec, ...]" = (),
+    selectors: "tuple[str, ...]" = (),
+    unmatched_agents: "tuple[str, ...]" = (),
+    unmatched_hosts: "tuple[str, ...]" = (),
     limit: "int | None" = None,
-    floor: "EngineFloor | None" = None,
 ) -> EnginesPlan:
     """What the sweep WOULD do over ``spec_paths``. Reads only.
 
@@ -437,10 +432,22 @@ def plan_engines_migration(
     and a roster that named only the first of them would be a report about a
     directory the sweep did not confine itself to.
 
-    ``floor`` is the version floor. Passing None disables it entirely, which
-    is what the unit tests of the OTHER buckets want; the CLI always passes
-    one, so the fleet path is never floorless.
+    ``floor`` is the version floor and is REQUIRED. Omitting it used to
+    disable it, so the documented public entry point — called the documented
+    way, ``plan_engines_migration(paths, root=root)`` — planned a spec pinned
+    on a measured pre-engines host as ``migrated`` and ``safe_to_apply``. The
+    fleet path was guarded only because the single CLI call site remembered;
+    a second entry point inherited nothing and got no error to trip over.
+    Pass ``EngineFloor.disabled()`` to plan without a floor on purpose.
     """
+    if floor is None:
+        raise TypeError(
+            "plan_engines_migration requires a floor. Pass "
+            "EngineFloor.with_overrides(...) for a real sweep, or "
+            "EngineFloor.disabled() to plan WITHOUT the version floor. There "
+            "is no default because the default was 'no floor', and a floorless "
+            "plan reports a spec pinned on a pre-engines host as safe to write."
+        )
     if limit is not None and limit < 1:
         raise ValueError(
             f"limit must be a positive count of specs to write; got {limit!r}. "
@@ -457,4 +464,8 @@ def plan_engines_migration(
         outcomes=_cap_batch(tuple(plan_spec(p, floor=floor) for p in paths), limit),
         roster=roster,
         skipped_templates=tuple(skipped_templates),
+        shadowed=tuple(shadowed),
+        selectors=tuple(selectors),
+        unmatched_agents=tuple(unmatched_agents),
+        unmatched_hosts=tuple(unmatched_hosts),
     )

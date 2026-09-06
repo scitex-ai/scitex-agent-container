@@ -189,9 +189,14 @@ HOST_ALIASES: "dict[str, str]" = {
 }
 
 # Refusal reasons. CONSTANT strings, nothing interpolated, so a 119-spec sweep
-# groups by reason and prints one line per KIND — the same contract
+# groups by reason and prints one BLOCK per KIND — the same contract
 # ``_engines_line``'s REFUSED_* constants keep. The variable half (which host,
-# what was measured) travels in the detail.
+# what was measured) travels in the detail, and that detail is per-HOST rather
+# than per-spec, so the grouping key that makes this claim true is
+# ``(reason, detail)``: nine specs on one pre-engines host are ONE block naming
+# nine agents, not nine copies of a 400-character paragraph. The renderer did
+# the second for a while, and the property was true only of the --json payload;
+# ``_agents_migrate_engines_report._group_refusals`` is where it is kept now.
 REFUSED_HOST_PREDATES_ENGINES = (
     "the target host runs a sac that PREDATES spec.engines and would reject "
     "the block as an unknown spec field — the agent would stop starting"
@@ -268,13 +273,31 @@ class EngineFloor:
     are alias-resolved on the way in, so lifting ``scitex-laptop-01`` also
     lifts the 14 specs that spell the same machine ``ywata-note-win`` —
     otherwise the override would silently miss the specs it was typed for.
+
+    ``active`` is what :meth:`disabled` turns off, and it exists so that
+    "plan without the floor" has to be SAID. The planner used to take
+    ``floor=None`` and default to it, which meant the documented public
+    entry point planned a pre-engines-host spec as safe to write; a caller
+    that wants no floor now names one rather than omitting an argument.
     """
 
     allowed: "frozenset[str]" = field(default_factory=frozenset)
+    active: bool = True
 
     @classmethod
     def with_overrides(cls, hosts: "tuple[str, ...]" = ()) -> "EngineFloor":
         return cls(allowed=frozenset(canonical_host(h) for h in hosts if h))
+
+    @classmethod
+    def disabled(cls) -> "EngineFloor":
+        """A floor that judges nothing — the EXPLICIT no-floor plan.
+
+        For the unit tests of the other buckets, which are about selection,
+        batching and line endings rather than about host capability. It is a
+        value a caller has to construct, so no plan is ever floorless by
+        accident.
+        """
+        return cls(active=False)
 
     def _describe(self, host: str) -> str:
         """One host's recorded verdict, spelled out.
@@ -302,6 +325,8 @@ class EngineFloor:
         host is the one to report — it is the fact, and the unknown is the
         absence of one.
         """
+        if not self.active:
+            return _PASS
         if hosts is None:
             return FloorVerdict(True, REFUSED_HOST_UNREADABLE)
         if not hosts:

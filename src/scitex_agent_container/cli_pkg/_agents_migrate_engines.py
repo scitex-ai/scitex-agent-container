@@ -41,16 +41,22 @@ and the fail-closed rule (an unmeasured host is refused, never assumed
 capable). ``--host-supports-engines HOST`` lifts it for a named machine.
 
 **Where it writes.** ``--root``, else ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR``,
-else EVERY user-scope root the rest of the CLI resolves, de-duplicated by
-agent name. The old default read a different env var and landed on the
-container's own ``$HOME`` — one spec next to the fleet's 123, reported as a
-finished sweep. Every report names the roots it searched.
+else every user-scope root the rest of the CLI resolves EXCEPT the
+project-local one, de-duplicated by agent name. The old default read a
+different env var and landed on the container's own ``$HOME`` — one spec next
+to the fleet's 123, reported as a finished sweep. Every report names the roots
+it searched, the roots it resolved and did not search, and the PATH of every
+spec it would write.
 
 **Exit codes.** ``0`` the plan is sound (a named refusal is NOT a failure),
 ``1`` a spec is unreadable or no roster was searched, ``2`` the apply was
 refused or rolled back. ``exit 0`` does NOT mean the migration is finished —
 a run whose every spec was refused also exits 0. ``migration_complete`` in
-``--json`` is the field that answers that question.
+``--json`` is the field that answers that question, and it is FALSE for any
+run that did not cover the whole roster: a ``--agent``/``--host`` filter, a
+``--limit`` batch, an unmigrated template, or a spec.yaml shadowed by an
+earlier root. The selectors themselves are echoed into the payload, so a
+filtered census can never be mistaken for a full one.
 
 ``--preflight`` probes the gateway the migration points at and reports a
 NAMED state rather than a boolean, because the two failure shapes look
@@ -76,13 +82,12 @@ from .._maintenance._engines_migration import (
     plan_engines_migration,
     select_spec_paths_over_roots,
 )
+from ._agents_migrate_engines_preflight import preflight_payload, render_preflight
 from ._agents_migrate_engines_report import (
     plan_payload,
-    preflight_payload,
     render_apply,
     render_diffs,
     render_plan,
-    render_preflight,
 )
 from ._helpers import _json_flag, console
 
@@ -94,26 +99,72 @@ _EXIT_APPLY_REFUSED = 2
 _AGENTS_DIR_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
 
 
+def _project_local_roots() -> "tuple[_Path, ...]":
+    """The registry found by WALKING UP FROM CWD, which is why it is excluded.
+
+    ``config._resolve`` prepends "the first ``.scitex/agent-container/agents``
+    found by walking upward from cwd" to the search path. That is right for
+    ``sac agents start`` — a repo's checked-in fixtures should win for a name
+    typed inside that repo — and wrong for a bulk rewrite, in two ways
+    measured 2026-09-06 with ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR`` unset::
+
+        cwd = <the sac repo, i.e. this agent's own workdir>
+            3 roots, 119 specs   (includes the repo's own sdk-test + self)
+        cwd = /uvwork/tmp   or   /home/agent
+            2 roots, 117 specs
+
+    First, the sweep's scope — and with ``--apply``, its WRITE SET — changed
+    with the working directory. Second, ``git ls-files`` confirms
+    ``.scitex/agent-container/agents/{sdk-test,self}/spec.yaml`` are TRACKED
+    repo test fixtures: from the normal invocation, ``--apply`` would rewrite
+    them. Both escaped today only by accident of unrelated guards, and
+    ``--host-supports-engines local`` — a plausible developer flag — put the
+    tracked fixture straight back into the write set.
+
+    So the default sweep does not include it. ``SAC_AGENT_SCOPE=project`` is
+    the one exception: there the operator asked for project scope by name,
+    and honouring an explicit request is not the same as inheriting a cwd.
+    ``--root`` still sweeps whatever directory is named.
+    """
+    # Private siblings on purpose: this is a statement about THAT resolver's
+    # project-local rule, so it has to consult that resolver rather than
+    # re-deriving the walk-up and drifting from it.
+    from ..config._resolve import _project_local_dirs, _read_scope
+
+    if _read_scope() == "project":
+        return ()
+    return tuple(_Path(d) for d in _project_local_dirs())
+
+
 def default_spec_roots() -> "tuple[_Path, ...]":
     """Where to sweep when neither ``--root`` nor the env var says.
 
-    EVERY user-scope root, not one. Measured inside this container on
-    2026-09-06, with ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR`` unset and
+    Every user-scope root except the cwd-derived project-local one (see
+    :func:`_project_local_roots`), in the order
+    ``config._resolve.resolve_config`` itself resolves them: the home primary,
+    then ``$SCITEX_AGENT_CONTAINER_YAML_DIRS``. Measured inside this container
+    on 2026-09-06, with ``$SCITEX_AGENT_CONTAINER_AGENTS_DIR`` unset and
     ``$SCITEX_AGENT_CONTAINER_YAML_DIRS`` set by the runtime to the
     operator's tree::
 
         fleet_agents_dir() -> /home/agent/.scitex/…/agents            1 spec
-        user_scope_roots() -> /home/agent/.scitex/…/agents            1 spec
-                              …/.worktrees/…/.scitex/…/agents         2 specs
-                              /home/ywatanabe/.scitex/…/agents      123 specs
+        this function     -> /home/agent/.scitex/…/agents            1 spec
+                             /home/ywatanabe/.scitex/…/agents      123 specs
 
     ``fleet_agents_dir`` reads a DIFFERENT variable, which the runtime does
     not set, and lands on the container's own ``$HOME`` — a root holding one
     spec, next to the fleet's 123. A sweep defaulting there does not refuse:
     it reports one spec and exits 0, which is the shape of a finished
-    migration. ``user_scope_roots`` is the resolver ``sac agents find`` and
-    ``sac agents start`` already use, so the sweep sees the agents the rest
-    of the CLI sees.
+    migration.
+
+    THE ORDER IS THE LOADER'S. ``user_scope_roots`` returns ``[primary,
+    *project_local, *operator_env_dirs]`` while ``resolve_config`` resolves
+    ``project_local -> primary -> operator_env_dirs``: on a name collision the
+    sweep would have migrated the copy the loader does not load, and the
+    report could not have said which. Dropping project-local removes that
+    disagreement rather than papering over it — what is left, primary before
+    the operator dirs, is the loader's own order. A collision between the two
+    that remain is reported as ``shadowed`` either way.
 
     ``fleet_agents_dir`` is deliberately NOT fixed here — four other callers
     share it and that consolidation is its own card.
@@ -125,7 +176,53 @@ def default_spec_roots() -> "tuple[_Path, ...]":
         return (_Path(override).expanduser(),)
     from ._helpers._agent_list_roots import user_scope_roots
 
-    return tuple(_Path(r) for r in user_scope_roots())
+    excluded = set(_project_local_roots())
+    return tuple(_Path(r) for r in user_scope_roots() if _Path(r) not in excluded)
+
+
+def excluded_spec_roots() -> "tuple[_Path, ...]":
+    """Roots this run RESOLVED and deliberately did not sweep.
+
+    Reported for the same reason ``roots_absent`` is: a root that was resolved
+    and then left out has to be visible, or the count reads as covering it.
+    """
+    import os
+
+    if (os.environ.get(_AGENTS_DIR_ENV) or "").strip():
+        return ()
+    from ._helpers._agent_list_roots import user_scope_roots
+
+    resolved = {_Path(r) for r in user_scope_roots()}
+    return tuple(r for r in _project_local_roots() if r in resolved)
+
+
+def _selectors(agents: "tuple[str, ...]", hosts: "tuple[str, ...]") -> "tuple[str, ...]":
+    """The narrowing flags this run was given, spelled back as flags.
+
+    A filtered run is a census of a SUBSET, and nothing recorded that: the
+    payload carried no field naming the filter, so ``-a business --apply``
+    over a 113-spec root reported ``specs: 1``, ``migration_complete: true``
+    and printed "this is what a completed one looks like" while naming the
+    full root it had not covered.
+    """
+    return tuple(
+        [f"--agent {a}" for a in agents if a] + [f"--host {h}" for h in hosts if h]
+    )
+
+
+def _show_preflight(payload: dict) -> None:
+    """Print the gateway verdict on EVERY path that paid for the probe.
+
+    ``--preflight`` is computed before the apply/dry-run branch, so the probe
+    is a real network round trip on every path — and it was rendered only in
+    the dry-run branch. ``--preflight --apply``, the natural "check the
+    gateway, then write" invocation, therefore printed no red, no yellow and
+    no green line at all. Exactly the defect this module's docstring records
+    having fixed for ``--diff``.
+    """
+    if payload.get("preflight"):
+        render_preflight(payload["preflight"])
+        console.print("")
 
 
 def _archive_dir():
@@ -141,12 +238,16 @@ def _complete_after_apply(plan, result) -> bool:
     Distinct from ``plan.is_complete``, which is the question BEFORE the
     write: a successful apply retires the ``migrated`` bucket, and what is
     left is whatever no further write of this batch can clear.
+
+    Everything else :attr:`EnginesPlan.outstanding` names still counts. The
+    two claims are the same claim minus one bucket, so this asks the plan
+    rather than re-listing the conditions — re-listing them is how the
+    ``--agent`` filter and the skipped templates came to be invisible here
+    while the dry-run reported them.
     """
     if not result.applied:
         return False
-    if plan.roster is not None and not plan.roster.is_populated:
-        return False
-    return not (plan.held_back or plan.refused or plan.unreadable)
+    return not plan.remaining(migrated_written=True)
 
 
 @click.command(name="migrate-engines")
@@ -301,15 +402,25 @@ def migrate_engines(
             f"--limit must be a positive number of specs to write; got {limit}."
         )
 
-    roots = (_Path(root_opt),) if root_opt is not None else default_spec_roots()
+    explicit_root = root_opt is not None
+    roots = (_Path(root_opt),) if explicit_root else default_spec_roots()
+    excluded = () if explicit_root else excluded_spec_roots()
     floor = EngineFloor.with_overrides(floor_overrides)
-    paths, skipped = select_spec_paths_over_roots(
+    selection = select_spec_paths_over_roots(
         roots, hosts=hosts, agents=agents, templates=templates
     )
     plan = plan_engines_migration(
-        paths, roots=roots, skipped_templates=skipped, limit=limit, floor=floor
+        list(selection.paths),
+        roots=roots,
+        skipped_templates=list(selection.skipped_templates),
+        shadowed=selection.shadowed,
+        selectors=_selectors(agents, hosts),
+        unmatched_agents=selection.unmatched_agents,
+        unmatched_hosts=selection.unmatched_hosts,
+        limit=limit,
+        floor=floor,
     )
-    payload = plan_payload(plan, roots)
+    payload = plan_payload(plan, roots, floor=floor, excluded_roots=excluded)
     payload["engine_floor_overrides"] = sorted(set(floor.allowed))
     payload["mode"] = "apply" if apply else "dry-run"
     payload["preflight"] = preflight_payload() if preflight else None
@@ -324,9 +435,7 @@ def migrate_engines(
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(code)
         console.print("[bold]sac agents migrate-engines[/bold]  dry-run (read-only)\n")
-        if payload["preflight"]:
-            render_preflight(payload["preflight"])
-            console.print("")
+        _show_preflight(payload)
         render_plan(plan, payload, diff=diff)
         if plan.migrated:
             console.print(
@@ -342,6 +451,7 @@ def migrate_engines(
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(_EXIT_PLAN_UNSOUND)
         console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
+        _show_preflight(payload)
         render_plan(plan, payload, diff=diff)
         console.print(
             "\n[red]REFUSED[/red] — nothing was written. A plan that cannot "
@@ -354,6 +464,7 @@ def migrate_engines(
     payload.update(
         {
             "written": list(result.written),
+            "written_paths": list(result.written_paths),
             "archive_dir": str(result.archive_dir) if result.archive_dir else None,
             "applied": result.applied,
             "apply_refused": result.refused,
@@ -361,6 +472,10 @@ def migrate_engines(
             "drift": list(result.drift),
             "errors": list(result.errors),
             "migration_complete": _complete_after_apply(plan, result),
+            # Re-derived AFTER the write, from the same source as the boolean
+            # above: a successful apply retires the `still to write` line and
+            # nothing else, and the prose must not keep claiming it.
+            "outstanding": list(plan.remaining(migrated_written=result.applied)),
             "exit_code": code,
         }
     )
@@ -368,6 +483,7 @@ def migrate_engines(
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(code)
     console.print("[bold]sac agents migrate-engines[/bold]  apply\n")
+    _show_preflight(payload)
     if diff:
         # `--diff` is on by DEFAULT and its help calls it "the whole point".
         # It used to be accepted and dropped on this path, so an operator who

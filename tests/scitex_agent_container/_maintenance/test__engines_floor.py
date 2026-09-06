@@ -357,14 +357,42 @@ def test_an_override_typed_as_an_alias_is_recorded_canonically() -> None:
     assert floor.allowed == frozenset({"scitex-laptop-01"})
 
 
-def test_a_plan_without_a_floor_does_not_refuse(root: Path) -> None:
-    # Arrange — floor=None is the seam the other buckets' tests plan through.
+def test_an_explicitly_disabled_floor_does_not_refuse(root: Path) -> None:
+    # Arrange — EngineFloor.disabled() is the seam the other buckets' tests
+    # plan through, and it has to be SAID: see the two tests below for why
+    # omitting the argument is no longer the way to say it.
     _write_spec(root, "grounded", host=PREDATES)
     paths, _ = select_spec_paths(root)
     # Act
-    plan = plan_engines_migration(paths, root=root)
+    plan = plan_engines_migration(paths, root=root, floor=EngineFloor.disabled())
     # Assert
     assert _outcome(plan, "grounded").state == STATE_MIGRATED
+
+
+def test_planning_without_naming_a_floor_is_a_type_error(root: Path) -> None:
+    # Arrange — the documented public planner, called the documented way,
+    # planned a spec pinned on a measured pre-engines host as migrated and
+    # safe_to_apply. The guard lived in the one caller that remembered to
+    # pass a floor; a second entry point would inherit nothing.
+    _write_spec(root, "grounded", host=PREDATES)
+    paths, _ = select_spec_paths(root)
+    # Act
+    act = lambda: plan_engines_migration(paths, root=root)  # noqa: E731
+    # Assert
+    with pytest.raises(TypeError):
+        act()
+
+
+def test_passing_none_as_the_floor_is_refused_by_name(root: Path) -> None:
+    # Arrange — None used to MEAN "no floor", so it must not keep meaning it
+    # silently now that the argument is required.
+    _write_spec(root, "grounded", host=PREDATES)
+    paths, _ = select_spec_paths(root)
+    # Act
+    act = lambda: plan_engines_migration(paths, root=root, floor=None)  # noqa: E731
+    # Assert
+    with pytest.raises(TypeError, match="EngineFloor.disabled"):
+        act()
 
 
 # ---------------------------------------------------------------------------

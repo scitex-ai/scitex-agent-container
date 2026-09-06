@@ -40,6 +40,12 @@ class ApplyResult:
     """What the apply actually did."""
 
     written: "tuple[str, ...]" = ()
+    #: The same writes, as PATHS. ``written`` carries agent NAMES, which is
+    #: what a human reads — and a name cannot answer "which root did that
+    #: land in?". The default sweep searches several roots, one of which is
+    #: the container's own ``$HOME``, so an agent name is not enough to tell
+    #: a fleet spec from a stray one under a root nobody meant to write.
+    written_paths: "tuple[str, ...]" = ()
     archive_dir: "Path | None" = None
     applied: bool = False
     refused: str = ""
@@ -233,6 +239,7 @@ def apply_engines_migration(plan, archive_dir: Path) -> ApplyResult:
         )
     return ApplyResult(
         written=tuple(o.agent for o in targets),
+        written_paths=tuple(str(o.path) for o in targets),
         archive_dir=archive_dir,
         applied=True,
     )
