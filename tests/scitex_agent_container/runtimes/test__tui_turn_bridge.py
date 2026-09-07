@@ -540,44 +540,56 @@ def test_build_on_turn_raises_when_session_absent() -> None:
 # failure anyway. These pin the two things a sender cannot act without.
 
 
-def test_the_refusal_says_NOTHING_WAS_QUEUED() -> None:
-    # Arrange — a pane that refuses the inject.
-    runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: False)
-    on_turn = bridge._build_on_turn(SimpleNamespace(name="busy"), runtime=runtime)
+@pytest.fixture()
+def refusal_message() -> str:
+    """The RuntimeError text a REFUSED turn produces.
 
-    # Act
-    with pytest.raises(RuntimeError) as exc:
-        on_turn("wake up")
-
-    # Assert — the sender must not assume the turn is waiting somewhere.
-    assert "NOTHING WAS QUEUED" in str(exc.value), str(exc.value)
-
-
-def test_the_refusal_names_the_BUSY_next_step() -> None:
-    # Arrange
-    runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: False)
-    on_turn = bridge._build_on_turn(SimpleNamespace(name="busy"), runtime=runtime)
-
-    # Act
-    with pytest.raises(RuntimeError) as exc:
-        on_turn("wake up")
-
-    # Assert — busy wants "resend later / use a durable rail".
-    assert "durable rail" in str(exc.value), str(exc.value)
-
-
-def test_the_refusal_names_the_ABSENT_next_step_with_the_agent_name() -> None:
-    # Arrange
+    Built once here so each test below asserts exactly one thing (STX-TQ007):
+    a `pytest.raises` block counts as an assertion, so raising and inspecting
+    in the same test is two.
+    """
     runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: False)
     on_turn = bridge._build_on_turn(SimpleNamespace(name="ghost"), runtime=runtime)
+    try:
+        on_turn("wake up")
+    except RuntimeError as exc:
+        return str(exc)
+    raise AssertionError("a refused turn must raise; it did not")
+
+
+def test_the_refusal_says_NOTHING_WAS_QUEUED(refusal_message: str) -> None:
+    # Arrange — the text a refused turn hands the sender.
+    message = refusal_message
 
     # Act
-    with pytest.raises(RuntimeError) as exc:
-        on_turn("wake up")
+    states_the_loss = "NOTHING WAS QUEUED" in message
 
-    # Assert — absent wants "start it", and the command must carry the NAME so
-    # the reader can run it without looking anything up.
-    assert "sac agents start ghost" in str(exc.value), str(exc.value)
+    # Assert — the sender must not assume the turn is waiting somewhere.
+    assert states_the_loss, message
+
+
+def test_the_refusal_names_the_BUSY_next_step(refusal_message: str) -> None:
+    # Arrange
+    message = refusal_message
+
+    # Act
+    names_the_alternative = "durable rail" in message
+
+    # Assert — busy wants "resend later / use a rail that survives a busy pane".
+    assert names_the_alternative, message
+
+
+def test_the_refusal_names_the_ABSENT_next_step_with_the_agent_name(
+    refusal_message: str,
+) -> None:
+    # Arrange
+    message = refusal_message
+
+    # Act — the command must carry the NAME so it is runnable as printed.
+    names_the_command = "sac agents start ghost" in message
+
+    # Assert
+    assert names_the_command, message
 
 
 def test_CONTROL_a_DELIVERED_turn_raises_nothing() -> None:
