@@ -184,10 +184,34 @@ From: ./sac-base.sif
         # pytest-asyncio built for 8 and 93 async tests failed as pure
         # environment artefacts. The floor mirrors pyproject.toml's ``[dev]``
         # (SSoT) and must be bumped in lockstep with it.
+        # build + hatchling: DELIBERATELY another package's dev dep, and the
+        # PAIR is load-bearing -- `build` alone does not work here.
+        #
+        # scitex-ui's packaging gate runs `python -m build --no-isolation`
+        # (its tests/develop/test_packaging.py). Default `build` creates a
+        # venv and FETCHES the backend from the index -- a network dependency
+        # inside a test whose failure mode is a HANG on a slow index, not a
+        # clean error, which is why that gate opted out of isolation. But with
+        # --no-isolation and no hatchling installed there is no backend to
+        # call at all, so shipping `build` by itself would bake for hours and
+        # still fail.
+        #
+        # WHY HERE rather than in that package's own extra: this image
+        # installs the dev extra of the package it is BUILT FROM (sac). It has
+        # never installed any other agent's, and no amount of shipping sac's
+        # [dev] would. Per-agent dev deps have no delivery mechanism today, so
+        # until they do, a tool another agent's gate needs is carried here
+        # explicitly. That gap is the more interesting question and stays open
+        # behind this unblock.
+        #
+        # NOT added to sac's pyproject [dev]: PS-210 reads those entries as
+        # distribution names and resolves them to imports, and sac's own suite
+        # imports neither.
         uv pip install --python /opt/venv-sac/bin/python -U \
             black flake8 \
             ipython ipdb \
             "pytest>=7.0.0,<9.0.0" pytest-cov \
+            "build>=1.0" "hatchling>=1.20" \
             "claude-agent-sdk" \
             "openai-agents>=0.19.0" \
             "scitex[all]" \
@@ -341,10 +365,34 @@ From: ./sac-base.sif
         # ``<9`` half is load-bearing (an unversioned pytest under
         # ``--upgrade`` crosses a major the inherited pytest-asyncio was not
         # built for, and the suite then fails as an environment artefact).
+        # build + hatchling: DELIBERATELY another package's dev dep, and the
+        # PAIR is load-bearing -- `build` alone does not work here.
+        #
+        # scitex-ui's packaging gate runs `python -m build --no-isolation`
+        # (its tests/develop/test_packaging.py). Default `build` creates a
+        # venv and FETCHES the backend from the index -- a network dependency
+        # inside a test whose failure mode is a HANG on a slow index, not a
+        # clean error, which is why that gate opted out of isolation. But with
+        # --no-isolation and no hatchling installed there is no backend to
+        # call at all, so shipping `build` by itself would bake for hours and
+        # still fail.
+        #
+        # WHY HERE rather than in that package's own extra: this image
+        # installs the dev extra of the package it is BUILT FROM (sac). It has
+        # never installed any other agent's, and no amount of shipping sac's
+        # [dev] would. Per-agent dev deps have no delivery mechanism today, so
+        # until they do, a tool another agent's gate needs is carried here
+        # explicitly. That gap is the more interesting question and stays open
+        # behind this unblock.
+        #
+        # NOT added to sac's pyproject [dev]: PS-210 reads those entries as
+        # distribution names and resolves them to imports, and sac's own suite
+        # imports neither.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             black flake8 \
             ipython ipdb \
             "pytest>=7.0.0,<9.0.0" pytest-cov \
+            "build>=1.0" "hatchling>=1.20" \
             "claude-agent-sdk" \
             "openai-agents>=0.19.0" \
             "scitex[all]" \
@@ -730,7 +778,7 @@ EOF
     org.scitex.layer scitex
     org.scitex.runtime apptainer
     org.scitex.from scitex-agent-container:base
-    org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest latex latexmk biber"
+    org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest build hatchling latex latexmk biber"
 
 %help
     scitex-agent-container :scitex layer (sac default image).
