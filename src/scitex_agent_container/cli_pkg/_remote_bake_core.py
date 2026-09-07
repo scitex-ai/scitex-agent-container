@@ -48,6 +48,8 @@ LAYERS = ("base", "scitex")
 
 # Timestamped artifact name, e.g. sac-scitex-2026-0717-092952.sif —
 # matches scitex-container's ``_store`` timestamp shape.
+from ._bake_space import check_space
+
 SIF_RE = re.compile(r"^sac-(?P<layer>base|scitex)-(?P<ts>\d{4}-\d{4}-\d{6})\.sif$")
 
 # Module-level seams (save/restore in tests, same pattern as image_group's
@@ -333,6 +335,35 @@ def prune_local(containers_dir: Path, layer: str, retain: int) -> list[str]:
     return pruned
 
 
+def _reference_size(layer_dir: Path, layer: str) -> int | None:
+    """Size of the newest SIF already present for ``layer``, or None.
+
+    An ESTIMATE, and deliberately a local one. The exact answer lives on
+    the remote, but fetching it would add an ssh round-trip to the hot
+    path of every pull — a new network dependency, and a new way for a
+    transfer to stall before it starts. Successive builds of one layer
+    are close in size (sac-scitex has sat near 7.1G across rebuilds), so
+    the previous artifact answers "roughly how much do we need?" well
+    enough to catch the case that actually bit us: 4.0G free, ~7.6G
+    wanted.
+
+    Returns None when no prior SIF exists (a first bake), which
+    :func:`check_space` treats as UNKNOWN and lets through rather than
+    blocking a legitimate first pull.
+
+    Being an estimate is the honest limit: an image that grows sharply
+    could pass this check and still exhaust the volume. It narrows the
+    failure, it does not eliminate it, and the margin is what covers
+    ordinary drift.
+    """
+    candidates = [
+        p for p in layer_dir.glob(f"sac-{layer}-*.sif") if SIF_RE.match(p.name)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime).stat().st_size
+
+
 def pull_and_publish(
     *,
     host: str,
@@ -380,6 +411,25 @@ def pull_and_publish(
     if rsync is None:
         return PullOutcome(PullVerdict.FAILED, layer, "rsync not found on this host")
     incoming = layer_dir / f".incoming-{sif_name}"
+
+    # WILL THIS FIT? Measured 2026-09-06/07: a ~7.6G transfer started
+    # onto 4.0G free, could not finish, and the partial it left made the
+    # next attempt likelier to fail. Refusing is the correct answer.
+    #
+    # The requirement is the REMAINDER, not the artifact: rsync runs
+    # --partial, so an existing partial is resumed rather than refetched.
+    # The size is ESTIMATED from the layer's previous SIF — local, so no
+    # ssh round-trip joins the hot path. No prior SIF means UNKNOWN, which
+    # proceeds: blocking a legitimate first pull would be worse than the
+    # failure this prevents.
+    space = check_space(
+        remote_size=_reference_size(layer_dir, layer),
+        existing_partial=incoming.stat().st_size if incoming.is_file() else 0,
+        free=shutil.disk_usage(layer_dir).free,
+    )
+    if not space.proceed:
+        return PullOutcome(PullVerdict.FAILED, layer, space.reason)
+
     proc = _run(
         [
             rsync,
