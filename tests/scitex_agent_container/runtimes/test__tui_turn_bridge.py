@@ -534,6 +534,77 @@ def test_build_on_turn_raises_when_session_absent() -> None:
         on_turn("wake up")
 
 
+# A refusal that explains itself and stops leaves the sender nowhere to go.
+# scitex-hub hit exactly that on 2026-09-07: three identical 502s, then it
+# reported "cannot reach sac" — correct against the old contract, and a system
+# failure anyway. These pin the two things a sender cannot act without.
+
+
+@pytest.fixture()
+def refusal_message() -> str:
+    """The RuntimeError text a REFUSED turn produces.
+
+    Built once here so each test below asserts exactly one thing (STX-TQ007):
+    a `pytest.raises` block counts as an assertion, so raising and inspecting
+    in the same test is two.
+    """
+    runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: False)
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="ghost"), runtime=runtime)
+    try:
+        on_turn("wake up")
+    except RuntimeError as exc:
+        return str(exc)
+    raise AssertionError("a refused turn must raise; it did not")
+
+
+def test_the_refusal_says_NOTHING_WAS_QUEUED(refusal_message: str) -> None:
+    # Arrange — the text a refused turn hands the sender.
+    message = refusal_message
+
+    # Act
+    states_the_loss = "NOTHING WAS QUEUED" in message
+
+    # Assert — the sender must not assume the turn is waiting somewhere.
+    assert states_the_loss, message
+
+
+def test_the_refusal_names_the_BUSY_next_step(refusal_message: str) -> None:
+    # Arrange
+    message = refusal_message
+
+    # Act
+    names_the_alternative = "durable rail" in message
+
+    # Assert — busy wants "resend later / use a rail that survives a busy pane".
+    assert names_the_alternative, message
+
+
+def test_the_refusal_names_the_ABSENT_next_step_with_the_agent_name(
+    refusal_message: str,
+) -> None:
+    # Arrange
+    message = refusal_message
+
+    # Act — the command must carry the NAME so it is runnable as printed.
+    names_the_command = "sac agents start ghost" in message
+
+    # Assert
+    assert names_the_command, message
+
+
+def test_CONTROL_a_DELIVERED_turn_raises_nothing() -> None:
+    # Arrange — the same seam, but the pane accepts. A "next step" that also
+    # appears on the success path would be noise, not guidance.
+    runtime = SimpleNamespace(send_turn=lambda config, text, wait_ready: True)
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="ok"), runtime=runtime)
+
+    # Act
+    result = on_turn("wake up")
+
+    # Assert
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # Launcher — spawn-failure + real SIGTERM teardown
 # ---------------------------------------------------------------------------
