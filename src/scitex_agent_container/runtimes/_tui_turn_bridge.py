@@ -454,8 +454,31 @@ def _build_on_turn(
                 "no reason available from this runtime — the session is absent, "
                 "or the pane would park the turn rather than run it"
             )
+            # NAME THE NEXT STEP, not only the cause. A refusal that explains
+            # itself and stops leaves the sender with nowhere to go: scitex-hub
+            # hit this on 2026-09-07, retried the same POST three times, got
+            # three identical 502s and reported "cannot reach sac" — correct
+            # behaviour against a contract that never told it what else to do.
+            #
+            # The two causes want OPPOSITE responses and the sender cannot act
+            # without being told which it is:
+            #   BUSY   -> the agent is working; the turn was NOT stored, so
+            #             resend later or use a durable rail
+            #   ABSENT -> nothing will drain; retrying forever is pointless and
+            #             someone must start it
+            #
+            # Explicit about the loss, because that is the part a sender gets
+            # wrong: a 502 here means NOTHING WAS QUEUED. Saying so is what
+            # stops a peer assuming the message is waiting somewhere.
             raise RuntimeError(
-                f"turn NOT delivered to agent {config.name!r}: {why}"
+                f"turn NOT delivered to agent {config.name!r}: {why}\n"
+                "NOTHING WAS QUEUED — this turn is not stored anywhere and "
+                "will not be retried by sac.\n"
+                "NEXT: if the agent is BUSY, resend when it idles, or use a "
+                "durable rail (scitex-cards DM) that survives a busy pane. "
+                "If the agent is ABSENT, resending cannot help — start it "
+                f"with `sac agents start {config.name}` and check "
+                f"`sac agents list {config.name}` first."
             )
 
     return on_turn
