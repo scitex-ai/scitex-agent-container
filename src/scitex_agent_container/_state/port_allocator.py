@@ -74,6 +74,7 @@ DEFAULT_RANGE: tuple[int, int] = (19000, 19999)
 
 __all__ = [
     "DEFAULT_RANGE",
+    "port_is_bindable",
     "STORE_NAME",
     "claim_port",
     "get_port",
@@ -134,6 +135,31 @@ def get_port(agent_name: str) -> int | None:
         if holder == agent_name:
             return port
     return None
+
+
+def port_is_bindable(port: int, host: str = "127.0.0.1") -> bool:
+    """True when a fresh listener could bind ``host:port`` RIGHT NOW.
+
+    Deliberately a real bind rather than a connect: a connect probe answers
+    "is someone serving", which is a different question and misses a socket
+    held open without accepting. SO_REUSEADDR mirrors what the turn bridge
+    itself sets, so this answers the bridge's question and not an easier one.
+
+    Fails OPEN (returns True) on an unexpected error — a probe that cannot
+    run must not silently block every allocation. The claim table still
+    guards the common case.
+    """
+    import socket as _socket
+
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    except Exception:  # stx-allow: fallback (reason: an unusable probe must not block every start)
+        return True
 
 
 def claim_port(
@@ -228,11 +254,35 @@ def claim_port(
     for candidate in range(lo, hi + 1):
         if candidate in held:
             continue
+        if not port_is_bindable(candidate):
+            # THE CLAIM TABLE IS NOT THE PORT.
+            #
+            # Measured 2026-09-07 by scitex-hub on compute-03:
+            # `sac agents stop handyman-c03-01` released the CLAIM but left the
+            # turn bridge LISTENING on 19003. figrecipe-qwen then started with
+            # `port: auto`, was handed 19003 because the table said free, and
+            # its claude launched with --turn-url http://127.0.0.1:19003/v1/turn.
+            # A turn sent to figrecipe-qwen appeared VERBATIM in the stopped
+            # agent's pane — different repo, different identity, different git
+            # credentials — and the sender was told {"ok": true, 200}.
+            #
+            # A MISDELIVERED turn reported as delivered is the exact inverse of
+            # the failure the bridge's 502 exists to prevent, and it is worse:
+            # a task that edited files would have edited the wrong tree.
+            #
+            # So the SOCKET arbitrates, not the table. Skipping costs one bind
+            # probe on the first unheld candidate — the loop returns on the
+            # first success, so the "thousand round trips" concern above (which
+            # is about STORE reads) is untouched.
+            continue
         if try_claim(store, port=candidate, agent_name=agent_name, now=now):
             return candidate
     raise RuntimeError(
-        f"no free a2a port in range [{lo}, {hi}] (all claimed); "
-        "extend a2a.port_range in ~/.scitex/agent-container/config.yaml"
+        f"no free a2a port in range [{lo}, {hi}] (every port is either claimed "
+        "in state.db or already has a live listener); extend a2a.port_range in "
+        "~/.scitex/agent-container/config.yaml, or find the stale listener with "
+        f"`ss -ltnp | grep -E ':{lo}|:{hi}'` — a stopped agent whose bridge was "
+        "never reaped holds a port that no claim row mentions"
     )
 
 
