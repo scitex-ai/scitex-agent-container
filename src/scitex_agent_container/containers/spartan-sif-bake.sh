@@ -104,6 +104,27 @@ fail() {
     exit 1
 }
 
+skip() {
+    # skip <reason> [detail...] — emit the SKIPPED verdict and exit ZERO.
+    #
+    # A bake that DECLINES to run is a no-op, not a failure. The distinction is
+    # not cosmetic: this script is driven by a systemd timer, and `fail` renders
+    # the unit `failed`. Since a bake can run for hours and the timer fires on
+    # its own schedule, an overlap is NORMAL and would paint the unit red every
+    # time -- burying real failures among expected ones.
+    #
+    # SKIPPED is already an ok verdict to the caller
+    # (_remote_bake_core: `if self.verdict in (BakeVerdict.BAKED,
+    # BakeVerdict.SKIPPED)`), so this needs no change on the reading side and no
+    # SuccessExitStatus= on the unit. A blanket SuccessExitStatus is the wrong
+    # tool here: it would swallow the REAL failures too.
+    local reason="$1"; shift || true
+    echo "SKIP[$STEP]: $reason $*" >&2
+    printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","step":"%s","reason":"%s"}\n' \
+        "${LAYER:-unset}" "$STEP" "$reason"
+    exit 0
+}
+
 case "$LAYER" in
     base|scitex) : ;;
     *) fail "bad-layer" "--layer must be base|scitex, got '${LAYER}'" ;;
@@ -130,7 +151,7 @@ mkdir -p "$WORKDIR"/{store,state,build-context,apptainer-cache,logs} \
     || fail "workdir-create" "$WORKDIR"
 STORE="$WORKDIR/store"
 exec 9>"$WORKDIR/state/bake-$LAYER.lock"
-flock -n 9 || fail "already-running" "another bake of layer=$LAYER holds the lock"
+flock -n 9 || skip "already-running" "another bake of layer=$LAYER holds the lock"
 
 # ---------------------------------------------------------------------------
 # lease: resolve BY NAME, require RUNNING. Never sbatch.
