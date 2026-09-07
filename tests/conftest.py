@@ -256,11 +256,19 @@ os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(_SAC_CONFIG_FLOOR)
 # than switching the mirror off) is deliberate — the production dual-write path
 # keeps running and stays under test; it just runs into the sandbox.
 #
-# BOTH names are set. `$SCITEX_CARDS_DB` is the current one and wins;
-# `$SCITEX_TODO_DB` is the pre-rename name (package renamed 2026-07-16) that
-# `resolve_db_path` still honours for direct callers in a process that never
-# imported the scitex_cards root, and this is the variable whose absence cost
-# 2,777 cards — it is not the place to bet on a transition window.
+# BOTH names are set, and only ONE of them does anything.
+# `$SCITEX_CARDS_DB` is the current name and is what the package reads.
+# `$SCITEX_TODO_DB` is the pre-rename name (package renamed 2026-07-16) and
+# is now INERT: measured 2026-09-07 against installed scitex_cards 0.50.0,
+# `SCITEX_TODO_` appears ZERO times in the whole package (control:
+# `SCITEX_CARDS_DB` in 53 files, so the search ran). `resolve_db_path` no
+# longer honours it for anyone — the fallback this comment used to describe
+# does not exist.
+#
+# It is kept because setting a dead variable costs nothing and a stray
+# reader of the old name elsewhere still gets a correct value. DO NOT read
+# it as a transition safety net: SETTING ONLY THE OLD NAME ISOLATES
+# NOTHING, and this is the variable whose absence cost 2,777 cards.
 _SAC_CARDS_DB = _SAC_STATE_FLOOR / "cards" / "cards.db"
 os.environ["SCITEX_CARDS_DB"] = str(_SAC_CARDS_DB)
 os.environ["SCITEX_TODO_DB"] = str(_SAC_CARDS_DB)
