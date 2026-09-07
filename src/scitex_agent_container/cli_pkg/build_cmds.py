@@ -106,6 +106,15 @@ def check(name_or_path: str) -> None:
     if not _check_host_route(config):
         all_ok = False
 
+    # `provider.auth_token_env` as a WORKING KEY, not merely a resolvable
+    # string. The start-time guard is an EMPTINESS test, so a placeholder
+    # passes it and the agent boots into an unbroken run of 401s behind a
+    # green heartbeat (measured 2026-09-07; see _provider_auth_probe). Only
+    # the backend can tell a well-formed string from a working key, so this
+    # is the one check in this command that asks something over the network.
+    if not _check_provider_auth(config):
+        all_ok = False
+
     if all_ok:
         console.print("[green]Ready to deploy.[/green]")
     else:
@@ -137,6 +146,49 @@ def _check_raw_args(config) -> bool:
         console.print(f"[red]{exc}[/red]")
         return False
     console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
+    return True
+
+
+def _check_provider_auth(config) -> bool:
+    """Report whether the provider key in ``config`` actually authenticates.
+
+    Thin console wrapper: the verdict logic, its positive control, and the
+    measured incident that motivates it live in
+    :mod:`._provider_auth_probe`.
+
+    FAILS only on EVIDENCE that the key is wrong — an authoritative 401/403,
+    or a key that resolves to nothing. An unreachable backend WARNS, matching
+    :func:`_check_host_route`'s refusal to convict on absent evidence: a
+    gateway that is briefly down must not fail every preflight on the fleet.
+    """
+    from ._provider_auth_probe import (
+        INACTIVE,
+        OK,
+        UNRESOLVED,
+        probe_provider_auth,
+    )
+
+    verdict = probe_provider_auth(config)
+    label = "provider key:"
+
+    if verdict.state == INACTIVE:
+        console.print(f"  {label:30s} [green]OK (no provider declared)[/green]")
+        return True
+
+    if verdict.state == OK:
+        console.print(f"  {label:30s} [green]OK ({verdict.detail})[/green]")
+        return True
+
+    if verdict.is_failure:
+        console.print(f"  {label:30s} [red]FAIL[/red]")
+        console.print(f"[red]{verdict.detail}[/red]")
+        # An unresolvable key already stops `start`; a REJECTED one does not,
+        # which is why this check exists. Say which of the two happened.
+        if verdict.state == UNRESOLVED:
+            console.print("[red]  (start would also refuse this spec)[/red]")
+        return False
+
+    console.print(f"  {label:30s} [yellow]WARN ({verdict.detail})[/yellow]")
     return True
 
 
