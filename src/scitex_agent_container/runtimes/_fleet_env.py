@@ -344,11 +344,17 @@ def effective_env(
     under ``config.env`` (``spec.env`` wins), then the board-identity alias
     (:mod:`._board_identity_env`) is applied so a value declared under either
     ``SCITEX_TODO_AGENT_ID`` or ``SCITEX_CARDS_AGENT_ID`` — in ``spec.env`` or
-    in ``apptainer.raw_args`` — is mirrored onto BOTH names for the
-    scitex-cards rename transition window (INCIDENT 2026-07-19: cards were
-    written with the literal, unexpanded ``${SCITEX_CARDS_AGENT_ID}`` as
-    their author because sac injected only the old name — 7 rows when first
-    reported, 15 a few hours later, since every new card added one).
+    in ``apptainer.raw_args`` — resolves to an identity. Only the CANONICAL
+    ``SCITEX_CARDS_AGENT_ID`` is ever written: the retired spelling is READ,
+    so an un-migrated spec still launches able to say who it is, and is
+    deliberately NOT written back. Mirroring it would re-create the very
+    declarations the rename retires — which is why the twin writer pops it
+    rather than inheriting it (``_lifecycle/_twin.py``).
+
+    INCIDENT 2026-07-19: cards were written with the literal, unexpanded
+    ``${SCITEX_CARDS_AGENT_ID}`` as their author because sac injected only
+    the old name — 7 rows when first reported, 15 a few hours later, since
+    every new card added one.
 
     Every value — not just the identity vars — is validated: an env value
     that still looks like an unexpanded ``${VAR}`` substitution raises
