@@ -50,6 +50,34 @@ def test_derive_pg_role_defaults_to_the_invoking_os_user() -> None:
     assert role == f"{getpass.getuser()}__scitex-io"
 
 
+def test_a_declared_pguser_wins_over_the_unprovisioned_label_derivation() -> None:
+    # Arrange — the scitex-agent-container-gui incident (2026-09-10): the DSN is
+    # roleless, so without a declared PGUSER this agent would derive the role
+    # <host_user>__<its label> = ywatanabe__scitex-agent-container-gui, which was
+    # never provisioned (no cluster role / no .pgpass row) -> PgBouncer "FATAL:
+    # bouncer config error" on every scitex-cards MCP list/comment. The fix is a
+    # spec-declared PGUSER naming the PROVEN provisioned family role. This pins
+    # that the declared role is honoured rather than re-derived from the label.
+    env = {"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+           "PGPASSFILE": "/home/agent/.pgpass",
+           "PGUSER": "ywatanabe__scitex-agent-container"}
+    # Act
+    out = apply_pg_identity(env, agent_name="scitex-agent-container-gui", host_user="ywatanabe")
+    # Assert — the provisioned family role survives; the label-derived role does not
+    assert out[PG_USER_ENV] == "ywatanabe__scitex-agent-container"
+
+
+def test_without_a_declared_pguser_the_label_role_is_derived() -> None:
+    # Arrange — same agent, no declared PGUSER: the shared derivation still
+    # applies (documents the failure path the declared role overrides).
+    env = {"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+           "PGPASSFILE": "/home/agent/.pgpass"}
+    # Act
+    out = apply_pg_identity(env, agent_name="scitex-agent-container-gui", host_user="ywatanabe")
+    # Assert
+    assert out[PG_USER_ENV] == "ywatanabe__scitex-agent-container-gui"
+
+
 # ----------------------------------------------------------------------
 # Injection and precedence.
 # ----------------------------------------------------------------------
