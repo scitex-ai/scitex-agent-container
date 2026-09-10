@@ -238,7 +238,7 @@ def lifecycle_action(request: HttpRequest, name: str):
         result = fleet.lifecycle(name, action)
         message = result.get("message") or result.get("status") or action
         state = "completed"
-    except Exception as exc:  # stx-allow: fallback (reason: a failed delegate is reported, not raised)
+    except Exception as exc:  # stx-allow: fallback (reason: the failed delegate is reported to the operator in the gui-audit.log audit trail, not raised)
         message = str(exc)
         state = "failed"
     from ._authorization import record_audit
