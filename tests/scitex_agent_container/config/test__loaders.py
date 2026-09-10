@@ -674,6 +674,24 @@ def test_load_config_lineage_may_spawn_false_round_trips(tmp_path: Path) -> None
     assert cfg.lineage.may_spawn is False
 
 
+def test_load_config_delegation_policy_round_trips(tmp_path: Path) -> None:
+    p = _v3_yaml(
+        tmp_path,
+        "cap-d",
+        {
+            "delegation": {
+                "max_concurrent_children": 4,
+                "worktree_isolation": False,
+            }
+        },
+    )
+
+    cfg = load_config(p)
+
+    assert cfg.delegation.max_concurrent_children == 4
+    assert cfg.delegation.worktree_isolation is False
+
+
 # ---------------------------------------------------------------------------
 # Builtin sac control plane (mcp + channel) — operator directive 2026-06-16
 # ---------------------------------------------------------------------------

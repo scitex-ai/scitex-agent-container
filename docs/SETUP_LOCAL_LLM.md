@@ -120,6 +120,47 @@ independent of `autonomous.enabled`: that setting controls whether the agent
 continues taking turns, not whether an individual tool call asks a human for
 permission.
 
+### Subagent delegation and parallel work
+
+Hermes 0.21.1 can spawn subagents. Its `delegate_task` accepts a `tasks` array
+and executes those independent entries concurrently; `display.busy_input_mode`
+set to `queue` controls messages arriving while the parent is busy and is unrelated to
+subagent scheduling. Sending ordinary turns one after another therefore still
+looks sequential. The parent must make one batch delegation (or background
+delegations) to use parallel capacity.
+
+SAC makes that capability and its bound explicit in the agent spec:
+
+```yaml
+spec:
+  lineage:
+    may_spawn: true
+  delegation:
+    max_concurrent_children: 2
+    worktree_isolation: true
+```
+
+`may_spawn: false` removes Hermes' `delegation` toolset, so `delegate_task` is
+not merely discouraged in the prompt; it is absent from the model's callable
+tools. If `lineage` is omitted, the backward-compatible value is `true`.
+`max_concurrent_children` defaults to 2 and is limited to 1–8, rather than
+silently inheriting Hermes' upstream default of 10. It is a per-parent cap and
+SAC also fixes `max_spawn_depth: 1`, so child agents cannot multiply it through
+another fan-out level.
+
+Keep external, metered engines such as DeepSeek at 1–2 children unless a task
+justifies additional spend. A measured local Qwen deployment may author 3–4
+when its inference replicas have capacity. These are authored workload limits,
+not assumptions inferred from model or provider names, so switching engines
+does not silently change concurrency.
+
+Hermes' `worktree_isolation` applies only to Git workspaces using its local
+terminal backend. It requests a separate Git worktree per child; it is not a
+general container or filesystem namespace. Parallel editing tasks must still
+own disjoint Cards and branches/worktrees. Do not give two children the same
+Card or working tree, and do not treat this flag as isolation for a non-Git
+directory or shared services such as a database.
+
 See [ADR-0027](adr/0027-hermes-owned-agent-control-plane.md) and the
 [pilot record](../examples/pilots/hermes/README.md). Do not expand SAC's
 transitional tmux queue with Hermes features that Hermes already provides.

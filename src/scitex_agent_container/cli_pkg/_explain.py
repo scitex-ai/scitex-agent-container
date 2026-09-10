@@ -234,6 +234,20 @@ def _workdir_line(pwd: str, binds: list[tuple[str, str, str]]) -> str:
     return f"Workdir (--pwd): {pwd}   [{flag}]"
 
 
+def _delegation_line(config: AgentConfig) -> str:
+    """Effective spawn permission and child bound from the loaded spec."""
+    allowed = bool(getattr(getattr(config, "lineage", None), "may_spawn", True))
+    policy = getattr(config, "delegation", None)
+    maximum = getattr(policy, "max_concurrent_children", 2)
+    isolated = bool(getattr(policy, "worktree_isolation", True))
+    state = "enabled" if allowed else "disabled (delegate_task removed)"
+    isolation = "requested" if isolated else "off"
+    return (
+        f"Delegation: {state}; max children: {maximum}; "
+        f"Git worktree isolation: {isolation}"
+    )
+
+
 def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Short variant of :func:`render_plan` for ``sac agents start``'s
     refuse-without-``--yes`` preview.
@@ -257,6 +271,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_delegation_line(config))
     return "\n".join(lines)
 
 
@@ -301,6 +316,7 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     channels = getattr(claude, "channels", []) or []
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_delegation_line(config))
     if flags:
         lines.append(f"Flags: {' '.join(flags)}")
     if channels:

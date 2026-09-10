@@ -101,3 +101,54 @@ def test_hermes_prefers_chat_completions_when_declared():
     plan = compile_launch_plan(raw, harness="hermes")
 
     assert plan.endpoint.protocol == "openai-chat-completions"
+
+
+def test_delegation_policy_defaults_are_harness_neutral_and_bounded():
+    raw = spec()
+
+    claude = compile_launch_plan(raw)
+    hermes = compile_launch_plan(raw, harness="hermes")
+
+    assert claude.may_spawn is hermes.may_spawn is True
+    assert claude.delegation == hermes.delegation
+    assert hermes.delegation.max_concurrent_children == 2
+    assert hermes.delegation.worktree_isolation is True
+
+
+def test_explicit_spawn_deny_and_delegation_cap_reach_plan():
+    raw = spec()
+    raw["lineage"] = {"may_spawn": False}
+    raw["delegation"] = {
+        "max_concurrent_children": 4,
+        "worktree_isolation": False,
+    }
+
+    plan = compile_launch_plan(raw, harness="hermes")
+
+    assert plan.may_spawn is False
+    assert plan.delegation.max_concurrent_children == 4
+    assert plan.delegation.worktree_isolation is False
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 9, "2"])
+def test_invalid_delegation_cap_is_rejected(value):
+    raw = spec()
+    raw["delegation"] = {"max_concurrent_children": value}
+
+    with pytest.raises(ValueError, match="integer between 1 and 8"):
+        compile_launch_plan(raw, harness="hermes")
+
+
+def test_non_boolean_spawn_permission_is_rejected():
+    raw = spec()
+    raw["lineage"] = {"may_spawn": "false"}
+
+    with pytest.raises(ValueError, match="must be a boolean"):
+        compile_launch_plan(raw, harness="hermes")
+
+
+def test_explicit_spawn_allow_is_preserved():
+    raw = spec()
+    raw["lineage"] = {"may_spawn": True}
+
+    assert compile_launch_plan(raw, harness="hermes").may_spawn is True

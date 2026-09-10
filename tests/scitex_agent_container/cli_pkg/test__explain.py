@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
+    _delegation_line,
     _pwd_is_backed,
     _redact,
     explain,
@@ -58,6 +59,19 @@ def test_pwd_is_backed_false_when_no_bind_covers_it() -> None:
     backed = _pwd_is_backed("/work", binds)
     # Assert
     assert backed is False
+
+
+def test_delegation_line_exposes_effective_deny_and_bound() -> None:
+    config = AgentConfig(name="worker", harness="hermes", runtime="headless")
+    config.lineage.may_spawn = False
+    config.delegation.max_concurrent_children = 1
+    config.delegation.worktree_isolation = False
+
+    line = _delegation_line(config)
+
+    assert "disabled (delegate_task removed)" in line
+    assert "max children: 1" in line
+    assert "Git worktree isolation: off" in line
 
 
 def test_explain_unknown_agent_raises_click_exception() -> None:

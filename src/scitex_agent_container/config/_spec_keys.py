@@ -91,6 +91,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "to_home_layers",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
+        "delegation",  # harness-neutral child concurrency/isolation policy
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),

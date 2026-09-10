@@ -58,6 +58,13 @@ def test_compiles_observed_qwen_profile_without_reading_secret(monkeypatch):
     }
     assert result["fallback_providers"] == []
     assert result["agent"]["reasoning_effort"] == "low"
+    assert result["agent"]["disabled_toolsets"] == []
+    assert result["delegation"] == {
+        "max_concurrent_children": 2,
+        "max_spawn_depth": 1,
+        "orchestrator_enabled": False,
+        "worktree_isolation": True,
+    }
     assert result["approvals"] == {"mode": "off"}
     assert result["compression"] == {
         "enabled": True,
@@ -98,3 +105,33 @@ def test_compiler_accepts_explicit_autonomous_approval_mode():
         compile_launch_plan(_spec()), workdir="/work", approval_mode="off"
     )
     assert result["approvals"] == {"mode": "off"}
+
+
+def test_spawn_deny_removes_hermes_delegate_task_toolset():
+    raw = _spec()
+    raw["lineage"] = {"may_spawn": False}
+
+    result = compile_hermes_config(
+        compile_launch_plan(raw), workdir="/work"
+    )
+
+    assert result["agent"]["disabled_toolsets"] == ["delegation"]
+
+
+def test_explicit_parallelism_is_emitted_without_nested_fanout():
+    raw = _spec()
+    raw["delegation"] = {
+        "max_concurrent_children": 4,
+        "worktree_isolation": False,
+    }
+
+    result = compile_hermes_config(
+        compile_launch_plan(raw), workdir="/work"
+    )
+
+    assert result["delegation"] == {
+        "max_concurrent_children": 4,
+        "max_spawn_depth": 1,
+        "orchestrator_enabled": False,
+        "worktree_isolation": False,
+    }

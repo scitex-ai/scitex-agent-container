@@ -145,6 +145,23 @@ Hermes owns:
 - messaging gateways, memory, skills, goals, subagents, Kanban, cron, and
   heartbeat when enabled by the generated configuration.
 
+SAC still owns the neutral permission and resource envelope for that feature.
+`spec.lineage.may_spawn` is carried into the launch plan; a false value becomes
+Hermes `agent.disabled_toolsets: [delegation]`, which removes `delegate_task`
+after the `hermes-cli` bundle is expanded. `spec.delegation` carries the
+provider-independent child-width and Git-worktree request. The generated
+profile states all of these values, fixes nested delegation off at depth one,
+and defaults to two children instead of inheriting Hermes' upstream width of
+ten. Engine names do not imply policy: an external DeepSeek agent can author a
+lower cap and a local Qwen agent a measured higher cap without coupling either
+engine to Hermes.
+
+Worktree isolation is conditional upstream behavior, not an Apptainer promise:
+it operates for Git workspaces on Hermes' local terminal backend. Cards remains
+the ownership ledger for collaborative work, and concurrent editing children
+must receive distinct Cards and branches/worktrees. They share the parent's
+container, mounted filesystems, network, and service credentials.
+
 The production boundary is Hermes' authenticated gateway API. SAC maps its
 neutral `message_id` to `Idempotency-Key`, its stable session identity to the
 Hermes session key/id, and Hermes terminal run status to a neutral completion

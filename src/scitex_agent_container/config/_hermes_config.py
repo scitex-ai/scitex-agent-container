@@ -74,6 +74,10 @@ def compile_hermes_config(
     agent: dict[str, Any] = {
         "max_turns": max_turns,
         "run_budget_seconds": run_budget_seconds,
+        # Hermes subtracts disabled toolsets after expanding ``hermes-cli``.
+        # Naming its one-tool ``delegation`` toolset removes delegate_task
+        # completely instead of relying on prompt compliance.
+        "disabled_toolsets": [] if plan.may_spawn else ["delegation"],
     }
     if plan.engine.reasoning_effort is not None:
         agent["reasoning_effort"] = plan.engine.reasoning_effort
@@ -87,6 +91,14 @@ def compile_hermes_config(
         "fallback_providers": [],
         "toolsets": ["hermes-cli"],
         "agent": agent,
+        "delegation": {
+            "max_concurrent_children": plan.delegation.max_concurrent_children,
+            # SAC permits one bounded fan-out from the owning agent. Children
+            # remain leaves so concurrency cannot multiply by tree depth.
+            "max_spawn_depth": 1,
+            "orchestrator_enabled": False,
+            "worktree_isolation": plan.delegation.worktree_isolation,
+        },
         "approvals": {"mode": approval_mode},
         "compression": {
             "enabled": True,

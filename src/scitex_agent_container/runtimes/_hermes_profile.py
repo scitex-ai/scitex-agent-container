@@ -12,7 +12,12 @@ import yaml
 
 from ..config import AgentConfig
 from ..config._hermes_config import compile_hermes_config
-from ..config._launch_plan import Endpoint, LaunchPlan, ResolvedEngine
+from ..config._launch_plan import (
+    DelegationPolicy,
+    Endpoint,
+    LaunchPlan,
+    ResolvedEngine,
+)
 from ._apptainer_provider import resolve_provider_api_key
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
@@ -53,7 +58,18 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         context_window_tokens=config.max_context_tokens,
         reasoning_effort=str(config.reasoning_effort or "") or None,
     )
-    return LaunchPlan("hermes", launch_mode, "apptainer", engine, endpoint)
+    return LaunchPlan(
+        "hermes",
+        launch_mode,
+        "apptainer",
+        engine,
+        endpoint,
+        may_spawn=config.lineage.may_spawn,
+        delegation=DelegationPolicy(
+            max_concurrent_children=config.delegation.max_concurrent_children,
+            worktree_isolation=config.delegation.worktree_isolation,
+        ),
+    )
 
 
 def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:

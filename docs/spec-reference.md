@@ -394,6 +394,19 @@ The AgentCard's `url` field advertises the **sac listen** URL
 endpoint served the card, so external A2A clients caching the card
 get a URL that survives per-agent port churn.
 
+### `spec.lineage` / `spec.delegation` — child-agent policy
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `lineage.may_spawn` | bool | `true` | Permission for the agent to create children. For Hermes, `false` removes the `delegation` toolset and therefore `delegate_task`. |
+| `delegation.max_concurrent_children` | int 1–8 | `2` | Per-parent parallel child cap. The cap is authored independently of the harness and engine. |
+| `delegation.worktree_isolation` | bool | `true` | Ask a supporting harness to put child work in separate Git worktrees. Hermes 0.21.1 honors this only for Git workspaces on its local terminal backend. |
+
+SAC's Hermes adapter fixes delegation depth at one, so children are leaves and
+cannot multiply the configured width. Worktree isolation does not create a new
+container or isolate databases, credentials, and other shared services.
+Parallel writers must own distinct Cards and branches/worktrees.
+
 ### `~/.scitex/agent-container/config.yaml`
 
 Host-wide sac configuration. All keys optional; defaults shown.

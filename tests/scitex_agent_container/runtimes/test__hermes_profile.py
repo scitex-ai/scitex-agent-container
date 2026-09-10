@@ -28,6 +28,25 @@ def test_launch_plan_normalizes_openai_api_root():
     assert plan.engine.reasoning_effort == "low"
 
 
+def test_launch_plan_carries_live_spawn_and_parallelism_policy():
+    config = AgentConfig(name="cards", harness="hermes", runtime="headless")
+    config.engine_key = "deepseek"
+    config.model = "deepseek-chat"
+    config.claude.provider = ProviderSpec(
+        base_url="https://api.deepseek.com/v1",
+        auth_token_env="DEEPSEEK_API_KEY",
+    )
+    config.lineage.may_spawn = False
+    config.delegation.max_concurrent_children = 1
+    config.delegation.worktree_isolation = False
+
+    plan = profile._launch_plan(config)
+
+    assert plan.may_spawn is False
+    assert plan.delegation.max_concurrent_children == 1
+    assert plan.delegation.worktree_isolation is False
+
+
 def test_mcp_translation_preserves_commands_and_drops_claude_metadata(tmp_path):
     source = {
         "mcpServers": {

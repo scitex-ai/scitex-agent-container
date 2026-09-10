@@ -13,6 +13,7 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 # ApptainerSpec extracted to a sibling module (per-file line cap);
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
+from ._delegation_types import DelegationSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
 # ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
@@ -375,6 +376,7 @@ class AgentConfig:
     # Defaults preserve pre-Phase-3 behaviour (everything allow / true).
     comms: CommsSpec = field(default_factory=CommsSpec)
     lineage: LineageSpec = field(default_factory=LineageSpec)
+    delegation: DelegationSpec = field(default_factory=DelegationSpec)
     # v3 ``kind`` discriminator: "Agent" (SDK runner) or "AgentProxy"
     # (HTTP forwarder — see :class:`ProxySpec`). Validator rejects any
     # other value. Loader populates from raw["kind"].

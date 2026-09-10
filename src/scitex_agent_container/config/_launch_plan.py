@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from ._delegation_types import (
+    DEFAULT_MAX_CONCURRENT_CHILDREN,
+    MAX_CONCURRENT_CHILDREN,
+)
+
 
 @dataclass(frozen=True)
 class Endpoint:
@@ -29,12 +34,20 @@ class ResolvedEngine:
 
 
 @dataclass(frozen=True)
+class DelegationPolicy:
+    max_concurrent_children: int = DEFAULT_MAX_CONCURRENT_CHILDREN
+    worktree_isolation: bool = True
+
+
+@dataclass(frozen=True)
 class LaunchPlan:
     harness: str
     launch_mode: str
     container_backend: str
     engine: ResolvedEngine
     endpoint: Endpoint
+    may_spawn: bool = True
+    delegation: DelegationPolicy = DelegationPolicy()
 
 
 _ALIASES = {"anthropic": "claude-code", "claude": "claude-code"}
@@ -67,6 +80,44 @@ def _text(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path} must be a nonempty string")
     return value.strip()
+
+
+def _delegation_policy(spec: Mapping) -> tuple[bool, DelegationPolicy]:
+    lineage_value = spec.get("lineage")
+    lineage = (
+        {} if lineage_value is None else _mapping(lineage_value, "spec.lineage")
+    )
+    may_spawn = lineage.get("may_spawn", True)
+    if not isinstance(may_spawn, bool):
+        raise ValueError("spec.lineage.may_spawn must be a boolean")
+
+    delegation_value = spec.get("delegation")
+    raw = (
+        {}
+        if delegation_value is None
+        else _mapping(delegation_value, "spec.delegation")
+    )
+    _keys(
+        raw,
+        {"max_concurrent_children", "worktree_isolation"},
+        "spec.delegation",
+    )
+    maximum = raw.get(
+        "max_concurrent_children", DEFAULT_MAX_CONCURRENT_CHILDREN
+    )
+    if (
+        type(maximum) is not int
+        or maximum <= 0
+        or maximum > MAX_CONCURRENT_CHILDREN
+    ):
+        raise ValueError(
+            "spec.delegation.max_concurrent_children must be an integer between "
+            f"1 and {MAX_CONCURRENT_CHILDREN}"
+        )
+    isolation = raw.get("worktree_isolation", True)
+    if not isinstance(isolation, bool):
+        raise ValueError("spec.delegation.worktree_isolation must be a boolean")
+    return may_spawn, DelegationPolicy(maximum, isolation)
 
 
 def _endpoint(protocol: str, value: object, path: str) -> Endpoint:
@@ -112,6 +163,7 @@ def compile_launch_plan(
     contract; it never substitutes a different model or inference engine.
     """
     spec = _mapping(spec, "spec")
+    may_spawn, delegation = _delegation_policy(spec)
     family = _text(
         harness if harness is not None else spec.get("harness"), "spec.harness"
     )
@@ -166,7 +218,15 @@ def compile_launch_plan(
     for protocol in _PROTOCOLS[family]:
         endpoint = next((e for e in selected.endpoints if e.protocol == protocol), None)
         if endpoint is not None:
-            return LaunchPlan(family, mode, "apptainer", selected, endpoint)
+            return LaunchPlan(
+                family,
+                mode,
+                "apptainer",
+                selected,
+                endpoint,
+                may_spawn=may_spawn,
+                delegation=delegation,
+            )
     raise ValueError(
         f"harness {family!r} cannot use engine {key!r}: requires one of {_PROTOCOLS[family]}"
     )
