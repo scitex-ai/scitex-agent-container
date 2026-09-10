@@ -7,6 +7,14 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **An autonomous Hermes TUI wakes through Hermes' own idle heartbeat instead
+  of remaining passively `ready` after one turn.** `spec.autonomous.enabled`
+  now arms one native `/heartbeat` command at successful launch, using
+  `idle_kick_after_s` (60-second Hermes safety floor) and `kick_text`. The
+  recurring prompt requires a fresh Cards ownership/overlap check before any
+  edit. Hermes fires only while idle with an empty input queue, so no SAC
+  busy-loop, token-burning poller, or human-steering race is introduced
+  (ADR-0028). Existing live agents are not restarted by this change.
 - **`/uvwork` is bound from the host scratch volume instead of accumulating in
   the apptainer overlay upper on the root LV** (ADR-0024; operator directive
   2026-09-02 「ディスクは /scratch 使ってくださいね」). Ninety of the 123 agent

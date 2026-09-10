@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
@@ -297,6 +298,27 @@ def test_tui_runtime_start_returns_true_on_success(
     ok = runtime.start(config)
     # Assert
     assert ok is True
+
+
+def test_tui_runtime_start_arms_native_hermes_heartbeat_when_autonomous(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    runtime = TuiSessionRuntime(multiplexer=mux, command_builder=_fake_builder)
+    config = _Config(name="hermes-auto")
+    config.harness = "hermes"
+    config.runtime = "tui"
+    config.autonomous = SimpleNamespace(
+        enabled=True,
+        idle_kick_after_s=180,
+        kick_text="Keep working.",
+    )
+    # Act
+    runtime.start(config)
+    # Assert
+    assert (
+        mux._sessions["tui-hermes-auto"].pane[-1].startswith("/heartbeat every 180s ")
+    )
 
 
 def test_tui_runtime_start_invokes_turn_bridge_seam(

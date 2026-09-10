@@ -220,7 +220,7 @@ pinned regex catches this early.
 | `health.interval`           | seconds between probes                                                                   |
 | `health.timeout`            | per-probe timeout                                                                        |
 | `health.method`             | `sdk-alive` (only value accepted by the validator). NOTE: the parser default is the legacy string `multiplexer-alive`; with the validator pin in place, any explicit value other than `sdk-alive` is rejected at load time. |
-| `autonomous.idle_kick_after_s` | int seconds — nudge cadence when no tool activity (default 120)                       |
+| `autonomous.idle_kick_after_s` | int seconds — nudge cadence when no tool activity (default 120). A Hermes TUI maps this to its session heartbeat, with Hermes' 60-second anti-busy-loop floor. |
 | `restart.policy`            | `never` \| `on-failure` \| `always`                                                      |
 | `restart.max_retries`       | int                                                                                      |
 | `restart.backoff.initial`   | seconds before first retry                                                               |
@@ -231,6 +231,15 @@ pinned regex catches this early.
 | `autonomous.drive_until`    | string token the agent prints when done (default `DONE`)                                 |
 | `autonomous.max_turns`      | int                                                                                      |
 | `autonomous.kick_text`      | nudge sent when the agent pauses                                                         |
+
+For an owning Hermes TUI, enabling this block arms Hermes' native session
+heartbeat at launch. The heartbeat fires only while the run is idle and the
+native input queue is empty, so queued human guidance/steering takes priority.
+Each wake asks the agent to re-read Cards, verify assignment and ownership,
+and reject overlap before editing. SAC does not poll Cards or issue model
+turns on a timer itself. Hermes cron remains the right mechanism for a
+wall-clock job; the session heartbeat is the right mechanism for an idle
+worker that should look for another durable Card.
 
 ### `spec.a2a` / `spec.listen` — network endpoints
 
