@@ -152,10 +152,26 @@
 @media (max-width: 768px) {
   .agents-app { padding: 14px 12px 32px; }
   .agents-head { align-items: flex-start; }
-  .agents-summary { width: 100%; }
-  .sum-card { flex: 1; min-width: 64px; }
+  .agents-title h1 { font-size: 18px; }
+  .agents-summary { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .sum-card { flex: 1 1 40%; min-width: 120px; }
+  .agents-scope-note { gap: 6px 10px; }
+  /* Drop the fixed min-width so the table can shrink to the viewport; keep a
+     scroll cue only if it still overflows (long agent names). */
+  .agents-table { min-width: 0; }
+  .agents-table-wrap {
+    background:
+      linear-gradient(to right, var(--agents-panel) 88%, transparent) no-repeat right center / 18px 100%,
+      var(--agents-panel);
+    scrollbar-width: thin;
+  }
+  /* Keep the essentials (Agent, State, Actions); hide the rest at narrow width.
+     Columns: 1 agent, 2 state, 3 runtime, 4 harness, 5 engine, 6 host, 7 a2a, 8 actions. */
+  .agents-table thead th:nth-child(3), .agents-table tbody td:nth-child(3) { display: none; }
+  .agents-table thead th:nth-child(4), .agents-table tbody td:nth-child(4) { display: none; }
+  .agents-table thead th:nth-child(5), .agents-table tbody td:nth-child(5) { display: none; }
+  .agents-table thead th:nth-child(6), .agents-table tbody td:nth-child(6) { display: none; }
+  .agents-table thead th:nth-child(7), .agents-table tbody td:nth-child(7) { display: none; }
+  .agents-table thead th, .agents-table tbody td { padding: 9px 10px; }
   .detail-grid { grid-template-columns: 1fr; }
-  .agents-table thead th:nth-child(4), .agents-table tbody td:nth-child(4) { display: none; } /* hide harness */
-  .agents-table thead th:nth-child(5), .agents-table tbody td:nth-child(5) { display: none; } /* hide engine */
-  .agents-table thead th:nth-child(6), .agents-table tbody td:nth-child(6) { display: none; } /* hide host */
 }
