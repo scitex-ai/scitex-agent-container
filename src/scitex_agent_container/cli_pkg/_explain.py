@@ -14,8 +14,8 @@ from pathlib import Path
 
 import click
 
-from .._state._meta.secrets import _redact_env_entry as _redact
 from .._state._meta.secrets import _SECRET_ENV  # noqa: F401 (re-exported, back-compat)
+from .._state._meta.secrets import _redact_env_entry as _redact
 from ..config import AgentConfig, load_config
 from ._explain_engine import engine_lines
 
@@ -31,21 +31,53 @@ def _spec_path_for(name: str) -> Path | None:
 
 
 def _argv_for(config: AgentConfig) -> list[str]:
-    """The real launch argv (binds + --pwd come straight from build_run_argv).
+    """The real launch argv, resolved through the selected runtime adapter.
 
     SIF resolution is best-effort — when no SIF resolves (apptainer absent) we
     still render the plan with a visible ``<unresolved>`` placeholder rather
     than failing, so ``explain`` works anywhere.
     """
-    from ..runtimes._apptainer_build_argv import build_run_argv
-    from ..runtimes._apptainer_runtime import ApptainerContainerRuntime
-    from ..runtimes.tui_session import state_dir_for_config
+    from .._lifecycle._runtime_select import _get_runtime
 
-    sif = ApptainerContainerRuntime().resolve_sif(config)
+    runtime = _get_runtime(config)
+
+    # TUI adapters own their full argv builder because the harness command is
+    # part of that adapter.  Using it here keeps explain on the same selection
+    # path as start without teaching this module Claude/Codex argv details.
+    default_argv = getattr(runtime, "_default_argv", None)
+    if callable(default_argv):
+        argv = default_argv(config)
+        if argv is not None:
+            return argv
+
+    # Headless wrapper adapters delegate the actual container launch to their
+    # selected container runtime.  Hermes is itself that runtime, so both paths
+    # converge here without a harness-specific fallback.
+    container = runtime
+    container_factory = getattr(runtime, "_container_runtime_for", None)
+    if callable(container_factory):
+        container = container_factory(config)
+    if container is None:
+        raise RuntimeError(
+            f"{type(runtime).__name__} cannot resolve its container runtime"
+        )
+
+    resolve_sif = getattr(container, "resolve_sif", None)
+    build_argv = getattr(container, "build_run_argv", None)
+    if not callable(resolve_sif) or not callable(build_argv):
+        raise RuntimeError(
+            f"{type(runtime).__name__} does not expose a launch-plan argv adapter"
+        )
+
+    state_dir_fn = getattr(runtime, "_state_dir", None)
+    if not callable(state_dir_fn):
+        state_dir_fn = getattr(container, "_state_dir", None)
+    if not callable(state_dir_fn):
+        raise RuntimeError(f"{type(runtime).__name__} does not expose a state directory")
+
+    sif = resolve_sif(config)
     sif_path = sif if sif is not None else Path(config.image or "<unresolved>.sif")
-    return build_run_argv(
-        config, state_dir=state_dir_for_config(config), sif_path=sif_path, tui=True
-    )
+    return build_argv(config, state_dir=state_dir_fn(config), sif_path=sif_path)
 
 
 def _binds(argv: list[str]) -> list[tuple[str, str, str]]:
@@ -377,7 +409,6 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
         created = apply_host_merge(config, tmp)
         by_dir: dict[str, int] = {}
         for link in created:
-            sub = link.parent
             # climb to the .claude/<subdir> name
             parts = link.relative_to(Path(tmp) / ".claude").parts
             key = parts[0] if parts else "?"

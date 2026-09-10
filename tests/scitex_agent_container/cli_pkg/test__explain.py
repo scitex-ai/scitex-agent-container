@@ -7,10 +7,12 @@ workdir-backing check) plus the unknown-agent error path.
 from __future__ import annotations
 
 from scitex_agent_container.cli_pkg._explain import (
+    _argv_for,
     _pwd_is_backed,
     _redact,
     explain,
 )
+from scitex_agent_container.config import AgentConfig
 
 
 def test_redact_masks_a_secret_named_value() -> None:
@@ -67,3 +69,31 @@ def test_explain_unknown_agent_raises_click_exception() -> None:
     result = runner.invoke(explain, ["definitely-no-such-agent-xyz"])
     # Assert — fail-loud with a hint, not a stack trace.
     assert "no agent named" in result.output
+
+
+def test_argv_for_uses_the_selected_hermes_runtime(monkeypatch, tmp_path) -> None:
+    config = AgentConfig(name="worker", harness="hermes", runtime="headless")
+    calls = []
+
+    class SelectedRuntime:
+        def resolve_sif(self, value):
+            calls.append(("resolve", value))
+            return tmp_path / "hermes.sif"
+
+        def _state_dir(self, value):
+            calls.append(("state", value))
+            return tmp_path / "state"
+
+        def build_run_argv(self, value, *, state_dir, sif_path):
+            calls.append(("build", value, state_dir, sif_path))
+            return ["apptainer", "exec", str(sif_path), "hermes", "gateway", "run"]
+
+    monkeypatch.setattr(
+        "scitex_agent_container._lifecycle._runtime_select._get_runtime",
+        lambda value: SelectedRuntime(),
+    )
+
+    argv = _argv_for(config)
+
+    assert argv[-3:] == ["hermes", "gateway", "run"]
+    assert [call[0] for call in calls] == ["resolve", "state", "build"]
