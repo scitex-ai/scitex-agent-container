@@ -149,6 +149,11 @@
 .kv dd { margin: 0; font-size: 13px; word-break: break-word; }
 .lifecycle-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 
+.session-log { margin: 0; padding-left: 18px; max-height: 260px; overflow-y: auto; }
+.session-log li { font-size: 12px; line-height: 1.55; margin-bottom: 4px; word-break: break-word; }
+.session-log li::marker { color: var(--agents-faint); }
+.session-note { margin: 8px 0 0; }
+
 @media (max-width: 768px) {
   .agents-app { padding: 14px 12px 32px; }
   .agents-head { align-items: flex-start; }

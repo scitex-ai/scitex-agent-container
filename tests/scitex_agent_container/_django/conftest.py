@@ -82,6 +82,18 @@ STATUS: dict[str, dict[str, Any]] = {
               "inbox_reachable": "true"},
 }
 
+# SSE tail bodies per agent (follow=false). alpha carries a secret to prove the
+# dashboard redacts it before it reaches the browser; beta/gamma have none.
+TAIL = {
+    "alpha": (
+        'data: {"line_no": 1, "record": {"type": "user", "text": "start the job"}}\n'
+        '\n'
+        'data: {"line_no": 2, "record": {"type": "assistant", "text": "done; token sk-abc123DEF456GHI789jkl012 is set"}}\n'
+        '\n'
+        'data: {"line_no": 3, "record": {"type": "result", "text": "finished ok"}}\n'
+    ),
+}
+
 
 class FakeFleet:
     """Deterministic stand-in for :class:`RemoteFleet` (no network)."""
@@ -104,6 +116,14 @@ class FakeFleet:
     def read_status(self, name):
         self.calls.append(("GET", f"/agents/{name}/status", None))
         return dict(STATUS.get(name, {}))
+
+    def read_tail(self, name, *, max_bytes=262144):
+        self.calls.append(("GET", f"/agents/{name}/tail", None))
+        from scitex_agent_container._django._remote import RemoteOperationError
+
+        if name not in TAIL:
+            raise RemoteOperationError(404, "no session.jsonl")
+        return TAIL[name]
 
     def lifecycle(self, name, action):
         self.calls.append(("POST/DELETE", name, action))

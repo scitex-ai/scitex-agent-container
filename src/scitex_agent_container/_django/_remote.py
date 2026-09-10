@@ -201,6 +201,40 @@ class RemoteFleet:
     def read_status(self, name: str) -> dict[str, Any]:
         return self._request(f"/agents/{quote(name, safe='')}/status")
 
+    def read_tail(self, name: str, *, max_bytes: int = 262144) -> str:
+        """Read the bounded ``follow=false`` SSE tail of an agent's session log.
+
+        Returns the raw stream text (data frames) for :mod:`._session` to parse.
+        A 404 (no session.jsonl yet) returns "" — that is a legitimate state,
+        not an error. The read is byte-capped so a long transcript cannot
+        balloon the detail view or the request.
+        """
+        from urllib.request import Request as _Req
+        from urllib.request import urlopen as _open
+
+        url = f"{self.base_url}/agents/{quote(name, safe='')}/tail?follow=false"
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        req = _Req(url, method="GET", headers=headers)
+        try:
+            with _open(req, timeout=self.timeout) as resp:
+                chunks = []
+                total = 0
+                while total < max_bytes:
+                    chunk = resp.read(min(65536, max_bytes - total))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+            return b"".join(chunks).decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            if exc.code == 404:
+                return ""
+            raise RemoteOperationError(exc.code, f"tail failed: {exc.reason}") from exc
+        except (OSError, TimeoutError) as exc:
+            raise FleetUnavailableError(self.base_url, str(exc)) from exc
+
     def read_statuses(self, names: list[str]) -> dict[str, dict[str, Any] | Exception]:
         """Read independent agent observations concurrently.
 

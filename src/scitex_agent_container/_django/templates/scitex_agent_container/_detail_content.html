@@ -80,6 +80,43 @@ back link and the lifecycle form action are correct in both modes.
       cross-host agents, the cross-host operator allowlist{% endif %}.</p>
       {% endif %}
     </div>
+
+    <div class="detail-card">
+      <h2>Resources</h2>
+      {% with r=agent.resources %}
+      {% if r.state == "ok" %}
+      <dl class="kv">
+        <dt>PID</dt><dd class="mono">{{ r.pid }}</dd>
+        <dt>RSS</dt><dd class="mono">{{ r.rss|default:"—" }}</dd>
+        <dt>VSZ</dt><dd class="mono">{{ r.vsz|default:"—" }}</dd>
+        <dt>CPU ticks</dt><dd class="mono">{{ r.cpu_ticks|default:"—" }}</dd>
+        <dt>Process tree</dt><dd>{{ r.tree_size }} process(es)</dd>
+      </dl>
+      {% elif r.state == "namespace" %}
+      <p class="dim"><i class="fas fa-boxes"></i> PID {{ r.pid }} is reported by the listener but runs in a
+      separate pid namespace (apptainer isolation) — live CPU/memory cannot be
+      read from the web process, so no value is shown rather than a guessed one.</p>
+      {% else %}
+      <p class="dim"><i class="fas fa-power-off"></i> No process to read (agent not started or stopped).</p>
+      {% endif %}
+      {% endwith %}
+    </div>
+
+    <div class="detail-card">
+      <h2>Recent session log</h2>
+      {% if agent.session_error %}
+      <p class="dim">Log unavailable: <span class="mono">{{ agent.session_error }}</span></p>
+      {% elif agent.session_lines %}
+      <ul class="session-log mono">
+        {% for line in agent.session_lines %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+      <p class="dim session-note">Tail (last {{ agent.session_lines|length }} lines), secrets redacted.</p>
+      {% else %}
+      <p class="dim">No session log recorded yet.</p>
+      {% endif %}
+    </div>
   </div>
   {% endif %}
 </div>

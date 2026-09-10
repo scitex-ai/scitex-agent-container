@@ -19,6 +19,7 @@ both modes.
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlencode
 
 from django.http import (
@@ -133,6 +134,37 @@ def fleet_api(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
 
 
+def _detail_extras(fleet: RemoteFleet, name: str, status: Any) -> dict:
+    """Session-log tail + process resources for one agent.
+
+    Both degrade to an explicit state (never a crash, never a fabricated value):
+    the tail reads the listener's public ``/agents/<name>/tail`` (SSE, bounded,
+    redacted); resources read ``/proc`` for the listener's pid and report
+    ``namespace``/``unavailable`` when it is not visible from here.
+    """
+    from ._remote import RemoteOperationError
+    from ._resources import read_resources
+    from ._session import parse_tail_frames
+
+    pid = None
+    if isinstance(status, dict):
+        pid = status.get("pid")
+    resources = read_resources(pid)
+
+    try:
+        session_lines = parse_tail_frames(fleet.read_tail(name))
+        session_error = ""
+    except RemoteOperationError as exc:
+        if exc.status_code == 404:
+            # No session.jsonl yet — a legitimate state, not a fault.
+            session_lines, session_error = [], ""
+        else:
+            session_lines, session_error = [], str(exc)
+    except Exception as exc:  # stx-allow: fallback (reason: a tail failure is a state, not fatal)
+        session_lines, session_error = [], str(exc)
+    return {"session_lines": session_lines, "session_error": session_error, "resources": resources}
+
+
 @require_GET
 def detail(request: HttpRequest, name: str):
     fleet = RemoteFleet.from_environment()
@@ -157,9 +189,11 @@ def detail(request: HttpRequest, name: str):
     except Exception as exc:  # stx-allow: fallback (reason: one agent's status failing is per-agent)
         status = exc  # type: ignore[assignment]
     cross_host = row.get("scope") == "cross-host"
+    agent = project_detail(row, status)
+    agent.update(_detail_extras(fleet, name, status))
     context, is_standalone = _app_context(
         request, f"Agent · {name}", view_path=f"{name}/",
-        agent=project_detail(row, status),
+        agent=agent,
         identity=identity,
         cross_host=cross_host,
         can_operate=can_control(identity, cross_host=cross_host, request=request, agent=name),
