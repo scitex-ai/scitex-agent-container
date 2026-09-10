@@ -8,6 +8,7 @@ model does not receive repeated continuation turns.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +20,11 @@ _CARDS_WORK_CONTRACT = (
     "work already owned by you first; otherwise claim exactly one eligible unowned "
     "card only after checking that its file/scope does not overlap active work owned "
     "by another agent. Never edit another agent's claimed scope. If Cards is "
-    "unavailable or no safe work exists, report that briefly and remain idle."
+    "unavailable or no safe work exists, report that briefly and remain idle. Do "
+    "not keep this turn active with sleep commands solely to poll external CI, "
+    "review, or status: record the pending evidence, end the turn, and let a later "
+    "heartbeat recheck. This does not apply to a real test, build, or useful process "
+    "that is already running; monitor legitimate work normally."
 )
 
 
@@ -27,8 +32,14 @@ _CARDS_WORK_CONTRACT = (
 class HermesHeartbeatPlan:
     """One idempotent native-heartbeat command for an owning Hermes TUI."""
 
-    interval_seconds: int
+    configured_interval_seconds: int
+    stagger_seconds: int
     prompt: str
+
+    @property
+    def interval_seconds(self) -> int:
+        """Effective cadence: configured lower bound plus stable staggering."""
+        return self.configured_interval_seconds + self.stagger_seconds
 
     @property
     def command(self) -> str:
@@ -37,6 +48,18 @@ class HermesHeartbeatPlan:
 
 def _one_line(value: object) -> str:
     return " ".join(str(value or "").split())
+
+
+def _stable_stagger_seconds(agent_name: object, interval_seconds: int) -> int:
+    """Return a cross-process-stable phase spread without random state.
+
+    Python's built-in ``hash`` is salted per process, so using it would move an
+    agent on every launch.  The first eight SHA-256 bytes provide a stable
+    integer.  The window never exceeds one minute or the configured interval.
+    """
+    window = min(60, interval_seconds)
+    digest = hashlib.sha256(str(agent_name or "").encode()).digest()
+    return int.from_bytes(digest[:8], "big") % window
 
 
 def hermes_heartbeat_plan(config: Any) -> HermesHeartbeatPlan | None:
@@ -58,9 +81,14 @@ def hermes_heartbeat_plan(config: Any) -> HermesHeartbeatPlan | None:
 
     authored_interval = int(getattr(autonomous, "idle_kick_after_s", 120) or 120)
     interval = max(_HERMES_MIN_HEARTBEAT_SECONDS, authored_interval)
+    stagger = _stable_stagger_seconds(getattr(config, "name", ""), interval)
     kick = _one_line(getattr(autonomous, "kick_text", ""))
     prompt = f"{_CARDS_WORK_CONTRACT} {kick}" if kick else _CARDS_WORK_CONTRACT
-    return HermesHeartbeatPlan(interval_seconds=interval, prompt=prompt)
+    return HermesHeartbeatPlan(
+        configured_interval_seconds=interval,
+        stagger_seconds=stagger,
+        prompt=prompt,
+    )
 
 
 def arm_hermes_autonomous_wakeup(runtime: Any, config: Any) -> bool | None:

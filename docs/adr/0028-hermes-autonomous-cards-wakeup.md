@@ -20,7 +20,14 @@ tokens while busy, race human steering, and make Cards ownership less safe.
 For `harness: hermes`, `runtime: tui`, and `autonomous.enabled: true`, SAC sends
 one Hermes-native `/heartbeat` control command after launch succeeds. Its
 interval is `autonomous.idle_kick_after_s`, with the upstream Hermes minimum of
-60 seconds. The heartbeat prompt includes the authored
+60 seconds, plus a deterministic per-agent stagger. The configured interval is
+the minimum idle backoff; SAC interprets the first eight SHA-256 digest bytes
+as an unsigned big-endian integer and adds
+`integer mod min(60, configured_interval)` seconds to obtain
+the effective recurring interval sent to Hermes. Thus a 120-second setting
+produces stable per-agent cadences from 120 through 179 seconds. The formula is
+stable across processes, hosts, and restarts, contains no random state, and
+never widens the cadence by more than 59 seconds. The heartbeat prompt includes the authored
 `autonomous.kick_text` plus a fixed Cards safety contract:
 
 - re-read the live durable board on every wake;
@@ -29,6 +36,13 @@ interval is `autonomous.idle_kick_after_s`, with the upstream Hermes minimum of
 - claim at most one eligible unowned card, and never edit another agent's
   claimed scope;
 - if Cards is unavailable or no safe work exists, report briefly and idle.
+- external CI, review, or status that is merely pending is recorded as pending;
+  the agent ends the turn and lets a later heartbeat recheck instead of
+  occupying an active turn with serial polling sleeps.
+
+That last rule targets sleeps whose only purpose is external polling. It does
+not tell an agent to abandon a real test, build, or useful process that is
+already running; legitimate work can still be monitored to completion.
 
 Hermes owns due-time polling, idle detection, coalescing, and its input queue.
 Its heartbeat fires only when the run is idle and the queue is empty, which
@@ -55,3 +69,14 @@ with its native `/heartbeat pause` or `/heartbeat clear` control.
 The mechanism is inference-engine neutral. No model alias, provider, endpoint,
 or response field participates in the decision; only the selected Hermes TUI
 harness and the authored autonomous block do.
+
+## Runtime evidence
+
+On 2026-09-10, all 12 manually armed Hermes TUI session heartbeats fired once
+(`fire_count=1`). Their timestamps ranged from 23:33:41.300Z through
+23:33:58.900Z (epoch 1789083221.3 through 1789083238.9). This proves native
+idle re-entry, and the 18-second cluster also demonstrates why identical
+cadences are unsafe for a shared Qwen engine: 11 Qwen application agents can
+wake together and congest the inference queue. The deterministic cadence
+offset above is the source-level correction. No live agent was restarted or
+re-armed while implementing it.

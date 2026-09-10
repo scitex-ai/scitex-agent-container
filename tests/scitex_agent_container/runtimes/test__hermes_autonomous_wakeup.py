@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from scitex_agent_container.runtimes._hermes_autonomous_wakeup import (
+    _stable_stagger_seconds,
     arm_hermes_autonomous_wakeup,
     hermes_heartbeat_plan,
 )
@@ -34,11 +35,14 @@ class _Runtime:
 
 
 def test_plan_uses_configured_idle_backoff_and_cards_ownership_contract():
-    plan = hermes_heartbeat_plan(_config())
-
+    # Arrange
+    config = _config()
+    # Act
+    plan = hermes_heartbeat_plan(config)
+    # Assert
     assert (
         plan is not None,
-        plan.interval_seconds if plan else None,
+        plan.configured_interval_seconds if plan else None,
         "durable Cards inbox/board" in plan.prompt if plan else False,
         "verify its assignee and ownership" in plan.prompt if plan else False,
         "does not overlap active work" in plan.prompt if plan else False,
@@ -47,14 +51,24 @@ def test_plan_uses_configured_idle_backoff_and_cards_ownership_contract():
 
 
 def test_plan_applies_hermes_busy_loop_floor():
-    plan = hermes_heartbeat_plan(_config(idle_kick_after_s=5))
-
-    assert (plan is not None, plan.interval_seconds if plan else None) == (True, 60)
+    # Arrange
+    config = _config(idle_kick_after_s=5)
+    # Act
+    plan = hermes_heartbeat_plan(config)
+    # Assert
+    assert (
+        plan is not None,
+        plan.configured_interval_seconds if plan else None,
+        plan.interval_seconds >= 60 if plan else False,
+    ) == (True, 60, True)
 
 
 def test_plan_collapses_multiline_kick_for_one_slash_command():
-    plan = hermes_heartbeat_plan(_config(kick_text="Continue.\nDo not stop."))
-
+    # Arrange
+    config = _config(kick_text="Continue.\nDo not stop.")
+    # Act
+    plan = hermes_heartbeat_plan(config)
+    # Assert
     assert (
         plan is not None,
         "Continue. Do not stop." in plan.command if plan else False,
@@ -63,33 +77,76 @@ def test_plan_collapses_multiline_kick_for_one_slash_command():
 
 
 def test_non_hermes_and_disabled_specs_do_not_arm():
+    # Arrange
     disabled = _config()
     disabled.autonomous.enabled = False
     claude = _config()
     claude.harness = "claude-code"
-
-    assert (hermes_heartbeat_plan(disabled), hermes_heartbeat_plan(claude)) == (
-        None,
-        None,
-    )
+    # Act
+    plans = hermes_heartbeat_plan(disabled), hermes_heartbeat_plan(claude)
+    # Assert
+    assert plans == (None, None)
 
 
 def test_arm_submits_native_command_without_waiting_for_ready():
+    # Arrange
     runtime = _Runtime()
-
-    armed = arm_hermes_autonomous_wakeup(runtime, _config())
-
+    config = _config()
+    # Act
+    armed = arm_hermes_autonomous_wakeup(runtime, config)
+    # Assert
     assert (
         armed,
         runtime.calls[0][0],
-        runtime.calls[0][1].startswith("/heartbeat every 120s "),
+        runtime.calls[0][1].startswith("/heartbeat every 177s "),
         runtime.calls[0][2],
     ) == (True, "hub", True, False)
 
 
 def test_arm_reports_refusal_without_retrying_or_burning_turns():
+    # Arrange
     runtime = _Runtime(accepted=False)
-
-    armed = arm_hermes_autonomous_wakeup(runtime, _config())
-
+    config = _config()
+    # Act
+    armed = arm_hermes_autonomous_wakeup(runtime, config)
+    # Assert
     assert (armed, len(runtime.calls)) == (False, 1)
+
+
+def test_plan_defers_external_ci_polling_to_a_later_heartbeat():
+    # Arrange
+    config = _config()
+    # Act
+    plan = hermes_heartbeat_plan(config)
+    # Assert
+    assert plan is not None and all(
+        text in plan.prompt
+        for text in (
+            "Do not keep this turn active with sleep commands solely to poll external CI",
+            "let a later heartbeat recheck",
+            "real test, build, or useful process that is already running",
+        )
+    )
+
+
+def test_stagger_is_deterministic_and_bounded_by_one_minute():
+    # Arrange
+    names = ("scitex-hub", "scitex-app", "scitex-figrecipe")
+    # Act
+    first = tuple(_stable_stagger_seconds(name, 120) for name in names)
+    second = tuple(_stable_stagger_seconds(name, 120) for name in names)
+    # Assert
+    assert (first, second, all(0 <= value < 60 for value in first)) == (
+        (7, 21, 30),
+        (7, 21, 30),
+        True,
+    )
+
+
+def test_stagger_window_never_exceeds_configured_interval():
+    # Arrange
+    configured_interval = 17
+    # Act
+    stagger = _stable_stagger_seconds("hub", configured_interval)
+    # Assert
+    assert 0 <= stagger < configured_interval
