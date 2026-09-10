@@ -2,13 +2,31 @@
 
 Read-only by default. A view never invents state: it asks the listener, scopes
 the result to the caller, and projects it. Control is a separate, gated path.
+
+DUAL MODE. The same views render two ways, chosen by the mount prefix (derived
+with scitex-ui's ``mount_prefix`` — the single source of truth):
+
+* **Standalone** (root mount, ``sac gui serve``): extend the full
+  ``scitex_ui/standalone_shell.html`` (``fleet.html`` / ``detail.html``).
+* **Mounted in SciTeX Hub** (``/apps/agents/``): extend the Hub's
+  ``global_base.html`` (``fleet_hub.html`` / ``detail_hub.html``), which already
+  renders the header + nav. This is what makes "no duplicate header, no project
+  switcher" true: the package supplies content only, the Hub supplies the shell.
+
+Per-row links and the lifecycle redirect use ``url_base`` so they are correct in
+both modes.
 """
 
 from __future__ import annotations
 
 from urllib.parse import urlencode
 
-from django.http import HttpRequest, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
+from django.http import (
+    HttpRequest,
+    HttpResponseForbidden,
+    HttpResponseRedirect,
+    JsonResponse,
+)
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -17,22 +35,67 @@ from ._projection import project_detail, project_row
 from ._remote import RemoteFleet
 
 
-def _context_base(request: HttpRequest, title: str) -> dict:
+def _mount_base(request: HttpRequest, view_path: str) -> str:
+    """The app's mount prefix for the route currently rendering, via scitex-ui's
+    SSOT. ``view_path`` must be the route this view is registered under (relative
+    to the app root) — ``mount_prefix`` subtracts it from ``request.path`` to
+    recover the prefix, and raises on a mismatch (a wiring bug), so this is
+    correct per-route and never guesses. "" at a root mount.
+
+    Content links and the lifecycle redirect are built from this value, so they
+    are correct whether the app is standalone (base "") or mounted (base
+    "/apps/agents")."""
+    from scitex_ui.mount import mount_prefix
+
+    try:
+        return mount_prefix(request, view_path=view_path)
+    except Exception:  # stx-allow: fallback (reason: a mount-detection failure renders standalone)
+        return ""
+
+
+def _shell_context(request: HttpRequest, title: str, view_path: str) -> dict:
+    """Context for the standalone shell only (mounted mode uses global_base)."""
     from scitex_ui.branding import shell_context
     from scitex_ui.mount import mount_context
 
     # All three side panes are unused: this is a server-rendered fleet table,
-    # not a file workspace. Declaring them unused is the scitex-ui API (it
-    # hides the panes) rather than a stylesheet hack at private class names.
+    # not a file workspace. Declaring them unused is the scitex-ui API.
     panes = {"ai": "unused", "files": "unused", "viewer": "unused"}
     ctx = dict(shell_context(title, accent="agents", panes=panes))
-    # merge mount context ONLY when a host declared a prefix — standalone has
-    # none, and mount_context() without a declaration would be a wrong claim.
     try:
-        ctx.update(mount_context(request, view_path=""))
-    except Exception:  # stx-allow: fallback (reason: standalone mount is not declared)
+        ctx.update(mount_context(request, view_path=view_path))
+    except Exception:  # stx-allow: fallback (reason: a root mount emits no marker)
         pass
     return ctx
+
+
+def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tuple[dict, bool]:
+    """Build the render context and decide mounted (hub) vs standalone.
+
+    Returns ``(context, is_standalone)``. ``url_base`` is the app's mount prefix
+    (no trailing slash — the templates add it), derived for the route currently
+    rendering. Because the four routes all share the same mount prefix, this is
+    the same value on every view: "" at a root (standalone) mount, e.g.
+    "/apps/agents" when mounted in the Hub. A non-empty base means we are
+    mounted in the Hub, whose ``global_base`` owns the header.
+    """
+    base = _mount_base(request, view_path)
+    ctx = dict(data)
+    ctx["url_base"] = base
+    if base == "":
+        ctx.update(_shell_context(request, title, view_path))
+        return ctx, True
+    # Mounted in the Hub: global_base owns the header/nav; the package renders
+    # content only, so there is no duplicate header and no project switcher.
+    return ctx, False
+
+
+def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
+    rows = scope_rows(fleet.list_all(), identity)
+    named = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    statuses = fleet.read_statuses(named)
+    agents = [project_row(r, statuses.get(str(r.get("name")), {})) for r in rows]
+    return agents, ""
 
 
 @require_GET
@@ -40,24 +103,23 @@ def index(request: HttpRequest):
     fleet = RemoteFleet.from_environment()
     identity = resolve_identity(request)
     try:
-        rows = scope_rows(fleet.list_all(), identity)
-        statuses = fleet.read_statuses([r["name"] for r in rows if isinstance(r.get("name"), str)])
-        agents = [project_row(r, statuses.get(r.get("name"), {})) for r in rows]
-        comm_error = ""
+        agents, comm_error = _fleet_rows(fleet, identity)
     except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE to show)
         agents, comm_error = [], str(exc)
-    summary = _summary(agents)
-    context = {
-        **_context_base(request, "Agents"),
-        "agents": agents,
-        "summary": summary,
-        "identity": identity,
-        "crosshost_authorized": identity in _crosshost_allowlist(),
-        "comm_error": comm_error,
-        "listener": fleet.base_url,
-        "page": "fleet",
-    }
-    return render(request, "scitex_agent_container/fleet.html", context)
+    context, is_standalone = _app_context(
+        request,
+        "Agents",
+        view_path="",
+        agents=agents,
+        summary=_summary(agents),
+        identity=identity,
+        crosshost_authorized=identity in _crosshost_allowlist(),
+        comm_error=comm_error,
+        listener=fleet.base_url,
+        page="fleet",
+    )
+    template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
+    return render(request, template, context)
 
 
 @require_GET
@@ -65,9 +127,7 @@ def fleet_api(request: HttpRequest) -> JsonResponse:
     fleet = RemoteFleet.from_environment()
     identity = resolve_identity(request)
     try:
-        rows = scope_rows(fleet.list_all(), identity)
-        statuses = fleet.read_statuses([r["name"] for r in rows if isinstance(r.get("name"), str)])
-        agents = [project_row(r, statuses.get(r.get("name"), {})) for r in rows]
+        agents, _ = _fleet_rows(fleet, identity)
         return JsonResponse({"ok": True, "identity": identity, "agents": agents, "summary": _summary(agents)})
     except Exception as exc:  # stx-allow: fallback (reason: surface the failure as JSON, not a 500 page)
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
@@ -79,39 +139,35 @@ def detail(request: HttpRequest, name: str):
     identity = resolve_identity(request)
     try:
         rows = scope_rows(fleet.list_all(), identity)
-    except Exception as exc:  # stx-allow: fallback (reason: listener unreachable is a state)
-        rows = []
-        list_error = str(exc)
-    else:
         list_error = ""
+    except Exception as exc:  # stx-allow: fallback (reason: listener unreachable is a state)
+        rows, list_error = [], str(exc)
     row = next((r for r in rows if r.get("name") == name), None)
     if row is None:
-        # Either not own-scope (hidden) or genuinely absent. We do not reveal
-        # which — an ordinary caller simply does not see cross-host agents.
-        context = {
-            **_context_base(request, f"Agent · {name}"),
-            "agent": None,
-            "identity": identity,
-            "list_error": list_error,
-            "not_found": True,
-            "page": "detail",
-        }
-        return render(request, "scitex_agent_container/detail.html", context)
+        # Not own-scope (hidden) or genuinely absent. We do not reveal which —
+        # an ordinary caller simply does not see cross-host agents.
+        context, is_standalone = _app_context(
+            request, f"Agent · {name}", view_path=f"{name}/",
+            agent=None, identity=identity, list_error=list_error, not_found=True, page="detail",
+        )
+        template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+        return render(request, template, context)
     try:
         status = fleet.read_status(name)
     except Exception as exc:  # stx-allow: fallback (reason: one agent's status failing is per-agent)
         status = exc  # type: ignore[assignment]
     cross_host = row.get("scope") == "cross-host"
-    context = {
-        **_context_base(request, f"Agent · {name}"),
-        "agent": project_detail(row, status),
-        "identity": identity,
-        "cross_host": cross_host,
-        "can_operate": can_control(identity, cross_host=cross_host, request=request, agent=name),
-        "list_error": list_error,
-        "page": "detail",
-    }
-    return render(request, "scitex_agent_container/detail.html", context)
+    context, is_standalone = _app_context(
+        request, f"Agent · {name}", view_path=f"{name}/",
+        agent=project_detail(row, status),
+        identity=identity,
+        cross_host=cross_host,
+        can_operate=can_control(identity, cross_host=cross_host, request=request, agent=name),
+        list_error=list_error,
+        page="detail",
+    )
+    template = "scitex_agent_container/detail.html" if is_standalone else "scitex_agent_container/detail_hub.html"
+    return render(request, template, context)
 
 
 @require_POST
@@ -121,7 +177,7 @@ def lifecycle_action(request: HttpRequest, name: str):
     action = request.POST.get("action", "")
     if action not in {"start", "stop", "restart"}:
         return JsonResponse({"error": "unsupported lifecycle action"}, status=400)
-    # Determine scope: a cross-host agent must be resolvable from the full list.
+    base = _mount_base(request, f"{name}/action")
     try:
         rows = scope_rows(fleet.list_all(), identity)
     except Exception as exc:  # stx-allow: fallback (reason: cannot authorize what cannot be listed)
@@ -166,7 +222,7 @@ def lifecycle_action(request: HttpRequest, name: str):
         }
     )
     query = urlencode({"operation": action, "state": state, "message": str(message)[:240]})
-    return HttpResponseRedirect(f"../{name}/?{query}")
+    return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 
 def _summary(agents: list[dict]) -> dict:

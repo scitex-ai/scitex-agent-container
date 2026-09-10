@@ -7,6 +7,7 @@ from .conftest import STATUS
 
 def test_project_row_uses_status_liveness_verdict():
     from scitex_agent_container._django._projection import project_row
+
     from .conftest import LOCAL_NAME
 
     row = project_row({"name": "alpha", "turn_url": f"http://{LOCAL_NAME}:19000/v1/turn"}, STATUS["alpha"])
@@ -69,6 +70,7 @@ def test_role_list_is_joined():
 
 def test_cross_host_row_is_tagged():
     from scitex_agent_container._django._projection import project_row
+
     from .conftest import REMOTE_NAME
 
     row = project_row(

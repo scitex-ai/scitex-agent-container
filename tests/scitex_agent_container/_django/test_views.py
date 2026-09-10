@@ -97,7 +97,7 @@ def test_lifecycle_local_operator_can_control_own_agent(client, fake_fleet, audi
     monkeypatch.setenv("SCITEX_AGENT_CONTAINER_GUI_IDENTITY", "localop")
     resp = client.post("/alpha/action", {"action": "restart"})
     assert resp.status_code in (302, 303)
-    recs = [json.loads(l) for l in audit_log.read_text().strip().splitlines()]
+    recs = [json.loads(line) for line in audit_log.read_text().strip().splitlines()]
     assert any(r["event"] == "lifecycle_action" and r["agent"] == "alpha" and r["cross_host"] is False for r in recs)
 
 
@@ -106,7 +106,7 @@ def test_lifecycle_cross_host_granted_is_audited(client, fake_fleet, crosshost_o
     # the grant is audited with cross_host=True.
     resp = client.post("/gamma/action", {"action": "restart"})
     assert resp.status_code in (302, 303)
-    recs = [json.loads(l) for l in audit_log.read_text().strip().splitlines()]
+    recs = [json.loads(line) for line in audit_log.read_text().strip().splitlines()]
     assert any(r["event"] == "lifecycle_action" and r["agent"] == "gamma" and r["cross_host"] is True for r in recs)
 
 

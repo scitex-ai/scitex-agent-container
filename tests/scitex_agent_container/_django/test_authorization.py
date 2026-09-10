@@ -29,6 +29,7 @@ def test_other_node_row_is_cross_scope():
 
 def test_ordinary_identity_sees_only_own_scope():
     from scitex_agent_container._django._authorization import scope_rows
+
     from .conftest import OWN_AGENT_DEAD
 
     rows = scope_rows([OWN_AGENT, OWN_AGENT_DEAD, CROSS_AGENT], identity="alice")
@@ -38,10 +39,11 @@ def test_ordinary_identity_sees_only_own_scope():
 
 
 def test_crosshost_operator_sees_fleet_tagged():
-    from scitex_agent_container._django._authorization import scope_rows
-    from .conftest import OWN_AGENT_DEAD
-
     import os
+
+    from scitex_agent_container._django._authorization import scope_rows
+
+    from .conftest import OWN_AGENT_DEAD
 
     os.environ["SCITEX_AGENT_CONTAINER_CROSSHOST_OPERATORS"] = "op1"
     try:
@@ -55,9 +57,9 @@ def test_crosshost_operator_sees_fleet_tagged():
 
 
 def test_can_control_own_requires_operator_list():
-    from scitex_agent_container._django._authorization import can_control
-
     import os
+
+    from scitex_agent_container._django._authorization import can_control
 
     os.environ["SCITEX_AGENT_CONTAINER_LIFECYCLE_OPERATORS"] = "op1"
     try:
@@ -69,9 +71,9 @@ def test_can_control_own_requires_operator_list():
 
 
 def test_can_control_crosshost_requires_stricter_list(audit_log):
-    from scitex_agent_container._django._authorization import can_control
-
     import os
+
+    from scitex_agent_container._django._authorization import can_control
 
     os.environ["SCITEX_AGENT_CONTAINER_LIFECYCLE_OPERATORS"] = "localop"
     os.environ["SCITEX_AGENT_CONTAINER_CROSSHOST_OPERATORS"] = "crossop"
@@ -109,9 +111,9 @@ def test_resolve_identity_prefers_django_user():
 
 
 def test_resolve_identity_falls_back_to_declared():
-    from scitex_agent_container._django._authorization import resolve_identity
-
     import os
+
+    from scitex_agent_container._django._authorization import resolve_identity
 
     os.environ["SCITEX_AGENT_CONTAINER_GUI_IDENTITY"] = "declared"
     try:

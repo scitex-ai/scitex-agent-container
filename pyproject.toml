@@ -461,6 +461,13 @@ all = [
     # un-closing `all`. Do NOT try a leading-underscore "private extra"
     # either — PEP 508/685 forbids the name outright.
     "scitex-agent-container[codex-sdk]",
+    # `gui` is closed under `all` by the SAME PS-221 §3 rule as every other
+    # public extra: an extra omitted here silently under-installs for anyone
+    # who ran the documented "give me everything" install. It is lightweight
+    # (django + scitex-app + scitex-ui, no native binaries) and its Django
+    # dashboard tests must run under a fresh `[all,dev]` install, so it is a
+    # natural member of `all` — not a cost like `codex-sdk`'s 285 MB wheel.
+    "scitex-agent-container[gui]",
     "scitex-agent-container[dev]",
     "scitex-agent-container[docs]",
 ]

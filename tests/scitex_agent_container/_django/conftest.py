@@ -12,9 +12,7 @@ while still running the real scope, authorization, and projection code.
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,27 +27,16 @@ import django  # noqa: E402
 
 django.setup()
 
-from django.test import Client  # noqa: E402
-
-from scitex_agent_container._django import _remote  # noqa: E402
-from scitex_agent_container._django._authorization import (  # noqa: E402
-    can_control,
-    is_own_scope,
-    record_audit,
-    resolve_identity,
-    scope_rows,
-)
-from scitex_agent_container._django._projection import (  # noqa: E402
-    project_detail,
-    project_row,
-)
-
 # Two nodes: this one (own scope) and a remote one (cross-host). The row's node
 # is read from `turn_url`'s hostname (the authoritative signal, per the real
 # listener) — the registry is fleet-wide and rows carry no `host` field.
 # LOCAL_NAME is derived from the real hostname so the tests are node-independent;
 # REMOTE_NAME is guaranteed to differ from it.
-import socket as _socket
+import socket as _socket  # noqa: E402
+
+from django.test import Client  # noqa: E402
+
+from scitex_agent_container._django import _remote  # noqa: E402
 
 LOCAL_NAME = _socket.gethostname() or "this-node"
 _REMOTE = "remote-node-" + (LOCAL_NAME[:8] if LOCAL_NAME else "x")

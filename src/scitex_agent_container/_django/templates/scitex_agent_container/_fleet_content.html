@@ -1,0 +1,76 @@
+{% comment %}
+Shared Agents fleet content. Included by:
+  * fleet.html        (standalone: inside scitex_ui/standalone_shell.html)
+  * fleet_hub.html    (Hub: inside global_base.html — no second header)
+`url_base` is the app's mount prefix ("" at root, "/apps/agents" when
+mounted) so the per-row links are correct in both modes.
+{% endcomment %}
+<div class="agents-app" data-page="fleet">
+  <header class="agents-head">
+    <div class="agents-title">
+      <h1><i class="fas fa-robot"></i> Agents</h1>
+      <span class="agents-sub">Scoped fleet — {{ listener }}</span>
+    </div>
+    <div class="agents-summary">
+      <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
+      <div class="sum-card good"><span class="sum-num">{{ summary.alive }}</span><span class="sum-label">alive</span></div>
+      <div class="sum-card warn"><span class="sum-num">{{ summary.attention }}</span><span class="sum-label">need attention</span></div>
+      {% if summary.cross_host %}
+      <div class="sum-card cross"><span class="sum-num">{{ summary.cross_host }}</span><span class="sum-label">cross-host</span></div>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if comm_error %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-triangle-exclamation"></i>
+    <span>{{ comm_error }}</span>
+    <small>The dashboard could not reach the SAC host control plane. Set
+    <code>SCITEX_AGENT_CONTAINER_API_URL</code> and the bearer token
+    (<code>SCITEX_AGENT_CONTAINER_API_TOKEN[_FILE]</code>), then retry.</small>
+  </div>
+  {% endif %}
+
+  <div class="agents-scope-note">
+    <span><i class="fas fa-user"></i> acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+    {% if crosshost_authorized %}
+    <span class="pill cross"><i class="fas fa-globe"></i> cross-host fleet authorized</span>
+    {% else %}
+    <span class="pill own"><i class="fas fa-lock"></i> own-scope only</span>
+    {% endif %}
+  </div>
+
+  {% if agents %}
+  <div class="agents-table-wrap">
+  <table class="agents-table">
+    <thead>
+      <tr>
+        <th>Agent</th><th>State</th><th>Runtime</th><th>Harness</th>
+        <th>Engine / Model</th><th>Host</th><th>a2a</th>
+        <th class="row-actions">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in agents %}
+      <tr class="row {{ a.state_tone }}{% if a.cross_host %} cross{% endif %}">
+        <td class="c-name"><a href="{{ url_base }}/{{ a.name }}/" title="{{ a.name }}">{{ a.name }}</a>
+          {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
+        <td title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
+        <td>{{ a.runtime }}</td>
+        <td>{{ a.harness }}</td>
+        <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span></td>
+        <td class="c-host">{{ a.host }}</td>
+        <td class="c-port">{% if a.a2a_port %}{{ a.a2a_port }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="row-actions"><a class="btn btn-detail" href="{{ url_base }}/{{ a.name }}/">inspect</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  {% if not comm_error %}
+  <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
+    <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
+  {% endif %}
+  {% endif %}
+</div>
