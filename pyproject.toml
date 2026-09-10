@@ -423,6 +423,14 @@ dev = [
     # more (`cli_pkg/mcp_group._list_tools` branches on hasattr).
     "fastmcp>=3.0,<4",
     "mcp>=1.29,<2",
+    # PS-210 §2 (dev-extras-incomplete) mirror of `[gui]`: the dashboard's
+    # tests import django / scitex_app / scitex_ui unguarded, so a fresh
+    # `pip install -e .[dev]` must carry them to run the full suite — exactly
+    # as `[codex-sdk]`'s openai-codex is mirrored above. The floors match the
+    # `[gui]` extra so the two cannot drift.
+    "django>=4.2",
+    "scitex-app>=0.11.0",
+    "scitex-ui>=0.13.0",
 ]
 docs = [
     "sphinx>=7.0",
