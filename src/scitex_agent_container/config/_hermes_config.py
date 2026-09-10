@@ -1,0 +1,108 @@
+"""Compile a neutral launch plan into an isolated Hermes profile."""
+
+from __future__ import annotations
+
+from pathlib import PurePosixPath
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from ._launch_plan import LaunchPlan
+
+
+def _api_root(endpoint_url: str, protocol: str) -> str:
+    suffix = {
+        "openai-chat-completions": "/chat/completions",
+        "openai-responses": "/responses",
+    }[protocol]
+    parsed = urlsplit(endpoint_url)
+    path = parsed.path.removesuffix(suffix).rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def compile_hermes_config(
+    plan: LaunchPlan,
+    *,
+    workdir: str,
+    max_turns: int = 50,
+    run_budget_seconds: int = 1200,
+    approval_mode: str = "off",
+) -> dict[str, Any]:
+    """Return a credential-free Hermes configuration derived from ``plan``."""
+    if plan.harness != "hermes":
+        raise ValueError(f"Hermes compiler received harness {plan.harness!r}")
+    if plan.launch_mode not in {"headless", "tui"}:
+        raise ValueError("Hermes requires launch_mode 'headless' or 'tui'")
+    if plan.endpoint.protocol not in {
+        "openai-chat-completions",
+        "openai-responses",
+    }:
+        raise ValueError(
+            f"unsupported Hermes endpoint protocol {plan.endpoint.protocol!r}"
+        )
+    if plan.endpoint.auth_kind == "none":
+        key_env = ""
+    else:
+        key_env = plan.endpoint.auth_env
+    if type(max_turns) is not int or max_turns <= 0:
+        raise ValueError("max_turns must be a positive integer")
+    if type(run_budget_seconds) is not int or run_budget_seconds <= 0:
+        raise ValueError("run_budget_seconds must be a positive integer")
+    if approval_mode not in {"manual", "smart", "off"}:
+        raise ValueError("approval_mode must be manual, smart, or off")
+    workspace = str(PurePosixPath(workdir))
+    if not workspace.startswith("/"):
+        raise ValueError("workdir must be an absolute container path")
+
+    provider_key = f"sac-{plan.engine.key}"
+    model = plan.engine.model_id
+    api_mode = {
+        "openai-chat-completions": "chat_completions",
+        "openai-responses": "responses",
+    }[plan.endpoint.protocol]
+    model_config: dict[str, Any] = {}
+    if plan.engine.context_window_tokens is not None:
+        model_config["context_length"] = plan.engine.context_window_tokens
+    provider: dict[str, Any] = {
+        "name": f"SAC {plan.engine.key}",
+        "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),
+        "key_env": key_env,
+        "transport": api_mode,
+        "model": model,
+        "default_model": model,
+        "models": {model: model_config},
+    }
+    agent: dict[str, Any] = {
+        "max_turns": max_turns,
+        "run_budget_seconds": run_budget_seconds,
+    }
+    if plan.engine.reasoning_effort is not None:
+        agent["reasoning_effort"] = plan.engine.reasoning_effort
+    return {
+        "model": {
+            "default": model,
+            "provider": provider_key,
+            "api_mode": api_mode,
+        },
+        "providers": {provider_key: provider},
+        "fallback_providers": [],
+        "toolsets": ["hermes-cli"],
+        "agent": agent,
+        "approvals": {"mode": approval_mode},
+        "compression": {
+            "enabled": True,
+            "threshold": 0.80,
+            "target_ratio": 0.20,
+            "tail_mode": "lean",
+            "in_place": True,
+        },
+        "display": {"busy_input_mode": "queue"},
+        "terminal": {
+            "backend": "local",
+            "cwd": workspace,
+            "auto_source_bashrc": False,
+        },
+        "auxiliary": {"title_generation": {"enabled": False}},
+    }
+
+
+__all__ = ["compile_hermes_config"]
