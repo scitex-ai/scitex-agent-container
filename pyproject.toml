@@ -189,6 +189,19 @@ codex-sdk = [
     # AsyncCodex/thread_resume surface the runner is written against.
     "openai-codex>=0.144.4",
 ]
+gui = [
+    # Browser-facing Agents dashboard (`sac gui`, the `_django` app). The
+    # app renders under the shared scitex-ui shell and boots through
+    # scitex-app's embed launcher, so it depends on all three. OPTIONAL: a
+    # bare install stays server-only — every import in the dashboard is
+    # deferred (the CLI resolves `scitex_app.embed` on first `gui` use and
+    # raises a clear install hint when absent), and the `[gui]` extra is
+    # what a deployment adds. The dashboard is a PROJECTION of the host
+    # control plane; it adds no state store and no second lifecycle path.
+    "django>=4.2",
+    "scitex-app>=0.11.0",
+    "scitex-ui>=0.13.0",
+]
 dev = [
     # PS-210 §2 (dev-extras-incomplete): `[codex-sdk]` declares
     # openai-codex, `src/.../_runners/codex_session.py` imports the

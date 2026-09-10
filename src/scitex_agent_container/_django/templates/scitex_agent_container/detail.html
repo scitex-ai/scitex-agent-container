@@ -1,0 +1,84 @@
+{% extends "scitex_ui/standalone_shell.html" %}
+{% load static %}
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'scitex_agent_container/agents.css' %}">
+{% endblock %}
+{% block app_content %}
+<div class="agents-app" data-page="detail">
+  <header class="agents-head">
+    <div class="agents-title">
+      <a class="back" href="../"><i class="fas fa-arrow-left"></i> Fleet</a>
+      {% if agent %}
+      <h1><i class="fas fa-robot"></i> {{ agent.name }}</h1>
+      {% else %}
+      <h1><i class="fas fa-ghost"></i> Agent not in scope</h1>
+      {% endif %}
+      {% if agent %}
+      <span class="agents-sub">{{ agent.host }} · acting as <strong>{{ identity|default:"(unidentified)" }}</strong></span>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if not agent %}
+  <div class="agents-bannor err" role="alert">
+    <i class="fas fa-lock"></i>
+    <span>This agent is not visible to <strong>{{ identity|default:"(unidentified)" }}</strong>.</span>
+    <small>Cross-host agents are hidden unless the acting identity is explicitly
+    authorized for the fleet.</small>
+    {% if list_error %}<br><small>Listener: {{ list_error }}</small>{% endif %}
+  </div>
+  {% else %}
+  <div class="detail-grid">
+    <div class="detail-card">
+      <div class="detail-state">
+        <span class="dot {{ agent.state_tone }}"></span>
+        <span class="detail-state-label {{ agent.state_tone }}">{{ agent.state_label }}</span>
+        {% if cross_host %}<span class="pill cross">cross-host</span>{% endif %}
+      </div>
+      <dl class="kv">
+        <dt>Runtime</dt><dd>{{ agent.runtime }}</dd>
+        <dt>Harness</dt><dd>{{ agent.harness }}</dd>
+        <dt>Role</dt><dd>{{ agent.role }}</dd>
+        <dt>Engine</dt><dd>{{ agent.engine }}</dd>
+        <dt>Model</dt><dd>{{ agent.model }}</dd>
+        <dt>Project</dt><dd>{{ agent.project }}</dd>
+        <dt>Host</dt><dd>{{ agent.host }}</dd>
+        <dt>PID</dt><dd>{{ agent.pid|default:"—" }}</dd>
+        <dt>a2a port</dt><dd>{{ agent.a2a_port|default:"—" }}</dd>
+        <dt>Turn URL</dt><dd class="mono">{{ agent.turn_url|default:"—" }}</dd>
+        <dt>Session</dt><dd class="mono">{{ agent.session|default:"—" }}</dd>
+        {% if agent.detail.started_at %}<dt>Started</dt><dd>{{ agent.detail.started_at }}</dd>{% endif %}
+      </dl>
+    </div>
+
+    <div class="detail-card">
+      <h2>Control</h2>
+      {% if agent.detail_error %}
+      <p class="dim">Status endpoint unavailable: <span class="mono">{{ agent.detail_error }}</span></p>
+      {% endif %}
+      {% if can_operate %}
+      <p class="dim">
+        {% if cross_host %}
+        Cross-host control — this action is recorded in the operator audit trail.
+        {% else %}
+        You are an authorized lifecycle operator for this node's agents.
+        {% endif %}
+      </p>
+      <form method="post" action="../{{ agent.name }}/action" class="lifecycle-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <div class="lifecycle-btns">
+          <button type="submit" name="action" value="start" class="btn good"><i class="fas fa-play"></i> Start</button>
+          <button type="submit" name="action" value="restart" class="btn"><i class="fas fa-rotate"></i> Restart</button>
+          <button type="submit" name="action" value="stop" class="btn bad"><i class="fas fa-stop"></i> Stop</button>
+        </div>
+      </form>
+      {% else %}
+      <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
+      identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
+      cross-host agents, the cross-host operator allowlist{% endif %}.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

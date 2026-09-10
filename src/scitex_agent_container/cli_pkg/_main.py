@@ -67,7 +67,7 @@ COMMAND_CATEGORIES = [
     ("Account", ["accounts"]),
     (
         "Network & Peer",
-        ["host", "peer", "a2a", "fleet", "listen"],
+        ["host", "peer", "a2a", "fleet", "listen", "gui"],
     ),
     ("Registry & Events", ["db", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
@@ -126,6 +126,7 @@ class _MainGroup(LazyGroup):
         "peer": f"{_PKG}.peer_group:peer_group",
         "fleet": f"{_PKG}.fleet_group:fleet_group",
         "listen": f"{_PKG}.listen_cmds:listen",
+        "gui": f"{_PKG}.gui_group:gui_group",
         "doctor": f"{_PKG}.doctor_cmds:doctor",
         # Mechanical gates over a DELEGATED code change. `guard deletions`
         # is the standing form of the detector that judged 36 local-model
@@ -267,6 +268,7 @@ class _MainGroup(LazyGroup):
         "ci": "Read WHY CI is red as cheaply as its status (extract the real failure).",
         "guard": "Mechanical gates a delegated change must pass.",
         "listen": "Host HTTP/JSON control plane: start/stop/restart/status.",
+        "gui": "Scoped Agents dashboard: serve/open/status/stop the browser surface.",
         "ports": "List the ports sac/scitex uses, with live status.",
         "auth-events": "Read the fleet auth timeline: 401s, rotations, restarts.",
         "pytest": "Run pytest on remote pools (Spartan SLURM, ...).",

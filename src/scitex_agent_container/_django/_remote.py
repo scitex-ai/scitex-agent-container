@@ -1,0 +1,242 @@
+"""Authenticated client for the SAC host control plane (``sac listen``).
+
+The GUI is a PROJECTION, not a store. Every read and mutation goes through
+this client to the committed public HTTP surface (ADR-0004): ``GET /agents``,
+``GET /agents/<name>/status`` and the lifecycle verbs. Nothing in here re-
+derives lifecycle state from registry files or reaches into ``_lifecycle``
+internals — those are the listener's job.
+
+Token resolution order (first that yields a value):
+  1. ``SCITEX_AGENT_CONTAINER_API_TOKEN``            (direct value)
+  2. ``SCITEX_AGENT_CONTAINER_API_TOKEN_FILE``       (file containing token)
+  3. the listener's own auto-generated token at
+     ``~/.scitex/agent-container/tokens/listen-<host>.token``
+
+where ``<host>`` is the base URL's host — so a co-located standalone server on
+loopback finds the token ``sac listen`` wrote with zero configuration.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
+
+from ._constants import (
+    API_URL_ENV,
+    DEFAULT_API_URL,
+    TOKEN_ENV,
+    TOKEN_FILE_ENV,
+)
+
+
+class RemoteOperationError(RuntimeError):
+    """Typed non-success response from the SAC host control plane."""
+
+    def __init__(self, status_code: int, message: str, kind: str | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.kind = kind
+
+
+class FleetUnavailableError(RuntimeError):
+    """The web process cannot reach the SAC listener at all."""
+
+    def __init__(self, base_url: str, reason: str) -> None:
+        super().__init__(f"could not reach the SAC listener at {base_url}: {reason}")
+        self.base_url = base_url
+        self.reason = reason
+
+
+def _home_roots() -> list[Path]:
+    """Candidate home roots, most-likely first.
+
+    The agent process runs with ``$HOME`` set to the container home
+    (``/home/agent``), but ``sac listen`` writes its token under the REAL user
+    home (``/home/<user>``). Both are probed so a co-located standalone server
+    finds the token either way.
+    """
+    roots: list[Path] = []
+    env_home = os.environ.get("HOME")
+    if env_home:
+        roots.append(Path(env_home))
+    try:
+        import pwd
+
+        real = pwd.getpwuid(os.getuid()).pw_dir
+        if real:
+            roots.append(Path(real))
+    except (ImportError, KeyError):  # stx-allow: fallback (reason: non-POSIX or no passwd entry)
+        pass
+    # de-dupe, preserving order
+    seen: set[str] = set()
+    out: list[Path] = []
+    for r in roots:
+        key = str(r)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+def _default_token_paths(base_url: str) -> list[Path]:
+    """Candidate token paths, most-specific first.
+
+    The listener names its token ``listen-<bind-host>.token`` where bind-host
+    is whatever ``sac listen --bind`` was given — typically the local hostname,
+    not the loopback IP. The token lives under the OPERATOR's home, which in a
+    container may differ from ``$HOME``/passwd (both can be remapped to
+    ``/home/agent``). So we cross the URL hostname and the local hostname with
+    each candidate home root, then, as a bounded last resort, glob one level of
+    ``/home/*`` for the local-hostname token. The first existing file wins.
+    """
+    from ._authorization import local_hostname
+
+    url_host = urlsplit(base_url).hostname or "127.0.0.1"
+    hostnames = [hn for hn in dict.fromkeys([url_host, local_hostname()]) if hn]
+    paths: list[Path] = []
+    for home in _home_roots():
+        tdir = home / ".scitex" / "agent-container" / "tokens"
+        for hn in hostnames:
+            paths.append(tdir / f"listen-{hn}.token")
+    # Bounded fallback across /home/* — the container remaps HOME to
+    # /home/agent but the operator's token sits under /home/<operator>. The
+    # local-hostname token is tried FIRST (a token named for another host would
+    # be the wrong credential and 403); any other listen token is last resort.
+    name = local_hostname()
+    if name:
+        try:
+            primary = sorted(Path("/home").glob(f"*/.scitex/agent-container/tokens/listen-{name}.token"))
+            others = sorted(Path("/home").glob("*/.scitex/agent-container/tokens/listen-*.token"))
+            for found in primary + [o for o in others if o not in primary]:
+                paths.append(found)
+        except OSError:  # stx-allow: fallback (reason: /home may be absent/unreadable)
+            pass
+    return paths
+
+
+def resolve_token(base_url: str) -> str:
+    """Return the Bearer token for ``base_url`` or '' if none is configured."""
+    value = os.environ.get(TOKEN_ENV, "").strip()
+    if value:
+        return value
+    file_env = os.environ.get(TOKEN_FILE_ENV, "").strip()
+    candidates: list[Path] = []
+    if file_env:
+        candidates.append(Path(file_env).expanduser())
+    candidates.extend(_default_token_paths(base_url))
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            return text
+    return ""
+
+
+class RemoteFleet:
+    """Small authenticated HTTP client matching the /agents row + status shape."""
+
+    def __init__(self, base_url: str, token: str, *, timeout: float = 8.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+
+    @classmethod
+    def from_environment(cls, base_url: str | None = None) -> "RemoteFleet":
+        resolved = (base_url or os.environ.get(API_URL_ENV, "") or DEFAULT_API_URL).strip()
+        token = resolve_token(resolved)
+        if not token:
+            # No credential at all: reads will 401. We still construct so the
+            # view can present an explicit "listener not authenticated" state
+            # instead of crashing — an unconfigured deployment is a STATE, not
+            # an exception.
+            token = ""
+        return cls(resolved, token)
+
+    def _request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        req = Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        try:
+            with urlopen(req, timeout=timeout or self.timeout) as resp:
+                payload = json.load(resp)
+        except HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+            except (ValueError, OSError):
+                payload = {}
+            message = payload.get("error") if isinstance(payload, dict) else str(exc.reason)
+            kind = payload.get("kind") if isinstance(payload, dict) else None
+            raise RemoteOperationError(exc.code, str(message or exc.reason), kind) from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise FleetUnavailableError(self.base_url, str(exc)) from exc
+        if not isinstance(payload, dict):
+            raise FleetUnavailableError(self.base_url, "non-object JSON response")
+        return payload
+
+    # ── reads ────────────────────────────────────────────────────────────────
+    def list_all(self) -> list[dict[str, Any]]:
+        payload = self._request("/agents")
+        rows = payload.get("agents")
+        if not isinstance(rows, list):
+            raise FleetUnavailableError(self.base_url, "'/agents' has no agents list")
+        return [row for row in rows if isinstance(row, dict)]
+
+    def read_status(self, name: str) -> dict[str, Any]:
+        return self._request(f"/agents/{quote(name, safe='')}/status")
+
+    def read_statuses(self, names: list[str]) -> dict[str, dict[str, Any] | Exception]:
+        """Read independent agent observations concurrently.
+
+        Failures are returned per-name (never raised) so one dead agent degrades
+        to an explicit row without taking the whole fleet page down.
+        """
+        if not names:
+            return {}
+        results: dict[str, dict[str, Any] | Exception] = {}
+        with ThreadPoolExecutor(max_workers=min(16, len(names))) as pool:
+            futures = {pool.submit(self.read_status, name): name for name in names}
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    results[name] = future.result()
+                except Exception as exc:  # surfaced as an explicit row by the view
+                    results[name] = exc
+        return results
+
+    # ── mutations (delegated to the authenticated listener) ─────────────────
+    def lifecycle(self, name: str, action: str) -> dict[str, Any]:
+        target = quote(name, safe="")
+        if action == "start":
+            return self._request(
+                "/agents", method="POST", body={"name": name, "assume_yes": True}, timeout=120
+            )
+        if action == "stop":
+            return self._request(f"/agents/{target}", method="DELETE", timeout=120)
+        if action == "restart":
+            return self._request(f"/agents/{target}/restart", method="POST", body={}, timeout=120)
+        raise ValueError(f"unsupported lifecycle action: {action}")
+
+
+__all__ = [
+    "FleetUnavailableError",
+    "RemoteFleet",
+    "RemoteOperationError",
+    "resolve_token",
+]
