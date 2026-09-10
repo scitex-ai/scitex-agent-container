@@ -217,6 +217,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     No backward compatibility — old apiVersions raise loud validation
     errors at config-load time.
     """
+    from ._schema_compat import normalize_document
+
+    raw = normalize_document(raw)
+
     # Red-start explicit-fields gate (operator ruling 2026-07-21): every
     # spec field must be WRITTEN — an omitted field is a load error with
     # a complete, paste-ready hint. Runs BEFORE any parsing so an

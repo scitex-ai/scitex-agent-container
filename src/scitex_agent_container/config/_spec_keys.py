@@ -49,6 +49,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         # today. It is ABSENT from the explicit-required map in
         # ``_explicit_fields`` deliberately. See ``config._engine_library``.
         "engine",
+        "available_engines",
+        "available_harnesses",
         "engines",  # MULTI-backend surface: several named engines, one
         # picked at start (``--engine <key>``). OPTIONAL, deliberately —
         # it is ABSENT from the explicit-required map in
