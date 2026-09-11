@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scitex_agent_container._listen import _config as listen_config
 from scitex_agent_container.config import AgentConfig
@@ -292,10 +293,12 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
     ]
+    expected_headers = {"X-SciTeX-Session-ID": "sac:scholar"}
     # Act
     with _replace_attributes(replacements):
         targets = profile.materialize_hermes_tui_profile(config, state_dir=tmp_path)
     rendered = (targets[0] / ".hermes" / "config.yaml").read_text(encoding="utf-8")
+    parsed = yaml.safe_load(rendered)
     env_text = (targets[0] / ".hermes" / ".env").read_text()
     # Assert
     assert (
@@ -303,6 +306,8 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         and "reasoning_effort: low" in rendered
         and "mode: 'off'" in rendered
         and "api_server:" not in rendered
+        and parsed["providers"]["sac-qwen"]["extra_headers"]
+        == expected_headers
         and env_text == "QWEN_KEY=secret\n"
     )
 
