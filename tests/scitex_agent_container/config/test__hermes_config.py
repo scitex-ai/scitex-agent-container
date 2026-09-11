@@ -67,6 +67,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "base_url": "http://gateway/prefix/v1",
             "key_env": "QWEN_KEY",
             "transport": "chat_completions",
+            "discover_models": False,
             "model": "qwen38-27b",
             "default_model": "qwen38-27b",
             "models": {"qwen38-27b": {"context_length": 1_000_000}},
@@ -92,6 +93,40 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
         "secret_absent": True,
     }
     assert observed == expected
+
+
+def test_named_provider_exposes_only_the_selected_configured_model():
+    # Arrange
+    raw = _spec()
+    raw["engine"] = "paid-flash"
+    raw["available_engines"] = {
+        "paid-flash": {
+            "model": "provider-flash",
+            "parameters": {"context_window_tokens": 128_000},
+            "endpoints": {
+                "openai-chat-completions": {
+                    "url": "https://provider.example/v1/chat/completions",
+                    "auth": {"kind": "bearer", "env": "PROVIDER_API_KEY"},
+                }
+            },
+        }
+    }
+
+    # Act
+    result = compile_hermes_config(compile_launch_plan(raw), workdir="/work")
+    provider = result["providers"]["sac-paid-flash"]
+
+    # Assert
+    assert provider == {
+        "name": "SAC paid-flash",
+        "base_url": "https://provider.example/v1",
+        "key_env": "PROVIDER_API_KEY",
+        "transport": "chat_completions",
+        "discover_models": False,
+        "model": "provider-flash",
+        "default_model": "provider-flash",
+        "models": {"provider-flash": {"context_length": 128_000}},
+    }
 
 
 def test_refuses_relative_workdir():
