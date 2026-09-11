@@ -20,6 +20,7 @@ def _config(tmp_path: Path) -> AgentConfig:
 
 
 def test_pid_identity_requires_module_agent_and_exact_spec(tmp_path):
+    # Arrange
     proc_root = tmp_path / "proc"
     cmdline = proc_root / "42" / "cmdline"
     cmdline.parent.mkdir(parents=True)
@@ -29,40 +30,46 @@ def test_pid_identity_requires_module_agent_and_exact_spec(tmp_path):
         + b"\0--name\0scholar\0--config-path\0/spec/scholar.yaml\0"
     )
 
-    assert lifecycle._owns_bridge_process(
-        42,
-        name="scholar",
-        config_path="/spec/scholar.yaml",
-        proc_root=proc_root,
+    # Act
+    ownership = (
+        lifecycle._owns_bridge_process(
+            42,
+            name="scholar",
+            config_path="/spec/scholar.yaml",
+            proc_root=proc_root,
+        ),
+        lifecycle._owns_bridge_process(
+            42,
+            name="writer",
+            config_path="/spec/scholar.yaml",
+            proc_root=proc_root,
+        ),
     )
-    assert not lifecycle._owns_bridge_process(
-        42,
-        name="writer",
-        config_path="/spec/scholar.yaml",
-        proc_root=proc_root,
-    )
+    # Assert
+    assert ownership == (True, False)
 
 
-def test_stop_never_signals_a_foreign_reused_pid(tmp_path, monkeypatch):
+def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     pid_path = state_dir / lifecycle.PID_FILENAME
     pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
-    monkeypatch.setattr(lifecycle, "state_dir_for_config", lambda _config: state_dir)
-    monkeypatch.setattr(lifecycle, "_owns_bridge_process", lambda *_args, **_kwargs: False)
     signals = []
-
+    # Act
     stopped = lifecycle.stop_inbox_bridge(
-        config, kill=lambda pid, sig: signals.append((pid, sig))
+        config,
+        kill=lambda pid, sig: signals.append((pid, sig)),
+        state_dir=state_dir,
+        owns=lambda *_args, **_kwargs: False,
     )
-
-    assert stopped is False
-    assert signals == []
-    assert not pid_path.exists()
+    # Assert
+    assert (stopped, signals, pid_path.exists()) == (False, [], False)
 
 
-def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path, monkeypatch):
+def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     state_dir = tmp_path / "state"
     seen = {}
@@ -78,24 +85,39 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path, monkeypatc
     def preflight(url, bearer):
         seen["preflight"] = (url, bearer)
 
-    monkeypatch.setattr(lifecycle, "state_dir_for_config", lambda _config: state_dir)
-    monkeypatch.setattr(lifecycle, "_read_listen_bearer", lambda: "secret")
-    monkeypatch.setattr(lifecycle, "listen_base_url", lambda: "http://127.0.0.1:7878")
-    monkeypatch.setattr(lifecycle, "stop_inbox_bridge", lambda _config: False)
-
-    pid = lifecycle.start_inbox_bridge(config, spawn=spawn, preflight=preflight)
-
-    assert pid == 4242
-    assert seen["preflight"] == (
-        "http://127.0.0.1:7878/agents/scholar/inbox/stream?ack=explicit",
-        "secret",
+    # Act
+    pid = lifecycle.start_inbox_bridge(
+        config,
+        spawn=spawn,
+        preflight=preflight,
+        bearer="secret",
+        base_url="http://127.0.0.1:7878",
+        state_dir=state_dir,
+        stop=lambda _config: False,
+        sleep=lambda _seconds: None,
     )
-    assert "secret" not in seen["argv"]
-    assert seen["env"]["SAC_LISTEN_BEARER"] == "secret"
-    assert (state_dir / lifecycle.PID_FILENAME).read_text() == "4242\n"
+    outcome = (
+        pid,
+        seen["preflight"],
+        "secret" in seen["argv"],
+        seen["env"]["SAC_LISTEN_BEARER"],
+        (state_dir / lifecycle.PID_FILENAME).read_text(),
+    )
+    # Assert
+    assert outcome == (
+        4242,
+        (
+            "http://127.0.0.1:7878/agents/scholar/inbox/stream?ack=explicit",
+            "secret",
+        ),
+        False,
+        "secret",
+        "4242\n",
+    )
 
 
-def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path, monkeypatch):
+def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     state_dir = tmp_path / "state"
 
@@ -106,19 +128,28 @@ def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path, monkeypatc
         def poll():
             return 1
 
-    monkeypatch.setattr(lifecycle, "state_dir_for_config", lambda _config: state_dir)
-    monkeypatch.setattr(lifecycle, "_read_listen_bearer", lambda: "secret")
-    monkeypatch.setattr(lifecycle, "listen_base_url", lambda: "http://127.0.0.1:7878")
-    monkeypatch.setattr(lifecycle, "stop_inbox_bridge", lambda _config: False)
-
+    error = None
+    # Act
     try:
         lifecycle.start_inbox_bridge(
             config,
             spawn=lambda *_args, **_kwargs: Process(),
             preflight=lambda *_args: None,
+            bearer="secret",
+            base_url="http://127.0.0.1:7878",
+            state_dir=state_dir,
+            stop=lambda _config: False,
+            sleep=lambda _seconds: None,
         )
     except RuntimeError as exc:
-        assert "exited during startup" in str(exc)
-    else:
-        raise AssertionError("an immediately dead subscriber must fail launch")
-    assert not (state_dir / lifecycle.PID_FILENAME).exists()
+        error = exc
+    # Assert
+    assert (
+        type(error),
+        "exited during startup" in str(error),
+        (state_dir / lifecycle.PID_FILENAME).exists(),
+    ) == (
+        RuntimeError,
+        True,
+        False,
+    )

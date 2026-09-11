@@ -7,46 +7,57 @@ from starlette.testclient import TestClient
 from scitex_agent_container.a2a import _inbox_ack as ack
 
 
-def test_ack_marks_only_the_addressed_target_after_acceptance(monkeypatch):
+def test_ack_marks_only_the_addressed_target_after_acceptance():
+    # Arrange
     calls = []
 
     async def fake_run_blocking(fn, row_ids, *, target):
         calls.append((fn, row_ids, target))
 
-    monkeypatch.setattr(ack, "run_blocking", fake_run_blocking)
+    async def endpoint(request):
+        return await ack.inbox_ack(request, run=fake_run_blocking)
+
     app = Starlette(
         routes=[
             Route(
                 "/agents/{name}/inbox/ack",
-                ack.inbox_ack,
+                endpoint,
                 methods=["POST"],
             )
         ]
     )
 
+    # Act
     response = TestClient(app).post("/agents/scholar/inbox/ack", json={"id": 41})
+    # Assert
+    assert (response.status_code, response.json(), calls) == (
+        200,
+        {"acknowledged": 41},
+        [(ack.mark_delivered, [41], "scholar")],
+    )
 
-    assert response.status_code == 200
-    assert response.json() == {"acknowledged": 41}
-    assert calls == [(ack.mark_delivered, [41], "scholar")]
 
-
-def test_ack_rejects_invalid_or_unknown_rows_without_marking(monkeypatch):
+def test_ack_rejects_invalid_or_unknown_rows_without_marking():
+    # Arrange
     calls = []
 
     async def fake_run_blocking(*args, **kwargs):
         calls.append((args, kwargs))
 
-    monkeypatch.setattr(ack, "run_blocking", fake_run_blocking)
-
     async def endpoint(request):
-        return await ack.inbox_ack(request, known_names={"scholar"})
+        return await ack.inbox_ack(
+            request, known_names={"scholar"}, run=fake_run_blocking
+        )
 
     app = Starlette(
         routes=[Route("/agents/{name}/inbox/ack", endpoint, methods=["POST"])]
     )
     client = TestClient(app)
-
-    assert client.post("/agents/writer/inbox/ack", json={"id": 1}).status_code == 404
-    assert client.post("/agents/scholar/inbox/ack", json={"id": 0}).status_code == 400
-    assert calls == []
+    # Act
+    outcomes = (
+        client.post("/agents/writer/inbox/ack", json={"id": 1}).status_code,
+        client.post("/agents/scholar/inbox/ack", json={"id": 0}).status_code,
+        calls,
+    )
+    # Assert
+    assert outcomes == (404, 400, [])

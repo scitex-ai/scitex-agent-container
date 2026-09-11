@@ -73,16 +73,18 @@ def stop_inbox_bridge(
     *,
     kill: Callable[[int, int], None] = os.kill,
     sleep: Callable[[float], None] = time.sleep,
+    state_dir: Path | None = None,
+    owns: Callable[..., bool] = _owns_bridge_process,
 ) -> bool:
     """Stop only the identity-proven bridge recorded for this agent."""
-    path = _pid_path(config)
+    path = (state_dir / PID_FILENAME) if state_dir is not None else _pid_path(config)
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         path.unlink(missing_ok=True)
         return False
     config_path = str(getattr(config, "config_path", "") or "")
-    if not _owns_bridge_process(pid, name=config.name, config_path=config_path):
+    if not owns(pid, name=config.name, config_path=config_path):
         log.warning(
             "Hermes inbox bridge PID %s is not owned by %s; not signalling",
             pid,
@@ -97,11 +99,11 @@ def stop_inbox_bridge(
         return False
     deadline = time.monotonic() + _STOP_GRACE_S
     while time.monotonic() < deadline:
-        if not _owns_bridge_process(pid, name=config.name, config_path=config_path):
+        if not owns(pid, name=config.name, config_path=config_path):
             path.unlink(missing_ok=True)
             return True
         sleep(0.05)
-    if _owns_bridge_process(pid, name=config.name, config_path=config_path):
+    if owns(pid, name=config.name, config_path=config_path):
         kill(pid, signal.SIGKILL)
     path.unlink(missing_ok=True)
     return True
@@ -122,6 +124,11 @@ def start_inbox_bridge(
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
     preflight: Callable[[str, str], None] = _listener_accepts_bearer,
+    bearer: str | None = None,
+    base_url: str | None = None,
+    state_dir: Path | None = None,
+    stop: Callable[..., bool] = stop_inbox_bridge,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Start one explicit-ack consumer after its listener route is reachable."""
     port = resolved_a2a_port(config)
@@ -130,14 +137,14 @@ def start_inbox_bridge(
         raise RuntimeError("Hermes inbox delivery requires a resolved spec.a2a.port")
     if not config_path:
         raise RuntimeError("Hermes inbox delivery requires config.config_path")
-    bearer = _read_listen_bearer()
+    bearer = bearer or _read_listen_bearer()
     if not bearer:
         raise RuntimeError("SAC listen bearer is absent; refusing a deaf Hermes launch")
-    stop_inbox_bridge(config)
-    base_url = listen_base_url().rstrip("/")
+    stop(config)
+    base_url = (base_url or listen_base_url()).rstrip("/")
     stream_url = f"{base_url}/agents/{config.name}/inbox/stream?ack=explicit"
     preflight(stream_url, bearer)
-    state_dir = state_dir_for_config(config)
+    state_dir = state_dir or state_dir_for_config(config)
     state_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         sys.executable,
@@ -166,9 +173,9 @@ def start_inbox_bridge(
     pid = getattr(process, "pid", None)
     if not isinstance(pid, int):
         raise RuntimeError("Hermes inbox bridge spawn returned no PID")
-    pid_path = _pid_path(config)
+    pid_path = state_dir / PID_FILENAME
     pid_path.write_text(f"{pid}\n", encoding="utf-8")
-    time.sleep(0.2)
+    sleep(0.2)
     poll = getattr(process, "poll", None)
     if callable(poll) and poll() is not None:
         pid_path.unlink(missing_ok=True)

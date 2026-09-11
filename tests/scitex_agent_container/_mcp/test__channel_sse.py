@@ -191,6 +191,7 @@ async def test_reconnect_sends_no_cursor_when_server_stamped_no_id(header_server
 
 @pytest.mark.asyncio
 async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
+    # Arrange
     requests: list[tuple[str, str]] = []
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -205,7 +206,11 @@ async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
                 key, _, value = line.decode("latin-1").partition(":")
                 if key.lower() == "content-length":
                     content_length = int(value.strip())
-            body = (await reader.readexactly(content_length)).decode() if content_length else ""
+            body = (
+                (await reader.readexactly(content_length)).decode()
+                if content_length
+                else ""
+            )
             requests.append((f"{method} {path}", body))
             if method == "GET":
                 writer.write(
@@ -240,6 +245,8 @@ async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
             ack_url=f"http://127.0.0.1:{port}/ack",
         )
     )
+    cancelled = False
+    # Act
     try:
         for _ in range(100):
             if any(request[0] == "POST /ack" for request in requests):
@@ -247,10 +254,15 @@ async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
             await asyncio.sleep(0.02)
     finally:
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        try:
             await task
+        except asyncio.CancelledError:
+            cancelled = True
         server.close()
         await server.wait_closed()
-
-    assert accepted == ["m-41"]
-    assert ("POST /ack", '{"id":41}') in requests
+    # Assert
+    assert (cancelled, accepted, ("POST /ack", '{"id":41}') in requests) == (
+        True,
+        ["m-41"],
+        True,
+    )

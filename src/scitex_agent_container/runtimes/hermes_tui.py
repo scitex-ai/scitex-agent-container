@@ -13,6 +13,36 @@ from .tui_session import TuiSessionRuntime, state_dir_for_config
 class HermesTuiSessionRuntime(TuiSessionRuntime):
     """Tmux/Apptainer holder for the profile-backed Hermes TUI."""
 
+    def _start_session(self, config: AgentConfig, **kwargs) -> bool:
+        return super().start(config, **kwargs)
+
+    def _stop_session(self, config: AgentConfig) -> bool:
+        return super().stop(config)
+
+    @staticmethod
+    def _start_inbox(config: AgentConfig) -> None:
+        from ._hermes_inbox_bridge_lifecycle import start_inbox_bridge
+
+        start_inbox_bridge(config)
+
+    @staticmethod
+    def _stop_inbox(config: AgentConfig) -> None:
+        from ._hermes_inbox_bridge_lifecycle import stop_inbox_bridge
+
+        stop_inbox_bridge(config)
+
+    @staticmethod
+    def _start_recovery(config: AgentConfig) -> None:
+        from ._hermes_stale_recovery import start_recovery_monitor
+
+        start_recovery_monitor(config)
+
+    @staticmethod
+    def _stop_recovery(config: AgentConfig) -> None:
+        from ._hermes_stale_recovery import stop_recovery_monitor
+
+        stop_recovery_monitor(config)
+
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         targets = materialize_hermes_tui_profile(
             config, state_dir=state_dir_for_config(config)
@@ -24,26 +54,20 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         # Hermes argv already carries the startup prompts as its first query.
         kwargs["drain_pickers_at_boot"] = False
         kwargs["inject_startup_prompts"] = False
-        started = super().start(config, **kwargs)
+        started = self._start_session(config, **kwargs)
         if started and not kwargs.get("dry_run", False):
-            from ._hermes_inbox_bridge_lifecycle import start_inbox_bridge
-            from ._hermes_stale_recovery import start_recovery_monitor
-
             try:
-                start_inbox_bridge(config)
+                self._start_inbox(config)
             except Exception:
-                super().stop(config)
+                self._stop_session(config)
                 raise
-            start_recovery_monitor(config)
+            self._start_recovery(config)
         return started
 
     def stop(self, config: AgentConfig) -> bool:
-        from ._hermes_inbox_bridge_lifecycle import stop_inbox_bridge
-        from ._hermes_stale_recovery import stop_recovery_monitor
-
-        stop_inbox_bridge(config)
-        stop_recovery_monitor(config)
-        return super().stop(config)
+        self._stop_inbox(config)
+        self._stop_recovery(config)
+        return self._stop_session(config)
 
     def send_turn(
         self, config: AgentConfig, text: str, *, wait_ready: bool = True

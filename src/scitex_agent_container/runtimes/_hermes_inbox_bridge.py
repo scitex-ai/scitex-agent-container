@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +22,25 @@ class _NotificationSink:
         del message
 
 
-async def consume(*, name: str, listen_url: str, turn_url: str) -> None:
+async def consume(
+    *,
+    name: str,
+    listen_url: str,
+    turn_url: str,
+    bearer: str | None = None,
+    environment: Mapping[str, str] = os.environ,
+    resolve_bearer: Callable[[], str | None] = _read_listen_bearer,
+    consume_sse: Callable[..., Awaitable[None]] = _consume_sse,
+    push_event: Callable[..., Awaitable[None]] = _push_channel_event,
+) -> None:
     """Consume with explicit acknowledgement after turn admission succeeds."""
-    bearer = os.environ.get("SAC_LISTEN_BEARER") or _read_listen_bearer()
+    bearer = bearer or environment.get("SAC_LISTEN_BEARER") or resolve_bearer()
     if not bearer:
         raise RuntimeError("SAC listen bearer is required for Hermes inbox delivery")
     sink = _NotificationSink()
 
     async def on_event(event: dict[str, Any]) -> None:
-        await _push_channel_event(
+        await push_event(
             sink,
             event,
             agent_name=name,
@@ -39,7 +50,7 @@ async def consume(*, name: str, listen_url: str, turn_url: str) -> None:
         )
 
     inbox_url = f"{listen_url.rstrip('/')}/agents/{name}/inbox"
-    await _consume_sse(
+    await consume_sse(
         f"{inbox_url}/stream?ack=explicit",
         bearer,
         on_event,

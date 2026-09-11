@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -13,7 +14,11 @@ from .._state.state_db_channel import mark_delivered
 
 
 async def inbox_ack(
-    request: Request, *, known_names: Collection[str] | None = None
+    request: Request,
+    *,
+    known_names: Collection[str] | None = None,
+    mark: Callable[..., Any] = mark_delivered,
+    run: Callable[..., Awaitable[Any]] = run_blocking,
 ) -> Response:
     """Mark one event delivered after a consumer has accepted it."""
     name = request.path_params["name"]
@@ -29,13 +34,11 @@ async def inbox_ack(
             {"error": "request body must contain a positive integer id"},
             status_code=400,
         )
-    await run_blocking(mark_delivered, [event_id], target=name)
+    await run(mark, [event_id], target=name)
     return JSONResponse({"acknowledged": event_id})
 
 
-def inbox_ack_route(
-    path: str, *, known_names: Collection[str] | None = None
-) -> Route:
+def inbox_ack_route(path: str, *, known_names: Collection[str] | None = None) -> Route:
     """Build the shared POST route without duplicating server wrappers."""
 
     async def endpoint(request: Request) -> Response:
