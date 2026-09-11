@@ -63,6 +63,9 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
 ):
     # Arrange
     env_save_restore.set("SAC_TEST_HERMES_ENGINE_KEY", "not-a-real-secret")
+    tokenless_home = tmp_path / "tokenless-home"
+    tokenless_home.mkdir()
+    env_save_restore.set("HOME", str(tokenless_home))
     (tmp_path / ".scitex" / "agent-container").mkdir(parents=True)
     spec_path = tmp_path / "scholar" / "spec.yaml"
     spec_path.parent.mkdir()
@@ -94,8 +97,12 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and profile["providers"]["sac-qwen"]["base_url"]
         == "http://engine.example:8000/v1"
         and profile_env == "SAC_TEST_HERMES_ENGINE_KEY=not-a-real-secret\n"
+        and config.claude.channels == ["server:sac"]
         and "HERMES_HOME=/home/agent/.hermes" in argv
         and "ANTHROPIC_BASE_URL=http://engine.example:8000/v1" not in argv
+        and "SAC_LISTEN_BASE_URL" not in rendered_argv
+        and "SAC_LISTEN_BEARER" not in rendered_argv
+        and "sac mcp channel" not in rendered_argv
         and "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in rendered_argv
         and "hermes chat --tui" in rendered_argv
         and "--continue sac:scholar" in rendered_argv

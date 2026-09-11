@@ -370,18 +370,16 @@ def build_run_argv(
     for env_key, val in effective_env(config).items():
         argv += ["--env", f"{env_key}={val}"]
 
-    # Layer-5 of auto-port-allocation + bus auth — forward the
-    # host-stable ``sac listen`` base URL and the host-generated bearer
-    # so the in-container ``sac mcp channel`` adapter can reach AND
-    # authenticate to the bus. Extracted to ``_apptainer_listen_env`` so
-    # the runtime file stays under the line cap; the helper fails loud
-    # when ``server:sac`` is registered but the bearer is unresolvable
-    # (see its docstring). UNCONDITIONAL w.r.t. the relaxed escape-hatch
-    # below: relaxed specs bypass the preflight wrapper but still need
-    # bus auth, else their adapter can never subscribe.
+    # Layer-5 of auto-port-allocation + bus auth — harnesses that own the
+    # Claude channel adapter receive the host-stable ``sac listen`` URL and
+    # bearer. Hermes does not own that adapter, even though the legacy config
+    # compatibility object inherits ``server:sac``; forwarding or validating
+    # its credentials there would cross the harness boundary. Generic runtime
+    # env from this helper still applies to Hermes. For adapter owners this is
+    # unconditional w.r.t. the relaxed escape hatch below.
     from ._apptainer_listen_env import listen_env_flags
 
-    argv += listen_env_flags(config)
+    argv += listen_env_flags(config, include_listener=harness_key != HERMES_TUI)
 
     # TUI parity with the SDK's telegrammer wake (apply_channels →
     # _wire_telegrammer_wake): inject CLAUDE_CODE_TELEGRAMMER_TURN_URL so an
