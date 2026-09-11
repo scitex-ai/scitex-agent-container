@@ -92,15 +92,19 @@ def hermes_heartbeat_plan(config: Any) -> HermesHeartbeatPlan | None:
 
 
 def arm_hermes_autonomous_wakeup(runtime: Any, config: Any) -> bool | None:
-    """Submit the native slash command once; Hermes schedules later wakeups.
+    """Submit the native slash command only from an observed idle composer.
 
     ``None`` means the spec does not request this feature.  Hermes treats slash
-    commands as local control input even while a model turn is running, so this
-    does not interrupt or enqueue ahead of a human turn.
+    commands as local control input, but text pasted during a live model turn
+    remains visible in the shared composer and prevents immediate human input.
+    The detached Hermes monitor retries this observation on later ticks; a busy
+    result therefore means "not yet", never "paste now and hope".
     """
     plan = hermes_heartbeat_plan(config)
     if plan is None:
         return None
+    if not runtime.autonomous_control_is_idle(config):
+        return False
     return bool(runtime.send_turn(config, plan.command, wait_ready=False))
 
 

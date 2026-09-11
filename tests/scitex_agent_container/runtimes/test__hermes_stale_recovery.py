@@ -12,9 +12,16 @@ from scitex_agent_container.runtimes._runtime_control import read_control_state
 def _config(tmp_path: Path):
     return SimpleNamespace(
         name="scholar",
+        harness="hermes",
+        runtime="tui",
         model="qwen38-27b",
         engine_key="qwen38-27b",
         config_path=str(tmp_path / "scholar.yaml"),
+        autonomous=SimpleNamespace(
+            enabled=True,
+            idle_kick_after_s=600,
+            kick_text="Continue.",
+        ),
         claude=SimpleNamespace(
             provider=SimpleNamespace(base_url="http://gateway.test:18772/v1")
         ),
@@ -201,6 +208,65 @@ def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
     assert (marker["turn_admission"], marker["detail"]) == (
         "ready",
         "owning Hermes TUI session ended; recovery observer stopped",
+    )
+
+
+def test_monitor_retries_without_pasting_until_hermes_is_idle(tmp_path):
+    # Arrange: two busy ticks, then one positively idle tick.  The monitor's
+    # lifecycle is finite because the fake mux reports the pane gone next.
+    config = _config(tmp_path)
+    observations = iter((False, False, True))
+    calls = []
+
+    class Runtime:
+        @staticmethod
+        def session_name(_config):
+            return "tui-scholar"
+
+        @staticmethod
+        def autonomous_control_is_idle(_config):
+            idle = next(observations)
+            calls.append(("idle", idle))
+            return idle
+
+        @staticmethod
+        def send_turn(_config, text, *, wait_ready):
+            calls.append(("send", text, wait_ready))
+            return True
+
+        @staticmethod
+        def suspend_autonomous_turns(_config):
+            raise AssertionError("no stale provider latch")
+
+        @staticmethod
+        def recover_turn_admission(_config):
+            raise AssertionError("no stale provider latch")
+
+    exists = iter((True, True, True, False))
+    mux = SimpleNamespace(
+        exists=lambda _session: next(exists),
+        capture_content=lambda _session: "healthy pane",
+    )
+    # Act
+    recovery._run_monitor_loop(
+        config,
+        runtime=Runtime(),
+        mux=mux,
+        wait=lambda _seconds: False,
+        state_dir=tmp_path,
+    )
+    # Assert
+    sends = [call for call in calls if call[0] == "send"]
+    assert (
+        [call for call in calls if call[0] == "idle"],
+        len(sends),
+        sends[0][1].startswith("/heartbeat every "),
+        sends[0][2],
+    ) == (
+        [("idle", False), ("idle", False), ("idle", True)],
+        1,
+        True,
+        False,
     )
 
 

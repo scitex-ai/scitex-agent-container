@@ -405,23 +405,9 @@ class TuiSessionRuntime(
                     name,
                 )
                 return False
-            # Hermes' TUI is intentionally healthy-but-idle after a completed
-            # turn.  When spec.autonomous opts in, arm Hermes' own persistent
-            # session heartbeat once at launch.  Hermes, rather than this
-            # lifecycle adapter, owns due-time polling, idle detection, input
-            # queue priority, and coalescing; this call creates no SAC poller.
-            from ._hermes_autonomous_wakeup import arm_hermes_autonomous_wakeup
-
-            armed = arm_hermes_autonomous_wakeup(self, config)
-            if armed is False:
-                import logging
-
-                logging.getLogger(__name__).error(
-                    "TuiSessionRuntime: Hermes autonomous wakeup was requested "
-                    "for %s but the native heartbeat command was not accepted; "
-                    "the session remains alive for human steering",
-                    getattr(config, "name", "?"),
-                )
+            # Hermes autonomy is armed by its detached monitor after that
+            # monitor positively observes an idle footer and empty composer.
+            # Never stage SAC control text over the initial model turn here.
         return started
 
     def stop(self, config: AgentConfig) -> bool:

@@ -25,9 +25,14 @@ def _config(**autonomous):
 
 
 class _Runtime:
-    def __init__(self, accepted: bool = True):
+    def __init__(self, accepted: bool = True, idle: bool = True):
         self.accepted = accepted
+        self.idle = idle
         self.calls = []
+
+    def autonomous_control_is_idle(self, config):
+        self.calls.append((config.name, "observe-idle", None))
+        return self.idle
 
     def send_turn(self, config, text, *, wait_ready=True):
         self.calls.append((config.name, text, wait_ready))
@@ -88,7 +93,7 @@ def test_non_hermes_and_disabled_specs_do_not_arm():
     assert plans == (None, None)
 
 
-def test_arm_submits_native_command_without_waiting_for_ready():
+def test_arm_submits_native_command_only_after_positive_idle_observation():
     # Arrange
     runtime = _Runtime()
     config = _config()
@@ -97,10 +102,23 @@ def test_arm_submits_native_command_without_waiting_for_ready():
     # Assert
     assert (
         armed,
-        runtime.calls[0][0],
-        runtime.calls[0][1].startswith("/heartbeat every 177s "),
-        runtime.calls[0][2],
-    ) == (True, "hub", True, False)
+        runtime.calls[0],
+        runtime.calls[1][1].startswith("/heartbeat every 177s "),
+        runtime.calls[1][2],
+    ) == (True, ("hub", "observe-idle", None), True, False)
+
+
+def test_arm_does_not_paste_while_initial_turn_is_busy():
+    # Arrange
+    runtime = _Runtime(idle=False)
+    config = _config()
+    # Act
+    armed = arm_hermes_autonomous_wakeup(runtime, config)
+    # Assert
+    assert (armed, runtime.calls) == (
+        False,
+        [("hub", "observe-idle", None)],
+    )
 
 
 def test_arm_reports_refusal_without_retrying_or_burning_turns():
@@ -110,7 +128,7 @@ def test_arm_reports_refusal_without_retrying_or_burning_turns():
     # Act
     armed = arm_hermes_autonomous_wakeup(runtime, config)
     # Assert
-    assert (armed, len(runtime.calls)) == (False, 1)
+    assert (armed, len(runtime.calls)) == (False, 2)
 
 
 def test_plan_defers_external_ci_polling_to_a_later_heartbeat():

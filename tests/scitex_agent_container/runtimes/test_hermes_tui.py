@@ -8,6 +8,7 @@ from scitex_agent_container.config._harness_callables import _hermes_tui_inner_a
 from scitex_agent_container.runtimes.hermes_tui import (
     HermesTuiSessionRuntime,
     _dismiss_heartbeat_confirmation,
+    _hermes_pane_is_idle,
 )
 
 
@@ -105,6 +106,44 @@ def test_send_turn_uses_settled_submit_for_hermes_busy_input():
             ),
             ("key", "tui-scholar", "Escape"),
         ],
+    )
+
+
+def test_hermes_idle_requires_latest_ready_footer_and_empty_composer():
+    # Arrange
+    ready = "\n ─ ready │ qwen38 27b low │ 44% ─ sac:stats\n ❯ "
+    busy = (
+        "\n ─ ready │ stale footer\n ❯ \n"
+        " ─ ٩(๑❛ᴗ❛๑)۶ brainstorming… · 4m │ qwen38 27b low │ 66% ─ sac:scholar\n"
+        " ❯ Ctrl+C to interrupt…"
+    )
+    human_text = "\n ─ ready │ qwen38 27b low │ 44% ─ sac:stats\n ❯ inspect this first"
+    # Act
+    observed = tuple(
+        _hermes_pane_is_idle(pane) for pane in (ready, busy, human_text)
+    )
+    # Assert
+    assert observed == (
+        True,
+        False,
+        False,
+    )
+
+
+def test_autonomous_idle_observation_is_read_only():
+    # Arrange
+    mux = _Mux(
+        panes=[
+            " ─ brainstorming… │ qwen38 27b low │ 66% ─ sac:scholar\n ❯ "
+        ]
+    )
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    idle = runtime.autonomous_control_is_idle(_config())
+    # Assert
+    assert (idle, [event[0] for event in mux.events]) == (
+        False,
+        ["exists", "capture"],
     )
 
 
