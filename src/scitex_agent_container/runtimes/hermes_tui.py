@@ -40,7 +40,12 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
     def send_turn(
         self, config: AgentConfig, text: str, *, wait_ready: bool = True
     ) -> bool:
-        """Paste through Hermes' native busy-input queue."""
+        """Submit through Hermes' native busy-input routing.
+
+        SAC-generated Hermes profiles default that routing to ``steer``:
+        input arriving during a live turn is injected at the next safe tool
+        boundary, while idle input remains an ordinary new turn.
+        """
         del wait_ready
         name = self.session_name(config)
         if not name or not self._mux.exists(name):
