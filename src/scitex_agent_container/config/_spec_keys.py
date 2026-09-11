@@ -49,6 +49,8 @@ _KNOWN_SPEC_KEYS = frozenset(
         # today. It is ABSENT from the explicit-required map in
         # ``_explicit_fields`` deliberately. See ``config._engine_library``.
         "engine",
+        "available_engines",
+        "available_harnesses",
         "engines",  # MULTI-backend surface: several named engines, one
         # picked at start (``--engine <key>``). OPTIONAL, deliberately —
         # it is ABSENT from the explicit-required map in
@@ -89,6 +91,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "to_home_layers",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
+        "delegation",  # harness-neutral child concurrency/isolation policy
         # v3 removed (rejected explicitly below with relocation hints):
         # image (→ spec.apptainer.image), mounts (→ spec.apptainer.binds),
         # env (→ spec.apptainer.env), model (→ spec.claude.model),

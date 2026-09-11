@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from ._delegation_types import DelegationSpec
 from ._engine_types import (
     EngineDefaultError,
     EngineError,
@@ -49,6 +50,7 @@ __all__ = [
     "AgentConfig",
     "ClaudeSpec",
     "ContainerSpec",
+    "DelegationSpec",
     "EngineDefaultError",
     "EngineError",
     "EngineSpec",

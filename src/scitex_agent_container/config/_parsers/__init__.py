@@ -14,6 +14,7 @@ from ._autonomous import parse_autonomous
 from ._claude import parse_claude
 from ._comms import parse_comms, parse_lineage
 from ._container import parse_container
+from ._delegation import parse_delegation
 from ._extensions import parse_extensions
 from ._health import parse_health
 from ._helpers import (
@@ -50,6 +51,7 @@ __all__ = [
     "parse_claude",
     "parse_comms",
     "parse_container",
+    "parse_delegation",
     "parse_extensions",
     "parse_health",
     "parse_hooks",

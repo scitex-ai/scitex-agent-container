@@ -23,6 +23,7 @@ from ._parsers import (
     parse_claude,
     parse_comms,
     parse_container,
+    parse_delegation,
     parse_extensions,
     parse_health,
     parse_hooks,
@@ -217,6 +218,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     No backward compatibility — old apiVersions raise loud validation
     errors at config-load time.
     """
+    from ._schema_compat import normalize_document
+
+    raw = normalize_document(raw)
+
     # Red-start explicit-fields gate (operator ruling 2026-07-21): every
     # spec field must be WRITTEN — an omitted field is a load error with
     # a complete, paste-ready hint. Runs BEFORE any parsing so an
@@ -367,6 +372,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # both surfaces without a second code branch downstream.
     comms_spec = parse_comms(spec)
     lineage_spec = parse_lineage(spec)
+    delegation_spec = parse_delegation(spec)
     a2a_spec = parse_a2a(spec)
     if not comms_spec.a2a.listen:
         a2a_spec = type(a2a_spec)(host=a2a_spec.host, port=None)
@@ -445,6 +451,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         a2a=a2a_spec,
         comms=comms_spec,
         lineage=lineage_spec,
+        delegation=delegation_spec,
         kind=kind,
         proxy=proxy_spec,
         # ADR-0006: default to ``./to_home`` when the key is absent so a
