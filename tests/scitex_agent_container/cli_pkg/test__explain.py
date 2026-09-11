@@ -6,6 +6,8 @@ workdir-backing check) plus the unknown-agent error path.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
     _delegation_line,
@@ -14,6 +16,16 @@ from scitex_agent_container.cli_pkg._explain import (
     explain,
 )
 from scitex_agent_container.config import AgentConfig
+
+
+@contextmanager
+def _replace_attribute(target, name, value):
+    original = getattr(target, name)
+    setattr(target, name, value)
+    try:
+        yield
+    finally:
+        setattr(target, name, original)
 
 
 def test_redact_masks_a_secret_named_value() -> None:
@@ -62,16 +74,22 @@ def test_pwd_is_backed_false_when_no_bind_covers_it() -> None:
 
 
 def test_delegation_line_exposes_effective_deny_and_bound() -> None:
+    # Arrange
     config = AgentConfig(name="worker", harness="hermes", runtime="headless")
     config.lineage.may_spawn = False
     config.delegation.max_concurrent_children = 1
     config.delegation.worktree_isolation = False
-
+    # Act
     line = _delegation_line(config)
-
-    assert "disabled (delegate_task removed)" in line
-    assert "max children: 1" in line
-    assert "Git worktree isolation: off" in line
+    # Assert
+    assert all(
+        fragment in line
+        for fragment in (
+            "disabled (delegate_task removed)",
+            "max children: 1",
+            "Git worktree isolation: off",
+        )
+    )
 
 
 def test_explain_unknown_agent_raises_click_exception() -> None:
@@ -85,7 +103,10 @@ def test_explain_unknown_agent_raises_click_exception() -> None:
     assert "no agent named" in result.output
 
 
-def test_argv_for_uses_the_selected_hermes_runtime(monkeypatch, tmp_path) -> None:
+def test_argv_for_uses_the_selected_hermes_runtime(tmp_path) -> None:
+    # Arrange
+    from scitex_agent_container._lifecycle import _runtime_select
+
     config = AgentConfig(name="worker", harness="hermes", runtime="headless")
     calls = []
 
@@ -102,12 +123,16 @@ def test_argv_for_uses_the_selected_hermes_runtime(monkeypatch, tmp_path) -> Non
             calls.append(("build", value, state_dir, sif_path))
             return ["apptainer", "exec", str(sif_path), "hermes", "gateway", "run"]
 
-    monkeypatch.setattr(
-        "scitex_agent_container._lifecycle._runtime_select._get_runtime",
-        lambda value: SelectedRuntime(),
+    # Act
+    with _replace_attribute(
+        _runtime_select, "_get_runtime", lambda value: SelectedRuntime()
+    ):
+        argv = _argv_for(config)
+    # Assert
+    assert (
+        argv[-3:],
+        [call[0] for call in calls],
+    ) == (
+        ["hermes", "gateway", "run"],
+        ["resolve", "state", "build"],
     )
-
-    argv = _argv_for(config)
-
-    assert argv[-3:] == ["hermes", "gateway", "run"]
-    assert [call[0] for call in calls] == ["resolve", "state", "build"]

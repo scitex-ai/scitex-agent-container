@@ -33,32 +33,54 @@ def spec():
     }
 
 
-def test_same_engine_across_harnesses_without_mutating_spec(monkeypatch):
+def test_same_engine_across_harnesses_without_mutating_spec(env_save_restore):
+    # Arrange
     raw = spec()
     original = deepcopy(raw)
-    monkeypatch.setenv("KEY", "secret-not-in-plan")
+    env_save_restore.set("KEY", "secret-not-in-plan")
+    # Act
     claude = compile_launch_plan(raw)
     pi = compile_launch_plan(raw, harness="pi")
     codex = compile_launch_plan(raw, harness="codex")
     hermes = compile_launch_plan(raw, harness="hermes")
-    assert claude.engine == pi.engine == codex.engine == hermes.engine
-    assert raw == original
-    assert "secret-not-in-plan" not in repr(pi)
-    assert pi.endpoint.url == "http://gateway/prefix/v1/responses"
-    assert hermes.endpoint.url == "http://gateway/prefix/v1/responses"
-    with pytest.raises(FrozenInstanceError):
-        pi.engine.model_id = "another-model"
+    # Assert
+    assert (
+        claude.engine == pi.engine == codex.engine == hermes.engine
+        and raw == original
+        and "secret-not-in-plan" not in repr(pi)
+        and pi.endpoint.url == "http://gateway/prefix/v1/responses"
+        and hermes.endpoint.url == "http://gateway/prefix/v1/responses"
+    )
+
+
+def test_launch_plan_is_immutable():
+    # Arrange
+    plan = compile_launch_plan(spec(), harness="pi")
+    # Act
+    ctx = pytest.raises(FrozenInstanceError)
+    # Assert
+    with ctx:
+        plan.engine.model_id = "another-model"
 
 
 def test_no_fleet_or_implicit_engine_fallback():
-    with pytest.raises(ValueError, match="unknown engine"):
-        compile_launch_plan(spec(), engine="missing")
+    # Arrange
+    raw = spec()
+    # Act
+    ctx = pytest.raises(ValueError, match="unknown engine")
+    # Assert
+    with ctx:
+        compile_launch_plan(raw, engine="missing")
 
 
 def test_missing_protocol_refuses_pairing():
+    # Arrange
     raw = spec()
     del raw["engines"]["qwen"]["endpoints"]["openai-responses"]
-    with pytest.raises(ValueError, match="requires one of"):
+    # Act
+    ctx = pytest.raises(ValueError, match="requires one of")
+    # Assert
+    with ctx:
         compile_launch_plan(raw, harness="codex")
 
 
@@ -66,56 +88,81 @@ def test_missing_protocol_refuses_pairing():
     "field,value", [("harness", "codex"), ("default", True), ("env", {"KEY": "secret"})]
 )
 def test_engine_cannot_own_other_axes(field, value):
+    # Arrange
     raw = spec()
     raw["engines"]["qwen"][field] = value
-    with pytest.raises(ValueError, match="unknown fields"):
+    # Act
+    ctx = pytest.raises(ValueError, match="unknown fields")
+    # Assert
+    with ctx:
         compile_launch_plan(raw)
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, "1048576"])
 def test_invalid_context_is_rejected(value):
+    # Arrange
     raw = spec()
     raw["engines"]["qwen"]["parameters"]["context_window_tokens"] = value
-    with pytest.raises(ValueError, match="positive integer"):
+    # Act
+    ctx = pytest.raises(ValueError, match="positive integer")
+    # Assert
+    with ctx:
         compile_launch_plan(raw)
 
 
 def test_legacy_harness_alias_normalizes_at_boundary():
-    assert compile_launch_plan(spec(), harness="anthropic").harness == "claude-code"
+    # Arrange
+    raw = spec()
+    # Act
+    harness = compile_launch_plan(raw, harness="anthropic").harness
+    # Assert
+    assert harness == "claude-code"
 
 
 def test_invalid_inactive_engine_is_not_hidden():
+    # Arrange
     raw = spec()
     raw["engines"]["bad"] = {"model": "other"}
-    with pytest.raises(ValueError, match="endpoints"):
+    # Act
+    ctx = pytest.raises(ValueError, match="endpoints")
+    # Assert
+    with ctx:
         compile_launch_plan(raw)
 
 
 def test_hermes_prefers_chat_completions_when_declared():
+    # Arrange
     raw = spec()
     raw["engines"]["qwen"]["endpoints"]["openai-chat-completions"] = {
         "url": "http://gateway/prefix/v1/chat/completions",
         "auth": {"kind": "bearer", "env": "KEY"},
     }
 
+    # Act
     plan = compile_launch_plan(raw, harness="hermes")
-
+    # Assert
     assert plan.endpoint.protocol == "openai-chat-completions"
 
 
 def test_delegation_policy_defaults_are_harness_neutral_and_bounded():
+    # Arrange
     raw = spec()
 
+    # Act
     claude = compile_launch_plan(raw)
     hermes = compile_launch_plan(raw, harness="hermes")
 
-    assert claude.may_spawn is hermes.may_spawn is True
-    assert claude.delegation == hermes.delegation
-    assert hermes.delegation.max_concurrent_children == 2
-    assert hermes.delegation.worktree_isolation is True
+    # Assert
+    assert (
+        claude.may_spawn is hermes.may_spawn is True
+        and claude.delegation == hermes.delegation
+        and hermes.delegation.max_concurrent_children == 2
+        and hermes.delegation.worktree_isolation is True
+    )
 
 
 def test_explicit_spawn_deny_and_delegation_cap_reach_plan():
+    # Arrange
     raw = spec()
     raw["lineage"] = {"may_spawn": False}
     raw["delegation"] = {
@@ -123,32 +170,47 @@ def test_explicit_spawn_deny_and_delegation_cap_reach_plan():
         "worktree_isolation": False,
     }
 
+    # Act
     plan = compile_launch_plan(raw, harness="hermes")
-
-    assert plan.may_spawn is False
-    assert plan.delegation.max_concurrent_children == 4
-    assert plan.delegation.worktree_isolation is False
+    # Assert
+    assert (
+        plan.may_spawn,
+        plan.delegation.max_concurrent_children,
+        plan.delegation.worktree_isolation,
+    ) == (False, 4, False)
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, 9, "2"])
 def test_invalid_delegation_cap_is_rejected(value):
+    # Arrange
     raw = spec()
     raw["delegation"] = {"max_concurrent_children": value}
 
-    with pytest.raises(ValueError, match="integer between 1 and 8"):
+    # Act
+    ctx = pytest.raises(ValueError, match="integer between 1 and 8")
+    # Assert
+    with ctx:
         compile_launch_plan(raw, harness="hermes")
 
 
 def test_non_boolean_spawn_permission_is_rejected():
+    # Arrange
     raw = spec()
     raw["lineage"] = {"may_spawn": "false"}
 
-    with pytest.raises(ValueError, match="must be a boolean"):
+    # Act
+    ctx = pytest.raises(ValueError, match="must be a boolean")
+    # Assert
+    with ctx:
         compile_launch_plan(raw, harness="hermes")
 
 
 def test_explicit_spawn_allow_is_preserved():
+    # Arrange
     raw = spec()
     raw["lineage"] = {"may_spawn": True}
 
-    assert compile_launch_plan(raw, harness="hermes").may_spawn is True
+    # Act
+    may_spawn = compile_launch_plan(raw, harness="hermes").may_spawn
+    # Assert
+    assert may_spawn is True

@@ -675,6 +675,7 @@ def test_load_config_lineage_may_spawn_false_round_trips(tmp_path: Path) -> None
 
 
 def test_load_config_delegation_policy_round_trips(tmp_path: Path) -> None:
+    # Arrange
     p = _v3_yaml(
         tmp_path,
         "cap-d",
@@ -686,10 +687,13 @@ def test_load_config_delegation_policy_round_trips(tmp_path: Path) -> None:
         },
     )
 
+    # Act
     cfg = load_config(p)
-
-    assert cfg.delegation.max_concurrent_children == 4
-    assert cfg.delegation.worktree_isolation is False
+    # Assert
+    assert (
+        cfg.delegation.max_concurrent_children,
+        cfg.delegation.worktree_isolation,
+    ) == (4, False)
 
 
 # ---------------------------------------------------------------------------
