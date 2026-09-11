@@ -80,6 +80,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from ._engine_entry_validation import validate_engine_entry
 from ._engine_types import (
     ENGINE_PIN_KEY,
     ENGINES_KEY,
@@ -199,6 +200,11 @@ def _parse_document(path: Path, raw: Any) -> FleetLibrary:
             f"{type(block).__name__}."
         )
     else:
+        namespace = f"{path}:{ENGINES_KEY}"
+        for key, entry in block.items():
+            errors += validate_engine_entry(
+                str(key), entry, namespace=namespace
+            )
         engines = parse_engines(raw)
 
     default_key = str(raw.get(ENGINE_KEY) or "").strip()

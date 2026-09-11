@@ -143,6 +143,7 @@ ENGINE_ENTRY_KEYS = frozenset(
         "default",
         "reasoning_effort",
         "max_context_tokens",
+        "timeouts",
         "env",
     }
 )
@@ -200,6 +201,8 @@ class EngineSpec:
     provider_declared: Any = None
     reasoning_effort: str = ""
     max_context_tokens: int | None = None
+    upstream_deadline_seconds: int | None = None
+    client_abandonment_seconds: int | None = None
     env: dict[str, str] = field(default_factory=dict)
     is_default: bool = False
 
@@ -249,6 +252,8 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
     harness = _stated(entry.get("harness"))
     provider_declared = entry.get("provider")
     raw_env = entry.get("env")
+    raw_timeouts = entry.get("timeouts")
+    timeouts = raw_timeouts if isinstance(raw_timeouts, Mapping) else {}
     env: dict[str, str] = {}
     if isinstance(raw_env, Mapping):
         env = {str(k): str(v) for k, v in raw_env.items() if v is not None}
@@ -260,6 +265,12 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
         provider_declared=provider_declared,
         reasoning_effort=(_stated(entry.get("reasoning_effort")) or "").lower(),
         max_context_tokens=_parse_int(entry.get("max_context_tokens")),
+        upstream_deadline_seconds=_parse_int(
+            timeouts.get("upstream_deadline_seconds")
+        ),
+        client_abandonment_seconds=_parse_int(
+            timeouts.get("client_abandonment_seconds")
+        ),
         env=env,
         is_default=entry.get("default") is True,
     )
@@ -381,6 +392,8 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
         config.harness = engine.harness
     config.reasoning_effort = engine.reasoning_effort
     config.max_context_tokens = engine.max_context_tokens
+    config.upstream_deadline_seconds = engine.upstream_deadline_seconds
+    config.client_abandonment_seconds = engine.client_abandonment_seconds
     resolved_model, display_model = resolve_model_surface(engine.model)
     config.model = resolved_model
     claude = getattr(config, "claude", None)

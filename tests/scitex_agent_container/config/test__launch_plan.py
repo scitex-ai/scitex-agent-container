@@ -110,6 +110,56 @@ def test_invalid_context_is_rejected(value):
         compile_launch_plan(raw)
 
 
+@pytest.mark.parametrize(
+    "timeouts",
+    [
+        {"upstream_deadline_seconds": 1800},
+        {"client_abandonment_seconds": 1860},
+        {
+            "upstream_deadline_seconds": 1800,
+            "client_abandonment_seconds": 1800,
+        },
+        {
+            "upstream_deadline_seconds": 1800,
+            "client_abandonment_seconds": 1799,
+        },
+        {
+            "upstream_deadline_seconds": 1800,
+            "client_abandonment_seconds": True,
+        },
+    ],
+)
+def test_invalid_timeout_contract_is_rejected(timeouts):
+    # Arrange
+    raw = spec()
+    raw["engines"]["qwen"]["timeouts"] = timeouts
+
+    # Act
+    ctx = pytest.raises(ValueError, match="timeouts")
+
+    # Assert
+    with ctx:
+        compile_launch_plan(raw)
+
+
+def test_timeout_contract_is_explicit_in_launch_plan():
+    # Arrange
+    raw = spec()
+    raw["engines"]["qwen"]["timeouts"] = {
+        "upstream_deadline_seconds": 1800,
+        "client_abandonment_seconds": 1860,
+    }
+
+    # Act
+    engine = compile_launch_plan(raw).engine
+
+    # Assert
+    assert (
+        engine.upstream_deadline_seconds,
+        engine.client_abandonment_seconds,
+    ) == (1800, 1860)
+
+
 def test_legacy_harness_alias_normalizes_at_boundary():
     # Arrange
     raw = spec()

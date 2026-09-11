@@ -295,6 +295,8 @@ class AgentConfig:
     # to the container by ``runtimes._apptainer_provider.engine_env_flags``.
     reasoning_effort: str = ""
     max_context_tokens: int | None = None
+    upstream_deadline_seconds: int | None = None
+    client_abandonment_seconds: int | None = None
     # RESIDENCY: does the daemon outlive its work? "resident" (default)
     # parks awaiting more turns after a conversation completes;
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when

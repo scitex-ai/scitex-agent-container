@@ -39,6 +39,8 @@ def test_launch_plan_normalizes_openai_api_root():
     config.model = "qwen-model"
     config.max_context_tokens = 1_048_576
     config.reasoning_effort = "low"
+    config.upstream_deadline_seconds = 1800
+    config.client_abandonment_seconds = 1860
     config.claude.provider = ProviderSpec(
         base_url="http://engine.example:8000",
         auth_token_env="ENGINE_KEY",
@@ -51,7 +53,15 @@ def test_launch_plan_normalizes_openai_api_root():
         plan.endpoint.url,
         plan.engine.context_window_tokens,
         plan.engine.reasoning_effort,
-    ) == ("http://engine.example:8000/v1/chat/completions", 1_048_576, "low")
+        plan.engine.upstream_deadline_seconds,
+        plan.engine.client_abandonment_seconds,
+    ) == (
+        "http://engine.example:8000/v1/chat/completions",
+        1_048_576,
+        "low",
+        1800,
+        1860,
+    )
 
 
 def test_launch_plan_carries_live_spawn_and_parallelism_policy():

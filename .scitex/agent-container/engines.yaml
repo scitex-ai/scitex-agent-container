@@ -70,6 +70,10 @@ engines:
     # resumed 1M session the compaction request itself crashed the engine.
     max_context_tokens: 1048576
 
+    timeouts:
+      upstream_deadline_seconds: 1800
+      client_abandonment_seconds: 1860
+
     # NO `harness:` LINE, deliberately. An entry that states one claims the
     # HARNESS axis — the coupling the harness/engine split removes. Stating
     # none means "no opinion", so the spec's own `harness:` wins and this ONE

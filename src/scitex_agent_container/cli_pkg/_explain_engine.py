@@ -142,5 +142,12 @@ def engine_lines(config: Any, spec_path: Path | None = None) -> list[str]:
             f"  reasoning_effort: {effort or '-'}   "
             f"max_context_tokens: {max_ctx or '-'}"
         )
+    upstream_deadline = getattr(config, "upstream_deadline_seconds", None)
+    client_abandonment = getattr(config, "client_abandonment_seconds", None)
+    if upstream_deadline or client_abandonment:
+        lines.append(
+            f"  upstream_deadline_seconds: {upstream_deadline or '-'}   "
+            f"client_abandonment_seconds: {client_abandonment or '-'}"
+        )
     lines += _library_identity()
     return lines
