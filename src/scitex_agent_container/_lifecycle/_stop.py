@@ -67,6 +67,7 @@ def agent_stop(
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     handover_mod: Any = None,
     prune_runtime: bool = False,
+    config_resolver: Optional[Callable[[str], str]] = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -88,13 +89,28 @@ def agent_stop(
             made by ``agent_restart`` / force-``agent_start`` NEVER prune
             the runtime they are about to reuse — only the terminal
             ``sac agents stop`` entry point passes True.
+        config_resolver: Injectable agent-name to spec-path resolver. When the
+            registry row is absent, stop resolves the declared spec and tears
+            down that runtime instead of abandoning a live tmux session or
+            bridge solely because registry state was lost.
     """
     registry = registry or Registry()
     entry = registry.get(name)
     if entry is None:
-        if force:
-            return True
-        raise RuntimeError(f"Agent '{name}' not found in registry")
+        resolver = config_resolver
+        if resolver is None:
+            from ..config import resolve_config as resolver
+
+        try:
+            config_path = resolver(name)
+        except FileNotFoundError as exc:
+            if force:
+                return True
+            raise RuntimeError(
+                f"Agent '{name}' not found in registry and no spec could be "
+                f"resolved by name ({exc})"
+            ) from exc
+        entry = {"name": name, "config": config_path}
 
     # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
