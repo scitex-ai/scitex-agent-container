@@ -26,14 +26,22 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         kwargs["inject_startup_prompts"] = False
         started = super().start(config, **kwargs)
         if started and not kwargs.get("dry_run", False):
+            from ._hermes_inbox_bridge_lifecycle import start_inbox_bridge
             from ._hermes_stale_recovery import start_recovery_monitor
 
+            try:
+                start_inbox_bridge(config)
+            except Exception:
+                super().stop(config)
+                raise
             start_recovery_monitor(config)
         return started
 
     def stop(self, config: AgentConfig) -> bool:
+        from ._hermes_inbox_bridge_lifecycle import stop_inbox_bridge
         from ._hermes_stale_recovery import stop_recovery_monitor
 
+        stop_inbox_bridge(config)
         stop_recovery_monitor(config)
         return super().stop(config)
 

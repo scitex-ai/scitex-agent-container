@@ -106,3 +106,53 @@ def test_recovery_uses_supported_same_session_controls_in_order():
             "/heartbeat resume",
         ],
     )
+
+
+def test_start_attaches_authenticated_inbox_bridge_before_recovery(monkeypatch):
+    # Arrange
+    from scitex_agent_container.runtimes import (
+        _hermes_inbox_bridge_lifecycle as inbox,
+    )
+    from scitex_agent_container.runtimes import _hermes_stale_recovery as recovery
+    from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+
+    events = []
+    monkeypatch.setattr(TuiSessionRuntime, "start", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(inbox, "start_inbox_bridge", lambda _config: events.append("inbox"))
+    monkeypatch.setattr(
+        recovery, "start_recovery_monitor", lambda _config: events.append("recovery")
+    )
+
+    # Act
+    started = HermesTuiSessionRuntime(multiplexer=_Mux()).start(_config())
+
+    # Assert
+    assert started is True
+    assert events == ["inbox", "recovery"]
+
+
+def test_stop_detaches_inbox_before_tmux_session(monkeypatch):
+    # Arrange
+    from scitex_agent_container.runtimes import (
+        _hermes_inbox_bridge_lifecycle as inbox,
+    )
+    from scitex_agent_container.runtimes import _hermes_stale_recovery as recovery
+    from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
+
+    events = []
+    monkeypatch.setattr(inbox, "stop_inbox_bridge", lambda _config: events.append("inbox"))
+    monkeypatch.setattr(
+        recovery, "stop_recovery_monitor", lambda _config: events.append("recovery")
+    )
+    monkeypatch.setattr(
+        TuiSessionRuntime,
+        "stop",
+        lambda *_args, **_kwargs: events.append("tmux") or True,
+    )
+
+    # Act
+    stopped = HermesTuiSessionRuntime(multiplexer=_Mux()).stop(_config())
+
+    # Assert
+    assert stopped is True
+    assert events == ["inbox", "recovery", "tmux"]
