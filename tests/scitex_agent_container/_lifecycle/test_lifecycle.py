@@ -1121,6 +1121,9 @@ def test_agent_stop_unknown_agent_without_force_raises(
     call = lambda: lc.agent_stop(  # noqa: E731
         "ghost",
         registry=registry,
+        config_resolver=lambda _name: (_ for _ in ()).throw(
+            FileNotFoundError("no declared spec")
+        ),
         runtime_factory=lambda _c: FakeRuntime(),
         handover_mod=FakeHandover(),
     )
@@ -1138,11 +1141,35 @@ def test_agent_stop_unknown_agent_with_force_returns_true(
         "ghost",
         registry=registry,
         force=True,
+        config_resolver=lambda _name: (_ for _ in ()).throw(
+            FileNotFoundError("no declared spec")
+        ),
         runtime_factory=lambda _c: FakeRuntime(),
         handover_mod=FakeHandover(),
     )
     # Assert
     assert ok is True
+
+
+def test_agent_stop_without_registry_row_resolves_spec_and_stops_runtime(
+    pg_schema: str, tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange — the declarative spec survives, but the volatile registry row
+    # has disappeared while the runtime may still own a tmux session/bridges.
+    spec = _write_spec(tmp_path)
+    runtime = FakeRuntime()
+
+    # Act
+    ok = lc.agent_stop(
+        "alpha",
+        registry=registry,
+        config_resolver=lambda _name: str(spec),
+        runtime_factory=lambda _config: runtime,
+        handover_mod=FakeHandover(),
+    )
+
+    # Assert — teardown follows the spec even without registry state.
+    assert (ok, len(runtime.stop_calls)) == (True, 1)
 
 
 def test_agent_stop_happy_path_returns_true(pg_schema: str, tmp_path: Path, registry: Registry) -> None:
