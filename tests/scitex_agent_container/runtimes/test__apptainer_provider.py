@@ -104,6 +104,31 @@ def test_flags_bridge_host_key_to_sac_anthropic_api_key(env_save_restore):
     assert env["SAC_ANTHROPIC_API_KEY"] == "sk-deepseek-secret"
 
 
+def test_registered_deepseek_uses_gateway_key_and_scrubs_vendor_key(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set("SCITEX_GENAI_GATEWAY_API_KEY", "local-gateway-key")
+    env_save_restore.set("DEEPSEEK_API_KEY", "must-not-enter-container")
+    cfg = AgentConfig(
+        name="flash", runtime="apptainer", workdir="/tmp/flash"
+    )
+    cfg.claude = ClaudeSpec(
+        model="deepseek-flash", provider=_parse_provider({"provider": "deepseek"})
+    )
+    # Act
+    env = _env_dict(provider_env_flags(cfg))
+    # Assert
+    assert env == {
+        "ANTHROPIC_BASE_URL": "http://scitex-compute-04:18775",
+        "SAC_ANTHROPIC_API_KEY": "local-gateway-key",
+        "ANTHROPIC_API_KEY": "local-gateway-key",
+        "CLAUDE_CONFIG_DIR": "/tmp/sac-flash-provider-cfg",
+        "ANTHROPIC_MODEL": "deepseek-flash",
+        "DEEPSEEK_API_KEY": "",
+    }
+
+
 def test_flags_set_per_agent_clean_config_dir(env_save_restore):
     # Arrange — the conflict-breaker dir is namespaced by agent name.
     env_save_restore.set("DEEPSEEK_API_KEY", "sk-deepseek-secret")

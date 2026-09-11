@@ -116,6 +116,7 @@ from pathlib import Path
 from scitex_config import PriorityConfig, load_dotenv
 
 from ..config import AgentConfig
+from ..config._external_gateway import DEFAULT_EXTERNAL_GATEWAY_TOKEN_ENV
 from ..config._harness_registry import known_harnesses
 from ._apptainer_context_window import context_window_env
 from ._apptainer_provider_cfg import container_config_dir
@@ -210,6 +211,7 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
         )
 
     base_url = getattr(provider, "base_url", "")
+    auth_token_env = str(getattr(provider, "auth_token_env", "") or "")
     api_key = resolve_provider_api_key(config)
 
     # Per-agent clean config dir — the conflict-breaker. Distinct from the
@@ -244,6 +246,16 @@ def provider_env_flags(config: AgentConfig) -> list[str]:
     model = (getattr(claude, "model", "") or "") if claude is not None else ""
     if model:
         flags.extend(["--env", f"ANTHROPIC_MODEL={model}"])
+    # A paid-provider gateway is only a boundary if the vendor credential is
+    # absent behind it. Apptainer inherits host environment by default, so a
+    # host-level key could otherwise make Hermes auto-create its built-in
+    # DeepSeek provider and `/model ...pro` would bypass the gateway entirely.
+    # Explicit last-wins blanking closes that route while the neutral local
+    # gateway token remains available under its own name.
+    if auth_token_env == DEFAULT_EXTERNAL_GATEWAY_TOKEN_ENV and model.startswith(
+        "deepseek"
+    ):
+        flags.extend(["--env", "DEEPSEEK_API_KEY="])
     return flags
 
 

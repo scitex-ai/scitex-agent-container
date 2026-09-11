@@ -34,8 +34,8 @@ def test_resolve_provider_returns_dict_for_known_deepseek():
     entry = resolve_provider(name)
     # Assert
     assert entry == {
-        "base_url": "https://api.deepseek.com/anthropic",
-        "auth_token_env": "DEEPSEEK_API_KEY",
+        "base_url": "http://scitex-compute-04:18775",
+        "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
     }
 
 
@@ -81,7 +81,14 @@ def test_resolve_provider_returns_copy_not_shared_reference():
 
 def test_list_providers_includes_registered_backends():
     # Arrange
-    expected = {"mimo", "deepseek", "anthropic", "codex", "xiaomi"}
+    expected = {
+        "mimo",
+        "deepseek",
+        "external-gateway",
+        "anthropic",
+        "codex",
+        "xiaomi",
+    }
     # Act
     names = set(list_providers())
     # Assert
@@ -102,6 +109,15 @@ def test_xiaomi_alias_resolves_to_same_backend_as_mimo():
     xiaomi = resolve_provider("xiaomi")
     # Assert
     assert xiaomi == resolve_provider("mimo")
+
+
+def test_deepseek_alias_resolves_to_neutral_external_gateway():
+    # Arrange
+    # Act
+    direct = resolve_provider("deepseek")
+    neutral = resolve_provider("external-gateway")
+    # Assert
+    assert direct == neutral
 
 
 # The harness registry (``spec.harness``) used to be a second, unrelated
