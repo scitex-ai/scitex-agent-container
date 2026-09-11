@@ -1183,6 +1183,7 @@ def test_agent_stop_happy_path_calls_runtime_stop(
 def test_agent_stop_currently_invalid_spec_still_stops_registered_runtime(
     pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
+    # Arrange
     spec = _write_spec(tmp_path)
     raw = yaml.safe_load(spec.read_text())
     raw["spec"]["future_launch_capability"] = {"enabled": True}
@@ -1190,6 +1191,7 @@ def test_agent_stop_currently_invalid_spec_still_stops_registered_runtime(
     registry.add("alpha", str(spec), "cld-alpha")
     runtime = FakeRuntime()
 
+    # Act
     ok = lc.agent_stop(
         "alpha",
         registry=registry,
@@ -1197,9 +1199,8 @@ def test_agent_stop_currently_invalid_spec_still_stops_registered_runtime(
         handover_mod=FakeHandover(),
     )
 
-    assert ok is True
-    assert len(runtime.stop_calls) == 1
-    assert not registry.exists("alpha")
+    # Assert
+    assert (ok, len(runtime.stop_calls), registry.exists("alpha")) == (True, 1, False)
 
 
 def test_agent_stop_happy_path_removes_registry_entry(
