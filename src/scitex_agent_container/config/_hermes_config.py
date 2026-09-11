@@ -67,6 +67,7 @@ def compile_hermes_config(
         "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),
         "key_env": key_env,
         "transport": api_mode,
+        "discover_models": False,
         "model": model,
         "default_model": model,
         "models": {model: model_config},
