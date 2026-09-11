@@ -13,6 +13,7 @@ from typing import Any
 from .._mcp._channel_sse import _consume_sse
 from .._mcp.channel import _push_channel_event
 from ._apptainer_build import _read_listen_bearer
+from ._hermes_cards_ingress import consume as consume_cards
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ async def consume(
     environment: Mapping[str, str] = os.environ,
     resolve_bearer: Callable[[], str | None] = _read_listen_bearer,
     consume_sse: Callable[..., Awaitable[None]] = _consume_sse,
+    consume_cards_notifications: Callable[..., Awaitable[None]] = consume_cards,
     push_event: Callable[..., Awaitable[None]] = _push_channel_event,
 ) -> None:
     """Consume with explicit acknowledgement after turn admission succeeds."""
@@ -40,6 +42,8 @@ async def consume(
     sink = _NotificationSink()
 
     async def on_event(event: dict[str, Any]) -> None:
+        event = dict(event)
+        event["_require_terminal_visibility"] = True
         await push_event(
             sink,
             event,
@@ -50,11 +54,14 @@ async def consume(
         )
 
     inbox_url = f"{listen_url.rstrip('/')}/agents/{name}/inbox"
-    await consume_sse(
-        f"{inbox_url}/stream?ack=explicit",
-        bearer,
-        on_event,
-        ack_url=f"{inbox_url}/ack",
+    await asyncio.gather(
+        consume_sse(
+            f"{inbox_url}/stream?ack=explicit",
+            bearer,
+            on_event,
+            ack_url=f"{inbox_url}/ack",
+        ),
+        consume_cards_notifications(name=name, turn_url=turn_url, bearer=bearer),
     )
 
 

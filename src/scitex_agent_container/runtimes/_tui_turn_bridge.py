@@ -7,10 +7,12 @@ agent to act; the TUI runtime runs ``claude`` in tmux with no in-process
 HTTP server, so that POST hit a dead port and the message never woke it.
 This module gives TUI agents the SAME endpoint host-side (the in-SIF
 subscriber POSTs to ``127.0.0.1:<port>`` — apptainer shares the host net
-namespace): on ``POST /v1/turn`` it asks the selected runtime to deliver
-``text`` and returns ``200`` only after that runtime accepts it. Hermes uses
-its native shared-session JSON-RPC; legacy TUI adapters retain their own
-runtime-specific path.
+namespace): on ``POST /v1/turn`` it first persists a durable exchange, then
+asks the selected runtime to deliver ``text``. Hermes uses its native
+shared-session JSON-RPC; legacy TUI adapters retain their runtime-specific
+path. The bridge immediately returns ``202`` plus the exchange id; the caller
+polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``
+or ``502``.
 
 Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
 unchanged:
@@ -21,10 +23,13 @@ unchanged:
     Content-Type: application/json
     {"text": "...", "from_agent": "<peer>"?, "dispatch_id": "<id>"?}
 
-    200 {"text": "", "delivered": true, "mode": "tui-session-delivery", "agent": "<name>"}
+    202 {"exchange_id": "xch_...", "status_code": {"kind": "http", "code": 202, ...}}
     400 {"error": "missing or empty 'text' field"}        # schema mismatch, loud
     404 {"error": "..."}                                  # unknown route / wrong agent
-    502 {"error": "tui delivery failed: ..."}             # session unavailable / refused
+    503 {"error": "...", "status_code": {...}}            # ledger rejected persistence
+
+Terminal injection never changes the already-returned HTTP response. Its
+separate final HTTP 200 or 502 is read from ``GET /v1/exchanges/<id>``.
 
 Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
 :mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
@@ -53,9 +58,12 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Callable
+
+from scitex_dev.status import StatusCode
 
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
@@ -74,6 +82,11 @@ from ._tui_turn_bridge_port import (
     TurnBridgePortBusyError,
     port_busy_error,
     port_is_free,
+)
+from ._turn_exchange_ledger import (
+    finish_turn_exchange,
+    open_turn_exchange,
+    read_turn_exchange,
 )
 
 log = logging.getLogger(__name__)
@@ -197,11 +210,26 @@ class _TurnBridgeServer(ThreadingHTTPServer):
         on_turn: Callable[..., None],
         agent_name: str,
         on_control: Callable[[str], None] | None = None,
+        *,
+        exchange_open: Callable[..., tuple[str, str]] = open_turn_exchange,
+        exchange_finish: Callable[..., None] = finish_turn_exchange,
+        exchange_read: Callable[[str], dict[str, Any] | None] = read_turn_exchange,
     ) -> None:
         super().__init__(server_address, _TurnBridgeHandler)
         self.on_turn = on_turn
         self.agent_name = agent_name
         self.on_control = on_control
+        self.exchange_open = exchange_open
+        self.exchange_finish = exchange_finish
+        self.exchange_read = exchange_read
+        # Cards, SAC A2A and a human-triggered control request can arrive on
+        # different HTTP threads.  Composer inspection + literal paste + Enter
+        # + visibility confirmation is one critical section; serializing it
+        # prevents two SAC-owned deliveries from both observing an empty
+        # composer and interleaving their text.
+        self.delivery_lock = threading.Lock()
+        self.admission_lock = threading.Lock()
+        self.active_delivery: tuple[str, str] | None = None
 
 
 class _TurnBridgeHandler(BaseHTTPRequestHandler):
@@ -230,8 +258,28 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 (stdlib handler contract)
-        if self.path.split("?", 1)[0].rstrip("/") == "/health":
+        clean = self.path.split("?", 1)[0].rstrip("/")
+        if clean == "/health":
             self._respond(200, {"status": "ok", "agent": self._srv().agent_name})
+            return
+        prefix = "/v1/exchanges/"
+        if clean.startswith(prefix):
+            exchange_id = clean[len(prefix) :]
+            row = self._srv().exchange_read(exchange_id)
+            if row is None:
+                self._respond(404, {"error": f"unknown exchange {exchange_id!r}"})
+                return
+            self._respond(
+                200,
+                {
+                    "exchange_id": exchange_id,
+                    "status_code": {
+                        "kind": row["kind"],
+                        "code": row["code"],
+                        "message": row["message"],
+                    },
+                },
+            )
             return
         self._respond(404, {"error": f"no GET route {self.path!r}"})
 
@@ -293,18 +341,165 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         raw_did = raw_did or envelope_meta.get("dispatch_id")
         from_agent = raw_from if isinstance(raw_from, str) and raw_from else None
         dispatch_id = raw_did if isinstance(raw_did, str) and raw_did else None
-        try:
-            srv.on_turn(text, from_agent=from_agent, dispatch_id=dispatch_id)
-        except Exception as exc:  # stx-allow: fallback (reason: surface inject failure as 502 instead of crashing the bridge; the wake POST's raise_for_status then propagates it loud to the channel subscriber)
-            self._respond(502, {"error": f"tui delivery failed: {exc}"})
-            return
+        visible_delivery_id = body.get("visible_delivery_id")
+        if not isinstance(visible_delivery_id, str) or not visible_delivery_id:
+            visible_delivery_id = None
+        requested_exchange_id = body.get("exchange_id")
+        if not isinstance(requested_exchange_id, str) or not requested_exchange_id:
+            requested_exchange_id = None
+        delivery_key = requested_exchange_id or visible_delivery_id or ""
+        with srv.admission_lock:
+            active = srv.active_delivery
+            if active is not None:
+                active_key, active_exchange_id = active
+                if delivery_key and delivery_key == active_key:
+                    self._respond(
+                        202,
+                        {
+                            "exchange_id": active_exchange_id,
+                            "status_code": StatusCode(
+                                kind="http",
+                                code=202,
+                                message=(
+                                    "this delivery is already in progress; poll "
+                                    f"`/v1/exchanges/{active_exchange_id}`"
+                                ),
+                            ).to_dict(),
+                        },
+                    )
+                    return
+                self._respond(
+                    429,
+                    {
+                        "error": "another turn delivery is already in progress",
+                        "status_code": StatusCode(
+                            kind="http",
+                            code=429,
+                            message=(
+                                "one turn already owns this agent session; leave the "
+                                "durable message unacknowledged and retry after polling "
+                                f"`/v1/exchanges/{active_exchange_id}`"
+                            ),
+                        ).to_dict(),
+                    },
+                )
+                return
+            try:
+                exchange_id, opened_at = srv.exchange_open(
+                    agent=srv.agent_name,
+                    probe_url="/v1/exchanges",
+                    exchange_id=requested_exchange_id,
+                )
+            except Exception:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
+                log.exception(
+                    "could not persist turn exchange for agent=%s", srv.agent_name
+                )
+                self._respond(
+                    503,
+                    {
+                        "error": "could not persist the canonical turn exchange",
+                        "status_code": StatusCode(
+                            kind="http",
+                            code=503,
+                            message=(
+                                "the canonical exchange ledger did not accept the turn; "
+                                "leave the Cards notification unconfirmed and run "
+                                "`scitex-dev store doctor` before retrying"
+                            ),
+                        ).to_dict(),
+                    },
+                )
+                return
+            existing = srv.exchange_read(exchange_id)
+            if (
+                requested_exchange_id
+                and isinstance(existing, dict)
+                and existing.get("kind") == "http"
+                and existing.get("code") == 200
+            ):
+                # The terminal turn was already proven visible; the only
+                # remaining work can be the caller's downstream Cards ACK.
+                # Never depend on the marker still fitting in the visible
+                # tmux pane and never inject the same durable message twice.
+                self._respond(
+                    202,
+                    {
+                        "exchange_id": exchange_id,
+                        "status_code": StatusCode(
+                            kind="http",
+                            code=202,
+                            message=(
+                                "terminal visibility is already final; poll "
+                                f"`/v1/exchanges/{exchange_id}` and retry only "
+                                "the downstream acknowledgement"
+                            ),
+                        ).to_dict(),
+                    },
+                )
+                return
+            srv.active_delivery = (delivery_key or exchange_id, exchange_id)
+
+        def deliver() -> None:
+            try:
+                delivery_kwargs = {
+                    "from_agent": from_agent,
+                    "dispatch_id": dispatch_id,
+                }
+                if visible_delivery_id is not None:
+                    delivery_kwargs["visible_delivery_id"] = visible_delivery_id
+                with srv.delivery_lock:
+                    delivery = srv.on_turn(text, **delivery_kwargs)
+                if visible_delivery_id and not delivery:
+                    raise RuntimeError("terminal visibility was not confirmed")
+                status = StatusCode(
+                    kind="http",
+                    code=200,
+                    message=(
+                        "the incoming turn is visible in the Hermes transcript"
+                        if visible_delivery_id
+                        else "the TUI accepted the turn"
+                    ),
+                )
+            except Exception as exc:  # stx-allow: fallback (reason: the canonical ledger must conclude every accepted exchange, including terminal injection failures)
+                status = StatusCode(
+                    kind="http",
+                    code=502,
+                    message=(
+                        f"terminal visibility was not confirmed ({type(exc).__name__}); "
+                        "leave the Cards notification unconfirmed and inspect "
+                        f"`sac agents logs {srv.agent_name}` before retrying"
+                    ),
+                )
+            try:
+                srv.exchange_finish(
+                    exchange_id,
+                    agent=srv.agent_name,
+                    opened_at=opened_at,
+                    status=status,
+                )
+            except Exception:  # stx-allow: fallback (reason: the accepted exchange remains non-final and findable when its completion cannot be written; never forge completion in process memory)
+                log.exception("could not conclude turn exchange %s", exchange_id)
+            finally:
+                with srv.admission_lock:
+                    if srv.active_delivery == (
+                        delivery_key or exchange_id,
+                        exchange_id,
+                    ):
+                        srv.active_delivery = None
+
+        threading.Thread(target=deliver, daemon=True).start()
         self._respond(
-            200,
+            202,
             {
-                "text": "",
-                "delivered": True,
-                "mode": "tui-session-delivery",
-                "agent": srv.agent_name,
+                "exchange_id": exchange_id,
+                "status_code": StatusCode(
+                    kind="http",
+                    code=202,
+                    message=(
+                        f"turn delivery accepted for {srv.agent_name!r}; poll "
+                        f"`/v1/exchanges/{exchange_id}` for the separately recorded result"
+                    ),
+                ).to_dict(),
             },
         )
 
@@ -374,6 +569,9 @@ def build_server(
     on_turn: Callable[..., None],
     agent_name: str,
     on_control: Callable[[str], None] | None = None,
+    exchange_open: Callable[..., tuple[str, str]] = open_turn_exchange,
+    exchange_finish: Callable[..., None] = finish_turn_exchange,
+    exchange_read: Callable[[str], dict[str, Any] | None] = read_turn_exchange,
 ) -> _TurnBridgeServer:
     """Construct (but do not run) the bridge server. Test seam.
 
@@ -382,7 +580,15 @@ def build_server(
     remediation, not a bare ``OSError [Errno 98] Address already in use``.
     """
     try:
-        return _TurnBridgeServer((host, port), on_turn, agent_name, on_control)
+        return _TurnBridgeServer(
+            (host, port),
+            on_turn,
+            agent_name,
+            on_control,
+            exchange_open=exchange_open,
+            exchange_finish=exchange_finish,
+            exchange_read=exchange_read,
+        )
     except OSError as exc:
         raise port_busy_error(host, port, agent_name, cause=exc) from exc
 
@@ -407,8 +613,6 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
     def _graceful(*_a: Any) -> None:
         # serve_forever() runs in the main thread here; shutdown() must be
         # called from another thread, so the signal handler spawns one.
-        import threading
-
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, _graceful)
@@ -456,7 +660,8 @@ def _build_on_turn(
         *,
         from_agent: str | None = None,
         dispatch_id: str | None = None,
-    ) -> None:
+        visible_delivery_id: str | None = None,
+    ) -> bool | None:
         if from_agent:
             try:
                 from ._tui_outbound import record_dispatch
@@ -493,7 +698,15 @@ def _build_on_turn(
         # dispatches to live agents across four pane states produced zero
         # completed tasks, one over a 35-minute window with no restart in it.
         # Claude does queue them; the queue does not reliably drain.
-        delivered = runtime.send_turn(config, text, wait_ready=False)
+        visible_send = getattr(runtime, "send_visible_turn", None)
+        if visible_delivery_id and callable(visible_send):
+            delivered = visible_send(
+                config,
+                text,
+                visible_delivery_id=visible_delivery_id,
+            )
+        else:
+            delivered = runtime.send_turn(config, text, wait_ready=False)
         if not delivered:
             # Name the ACTUAL cause. This used to assert the session did not
             # exist, which was true when absence was the only cause and became
@@ -536,6 +749,7 @@ def _build_on_turn(
                 f"with `sac agents start {config.name}` and check "
                 f"`sac agents list {config.name}` first."
             )
+        return bool(delivered) if visible_delivery_id else None
 
     return on_turn
 

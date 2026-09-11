@@ -56,7 +56,9 @@ DEFAULT_BUSY_MARKERS: tuple[str, ...] = (
     "Working\u2026",  # "Working…"
     "Ruminating\u2026",
     "Thinking\u2026",
+    "Pondering",
     "esc to interrupt",  # the "esc to interrupt" line accompanies active generation
+    "Ctrl+C to interrupt",  # Hermes' active-turn control line
 )
 
 # Tail window for busy-marker classification. Matches the window used

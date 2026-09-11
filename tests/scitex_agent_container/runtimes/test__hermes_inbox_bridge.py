@@ -17,6 +17,9 @@ def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
         seen["stream"] = (url, bearer, kwargs)
         await on_event({"msg_id": "m-1", "content": "steer now"})
 
+    async def fake_cards(**kwargs):
+        seen["cards"] = kwargs
+
     # Act
     asyncio.run(
         bridge.consume(
@@ -26,6 +29,7 @@ def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
             bearer="secret",
             push_event=fake_push,
             consume_sse=fake_consume,
+            consume_cards_notifications=fake_cards,
         )
     )
     # Assert
@@ -35,12 +39,21 @@ def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
             "secret",
             {"ack_url": "http://127.0.0.1:7878/agents/scholar/inbox/ack"},
         ),
-        "event": {"msg_id": "m-1", "content": "steer now"},
+        "event": {
+            "msg_id": "m-1",
+            "content": "steer now",
+            "_require_terminal_visibility": True,
+        },
         "push": {
             "agent_name": "scholar",
             "listen_url": "http://127.0.0.1:7878",
             "bearer": "secret",
             "turn_url": "http://127.0.0.1:19001/v1/turn",
+        },
+        "cards": {
+            "name": "scholar",
+            "turn_url": "http://127.0.0.1:19001/v1/turn",
+            "bearer": "secret",
         },
     }
 

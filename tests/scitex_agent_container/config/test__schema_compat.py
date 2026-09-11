@@ -11,7 +11,7 @@ from scitex_agent_container.config._validation import validate_raw
 def _hermes_entry() -> dict:
     return {
         "session": {"mode": "continue", "max_age_minutes": None},
-        "channels": [],
+        "channels": ["server:sac", "server:scitex-cards"],
     }
 
 

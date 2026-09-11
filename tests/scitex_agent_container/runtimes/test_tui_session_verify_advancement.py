@@ -62,6 +62,9 @@ _CLEARED = (
 # Never anything pending (e.g. instant submit / nothing to force).
 _EMPTY_PROMPT = "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
 
+_HERMES_IDLE_WITH_PENDING = "❯ go work\n\n ─ ready │ qwen38 27b low ─\n"
+_HERMES_SUBMITTED_PONDERING = "❯ go work\n\n┊ ◇ Pondering (Ctrl+C to interrupt)\n"
+
 # Submitted, but a prior "❯ …" line lingers in SCROLLBACK (e.g. a "❯ 1"
 # echo or the previous turn's rendered prompt). The LIVE box (bottom-most
 # ❯) is empty, so this is NOT pending. The OLD whole-pane detector matched
@@ -248,6 +251,55 @@ def test_returns_true_and_stops_when_buffer_advances_after_enter() -> None:
     )
     # Assert — submission verified by advancement; loop stopped after 1 Enter.
     assert (ok, len(sender.keys)) == (True, 1)
+
+
+def test_hermes_pondering_transition_is_positive_submission_evidence() -> None:
+    """Regression for live token 3e176bb65980: accepted, then false-negative."""
+    # Arrange
+    sender = _RecordingSend()
+    capture = _ScriptedPane(
+        [
+            _HERMES_IDLE_WITH_PENDING,
+            _HERMES_IDLE_WITH_PENDING,
+            _HERMES_SUBMITTED_PONDERING,
+        ]
+    )
+    # Act
+    submitted = verify_submit_by_advancement(
+        "tui-scitex-hub",
+        capture_fn=capture,
+        send_keys_fn=sender,
+        pending_fragment="go work",
+        max_resends=2,
+        poll_s=0.0,
+        appear_timeout_s=1.0,
+        idle_wait_s=1.0,
+        sleep_fn=_no_sleep,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert
+    assert (submitted, sender.keys) == (True, ["Enter"])
+
+
+def test_preexisting_hermes_pondering_never_false_confirms_or_sends_enter() -> None:
+    # Arrange
+    sender = _RecordingSend()
+    pane = "❯ go work\n\n┊ ◇ Pondering (Ctrl+C to interrupt)\n"
+    # Act
+    submitted = verify_submit_by_advancement(
+        "tui-scitex-hub",
+        capture_fn=lambda _name: pane,
+        send_keys_fn=sender,
+        pending_fragment="go work",
+        max_resends=1,
+        poll_s=0.0,
+        appear_timeout_s=1.0,
+        idle_wait_s=0.3,
+        sleep_fn=_no_sleep,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert
+    assert (submitted, sender.keys) == (False, [])
 
 
 # ── (d) resends when not advanced and now idle ───────────────────────────────

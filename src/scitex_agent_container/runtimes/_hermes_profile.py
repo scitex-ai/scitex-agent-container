@@ -208,11 +208,27 @@ def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
         if entry.get("alwaysLoad") is not True:
             continue
         eager_toolsets.append(f"mcp-{name}")
-        translated[name] = {
+        rendered = {
             key: value
             for key, value in entry.items()
             if key not in {"type", "alwaysLoad"}
         }
+        command = Path(str(rendered.get("command", ""))).name
+        is_cards = name in {"cards", "scitex-cards"} or command == "scitex-cards"
+        args = rendered.get("args")
+        if (
+            is_cards
+            and isinstance(args, list)
+            and args[:2] == ["mcp", "start"]
+            and "--tools-only" not in args
+        ):
+            # Hermes receives Cards notifications through SAC's durable,
+            # terminal-visible ingress worker. Running Cards' Claude-specific
+            # poller here would consume the same inbox a second time and emit
+            # custom notifications Hermes ignores. Keep the stdio tools and
+            # their SCITEX_CARDS_AGENT_ID, disable only that duplicate poller.
+            rendered["args"] = [*args, "--tools-only"]
+        translated[name] = rendered
     return translated, eager_toolsets
 
 

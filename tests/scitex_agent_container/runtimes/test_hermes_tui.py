@@ -31,6 +31,10 @@ class _Mux:
     def send_text_and_submit(self, name: str, text: str) -> None:
         self.events.append(("settled-submit", name, text))
 
+    def send_text_and_submit_verified(self, name: str, text: str, **kwargs) -> int:
+        self.events.append(("verified-submit", name, text))
+        return 1
+
     def capture_content(self, name: str) -> str:
         pane = self.panes.pop(0) if self.panes else ""
         self.events.append(("capture", name, pane))
@@ -206,6 +210,86 @@ def test_send_key_refuses_when_tmux_session_is_absent():
     delivered = runtime.send_key(_config(), "Enter")
     # Assert
     assert delivered is False
+
+
+def test_visible_incoming_turn_confirms_sender_and_message_left_the_composer():
+    # Arrange
+    text = '<channel source="operator" msg_id="m_visible">\ncheck signup\n</channel>'
+    mux = _Mux(
+        panes=[
+            "\u276f\nready",
+            '\u276f <channel source="operator" msg_id="m_visible">\n'
+            "check signup\n</channel>\n\u276f\npondering",
+        ]
+    )
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    delivered = runtime.send_visible_turn(
+        _config(), text, visible_delivery_id="m_visible"
+    )
+    # Assert
+    assert delivered is True
+
+
+def test_visible_incoming_turn_refuses_to_overwrite_staged_human_text():
+    # Arrange
+    mux = _Mux(panes=["\u276f operator is still typing this\nready"])
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    delivered = runtime.send_visible_turn(
+        _config(),
+        '<channel source="operator" msg_id="m_wait">\nnew\n</channel>',
+        visible_delivery_id="m_wait",
+    )
+    # Assert
+    assert (delivered, [event[0] for event in mux.events]) == (
+        False,
+        ["exists", "capture"],
+    )
+
+
+def test_visible_incoming_turn_does_not_duplicate_an_already_rendered_delivery():
+    # Arrange: terminal visibility succeeded earlier, but the Cards ACK was
+    # interrupted. The durable retry should confirm, not submit twice.
+    mux = _Mux(
+        panes=[
+            '❯ <channel source="operator" msg_id="m_seen">\n'
+            "already visible\n</channel><!-- delivery:m_seen -->\n❯"
+        ]
+    )
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+
+    # Act
+    delivered = runtime.send_visible_turn(
+        _config(),
+        '<channel source="operator" msg_id="m_seen">\nnew\n</channel>',
+        visible_delivery_id="m_seen",
+    )
+
+    # Assert
+    assert (delivered, [event[0] for event in mux.events]) == (
+        True,
+        ["exists", "capture"],
+    )
+
+
+def test_visible_incoming_turn_does_not_false_fail_when_hermes_is_pondering():
+    # Arrange
+    text = '<channel source="operator" msg_id="m_ponder">\ncontinue\n</channel>'
+    mux = _Mux(
+        panes=[
+            "\u276f\nready",
+            '\u276f <channel source="operator" msg_id="m_ponder">\n'
+            "continue\n</channel>\n\u25ca Pondering (Ctrl+C to interrupt)\n\u276f",
+        ]
+    )
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    delivered = runtime.send_visible_turn(
+        _config(), text, visible_delivery_id="m_ponder"
+    )
+    # Assert
+    assert delivered is True
 
 
 def test_recovery_uses_supported_same_session_controls_in_order():

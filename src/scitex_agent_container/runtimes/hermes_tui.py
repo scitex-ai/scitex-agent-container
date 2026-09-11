@@ -10,6 +10,7 @@ from typing import Callable
 from ..config import AgentConfig
 from ._hermes_profile import materialize_hermes_tui_profile
 from ._runtime_control import read_control_state
+from ._tui_compose import _compose_pending_live, composer_holds_fragment
 from .tui_session import TuiSessionRuntime, state_dir_for_config
 
 _HEARTBEAT_SET_COMMAND = "/heartbeat every "
@@ -164,6 +165,60 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
             and self._mux.exists(name)
             and _hermes_pane_is_idle(self._mux.capture_content(name))
         )
+
+    def send_visible_turn(
+        self,
+        config: AgentConfig,
+        text: str,
+        *,
+        visible_delivery_id: str,
+        max_captures: int = 20,
+        poll_s: float = 0.1,
+    ) -> bool:
+        """Submit one durable inbound and prove it is in Hermes' transcript.
+
+        Hermes has no server-to-TUI notification API equivalent to Claude
+        Code's ``notifications/claude/channel``.  Its supported TUI ingress is
+        the composer; ``display.busy_input_mode=steer`` makes Enter route busy
+        input at the next safe boundary.  Therefore SAC verifies both halves:
+        the literal text echoed before Enter, then its unique delivery id is
+        visible outside the live composer.  A staged human composer is never
+        overwritten.  False means the durable caller must not acknowledge.
+        """
+        name = self.session_name(config)
+        if not name or not self._mux.exists(name):
+            return False
+        initial = self._mux.capture_content(name)
+        if visible_delivery_id in initial and not composer_holds_fragment(
+            initial, visible_delivery_id
+        ):
+            # A prior delivery reached the transcript but its downstream Cards
+            # ACK did not. Re-prove the same observation without injecting a
+            # duplicate turn, then let the durable poller retry only the ACK.
+            return True
+        if _compose_pending_live(initial):
+            return False
+
+        verified_submit = getattr(self._mux, "send_text_and_submit_verified", None)
+        if not callable(verified_submit):
+            return False
+        verified_submit(
+            name,
+            text,
+            capture_fn=self._mux.capture_content,
+            send_text_fn=self._mux.send_text_literal,
+            send_enter_fn=lambda session: self._mux.send_keys(session, "Enter"),
+        )
+
+        for attempt in range(max_captures):
+            pane = self._mux.capture_content(name)
+            marker_seen = visible_delivery_id in pane
+            still_staged = composer_holds_fragment(pane, visible_delivery_id)
+            if marker_seen and not still_staged:
+                return True
+            if poll_s > 0 and attempt + 1 < max_captures:
+                time.sleep(poll_s)
+        return False
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
         from ._hermes_tui_owner import GATEWAY_FILE

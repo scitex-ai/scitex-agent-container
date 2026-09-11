@@ -1261,6 +1261,7 @@ class _FakeTurnServer:
 
     def __init__(self) -> None:
         self.turns: list[dict[str, Any]] = []
+        self.synchronous = False
         self._server: asyncio.base_events.Server | None = None
         self.host = "127.0.0.1"
         self.port = 0
@@ -1284,6 +1285,7 @@ class _FakeTurnServer:
             request_line = await reader.readline()
             if not request_line:
                 return
+            method, path, _version = request_line.decode().strip().split(" ", 2)
             content_length = 0
             while True:
                 line = await reader.readline()
@@ -1298,10 +1300,35 @@ class _FakeTurnServer:
                 payload = json.loads(body.decode() or "{}")
             except json.JSONDecodeError:
                 payload = {}
-            self.turns.append(payload)
-            resp = json.dumps({"text": "ok", "session_id": "s1"}).encode()
+            if method == "POST":
+                self.turns.append(payload)
+                if self.synchronous:
+                    response_status = b"200 OK"
+                    response = {"status": "completed"}
+                else:
+                    response_status = b"202 Accepted"
+                    response = {
+                        "exchange_id": "xch_20260912T000000Z_test_abcdef",
+                        "status_code": {
+                            "kind": "http",
+                            "code": 202,
+                            "message": "accepted; poll `/v1/exchanges/test`",
+                        },
+                    }
+            else:
+                assert path.startswith("/v1/exchanges/")
+                response_status = b"200 OK"
+                response = {
+                    "exchange_id": path.rsplit("/", 1)[-1],
+                    "status_code": {
+                        "kind": "http",
+                        "code": 200,
+                        "message": "the turn is visible in the test transcript",
+                    },
+                }
+            resp = json.dumps(response).encode()
             writer.write(
-                b"HTTP/1.1 200 OK\r\n"
+                b"HTTP/1.1 " + response_status + b"\r\n"
                 b"Content-Type: application/json\r\n"
                 b"Content-Length: " + str(len(resp)).encode() + b"\r\n"
                 b"Connection: close\r\n\r\n" + resp
@@ -1431,6 +1458,28 @@ async def test_push_with_turn_url_drives_a_turn(fake_turn):
 
 
 @pytest.mark.asyncio
+async def test_non_hermes_wake_keeps_synchronous_sdk_turn_compatibility(fake_turn):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    fake_turn.synchronous = True
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+
+    # Act
+    await _push_channel_event(
+        _CapturingSession(),
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+
+    # Assert
+    assert fake_turn.turns[0].get("visible_delivery_id") is None
+
+
+@pytest.mark.asyncio
 async def test_push_with_turn_url_carries_message_content_as_turn_text(fake_turn):
     # Arrange
     from scitex_agent_container._mcp.channel import _push_channel_event
@@ -1448,6 +1497,45 @@ async def test_push_with_turn_url_carries_message_content_as_turn_text(fake_turn
     )
     # Assert — the driven turn carries the original message body.
     assert "summarize commits" in fake_turn.turns[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_push_with_turn_url_preserves_cards_exchange_id(fake_turn):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {
+        "from_agent": "operator",
+        "content": "inspect signup",
+        "msg_id": "m1",
+        "exchange_id": "xch_20260912T000000Z_cards_abcdef",
+    }
+
+    # Act
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="scitex-hub",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+
+    # Assert
+    assert fake_turn.turns[0]["exchange_id"] == "xch_20260912T000000Z_cards_abcdef"
+
+
+@pytest.mark.asyncio
+async def test_wake_named_turn_route_polls_root_exchange_route(fake_turn):
+    # Arrange
+    from scitex_agent_container._mcp.channel import _wake_turn
+
+    event = {"from_agent": "operator", "content": "hello", "msg_id": "m1"}
+    named_turn_url = f"http://{fake_turn.host}:{fake_turn.port}/agents/scitex-hub/turn"
+
+    # Act / Assert: the fake server asserts every GET uses /v1/exchanges/.
+    await _wake_turn(event, turn_url=named_turn_url, bearer=None)
 
 
 @pytest.mark.asyncio

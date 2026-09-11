@@ -116,12 +116,36 @@ def test_mcp_translation_preserves_commands_and_drops_claude_metadata(tmp_path):
         {
             "cards": {
                 "command": "scitex-cards",
-                "args": ["mcp", "start"],
+                "args": ["mcp", "start", "--tools-only"],
                 "env": {"SCITEX_CARDS_AGENT_ID": "${SCITEX_CARDS_AGENT_ID}"},
             }
         },
         ["mcp-cards"],
     )
+
+
+def test_mcp_translation_does_not_duplicate_cards_tools_only_flag(tmp_path):
+    # Arrange
+    source = {
+        "mcpServers": {
+            "scitex-cards": {
+                "command": "scitex-cards",
+                "args": ["mcp", "start", "--tools-only"],
+                "alwaysLoad": True,
+            }
+        }
+    }
+    (tmp_path / ".mcp.json").write_text(json.dumps(source), encoding="utf-8")
+
+    # Act
+    translated, _toolsets = profile._mcp_servers(tmp_path)
+
+    # Assert
+    assert translated["scitex-cards"]["args"] == [
+        "mcp",
+        "start",
+        "--tools-only",
+    ]
 
 
 def test_api_key_is_stable_and_owner_only(tmp_path: Path):

@@ -555,6 +555,7 @@ def verify_submit_by_advancement(
             continue
 
         # 2b — idle + still pending: send exactly one Enter.
+        pane_before_enter = last_pane
         send_keys_fn("Enter")
 
         # 2c — verify advancement with an adaptive settle. Anti-flicker:
@@ -567,6 +568,17 @@ def verify_submit_by_advancement(
                 sleep_fn(poll_s)
             last_pane = _advanced()
             if not _pending(last_pane):
+                return True
+            # Hermes hides its empty live composer while a submitted turn is
+            # active.  The submitted transcript row therefore remains the
+            # bottom-most ``❯`` row and looks "pending" to the generic
+            # composer parser even though the newly-rendered Pondering/Ctrl+C
+            # control proves Enter started the turn.  Trust only a TRANSITION
+            # observed after our idle-gated Enter; a pane that was already
+            # busy before the key cannot satisfy this branch.
+            from .._lifecycle.liveness_probe import pane_is_busy
+
+            if not pane_is_busy(pane_before_enter) and pane_is_busy(last_pane):
                 return True
             if time_fn() >= verify_deadline:
                 break

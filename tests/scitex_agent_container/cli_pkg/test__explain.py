@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
     _delegation_line,
+    _hermes_channel_lines,
     _pwd_is_backed,
     _redact,
     explain,
@@ -107,6 +108,37 @@ def test_engine_explain_exposes_the_effective_timeout_contract() -> None:
         "upstream_deadline_seconds: 1800" in rendered
         and "client_abandonment_seconds: 1860" in rendered
     )
+
+
+def test_hermes_channel_explain_separates_cards_ingress_from_tools() -> None:
+    # Arrange: Cards delivery is a declared rail, but no Cards MCP tool is
+    # exposed to the model. These are intentionally independent facts.
+    config = AgentConfig(name="worker", harness="hermes", runtime="tui")
+
+    # Act
+    rendered = "\n".join(
+        _hermes_channel_lines(config, ["server:sac", "server:scitex-cards"])
+    )
+
+    # Assert
+    assert "cards_inbound_delivery: resolved" in rendered
+    assert "cards_tools: unavailable" in rendered
+    assert "CCT is optional" in rendered
+
+
+def test_hermes_channel_explain_reports_cards_tools_independently() -> None:
+    # Arrange
+    config = AgentConfig(name="worker", harness="hermes", runtime="tui")
+    config.mcp_servers["scitex-cards"] = {"command": "scitex-cards-mcp"}
+
+    # Act
+    rendered = "\n".join(
+        _hermes_channel_lines(config, ["server:sac", "server:scitex-cards"])
+    )
+
+    # Assert
+    assert "cards_inbound_delivery: resolved" in rendered
+    assert "cards_tools: resolved" in rendered
 
 
 def test_explain_unknown_agent_raises_click_exception() -> None:

@@ -1523,14 +1523,12 @@ def test_agent_restart_calls_runtime_stop_then_start(
     assert ok is True and len(runtime.stop_calls) == 1 and len(runtime.start_calls) == 1
 
 
-def test_agent_restart_clears_dead_session_marker(
+def test_agent_restart_preserves_session_marker_and_resolves_continue(
     pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange — a runtime state dir holding a DEAD resume marker + history
-    # (the production shape after a session aged out). PR #190's restart
-    # left the dead uuid in the history to be re-resumed and re-crashed;
-    # a plain restart must now clear it.
+    # Arrange — the persisted id is the harness conversation identity. A
+    # plain restart may replace process/tmux/incarnation but must retain it.
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime_root = tmp_path / "rt"
@@ -1542,30 +1540,32 @@ def test_agent_restart_clears_dead_session_marker(
         state_dir = runtime_root / "alpha"
         sid.write_session_id(state_dir, "dead-uuid")
         # Act
+        runtime = FakeRuntime(start_result=True)
         lc.agent_restart(
             "alpha",
             registry=registry,
-            runtime_factory=lambda _c: FakeRuntime(start_result=True),
+            runtime_factory=lambda _c: runtime,
             sleep_fn=_no_sleep,
             handover_mod=FakeHandover(),
             thread_factory=FakeThread,
         )
-        # Assert — the dead resume marker is gone so the restart is fresh.
-        result = sid.read_session_id(state_dir)
+        result = (
+            sid.read_session_id(state_dir),
+            runtime.start_calls[0].claude.session,
+        )
     finally:
         if prev is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
         else:
             os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
-    assert result is None
+    assert result == ("dead-uuid", "continue")
 
 
-def test_agent_restart_clears_dead_session_history(
+def test_agent_restart_preserves_session_history(
     pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange — the dead uuid lives in the append-only history that the
-    # runner's resume fallback would otherwise walk and re-resume.
+    # Arrange — history is part of the resumable harness conversation.
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime_root = tmp_path / "rt"
@@ -1586,23 +1586,20 @@ def test_agent_restart_clears_dead_session_history(
             handover_mod=FakeHandover(),
             thread_factory=FakeThread,
         )
-        # Assert — the whole history is cleared so no dead uuid can be
-        # re-resumed on the next start (the crash-loop is closed).
         history = sid.read_session_id_history(state_dir)
     finally:
         if prev is None:
             os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
         else:
             os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
-    assert history == []
+    assert history == ["dead-uuid", "dead-fork"]
 
 
-def test_agent_restart_backs_up_dead_session_history(
+def test_agent_restart_does_not_archive_live_session_history(
     pg_schema: str,
     tmp_path: Path, registry: Registry
 ) -> None:
-    # Arrange — clearing the dead history must preserve it as an audit
-    # side-file, not silently destroy it.
+    # Arrange — plain restart has no authority to archive live history.
     spec = _write_spec(tmp_path)
     registry.add("alpha", str(spec), "cld-alpha")
     runtime_root = tmp_path / "rt"
@@ -1629,7 +1626,7 @@ def test_agent_restart_backs_up_dead_session_history(
             os.environ.pop("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", None)
         else:
             os.environ["SCITEX_AGENT_CONTAINER_RUNTIME_DIR"] = prev
-    assert len(backups) == 1
+    assert backups == []
 
 
 def test_agent_restart_unknown_raises(tmp_path: Path, registry: Registry) -> None:

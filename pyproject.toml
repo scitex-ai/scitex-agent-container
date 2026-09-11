@@ -85,6 +85,11 @@ dependencies = [
     "scitex-container>=0.4.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
+    # Hermes cannot consume Claude Code's notifications/claude/channel
+    # extension.  SAC's host-side Hermes inbox bridge therefore reads Cards'
+    # public durable poll/confirm API and confirms only after terminal-visible
+    # delivery.  This is a runtime dependency, not an optional MCP tool.
+    "scitex-cards>=0.52.0",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.

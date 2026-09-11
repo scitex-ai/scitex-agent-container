@@ -206,9 +206,34 @@ into tmux. A bridge failure before acceptance therefore leaves the row
 replayable. The host-side adapter receives the listener bearer only through
 its environment, and its stop path signals a recorded PID only after Linux
 process identity proves the exact module, agent name, and authored spec path.
-This is delivery plumbing, not a second queue or scheduler. Explicit
-`/v1/control` events are limited to Enter and Escape for human modal control;
-they use the attached tmux PTY and are never used for message delivery.
+This is delivery plumbing, not a second queue or scheduler. Message delivery
+uses Hermes' native steering behavior. Explicit `/v1/control` events are
+limited to Enter and Escape for human modal control; they use the attached
+tmux PTY and are never used for message delivery.
+
+Hermes 0.21.1 does not implement Claude Code's
+`notifications/claude/channel` terminal-rendering extension, and its public
+gateway has no server-to-TUI notification method. A successful MCP stdio write
+therefore cannot prove that a human or agent saw a Cards notification. For a
+Hermes TUI, SAC instead reads Cards through its public non-destructive
+`poll_notifications(..., ack=False)` API, submits a sender-attributed
+`<channel>` turn through Hermes' official composer. The delivery boundary
+borrows HTTP through `scitex_dev.status`: the turn bridge first persists a
+`202 Accepted` plus exchange id in the shared `status_exchanges` ledger and
+returns immediately, then a serialized worker records the separately observed
+final `200` or `502`. The Cards poller confirms the Cards id only after polling
+that exchange to a final `http/200` whose unique delivery marker was observed
+outside the live composer.
+The poll selects Cards' `unconfirmed` ids rather than only unseen ids: the
+legacy Claude channel can stamp a transport push as seen even though Hermes
+ignored its unsupported notification method. A busy turn is accepted through
+Hermes' native `steer` mode. Existing staged human text or a modal is never
+overwritten; a failure carries an actionable native `StatusCode.message` and
+the Cards row remains unconfirmed for retry. Diagnostic questions use
+`scitex_dev.status.Check`'s three-valued wire shape rather than a local delivery
+taxonomy. The same positive-visibility gate
+backs SAC inbox explicit ACK, so neither rail equates sent keystrokes with
+delivery.
 They can be removed only after the image-installed Hermes path demonstrates
 durable replay across process restart, MCP/tool availability, model provenance,
 and one representative Scholar task. Absolute-workdir isolation has passed
