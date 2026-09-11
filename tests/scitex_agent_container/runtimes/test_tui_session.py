@@ -322,7 +322,7 @@ def test_tui_runtime_start_returns_true_on_success(
     assert ok is True
 
 
-def test_tui_runtime_start_arms_native_hermes_heartbeat_when_autonomous(
+def test_tui_runtime_start_never_stages_heartbeat_over_initial_turn(
     mux: type[_MemoryMultiplexer],
 ) -> None:
     # Arrange
@@ -338,8 +338,9 @@ def test_tui_runtime_start_arms_native_hermes_heartbeat_when_autonomous(
     # Act
     runtime.start(config)
     # Assert
-    assert (
-        mux._sessions["tui-hermes-auto"].pane[-1].startswith("/heartbeat every 208s ")
+    assert not any(
+        row.startswith("/heartbeat every ")
+        for row in mux._sessions["tui-hermes-auto"].pane
     )
 
 

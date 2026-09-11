@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Callable
@@ -11,10 +12,32 @@ from ._hermes_profile import materialize_hermes_tui_profile
 from ._runtime_control import read_control_state
 from .tui_session import TuiSessionRuntime, state_dir_for_config
 
-
 _HEARTBEAT_SET_COMMAND = "/heartbeat every "
 _HEARTBEAT_SET_CONFIRMATION = "heartbeat set (every "
 _HEARTBEAT_CONFIRMATION_CLOSE = "esc/q close"
+_HERMES_STATUS_RE = re.compile(r"(?m)^[ \t]*─+\s+([^\u2502\n]+?)\s*\u2502")
+_HERMES_COMPOSER_RE = re.compile(r"(?m)^[ \t]*❯(?P<body>[^\n]*)$")
+
+
+def _hermes_pane_is_idle(pane: str) -> bool:
+    """True only for Hermes' live ``ready`` footer and empty composer.
+
+    Choosing the last status and composer rows excludes stale ``ready`` text
+    in scrollback.  Requiring both signals also preserves text a human has
+    already staged: an empty-looking status alone never authorizes SAC to
+    write into the shared composer.
+    """
+    statuses = list(_HERMES_STATUS_RE.finditer(pane or ""))
+    composers = list(_HERMES_COMPOSER_RE.finditer(pane or ""))
+    if not statuses or not composers:
+        return False
+    status = statuses[-1]
+    composer = composers[-1]
+    return (
+        status.group(1).strip().lower() == "ready"
+        and composer.start() > status.end()
+        and not composer.group("body").strip()
+    )
 
 
 def _dismiss_heartbeat_confirmation(
@@ -126,13 +149,23 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         # before prompt_toolkit has rendered the literal paste, leaving the
         # command visibly parked in Hermes' composer.
         self._mux.send_text_and_submit(name, text)
-        _dismiss_heartbeat_confirmation(
-            name,
-            text,
-            capture_fn=self._mux.capture_content,
-            send_keys_fn=self._mux.send_keys,
-        )
+        if text.strip().lower().startswith(_HEARTBEAT_SET_COMMAND):
+            return _dismiss_heartbeat_confirmation(
+                name,
+                text,
+                capture_fn=self._mux.capture_content,
+                send_keys_fn=self._mux.send_keys,
+            )
         return True
+
+    def autonomous_control_is_idle(self, config: AgentConfig) -> bool:
+        """Observe whether SAC may safely use Hermes' shared composer now."""
+        name = self.session_name(config)
+        return bool(
+            name
+            and self._mux.exists(name)
+            and _hermes_pane_is_idle(self._mux.capture_content(name))
+        )
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
         name = self.session_name(config)

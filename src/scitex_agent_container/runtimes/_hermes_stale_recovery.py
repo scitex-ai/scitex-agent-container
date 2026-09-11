@@ -205,8 +205,15 @@ def _run_monitor_loop(
     if wait(_stable_initial_delay(config.name)):
         return
     recovered_fingerprint = ""
+    heartbeat_armed = False
     while mux.exists(session):
         try:
+            if not heartbeat_armed:
+                from ._hermes_autonomous_wakeup import arm_hermes_autonomous_wakeup
+
+                heartbeat_armed = bool(
+                    arm_hermes_autonomous_wakeup(runtime, config)
+                )
             recovered_fingerprint = recovery_tick(
                 config,
                 capture=lambda: mux.capture_content(session),
@@ -216,7 +223,7 @@ def _run_monitor_loop(
                 state_dir=state_dir,
             )
         except Exception:  # stx-allow: fallback (reason: one observation/control failure must not kill the bounded recovery monitor)
-            log.exception("Hermes recovery tick failed for %s", config.name)
+            log.exception("Hermes autonomous monitor tick failed for %s", config.name)
         if wait(POLL_SECONDS):
             return
     write_control_state(
