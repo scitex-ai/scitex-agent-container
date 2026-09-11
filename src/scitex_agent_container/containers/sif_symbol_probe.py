@@ -1,5 +1,10 @@
 """Artifact gate: assert BY SYMBOL that this SIF is fresh and whole."""
 
+# The import order is executable documentation: each guarded import sits next
+# to the incident and capability it gates, and the final SAC import must run
+# only after dependency checks. This is a probe script, not a library module.
+# ruff: noqa: E402, I001
+
 import sys
 
 # noqa placement is deliberate: this import LOOKS unused and is not. The
@@ -48,7 +53,17 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 # upstream may rename or inline it with no deprecation, and that would land
 # here as a dead bake far from scitex-dev's repo. If this line is what broke
 # the build, read scitex_dev/store/_store.py before suspecting the image.
+from scitex_dev.store import Store
 from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+
+# scitex-dev 0.59.1: Store.put's NEW_RECORD and expected_revision paths are
+# database-atomic across independent PostgreSQL connections. The older symbol
+# above proves only the 0.56.6 oplog sequence retry and cannot establish this
+# stronger CAS contract. `_materialise_atomic` is the implementation seam
+# introduced with that contract; gate the installed code, not metadata alone.
+if not callable(getattr(Store, "_materialise_atomic", None)):
+    print("FATAL: scitex-dev lacks atomic cross-process Store CAS")
+    sys.exit(1)
 
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")

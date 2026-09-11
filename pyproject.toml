@@ -85,6 +85,12 @@ dependencies = [
     "scitex-container>=0.4.0",
     "scitex-logging>=0.1.5",
     "scitex-ssh>=1.0.0",
+    # The host-side turn bridge imports scitex_dev.store in normal runtime
+    # operation. 0.59.1 is the first release whose NEW_RECORD and
+    # revision-guarded writes are atomic across independent Store processes;
+    # the durable inbox cannot safely provide idempotency or delivery leases
+    # without that contract (scitex-ai/scitex-dev#795).
+    "scitex-dev>=0.59.1",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.

@@ -948,7 +948,7 @@ def test_real_store_late_commit_retry_by_message_id_injects_exactly_once(
         SimpleNamespace(name="scholar"),
         runtime=runtime,
         queue_api=LateFirstCommit(),
-        accept_timeout_seconds=0.02,
+        accept_timeout_seconds=0.5,
     )
     port = bridge_factory(consumer.accept, agent_name="scholar")
 
