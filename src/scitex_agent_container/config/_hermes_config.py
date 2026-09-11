@@ -62,6 +62,11 @@ def compile_hermes_config(
     model_config: dict[str, Any] = {}
     if plan.engine.context_window_tokens is not None:
         model_config["context_length"] = plan.engine.context_window_tokens
+    if plan.engine.client_abandonment_seconds is not None:
+        model_config["timeout_seconds"] = plan.engine.client_abandonment_seconds
+        model_config["stale_timeout_seconds"] = (
+            plan.engine.client_abandonment_seconds
+        )
     provider: dict[str, Any] = {
         "name": f"SAC {plan.engine.key}",
         "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),

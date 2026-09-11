@@ -139,6 +139,22 @@ def test_compiler_accepts_explicit_autonomous_approval_mode():
     assert result["approvals"] == {"mode": "off"}
 
 
+def test_long_inference_timeout_reaches_both_hermes_watchdogs():
+    # Arrange
+    raw = _spec()
+    raw["available_engines"]["qwen"]["timeouts"] = {
+        "upstream_deadline_seconds": 1800,
+        "client_abandonment_seconds": 1860,
+    }
+
+    # Act
+    result = compile_hermes_config(compile_launch_plan(raw), workdir="/work")
+
+    # Assert
+    model = result["providers"]["sac-qwen"]["models"]["qwen38-27b"]
+    assert model["timeout_seconds"] == model["stale_timeout_seconds"] == 1860
+
+
 def test_spawn_deny_removes_hermes_delegate_task_toolset():
     # Arrange
     raw = _spec()

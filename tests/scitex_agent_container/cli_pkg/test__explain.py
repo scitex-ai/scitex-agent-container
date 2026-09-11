@@ -15,6 +15,7 @@ from scitex_agent_container.cli_pkg._explain import (
     _redact,
     explain,
 )
+from scitex_agent_container.cli_pkg._explain_engine import engine_lines
 from scitex_agent_container.config import AgentConfig
 
 
@@ -89,6 +90,22 @@ def test_delegation_line_exposes_effective_deny_and_bound() -> None:
             "max children: 1",
             "Git worktree isolation: off",
         )
+    )
+
+
+def test_engine_explain_exposes_the_effective_timeout_contract() -> None:
+    # Arrange
+    config = AgentConfig(name="worker", harness="hermes", runtime="headless")
+    config.upstream_deadline_seconds = 1800
+    config.client_abandonment_seconds = 1860
+
+    # Act
+    rendered = "\n".join(engine_lines(config))
+
+    # Assert
+    assert (
+        "upstream_deadline_seconds: 1800" in rendered
+        and "client_abandonment_seconds: 1860" in rendered
     )
 
 

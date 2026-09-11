@@ -31,6 +31,8 @@ class ResolvedEngine:
     endpoints: tuple[Endpoint, ...]
     context_window_tokens: int | None
     reasoning_effort: str | None
+    upstream_deadline_seconds: int | None = None
+    client_abandonment_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -191,7 +193,7 @@ def compile_launch_plan(
         _text(label, "engine key")
         path = f"spec.available_engines.{label}"
         entry = _mapping(value, path)
-        _keys(entry, {"model", "endpoints", "parameters"}, path)
+        _keys(entry, {"model", "endpoints", "parameters", "timeouts"}, path)
         model = _text(entry.get("model"), f"{path}.model")
         endpoints = _mapping(entry.get("endpoints"), f"{path}.endpoints")
         if not endpoints:
@@ -211,7 +213,46 @@ def compile_launch_plan(
         effort = params.get("reasoning_effort")
         if effort is not None:
             effort = _text(effort, f"{path}.parameters.reasoning_effort")
-        resolved[label] = ResolvedEngine(label, model, endpoint_values, context, effort)
+        timeout_values = _mapping(entry.get("timeouts", {}), f"{path}.timeouts")
+        _keys(
+            timeout_values,
+            {"upstream_deadline_seconds", "client_abandonment_seconds"},
+            f"{path}.timeouts",
+        )
+        upstream_deadline = timeout_values.get("upstream_deadline_seconds")
+        client_abandonment = timeout_values.get("client_abandonment_seconds")
+        for timeout_name, timeout_value in (
+            ("upstream_deadline_seconds", upstream_deadline),
+            ("client_abandonment_seconds", client_abandonment),
+        ):
+            if timeout_value is not None and (
+                type(timeout_value) is not int or timeout_value <= 0
+            ):
+                raise ValueError(
+                    f"{path}.timeouts.{timeout_name} must be a positive integer"
+                )
+        if (upstream_deadline is None) != (client_abandonment is None):
+            raise ValueError(
+                f"{path}.timeouts must declare upstream_deadline_seconds and "
+                "client_abandonment_seconds together"
+            )
+        if (
+            upstream_deadline is not None
+            and client_abandonment <= upstream_deadline
+        ):
+            raise ValueError(
+                f"{path}.timeouts.client_abandonment_seconds must be greater than "
+                "upstream_deadline_seconds"
+            )
+        resolved[label] = ResolvedEngine(
+            label,
+            model,
+            endpoint_values,
+            context,
+            effort,
+            upstream_deadline,
+            client_abandonment,
+        )
     if key not in resolved:
         raise ValueError(f"unknown engine {key!r}; available: {', '.join(resolved)}")
     selected = resolved[key]

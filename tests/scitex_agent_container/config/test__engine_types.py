@@ -134,6 +134,49 @@ def test_declared_default_engine_resolves_onto_the_loaded_config(tmp_path):
     assert (config.engine_key, config.claude.model) == ("claude", "fable[1m]")
 
 
+def test_timeout_contract_reaches_loaded_agent_config(tmp_path):
+    # Arrange
+    engines = _two_engines(default_on="qwen38-27b")
+    engines["qwen38-27b"]["timeouts"] = {
+        "upstream_deadline_seconds": 1800,
+        "client_abandonment_seconds": 1860,
+    }
+    path = _write(tmp_path, "eng-timeouts", {"engines": engines})
+
+    # Act
+    config = load_config(path)
+
+    # Assert
+    assert (
+        config.upstream_deadline_seconds,
+        config.client_abandonment_seconds,
+    ) == (1800, 1860)
+
+
+@pytest.mark.parametrize(
+    "timeouts",
+    [
+        {"upstream_deadline_seconds": 1800},
+        {
+            "upstream_deadline_seconds": 1800,
+            "client_abandonment_seconds": 1800,
+        },
+    ],
+)
+def test_invalid_timeout_contract_is_a_load_error(tmp_path, timeouts):
+    # Arrange
+    engines = _two_engines(default_on="qwen38-27b")
+    engines["qwen38-27b"]["timeouts"] = timeouts
+    path = _write(tmp_path, "eng-bad-timeouts", {"engines": engines})
+
+    # Act
+    ctx = pytest.raises(ValueError, match="timeouts")
+
+    # Assert
+    with ctx:
+        load_config(path)
+
+
 def test_default_engine_leaves_the_non_default_provider_unapplied(tmp_path):
     # POSITIVE CONTROL for the selection test below: with no --engine the
     # qwen provider must NOT be in play, so the later assertion that it IS

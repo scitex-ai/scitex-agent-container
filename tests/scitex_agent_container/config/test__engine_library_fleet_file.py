@@ -23,17 +23,24 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
+from scitex_agent_container.config import load_config
 from scitex_agent_container.config._engine_library import (
     FLEET_ENGINES_ENV,
     FLEET_ENGINES_FILENAME,
     fleet_engines_path,
     load_fleet_library,
+    resolve_engine_namespace,
 )
+from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._qwen_gateway import (
     QWEN_GATEWAY_HOST,
     QWEN_GATEWAY_PROVIDER,
 )
+from scitex_agent_container.config._validation import validate_raw
+from scitex_agent_container.runtimes._hermes_profile import _launch_plan
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -68,6 +75,21 @@ def library(env_override):
     """The tracked file, loaded through the production reader."""
     env_override(str(TRACKED_LIBRARY))
     return load_fleet_library()
+
+
+@pytest.fixture
+def engines_file(tmp_path, env_override):
+    """Write a fresh fleet library and select it through the production seam."""
+    counter = {"value": 0}
+
+    def _write(text: str) -> str:
+        counter["value"] += 1
+        path = tmp_path / f"fleet-{counter['value']}.yaml"
+        path.write_text(text, encoding="utf-8")
+        env_override(str(path))
+        return str(path)
+
+    return _write
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +219,136 @@ def test_with_no_override_the_path_sits_beside_the_agents_dir(
     resolved = fleet_engines_path()
     # Assert
     assert resolved == agent_container_root() / FLEET_ENGINES_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# Fleet entries pass through the same validation gate as spec-local entries
+# ---------------------------------------------------------------------------
+
+
+def _fleet_document(timeouts: object, *, extra: str = "") -> str:
+    return f"""\
+apiVersion: scitex-agent-container/v3
+kind: EngineLibrary
+engines:
+  fleet-qwen:
+    model: qwen38-27b
+    provider:
+      base_url: http://gateway.example/v1
+      auth_token_env: SAC_TEST_QWEN_KEY
+    timeouts: {yaml.safe_dump(timeouts, default_flow_style=True).strip()}
+{extra}"""
+
+
+def _dependent_document() -> dict:
+    return explicit_doc(
+        {"harness": "hermes", "runtime": "tui", "engine": "fleet-qwen"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("timeouts", "fragment"),
+    [
+        ([1800, 1860], "timeouts must be a mapping"),
+        ({"upstream_deadline_seconds": 1800}, "declare upstream_deadline_seconds"),
+        (
+            {
+                "upstream_deadline_seconds": 0,
+                "client_abandonment_seconds": 1860,
+            },
+            "upstream_deadline_seconds must be a positive integer",
+        ),
+        (
+            {
+                "upstream_deadline_seconds": 1800,
+                "client_abandonment_seconds": 1800,
+            },
+            "client_abandonment_seconds must be greater",
+        ),
+        (
+            {
+                "upstream_deadline_seconds": 1800,
+                "client_abandonment_seconds": 1860,
+                "retry_after_seconds": 1,
+            },
+            "unknown field(s): retry_after_seconds",
+        ),
+    ],
+)
+def test_invalid_fleet_timeout_blocks_a_dependent_agent(
+    engines_file, timeouts, fragment
+) -> None:
+    # Arrange
+    path = engines_file(_fleet_document(timeouts))
+    raw = _dependent_document()
+    # Act
+    library_errors = load_fleet_library().errors
+    agent_errors = validate_raw(raw, "/tmp/dependent/spec.yaml")
+    # Assert
+    assert (
+        any(fragment in error for error in library_errors)
+        and any(fragment in error for error in agent_errors)
+        and all(path in error for error in library_errors)
+    )
+
+
+def test_valid_fleet_timeout_reaches_loaded_config_and_compiled_hermes(
+    tmp_path, engines_file
+) -> None:
+    # Arrange
+    engines_file(
+        _fleet_document(
+            {
+                "upstream_deadline_seconds": 1800,
+                "client_abandonment_seconds": 1860,
+            }
+        )
+    )
+    spec_path = tmp_path / "dependent" / "spec.yaml"
+    spec_path.parent.mkdir()
+    spec_path.write_text(yaml.safe_dump(_dependent_document()), encoding="utf-8")
+    # Act
+    config = load_config(spec_path)
+    rendered = compile_hermes_config(_launch_plan(config), workdir="/work")
+    model = rendered["providers"]["sac-fleet-qwen"]["models"]["qwen38-27b"]
+    # Assert
+    assert (
+        config.upstream_deadline_seconds == 1800
+        and config.client_abandonment_seconds == 1860
+        and model["timeout_seconds"] == 1860
+        and model["stale_timeout_seconds"] == 1860
+    )
+
+
+def test_spec_local_engine_still_wins_a_fleet_key_collision(engines_file) -> None:
+    # Arrange
+    engines_file(
+        _fleet_document(
+            {
+                "upstream_deadline_seconds": 1800,
+                "client_abandonment_seconds": 1860,
+            }
+        )
+    )
+    spec = _dependent_document()["spec"]
+    spec["engines"] = {
+        "fleet-qwen": {
+            "model": "local-model",
+            "provider": {
+                "base_url": "http://local.example/v1",
+                "auth_token_env": "LOCAL_KEY",
+            },
+            "timeouts": {
+                "upstream_deadline_seconds": 20,
+                "client_abandonment_seconds": 30,
+            },
+        }
+    }
+    # Act
+    selected = resolve_engine_namespace(spec)["fleet-qwen"]
+    # Assert
+    assert (
+        selected.model == "local-model"
+        and selected.upstream_deadline_seconds == 20
+        and selected.client_abandonment_seconds == 30
+    )

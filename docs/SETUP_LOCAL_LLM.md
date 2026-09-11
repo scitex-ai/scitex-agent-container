@@ -59,7 +59,18 @@ spec:
         auth_token_env: SCITEX_GENAI_GATEWAY_API_KEY
       max_context_tokens: 1048576
       reasoning_effort: low
+      timeouts:
+        upstream_deadline_seconds: 1800
+        client_abandonment_seconds: 1860
 ```
+
+The client deadline is intentionally later than the inference gateway's
+upstream deadline. Long-context Qwen requests have taken more than 18 minutes
+before producing a response; a shorter harness stale detector abandons useful
+GPU work and can create duplicate queued requests. SAC validates the ordering
+and writes the effective client deadline into Hermes' supported per-model
+request and stale-timeout fields. A dead provider remains bounded by the finite
+client deadline.
 
 The Claude Code prompt watchdog is not a global lifecycle policy. A spec that
 offers that harness declares it under

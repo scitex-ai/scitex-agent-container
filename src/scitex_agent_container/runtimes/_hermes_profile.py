@@ -170,6 +170,8 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         endpoints=(endpoint,),
         context_window_tokens=config.max_context_tokens,
         reasoning_effort=str(config.reasoning_effort or "") or None,
+        upstream_deadline_seconds=config.upstream_deadline_seconds,
+        client_abandonment_seconds=config.client_abandonment_seconds,
     )
     return LaunchPlan(
         "hermes",

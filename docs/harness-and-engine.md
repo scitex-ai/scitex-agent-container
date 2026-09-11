@@ -93,6 +93,9 @@ engines:
       auth_token_env: SCITEX_GENAI_GATEWAY_API_KEY
     reasoning_effort: low
     max_context_tokens: 1048576
+    timeouts:
+      upstream_deadline_seconds: 1800
+      client_abandonment_seconds: 1860
 ```
 
 **Moving the whole fleet onto Qwen is one line** — change `engine: claude-opus`
@@ -148,4 +151,3 @@ speak two protocols to the *same* endpoint, where the choice is not derivable
 from the harness. Until that exists, adding the field would be a menu with one
 dish — and stating the condition here is what stops someone adding it later
 without knowing it was a decision.
-

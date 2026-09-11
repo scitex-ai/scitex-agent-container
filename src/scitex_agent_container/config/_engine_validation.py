@@ -14,16 +14,15 @@ Sibling of ``_claude_validation`` / ``_provider_validation`` /
 
 from __future__ import annotations
 
-import re
 from typing import Mapping
 
+from ._engine_entry_validation import validate_engine_entry
 from ._engine_library import (
     load_fleet_library,
     resolve_engine_namespace,
     spec_engine_key,
 )
 from ._engine_types import (
-    ENGINE_ENTRY_KEYS,
     ENGINE_PIN_KEY,
     ENGINES_KEY,
     EngineDefaultError,
@@ -31,99 +30,8 @@ from ._engine_types import (
     legacy_conflict_messages,
     parse_engines,
 )
-from ._harness_types import is_known_harness, list_harnesses
-from ._provider_validation import validate_provider
 
 __all__ = ["validate_engine_pin", "validate_engines"]
-
-# Engine keys name a backend on a command line
-# (``--engine qwen38-27b``), so they stay shell-plain. Dots are allowed
-# because model ids carry them (the operator's own example was
-# ``--engine qwen-3.8-27b``).
-_ENGINE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-_REASONING_EFFORTS = ("none", "low", "medium", "high")
-
-
-def _validate_entry(key: str, raw: object) -> list[str]:
-    path = f"spec.{ENGINES_KEY}.{key}"
-    if not isinstance(raw, Mapping):
-        return [
-            f"{path} must be a mapping of engine fields "
-            f"({', '.join(sorted(ENGINE_ENTRY_KEYS))}), got "
-            f"{type(raw).__name__}."
-        ]
-    errors: list[str] = []
-    unknown = sorted(set(map(str, raw)) - ENGINE_ENTRY_KEYS)
-    if unknown:
-        errors.append(
-            f"{path} has unknown field(s): {', '.join(unknown)}. An engine "
-            f"entry carries {sorted(ENGINE_ENTRY_KEYS)} — the SAME fields "
-            "the single-backend surface carries, plus the per-engine "
-            "parameters. Anything else belongs in spec.extensions."
-        )
-
-    harness = raw.get("harness")
-    if harness is not None and str(harness).strip():
-        if not is_known_harness(str(harness).strip().lower()):
-            errors.append(
-                f"{path}.harness must be one of {list_harnesses()} (got "
-                f"{str(harness)!r}). It resolves through the SAME harness "
-                "registry as spec.harness — an engine cannot invent a "
-                "harness the fleet cannot run."
-            )
-
-    model = raw.get("model")
-    if model is not None and not isinstance(model, str):
-        errors.append(
-            f"{path}.model must be a string, got {type(model).__name__}."
-        )
-
-    if "provider" in raw:
-        # Reuses the single-backend surface's validator verbatim so the
-        # accepted provider vocabulary cannot drift between the two.
-        errors += [
-            msg.replace("spec.claude.provider", f"{path}.provider")
-            for msg in validate_provider(raw.get("provider"))
-        ]
-
-    default = raw.get("default")
-    if default is not None and not isinstance(default, bool):
-        errors.append(
-            f"{path}.default must be true or false, got "
-            f"{type(default).__name__}. (DEPRECATED: `{ENGINE_PIN_KEY}: "
-            f"<key>` at the top of spec: says the same thing without making "
-            "the CHOICE a property of the CHOSEN.)"
-        )
-
-    effort = raw.get("reasoning_effort")
-    if effort is not None and str(effort).strip():
-        if str(effort).strip().lower() not in _REASONING_EFFORTS:
-            errors.append(
-                f"{path}.reasoning_effort must be one of "
-                f"{list(_REASONING_EFFORTS)} (got {str(effort)!r})."
-            )
-
-    max_ctx = raw.get("max_context_tokens")
-    if max_ctx is not None:
-        if isinstance(max_ctx, bool) or not isinstance(max_ctx, int):
-            errors.append(
-                f"{path}.max_context_tokens must be a positive integer, got "
-                f"{type(max_ctx).__name__}."
-            )
-        elif max_ctx <= 0:
-            errors.append(
-                f"{path}.max_context_tokens must be > 0, got {max_ctx}."
-            )
-
-    env = raw.get("env")
-    if env is not None and not isinstance(env, Mapping):
-        errors.append(
-            f"{path}.env must be a mapping of env var name → value, got "
-            f"{type(env).__name__}."
-        )
-    return errors
-
 
 def validate_engines(spec: dict, kind: object = "Agent") -> list[str]:
     """Return ``spec.engines`` errors (empty = valid).
@@ -155,14 +63,9 @@ def validate_engines(spec: dict, kind: object = "Agent") -> list[str]:
 
     errors: list[str] = []
     for key, raw in block.items():
-        if not _ENGINE_KEY_RE.match(str(key)):
-            errors.append(
-                f"spec.{ENGINES_KEY} key {str(key)!r} is not a usable engine "
-                "name. It is typed on a command line (--engine <key>), so it "
-                "must start alphanumeric and contain only letters, digits, "
-                "'.', '_' and '-'."
-            )
-        errors += _validate_entry(str(key), raw)
+        errors += validate_engine_entry(
+            str(key), raw, namespace=f"spec.{ENGINES_KEY}"
+        )
 
     # ``spec.engine`` is the canonical explicit choice. The legacy
     # exactly-one-``default: true`` rule applies only when no pin is stated;
