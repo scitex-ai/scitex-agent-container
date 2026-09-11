@@ -140,6 +140,16 @@ async def agent_status(request: Request) -> JSONResponse:
         "session_id": sid,
         "state_dir": str(sd),
     }
+    # Additive, harness-neutral turn-admission state. Runtime adapters own
+    # their detection mechanism; this route and its GUI consumers do not.
+    try:
+        from .._lifecycle._runtime_select import _get_runtime
+
+        control = _get_runtime(cfg).control_state(cfg)
+    except Exception:  # stx-allow: fallback (reason: optional runtime observation must not turn status into a 500)
+        control = None
+    if control is not None:
+        body["runtime_control"] = control
     # PR-1 — stillborn surface. If the runtime dir has a
     # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
     # session), echo it so callers don't have to also poll a separate

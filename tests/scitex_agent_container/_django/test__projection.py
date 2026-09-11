@@ -46,6 +46,29 @@ def test_row_alive_is_good_tone():
     assert tone == "good"
 
 
+def test_stale_latch_is_distinct_from_alive_idle_state():
+    # Arrange
+    status = {
+        **ALIVE,
+        "runtime_control": {
+            "turn_admission": "stale_latched",
+            "detail": "provider stale circuit breaker latched after 5 attempts",
+        },
+    }
+    # Act
+    projected = project_row({"name": "alpha"}, status)
+    # Assert
+    assert (
+        projected["state_label"],
+        projected["state_tone"],
+        projected["state_detail"],
+    ) == (
+        "Provider stale-latched",
+        "warn",
+        "provider stale circuit breaker latched after 5 attempts",
+    )
+
+
 def test_row_dead_agent_is_bad_tone():
     # Arrange
     row = {"name": "beta"}

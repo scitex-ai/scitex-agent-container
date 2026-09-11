@@ -25,6 +25,8 @@ _PRESENTATION: dict[str, tuple[str, str]] = {
     "wedged": ("Wedged", "warn"),
     "startup_failed": ("Startup failed", "warn"),
     "startup_failed_superseded": ("Recovered", "warn"),
+    "stale_latched": ("Provider stale-latched", "warn"),
+    "recovering": ("Provider recovering", "warn"),
     "unknown": ("Unknown", "warn"),
     "not_started": ("Not started", "muted"),
     "ambiguous_registry": ("Ambiguous registry", "warn"),
@@ -74,6 +76,14 @@ def _state(row: dict[str, Any], status: dict[str, Any]) -> tuple[str, str]:
     ``startup_failed``), then a row-level ``status``. Empty/unknown falls
     through to the explicit ``Unknown`` state.
     """
+    # Turn admission is orthogonal to process liveness.  Show a live but
+    # stale-latched runtime before the ordinary ALIVE/READY projection.
+    for source in (status, row):
+        control = source.get("runtime_control")
+        if isinstance(control, dict):
+            admission = _text(control.get("turn_admission")).lower()
+            if admission in {"stale_latched", "recovering"}:
+                return _PRESENTATION[admission]
     for source in (status, row):
         verdict = _liveness_verdict(source).lower()
         if verdict:
@@ -114,7 +124,13 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         label, tone, detail = err
     else:
         label, tone = _state(row, status)
-        detail = ""
+        control = status.get("runtime_control")
+        detail = (
+            _text(control.get("detail"))
+            if isinstance(control, dict)
+            and control.get("turn_admission") in {"stale_latched", "recovering"}
+            else ""
+        )
     a2a_port = row.get("a2a_port", status.get("a2a_port"))
     turn_url = row.get("turn_url", status.get("turn_url"))
     host = _node(row, turn_url)

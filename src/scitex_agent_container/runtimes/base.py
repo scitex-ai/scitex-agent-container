@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from ..config import AgentConfig
 
@@ -111,5 +112,29 @@ class RuntimeBase(ABC):
         this ``None``. ``None`` reads downstream as "cannot verify", which
         is honest; a guessed name would read as a verified one.
         """
+        del config
+        return None
+
+    def control_state(self, config: AgentConfig) -> dict[str, Any] | None:
+        """Return an optional, harness-neutral turn-admission observation.
+
+        Most runtimes have no additional control-plane state beyond liveness,
+        so absence is the honest default.  Adapters may publish states such as
+        ``stale_latched`` without teaching SAC status about harness internals.
+        """
+        del config
+        return None
+
+    def recover_turn_admission(self, config: AgentConfig) -> bool | None:
+        """Ask an adapter to recover its current session in place.
+
+        ``None`` means unsupported.  Implementations must not restart the
+        process or replace session/incarnation identity.
+        """
+        del config
+        return None
+
+    def suspend_autonomous_turns(self, config: AgentConfig) -> bool | None:
+        """Pause adapter-owned autonomous admission; ``None`` if unsupported."""
         del config
         return None
