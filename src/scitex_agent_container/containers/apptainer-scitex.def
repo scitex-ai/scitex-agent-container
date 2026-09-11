@@ -316,7 +316,7 @@ From: ./sac-base.sif
         # ALREADY satisfied by the inherited base venv, so without it the
         # providers freeze at base's build and a routine rebake is a no-op.
         uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-dev>=0.56.8" \
+            "scitex-dev>=0.59.1" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -409,7 +409,7 @@ From: ./sac-base.sif
         # already satisfies never re-resolves, so without it these providers
         # freeze at base's build and the routine rebake ships stale.
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-dev>=0.56.8" \
+            "scitex-dev>=0.59.1" \
             "scitex-writer>=2.29.0" \
             "scitex-audio>=0.3.0" \
             "scitex-cv>=0.2.0" \
@@ -561,7 +561,14 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 # upstream may rename or inline it with no deprecation, and that would land
 # here as a dead bake far from scitex-dev's repo. If this line is what broke
 # the build, read scitex_dev/store/_store.py before suspecting the image.
+from scitex_dev.store import Store
 from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+
+# 0.59.1 is the atomic cross-process NEW_RECORD / revision-CAS contract used
+# by the durable turn inbox. The older symbol above proves only seq retry.
+if not callable(getattr(Store, "_materialise_atomic", None)):
+    print("FATAL: scitex-dev lacks atomic cross-process Store CAS")
+    sys.exit(1)
 
 
 

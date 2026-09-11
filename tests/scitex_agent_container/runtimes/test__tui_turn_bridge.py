@@ -342,6 +342,24 @@ def test_post_v1_turn_returns_200_delivered_true(bridge_factory) -> None:
     assert status == 200 and body.get("delivered") is True
 
 
+def test_post_reports_unknown_acceptance_as_service_unavailable(bridge_factory) -> None:
+    # Arrange
+    def unavailable(text, **kwargs):
+        raise bridge.TurnInboxUnavailable(
+            "store timed out", message_id="dispatch-7", accepted=None
+        )
+
+    port = bridge_factory(unavailable)
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": "persist me"})
+    # Assert
+    assert (status, body["accepted"], body["message_id"]) == (
+        503,
+        None,
+        "dispatch-7",
+    )
+
+
 def test_post_named_turn_route_delivers_for_this_agent(bridge_factory) -> None:
     # Arrange
     received: list[str] = []
@@ -469,6 +487,71 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
     bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
     # Assert
     assert str(_PORT) in recorded["argv"]
+
+
+def test_start_turn_bridge_spawns_with_project_database_identity(
+    tmp_path: Path, isolated_home: Path, env_save_restore
+) -> None:
+    # Arrange
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    env_save_restore.set("PGUSER", "ywatanabe__cli")
+    env_save_restore.set("PGPASSFILE", "/host/operator.pgpass")
+    recorded: dict = {}
+
+    def fake_spawn(argv, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(pid=_PID)
+
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT),
+        apptainer=SimpleNamespace(raw_args=[]),
+        env={},
+        labels={"project": "scitex-hub"},
+        name="scitex-hub-signup",
+        config_path=str(spec),
+    )
+    # Act
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
+    # Assert
+    assert (recorded["env"]["PGUSER"], recorded["env"]["PGPASSFILE"]) == (
+        "ywatanabe__scitex-hub",
+        "/host/operator.pgpass",
+    )
+
+
+def test_start_turn_bridge_preserves_explicit_role_but_uses_host_passfile(
+    tmp_path: Path, isolated_home: Path, env_save_restore
+) -> None:
+    # Arrange
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    recorded: dict = {}
+    env_save_restore.set("PGPASSFILE", str(isolated_home / ".pgpass"))
+
+    def fake_spawn(argv, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(pid=_PID)
+
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT),
+        apptainer=SimpleNamespace(raw_args=[]),
+        env={"PGUSER": "provisioned_project", "PGPASSFILE": "/project/.pgpass"},
+        labels={"project": "scitex-hub"},
+        name="scitex-hub-signup",
+        config_path=str(spec),
+    )
+    # Act
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
+    # Assert
+    assert (recorded["env"]["PGUSER"], recorded["env"]["PGPASSFILE"]) == (
+        "provisioned_project",
+        str(isolated_home / ".pgpass"),
+    )
 
 
 def test_start_turn_bridge_returns_spawned_pid(
@@ -603,6 +686,366 @@ def test_CONTROL_a_DELIVERED_turn_raises_nothing() -> None:
 
     # Assert
     assert result is None
+
+
+class _FakeMessageInbox:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def accept_message(self, **values):
+        requested_id = values.get("message_id")
+        existing = next(
+            (
+                row
+                for row in self.rows
+                if requested_id and row["message_id"] == requested_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return {
+                "message_id": existing["message_id"],
+                "status": existing["status"],
+            }
+        row = {
+            **values,
+            "message_id": values.get("message_id") or "generated-1",
+            "status": "accepted",
+            "attempts": 0,
+        }
+        self.rows.append(row)
+        return {"message_id": row["message_id"], "status": "accepted"}
+
+    def claim_next_message(self, *, target_agent, lease_owner=None):
+        for row in self.rows:
+            if row["target_agent"] == target_agent and row["status"] == "accepted":
+                row["status"] = "delivering"
+                row["attempts"] += 1
+                row["lease_owner"] = lease_owner
+                return dict(row)
+        return None
+
+    def release_message(self, message_id, *, lease_owner, error=""):
+        row = next(row for row in self.rows if row["message_id"] == message_id)
+        row.update(status="accepted", last_error=error)
+        return True
+
+    def mark_delivered(self, message_id, *, lease_owner, incarnation_id=""):
+        row = next(row for row in self.rows if row["message_id"] == message_id)
+        row.update(status="delivered", incarnation_id=incarnation_id)
+        return True
+
+
+def test_queued_consumer_retains_a_turn_when_the_pane_is_busy() -> None:
+    # Arrange
+    queue = _FakeMessageInbox()
+    runtime = SimpleNamespace(
+        send_turn=lambda config, text, wait_ready: False,
+        why_not_deliverable=lambda config: "busy",
+    )
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"), runtime=runtime, queue_api=queue
+    )
+
+    # Act
+    result = consumer.accept("do this", dispatch_id="d1")
+    # Assert
+    assert (result["status"], queue.rows[0]["status"], queue.rows[0]["attempts"]) == (
+        "accepted",
+        "accepted",
+        0,
+    )
+
+
+def test_queued_consumer_delivers_the_retained_turn_after_idle() -> None:
+    # Arrange
+    queue = _FakeMessageInbox()
+    runtime = SimpleNamespace(
+        send_turn=lambda config, text, wait_ready: True,
+        why_not_deliverable=lambda config: None,
+    )
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"), runtime=runtime, queue_api=queue
+    )
+    consumer.accept("do this", dispatch_id="d1")
+
+    # Act
+    delivered_id = consumer.drain_once()
+    # Assert
+    assert delivered_id == "d1" and queue.rows[0]["status"] == "delivered"
+
+
+def test_current_incarnation_prefers_the_inherited_launch_id(env_save_restore) -> None:
+    # Arrange
+    env_save_restore.set("SAC_INSTANCE_UUID", "incarnation-7")
+    # Act
+    result = bridge._current_incarnation_id(SimpleNamespace(name="scholar"))
+    # Assert
+    assert result == "incarnation-7"
+
+
+def test_retry_of_delivered_message_is_idempotent() -> None:
+    # Arrange
+    queue = _FakeMessageInbox()
+    sent: list[str] = []
+    runtime = SimpleNamespace(
+        send_turn=lambda config, text, wait_ready: sent.append(text) or True,
+        why_not_deliverable=lambda config: None,
+    )
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"), runtime=runtime, queue_api=queue
+    )
+
+    # Act
+    first = consumer.accept("do this", dispatch_id="d1")
+    consumer.drain_once()
+    second = consumer.accept("do this", dispatch_id="d1")
+
+    # Assert
+    assert (first["status"], second["status"], sent) == (
+        "accepted",
+        "delivered",
+        ["do this"],
+    )
+
+
+def test_blocked_poll_does_not_block_or_duplicate_durable_http_acceptance(
+    bridge_factory,
+) -> None:
+    # Arrange
+    claim_started = threading.Event()
+    release_claim = threading.Event()
+
+    class BlockingClaimInbox(_FakeMessageInbox):
+        def claim_next_message(self, *, target_agent, lease_owner=None):
+            claim_started.set()
+            release_claim.wait(timeout=2)
+            return None
+
+    queue = BlockingClaimInbox()
+    runtime = SimpleNamespace(why_not_deliverable=lambda config: None)
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"), runtime=runtime, queue_api=queue
+    )
+    port = bridge_factory(consumer.accept, agent_name="scholar")
+    poll = threading.Thread(target=consumer.drain_once)
+    poll.start()
+    if not claim_started.wait(timeout=1):
+        raise RuntimeError("claim thread did not reach the blocking store seam")
+    started = time.monotonic()
+    # Act
+    first_status, first = _post(
+        port,
+        "/v1/turn",
+        {"text": "continue", "dispatch_id": "dispatch-9"},
+    )
+    second_status, second = _post(
+        port,
+        "/v1/turn",
+        {"text": "continue", "dispatch_id": "dispatch-9"},
+    )
+    elapsed = time.monotonic() - started
+    release_claim.set()
+    poll.join(timeout=1)
+    # Assert
+    assert (
+        first_status,
+        second_status,
+        first["message_id"],
+        second["message_id"],
+        len(queue.rows),
+        elapsed < 0.5,
+    ) == (
+        202,
+        202,
+        "dispatch-9",
+        "dispatch-9",
+        1,
+        True,
+    )
+
+
+def test_store_timeout_returns_bounded_503_and_retry_stays_idempotent(
+    bridge_factory,
+) -> None:
+    # Arrange
+    release_accept = threading.Event()
+    accept_finished = threading.Event()
+
+    class BlockingAcceptInbox(_FakeMessageInbox):
+        def accept_message(self, **values):
+            release_accept.wait(timeout=2)
+            receipt = super().accept_message(**values)
+            accept_finished.set()
+            return receipt
+
+    queue = BlockingAcceptInbox()
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"),
+        runtime=SimpleNamespace(),
+        queue_api=queue,
+        accept_timeout_seconds=0.02,
+    )
+    port = bridge_factory(consumer.accept, agent_name="scholar")
+    started = time.monotonic()
+    # Act
+    first_status, first = _post(
+        port,
+        "/v1/turn",
+        {"text": "continue", "dispatch_id": "dispatch-10"},
+    )
+    elapsed = time.monotonic() - started
+    release_accept.set()
+    if not accept_finished.wait(timeout=1):
+        raise RuntimeError("timed-out store worker did not complete after release")
+    second_status, second = _post(
+        port,
+        "/v1/turn",
+        {"text": "continue", "dispatch_id": "dispatch-10"},
+    )
+    # Assert
+    assert (
+        first_status,
+        first["accepted"],
+        first["message_id"],
+        second_status,
+        second["message_id"],
+        len(queue.rows),
+        elapsed < 0.5,
+    ) == (503, None, "dispatch-10", 202, "dispatch-10", 1, True)
+
+
+def test_real_store_late_commit_retry_by_message_id_injects_exactly_once(
+    bridge_factory, pg_schema: str
+) -> None:
+    # Arrange
+    from scitex_agent_container._state import message_inbox
+
+    release_first = threading.Event()
+    committed = threading.Event()
+    first_call = True
+
+    class LateFirstCommit:
+        def accept_message(self, **values):
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                release_first.wait(timeout=2)
+            receipt = message_inbox.accept_message(**values)
+            committed.set()
+            return receipt
+
+        claim_next_message = staticmethod(message_inbox.claim_next_message)
+        release_message = staticmethod(message_inbox.release_message)
+        mark_delivered = staticmethod(message_inbox.mark_delivered)
+
+    injected: list[str] = []
+    runtime = SimpleNamespace(
+        send_turn=lambda config, text, wait_ready: injected.append(text) or True,
+        why_not_deliverable=lambda config: None,
+    )
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"),
+        runtime=runtime,
+        queue_api=LateFirstCommit(),
+        accept_timeout_seconds=0.5,
+    )
+    port = bridge_factory(consumer.accept, agent_name="scholar")
+
+    # Act
+    first_status, first = _post(
+        port, "/v1/turn", {"text": "one job", "dispatch_id": "late-1"}
+    )
+    release_first.set()
+    if not committed.wait(timeout=2):
+        raise RuntimeError("real PostgreSQL late commit did not finish")
+    retry_status, retry = _post(
+        port, "/v1/turn", {"text": "one job", "message_id": first["message_id"]}
+    )
+    consumer.drain_once()
+    consumer.drain_once()
+
+    # Assert
+    assert (
+        first_status,
+        retry_status,
+        retry["message_id"],
+        len(message_inbox.list_messages(target_agent="scholar")),
+        injected,
+    ) == (503, 202, "late-1", 1, ["one job"])
+
+
+def test_same_message_id_with_different_content_returns_nonretryable_409(
+    bridge_factory, pg_schema: str
+) -> None:
+    # Arrange
+    from scitex_agent_container._state import message_inbox
+
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"),
+        runtime=SimpleNamespace(),
+        queue_api=message_inbox,
+    )
+    port = bridge_factory(consumer.accept, agent_name="scholar")
+    _post(port, "/v1/turn", {"text": "first", "message_id": "collision"})
+    # Act
+    status, body = _post(
+        port, "/v1/turn", {"text": "different", "message_id": "collision"}
+    )
+    # Assert
+    assert (status, body["retryable"], body["message_id"]) == (
+        409,
+        False,
+        "collision",
+    )
+
+
+def test_disconnected_request_handler_exits_after_bounded_store_timeout(
+    bridge_factory,
+) -> None:
+    # Arrange
+    release_store = threading.Event()
+    entered = threading.Event()
+    handler: list[threading.Thread] = []
+
+    class WedgedInbox(_FakeMessageInbox):
+        def accept_message(self, **values):
+            release_store.wait(timeout=2)
+            return super().accept_message(**values)
+
+    consumer = bridge.QueuedTurnConsumer(
+        SimpleNamespace(name="scholar"),
+        runtime=SimpleNamespace(),
+        queue_api=WedgedInbox(),
+        accept_timeout_seconds=0.02,
+    )
+
+    def record_handler(text, **kwargs):
+        handler.append(threading.current_thread())
+        entered.set()
+        return consumer.accept(text, **kwargs)
+
+    port = bridge_factory(record_handler, agent_name="scholar")
+    body = json.dumps({"text": "cancelled", "message_id": "gone"}).encode()
+    request = (
+        b"POST /v1/turn HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+    client = socket.create_connection(("127.0.0.1", port), timeout=1)
+
+    # Act
+    client.sendall(request)
+    client.close()
+    if not entered.wait(timeout=1):
+        raise RuntimeError("request never entered the bridge handler")
+    handler[0].join(timeout=0.5)
+    release_store.set()
+
+    # Assert
+    assert handler[0].is_alive() is False
 
 
 # ---------------------------------------------------------------------------

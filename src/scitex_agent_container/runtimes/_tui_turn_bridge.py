@@ -3,12 +3,14 @@
 Closes the wake-on-push gap for interactive TUI agents. The SDK runtime
 serves ``/v1/turn`` from its in-SIF runner so the ``sac mcp channel``
 subscriber's wake POST (``_mcp/_channel_wake._wake_turn``) DRIVES an idle
-agent to act; the TUI runtime runs ``claude`` in tmux with no in-process
+agent to act; the TUI runtime runs a harness in tmux with no in-process
 HTTP server, so that POST hit a dead port and the message never woke it.
 This module gives TUI agents the SAME endpoint host-side (the in-SIF
 subscriber POSTs to ``127.0.0.1:<port>`` — apptainer shares the host net
 namespace): on ``POST /v1/turn`` it injects ``text`` into the tmux session
-via :meth:`TuiSessionRuntime.send_turn` and returns ``200`` once delivered.
+through a PostgreSQL inbox, returns ``202`` only after durable acceptance,
+and lets one background consumer inject it through
+:meth:`TuiSessionRuntime.send_turn` when the pane is ready.
 
 Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
 unchanged:
@@ -17,12 +19,14 @@ unchanged:
     POST /agents/<name>/turn           (canonical sac namespace)
     POST /agents/<name>/send           (A2A v1 alias)
     Content-Type: application/json
-    {"text": "...", "from_agent": "<peer>"?, "dispatch_id": "<id>"?}
+    {"text": "...", "from_agent": "<peer>"?,
+     "dispatch_id": "<id>"? | "message_id": "<id>"?}
 
-    200 {"text": "", "delivered": true, "mode": "tui-tmux-inject", "agent": "<name>"}
+    202 {"accepted": true, "message_id": "<stable retry id>", ...}
     400 {"error": "missing or empty 'text' field"}        # schema mismatch, loud
+    409 {"error": "...different content", "retryable": false}
     404 {"error": "..."}                                  # unknown route / wrong agent
-    502 {"error": "tui inject failed: ..."}               # session gone / input wedged
+    503 {"accepted": null|false, "message_id": "..."}     # bounded store failure
 
 Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
 :mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
@@ -50,11 +54,16 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
+import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from queue import Empty, Queue
 from typing import IO, Any, Callable
 
+from .._state.message_inbox import MessageConflictError
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
     DEFAULT_HOST,
@@ -75,6 +84,84 @@ from ._tui_turn_bridge_port import (
 )
 
 log = logging.getLogger(__name__)
+
+DEFAULT_ACCEPT_TIMEOUT_SECONDS = 5.0
+DEFAULT_ACCEPT_WORKERS = 4
+HTTP_IO_TIMEOUT_SECONDS = 10.0
+
+
+class TurnInboxUnavailable(RuntimeError):
+    """Durable inbox acceptance did not produce a bounded answer."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        message_id: str,
+        accepted: bool | None,
+    ) -> None:
+        super().__init__(message)
+        self.message_id = message_id
+        self.accepted = accepted
+
+
+class _BoundedStoreCalls:
+    """Run a small bounded set of interrupt-resistant store operations."""
+
+    def __init__(self, capacity: int) -> None:
+        self._slots = threading.BoundedSemaphore(max(1, int(capacity)))
+
+    def call(
+        self,
+        fn: Callable[[], Any],
+        *,
+        timeout_seconds: float,
+        message_id: str,
+    ) -> Any:
+        if not self._slots.acquire(blocking=False):
+            raise TurnInboxUnavailable(
+                "durable inbox is unavailable: all bounded acceptance workers "
+                "are still waiting for the PostgreSQL store",
+                message_id=message_id,
+                accepted=False,
+            )
+
+        result: Queue[tuple[bool, Any]] = Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                result.put((True, fn()))
+            except Exception as exc:  # stx-allow: fallback (reason: carry the concrete store failure back to the waiting HTTP handler without losing its type or traceback text)
+                result.put((False, exc))
+            finally:
+                self._slots.release()
+
+        threading.Thread(
+            target=invoke,
+            name="sac-message-inbox-accept",
+            daemon=True,
+        ).start()
+        try:
+            succeeded, value = result.get(timeout=max(0.001, timeout_seconds))
+        except Empty as exc:
+            raise TurnInboxUnavailable(
+                "durable inbox acceptance timed out while waiting for the "
+                "PostgreSQL store; commit state is unknown, retry with the "
+                "same message_id",
+                message_id=message_id,
+                accepted=None,
+            ) from exc
+        if succeeded:
+            return value
+        if isinstance(value, MessageConflictError):
+            raise value
+        raise TurnInboxUnavailable(
+            "durable inbox write failed "
+            f"({type(value).__name__}); commit state is unknown, retry with "
+            "the same message_id",
+            message_id=message_id,
+            accepted=None,
+        ) from value
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +298,28 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
 
     def _respond(self, code: int, obj: dict) -> None:
         body = json.dumps(obj).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The caller may cancel its local ssh while the bounded durable
+            # write is still resolving.  Once that bound expires there is no
+            # response peer left; close this handler's socket explicitly and
+            # let ThreadingMixIn reap the daemon request thread.  The durable
+            # message id still makes a later retry idempotent.
+            self.close_connection = True
+            log.info(
+                "tui-turn-bridge: requester disconnected before response "
+                "agent=%s status=%d",
+                self._srv().agent_name,
+                code,
+            )
+        finally:
+            self.close_connection = True
 
     def do_GET(self) -> None:  # noqa: N802 (stdlib handler contract)
         if self.path.split("?", 1)[0].rstrip("/") == "/health":
@@ -225,10 +329,15 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 (stdlib handler contract)
         srv = self._srv()
+        self.connection.settimeout(HTTP_IO_TIMEOUT_SECONDS)
         # Drain the request body FIRST (even on a route miss) so a 404
         # never leaves an unread body on the socket.
         length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            raw = self.rfile.read(length) if length > 0 else b""
+        except socket.timeout:
+            self.close_connection = True
+            return
         if not is_turn_route(self.path, srv.agent_name):
             self._respond(404, {"error": f"no turn route {self.path!r}"})
             return
@@ -247,26 +356,68 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         # for an operator send / boot turn → no report is owed.
         raw_from = body.get("from_agent") if isinstance(body, dict) else None
         raw_did = body.get("dispatch_id") if isinstance(body, dict) else None
+        raw_mid = body.get("message_id") if isinstance(body, dict) else None
         # An A2A envelope carries these under ``params.metadata`` instead of at
         # the root; the flat form still wins when both are present.
         raw_from = raw_from or envelope_meta.get("from_agent")
         raw_did = raw_did or envelope_meta.get("dispatch_id")
+        raw_mid = raw_mid or envelope_meta.get("message_id")
         from_agent = raw_from if isinstance(raw_from, str) and raw_from else None
+        if (
+            isinstance(raw_did, str)
+            and raw_did
+            and isinstance(raw_mid, str)
+            and raw_mid
+            and raw_did != raw_mid
+        ):
+            self._respond(
+                400, {"error": "dispatch_id and message_id identify different messages"}
+            )
+            return
+        raw_did = raw_did or raw_mid
         dispatch_id = raw_did if isinstance(raw_did, str) and raw_did else None
         try:
-            srv.on_turn(text, from_agent=from_agent, dispatch_id=dispatch_id)
-        except Exception as exc:  # stx-allow: fallback (reason: surface inject failure as 502 instead of crashing the bridge; the wake POST's raise_for_status then propagates it loud to the channel subscriber)
+            outcome = srv.on_turn(text, from_agent=from_agent, dispatch_id=dispatch_id)
+        except MessageConflictError as exc:
+            self._respond(
+                409,
+                {
+                    "error": str(exc),
+                    "retryable": False,
+                    "message_id": dispatch_id,
+                    "agent": srv.agent_name,
+                },
+            )
+            return
+        except TurnInboxUnavailable as exc:
+            self._respond(
+                503,
+                {
+                    "error": str(exc),
+                    "accepted": exc.accepted,
+                    "message_id": exc.message_id,
+                    "retry_safe_with_same_message_id": True,
+                    "agent": srv.agent_name,
+                },
+            )
+            return
+        except Exception as exc:  # stx-allow: fallback (reason: surface adapter failure as 502 instead of crashing the bridge; the caller receives a truthful non-2xx and the request socket is closed)
             self._respond(502, {"error": f"tui inject failed: {exc}"})
             return
-        self._respond(
-            200,
-            {
-                "text": "",
-                "delivered": True,
-                "mode": "tui-tmux-inject",
-                "agent": srv.agent_name,
-            },
-        )
+        status = outcome.get("status") if isinstance(outcome, dict) else None
+        accepted = status in {"accepted", "delivering", "delivered"}
+        delivered = status == "delivered" or not accepted
+        pending = accepted and not delivered
+        response = {
+            "text": "",
+            "delivered": delivered,
+            "accepted": accepted or delivered,
+            "mode": "sac-message-inbox" if accepted else "tui-tmux-inject",
+            "agent": srv.agent_name,
+        }
+        if isinstance(outcome, dict):
+            response.update(outcome)
+        self._respond(202 if pending else 200, response)
 
 
 # ---------------------------------------------------------------------------
@@ -391,9 +542,9 @@ def _build_on_turn(
     if (
         runtime is None
     ):  # pragma: no cover - trivial default-construct of the real runtime
-        from .tui_session import TuiSessionRuntime
+        from .._lifecycle._runtime_select import _get_runtime
 
-        runtime = TuiSessionRuntime()
+        runtime = _get_runtime(config)
 
     def on_turn(
         text: str,
@@ -484,6 +635,172 @@ def _build_on_turn(
     return on_turn
 
 
+class QueuedTurnConsumer:
+    """Durable SAC inbox consumer for a tmux-backed harness adapter."""
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        *,
+        runtime: Any | None = None,
+        queue_api: Any | None = None,
+        poll_seconds: float = 5.0,
+        accept_timeout_seconds: float = DEFAULT_ACCEPT_TIMEOUT_SECONDS,
+        accept_workers: int = DEFAULT_ACCEPT_WORKERS,
+    ) -> None:
+        if runtime is None:
+            from .._lifecycle._runtime_select import _get_runtime
+
+            runtime = _get_runtime(config)
+        if queue_api is None:
+            from .._state import message_inbox as queue_api
+
+        self.config = config
+        self.runtime = runtime
+        self.queue = queue_api
+        self.poll_seconds = poll_seconds
+        self.accept_timeout_seconds = accept_timeout_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._accept_calls = _BoundedStoreCalls(accept_workers)
+        self.lease_owner = str(uuid.uuid4())
+
+    def accept(
+        self,
+        text: str,
+        *,
+        from_agent: str | None = None,
+        dispatch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist first and return without waiting behind the poll thread.
+
+        Delivery is deliberately owned by the one background consumer. The
+        old opportunistic drain held one lock across ``claim_next_message``;
+        when PostgreSQL stopped answering, every HTTP handler waited behind
+        that lock before it could persist anything. Acceptance now has an
+        independent bounded lane and reports success only after the write
+        returns. A generated id is chosen before the write so a timed-out
+        caller can safely retry the same possibly-committed operation.
+        """
+        message_id = (dispatch_id or "").strip() or str(uuid.uuid4())
+        receipt = self._accept_calls.call(
+            lambda: self.queue.accept_message(
+                target_agent=self.config.name,
+                payload=text,
+                sender_agent=from_agent,
+                message_id=message_id,
+            ),
+            timeout_seconds=self.accept_timeout_seconds,
+            message_id=message_id,
+        )
+        return {
+            **receipt,
+            "delivered": receipt.get("status") == "delivered",
+        }
+
+    def drain_once(self) -> str | None:
+        """Try one FIFO delivery; retain the message when the pane is busy.
+
+        Production calls this only from the single consumer thread. No lock
+        spans the store query: HTTP acceptance remains independent even if
+        the database poll is stuck in kernel or driver code.
+        """
+        # Readiness is incarnation-local adapter state, so check it before
+        # claiming durable work.  Claim/release on every poll turned one busy
+        # turn into one PostgreSQL revision per second without improving
+        # delivery.  A final readiness check still happens inside send_turn.
+        explain = getattr(self.runtime, "why_not_deliverable", None)
+        if callable(explain) and explain(self.config):
+            return None
+        message = self.queue.claim_next_message(
+            target_agent=self.config.name, lease_owner=self.lease_owner
+        )
+        if message is None:
+            return None
+        message_id = str(message["message_id"])
+        try:
+            delivered = self.runtime.send_turn(
+                self.config, str(message["payload"]), wait_ready=False
+            )
+        except Exception as exc:  # stx-allow: fallback (reason: adapter failure must leave the already-accepted message retryable)
+            self.queue.release_message(
+                message_id, lease_owner=self.lease_owner, error=str(exc)
+            )
+            return None
+        if not delivered:
+            reason = explain(self.config) if callable(explain) else "adapter refused"
+            self.queue.release_message(
+                message_id,
+                lease_owner=self.lease_owner,
+                error=str(reason or "adapter refused"),
+            )
+            return None
+
+        incarnation_id = _current_incarnation_id(self.config)
+        self.queue.mark_delivered(
+            message_id,
+            lease_owner=self.lease_owner,
+            incarnation_id=incarnation_id,
+        )
+        from_agent = str(message.get("sender_agent") or "")
+        if from_agent:
+            try:
+                from ._tui_outbound import record_dispatch
+
+                record_dispatch(
+                    agent=self.config.name,
+                    from_agent=from_agent,
+                    dispatch_id=message_id,
+                )
+            except Exception as exc:  # stx-allow: fallback (reason: delivery succeeded; a completion-ledger failure must not put the message back and duplicate the turn)
+                log.warning(
+                    "tui-outbound: delivered message %s but could not record completion correlation: %s",
+                    message_id,
+                    exc,
+                )
+        return message_id
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.poll_seconds):
+            try:
+                self.drain_once()
+            except Exception:  # stx-allow: fallback (reason: one transient store/adapter error must not permanently kill durable inbox consumption)
+                log.exception(
+                    "message-inbox consumer poll failed for %s", self.config.name
+                )
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"sac-message-inbox-{self.config.name}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self.poll_seconds * 2))
+
+
+def _current_incarnation_id(config: AgentConfig) -> str:
+    """Resolve the SAC launch identity adopted by the target TUI.
+
+    The bridge is a host-side sibling, not a child of the process inside the
+    container, so an incarnation environment variable is not guaranteed to be
+    present.  SAC's launch marker is the authoritative local hand-off.
+    """
+    inherited = os.environ.get("SAC_INSTANCE_UUID", "").strip()
+    if inherited:
+        return inherited
+    from .._runners._session_state import read_instance_id
+    from .tui_session import state_dir_for_config
+
+    return read_instance_id(state_dir_for_config(config)) or ""
+
+
 def main(
     argv: list[str] | None = None,
 ) -> int:  # pragma: no cover - subprocess entry: parses args, loads the spec, and blocks in serve(); exercised end-to-end (the launcher spawns it), not unit
@@ -500,12 +817,17 @@ def main(
     from ..config import load_config
 
     config = load_config(args.config_path)
-    serve(
-        host=args.host or resolved_a2a_host(config),
-        port=args.port,
-        on_turn=_build_on_turn(config),
-        agent_name=config.name,
-    )
+    consumer = QueuedTurnConsumer(config)
+    consumer.start()
+    try:
+        serve(
+            host=args.host or resolved_a2a_host(config),
+            port=args.port,
+            on_turn=consumer.accept,
+            agent_name=config.name,
+        )
+    finally:
+        consumer.stop()
     return 0
 
 
@@ -529,6 +851,8 @@ __all__ = [
     "LOG_FILENAME",
     "MODULE_PATH",
     "DEFAULT_HOST",
+    "TurnInboxUnavailable",
+    "QueuedTurnConsumer",
     "_pid_path",
     "_state_dir",
 ]

@@ -14,6 +14,7 @@ import ast
 from pathlib import Path
 
 import pytest
+import tomllib
 
 import scitex_agent_container
 
@@ -22,6 +23,7 @@ PROBE = (
     / "containers"
     / "sif_symbol_probe.py"
 )
+PROJECT = PROBE.parents[3] / "pyproject.toml"
 
 
 def _probe_source() -> str:
@@ -143,6 +145,30 @@ def test_probe_checks_the_seq_allocation_symbol() -> None:
     from_imports = _from_imports(source)
     # Assert
     assert ("scitex_dev.store._store", "_SEQ_ALLOCATION_ATTEMPTS") in from_imports
+
+
+def test_atomic_store_cas_floor_is_a_runtime_dependency() -> None:
+    # Arrange
+    project = tomllib.loads(PROJECT.read_text(encoding="utf-8"))["project"]
+    # Act
+    dependency_is_runtime = "scitex-dev>=0.59.1" in project["dependencies"]
+    # Assert
+    assert dependency_is_runtime
+
+
+def test_probe_checks_the_atomic_store_cas_capability() -> None:
+    # Arrange — the seq-allocation symbol predates cross-process NEW_RECORD / revision
+    # CAS by several releases. The artifact gate must therefore reject an
+    # installed artifact lacking that stronger contract even when the old
+    # symbol is present.
+    source = _probe_source()
+    # Act
+    gate = (
+        'getattr(Store, "_materialise_atomic", None)' in source,
+        "atomic cross-process Store CAS" in source,
+    )
+    # Assert
+    assert gate == (True, True)
 
 
 def test_probe_fails_loud_on_a_bad_sif() -> None:
@@ -322,4 +348,16 @@ def test_every_probe_copy_carries_the_seq_allocation_symbol(path) -> None:
     assert present, (
         f"{path.name} embeds the symbol probe but not the 0.56.6 "
         "seq-allocation check - this copy still passes on a 0.56.5 image"
+    )
+
+
+@pytest.mark.parametrize("path", EMBEDS, ids=lambda p: p.name)
+def test_every_probe_copy_gates_the_atomic_store_cas_release(path) -> None:
+    # Arrange
+    source = path.read_text(encoding="utf-8")
+    # Act
+    present = 'getattr(Store, "_materialise_atomic", None)' in source
+    # Assert
+    assert present, (
+        f"{path.name} still admits scitex-dev without atomic Store CAS"
     )

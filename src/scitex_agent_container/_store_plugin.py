@@ -335,6 +335,35 @@ INCARNATIONS = Schema.build(
     },
 )
 
+# Durable transport acceptance is fleet truth: any bridge may accept or
+# recover a message, and every bridge must observe one shared lifecycle.
+# The envelope is write-once; only delivery state and its lease may move.
+MESSAGE_INBOX = Schema.build(
+    "message_inbox",
+    {
+        "message_id": _identity(FieldKind.TEXT),
+        "target_agent": _data(
+            FieldKind.TEXT, MergeRule.IMMUTABLE, required=True, indexed=True
+        ),
+        "sender_agent": _data(FieldKind.TEXT, MergeRule.IMMUTABLE),
+        "payload": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "content_type": _data(FieldKind.TEXT, MergeRule.IMMUTABLE, required=True),
+        "accepted_at": _data(FieldKind.REAL, MergeRule.IMMUTABLE, required=True),
+        "status": _data(
+            FieldKind.TEXT,
+            MergeRule.LAST_WRITER_WINS,
+            required=True,
+            indexed=True,
+        ),
+        "attempts": _data(FieldKind.INTEGER, MergeRule.MAX, required=True),
+        "last_attempt_at": _data(FieldKind.REAL, MergeRule.MAX),
+        "lease_owner": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "delivered_at": _data(FieldKind.REAL, MergeRule.MAX),
+        "last_error": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "incarnation_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+    },
+)
+
 
 # The two ACL tables. Both are FLEET truth, and both are declared rather
 # than deferred because getting an ACL wrong is a PRIVILEGE bug: an ACL
@@ -424,6 +453,7 @@ CLASSIFIED: dict[str, tuple[Schema, Truth, WriterPolicy]] = {
     "sac_lineage": (LINEAGE, Truth.HISTORY, WriterPolicy.MULTI_WRITER),
     "sac_instances": (INSTANCES, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
     "sac_incarnations": (INCARNATIONS, Truth.PER_HOST, WriterPolicy.SINGLE_WRITER),
+    "message_inbox": (MESSAGE_INBOX, Truth.FLEET, WriterPolicy.MULTI_WRITER),
 }
 
 
@@ -437,6 +467,7 @@ SOURCE_TABLE: dict[str, str] = {
     "sac_lineage": "lineage",
     "sac_instances": "instances",
     "sac_incarnations": "incarnations",
+    "message_inbox": "message_inbox",
 }
 
 
@@ -576,6 +607,7 @@ __all__ = [
     "COMMS_NODES",
     "INCARNATIONS",
     "INSTANCES",
+    "MESSAGE_INBOX",
     "LINEAGE",
     "NEVER_SYNCED",
     "Truth",
