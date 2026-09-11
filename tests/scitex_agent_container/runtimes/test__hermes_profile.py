@@ -10,7 +10,11 @@ import yaml
 from scitex_agent_container._listen import _config as listen_config
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._provider_types import ProviderSpec
-from scitex_agent_container.runtimes import _apptainer_build, _fleet_env
+from scitex_agent_container.runtimes import (
+    _apptainer_build,
+    _fleet_env,
+    _pg_identity_env,
+)
 from scitex_agent_container.runtimes import _hermes_profile as profile
 
 
@@ -203,6 +207,274 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
     }
 
 
+def test_mcp_pg_binding_derives_and_validates_provisioned_project_role(tmp_path):
+    # Arrange
+    profile_home = tmp_path / "runtime-home"
+    profile_home.mkdir()
+    passfile = profile_home / ".sac-pgpass"
+    passfile.write_text(
+        "*:*:*:operator__scitex-agent-container:secret\n", encoding="utf-8"
+    )
+    passfile.chmod(0o600)
+    servers = {"scitex-cards": {"command": "scitex-cards", "args": ["mcp", "start"]}}
+    config = AgentConfig(
+        name="scitex-agent-container-gui",
+        harness="hermes",
+        labels={"project": "scitex-agent-container"},
+        env={"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex"},
+    )
+    # Act
+    with _replace_attributes(
+        [
+            (_pg_identity_env.getpass, "getuser", lambda: "operator"),
+            (_fleet_env, "declared_fleet_defaults", lambda: {}),
+        ]
+    ):
+        profile._bind_mcp_runtime_env(config, servers)
+        profile._validate_mcp_pg_credentials(
+            servers,
+            launch_argv=("apptainer", "exec", "--bind", f"{profile_home}:/home/agent"),
+        )
+    # Assert
+    assert servers["scitex-cards"]["env"]["PGUSER"] == (
+        "operator__scitex-agent-container"
+    )
+
+
+def test_signup_variant_gets_project_role_passfile_and_cards_target():
+    # Arrange
+    # The real signup shape declares only the consolidated store;
+    # Hermes must compile a complete scitex-cards child-process environment.
+    config = AgentConfig(
+        name="scitex-hub-signup",
+        harness="hermes",
+        labels={"project": "scitex-hub"},
+    )
+    servers = {"scitex-cards": {"command": "scitex-cards"}}
+    replacements = [
+        (
+            _fleet_env,
+            "declared_fleet_defaults",
+            lambda: {"SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex"},
+        ),
+        (_pg_identity_env.getpass, "getuser", lambda: "operator"),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        profile._bind_mcp_runtime_env(config, servers)
+    # Assert
+    assert servers["scitex-cards"]["env"] == {
+        "PGPASSFILE": "/home/agent/.sac-pgpass",
+        "PGUSER": "operator__scitex-hub",
+        "SCITEX_CARDS_AGENT_ID": "scitex-hub-signup",
+        "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+        "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
+    }
+
+
+def test_mcp_pg_validation_refuses_unprovisioned_variant_role(tmp_path):
+    # Arrange
+    passfile = tmp_path / ".pgpass"
+    passfile.write_text(
+        "*:*:*:operator__scitex-agent-container:secret\n", encoding="utf-8"
+    )
+    passfile.chmod(0o600)
+    servers = {
+        "scitex-cards": {
+            "env": {
+                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "PGUSER": "operator__scitex-agent-container-gui",
+                "PGPASSFILE": str(passfile),
+            }
+        }
+    }
+    # Act
+    ctx = pytest.raises(RuntimeError, match="scitex-agent-container-gui")
+    # Assert
+    with ctx:
+        profile._validate_mcp_pg_credentials(
+            servers,
+            launch_argv=("apptainer", "exec", "--bind", f"{passfile}:{passfile}"),
+        )
+
+
+def test_mcp_pg_validation_rejects_dsn_userinfo_that_overrides_pguser(tmp_path):
+    # Arrange
+    passfile = tmp_path / ".pgpass"
+    passfile.write_text("*:*:*:operator__scitex-hub:secret\n", encoding="utf-8")
+    passfile.chmod(0o600)
+    servers = {
+        "scitex-cards": {
+            "env": {
+                "SCITEX_CARDS_DB": (
+                    "postgresql://different_role@scitex-primary:55432/scitex"
+                ),
+                "PGUSER": "operator__scitex-hub",
+                "PGPASSFILE": "/creds/.pgpass",
+            }
+        }
+    }
+    # Act
+    ctx = pytest.raises(RuntimeError, match="no credential")
+    # Assert
+    with ctx:
+        profile._validate_mcp_pg_credentials(
+            servers,
+            launch_argv=(
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{passfile}:/creds/.pgpass:ro",
+            ),
+        )
+
+
+def test_mcp_pg_validation_does_not_treat_unbound_host_passfile_as_container_file(
+    tmp_path,
+):
+    # Arrange
+    # The host credential exists, but the generated MCP path names
+    # /home/agent/.pgpass and neither materialization nor a bind supplies it.
+    host_passfile = tmp_path / "host.pgpass"
+    host_passfile.write_text("*:*:*:operator__project:secret\n", encoding="utf-8")
+    host_passfile.chmod(0o600)
+    servers = {
+        "scitex-cards": {
+            "env": {
+                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "PGUSER": "operator__project",
+                "PGPASSFILE": "/home/agent/.pgpass",
+            }
+        }
+    }
+    # Act
+    ctx = pytest.raises(RuntimeError, match="no credential")
+    # Assert
+    with ctx:
+        profile._validate_mcp_pg_credentials(
+            servers,
+            launch_argv=(
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{host_passfile}:/unrelated/.pgpass:ro",
+            ),
+        )
+
+
+def test_raw_args_env_and_bind_are_the_hermes_mcp_identity_source(tmp_path):
+    # Arrange
+    # Exact last-wins escape-hatch shape used by real relaxed specs.
+    passfile = tmp_path / ".pgpass"
+    passfile.write_text("*:*:*:operator__scitex-hub:secret\n", encoding="utf-8")
+    passfile.chmod(0o600)
+    config = AgentConfig(
+        name="scitex-hub-deepseek",
+        harness="hermes",
+        env={"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex"},
+        labels={"project": "scitex-hub"},
+    )
+    config.apptainer.raw_args = [
+        "--env",
+        "PGUSER=operator__scitex-hub",
+        "--env",
+        "PGPASSFILE=/creds/.pgpass",
+        "--bind",
+        f"{passfile}:/creds/.pgpass:ro",
+    ]
+    servers = {
+        "scitex-cards": {
+            "command": "scitex-cards",
+            "env": {"PGUSER": "${PGUSER}", "PGPASSFILE": "${PGPASSFILE}"},
+        }
+    }
+    # Act
+    profile._bind_mcp_runtime_env(config, servers)
+    profile._validate_mcp_pg_credentials(
+        servers, launch_argv=("apptainer", "exec", *config.apptainer.raw_args)
+    )
+    # Assert
+    assert (
+        servers["scitex-cards"]["env"]["PGUSER"],
+        servers["scitex-cards"]["env"]["PGPASSFILE"],
+    ) == ("operator__scitex-hub", "/creds/.pgpass")
+
+
+def test_pg_validation_uses_first_bind_for_duplicate_destination(tmp_path):
+    # Arrange
+    # Apptainer keeps the first bind for an exact destination.
+    invalid = tmp_path / "invalid.pgpass"
+    invalid.write_text("*:*:*:some_other_role:secret\n", encoding="utf-8")
+    invalid.chmod(0o600)
+    valid = tmp_path / "valid.pgpass"
+    valid.write_text("*:*:*:operator__scitex-hub:secret\n", encoding="utf-8")
+    valid.chmod(0o600)
+    servers = {
+        "scitex-cards": {
+            "env": {
+                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "PGUSER": "operator__scitex-hub",
+                "PGPASSFILE": "/creds/.pgpass",
+            }
+        }
+    }
+    # Act
+    ctx = pytest.raises(RuntimeError, match="no credential")
+    # Assert
+    with ctx:
+        profile._validate_mcp_pg_credentials(
+            servers,
+            launch_argv=(
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{invalid}:/creds/.pgpass:ro",
+                "--bind",
+                f"{valid}:/creds/.pgpass:ro",
+            ),
+        )
+
+
+def test_pg_validation_uses_longest_covering_bind_destination(tmp_path):
+    # Arrange
+    # A nested mount shadows its broader parent for this path.
+    broad_home = tmp_path / "broad"
+    nested_home = tmp_path / "nested"
+    broad_home.mkdir()
+    nested_home.mkdir()
+    (broad_home / ".pgpass").write_text(
+        "*:*:*:some_other_role:secret\n", encoding="utf-8"
+    )
+    (broad_home / ".pgpass").chmod(0o600)
+    (nested_home / ".pgpass").write_text(
+        "*:*:*:operator__scitex-hub:secret\n", encoding="utf-8"
+    )
+    (nested_home / ".pgpass").chmod(0o600)
+    servers = {
+        "scitex-cards": {
+            "env": {
+                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "PGUSER": "operator__scitex-hub",
+                "PGPASSFILE": "/home/agent/.pgpass",
+            }
+        }
+    }
+    # Act
+    result = profile._validate_mcp_pg_credentials(
+        servers,
+        launch_argv=(
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{broad_home}:/home",
+            "--bind",
+            f"{nested_home}:/home/agent",
+        ),
+    )
+    # Assert
+    assert result is None
+
+
 def test_sac_mcp_receives_bus_auth_refs_without_persisting_bearer(env_save_restore):
     # Arrange
     config = AgentConfig(name="scholar", harness="hermes", runtime="tui")
@@ -231,6 +503,7 @@ def test_sac_mcp_receives_bus_auth_refs_without_persisting_bearer(env_save_resto
         "SAC_NAME": "${env:SAC_NAME}",
         "PGUSER": "ywatanabe__scholar",
         "PGPASSFILE": "/home/ywatanabe/.pgpass",
+        "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
         "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     } and "actual-secret" not in json.dumps(servers)
 
@@ -306,8 +579,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         and "reasoning_effort: low" in rendered
         and "mode: 'off'" in rendered
         and "api_server:" not in rendered
-        and parsed["providers"]["sac-qwen"]["extra_headers"]
-        == expected_headers
+        and parsed["providers"]["sac-qwen"]["extra_headers"] == expected_headers
         and env_text == "QWEN_KEY=secret\n"
     )
 

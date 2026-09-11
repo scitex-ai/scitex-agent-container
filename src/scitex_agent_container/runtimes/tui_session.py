@@ -195,7 +195,16 @@ class TuiSessionRuntime(
         if sif_path is None:
             return None
         state_dir = state_dir_for_config(config)
-        return build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
+        argv = build_run_argv(
+            config, state_dir=state_dir, sif_path=sif_path, tui=True
+        )
+        if getattr(config, "harness", "") == "hermes":
+            from ._hermes_profile import validate_hermes_tui_profile
+
+            validate_hermes_tui_profile(
+                config, state_dir=state_dir, launch_argv=argv
+            )
+        return argv
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         """Materialise per-agent ``to_home/`` + CLAUDE.md into the container
@@ -206,7 +215,18 @@ class TuiSessionRuntime(
         for the per-step rationale (SDK-parity $HOME surface, settings.json USER
         scope, overlay upper-home, onboarding pre-seed).
         """
-        return _materialize_workspace(config, state_dir_for_config=state_dir_for_config)
+        home = _materialize_workspace(
+            config, state_dir_for_config=state_dir_for_config
+        )
+        if home is not None and getattr(config, "harness", "") == "hermes":
+            from ._hermes_profile import materialize_hermes_tui_profile
+
+            materialize_hermes_tui_profile(
+                config,
+                state_dir=state_dir_for_config(config),
+                deploy_home=False,
+            )
+        return home
 
     def start(
         self,

@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -38,6 +38,118 @@ _MCP_SAC_ENV_REFS = {
     "SAC_LISTEN_BEARER": "${env:SAC_LISTEN_BEARER}",
     "SAC_NAME": "${env:SAC_NAME}",
 }
+
+
+def _host_pgpass_source(
+    container_path: str,
+    *,
+    launch_argv: Sequence[str],
+) -> Path | None:
+    """Resolve the host source visible at a container path after all binds."""
+    rendered = Path(container_path).expanduser()
+    argv = [str(value) for value in launch_argv]
+    # Apptainer keeps the first bind for an exact destination.  Preserve that
+    # precedence before choosing the most-specific mount covering the file.
+    sources_by_destination: dict[Path, Path] = {}
+    for index, arg in enumerate(argv):
+        declaration = ""
+        if arg in {"--bind", "-B"} and index + 1 < len(argv):
+            declaration = argv[index + 1]
+        elif arg.startswith("--bind="):
+            declaration = arg.split("=", 1)[1]
+        if not declaration:
+            continue
+        for binding in declaration.split(","):
+            parts = binding.split(":", 2)
+            if len(parts) < 2:
+                continue
+            source, destination = map(Path, parts[:2])
+            sources_by_destination.setdefault(destination, source.expanduser())
+
+    covering: list[tuple[Path, Path, Path]] = []
+    for destination, source in sources_by_destination.items():
+        try:
+            relative = rendered.relative_to(destination)
+        except ValueError:
+            continue
+        covering.append((destination, source, relative))
+    if not covering:
+        return None
+    _, source, relative = max(
+        covering,
+        key=lambda item: len(item[0].parts),
+    )
+    return source / relative
+
+
+def _validate_mcp_pg_credentials(
+    servers: dict[str, dict[str, Any]],
+    *,
+    launch_argv: Sequence[str],
+) -> None:
+    """Verify generated roleless-DSN MCP entries have a usable login."""
+    from ._pg_identity_env import PgIdentityCredentialError, pgpass_has_role
+
+    checked: set[tuple[str, str]] = set()
+    for server in servers.values():
+        declared = server.get("env")
+        if not isinstance(declared, dict):
+            continue
+        postgres_dsns = tuple(
+            value
+            for key in ("SCITEX_CARDS_DB", "SCITEX_STORE_DSN")
+            if (value := str(declared.get(key, ""))).startswith(
+                ("postgresql://", "postgres://")
+            )
+        )
+        if not postgres_dsns:
+            continue
+        role = str(declared.get("PGUSER", "")).strip()
+        passfile = str(declared.get("PGPASSFILE", "")).strip()
+        if not role or not passfile:
+            raise PgIdentityCredentialError(
+                "Hermes MCP received a roleless PostgreSQL DSN without both "
+                "PGUSER and PGPASSFILE"
+            )
+        identity = (passfile, role)
+        if identity not in checked:
+            source = _host_pgpass_source(
+                passfile,
+                launch_argv=launch_argv,
+            )
+            if source is None or not pgpass_has_role(source, role, dsns=postgres_dsns):
+                raise PgIdentityCredentialError(
+                    f"PostgreSQL identity {role!r} has no credential in the "
+                    "finalized launch bind sources; "
+                    "provision the project role before starting the agent"
+                )
+            checked.add(identity)
+
+
+def validate_hermes_tui_profile(
+    config: AgentConfig, *, state_dir: Path, launch_argv: Sequence[str]
+) -> None:
+    """Validate the materialized profile against the real finalized argv."""
+    targets = [state_dir / "home"]
+    upper = resolve_overlay_upper_home(config)
+    if upper is not None:
+        targets.append(upper)
+    documents: list[dict[str, Any]] = []
+    for target in targets:
+        path = target / ".hermes" / "config.yaml"
+        if not path.is_file():
+            continue
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(document, dict):
+            documents.append(document)
+    if not documents:
+        raise RuntimeError(
+            f"Hermes profile was not materialized for {config.name!r} before launch"
+        )
+    for document in documents:
+        servers = document.get("mcp_servers")
+        if isinstance(servers, dict):
+            _validate_mcp_pg_credentials(servers, launch_argv=launch_argv)
 
 
 def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> LaunchPlan:
@@ -80,7 +192,9 @@ def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise RuntimeError(f"cannot translate Hermes MCP config {source}: {exc}") from exc
+        raise RuntimeError(
+            f"cannot translate Hermes MCP config {source}: {exc}"
+        ) from exc
     servers = raw.get("mcpServers") if isinstance(raw, dict) else None
     if not isinstance(servers, dict):
         return {}, []
@@ -103,9 +217,28 @@ def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
 def _bind_mcp_runtime_env(
     config: AgentConfig, servers: dict[str, dict[str, Any]]
 ) -> None:
+    from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
     runtime_env = effective_env(config)
+    apptainer = getattr(config, "apptainer", None)
+    # raw_args are appended after curated --env flags in the production argv,
+    # so they are the real last-wins launch environment.  apply_pg_identity()
+    # deliberately suppresses a generated PGUSER when one is declared here;
+    # fold the same declarations back in before writing the Hermes MCP env.
+    runtime_env.update(raw_args_env(getattr(apptainer, "raw_args", None)))
+    from ._pg_identity_credentials import (
+        DEFAULT_CONTAINER_PGPASSFILE,
+        PG_PASSFILE_ENV,
+    )
+
+    # Hermes MCP processes do not inherit the parent container's env.  The
+    # consolidated store DSN is the authoritative PostgreSQL target; expose
+    # it under scitex-cards' still-consumed spelling when a spec has not
+    # declared a more-specific Cards target.
+    store_dsn = str(runtime_env.get("SCITEX_STORE_DSN", ""))
+    if store_dsn.startswith(("postgresql://", "postgres://")):
+        runtime_env.setdefault("SCITEX_CARDS_DB", store_dsn)
     for name, server in servers.items():
         declared = server.get("env")
         if not isinstance(declared, dict):
@@ -125,6 +258,13 @@ def _bind_mcp_runtime_env(
             value = runtime_env.get(key)
             if value is not None:
                 declared[key] = str(value)
+        has_postgres = any(
+            str(declared.get(key, "")).startswith(("postgresql://", "postgres://"))
+            for key in ("SCITEX_CARDS_DB", "SCITEX_STORE_DSN")
+        )
+        current_passfile = str(declared.get(PG_PASSFILE_ENV, "")).strip()
+        if has_postgres and current_passfile in {"", "${PGPASSFILE}"}:
+            declared[PG_PASSFILE_ENV] = DEFAULT_CONTAINER_PGPASSFILE
 
 
 def _sac_profile_env(
@@ -233,6 +373,9 @@ def materialize_hermes_profile(
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
         targets.append(resolved_upper)
+    from ._pg_identity_credentials import materialize_project_pgpass
+
+    materialize_project_pgpass(config, home_backings=targets, servers=servers)
     env_name = plan.endpoint.auth_env
     profile_env = {
         "API_SERVER_ENABLED": "true",
@@ -254,14 +397,17 @@ def materialize_hermes_profile(
 
 
 def materialize_hermes_tui_profile(
-    config: AgentConfig, *, state_dir: Path
+    config: AgentConfig, *, state_dir: Path, deploy_home: bool = True
 ) -> list[Path]:
     """Write the isolated profile consumed by an official Hermes TUI."""
     state_dir.mkdir(parents=True, exist_ok=True)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
-    deploy_to_home(config, str(home))
-    overlay_home = deploy_to_home_overlay(config)
+    if deploy_home:
+        deploy_to_home(config, str(home))
+        overlay_home = deploy_to_home_overlay(config)
+    else:
+        overlay_home = resolve_overlay_upper_home(config)
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config, launch_mode="tui")
     max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
@@ -283,6 +429,9 @@ def materialize_hermes_tui_profile(
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
         targets.append(resolved_upper)
+    from ._pg_identity_credentials import materialize_project_pgpass
+
+    materialize_project_pgpass(config, home_backings=targets, servers=servers)
     profile_env = {
         plan.endpoint.auth_env: provider_key,
         **_sac_profile_env(config, servers),
@@ -303,4 +452,5 @@ __all__ = [
     "ensure_api_key",
     "materialize_hermes_profile",
     "materialize_hermes_tui_profile",
+    "validate_hermes_tui_profile",
 ]
