@@ -558,6 +558,39 @@ def test_profile_env_file_rejects_newlines(tmp_path):
         profile._write_profile_env(env_path, {"UNSAFE": "first\nsecond"})
 
 
+def test_headless_profile_declares_stable_agent_gateway_affinity(tmp_path):
+    # Arrange -- this is the profile used by the live Hermes gateway runtime.
+    config = AgentConfig(
+        name="scholar", harness="hermes", runtime="headless", workdir="/work"
+    )
+    config.engine_key = "qwen"
+    config.model = "qwen-model"
+    config.claude.provider = ProviderSpec(
+        base_url="http://qwen.example:8000/v1",
+        auth_token_env="QWEN_KEY",
+    )
+    replacements = [
+        (profile, "resolve_provider_api_key", lambda value: "secret"),
+        (profile, "deploy_to_home", lambda value, target: None),
+        (profile, "deploy_to_home_overlay", lambda value: None),
+        (profile, "resolve_overlay_upper_home", lambda value: None),
+    ]
+
+    # Act
+    with _replace_attributes(replacements):
+        _, targets = profile.materialize_hermes_profile(
+            config, state_dir=tmp_path, api_port=8642
+        )
+    rendered = yaml.safe_load(
+        (targets[0] / ".hermes" / "config.yaml").read_text(encoding="utf-8")
+    )
+
+    # Assert -- agent identity is stable across Hermes session resume and restart.
+    assert rendered["providers"]["sac-qwen"]["extra_headers"] == {
+        "X-SciTeX-Session-ID": "sac:scholar"
+    }
+
+
 def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     # Arrange
     config = AgentConfig(
