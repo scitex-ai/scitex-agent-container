@@ -1,4 +1,8 @@
-"""Stale Hermes session -> healthy provider -> same session performs a turn."""
+"""Synthetic adapter integration for stale-provider recovery.
+
+This exercises real HTTP health/completion boundaries with a behavioral fake
+session. It does not prove the pinned Hermes TUI path in a production runtime.
+"""
 
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"choices": [{"message": {"content": "resumed"}}]})
 
 
-def test_stale_latch_recovers_and_real_turn_keeps_all_identities(tmp_path):
+def test_stale_latch_recovers_and_http_turn_keeps_all_identities(tmp_path):
     # Arrange
     gateway = _Gateway(("127.0.0.1", 0), _Handler)
     gateway.requests = []

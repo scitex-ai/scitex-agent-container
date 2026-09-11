@@ -189,17 +189,20 @@ def _stable_initial_delay(name: str) -> float:
     return float(int.from_bytes(digest[:8], "big") % int(POLL_SECONDS))
 
 
-def run_monitor(config: AgentConfig) -> None:
-    """Run one rate-bounded observer for the life of the owning tmux session."""
-    from .._runners._tmux.tmux import TmuxManager
-    from .hermes_tui import HermesTuiSessionRuntime
-
-    runtime = HermesTuiSessionRuntime()
-    mux = TmuxManager()
+def _run_monitor_loop(
+    config: AgentConfig,
+    *,
+    runtime: Any,
+    mux: Any,
+    wait: Callable[[float], bool] = _STOP_EVENT.wait,
+    state_dir: Path | None = None,
+) -> None:
+    """Observe until stopped or the owning tmux session naturally exits."""
+    state_dir = state_dir or _state_dir(config)
     session = runtime.session_name(config)
     if not session:
         return
-    if _STOP_EVENT.wait(_stable_initial_delay(config.name)):
+    if wait(_stable_initial_delay(config.name)):
         return
     recovered_fingerprint = ""
     while mux.exists(session):
@@ -210,11 +213,32 @@ def run_monitor(config: AgentConfig) -> None:
                 pause=lambda: bool(runtime.suspend_autonomous_turns(config)),
                 recover=lambda: bool(runtime.recover_turn_admission(config)),
                 previous_fingerprint=recovered_fingerprint,
+                state_dir=state_dir,
             )
         except Exception:  # stx-allow: fallback (reason: one observation/control failure must not kill the bounded recovery monitor)
             log.exception("Hermes recovery tick failed for %s", config.name)
-        if _STOP_EVENT.wait(POLL_SECONDS):
+        if wait(POLL_SECONDS):
             return
+    write_control_state(
+        state_dir,
+        {
+            "turn_admission": READY,
+            "detail": "owning Hermes TUI session ended; recovery observer stopped",
+            "observed_at": time.time(),
+        },
+    )
+
+
+def run_monitor(config: AgentConfig) -> None:
+    """Run one rate-bounded observer for the life of the owning tmux session."""
+    from .._runners._tmux.tmux import TmuxManager
+    from .hermes_tui import HermesTuiSessionRuntime
+
+    _run_monitor_loop(
+        config,
+        runtime=HermesTuiSessionRuntime(),
+        mux=TmuxManager(),
+    )
 
 
 def start_recovery_monitor(

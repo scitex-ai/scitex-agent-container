@@ -175,6 +175,35 @@ def test_one_observed_latch_can_trigger_only_one_recovery(tmp_path):
     assert second == recovered_token and recovered == [1]
 
 
+def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    runtime = SimpleNamespace(session_name=lambda _config: "sac-scholar")
+    mux = SimpleNamespace(exists=lambda _session: False)
+    recovery.write_control_state(
+        tmp_path,
+        {
+            "turn_admission": "stale_latched",
+            "detail": "old marker",
+            "observed_at": 1.0,
+        },
+    )
+    # Act
+    recovery._run_monitor_loop(
+        config,
+        runtime=runtime,
+        mux=mux,
+        wait=lambda _seconds: False,
+        state_dir=tmp_path,
+    )
+    # Assert
+    marker = read_control_state(tmp_path)
+    assert (marker["turn_admission"], marker["detail"]) == (
+        "ready",
+        "owning Hermes TUI session ended; recovery observer stopped",
+    )
+
+
 def test_unrelated_live_pid_is_not_owned_by_recovery_adapter(tmp_path):
     # Arrange
     config = _config(tmp_path)

@@ -59,6 +59,12 @@ It writes only `runtime-control.json` and its own PID/log files in the SAC
 runtime directory. The Hermes session id, SAC incarnation id, and Hermes
 `state.db` context remain unchanged.
 
+The committed integration regression uses a behavioral fake session around
+real local HTTP health and completion boundaries. It proves the adapter's
+orchestration and persistence invariants, but is not production proof of the
+pinned Hermes TUI path; validation in a disposable real Hermes environment
+remains follow-up operational evidence.
+
 ## Relation to issue #1340
 
 This observer recognizes an exact terminal breaker error; it does not decide
