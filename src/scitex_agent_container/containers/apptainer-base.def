@@ -49,6 +49,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # path below against the build CWD, which the CLI sets to that
     # staging dir. See sac image build for the staging implementation.
     scitex-agent-container-src /opt/scitex-agent-container-src
+    hermes-agent-src /opt/hermes-agent
 
 %post
     set -e
@@ -211,7 +212,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         apptainer uidmap squashfs-tools
 
     # ---- 3. Node.js + npm globals --------------------------------------
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y --no-install-recommends nodejs
     mkdir -p /opt/npm-global
     npm config set prefix /opt/npm-global
@@ -628,7 +629,33 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         "scitex-cards>=0.49.1" \
         "/opt/scitex-agent-container-src[all,dev]"
 
-    # ---- 6c. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
+    # ---- 6c. Hermes harness + official TUI ---------------------------
+    # Hermes is a harness available to every SAC agent, not a separate image
+    # product. Its exact source commit is staged beside SAC before the base
+    # build. Keep its Python environment isolated from /opt/venv-sac because
+    # Hermes owns a fully pinned lockfile and a narrower Python compatibility
+    # range.
+    HERMES_ROOT=/opt/hermes-agent
+    UV_CACHE_DIR=/tmp/sac-hermes-uv-cache \
+        uv sync --project "$HERMES_ROOT" --frozen --no-dev \
+        --extra messaging --extra mcp
+    rm -rf /tmp/sac-hermes-uv-cache
+    ln -sf "$HERMES_ROOT/.venv/bin/hermes" /usr/local/bin/hermes
+
+    # Build the official Ink TUI from the same pinned source. The upstream
+    # root package-lock covers the ui-tui workspace, so npm ci is deterministic.
+    npm ci --prefix "$HERMES_ROOT" --workspace ui-tui --include=dev
+    npm run --prefix "$HERMES_ROOT" build --workspace ui-tui
+    node --check "$HERMES_ROOT/ui-tui/dist/entry.js"
+    rm -rf "$HERMES_ROOT/node_modules" "$HERMES_ROOT/ui-tui/node_modules"
+    npm cache clean --force
+
+    test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
+    test -x "$HERMES_ROOT/.venv/bin/hermes"
+    "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.1"'
+    test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
+
+    # ---- 6d. FAIL-LOUD staleness gate — assert BY SYMBOL --------------
     # incident-fleet-drift-stale-scitex-todo (2026-07-12): the live SIFs
     # silently shipped scitex-todo 0.7.50 — days and two minor releases
     # behind — and NOTHING failed. The bake was green, `sac versions`
@@ -975,13 +1002,17 @@ EOF
     # /opt/venv-sac/bin or /root/.local/bin (the latter holds only uv), so
     # those earlier entries do NOT shadow the npm claude symlink.
     export PATH=/opt/venv-sac/bin:/root/.local/bin:/opt/cargo/bin:/opt/npm-global/bin:/usr/local/bin:$PATH
+    export HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
+    export HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk hermes hermes-tui"
+    org.scitex.hermes.version 0.21.1
+    org.scitex.hermes.commit a74e76632cce62ad6948cf7e4e6b27629d66d147
 
 %help
     scitex-agent-container :base layer.

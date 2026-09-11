@@ -69,6 +69,8 @@ WORKDIR="/data/gpfs/projects/punim2354/ywatanabe/sac-sif-bake"
 LEASE_NAME="spartan-cpu-32-cores-64-ram"
 REPO_URL="https://github.com/ywatanabe1989/scitex-agent-container.git"
 BRANCH="develop"
+HERMES_REPO_URL="https://github.com/NousResearch/hermes-agent.git"
+HERMES_COMMIT="a74e76632cce62ad6948cf7e4e6b27629d66d147"
 RETAIN=3
 MIN_FREE_GB=40
 MIN_FREE_INODES=100000
@@ -232,6 +234,26 @@ cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
+if [ "$LAYER" = "base" ]; then
+    # apptainer-base.def installs Hermes from a sibling %files input. Fetch
+    # and export the same immutable commit as cli_pkg/_hermes_source.py; a
+    # remote bake that stages only SAC otherwise dies at %files.
+    HERMES_CACHE="$WORKDIR/upstream/hermes-agent.git"
+    mkdir -p "$(dirname "$HERMES_CACHE")" || fail "stage-hermes-cache-mkdir"
+    if [ ! -d "$HERMES_CACHE" ]; then
+        "$GIT" init --bare "$HERMES_CACHE" || fail "stage-hermes-cache-init"
+    fi
+    if ! "$GIT" -C "$HERMES_CACHE" cat-file -e "$HERMES_COMMIT^{commit}" 2>/dev/null; then
+        "$GIT" -C "$HERMES_CACHE" fetch --depth 1 "$HERMES_REPO_URL" "$HERMES_COMMIT" \
+            || fail "stage-hermes-fetch" "$HERMES_COMMIT"
+    fi
+    mkdir -p "$CTX/hermes-agent-src" || fail "stage-hermes-mkdir"
+    "$GIT" -C "$HERMES_CACHE" archive "$HERMES_COMMIT" \
+        | tar -x -C "$CTX/hermes-agent-src" \
+        || fail "stage-hermes-export" "$HERMES_COMMIT"
+    printf '%s\n' "$HERMES_COMMIT" > "$CTX/hermes-agent-src/SAC_UPSTREAM_COMMIT" \
+        || fail "stage-hermes-marker"
+fi
 if [ "$LAYER" = "scitex" ]; then
     ln -s "$BASE_LIVE" "$CTX/sac-base.sif" || fail "stage-base-sif"
 fi

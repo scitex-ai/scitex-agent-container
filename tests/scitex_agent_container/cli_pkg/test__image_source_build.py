@@ -93,6 +93,17 @@ def fake_def(tmp_path: Path) -> Path:
     return p
 
 
+@pytest.fixture(autouse=True)
+def isolated_hermes_source_stager():
+    """Keep unrelated image-build tests offline and deterministic."""
+    saved = isb._stage_hermes_source
+    isb._stage_hermes_source = lambda build_context: build_context
+    try:
+        yield
+    finally:
+        isb._stage_hermes_source = saved
+
+
 @contextmanager
 def _use_container_build(build_fn) -> Iterator[list[tuple]]:
     """Swap ``_image_source_build._container_build`` for a real fake.
@@ -724,6 +735,53 @@ def test_build_layer_from_source_stages_source_at_known_relative_name(
         and (staged_src / "pyproject.toml").is_file()
         and (staged_src / "src" / "scitex_agent_container" / "__init__.py").is_file()
     )
+
+
+def test_base_build_stages_hermes_source_in_same_build_context(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_hermes_source
+    isb._stage_hermes_source = lambda path: staged.append(path)
+    out_dir = tmp_path / "out"
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            isb.build_layer_from_source(
+                layer="base",
+                def_path=fake_def,
+                pkg_root=fake_pkg_root,
+                output_dir=out_dir,
+            )
+    finally:
+        isb._stage_hermes_source = saved
+
+    # Assert
+    assert staged == [out_dir / "sac-base" / "build-context"]
+
+
+def test_non_base_build_does_not_stage_hermes_source(tmp_path, fake_pkg_root, fake_def):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_hermes_source
+    isb._stage_hermes_source = lambda path: staged.append(path)
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            isb.build_layer_from_source(
+                layer="proxy",
+                def_path=fake_def,
+                pkg_root=fake_pkg_root,
+                output_dir=tmp_path / "out",
+            )
+    finally:
+        isb._stage_hermes_source = saved
+
+    # Assert
+    assert staged == []
 
 
 def test_build_layer_from_source_forwards_bootstrap_sif_to_staging(

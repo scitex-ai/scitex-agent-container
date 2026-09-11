@@ -307,6 +307,29 @@ def test_bake_script_never_calls_sbatch() -> None:
     assert not calls_sbatch
 
 
+def test_bake_script_stages_the_pinned_hermes_source_for_base() -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg._hermes_source import (
+        HERMES_COMMIT,
+        HERMES_REPOSITORY,
+    )
+
+    # Act
+    text = core.BAKE_SCRIPT.read_text()
+
+    # Assert
+    assert all(
+        expected in text
+        for expected in (
+            f'HERMES_REPO_URL="{HERMES_REPOSITORY}"',
+            f'HERMES_COMMIT="{HERMES_COMMIT}"',
+            'if [ "$LAYER" = "base" ]; then',
+            '"$CTX/hermes-agent-src/SAC_UPSTREAM_COMMIT"',
+            '"$GIT" -C "$HERMES_CACHE" archive "$HERMES_COMMIT"',
+        )
+    )
+
+
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:
     # Arrange — the remote gate is a heredoc copy of sif_symbol_probe.py
     # (the remote host has no wheel). If the two drift, the master could

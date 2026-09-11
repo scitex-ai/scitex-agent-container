@@ -697,6 +697,14 @@ env_allowlist = ["SAC_", "CODEX_HOME"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/scitex_agent_container"]
 
+[tool.scitex-agent-container.harnesses.hermes]
+package = "hermes-agent"
+version = "0.21.1"
+repository = "https://github.com/NousResearch/hermes-agent.git"
+commit = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
+installation = "local-staged-source"
+environment = "/opt/hermes-agent/.venv"
+
 # Stamp the commit + a content hash of the tree into the artifact, as
 # `_provenance/_build_info.py`. An installed copy has no `.git`, so build
 # time is the only moment the identity of the code can be captured — and

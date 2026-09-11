@@ -2,25 +2,27 @@
 
 ## Builtin layers
 
-Two `.def` recipes, layered:
+The common base carries the supported agent programs; application layers add
+domain dependencies on top:
 
 | Tag       | What's inside                                                                                               | When                                   |
 |-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools (git, gh, rust CLIs, mermaid, prettier, eslint, jsonlint, uv, pipx, tree, node 20) | **Default** when `spec.image` is unset |
+| `:base`   | Ubuntu 24.04 + dev tools, Node 22, pinned Hermes 0.21.1 and its official TUI | **Default** when `spec.image` is unset |
 | `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
 
-**Neither layer is harness-complete on its own.** `:base` ships no agent
-SDK at all; `:scitex` adds `claude-agent-sdk` only. Whichever harness your
-specs select has to be present in the image you point them at — an
-`openai` agent needs the `openai-agents` SDK on top, a `codex` agent needs
-`openai-codex` plus its ~285 MB pinned CLI-binary wheel.
+Hermes is a capability of `:base`, not a separate `:hermes` layer. The build
+stages one immutable upstream commit and uses Hermes' frozen lockfile; the
+recipe verifies both the installed version and official TUI artifact. Other
+harnesses still have to be present in the selected image — an `openai` agent
+needs the `openai-agents` SDK, and a `codex` agent needs `openai-codex` plus
+its pinned CLI-binary wheel.
 
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`.
 Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.
 
 ```
 <site-packages>/scitex_agent_container/containers/
-  apptainer-{base,scitex}.def    ← canonical SSoT
+  apptainer-{base,scitex}.def    ← canonical SSoT (`:base` includes Hermes)
 ```
 
 ## Cross-package convention: `~/.scitex/<pkg>/{containers,bin}`
