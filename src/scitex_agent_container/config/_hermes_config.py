@@ -112,7 +112,7 @@ def compile_hermes_config(
             "tail_mode": "lean",
             "in_place": True,
         },
-        "display": {"busy_input_mode": "queue"},
+        "display": {"busy_input_mode": "steer"},
         "terminal": {
             "backend": "local",
             "cwd": workspace,

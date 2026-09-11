@@ -88,7 +88,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "tail_mode": "lean",
             "in_place": True,
         },
-        "busy_input_mode": "queue",
+        "busy_input_mode": "steer",
         "secret_absent": True,
     }
     assert observed == expected
