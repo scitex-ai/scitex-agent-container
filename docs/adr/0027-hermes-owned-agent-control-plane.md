@@ -198,7 +198,12 @@ state remains in the configured state stores.
 The existing neutral PostgreSQL inbox and TUI bridge are transitional rollback
 mechanisms. The Hermes adapter uses the inbox only as a durable transport: it
 requests `ack=explicit` and acknowledges a row only after Hermes accepts the
-run. A bridge failure before acceptance therefore leaves the row replayable.
+turn through the existing neutral TUI endpoint. That endpoint submits into the
+official Hermes TUI, whose generated profile sets busy input to native
+`steer`. A bridge failure before acceptance therefore leaves the row
+replayable. The host-side adapter receives the listener bearer only through
+its environment, and its stop path signals a recorded PID only after Linux
+process identity proves the exact module, agent name, and authored spec path.
 This is delivery plumbing, not a second queue or scheduler. The mechanisms are
 not extended with new scheduling or steering behavior.
 They can be removed only after the image-installed Hermes path demonstrates

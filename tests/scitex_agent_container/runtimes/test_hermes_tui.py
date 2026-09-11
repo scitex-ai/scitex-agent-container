@@ -97,7 +97,11 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     paused = runtime.suspend_autonomous_turns(config)
     recovered = runtime.recover_turn_admission(config)
     # Assert
-    assert (paused, recovered, [event[2] for event in mux.events if event[0] == "text"]) == (
+    assert (
+        paused,
+        recovered,
+        [event[2] for event in mux.events if event[0] == "text"],
+    ) == (
         True,
         True,
         [
@@ -105,4 +109,54 @@ def test_recovery_uses_supported_same_session_controls_in_order():
             "/model qwen38-27b --provider sac-qwen38-27b --session",
             "/heartbeat resume",
         ],
+    )
+
+
+class _LifecycleRuntime(HermesTuiSessionRuntime):
+    def __init__(self):
+        super().__init__(multiplexer=_Mux())
+        self.lifecycle_events = []
+
+    def _start_session(self, _config, **_kwargs):
+        self.lifecycle_events.append("tmux-start")
+        return True
+
+    def _stop_session(self, _config):
+        self.lifecycle_events.append("tmux-stop")
+        return True
+
+    def _start_inbox(self, _config):
+        self.lifecycle_events.append("inbox-start")
+
+    def _stop_inbox(self, _config):
+        self.lifecycle_events.append("inbox-stop")
+
+    def _start_recovery(self, _config):
+        self.lifecycle_events.append("recovery-start")
+
+    def _stop_recovery(self, _config):
+        self.lifecycle_events.append("recovery-stop")
+
+
+def test_start_attaches_authenticated_inbox_bridge_before_recovery():
+    # Arrange
+    runtime = _LifecycleRuntime()
+    # Act
+    started = runtime.start(_config())
+    # Assert
+    assert (started, runtime.lifecycle_events) == (
+        True,
+        ["tmux-start", "inbox-start", "recovery-start"],
+    )
+
+
+def test_stop_detaches_inbox_before_tmux_session():
+    # Arrange
+    runtime = _LifecycleRuntime()
+    # Act
+    stopped = runtime.stop(_config())
+    # Assert
+    assert (stopped, runtime.lifecycle_events) == (
+        True,
+        ["inbox-stop", "recovery-stop", "tmux-stop"],
     )

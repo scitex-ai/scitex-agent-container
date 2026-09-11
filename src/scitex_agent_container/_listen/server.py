@@ -328,6 +328,7 @@ async def fleet_card_handler(request: Request) -> JSONResponse:
 # re-imported here so route registration (:func:`_v1_agent_routes`) and
 # the historical ``from ..._listen.server import agent_delete`` import
 # path keep working unchanged.
+from ..a2a._inbox_ack import inbox_ack_route  # noqa: E402
 from ._agent_delete import agent_delete  # noqa: E402
 
 # ``agent_restart`` (POST /agents/<name>/restart) is the container-side
@@ -370,6 +371,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
             node_inbox_stream,
             methods=["GET"],
         ),
+        inbox_ack_route(f"{prefix}/{{name}}/inbox/ack"),
         Route(
             f"{prefix}/{{name}}/.well-known/agent-card.json",
             agent_card,

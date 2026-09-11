@@ -55,12 +55,11 @@ from scitex_agent_container.a2a._card import (
 )
 from scitex_agent_container.a2a._delivery_report import report_zero_delivery
 from scitex_agent_container.a2a._handlers import HANDLERS
+from scitex_agent_container.a2a._inbox_ack import inbox_ack_route
 from scitex_agent_container.a2a._inbox_bus import Broker, mint_event
 from scitex_agent_container.a2a._inbox_stream import inbox_stream
 
 log = logging.getLogger(__name__)
-
-
 # ---------------------------------------------------------------------
 # Per-agent SDK plumbing
 # ---------------------------------------------------------------------
@@ -281,6 +280,7 @@ def _build_app(ctx: _ServerCtx) -> Starlette:
             get_inbox_stream,
             methods=["GET"],
         ),
+        inbox_ack_route("/agents/{name}/inbox/ack", known_names=ctx.yamls),
         Route(
             "/agents/{name}/_active",
             get_active_tasks,
@@ -394,13 +394,13 @@ def _base_url(request: Request) -> str:
 from scitex_agent_container.a2a._build import (  # noqa: E402
     agent_name_from_yaml as _agent_name_from_yaml,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     build_executor as _build_executor,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     load_yaml as _load_yaml,
 )
-from scitex_agent_container.a2a._build import (
+from scitex_agent_container.a2a._build import (  # noqa: E402
     select_handler_key as _select_handler_key,
 )
 

@@ -187,3 +187,82 @@ async def test_reconnect_sends_no_cursor_when_server_stamped_no_id(header_server
     await _run_until_reconnect(header_server)
     # Assert
     assert "last-event-id" not in header_server.headers_seen[1]
+
+
+@pytest.mark.asyncio
+async def test_explicit_ack_is_posted_only_after_event_callback_accepts():
+    # Arrange
+    requests: list[tuple[str, str]] = []
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            request_line = (await reader.readline()).decode("latin-1").strip()
+            method, path, _version = request_line.split(" ", 2)
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                key, _, value = line.decode("latin-1").partition(":")
+                if key.lower() == "content-length":
+                    content_length = int(value.strip())
+            body = (
+                (await reader.readexactly(content_length)).decode()
+                if content_length
+                else ""
+            )
+            requests.append((f"{method} {path}", body))
+            if method == "GET":
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    b"Connection: keep-alive\r\n\r\n"
+                    b'id: 41\ndata: {"msg_id":"m-41","content":"steer"}\n\n'
+                )
+                await writer.drain()
+                await asyncio.sleep(5)
+            else:
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
+                )
+                await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+    accepted = []
+
+    async def on_event(event):
+        accepted.append(event["msg_id"])
+
+    task = asyncio.create_task(
+        _consume_sse(
+            f"http://127.0.0.1:{port}/stream?ack=explicit",
+            "bearer",
+            on_event,
+            ack_url=f"http://127.0.0.1:{port}/ack",
+        )
+    )
+    cancelled = False
+    # Act
+    try:
+        for _ in range(100):
+            if any(request[0] == "POST /ack" for request in requests):
+                break
+            await asyncio.sleep(0.02)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            cancelled = True
+        server.close()
+        await server.wait_closed()
+    # Assert
+    assert (cancelled, accepted, ("POST /ack", '{"id":41}') in requests) == (
+        True,
+        ["m-41"],
+        True,
+    )

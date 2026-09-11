@@ -111,6 +111,8 @@ async def _consume_sse(
     url: str,
     bearer: str | None,
     on_event: "callable[[dict[str, Any]], asyncio.Future[None]]",
+    *,
+    ack_url: str | None = None,
 ) -> None:
     """Long-lived SSE consumer. Reconnects with jittered backoff on disconnect.
 
@@ -205,6 +207,13 @@ async def _consume_sse(
                                         )
                                         continue
                                     await on_event(event)
+                                    if pending_id is not None and ack_url is not None:
+                                        ack_response = await client.post(
+                                            ack_url,
+                                            headers=headers,
+                                            json={"id": int(pending_id)},
+                                        )
+                                        ack_response.raise_for_status()
                                     # Advance the cursor ONLY after on_event
                                     # returns. Advancing on receipt would ack
                                     # an event we then failed to hand over —
