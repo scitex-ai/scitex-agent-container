@@ -9,7 +9,7 @@
 #
 # `python -m build` needs the `build` frontend, which is NOT baked in the SIF
 # (only scitex-dev[all,dev] deps are). Mirror run-in-sif.sh: install `build`
-# into a writable --target on node-local /tmp and put it on PYTHONPATH. The
+# into a writable --target in the run namespace and put it on PYTHONPATH. The
 # SIF's /opt/venv-* are root-owned + RO and the compute-node HOME is RO inside
 # the container, so a normal install fails Permission denied — a --target on
 # writable scratch sidesteps both.
@@ -28,22 +28,11 @@ test -x "$PY" || {
 
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 
-# Writable scratch (the runner's TMPDIR=~/.cache/tmp is a host path that does
-# NOT resolve inside the container). Node-local /tmp is writable.
-#
-# It was NOT "ephemeral", whatever this comment used to say: nothing removed
-# this directory, so every release leaked one. Smaller and rarer than
-# run-in-sif.sh's, therefore slower to notice — not less of a leak. Lifecycle
-# (naming, end-of-job removal, startup prune) now lives in tmpdir-lib.sh.
+# The outer wrapper resolves, binds, logs, and owns this invocation's namespace.
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
-TMPDIR="$(ci_tmpdir_path build "$V")"
+TMPDIR="$(ci_work_tmpdir_path build "$V")"
 export TMPDIR
-# `${TMPDIR:?}` — see run-in-sif.sh for the measurement. Short version: `rm -rf ""`
-# exits 0 SILENTLY on GNU coreutils (`-f` swallows the empty operand), so an empty
-# name here would delete nothing, fail nothing, and leave the rest of the script
-# addressing paths off the filesystem root. `:?` aborts instead.
-rm -rf "${TMPDIR:?build scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
 
 # The compute-node $HOME is RO inside the container — point every cache the

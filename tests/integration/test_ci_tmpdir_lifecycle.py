@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -148,6 +149,134 @@ def test_path_is_the_name_the_scripts_already_used(path_result):
     got = path_result.stdout
     # Assert
     assert got == expected
+
+
+def _resolve_root(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'. "{_LIB}"; ci_tmpdir_resolve_root'],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_resolver_prefers_namespaced_scratch_when_available(tmp_path: Path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    env = dict(os.environ)
+    env.pop("SAC_CI_TMPDIR_ROOT", None)
+    env.update(
+        SAC_CI_SCRATCH_BASE=str(scratch), RUNNER_TEMP=str(fallback), USER="runner-a"
+    )
+
+    res = _resolve_root(env)
+
+    expected = scratch / "runner-a" / "scitex-agent-container" / "ci"
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == str(expected)
+    assert expected.is_dir()
+
+
+def test_resolver_falls_back_safely_when_scratch_is_absent(tmp_path: Path):
+    fallback = tmp_path / "runner-temp"
+    fallback.mkdir()
+    env = dict(os.environ)
+    env.pop("SAC_CI_TMPDIR_ROOT", None)
+    env.update(
+        SAC_CI_SCRATCH_BASE=str(tmp_path / "absent"),
+        RUNNER_TEMP=str(fallback),
+        USER="runner-b",
+    )
+
+    res = _resolve_root(env)
+
+    expected = fallback / "scitex-agent-container-ci-runner-b"
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == str(expected)
+    assert expected.is_dir()
+
+
+def test_concurrent_run_cleanup_isolated_by_run_identity(root: Path):
+    first_env = _env(root, GITHUB_RUN_ID="81001")
+    second_env = _env(root, GITHUB_RUN_ID="81002")
+    command = f'. "{_LIB}"; ci_tmpdir_path ci 3.12'
+    first = Path(
+        subprocess.check_output(["bash", "-c", command], text=True, env=first_env)
+    )
+    second = Path(
+        subprocess.check_output(["bash", "-c", command], text=True, env=second_env)
+    )
+    (first / "work").mkdir(parents=True)
+    (second / "work").mkdir(parents=True)
+
+    cleaned = subprocess.run(
+        ["bash", "-c", f'. "{_LIB}"; ci_tmpdir_cleanup "{first}"'],
+        capture_output=True,
+        text=True,
+        env=first_env,
+    )
+
+    assert cleaned.returncode == 0, cleaned.stderr
+    assert not first.exists()
+    assert second.is_dir()
+
+
+def test_interrupted_wrapper_cleans_only_its_run_directory(tmp_path: Path):
+    root = tmp_path / "ci-root"
+    root.mkdir()
+    bystander = root / "ci-scitex_agent_container-999-1-3.12"
+    bystander.mkdir()
+    sif = tmp_path / "ci.sif"
+    sif.touch()
+    fake_apptainer = tmp_path / "apptainer"
+    fake_apptainer.write_text(
+        "#!/usr/bin/env bash\ntrap 'exit 143' TERM INT\nwhile :; do sleep 0.1; done\n",
+        encoding="utf-8",
+    )
+    fake_apptainer.chmod(0o755)
+    env = _env(root, GITHUB_RUN_ID="82001")
+    env.update(
+        HOME=str(tmp_path),
+        SCITEX_CI_APPTAINER=str(fake_apptainer),
+        SCITEX_CI_SIF=str(sif),
+    )
+
+    proc = subprocess.Popen(
+        ["bash", str(_EXEC), "run-in-sif.sh", "3.12"],
+        cwd=_REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    owned = root / "ci-scitex_agent_container-82001-1-3.12"
+    deadline = time.monotonic() + 5
+    while not owned.is_dir() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert owned.is_dir(), "wrapper did not establish its run namespace"
+
+    proc.send_signal(signal.SIGTERM)
+    stdout, stderr = proc.communicate(timeout=5)
+
+    assert proc.returncode == 143, stdout + stderr
+    assert f"ci-run-storage: root={owned} free=" in stdout
+    assert not owned.exists()
+    assert bystander.is_dir(), "signal cleanup removed a concurrent run"
+
+
+def test_all_heavy_temp_roots_are_children_of_the_run_namespace():
+    outer = _EXEC.read_text(encoding="utf-8")
+    inners = "\n".join(
+        (_CI / name).read_text(encoding="utf-8") for name in _SCRATCH_CREATORS
+    )
+
+    assert 'APPTAINER_TMPDIR="$CI_RUN_DIR/apptainer"' in outer
+    assert 'CI_PG_ROOT="$CI_RUN_DIR/postgres"' in outer
+    assert "ci_work_tmpdir_path" in inners
+    assert 'UV_CACHE_DIR="$TMPDIR/uv-cache"' in inners
+    assert 'PIP_CACHE_DIR="$TMPDIR/pip-cache"' in inners
 
 
 @pytest.mark.parametrize(

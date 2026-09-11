@@ -37,13 +37,15 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / ".github" / "ci" / "run-in-sif.sh"
+_CI = Path(__file__).resolve().parents[2] / ".github" / "ci"
+_SCRIPT = _CI / "exec-in-sif.sh"
+_LIB = _CI / "tmpdir-lib.sh"
 _GLOB = "ci-scitex_agent_container-*"
 
 
 @pytest.fixture(scope="module")
 def script_text() -> str:
-    return _SCRIPT.read_text(encoding="utf-8")
+    return _SCRIPT.read_text(encoding="utf-8") + _LIB.read_text(encoding="utf-8")
 
 
 def test_ci_script_exists():
@@ -57,15 +59,13 @@ def test_ci_script_exists():
 
 def test_scratch_dir_is_removed_on_exit(script_text):
     # Arrange
-    needle = "trap 'rm -rf \"${TMPDIR:?"
+    needle = "trap _ci_run_cleanup EXIT"
     # Act
     present = needle in script_text
     # Assert
     assert present, (
-        "run-in-sif.sh must remove its own scratch dir on EXIT, via the guarded "
-        "${TMPDIR:?} form. Without the trap each CI leg leaks ~2G and the runner "
-        "filesystem fills (measured: 290G); without the guard the trap can fire "
-        "on an empty path."
+        "exec-in-sif.sh must keep its shell alive and clean the exact run-owned "
+        "directory on EXIT. Without the trap each CI leg leaks ~2G."
     )
 
 
@@ -83,7 +83,7 @@ def test_sibling_sweep_is_age_gated(script_text):
 
 def test_sibling_sweep_excludes_the_current_scratch_dir(script_text):
     # Arrange
-    needle = '! -path "$TMPDIR"'
+    needle = '! -name "*-${run_id}-${attempt}-*"'
     # Act
     present = needle in script_text
     # Assert
@@ -158,9 +158,10 @@ def test_every_wrapper_still_deletes_its_scratch(name):
     # Arrange
     wrapper = name
     # Act
-    lines = _rm_lines(wrapper)
+    text = _wrapper(wrapper).read_text(encoding="utf-8")
     # Assert
-    assert lines, f"{wrapper} deletes no scratch path — did the lifecycle move?"
+    assert "ci_work_tmpdir_path" in text
+    assert "ci_tmpdir_cleanup \"$CI_RUN_DIR\"" in _SCRIPT.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(("name", "body"), _DELETIONS)

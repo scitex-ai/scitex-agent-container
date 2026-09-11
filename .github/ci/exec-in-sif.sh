@@ -90,15 +90,61 @@ fi
     exit 1
 }
 
-# Apptainer scratch. On Spartan the GPFS project scratch (shared FS) keeps HOME
-# clean; everywhere else that path does not exist, and `mkdir -p` under it would
-# be a hard failure, so fall back to host-local scratch under $HOME.
+# Resolve one host-visible directory for this invocation before starting any
+# heavyweight work. The inner SIF receives the exact same path via an explicit
+# bind and environment variable.
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
+CI_PREFIX="$(ci_tmpdir_prefix_for_inner "$INNER")"
+CI_PREFIX="${CI_PREFIX:-exec}"
+CI_VERSION="${1:-generic}"
+SAC_CI_TMPDIR_ROOT="$(ci_tmpdir_resolve_root)"
+export SAC_CI_TMPDIR_ROOT
+CI_RUN_DIR="$(ci_tmpdir_path "$CI_PREFIX" "$CI_VERSION")"
+export CI_RUN_DIR
+export APPTAINERENV_SAC_CI_TMPDIR_ROOT="$SAC_CI_TMPDIR_ROOT"
+export APPTAINERENV_SAC_CI_RUN_DIR="$CI_RUN_DIR"
+mkdir -p -- "$CI_RUN_DIR"
+ci_tmpdir_log "$CI_RUN_DIR"
+export TMPDIR="$CI_RUN_DIR/host-tmp"
+mkdir -p -- "$TMPDIR"
+
+CI_CHILD_PID=""
+CI_PG_PID=""
+_ci_stop_pid() {
+    local pid="${1:-}" i
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    i=0
+    while [ "$i" -lt 50 ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+        i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+}
+_ci_run_cleanup() {
+    local rc=$?
+    trap - EXIT TERM INT
+    _ci_stop_pid "$CI_CHILD_PID"
+    _ci_stop_pid "$CI_PG_PID"
+    if ! ci_tmpdir_cleanup "$CI_RUN_DIR"; then
+        echo "::warning::ci-run-storage: could not remove run-owned directory $CI_RUN_DIR"
+    fi
+    exit "$rc"
+}
+trap _ci_run_cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+# Apptainer scratch belongs to this invocation, alongside all other temporary
+# state, so one exact cleanup removes it without touching a concurrent run.
 GPFS_PROJECT="/data/gpfs/projects/punim0264"
-if [ -d "$GPFS_PROJECT" ]; then
-    export APPTAINER_TMPDIR="$GPFS_PROJECT/ywatanabe/ci/apptainer-tmp"
-else
-    export APPTAINER_TMPDIR="$HOME/.cache/scitex-ci/apptainer-tmp"
-fi
+export APPTAINER_TMPDIR="$CI_RUN_DIR/apptainer"
 mkdir -p "$APPTAINER_TMPDIR"
 
 # --- scitex-agent-container-specific (1/2): reap leaked CI processes ----------
@@ -203,8 +249,6 @@ fi
 # the backstop for SIGKILL/reboot; the normal ending is the `if: always()`
 # clean-tmpdir.sh step in each job. Guards (self-exclusion by run identity, 24 h
 # age floor) and the /scratch decision are argued in tmpdir-lib.sh.
-# shellcheck source=/dev/null
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
 ci_tmpdir_prune
 # --- end scitex-agent-container-specific -------------------------------------
 
@@ -238,26 +282,11 @@ ci_tmpdir_prune
 # down every build in the repo including ones that touch no database. A missing
 # test database must degrade to a LOUD skip, never to an outage.
 #
-# TEARDOWN IS BY REAPER, NOT BY TRAP, and that is forced: this script ends in
-# `exec`, which replaces the shell, so an EXIT trap would never fire. The same
-# reasoning the tmpdir prune above already uses applies -- age is what separates
-# a leftover from a live concurrent sibling, and a reaper survives SIGKILL and
-# reboots, which a trap does not.
-CI_PG_ROOT="${TMPDIR:-/tmp}/sac-ci-pg"
+# PostgreSQL is stopped by the wrapper's EXIT/TERM/INT handler before the exact
+# run directory is removed. The age-gated run-directory prune is only the
+# SIGKILL/reboot backstop.
+CI_PG_ROOT="$CI_RUN_DIR/postgres"
 mkdir -p "$CI_PG_ROOT" 2>/dev/null || true
-
-# Reap leftovers from runs that were killed before they could clean up. The 6 h
-# floor is deliberately far longer than any leg: a concurrent matrix sibling on
-# this same runner must never be shot.
-find "$CI_PG_ROOT" -mindepth 1 -maxdepth 1 -type d -mmin +360 2>/dev/null |
-    while read -r stale; do
-        if [ -f "$stale/postmaster.pid" ]; then
-            stale_pid="$(head -1 "$stale/postmaster.pid" 2>/dev/null)"
-            case "$stale_pid" in [0-9]*) kill "$stale_pid" 2>/dev/null || true ;; esac
-        fi
-        rm -rf "$stale" 2>/dev/null || true
-        echo "exec-in-sif: reaped stale CI postgres $stale"
-    done
 
 # Resolve the server image by GLOB. The filename differs per host -- measured
 # 2026-08-26: compute-03 carries postgres18.sif, compute-01 and compute-04 carry
@@ -279,7 +308,7 @@ else
     # microseconds and the alternative -- a fixed guess -- is wrong on a host
     # nobody has probed yet.
     CI_PG_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()' 2>/dev/null || echo "")"
-    CI_PG_DATA="$CI_PG_ROOT/$$-$(date +%s)"
+    CI_PG_DATA="$CI_PG_ROOT/data"
 
     if [ -z "$CI_PG_PORT" ]; then
         echo "::warning::could not obtain a free port for the CI postgres — PostgreSQL tests will SKIP (loudly)."
@@ -299,6 +328,7 @@ else
                 -c fsync=off \
                 -c full_page_writes=off -c synchronous_commit=off \
                 >"$CI_PG_DATA/server.log" 2>&1 &
+            CI_PG_PID=$!
             # unix_socket_directories is NOT optional here, and the failure it
             # prevents is not guessable from its message. MEASURED on
             # scitex-compute-04 2026-08-26: without it the server starts, binds
@@ -339,12 +369,12 @@ fi
 
 # Build the argv as an ARRAY so the GPFS bind can be dropped cleanly rather than
 # passed as an empty string. --pwd "$PWD" keeps the checkout as cwd.
-APPTAINER_ARGV=(exec --pwd "$PWD")
+APPTAINER_ARGV=(exec --pwd "$PWD" --bind "$CI_RUN_DIR")
 if [ -d "$GPFS_PROJECT" ]; then
     APPTAINER_ARGV+=(--bind "$GPFS_PROJECT")
-    GPFS_STATE="present (scratch on GPFS, punim0264 bound)"
+    GPFS_STATE="present (punim0264 bound)"
 else
-    GPFS_STATE="absent (scratch under \$HOME, no GPFS bind)"
+    GPFS_STATE="absent (no GPFS bind)"
 fi
 
 # Echo the resolved plan: when a run fails on an unfamiliar node, the FIRST
@@ -353,6 +383,15 @@ echo "exec-in-sif: apptainer=$APPTAINER (via $APPTAINER_FROM)"
 echo "exec-in-sif: sif=$SIF"
 echo "exec-in-sif: $GPFS_PROJECT $GPFS_STATE"
 echo "exec-in-sif: APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+echo "exec-in-sif: run-owned temp=$CI_RUN_DIR"
 echo "exec-in-sif: + $APPTAINER ${APPTAINER_ARGV[*]} $SIF bash .github/ci/$INNER $*"
 
-exec "$APPTAINER" "${APPTAINER_ARGV[@]}" "$SIF" bash ".github/ci/$INNER" "$@"
+"$APPTAINER" "${APPTAINER_ARGV[@]}" "$SIF" bash ".github/ci/$INNER" "$@" &
+CI_CHILD_PID=$!
+if wait "$CI_CHILD_PID"; then
+    CI_STATUS=0
+else
+    CI_STATUS=$?
+fi
+CI_CHILD_PID=""
+exit "$CI_STATUS"
