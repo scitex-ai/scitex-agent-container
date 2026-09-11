@@ -23,6 +23,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
+from ._tui_turn_bridge_env import (
+    turn_bridge_db_observation,
+    turn_bridge_process_env,
+)
 from ._tui_turn_bridge_port import (
     _PORT_FREE_TIMEOUT_S,
     _STOP_SIGTERM_GRACE_S,
@@ -186,14 +190,25 @@ def start_turn_bridge(
     ]
     try:
         log_fh = open(state_dir / LOG_FILENAME, "ab")
+        bridge_env = turn_bridge_process_env(config)
+        db_identity = turn_bridge_db_observation(config, bridge_env)
+        log.info(
+            "tui-turn-bridge: database identity for %s "
+            "configured_pguser=%s effective_pguser=%s pgpassfile_source=%s",
+            config.name,
+            db_identity["configured_pguser"] or "derived",
+            db_identity["effective_pguser"] or "unset",
+            db_identity["pgpassfile_source"],
+        )
         proc = spawn(
             argv,
             stdout=log_fh,
             stderr=log_fh,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=bridge_env,
         )
-    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged for the operator)
+    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged to the caller's stderr/journald through this module's configured Python logger)
         log.warning("tui-turn-bridge: failed to spawn for %r: %s", config.name, exc)
         return None
     pid = getattr(proc, "pid", None)

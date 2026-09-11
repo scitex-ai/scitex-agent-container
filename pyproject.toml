@@ -363,7 +363,11 @@ dev = [
     # admits silent write loss on exactly the path the migration depends on.
     # The container recipes gate this BY SYMBOL (_SEQ_ALLOCATION_ATTEMPTS) —
     # see apptainer-scitex.def; this specifier is the base layer's half.
-    "scitex-dev>=0.56.6",
+    # 0.59.1 makes NEW_RECORD creation and revision-guarded transitions one
+    # database-atomic operation across independent Store processes. The
+    # durable turn inbox depends on that guarantee for idempotent acceptance
+    # and single-owner delivery leases (scitex-ai/scitex-dev#795).
+    "scitex-dev>=0.59.1",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",

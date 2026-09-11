@@ -21,6 +21,7 @@ from scitex_agent_container._store_plugin import (
     CLASSIFIED,
     INSTANCES,
     LINEAGE,
+    MESSAGE_INBOX,
     NEVER_SYNCED,
     SOURCE_TABLE,
     Truth,
@@ -299,6 +300,25 @@ def test_the_directory_is_fleet_truth():
     got = truth
     # Assert
     assert got is Truth.FLEET
+
+
+def test_the_durable_message_inbox_is_complete_fleet_multi_writer_truth():
+    # Arrange
+    schema, truth, policy = CLASSIFIED["message_inbox"]
+    # Act
+    classification = (
+        schema,
+        truth.value,
+        policy.value,
+        SOURCE_TABLE["message_inbox"],
+    )
+    # Assert
+    assert classification == (
+        MESSAGE_INBOX,
+        "fleet",
+        "multi_writer",
+        "message_inbox",
+    )
 
 
 def test_a_declared_identity_field_is_never_last_writer_wins():
