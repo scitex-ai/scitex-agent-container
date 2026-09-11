@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+import yaml
 
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._lifecycle._start_outcome import (
@@ -1177,6 +1178,29 @@ def test_agent_stop_happy_path_calls_runtime_stop(
     )
     # Assert
     assert len(runtime.stop_calls) == 1
+
+
+def test_agent_stop_currently_invalid_spec_still_stops_registered_runtime(
+    pg_schema: str, tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    raw = yaml.safe_load(spec.read_text())
+    raw["spec"]["future_launch_capability"] = {"enabled": True}
+    spec.write_text(yaml.safe_dump(raw, sort_keys=False))
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime()
+
+    # Act
+    ok = lc.agent_stop(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _config: runtime,
+        handover_mod=FakeHandover(),
+    )
+
+    # Assert
+    assert (ok, len(runtime.stop_calls), registry.exists("alpha")) == (True, 1, False)
 
 
 def test_agent_stop_happy_path_removes_registry_entry(
