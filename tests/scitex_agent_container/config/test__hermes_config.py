@@ -117,11 +117,15 @@ def test_named_provider_exposes_only_the_selected_configured_model():
     provider = result["providers"]["sac-paid-flash"]
 
     # Assert
-    assert provider["discover_models"] is False
-    assert provider["model"] == "provider-flash"
-    assert provider["default_model"] == "provider-flash"
-    assert provider["models"] == {
-        "provider-flash": {"context_length": 128_000}
+    assert provider == {
+        "name": "SAC paid-flash",
+        "base_url": "https://provider.example/v1",
+        "key_env": "PROVIDER_API_KEY",
+        "transport": "chat_completions",
+        "discover_models": False,
+        "model": "provider-flash",
+        "default_model": "provider-flash",
+        "models": {"provider-flash": {"context_length": 128_000}},
     }
 
 
