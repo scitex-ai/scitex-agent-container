@@ -22,6 +22,7 @@ from scitex_agent_container.config._harness_registry import (
     CODEX_SDK,
     CODEX_TUI,
     HARNESS_DESCRIPTORS,
+    HERMES_TUI,
     OPENAI_AGENTS,
     UnmappableHarnessError,
     host_probed_runtime_spellings,
@@ -93,6 +94,24 @@ def test_resolve_harness_openai_maps_to_the_openai_key():
     key = resolve_harness_key(spec)
     # Assert
     assert key == OPENAI_AGENTS
+
+
+def test_resolve_hermes_tui_maps_to_the_hermes_tui_key():
+    # Arrange
+    spec = {"harness": "hermes", "runtime": "tui"}
+    # Act
+    key = resolve_harness_key(spec)
+    # Assert
+    assert key == HERMES_TUI
+
+
+def test_resolve_hermes_headless_refuses_the_unregistered_mode():
+    # Arrange
+    spec = {"harness": "hermes", "runtime": "headless"}
+    # Act
+    # Assert
+    with pytest.raises(UnmappableHarnessError, match="'headless'"):
+        resolve_harness_key(spec)
 
 
 def test_resolve_harness_axis_wins_over_the_runtime_axis():
@@ -261,14 +280,21 @@ def test_resolve_config_and_mapping_surfaces_agree():
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_exactly_the_five_real_entries():
+def test_registry_has_exactly_the_six_real_entries():
     # Arrange — CODEX_SDK joined on 2026-08-14 (card
     # sac-codex-python-sdk-harness-20260814), the first vendor added
     # since the registry landed. A closed-set assertion like this one is
     # deliberately allowed to break when a row is added: the break is
     # the review prompt asking whether the new entry was intended.
     # CODEX_TUI joined on 2026-09-05 (the operator's move off Claude Code).
-    expected = {CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK, CODEX_TUI}
+    expected = {
+        CLAUDE_CODE_TUI,
+        CLAUDE_AGENT_SDK,
+        OPENAI_AGENTS,
+        CODEX_SDK,
+        CODEX_TUI,
+        HERMES_TUI,
+    }
     # Act
     keys = set(HARNESS_DESCRIPTORS)
     # Assert
@@ -577,9 +603,9 @@ def test_sdk_heartbeat_loop_skip_set_derives_from_the_registry():
     assert _TUI_RUNTIMES == derived
 
 
-def test_known_harnesses_lists_the_three_families_sorted():
+def test_known_harnesses_lists_the_four_families_sorted():
     # Arrange — "codex" joined the axis with the fourth registry row.
-    expected = ("anthropic", "codex", "openai")
+    expected = ("anthropic", "codex", "hermes", "openai")
     # Act
     harnesses = known_harnesses()
     # Assert

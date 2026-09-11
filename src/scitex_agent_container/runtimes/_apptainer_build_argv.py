@@ -93,22 +93,28 @@ def build_run_argv(
     # function reads ``config.harness`` CORRECTLY. That split-brain is
     # exactly the bug this guard retires: OPENAI_* auth env provisioned,
     # Claude runner launched, no error anywhere.
-    from ..config._harness_registry import CODEX_TUI
+    from ..config._harness_registry import (
+        CODEX_TUI,
+        HERMES_TUI,
+        resolve_harness_key,
+    )
     from ..config._harness_types import ensure_harness_matches_claude_launch
     from ._apptainer_codex_env import codex_harness_active
 
+    harness_key = resolve_harness_key(config)
     codex_pane = bool(tui) and codex_harness_active(config)
-    ensure_harness_matches_claude_launch(
-        config,
-        launching=(
-            "the interactive codex TUI"
-            if codex_pane
-            else "the interactive claude TUI"
-            if tui
-            else f"runner module {RUNNER_MODULE!r}"
-        ),
-        launching_key=CODEX_TUI if codex_pane else "",
-    )
+    if harness_key != HERMES_TUI:
+        ensure_harness_matches_claude_launch(
+            config,
+            launching=(
+                "the interactive codex TUI"
+                if codex_pane
+                else "the interactive claude TUI"
+                if tui
+                else f"runner module {RUNNER_MODULE!r}"
+            ),
+            launching_key=CODEX_TUI if codex_pane else "",
+        )
 
     # Hardened isolation by default — see _apptainer_iso_flags for the
     # per-flag skip logic (relaxed opt-out, operator-declared raw_args,
@@ -355,16 +361,14 @@ def build_run_argv(
     # skipped); otherwise → the OAuth path (forward host auth env +
     # bind the resolved .credentials.json). Extracted to
     # _apptainer_auth so this runtime file stays under the line cap.
-    from ._apptainer_auth import auth_argv
-
-    argv += auth_argv(config, state_dir)
+    argv += HARNESS_DESCRIPTORS[harness_key].env_and_binds(config, state_dir)
 
     # Agent env = the FLEET-DEFAULT layer merged UNDER spec.env (spec.env
     # WINS). See _fleet_env for the precedence rule and why it never raises.
     from ._fleet_env import effective_env
 
-    for key, val in effective_env(config).items():
-        argv += ["--env", f"{key}={val}"]
+    for env_key, val in effective_env(config).items():
+        argv += ["--env", f"{env_key}={val}"]
 
     # Layer-5 of auto-port-allocation + bus auth — forward the
     # host-stable ``sac listen`` base URL and the host-generated bearer
@@ -385,7 +389,7 @@ def build_run_argv(
     # session. The TUI telegrammer inherits the container env (same path as its
     # bot token via --env-file), so forward the SAME shared-plan wake URL here.
     # Without it an idle TUI agent never wakes on Telegram (the SDK↔TUI drift).
-    if tui:
+    if tui and harness_key != HERMES_TUI:
         from ._apptainer_inner_argv import tui_channel_plan
 
         _wake_url = tui_channel_plan(config).telegrammer_turn_url
@@ -438,7 +442,7 @@ def build_run_argv(
     tui_channel_mcp: str | None = None
     tui_dev_channels: str | None = None
     tui_settings: str | None = None
-    if tui:
+    if tui and harness_key != HERMES_TUI:
         ch = resolve_container_home(config).rstrip("/")
         has_mcp = (home_host / ".mcp.json").is_file() or (
             _upper_home is not None and (_upper_home / ".mcp.json").is_file()

@@ -42,6 +42,7 @@ from scitex_agent_container.config._harness_types import (
     HarnessRuntimeMismatchError,
 )
 from scitex_agent_container.runtimes.claude_session import ClaudeSessionRuntime
+from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
 from scitex_agent_container.runtimes.tui_session import TuiSessionRuntime
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,15 @@ def test_get_runtime_returns_tui_session_for_runtime_tui():
     rt = _get_runtime(config)
     # Assert
     assert isinstance(rt, TuiSessionRuntime)
+
+
+def test_get_runtime_returns_hermes_tui_for_hermes_tui_spec():
+    # Arrange
+    config = AgentConfig(name="alpha", harness="hermes", runtime="tui")
+    # Act
+    runtime = _get_runtime(config)
+    # Assert
+    assert isinstance(runtime, HermesTuiSessionRuntime)
 
 
 # ---------------------------------------------------------------------------

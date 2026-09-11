@@ -59,11 +59,19 @@ def _engines() -> dict:
     }
 
 
-def _write(tmp_path, name: str, engines: dict | None = None) -> str:
+def _write(
+    tmp_path,
+    name: str,
+    engines: dict | None = None,
+    *,
+    engine: str | None = None,
+) -> str:
     spec = explicit_spec_defaults("Agent")
     spec["host"] = "${HOSTNAME}"
     if engines is not None:
         spec["engines"] = engines
+    if engine is not None:
+        spec["engine"] = engine
     agent_dir = tmp_path / name
     agent_dir.mkdir(parents=True, exist_ok=True)
     path = agent_dir / "spec.yaml"
@@ -198,6 +206,20 @@ def test_the_same_engine_with_its_token_exported_starts_clean(
     config = load_config(_write(tmp_path, "honourable", _engines()))
     # Act
     selected = select_engine_at_start(config, "qwen38-27b", log=False)
+    # Assert
+    assert selected.key == "qwen38-27b"
+
+
+def test_start_uses_the_specs_explicit_pin_with_multiple_available_engines(
+    tmp_path, token_exported
+):
+    # Arrange
+    engines = _engines()
+    for entry in engines.values():
+        entry.pop("default", None)
+    config = load_config(_write(tmp_path, "pinned-qwen", engines, engine="qwen38-27b"))
+    # Act
+    selected = select_engine_at_start(config, None, log=False)
     # Assert
     assert selected.key == "qwen38-27b"
 

@@ -24,6 +24,7 @@ from ..config._harness_registry import (
     CLAUDE_CODE_TUI,
     CODEX_TUI,
     HARNESS_DESCRIPTORS,
+    HERMES_TUI,
     OPENAI_AGENTS,
 )
 from ..config._harness_types import ensure_harness_matches_claude_launch
@@ -181,9 +182,15 @@ def build_inner_argv(
         # direct/dry-run callers pass configs whose ``runtime`` field this
         # builder must not second-guess. The HARNESS axis picks the pane's
         # program: codex (2026-09-05) or Claude Code.
+        from ..config._harness_registry import resolve_harness_key
         from ._apptainer_codex_env import codex_harness_active
 
-        if codex_harness_active(config):
+        harness_key = resolve_harness_key(config)
+        if harness_key == HERMES_TUI:
+            runner_tail = HARNESS_DESCRIPTORS[harness_key].inner_argv(
+                config, tui_options
+            )
+        elif codex_harness_active(config):
             ensure_harness_matches_claude_launch(
                 config, launching="the interactive codex TUI", launching_key=CODEX_TUI
             )

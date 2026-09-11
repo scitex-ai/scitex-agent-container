@@ -38,6 +38,7 @@ from ..config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
     CODEX_TUI,
+    HERMES_TUI,
     resolve_harness_key,
     runtime_spellings_for,
 )
@@ -106,6 +107,10 @@ def _get_runtime(config: AgentConfig):
         # UnmappableHarnessError (a ValueError) naming both spec values
         # and the v4 card.
         key = resolve_harness_key(config)
+    if key == HERMES_TUI:
+        from ..runtimes.hermes_tui import HermesTuiSessionRuntime
+
+        return HermesTuiSessionRuntime()
     ensure_harness_matches_claude_launch(
         config,
         launching=(

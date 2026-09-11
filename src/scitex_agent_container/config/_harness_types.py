@@ -79,7 +79,7 @@ LEGACY_HARNESS_KEY = "provider"
 # registry, but a `Literal` cannot be built from a runtime tuple without
 # losing static checking, so the members are restated here. Keep in sync
 # with the ``spec_harness`` values in config._harness_registry.
-AgentHarness = Literal["anthropic", "openai", "codex"]
+AgentHarness = Literal["anthropic", "openai", "codex", "hermes"]
 
 DEFAULT_AGENT_HARNESS: AgentHarness = "anthropic"
 

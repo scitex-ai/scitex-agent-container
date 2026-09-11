@@ -164,10 +164,14 @@ def validate_engines(spec: dict, kind: object = "Agent") -> list[str]:
             )
         errors += _validate_entry(str(key), raw)
 
-    try:
-        default_engine(parse_engines(spec))
-    except EngineDefaultError as exc:
-        errors.append(str(exc))
+    # ``spec.engine`` is the canonical explicit choice. The legacy
+    # exactly-one-``default: true`` rule applies only when no pin is stated;
+    # requiring both makes two separate fields select the same engine.
+    if not spec_engine_key(spec):
+        try:
+            default_engine(parse_engines(spec))
+        except EngineDefaultError as exc:
+            errors.append(str(exc))
 
     errors += legacy_conflict_messages(spec)
     return errors

@@ -33,6 +33,7 @@ from scitex_agent_container.config._harness_registry import (
     CODEX_SDK,
     CODEX_TUI,
     HARNESS_DESCRIPTORS,
+    HERMES_TUI,
     OPENAI_AGENTS,
     UnmappableHarnessError,
     known_harnesses,
@@ -216,9 +217,9 @@ def test_unknown_harness_error_lists_codex_among_the_known_families():
 # ---------------------------------------------------------------------------
 
 
-def test_known_harnesses_now_includes_codex():
+def test_known_harnesses_includes_registered_families():
     # Arrange
-    expected = ("anthropic", "codex", "openai")
+    expected = ("anthropic", "codex", "hermes", "openai")
     # Act
     families = known_harnesses()
     # Assert
@@ -261,10 +262,17 @@ def test_adding_codex_did_not_widen_the_runtime_spellings():
     assert spellings == expected
 
 
-def test_the_registry_holds_exactly_the_five_known_harness_keys():
+def test_the_registry_holds_exactly_the_six_known_harness_keys():
     # Arrange
     expected = sorted(
-        [CLAUDE_CODE_TUI, CLAUDE_AGENT_SDK, OPENAI_AGENTS, CODEX_SDK, CODEX_TUI]
+        [
+            CLAUDE_CODE_TUI,
+            CLAUDE_AGENT_SDK,
+            OPENAI_AGENTS,
+            CODEX_SDK,
+            CODEX_TUI,
+            HERMES_TUI,
+        ]
     )
     # Act
     keys = sorted(HARNESS_DESCRIPTORS)
@@ -445,4 +453,3 @@ def test_codex_env_flags_bind_into_tmp_where_the_image_has_a_mount_point(
     argv = codex_env.codex_env_flags(config, tmp_path)
     # Assert
     assert argv[argv.index("--bind") + 1].endswith(":/tmp/sac-hm-codex-home")
-

@@ -70,6 +70,7 @@ __all__ = [
     "CLAUDE_CODE_TUI",
     "CODEX_SDK",
     "CODEX_TUI",
+    "HERMES_TUI",
     "HARNESS_DESCRIPTORS",
     "HarnessDescriptor",
     "OPENAI_AGENTS",
@@ -120,6 +121,11 @@ CODEX_SDK = "codex-sdk"
 #: through ``runtimes._apptainer_inner_argv_codex``.
 CODEX_TUI = "codex-tui"
 
+#: Hermes' official Ink TUI in a tmux PTY. Hermes is intentionally TUI-only
+#: on the production v3 lifecycle; its gateway/headless control plane remains
+#: outside this registration until that separate rollout is approved.
+HERMES_TUI = "hermes-tui"
+
 
 class UnmappableHarnessError(ValueError):
     """``spec.harness`` + ``spec.runtime`` select no registered harness.
@@ -148,16 +154,24 @@ def _v4_card() -> str:
 # their ``RUNNER_MODULE*`` re-exports from the DESCRIPTORS, not from these.
 # ---------------------------------------------------------------------------
 
-from ._harness_callables import (  # noqa: F401 (re-export)
+from ._harness_callables import (  # noqa: E402
     CLAUDE_SESSION_RUNNER as _CLAUDE_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402
     CODEX_SESSION_RUNNER as _CODEX_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402
     OPENAI_SESSION_RUNNER as _OPENAI_SESSION_RUNNER,
+)
+from ._harness_callables import (  # noqa: E402,F401 (re-export)
     _claude_env_and_binds,
     _claude_sdk_inner_argv,
     _claude_tui_inner_argv,
     _codex_env_and_binds,
     _codex_sdk_inner_argv,
     _codex_tui_inner_argv,
+    _hermes_env_and_binds,
+    _hermes_tui_inner_argv,
     _noop_prepare_home,
     _openai_agents_inner_argv,
     _openai_env_and_binds,
@@ -364,6 +378,17 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
             can_resume=True,
             env_and_binds=_codex_env_and_binds,
         ),
+        HarnessDescriptor(
+            key=HERMES_TUI,
+            spec_harness="hermes",
+            spec_runtimes=frozenset({"tui"}),
+            runner_module=None,
+            inner_argv=_hermes_tui_inner_argv,
+            hosted="external",
+            beat_writer="host-probe",
+            can_resume=True,
+            env_and_binds=_hermes_env_and_binds,
+        ),
     )
 }
 
@@ -423,7 +448,10 @@ def resolve_harness_key(spec: "Mapping | AgentConfig") -> str:
             f"family. Known harnesses: {', '.join(known_harnesses())}. "
             f"(v4 harness registry — card {_v4_card()})"
         )
-    if len(family) == 1:
+    # A sole row with NO runtime spellings (openai-agents) is selected by
+    # harness alone. A sole row that DOES claim spellings (Hermes TUI) is
+    # intentionally mode-restricted and must still pass through the matcher.
+    if len(family) == 1 and not family[0].spec_runtimes:
         return family[0].key
     for descriptor in family:
         if runtime in descriptor.spec_runtimes:
