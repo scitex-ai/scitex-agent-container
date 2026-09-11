@@ -210,7 +210,7 @@ def test_the_harness_registry_is_exactly_anthropic_openai_and_codex():
     # the harness-types module (that derivation is the point).
     from scitex_agent_container.config._harness_registry import known_harnesses
 
-    expected = {"anthropic", "openai", "codex"}
+    expected = {"anthropic", "openai", "codex", "hermes"}
     # Act
     names = set(known_harnesses())
     # Assert
@@ -224,7 +224,15 @@ def test_list_harnesses_also_offers_the_program_name_spellings():
     listed only the vendor words would exclude spellings the loader
     happily accepts."""
     # Arrange
-    expected = {"anthropic", "claude", "claude-code", "codex", "openai", "openai-agents"}
+    expected = {
+        "anthropic",
+        "claude",
+        "claude-code",
+        "codex",
+        "hermes",
+        "openai",
+        "openai-agents",
+    }
     # Act
     names = set(list_harnesses())
     # Assert

@@ -185,7 +185,8 @@ def select_engine_at_start(
     # Raises UnknownEngineError listing the declared keys. Deliberately
     # NOT caught: degrading to the default here is the exact silent
     # fallback the operator ruled out.
-    engine = select_engine(engines, requested)
+    selected_key = requested if explicit else spec_default or None
+    engine = select_engine(engines, selected_key)
     if engine is None:
         return None
 

@@ -27,10 +27,8 @@ from ._acl_validation import validate_phase3_acl
 # back-compat with any importer of the old ``_validation._VALID_MODEL_RE``.
 from ._claude_validation import _VALID_MODEL_RE as _VALID_MODEL_RE  # noqa: F401
 from ._claude_validation import validate_claude
-from ._engine_validation import validate_engine_pin, validate_engines
 from ._container_engine import container_runtime_removed_error
-from ._labels_validation import validate_labels
-from ._placement_validation import validate_placement
+from ._engine_validation import validate_engine_pin, validate_engines
 
 # spec.harness (TOP-LEVEL: which agent SDK runs the session), plus its
 # DEPRECATED alias spec.provider — distinct from spec.claude.provider
@@ -44,6 +42,8 @@ from ._harness_types import (
     is_known_harness,
     list_harnesses,
 )
+from ._labels_validation import validate_labels
+from ._placement_validation import validate_placement
 from ._reserved_names import reserved_spec_path_errors
 from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
@@ -89,8 +89,6 @@ from ._spec_keys import (  # noqa: E402
     _V3_REMOVED_FIELDS,
 )
 
-
-
 # ---------------------------------------------------------------------------
 # Required author-facing fields. The 2026-06-23 "no hidden defaults" subset
 # (runtime/workdir/apptainer.{image,binds}/health/restart/claude.model) was
@@ -114,6 +112,11 @@ def validate_raw(raw: dict, path: str) -> list[str]:
 
     if not isinstance(raw, dict):
         return [f"Config file is not a YAML mapping: {path}"]
+
+    from ._schema_compat import canonical_surface_errors, normalize_document
+
+    errors.extend(canonical_surface_errors(raw))
+    raw = normalize_document(raw)
 
     # dir-as-SSoT: the agent name is the spec's parent directory, so a
     # reserved name (the host-process role slot) is refused by PATH here —
@@ -237,6 +240,27 @@ def validate_raw(raw: dict, path: str) -> list[str]:
                     "is an inference gateway with Claude Code still "
                     "driving.)"
                 )
+
+        # The runtime spelling is global, but each harness owns only a subset
+        # of it. Validate the PAIR as well as the two individual axes so a
+        # TUI-only harness cannot load as a headless spec and fail much later
+        # in argv construction.
+        if (not runtime or runtime in _VALID_RUNTIMES) and all(
+            not spec.get(key) or is_known_harness(str(spec.get(key)))
+            for key in (HARNESS_KEY, LEGACY_HARNESS_KEY)
+        ):
+            from ._harness_registry import (
+                UnmappableHarnessError,
+                resolve_harness_key,
+            )
+            from ._harness_types import HarnessKeyConflictError
+
+            try:
+                resolve_harness_key(spec)
+            except UnmappableHarnessError as exc:
+                errors.append(str(exc))
+            except HarnessKeyConflictError:
+                pass  # the dedicated conflict validator above owns this error
 
         # spec.residency — DOES THE DAEMON OUTLIVE ITS WORK (v4 step 6):
         # resident (default) parks awaiting more turns; one-shot exits

@@ -165,12 +165,22 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 errors.append(
                     f"{path}.session.max_age_minutes must be null or a positive integer"
                 )
+            elif family == "hermes" and age is not None:
+                errors.append(
+                    f"{path}.session.max_age_minutes must be null because the "
+                    "Hermes TUI runtime does not implement age-gated continuation"
+                )
 
         channels = raw_entry.get("channels")
         if not isinstance(channels, list) or not all(
             isinstance(item, str) and item.strip() for item in channels
         ):
             errors.append(f"{path}.channels must be a list of non-empty strings")
+        elif family == "hermes" and channels:
+            errors.append(
+                f"{path}.channels must be empty because the Hermes TUI runtime "
+                "does not wire external channels"
+            )
         if (
             "approval_policy" in required
             and raw_entry.get("approval_policy") != "never"

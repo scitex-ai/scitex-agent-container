@@ -170,6 +170,34 @@ def _codex_tui_inner_argv(
     )
 
 
+def _hermes_tui_inner_argv(
+    config: "AgentConfig", options: "Mapping[str, object] | None" = None
+) -> list[str]:
+    """Inner argv for Hermes' official Ink TUI as the session owner."""
+    del options
+    argv = [
+        "/usr/bin/tini",
+        "-s",
+        "--",
+        "hermes",
+        "chat",
+        "--tui",
+        "--in",
+        str(config.workdir),
+        "--pass-session-id",
+    ]
+    if config.claude.session == "continue":
+        argv += [
+            "--continue",
+            f"sac:{config.name}",
+            "--create-if-missing",
+        ]
+    prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
+    if prompts:
+        argv += ["--query", "\n\n".join(prompts)]
+    return argv
+
+
 # ---------------------------------------------------------------------------
 # env_and_binds
 # ---------------------------------------------------------------------------
@@ -214,3 +242,11 @@ def _codex_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
     from ..runtimes._apptainer_codex_env import codex_env_flags
 
     return codex_env_flags(config, state_dir)
+
+
+def _hermes_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
+    """Expose the isolated Hermes profile and selected-engine provenance."""
+    del state_dir
+    from ..runtimes._apptainer_provider import engine_env_flags
+
+    return ["--env", "HERMES_HOME=/home/agent/.hermes"] + engine_env_flags(config)
