@@ -104,7 +104,7 @@ def test_flags_bridge_host_key_to_sac_anthropic_api_key(env_save_restore):
     assert env["SAC_ANTHROPIC_API_KEY"] == "sk-deepseek-secret"
 
 
-def test_registered_deepseek_uses_gateway_key_and_scrubs_vendor_key(
+def test_registered_deepseek_provider_flags_use_only_gateway_key(
     env_save_restore,
 ):
     # Arrange
@@ -125,7 +125,6 @@ def test_registered_deepseek_uses_gateway_key_and_scrubs_vendor_key(
         "ANTHROPIC_API_KEY": "local-gateway-key",
         "CLAUDE_CONFIG_DIR": "/tmp/sac-flash-provider-cfg",
         "ANTHROPIC_MODEL": "deepseek-flash",
-        "DEEPSEEK_API_KEY": "",
     }
 
 

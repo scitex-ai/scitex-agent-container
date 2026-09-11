@@ -9,26 +9,31 @@ That is a real phase, not an arbitrary cut: every step in it exists
 because of an **ordering invariant** on the finished flag region, and
 those invariants only hold if the whole region is already present.
 
-1. **Reconcile duplicate ``--env`` keys.** Several layers contribute
+1. **Remove vendor credentials behind a neutral gateway.** Recognition is
+   by the resolved gateway endpoint, independent of harness, model spelling,
+   or token-env override.
+2. **Reconcile duplicate ``--env`` keys.** Several layers contribute
    ``--env`` and two of them routinely name the same key. Collapse to a
    single occurrence so the launch stops depending on apptainer's
    last-wins tie-break to be correct — see :mod:`._apptainer_env_dedup`.
-2. **Refuse a banned scitex DSN.** Once one value per key survives, check
+3. **Refuse a banned scitex DSN.** Once one value per key survives, check
    the one that will actually reach the container (ADR-0022: port 5432 is
    never used for scitex).
-3. **Bind the overlay upper-home** over the container ``$HOME``, after
+4. **Bind the overlay upper-home** over the container ``$HOME``, after
    ``raw_args`` so it wins over a raw-arg ``--home`` tmpfs.
-4. **Bind ``/uvwork`` from the host scratch volume** (ADR-0024), after
+5. **Bind ``/uvwork`` from the host scratch volume** (ADR-0024), after
    every spec-declared bind so an explicit spec bind to ``/uvwork`` wins.
    READ-ONLY here — the source directory is created, and a host with no
    scratch root refused, on the real launch path only
    (``_apptainer_scratch.ensure_uvwork_for_launch``).
-5. **Lift secret-shaped ``--env`` into a 0600 env-file**, after every
+6. **Lift secret-shaped ``--env`` into a 0600 env-file**, after every
    ``--env`` source so nothing is missed, before the creds bind so that
    bind stays last.
-6. **Emit the designated credentials bind last**, so no earlier bind can
+7. **Reassert the vendor-key denial as ``--env``.** Apptainer gives this
+   precedence over inherited variables and every ``--env-file`` source.
+8. **Emit the designated credentials bind last**, so no earlier bind can
    shadow it.
-7. **Validate the flag region** as a whole, which is only meaningful once
+9. **Validate the flag region** as a whole, which is only meaningful once
    it is complete.
 
 ``finalize_flag_argv`` is pure with respect to its ``argv`` argument (a
@@ -77,6 +82,10 @@ def finalize_flag_argv(
     )
 
     agent = getattr(config, "name", None)
+
+    from ._apptainer_external_gateway import remove_vendor_credential_flags
+
+    argv = remove_vendor_credential_flags(argv, config)
 
     # The LAST ``--env`` contributor has now run, so reconcile the layers
     # that can name the same key. The fleet/spec env layer and raw_args
@@ -152,6 +161,15 @@ def finalize_flag_argv(
     from ._apptainer_secret_env import redact_secret_env_to_file
 
     argv = redact_secret_env_to_file(argv, state_dir=state_dir)
+
+    # This explicit empty value is intentionally added AFTER the secret sweep.
+    # It contains no secret, and Apptainer's --env precedence makes it the
+    # final answer over host inheritance, to_home/.env, and arbitrary
+    # --env-file entries from raw_args. The earlier pass removed any actual
+    # vendor value before it could be copied into sac's secret env file.
+    from ._apptainer_external_gateway import vendor_credential_denial_flags
+
+    argv += vendor_credential_denial_flags(config)
 
     # Designated credentials file (spec.claude.credentials_file) — bound
     # writable at ``$HOME/.claude/.credentials.json``. Emitted LAST among
