@@ -82,8 +82,11 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         name = self.session_name(config)
         if not name or not self._mux.exists(name):
             return False
-        self._mux.send_text_literal(name, text)
-        self._mux.send_keys(name, "Enter")
+        # Keep text and submit as separate tmux events, but use the shared
+        # primitive's text-to-Enter settle.  An immediate Enter can arrive
+        # before prompt_toolkit has rendered the literal paste, leaving the
+        # command visibly parked in Hermes' composer.
+        self._mux.send_text_and_submit(name, text)
         return True
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
