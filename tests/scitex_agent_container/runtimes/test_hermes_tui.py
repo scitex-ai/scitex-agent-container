@@ -84,3 +84,25 @@ def test_send_turn_refuses_when_tmux_session_is_absent():
     delivered = runtime.send_turn(_config(), "not lost", wait_ready=False)
     # Assert
     assert delivered is False
+
+
+def test_recovery_uses_supported_same_session_controls_in_order():
+    # Arrange
+    config = _config()
+    config.model = "qwen38-27b"
+    config.engine_key = "qwen38-27b"
+    mux = _Mux()
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    paused = runtime.suspend_autonomous_turns(config)
+    recovered = runtime.recover_turn_admission(config)
+    # Assert
+    assert (paused, recovered, [event[2] for event in mux.events if event[0] == "text"]) == (
+        True,
+        True,
+        [
+            "/heartbeat pause",
+            "/model qwen38-27b --provider sac-qwen38-27b --session",
+            "/heartbeat resume",
+        ],
+    )

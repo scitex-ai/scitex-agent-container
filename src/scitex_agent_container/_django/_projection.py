@@ -25,6 +25,8 @@ _PRESENTATION: dict[str, tuple[str, str]] = {
     "wedged": ("Wedged", "warn"),
     "startup_failed": ("Startup failed", "warn"),
     "startup_failed_superseded": ("Recovered", "warn"),
+    "stale_latched": ("Provider stale-latched", "warn"),
+    "recovering": ("Provider recovering", "warn"),
     "unknown": ("Unknown", "warn"),
     "not_started": ("Not started", "muted"),
     "ambiguous_registry": ("Ambiguous registry", "warn"),
@@ -63,17 +65,51 @@ def _liveness_verdict(status: dict[str, Any]) -> str:
     lv = status.get("liveness")
     if isinstance(lv, dict):
         return str(lv.get("verdict") or "").strip()
-    return str(lv or "").strip()
+    return str(lv or status.get("liveness_verdict") or "").strip()
+
+
+def _affirmatively_live(row: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Whether current observations prove the owning runtime is live."""
+    for source in (status, row):
+        verdict = _liveness_verdict(source).lower()
+        if verdict:
+            return verdict == "alive"
+    for source in (status, row):
+        coarse = _text(source.get("status") or source.get("state")).lower()
+        if coarse:
+            return coarse in {"alive", "running", "active", "ready"}
+    return False
+
+
+def _active_runtime_control(
+    row: dict[str, Any], status: dict[str, Any]
+) -> tuple[str, str] | None:
+    """Return a degraded admission state only for a proven-live runtime."""
+    if not _affirmatively_live(row, status):
+        return None
+    for source in (status, row):
+        control = source.get("runtime_control")
+        if isinstance(control, dict):
+            admission = _text(control.get("turn_admission")).lower()
+            if admission in {"stale_latched", "recovering"}:
+                return admission, _text(control.get("detail"))
+    return None
 
 
 def _state(row: dict[str, Any], status: dict[str, Any]) -> tuple[str, str]:
     """Derive (label, tone) from the status endpoint first, then the row.
 
-    Precedence: ``liveness.verdict`` (the authoritative ALIVE/DEAD/WEDGED
-    ternary), then ``status`` (a coarse word like ``stopped`` /
-    ``startup_failed``), then a row-level ``status``. Empty/unknown falls
+    Degraded turn admission refines only an affirmatively live observation.
+    Otherwise precedence is ``liveness.verdict`` (the authoritative
+    ALIVE/DEAD/WEDGED ternary), then ``status`` (a coarse word like ``stopped``
+    / ``startup_failed``), then a row-level ``status``. Empty/unknown falls
     through to the explicit ``Unknown`` state.
     """
+    # Turn admission is orthogonal to process liveness, but its persisted
+    # observation must never mask authoritative dead/not-started liveness.
+    runtime_control = _active_runtime_control(row, status)
+    if runtime_control is not None:
+        return _PRESENTATION[runtime_control[0]]
     for source in (status, row):
         verdict = _liveness_verdict(source).lower()
         if verdict:
@@ -114,7 +150,8 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         label, tone, detail = err
     else:
         label, tone = _state(row, status)
-        detail = ""
+        runtime_control = _active_runtime_control(row, status)
+        detail = runtime_control[1] if runtime_control is not None else ""
     a2a_port = row.get("a2a_port", status.get("a2a_port"))
     turn_url = row.get("turn_url", status.get("turn_url"))
     host = _node(row, turn_url)

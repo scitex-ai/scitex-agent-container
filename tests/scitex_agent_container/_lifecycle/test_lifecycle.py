@@ -2067,6 +2067,25 @@ def test_agent_status_running_reports_status_running(
     assert result["status"] == "running"
 
 
+def test_agent_status_surfaces_neutral_runtime_control_state(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = FakeRuntime(running=True)
+    runtime.control_state = lambda _config: {  # type: ignore[attr-defined]
+        "turn_admission": "stale_latched",
+        "detail": "provider stale circuit breaker latched after 5 attempts",
+    }
+    # Act
+    result = lc.agent_status(
+        "alpha", registry=registry, runtime_factory=lambda _config: runtime
+    )
+    # Assert
+    assert result["runtime_control"]["turn_admission"] == "stale_latched"
+
+
 def test_agent_status_includes_hooks_configured_counts(
     tmp_path: Path, registry: Registry
 ) -> None:

@@ -185,6 +185,17 @@ def agent_status(
         "account": _resolve_account(config),
     }
 
+    # Runtime-specific detection stays behind a neutral control-plane shape.
+    # A live process can still be unable to admit turns (for example a
+    # circuit-breaker latch), which is distinct from liveness and idle state.
+    if config is not None:
+        try:
+            control = runtime.control_state(config)
+        except Exception:  # stx-allow: fallback (reason: optional adapter observation must not break status)
+            control = None
+        if control is not None:
+            result["runtime_control"] = control
+
     # TERNARY liveness verdict + THE EVIDENCE FOR IT.
     #
     # ``status`` above is the legacy BOOL ("running"/"stopped"), and it cannot
