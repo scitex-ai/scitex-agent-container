@@ -13,8 +13,11 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import yaml
+
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config
+from ..config._loaders import load_v3
 from ._a2a_port import release_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
@@ -32,6 +35,28 @@ logger = logging.getLogger(__name__)
 # lock file → new bun child's ``acquireLock`` sees the live old PID and
 # exits 1 → claude silently drops the MCP.
 _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S = 15.0
+
+
+def _load_config_for_teardown(path: str | Path, expected_name: str) -> AgentConfig:
+    """Parse enough of a v3 spec to tear down its already-running runtime.
+
+    A spec can become invalid after SAC is upgraded while the process it
+    launched is still alive.  Teardown must not strand that process merely
+    because a start-time capability rule changed.  ``load_v3`` constructs the
+    same runtime configuration without applying current launch validation;
+    the registry name check prevents an invalid path from targeting a
+    different agent.
+    """
+    resolved = Path(path).resolve()
+    with resolved.open() as stream:
+        raw = yaml.safe_load(stream)
+    config = load_v3(raw, resolved)
+    if config.name != expected_name:
+        raise ValueError(
+            f"Registry entry for {expected_name!r} resolves to spec for "
+            f"{config.name!r}"
+        )
+    return config
 
 
 def agent_stop(
@@ -74,12 +99,20 @@ def agent_stop(
     # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
     try:
         config = load_config(entry["config"])
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        if not force:
-            raise
-        # Config gone — just nuke the registry entry
-        registry.remove(name)
-        return True
+    except Exception as validation_error:  # stx-allow: fallback (reason: an upgraded validator must not strand an already-running process)
+        try:
+            config = _load_config_for_teardown(entry["config"], name)
+        except Exception:  # stx-allow: fallback (reason: an absent/unparseable spec leaves no safe runtime target; force may release only the stale registry row)
+            if not force:
+                raise validation_error
+            registry.remove(name)
+            return True
+        logger.warning(
+            "Stopping %s from its registered v3 spec despite current launch "
+            "validation failure: %s",
+            name,
+            validation_error,
+        )
 
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
