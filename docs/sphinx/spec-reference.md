@@ -220,7 +220,7 @@ pinned regex catches this early.
 | `health.interval`           | seconds between probes                                                                   |
 | `health.timeout`            | per-probe timeout                                                                        |
 | `health.method`             | `sdk-alive` (only value accepted by the validator). NOTE: the parser default is the legacy string `multiplexer-alive`; with the validator pin in place, any explicit value other than `sdk-alive` is rejected at load time. |
-| `autonomous.idle_kick_after_s` | int seconds — nudge cadence when no tool activity (default 120)                       |
+| `autonomous.idle_kick_after_s` | int seconds — minimum nudge cadence when no tool activity (default 120). A Hermes TUI applies its 60-second anti-busy-loop floor, then adds a deterministic per-agent 0–59 second cadence offset. |
 | `restart.policy`            | `never` \| `on-failure` \| `always`                                                      |
 | `restart.max_retries`       | int                                                                                      |
 | `restart.backoff.initial`   | seconds before first retry                                                               |
@@ -231,6 +231,24 @@ pinned regex catches this early.
 | `autonomous.drive_until`    | string token the agent prints when done (default `DONE`)                                 |
 | `autonomous.max_turns`      | int                                                                                      |
 | `autonomous.kick_text`      | nudge sent when the agent pauses                                                         |
+
+For an owning Hermes TUI, enabling this block arms Hermes' native session
+heartbeat at launch. The heartbeat fires only while the run is idle and the
+native input queue is empty, so queued human guidance/steering takes priority.
+Each wake asks the agent to re-read Cards, verify assignment and ownership,
+and reject overlap before editing. SAC does not poll Cards or issue model
+turns on a timer itself. Hermes cron remains the right mechanism for a
+wall-clock job; the session heartbeat is the right mechanism for an idle
+worker that should look for another durable Card.
+When an external CI/review status is merely pending, the wake contract records
+that evidence and returns idle for a later heartbeat rather than holding an
+active turn open with polling sleeps. A real running test, build, or useful
+process is not a polling sleep and may still be monitored normally.
+The exact Hermes stagger interprets the first eight SHA-256 digest bytes of the
+agent name as an unsigned big-endian integer, takes
+`integer mod min(60, configured_interval)` seconds, and adds that to the
+configured/floored interval. It is stable across restarts and hosts, and the
+configured value remains the minimum idle backoff.
 
 ### `spec.a2a` / `spec.listen` — network endpoints
 

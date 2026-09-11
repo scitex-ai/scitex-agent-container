@@ -135,8 +135,9 @@ def test_flags_empty_when_no_provider():
 # ---------------------------------------------------------------------------
 
 
-def test_unset_auth_token_env_raises_provider_env_error(env_save_restore):
-    # Arrange — the named host env var is absent; no silent Anthropic fallback.
+def test_unset_auth_token_env_raises_provider_env_error(env_save_restore, tmp_path):
+    # Arrange — isolate both documented key layers; no silent Anthropic fallback.
+    env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
     cfg = _provider_config()
     # Act
@@ -146,8 +147,9 @@ def test_unset_auth_token_env_raises_provider_env_error(env_save_restore):
         provider_env_flags(cfg)
 
 
-def test_unset_auth_token_env_error_names_the_env_var(env_save_restore):
+def test_unset_auth_token_env_error_names_the_env_var(env_save_restore, tmp_path):
     # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
     env_save_restore.delete("DEEPSEEK_API_KEY")
     cfg = _provider_config()
     message = ""
