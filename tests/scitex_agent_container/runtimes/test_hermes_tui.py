@@ -5,12 +5,16 @@ from __future__ import annotations
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
-from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
+from scitex_agent_container.runtimes.hermes_tui import (
+    HermesTuiSessionRuntime,
+    _dismiss_heartbeat_confirmation,
+)
 
 
 class _Mux:
-    def __init__(self, exists: bool = True):
+    def __init__(self, exists: bool = True, panes: list[str] | None = None):
         self.alive = exists
+        self.panes = list(panes or [])
         self.events: list[tuple[str, str, str | None]] = []
 
     def exists(self, name: str) -> bool:
@@ -22,6 +26,14 @@ class _Mux:
 
     def send_keys(self, name: str, key: str) -> None:
         self.events.append(("key", name, key))
+
+    def send_text_and_submit(self, name: str, text: str) -> None:
+        self.events.append(("settled-submit", name, text))
+
+    def capture_content(self, name: str) -> str:
+        pane = self.panes.pop(0) if self.panes else ""
+        self.events.append(("capture", name, pane))
+        return pane
 
 
 def _config() -> AgentConfig:
@@ -60,9 +72,75 @@ def test_continue_session_resumes_the_stable_agent_session_name():
     ]
 
 
-def test_send_turn_uses_hermes_native_busy_input_queue():
+def test_send_turn_uses_settled_submit_for_hermes_busy_input():
     # Arrange
-    mux = _Mux()
+    mux = _Mux(
+        panes=[
+            "Hub is compacting...",
+            "♥ Heartbeat set (every 607s): check Cards\n"
+            "end · ↑/↓ scroll · Esc/q close",
+        ]
+    )
+    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    # Act
+    delivered = runtime.send_turn(
+        _config(), "/heartbeat every 607s check Cards", wait_ready=False
+    )
+    # Assert
+    assert (delivered, mux.events) == (
+        True,
+        [
+            ("exists", "tui-scholar", None),
+            (
+                "settled-submit",
+                "tui-scholar",
+                "/heartbeat every 607s check Cards",
+            ),
+            ("capture", "tui-scholar", "Hub is compacting..."),
+            (
+                "capture",
+                "tui-scholar",
+                "♥ Heartbeat set (every 607s): check Cards\n"
+                "end · ↑/↓ scroll · Esc/q close",
+            ),
+            ("key", "tui-scholar", "Escape"),
+        ],
+    )
+
+
+def test_heartbeat_dismissal_never_escapes_arbitrary_agent_work():
+    # Arrange
+    mux = _Mux(
+        panes=[
+            "old scrollback: ♥ Heartbeat set (every 607s)\n"
+            "Hub is compacting...\nesc to interrupt"
+        ]
+        * 3
+    )
+    # Act
+    dismissed = _dismiss_heartbeat_confirmation(
+        "tui-scholar",
+        "/heartbeat every 607s check Cards",
+        capture_fn=mux.capture_content,
+        send_keys_fn=mux.send_keys,
+        max_captures=3,
+        poll_s=0,
+    )
+    # Assert
+    assert (dismissed, [event for event in mux.events if event[0] == "key"]) == (
+        False,
+        [],
+    )
+
+
+def test_non_heartbeat_turn_does_not_probe_or_dismiss_the_pane():
+    # Arrange
+    mux = _Mux(
+        panes=[
+            "♥ Heartbeat set (every 607s): old command\n"
+            "end · ↑/↓ scroll · Esc/q close"
+        ]
+    )
     runtime = HermesTuiSessionRuntime(multiplexer=mux)
     # Act
     delivered = runtime.send_turn(_config(), "new guidance", wait_ready=False)
@@ -71,8 +149,7 @@ def test_send_turn_uses_hermes_native_busy_input_queue():
         True,
         [
             ("exists", "tui-scholar", None),
-            ("text", "tui-scholar", "new guidance"),
-            ("key", "tui-scholar", "Enter"),
+            ("settled-submit", "tui-scholar", "new guidance"),
         ],
     )
 
@@ -100,7 +177,7 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     assert (
         paused,
         recovered,
-        [event[2] for event in mux.events if event[0] == "text"],
+        [event[2] for event in mux.events if event[0] == "settled-submit"],
     ) == (
         True,
         True,
