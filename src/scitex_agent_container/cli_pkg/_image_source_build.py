@@ -357,6 +357,12 @@ def _default_container_build(
 _container_build: Callable[..., Path] = _default_container_build
 
 
+def _stage_hermes_source(build_context: Path) -> Path:
+    from ._hermes_source import stage_hermes_source
+
+    return stage_hermes_source(build_context)
+
+
 def build_layer_from_source(
     *,
     layer: str,
@@ -431,6 +437,8 @@ def build_layer_from_source(
     staged_def = stage_build_context(
         pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
     )
+    if layer == "base":
+        _stage_hermes_source(staging_dir)
 
     image_name = f"sac-{layer}"
     result = _container_build(
