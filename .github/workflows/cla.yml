@@ -60,11 +60,9 @@ name: cla
 # become unnecessary. That entry is the security argument, not bookkeeping.
 # Unresolvable is not unhosted.
 #
-# SECRET NAMING (PS-168 §1): per-package secrets in .github/workflows/ carry the
-# SCITEX_AGENT_CONTAINER_ prefix. The prefix belongs to THIS repo's secret store,
-# so the mapping below keeps the prefixed name on our side and hands it to the
-# reusable under the parameter name the reusable declares. GITHUB_TOKEN is the
-# GitHub-builtin and is provided to the reusable automatically.
+# The reusable workflow declares GH_PERSONAL_ACCESS_TOKEN. Pass the repository's
+# canonical secret of the same name so the CLA action receives a non-empty PAT.
+# GITHUB_TOKEN is GitHub-provided and is forwarded automatically.
 #
 # TRIGGERS ARE UNCHANGED ON PURPOSE. The org reusable also has an owner
 # direct-push bypass job gated on `github.event_name == 'push'`. This caller does
@@ -94,4 +92,4 @@ jobs:
       # indistinguishable from "still waiting" in the run list.
       runs_on: '["ubuntu-latest"]'
     secrets:
-      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.SCITEX_AGENT_CONTAINER_GH_PERSONAL_ACCESS_TOKEN }}
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
