@@ -27,6 +27,9 @@ from scitex_agent_container._delivery import (
 
 from ._helpers import ComposerPane, TickClock
 
+_BUSY = "Working…\n  esc to interrupt\n"
+_IDLE = "  ctx:1%\n"
+
 
 class SessionLister:
     """A real ``list_sessions_fn() -> list[str] | None``."""
@@ -462,3 +465,198 @@ def test_elapsed_time_is_always_stamped():
     state = _deliver(pane)
     # Assert
     assert state.elapsed is not None
+
+
+# --- the active-turn vs still-unsent split ---------------------------------
+#
+# A marker-less TUI (Hermes) that accepts a pasted turn into its native
+# busy-input queue leaves the payload rendered while the pane is BUSY.
+# ``verify_submit_by_advancement``'s idle gate never opens for such a pane, so
+# no Enter is fired and it returns False — which the OLD code spelled "STILL
+# SITTING UNSENT / Do NOT resend" (exit 4), a false negative whose resend remedy
+# would duplicate a turn already running. Card
+# ``hermes-tui-deliver-slash-and-false-unsent`` (defect 2).
+#
+# The discriminator is Enter-count + live-composer presence, not pane text. Two
+# hand-rolled panes model the two cases and run the REAL production path.
+
+
+class HermesActiveTurnPane:
+    """Marker-less Hermes pane: the turn is queued and running (busy).
+
+    The payload renders (no ``❯`` compose box), the busy marker is up, and the
+    peer never goes idle during the submit window — so no idle-gated Enter is
+    fired. On submit the TUI echoes the FULL pasted text into the transcript.
+    """
+
+    def __init__(self, busy_captures: int = 9999, drops_enter: int = 0) -> None:
+        self.busy_captures = busy_captures
+        self.drops_enter = drops_enter
+        self._buffer = ""
+        self._submitted = ""
+        self._captured = 0
+        self.enters = 0
+
+    def capture(self, target):
+        self._captured += 1
+        body = self._submitted or self._buffer or ""
+        status = _BUSY if self._captured <= self.busy_captures else _IDLE
+        return f"  {body}\n{status}\n"
+
+    def paste(self, target, text):
+        self._buffer = text
+
+    def send_key(self, target, key):
+        if key != "Enter":
+            return
+        self.enters += 1
+        if self.drops_enter > 0:
+            self.drops_enter -= 1
+            return
+        self._submitted = self._buffer
+        self._buffer = ""
+
+
+class IdleDroppedEnterPane:
+    """Control: the payload sits in a live ``❯`` composer; the Enter is eaten.
+
+    The peer is IDLE (no busy marker), so the idle gate opens and an Enter IS
+    fired, but the TUI drops it and the payload stays in the composer — the
+    genuine "still unsent" case the fix must keep reporting as exit 4.
+    """
+
+    def __init__(self, drops_enter: int = 999) -> None:
+        self.drops_enter = drops_enter
+        self._buffer = ""
+        self._submitted = []
+        self.enters = 0
+
+    def capture(self, target):
+        if self._submitted:
+            return f"  {self._submitted[-1]}\n❯\n{_IDLE}\n"
+        return f"❯ {self._buffer}\n{_IDLE}\n"
+
+    def paste(self, target, text):
+        self._buffer += text
+
+    def send_key(self, target, key):
+        if key != "Enter":
+            return
+        self.enters += 1
+        if self.drops_enter > 0:
+            self.drops_enter -= 1
+            return
+        self._submitted.append(self._buffer)
+        self._buffer = ""
+
+
+def _drive_active(pane, message: str = "rebase onto develop", **overrides):
+    """Run the production ``deliver`` against ``pane`` on an injected clock."""
+    clock = TickClock()
+    kwargs = dict(
+        strategy="tui",
+        list_sessions_fn=lambda: ["tui-peer"],
+        capture_fn=pane.capture,
+        paste_fn=pane.paste,
+        send_keys_fn=pane.send_key,
+        time_fn=clock.now,
+        sleep_fn=clock.sleep,
+        clock_fn=lambda: 1_800_000_000.0,
+        poll_s=0.1,
+        arrival_timeout_s=2.0,
+        idle_wait_s=2.0,
+        max_resends=3,
+    )
+    kwargs.update(overrides)
+    return deliver("peer", message, **kwargs)
+
+
+def test_active_turn_is_delivered_not_unsent():
+    # Arrange
+    pane = HermesActiveTurnPane()
+    # Act
+    verdict = assess_delivery(_drive_active(pane))
+    # Assert
+    assert verdict.exit_code() == EXIT_DELIVERED
+
+
+def test_active_turn_fires_no_enter():
+    # Arrange — the idle gate never opens, so no Enter is sent at all.
+    pane = HermesActiveTurnPane()
+    # Act
+    _drive_active(pane)
+    # Assert
+    assert pane.enters == 0
+
+
+def test_active_turn_does_not_stack_a_second_copy():
+    # Arrange
+    pane = HermesActiveTurnPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert — the payload renders exactly once; no stacked copy.
+    n = (pane.capture("tui-peer") or "").count(state.token)
+    assert n == 1
+
+
+def test_active_turn_reports_submitted():
+    # Arrange
+    pane = HermesActiveTurnPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert
+    assert state.is_payload_submitted is True
+
+
+def test_active_turn_reasons_as_running():
+    # Arrange
+    pane = HermesActiveTurnPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert
+    assert "MID-TURN" in state.reason_for("is_payload_submitted")
+
+
+def test_active_turn_does_not_advertise_a_resend():
+    # Arrange
+    pane = HermesActiveTurnPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert
+    assert "Do NOT resend" not in state.reason_for("is_payload_submitted")
+
+
+def test_idle_dropped_enter_is_still_unsent():
+    # Arrange
+    pane = IdleDroppedEnterPane()
+    # Act
+    verdict = assess_delivery(_drive_active(pane))
+    # Assert
+    assert verdict.exit_code() == EXIT_UNSUBMITTED
+
+
+def test_idle_dropped_enter_fired_at_least_one_enter():
+    # Arrange
+    pane = IdleDroppedEnterPane()
+    # Act
+    _drive_active(pane)
+    # Assert — the idle gate opened, so this is NOT the active-turn shape.
+    assert pane.enters >= 1
+
+
+def test_idle_dropped_enter_reports_unsubmitted():
+    # Arrange
+    pane = IdleDroppedEnterPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert
+    assert state.is_payload_submitted is False
+
+
+def test_idle_dropped_enter_forbids_resend():
+    # Arrange
+    pane = IdleDroppedEnterPane()
+    # Act
+    state = _drive_active(pane)
+    # Assert
+    assert "Do NOT resend" in state.reason_for("is_payload_submitted")

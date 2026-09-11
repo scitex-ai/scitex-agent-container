@@ -100,3 +100,73 @@ def test_two_tokens_are_not_equal():
     second = make_token()
     # Assert
     assert first != second
+
+
+# --- slash commands: the command word must stay the FIRST token -------------
+
+
+def test_steer_command_keeps_the_command_first():
+    # Arrange
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("/steer stop and turn left", token)
+    # Assert
+    assert payload.startswith("/steer ")
+
+
+def test_steer_payload_still_carries_the_token():
+    # Arrange
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("/steer stop and turn left", token)
+    # Assert
+    assert f"[sac-deliver:{token}]" in payload
+
+
+def test_queue_command_keeps_the_command_first():
+    # Arrange
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("/queue hello later", token)
+    # Assert
+    assert payload.startswith("/queue ")
+
+
+def test_queue_payload_still_carries_the_token():
+    # Arrange
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("/queue hello later", token)
+    # Assert
+    assert f"[sac-deliver:{token}]" in payload
+
+
+def test_ordinary_message_still_puts_the_token_first():
+    # Arrange
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("hello there", token)
+    # Assert
+    assert payload == f"[sac-deliver:{token}] hello there"
+
+
+def test_bare_slash_is_not_a_command():
+    # Arrange — a lone "/" is prose, not a TUI command; token stays first.
+    token = "deadbeef0123"
+    # Act
+    payload = format_payload("/ just a slash", token)
+    # Assert
+    assert payload == f"[sac-deliver:{token}] / just a slash"
+
+
+def test_slash_command_token_is_found_after_a_wrap():
+    # Arrange — the token now sits LAST on a slash command; prove the matcher
+    # still finds it wherever it lands (verification is position-independent).
+    token = "ab12cd34ef56"
+    payload = format_payload("/steer go", token)
+    pane = f"❯ /steer go [sac-deliver:ab12cd │\n│ 34ef56]\n"
+    # Act
+    found = pane_contains_token(pane, token)
+    # Assert
+    assert found is True
+

@@ -219,6 +219,7 @@ def _submission_signal(
     blind_during: int,
     max_resends: int,
     session: str,
+    active_turn: bool = False,
 ) -> tuple[Optional[bool], str]:
     """Turn the verifier's bool into a TRI-STATE, guarding its vacuous True.
 
@@ -236,6 +237,18 @@ def _submission_signal(
     A PARTIALLY blind window is treated asymmetrically on purpose: it may still
     carry a positive (we watched the buffer clear with our own eyes) but never a
     negative (a failure seen through gaps is not a refutation).
+
+    THE ACTIVE-TURN CASE (``active_turn``). A marker-less TUI (Hermes) draws no
+    live compose box the shared verifier can see, so when the peer is MID-TURN
+    the verifier waits for an idle that never comes, fires no Enter, and returns
+    ``False`` — read naively as "still sitting unsent". That is a false negative
+    whose remedy (resend) would DUPLICATE a turn that is already running. The
+    discriminator is Enter-count, not pane text: we only reach ``active_turn``
+    when the payload ARRIVED (we saw the token), the submit window was fully
+    OBSERVED (``blind_during == 0``), and ZERO idle-gated Enters fired — i.e. the
+    idle gate never opened because the pane was busy the whole time. An idle
+    composer that ate our Enters always fired at least one, so it can never be
+    misread as an active turn.
     """
     if readable_during == 0:
         return None, (
@@ -248,6 +261,14 @@ def _submission_signal(
         return True, (
             "the live compose box was observed to CLEAR after an idle-gated "
             "Enter — the turn was submitted"
+        )
+    if active_turn:
+        return True, (
+            "the payload had ARRIVED and the pane was BUSY for the whole submit "
+            "window, so the idle-gated Enter never fired (0 of the "
+            f"{max_resends} attempts) — the peer is MID-TURN and the input was "
+            "accepted and is actively running. Delivered, not unsent; a resend "
+            "would duplicate the work"
         )
     if blind_during:
         return None, (
@@ -301,12 +322,43 @@ def deliver_via_tui(
         "is_payload_delivered", arrived, why, pane_after_paste=pane_after
     )
 
+    # Count how many idle-gated Enters the shared verifier ACTUALLY fired, and
+    # whether we ever saw the payload in a LIVE marker composer (Claude's ❯ box).
+    # These two are the active-turn discriminator, not the pane text:
+    #
+    #   * a Hermes (marker-less) peer that is MID-TURN is busy for the whole
+    #     submit window, so the idle gate never opens and ZERO Enters fire, yet
+    #     the payload already rendered — read naively as "still unsent", whose
+    #     remedy (resend) would DUPLICATE a running turn. We never see a ❯ box.
+    #   * an idle composer that ate our Enters always fired at least one.
+    #   * a Claude (❯) pane holding a queued payload shows ❯, so we must NOT
+    #     call it an active turn — it genuinely still needs an Enter when idle.
+    #
+    # See _submission_signal. The shared boot-path verifier is left UNTOUCHED.
+    from ..runtimes._tui_compose import _compose_pending_live
+
+    enters_fired = 0
+    saw_live_composer = False
+
+    def _counting_send_keys(key: str) -> None:
+        nonlocal enters_fired
+        if key == "Enter":
+            enters_fired += 1
+        send_keys_fn(session, key)
+
+    def _observing_capture(name: str) -> str:
+        pane = tap(name)
+        if pane and _compose_pending_live(pane):
+            nonlocal saw_live_composer
+            saw_live_composer = True
+        return pane
+
     blind_before = tap.unreadable
     readable_before = tap.readable
     submitted = verify_submit_by_advancement(
         session,
-        capture_fn=tap,
-        send_keys_fn=lambda key: send_keys_fn(session, key),
+        capture_fn=_observing_capture,
+        send_keys_fn=_counting_send_keys,
         pending_fragment=token,
         max_resends=max_resends,
         poll_s=poll_s,
@@ -314,12 +366,20 @@ def deliver_via_tui(
         sleep_fn=sleep_fn,
         time_fn=time_fn,
     )
+    blind_during = tap.unreadable - blind_before
+    active_turn = (
+        arrived is True
+        and blind_during == 0
+        and enters_fired == 0
+        and not saw_live_composer
+    )
     value, reason = _submission_signal(
         submitted=bool(submitted),
         readable_during=tap.readable - readable_before,
-        blind_during=tap.unreadable - blind_before,
+        blind_during=blind_during,
         max_resends=max_resends,
         session=session,
+        active_turn=active_turn,
     )
     return state.with_signal(
         "is_payload_submitted", value, reason, pane_after_submit=tap.last_readable

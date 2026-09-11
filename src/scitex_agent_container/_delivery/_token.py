@@ -63,20 +63,44 @@ def make_token() -> str:
     return generate_nonce(DELIVERY_TOKEN_BYTES)
 
 
-def format_payload(message: str, token: str) -> str:
-    """The wire form: a marked token, then the message.
+def _is_slash_command(message: str) -> bool:
+    """True iff ``message`` is a TUI slash command (``/steer``, ``/queue``, …).
 
-    The token goes FIRST, on purpose. It is the part that must survive
-    rendering, and the start of the payload is the position least likely to be
-    split across a wrap boundary — the composer has a full row available at that
-    point. (:func:`flatten_pane` makes the matcher wrap-proof anyway; this merely
-    keeps the token legible to a HUMAN reading the pane, who has no flattener.)
+    A slash command is parsed by the TUI by its FIRST token, so the command word
+    must stay at the front of whatever we paste. ``/`` alone, or a ``/`` followed
+    by whitespace, is not a command — it is prose that merely starts with a slash.
+    """
+    stripped = (message or "").strip()
+    if not stripped.startswith("/"):
+        return False
+    rest = stripped[1:]
+    return bool(rest) and not rest[0].isspace()
+
+
+def format_payload(message: str, token: str) -> str:
+    """The wire form: a marked token plus the message.
+
+    The token goes FIRST for an ordinary message, on purpose. It is the part that
+    must survive rendering, and the start of the payload is the position least
+    likely to be split across a wrap boundary — the composer has a full row
+    available at that point. (:func:`flatten_pane` makes the matcher wrap-proof
+    anyway; this merely keeps the token legible to a HUMAN reading the pane, who
+    has no flattener.)
+
+    EXCEPT a slash command. The TUI parses a command by its first token, so if we
+    prepend the token a ``/steer`` / ``/queue`` is demoted to an ordinary queued
+    prompt and the native command never fires. For a slash command the token goes
+    LAST instead — the command word stays first-token. Verification is unaffected
+    by the swap: :func:`flatten_pane` strips all non-alphanumerics before matching,
+    and the hex token contains none, so it is found wherever it sits on the pane.
 
     The ``sac-deliver:`` marker makes the token self-describing on the receiving
     end: an agent that sees it knows the message came through a verified send and
     that the sender is watching for arrival, rather than wondering what the
     stray hex is.
     """
+    if _is_slash_command(message):
+        return f"{message} [sac-deliver:{token}]"
     return f"[sac-deliver:{token}] {message}"
 
 
