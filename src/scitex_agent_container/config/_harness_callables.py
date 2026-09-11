@@ -182,13 +182,16 @@ def _hermes_tui_inner_argv(
         "hermes",
         "chat",
         "--tui",
-        "--continue",
-        f"sac:{config.name}",
-        "--create-if-missing",
         "--in",
         str(config.workdir),
         "--pass-session-id",
     ]
+    if config.claude.session == "continue":
+        argv += [
+            "--continue",
+            f"sac:{config.name}",
+            "--create-if-missing",
+        ]
     prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
     if prompts:
         argv += ["--query", "\n\n".join(prompts)]

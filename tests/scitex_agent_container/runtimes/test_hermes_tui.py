@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._claude_spec import ClaudeSpec
+from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.runtimes.hermes_tui import HermesTuiSessionRuntime
 
 
@@ -24,6 +26,38 @@ class _Mux:
 
 def _config() -> AgentConfig:
     return AgentConfig(name="scholar", harness="hermes", runtime="tui")
+
+
+def test_fresh_session_does_not_request_continuation():
+    # Arrange
+    config = AgentConfig(
+        name="scholar",
+        harness="hermes",
+        runtime="tui",
+        claude=ClaudeSpec(session="fresh"),
+    )
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert "--continue" not in argv and "--create-if-missing" not in argv
+
+
+def test_continue_session_resumes_the_stable_agent_session_name():
+    # Arrange
+    config = AgentConfig(
+        name="scholar",
+        harness="hermes",
+        runtime="tui",
+        claude=ClaudeSpec(session="continue"),
+    )
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert argv[argv.index("--continue") :] == [
+        "--continue",
+        "sac:scholar",
+        "--create-if-missing",
+    ]
 
 
 def test_send_turn_uses_hermes_native_busy_input_queue():

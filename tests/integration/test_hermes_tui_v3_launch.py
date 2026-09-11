@@ -46,7 +46,7 @@ def _canonical_hermes_spec() -> dict:
             "available_harnesses": {
                 "hermes": {
                     "session": {"mode": "continue", "max_age_minutes": None},
-                    "channels": ["telegram"],
+                    "channels": [],
                 }
             },
         }
