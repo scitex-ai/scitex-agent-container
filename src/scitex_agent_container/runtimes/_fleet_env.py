@@ -374,11 +374,17 @@ def effective_env(
     aliased = apply_board_identity_alias(
         merged, raw_args=raw_args, agent_name=getattr(config, "name", None)
     )
-    # Same shape for the PostgreSQL login: ``PGUSER=<host_user>__<name>``
-    # unless a spec declares its own (b2 of the pg55432 role rework — see
-    # ``_pg_identity_env`` for why specs stopped carrying DSN userinfo).
+    # Same shape for the PostgreSQL login.  The project label names the
+    # provisioned principal shared by variant workers (for example a GUI or
+    # an engine-specific helper); the agent name remains the compatibility
+    # fallback for project-less configs.
+    labels = getattr(config, "labels", None)
+    project_name = labels.get("project") if isinstance(labels, Mapping) else None
     return apply_pg_identity(
-        aliased, raw_args=raw_args, agent_name=getattr(config, "name", None)
+        aliased,
+        raw_args=raw_args,
+        agent_name=getattr(config, "name", None),
+        project_name=project_name,
     )
 
 

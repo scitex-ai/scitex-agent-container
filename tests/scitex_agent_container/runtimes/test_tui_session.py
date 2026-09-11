@@ -14,14 +14,22 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
 
 from scitex_agent_container._runners._tmux.tmux import TuiInputNotReadyError
+from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.runtimes import _hermes_profile as hermes_profile
 from scitex_agent_container.runtimes import prompts as _prompts
+from scitex_agent_container.runtimes import tui_session as tui_module
+from scitex_agent_container.runtimes._apptainer_runtime import (
+    ApptainerContainerRuntime,
+)
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
     session_name_for,
@@ -238,6 +246,20 @@ class _Config:
 _FAKE_ARGV = ["apptainer", "exec", "img.sif", "claude"]
 
 
+@contextmanager
+def _replace_attributes(replacements):
+    originals = [
+        (target, name, getattr(target, name)) for target, name, _ in replacements
+    ]
+    try:
+        for target, name, value in replacements:
+            setattr(target, name, value)
+        yield
+    finally:
+        for target, name, value in originals:
+            setattr(target, name, value)
+
+
 def _fake_builder(config: _Config) -> list[str]:
     return list(_FAKE_ARGV)
 
@@ -319,6 +341,56 @@ def test_tui_runtime_start_arms_native_hermes_heartbeat_when_autonomous(
     assert (
         mux._sessions["tui-hermes-auto"].pane[-1].startswith("/heartbeat every 208s ")
     )
+
+
+def test_tui_runtime_materializes_hermes_profile_on_production_workspace_path(
+    tmp_path,
+) -> None:
+    # Arrange
+    config = AgentConfig(name="project-gui", harness="hermes", runtime="tui")
+    home = tmp_path / "home"
+    calls: list[tuple[str, Path, bool]] = []
+
+    def materialize(value, *, state_dir, deploy_home):
+        calls.append((value.name, state_dir, deploy_home))
+        return [home]
+
+    replacements = [
+        (tui_module, "_materialize_workspace", lambda *args, **kwargs: home),
+        (hermes_profile, "materialize_hermes_tui_profile", materialize),
+        (tui_module, "state_dir_for_config", lambda value: tmp_path),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        result = TuiSessionRuntime().materialize_workspace(config)
+    # Assert
+    assert (result, calls) == (home, [("project-gui", tmp_path, False)])
+
+
+def test_default_tui_argv_validates_hermes_profile_against_final_argv(tmp_path):
+    # Arrange
+    config = AgentConfig(name="project-gui", harness="hermes", runtime="tui")
+    argv = ["apptainer", "exec", "--bind", "/host:/home/agent", "image", "hermes"]
+    calls: list[tuple[str, Path, list[str]]] = []
+
+    def validate(value, *, state_dir, launch_argv):
+        calls.append((value.name, state_dir, list(launch_argv)))
+
+    replacements = [
+        (
+            ApptainerContainerRuntime,
+            "resolve_sif",
+            lambda self, value: Path("/image.sif"),
+        ),
+        (tui_module, "build_run_argv", lambda *args, **kwargs: list(argv)),
+        (hermes_profile, "validate_hermes_tui_profile", validate),
+        (tui_module, "state_dir_for_config", lambda value: tmp_path),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        result = TuiSessionRuntime()._default_argv(config)
+    # Assert
+    assert (result, calls) == (argv, [("project-gui", tmp_path, argv)])
 
 
 def test_tui_runtime_start_invokes_turn_bridge_seam(
