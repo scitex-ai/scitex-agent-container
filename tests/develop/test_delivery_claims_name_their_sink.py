@@ -200,7 +200,7 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # agent is a survey nobody has done, so naming it here would be a
         # guess wearing a receipt.
         "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
-        "scitex_agent_container/_mcp/channel.py:331",
+        "scitex_agent_container/_mcp/channel.py:344",
         "scitex_agent_container/_network/_peer_dispatch.py:62",
         "scitex_agent_container/_network/_peer_dispatch.py:79",
         "scitex_agent_container/_network/probe.py:457",
