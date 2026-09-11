@@ -225,6 +225,19 @@ async def _push_channel_event(
         absorb_reaction_ack(event, agent=agent_name)
         return
 
+    # Dedupe on the envelope's msg_id (store contract,
+    # ``state_db_channel_store`` module docstring: the SSE cursor is a resume
+    # position, NOT a dedupe key — the consumer must de-duplicate on
+    # ``msg_id``). ``_recent`` is the per-process ring the a2a tools already
+    # keep; if we have already dispatched this msg_id, the durable row was
+    # re-served on a reconnect (``list_since_id`` replays ``id > cursor``
+    # regardless of ``delivered_at``) — skip re-dispatch so it neither re-wakes
+    # ``/v1/turn`` nor re-injects the ``<channel>`` tag. The row is already
+    # delivered and the cursor already advanced, so this is a pure replay, not
+    # a first delivery: dropping it loses nothing. First deliveries still pass.
+    mid = event.get("msg_id")
+    if mid and any(e.get("msg_id") == mid for e in _recent):
+        return
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.
     _recent.append(event)
 

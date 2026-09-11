@@ -1451,6 +1451,39 @@ async def test_push_with_turn_url_carries_message_content_as_turn_text(fake_turn
 
 
 @pytest.mark.asyncio
+async def test_push_same_msg_id_replayed_drives_turn_once(fake_turn):
+    """The durable-log replay the CI rail kept re-firing: a reconnect re-serves
+    the SAME row (same ``msg_id``, a stale cursor, ``list_since_id`` ignores
+    ``delivered_at``). The store contract mandates the consumer de-duplicate on
+    ``msg_id`` — so the first push drives one turn and the replayed push is
+    dropped, not a second. This is the fix for the stuck ``ad7db0e5`` loop."""
+    # Arrange
+    from scitex_agent_container._mcp.channel import _push_channel_event
+
+    session = _CapturingSession()
+    event = {"from_agent": "bob", "content": "summarize commits", "msg_id": "m1"}
+    # Act — deliver, then re-deliver the same envelope (a replay).
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    await _push_channel_event(
+        session,
+        event,
+        agent_name="alice",
+        listen_url="http://127.0.0.1:1",
+        bearer=None,
+        turn_url=fake_turn.turn_url,
+    )
+    # Assert — the replay did not drive a second turn.
+    assert len(fake_turn.turns) == 1
+
+
+@pytest.mark.asyncio
 async def test_push_with_turn_url_skips_duplicate_notification(fake_turn):
     """Wake delivers the message as turn input; the notification push is
     skipped so the agent does not see the same message twice."""
