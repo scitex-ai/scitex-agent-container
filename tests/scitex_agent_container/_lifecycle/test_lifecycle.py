@@ -1169,8 +1169,7 @@ def test_agent_stop_without_registry_row_resolves_spec_and_stops_runtime(
     )
 
     # Assert — teardown follows the spec even without registry state.
-    assert ok is True
-    assert len(runtime.stop_calls) == 1
+    assert (ok, len(runtime.stop_calls)) == (True, 1)
 
 
 def test_agent_stop_happy_path_returns_true(pg_schema: str, tmp_path: Path, registry: Registry) -> None:
