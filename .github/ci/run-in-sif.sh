@@ -12,7 +12,8 @@
 #
 # --target (not a plain `-e .`): the SIF's /opt/venv-* are root-owned + RO and
 # the HPC compute-node HOME is RO inside the container, so a normal site install
-# fails Permission denied. A writable target on node-local /tmp sidesteps both.
+# fails Permission denied. A writable target in the host-resolved run namespace
+# sidesteps both.
 #
 # Fail-loud: a missing interpreter or a failed install is a hard error.
 set -euo pipefail
@@ -70,71 +71,14 @@ export GIT_CONFIG_VALUE_0=false
 export GIT_CONFIG_KEY_1=tag.gpgsign
 export GIT_CONFIG_VALUE_1=false
 
-# Real writable scratch. The runner profile exports TMPDIR=~/.cache/tmp, a host
-# path that does NOT resolve inside the container; tests (tmp_path) and the
-# install target both need a working, writable tmp. Node-local /tmp is writable
-# + per-version-isolated so concurrent matrix legs don't collide.
-#
-# "+ ephemeral" USED TO BE CLAIMED HERE AND WAS NEVER TRUE. Nothing removed this
-# directory — on the persistent self-hosted node 116 of them at 1.8-2.2 GB each
-# filled the root filesystem (2026-08-09). tmpdir-lib.sh now owns the whole
-# lifecycle: it names the directory (once, here), an `if: always()` job step
-# removes it at the end of the job, and exec-in-sif.sh prunes what a SIGKILL or
-# a reboot left behind. The name is unchanged, so this also reclaims the
-# directories already on disk.
+# The outer wrapper resolves and binds one run-owned namespace. This work child
+# holds pytest, pip, uv, and application caches; PostgreSQL and Apptainer use
+# sibling children and the outer signal trap removes the parent atomically.
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/tmpdir-lib.sh"
-TMPDIR="$(ci_tmpdir_path ci "$V")"
+TMPDIR="$(ci_work_tmpdir_path ci "$V")"
 export TMPDIR
-# `${TMPDIR:?}` AND NOT `$TMPDIR`, at every `rm -rf` of this path.
-#
-# The name is produced by a function in ANOTHER file, so "it is always non-empty"
-# is a property of tmpdir-lib.sh, not of this line — one refactor away from being
-# false, and nothing here would notice.
-#
-# `rm -rf ""` IS NOT THE SAFE NO-OP IT LOOKS LIKE. Measured on GNU coreutils 9.4:
-# `-f` treats the empty operand as a nonexistent file, so it exits 0 SILENTLY —
-# `set -euo pipefail` does not catch it, and the script CONTINUES with TMPDIR="".
-# Every later use is then a path off the filesystem root: `"$TMPDIR/site"` is
-# `/site`, and the sibling sweep's `! -path "$TMPDIR"` self-exclusion stops
-# matching anything. The empty value is dangerous because it is silent.
-#
-# `:?` makes the shell abort right here, naming the variable, before the deletion.
-rm -rf "${TMPDIR:?ci scratch path came back empty — refusing to rm -rf it}"
 mkdir -p "$TMPDIR/site" "$TMPDIR/uv-cache"
-
-# REMOVE OUR OWN SCRATCH ON THE WAY OUT. The `rm -rf` above only ever deletes a
-# RE-RUN of this exact (run_id, attempt, version) triple, because the name it
-# cleans is the name it is about to use. Every new run gets a new GITHUB_RUN_ID
-# and therefore a new directory, so nothing has ever removed the previous one.
-#
-# MEASURED 2026-08-09 on scitex-compute-04: 153 orphaned ci-* directories,
-# 1.8-2.2G each, ~290G total — the root filesystem hit 393G/393G, 0 bytes free.
-# Every writing test then failed with `fatal: failed to write commit object`, on
-# EVERY pull request regardless of its diff, which reads as a runner fault and
-# is not one. `sac listen` also began returning HTTP 500 (it could not write its
-# audit log). One PR costs ~6G across the three matrix legs.
-#
-# The trap preserves the script's exit status (bash re-raises it after the
-# handler), so a failing test suite still fails.
-#
-# Same `:?` guard as above, and it matters MORE here: a trap body is evaluated at
-# EXIT, so it reads whatever TMPDIR holds then — not what it held at line 80.
-trap 'rm -rf "${TMPDIR:?exiting with an empty scratch path — refusing to rm -rf it}"' EXIT
-
-# ...and sweep SIBLINGS left behind by jobs that never reached the trap — a
-# cancelled workflow, a SIGKILL, an OOM, or any run that predates this change.
-# Without this the 153-directory backlog needs a human with sudo, which is how
-# it reached 290G in the first place: the only cleanup path was one nobody ran.
-#
-# Age-gated rather than name-gated: a concurrent matrix leg on this same runner
-# owns a sibling directory that is minutes old and MUST NOT be removed, while
-# anything untouched for hours belongs to a job that is long gone. Mirrors the
-# `_REAP_MIN_AGE_S` process reap in exec-in-sif.sh — same hazard, same guard.
-_TMPDIR_REAP_MIN_AGE_MIN="${SCITEX_CI_TMPDIR_REAP_MIN_AGE_MIN:-360}"
-find /tmp -maxdepth 1 -type d -name 'ci-scitex_agent_container-*' \
-    -mmin "+$_TMPDIR_REAP_MIN_AGE_MIN" ! -path "$TMPDIR" \
-    -exec rm -rf {} + 2>/dev/null || true
 
 # The HPC compute-node $HOME is READ-ONLY inside the container, so uv/pip cannot
 # create their default caches under ~/.cache — point them at the writable

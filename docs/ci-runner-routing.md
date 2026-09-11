@@ -148,3 +148,18 @@ Which pool the variable points at. That is a settings value no static reader
 can see, and it is exactly the thing that should change without a commit. The
 guard enforces only the weaker, statically-decidable property that makes
 redirection possible at all.
+
+## Run-scoped temporary storage
+
+SIF-based jobs resolve one host-side directory before starting. When writable
+`/scratch` is available, the directory is under
+`/scratch/<user>/scitex-agent-container/ci/`; otherwise it falls back to the
+runner temp directory under a user-specific namespace. The resolved path and
+available space are printed at the start of every run.
+
+The run directory contains separate children for Apptainer, PostgreSQL, and
+the in-container work directory used by pytest, uv, and pip. The outer wrapper
+keeps ownership of the lifecycle: its `EXIT`, `TERM`, and `INT` handlers stop
+its child processes and remove only that exact run directory. Run id, attempt,
+script kind, and matrix version isolate concurrent jobs. An age-gated startup
+prune handles only directories left by an untrappable `SIGKILL` or reboot.
