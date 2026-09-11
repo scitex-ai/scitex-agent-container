@@ -124,8 +124,8 @@ def token_absent():
 
 @pytest.fixture
 def deepseek_token_exported():
-    """Export the registered deepseek provider's auth env var."""
-    yield from _env_set("DEEPSEEK_API_KEY", "sk-test-not-a-real-key")
+    """Export the registered deepseek gateway's local auth env var."""
+    yield from _env_set("SCITEX_GENAI_GATEWAY_API_KEY", "sk-test-not-a-real-key")
 
 
 # ---------------------------------------------------------------------------

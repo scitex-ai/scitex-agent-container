@@ -9,6 +9,7 @@ import yaml
 
 from scitex_agent_container._listen import _config as listen_config
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._provider_registry import resolve_provider
 from scitex_agent_container.config._provider_types import ProviderSpec
 from scitex_agent_container.runtimes import (
     _apptainer_build,
@@ -591,6 +592,43 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         and "api_server:" not in rendered
         and parsed["providers"]["sac-qwen"]["extra_headers"] == expected_headers
         and env_text == "QWEN_KEY=secret\n"
+    )
+
+
+def test_tui_deepseek_profile_contains_only_neutral_gateway_credential(tmp_path):
+    # Arrange
+    config = AgentConfig(
+        name="hub-flash", harness="hermes", runtime="tui", workdir="/work"
+    )
+    config.engine_key = "deepseek-flash"
+    config.model = "deepseek-flash"
+    entry = resolve_provider("external-gateway")
+    config.claude.provider = ProviderSpec(**(entry or {}))
+    replacements = [
+        (profile, "resolve_provider_api_key", lambda value: "local-gateway-token"),
+        (profile, "deploy_to_home", lambda value, target: None),
+        (profile, "deploy_to_home_overlay", lambda value: None),
+        (profile, "resolve_overlay_upper_home", lambda value: None),
+    ]
+    # Act
+    with _replace_attributes(replacements):
+        targets = profile.materialize_hermes_tui_profile(config, state_dir=tmp_path)
+    rendered = yaml.safe_load(
+        (targets[0] / ".hermes" / "config.yaml").read_text(encoding="utf-8")
+    )
+    env_text = (targets[0] / ".hermes" / ".env").read_text(encoding="utf-8")
+    provider = rendered["providers"]["sac-deepseek-flash"]
+    # Assert
+    assert (
+        provider["base_url"],
+        provider["model"],
+        env_text,
+        "DEEPSEEK_API_KEY" in env_text,
+    ) == (
+        "http://scitex-compute-04:18775/v1",
+        "deepseek-flash",
+        "SCITEX_GENAI_GATEWAY_API_KEY=local-gateway-token\n",
+        False,
     )
 
 

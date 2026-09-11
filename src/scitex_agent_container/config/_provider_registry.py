@@ -39,6 +39,12 @@ per-host override — no caller in this package does.
 
 from __future__ import annotations
 
+from ._external_gateway import (
+    DEFAULT_EXTERNAL_GATEWAY_TOKEN_ENV,
+    DEFAULT_EXTERNAL_GATEWAY_URL,
+    EXTERNAL_GATEWAY_PROVIDER,
+    external_gateway_provider_entry,
+)
 from ._qwen_gateway import (
     DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     DEFAULT_QWEN_GATEWAY_URL,
@@ -60,8 +66,15 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
     },
     "deepseek": {
-        "base_url": "https://api.deepseek.com/anthropic",
-        "auth_token_env": "DEEPSEEK_API_KEY",
+        # Back-compatible spelling. It deliberately resolves to the neutral
+        # egress gateway: model selection in a harness is not an outbound
+        # allowlist and must not expose the vendor credential in-container.
+        "base_url": DEFAULT_EXTERNAL_GATEWAY_URL,
+        "auth_token_env": DEFAULT_EXTERNAL_GATEWAY_TOKEN_ENV,
+    },
+    EXTERNAL_GATEWAY_PROVIDER: {
+        "base_url": DEFAULT_EXTERNAL_GATEWAY_URL,
+        "auth_token_env": DEFAULT_EXTERNAL_GATEWAY_TOKEN_ENV,
     },
     "mimo": {
         "base_url": "https://token-plan-sgp.xiaomimimo.com/anthropic",
@@ -90,7 +103,11 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
 #: import, and sac is imported long before a launch resolves a provider. One
 #: member today; the mechanism is general so a second movable backend does not
 #: become a second special case in :func:`resolve_provider`.
-_DYNAMIC_PROVIDERS = {QWEN_GATEWAY_PROVIDER: qwen_gateway_provider_entry}
+_DYNAMIC_PROVIDERS = {
+    QWEN_GATEWAY_PROVIDER: qwen_gateway_provider_entry,
+    EXTERNAL_GATEWAY_PROVIDER: external_gateway_provider_entry,
+    "deepseek": external_gateway_provider_entry,
+}
 
 
 def resolve_provider(name: str) -> dict[str, str | None] | None:

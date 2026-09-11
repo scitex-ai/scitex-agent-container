@@ -478,8 +478,8 @@ def test_the_same_provider_spelled_as_a_name_and_a_dict_agrees():
         "claude": {
             "model": "deepseek-chat",
             "provider": {
-                "base_url": "https://api.deepseek.com/anthropic",
-                "auth_token_env": "DEEPSEEK_API_KEY",
+                "base_url": "http://scitex-compute-04:18775",
+                "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
             },
         },
         "engines": {
