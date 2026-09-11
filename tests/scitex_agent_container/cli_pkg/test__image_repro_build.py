@@ -138,6 +138,38 @@ class TestBuildContextReachesTheRoundTrip:
         # Assert — the staged copy, not the source recipe
         assert calls[0]["def_path"] == calls[0]["cwd"] / recipe.name
 
+    def test_base_stages_hermes_source(self, tmp_path, fake_pkg_root, recipe):
+        # Arrange
+        staged = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="base",
+                stage_hermes=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == [tmp_path / "containers" / "sac-base" / "build-context"]
+
+    def test_non_base_does_not_stage_hermes_source(
+        self, tmp_path, fake_pkg_root, recipe
+    ):
+        # Arrange
+        staged = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="proxy",
+                stage_hermes=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == []
+
 
 class TestRoundTripArguments:
     """Layer naming, output root and the verify toggle."""
