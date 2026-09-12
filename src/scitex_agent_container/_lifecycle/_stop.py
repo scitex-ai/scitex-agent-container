@@ -206,7 +206,9 @@ def agent_stop(
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         from ..runtimes.tui_session import TuiStopVerificationError
 
-        if isinstance(exc, TuiStopVerificationError) and is_tui_runtime:
+        if isinstance(exc, TuiStopVerificationError):
+            if not is_tui_runtime:
+                raise
             logger.warning(
                 "tmux teardown could not verify %r; checking its exact "
                 "launch-recorded systemd scope before deciding the stop",
