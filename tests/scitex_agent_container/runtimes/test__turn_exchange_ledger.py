@@ -5,11 +5,49 @@ from __future__ import annotations
 from scitex_dev.status import StatusCode, ledger_record, new_exchange_id
 
 from scitex_agent_container.runtimes._turn_exchange_ledger import (
+    _access_error,
+    _privilege_failure,
     _store,
     finish_turn_exchange,
     open_turn_exchange,
     read_turn_exchange,
 )
+
+
+class _PrivilegeDenied(Exception):
+    sqlstate = "42501"
+
+
+def test_postgres_insufficient_privilege_is_recognised_by_sqlstate() -> None:
+    # Arrange
+    error = _PrivilegeDenied()
+    # Act
+    recognised = _privilege_failure(error)
+    # Assert
+    assert recognised is True
+
+
+def test_an_unrelated_store_error_is_not_misreported_as_acl_drift() -> None:
+    # Arrange
+    error = ConnectionError("network down")
+    # Act
+    recognised = _privilege_failure(error)
+    # Assert
+    assert recognised is False
+
+
+def test_store_acl_failure_names_owner_grant_and_refuses_self_heal() -> None:
+    # Arrange
+    denied = _PrivilegeDenied("must be owner of table status_exchanges_oplog")
+    # Act
+    message = str(_access_error(denied))
+    # Assert
+    assert (
+        "PGUSER=" in message,
+        "scitex_store_owner" in message,
+        "scitex_rw" in message,
+        "SAC will not change shared-database ownership" in message,
+    ) == (True, True, True, True)
 
 
 def test_turn_exchange_moves_from_http_202_to_final_http_200(pg_schema: str) -> None:

@@ -84,8 +84,10 @@ from ._tui_turn_bridge_port import (
     port_is_free,
 )
 from ._turn_exchange_ledger import (
+    TurnExchangeStoreUnavailable,
     finish_turn_exchange,
     open_turn_exchange,
+    preflight_turn_exchange_store,
     read_turn_exchange,
 )
 
@@ -390,21 +392,25 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     probe_url="/v1/exchanges",
                     exchange_id=requested_exchange_id,
                 )
-            except Exception:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
+            except Exception as exc:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
                 log.exception(
                     "could not persist turn exchange for agent=%s", srv.agent_name
                 )
                 self._respond(
                     503,
                     {
-                        "error": "could not persist the canonical turn exchange",
+                        "error": (
+                            str(exc)
+                            if isinstance(exc, TurnExchangeStoreUnavailable)
+                            else "could not persist the canonical turn exchange"
+                        ),
                         "status_code": StatusCode(
                             kind="http",
                             code=503,
                             message=(
                                 "the canonical exchange ledger did not accept the turn; "
-                                "leave the Cards notification unconfirmed and run "
-                                "`scitex-dev store doctor` before retrying"
+                                "leave the Cards notification unconfirmed and follow "
+                                "the database-provisioning hint in `error` before retrying"
                             ),
                         ).to_dict(),
                     },
@@ -602,6 +608,11 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
     on_control: Callable[[str], None] | None = None,
 ) -> None:
     """Run the bridge server until the process is signalled. Blocking."""
+    # A listening /health socket must mean the bridge can persist the 202 it
+    # promises. The 202 ledger is the acknowledgement boundary, so binding
+    # while its PostgreSQL ACL is broken advertises a service that cannot
+    # accept any turn. This read-only open performs no ownership repair.
+    preflight_turn_exchange_store()
     server = build_server(
         host=host,
         port=port,
