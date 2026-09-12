@@ -896,11 +896,13 @@ def test_status_discovers_real_current_artifact_store_layout(home_tmp):
     result = runner.invoke(image_group, ["status", "--json"])
     data = json.loads(result.stdout)
     # Assert
-    assert result.exit_code == 0
-    assert data[0]["name"] == "sac-base"
-    assert data[0]["version"] == "2026-0912-140710"
-    assert data[0]["verification"] == "verified"
-    assert data[0]["sif_size_bytes"] == 1024
+    assert (
+        result.exit_code,
+        data[0]["name"],
+        data[0]["version"],
+        data[0]["verification"],
+        data[0]["sif_size_bytes"],
+    ) == (0, "sac-base", "2026-0912-140710", "verified", 1024)
 
 
 def test_status_json_reports_active_artifact_fields(home_tmp):
@@ -923,17 +925,19 @@ def test_status_json_reports_active_artifact_fields(home_tmp):
         result = runner.invoke(image_group, ["status", "--json"])
     data = json.loads(result.stdout)
     # Assert
-    assert result.exit_code == 0
-    assert data == [
-        {
-            "name": "sac-base",
-            "version": "2026-0912-140710",
-            "sif_path": str(artifact),
-            "sif_size_bytes": 1024,
-            "sif_date": data[0]["sif_date"],
-            "verification": "unknown",
-        }
-    ]
+    assert (result.exit_code, data) == (
+        0,
+        [
+            {
+                "name": "sac-base",
+                "version": "2026-0912-140710",
+                "sif_path": str(artifact),
+                "sif_size_bytes": 1024,
+                "sif_date": data[0]["sif_date"],
+                "verification": "unknown",
+            }
+        ],
+    )
 
 
 def test_status_ignores_inactive_builds(home_tmp):
