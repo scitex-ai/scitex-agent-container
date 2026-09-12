@@ -628,12 +628,18 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # the normal published-release policy. v0.52.0 was published before the
     # required fix merged, so this build takes the exact, verified merge commit
     # exported by the build frontend. This is not a moving branch ref and the
-    # local path is explicit in the resolver transaction.
+    # local path is explicit in the resolver transaction. Filesystem
+    # requirements cannot carry a PEP 440 comparator; SAC's project metadata
+    # honestly declares the supported floor (scitex-cards>=0.52.0), while the
+    # local candidate reports 0.52.0 and the commit marker proves its content.
+    # Keep both runtime extras explicit even though that source currently
+    # promotes their dependencies to core: the aliases are the install-time
+    # contract that fastmcp and psycopg must remain resolvable.
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
         --reinstall-package scitex-cards \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "/opt/scitex-cards-src" \
+        "/opt/scitex-cards-src[mcp,postgres]" \
         "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. Hermes harness + official TUI ---------------------------

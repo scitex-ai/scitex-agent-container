@@ -375,7 +375,7 @@ From: ./sac-base.sif
         # wheel. This is immutable source, never a moving Git branch.
         uv pip install --no-cache --python /opt/venv-sac/bin/python \
             --reinstall-package scitex-cards \
-            /opt/scitex-cards-src
+            "/opt/scitex-cards-src[mcp,postgres]"
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -473,9 +473,11 @@ From: ./sac-base.sif
         # exclusion the old text argued for is subsumed — 0.17.0 destroys card
         # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
         # was guarding against it.
-        # Same exact staged-source reinstall as the uv branch above.
-        /opt/venv-sac/bin/pip install --no-cache-dir --force-reinstall --no-deps \
-            /opt/scitex-cards-src
+        # Same exact staged-source reinstall as the uv branch above. Resolve
+        # the named runtime extras here too: --no-deps would silently turn
+        # [mcp,postgres] into decorative metadata on fallback hosts.
+        /opt/venv-sac/bin/pip install --no-cache-dir --force-reinstall \
+            "/opt/scitex-cards-src[mcp,postgres]"
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------

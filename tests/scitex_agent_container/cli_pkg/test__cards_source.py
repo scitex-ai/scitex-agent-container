@@ -20,9 +20,7 @@ def test_explicit_source_must_contain_pinned_commit(tmp_path):
     # Act
     try:
         # Assert
-        with pytest.raises(
-            source.CardsSourceError, match="must name a git repository"
-        ):
+        with pytest.raises(source.CardsSourceError, match="must name a git repository"):
             source.resolve_cards_repo()
     finally:
         if saved is None:
@@ -89,7 +87,7 @@ def test_base_recipe_installs_and_labels_exact_staged_commit():
         expected in text
         for expected in (
             "scitex-cards-src /opt/scitex-cards-src",
-            '"/opt/scitex-cards-src"',
+            '"/opt/scitex-cards-src[mcp,postgres]"',
             "--reinstall-package scitex-cards",
             f'cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "{source.CARDS_COMMIT}"',
             f"org.scitex.cards.commit {source.CARDS_COMMIT}",
@@ -110,6 +108,7 @@ def test_scitex_recipe_reinstalls_exact_source_after_dependency_resolution():
         for expected in (
             "scitex-cards-src /opt/scitex-cards-src",
             "--reinstall-package scitex-cards",
+            '"/opt/scitex-cards-src[mcp,postgres]"',
             "/opt/scitex-cards-src/scitex-cards-src",
             f'cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "{source.CARDS_COMMIT}"',
             f"org.scitex.cards.commit {source.CARDS_COMMIT}",
