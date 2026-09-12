@@ -30,6 +30,7 @@ swap module-level references the same way ``test_image_group`` does.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -1081,6 +1082,22 @@ def test_resolve_bootstrap_sif_scitex_raises_when_base_missing(tmp_path):
 _ALL_DEF_NAMES = sorted(set(_LAYERS.values()) | {"apptainer-proxy.def"})
 
 
+def _uv_pip_install_commands(recipe: str) -> list[list[str]]:
+    """Tokenize real backslash-continued ``uv pip install`` commands."""
+    commands: list[list[str]] = []
+    lines = iter(recipe.splitlines())
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("uv pip install"):
+            continue
+        parts = [stripped]
+        while parts[-1].endswith("\\"):
+            parts.append(next(lines).strip())
+        command = " ".join(part.removesuffix("\\") for part in parts)
+        commands.append(shlex.split(command))
+    return commands
+
+
 @pytest.fixture
 def def_text(request) -> str:
     """Read one .def file's text by its bare filename."""
@@ -1164,6 +1181,28 @@ def test_def_files_use_consistent_staged_source_name():
         f"{missing} do not reference /opt/scitex-agent-container-src; "
         f"layered .defs must agree on the in-image source path."
     )
+
+
+def test_real_uv_install_commands_do_not_repeat_singleton_flags():
+    # Arrange — uv's clap parser rejects repeated set-once flags before it
+    # resolves anything. Parse the shipped recipes' complete continuation
+    # blocks: checking isolated lines or substring presence missed this exact
+    # failure when --no-deps appeared on both lines of one command.
+    singleton_flags = {"--no-cache", "--no-deps", "--python", "-U", "--upgrade"}
+    offenders: list[str] = []
+
+    # Act
+    for name in _ALL_DEF_NAMES:
+        recipe = (_RECIPES_DIR / name).read_text()
+        for argv in _uv_pip_install_commands(recipe):
+            duplicates = sorted(
+                flag for flag in singleton_flags if argv.count(flag) > 1
+            )
+            if duplicates:
+                offenders.append(f"{name}: {duplicates}: {shlex.join(argv)}")
+
+    # Assert
+    assert offenders == [], "duplicate singleton uv flags:\n" + "\n".join(offenders)
 
 
 def test_staged_src_name_matches_def_files_files_entry():

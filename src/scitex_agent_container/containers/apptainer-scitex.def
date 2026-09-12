@@ -244,7 +244,7 @@ From: ./sac-base.sif
         # starting with ``uv pip install``: the def contract tests locate this
         # block with startswith("uv pip install"), so an env-var prefix hides it.
         uv pip install --no-cache --no-deps --python /opt/venv-sac/bin/python \
-            --reinstall-package scitex-agent-container --no-deps \
+            --reinstall-package scitex-agent-container \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
         # pinned to PUBLISHED PyPI floors (reproducible — NOT a moving git
