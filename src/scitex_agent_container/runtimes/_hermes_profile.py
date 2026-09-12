@@ -31,6 +31,7 @@ _MCP_NON_SECRET_ENV = {
     "SCITEX_CARDS_AGENT_ID",
     "SCITEX_CARDS_SCOPE",
     "SCITEX_CARDS_DB",
+    "SCITEX_CARDS_NOTIFY_DSN",
     "SCITEX_STORE_DSN",
 }
 _MCP_SAC_ENV_REFS = {
@@ -97,7 +98,11 @@ def _validate_mcp_pg_credentials(
             continue
         postgres_dsns = tuple(
             value
-            for key in ("SCITEX_CARDS_DB", "SCITEX_STORE_DSN")
+            for key in (
+                "SCITEX_CARDS_DB",
+                "SCITEX_CARDS_NOTIFY_DSN",
+                "SCITEX_STORE_DSN",
+            )
             if (value := str(declared.get(key, ""))).startswith(
                 ("postgresql://", "postgres://")
             )
@@ -278,7 +283,11 @@ def _bind_mcp_runtime_env(
                 declared[key] = str(value)
         has_postgres = any(
             str(declared.get(key, "")).startswith(("postgresql://", "postgres://"))
-            for key in ("SCITEX_CARDS_DB", "SCITEX_STORE_DSN")
+            for key in (
+                "SCITEX_CARDS_DB",
+                "SCITEX_CARDS_NOTIFY_DSN",
+                "SCITEX_STORE_DSN",
+            )
         )
         current_passfile = str(declared.get(PG_PASSFILE_ENV, "")).strip()
         if has_postgres and current_passfile in {"", "${PGPASSFILE}"}:

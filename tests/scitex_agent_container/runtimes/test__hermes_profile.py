@@ -229,6 +229,7 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
             "PGPASSFILE": "/home/ywatanabe/.pgpass",
             "SCITEX_CARDS_AGENT_ID": "scholar",
             "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+            "SCITEX_CARDS_NOTIFY_DSN": "postgresql://scitex-primary:55433/scitex",
         }
 
     # Act
@@ -240,6 +241,7 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
         "PGPASSFILE": "/home/ywatanabe/.pgpass",
         "SCITEX_CARDS_AGENT_ID": "scholar",
         "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+        "SCITEX_CARDS_NOTIFY_DSN": "postgresql://scitex-primary:55433/scitex",
     }
 
 
