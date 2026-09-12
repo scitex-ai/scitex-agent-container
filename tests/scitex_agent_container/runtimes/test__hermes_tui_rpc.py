@@ -69,16 +69,42 @@ class _VisibleSocket:
         request = self.sent[-1]
         method = request["method"]
         if method == "session.active_list":
-            result = {
-                "sessions": [{"id": "live-1", "title": "sac:hub"}]
-            }
+            result = {"sessions": [{"id": "live-1", "title": "sac:hub"}]}
         elif method == "session.activate":
             result = next(self.projections)
+            result.setdefault("session_key", "stored-1")
         elif method == "prompt.submit":
             result = {"status": self.submit_status}
         else:  # pragma: no cover - a new RPC is itself a test failure
             raise AssertionError(method)
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+class _SearchResponse:
+    def __init__(self, payload: dict):
+        self.encoded = json.dumps(payload).encode()
+        self.read_sizes = []
+        self.requests = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self, size):
+        self.read_sizes.append(size)
+        return self.encoded
+
+
+def _search(payload=None):
+    response = _SearchResponse(payload or {"results": []})
+
+    def open_search(request, **kwargs):
+        response.requests.append((request, kwargs))
+        return response
+
+    return response, open_search
 
 
 def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
@@ -179,9 +205,7 @@ def test_turn_activity_refuses_unknown_native_status(tmp_path):
 
 def _gateway_files(tmp_path):
     (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
-    (tmp_path / "hermes-api.key").write_text(
-        "a-secure-test-token\n", encoding="utf-8"
-    )
+    (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
 
 
 def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
@@ -192,6 +216,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         submit_status="streaming",
         projections=[{"messages": []}, {"inflight": {"user": text}}],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -200,6 +225,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         text,
         delivery_id="n_idle",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -230,6 +256,7 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
             {"inflight": {"user": "original", "corrections": [text]}},
         ],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -238,6 +265,7 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
         text,
         delivery_id="n_busy",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -255,6 +283,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
         submit_status="queued",
         projections=[{}, {"queued": {"user": text}}],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -263,6 +292,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
         text,
         delivery_id="n_queued",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -273,12 +303,26 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
 
 
 def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path):
-    # Arrange: native acceptance succeeded, but the downstream Cards ACK did not.
+    # Arrange: native acceptance succeeded long ago, but the downstream Cards
+    # ACK did not. The 7,442-message transcript must never cross the websocket.
     _gateway_files(tmp_path)
     text = "retry delivery <!-- delivery:n_retry -->"
     socket = _VisibleSocket(
         submit_status="streaming",
-        projections=[{"messages": [{"role": "user", "text": text}]}],
+        projections=[{"message_count": 7_442, "messages": []}],
+    )
+    response, search = _search(
+        {
+            "results": [
+                {
+                    "role": "user",
+                    "session_id": "stored-1",
+                    "lineage_root": "stored-1",
+                    "snippet": "retry delivery <!-- >>>delivery:n_retry<<< -->",
+                    "message_count": 7_442,
+                }
+            ]
+        }
     )
 
     # Act
@@ -288,17 +332,31 @@ def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path
         text,
         delivery_id="n_retry",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
+    request, request_kwargs = response.requests[0]
     assert (
         receipt.status,
         receipt.visibility,
         [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"]["omit_messages"],
+        response.read_sizes,
+        request.full_url.endswith(
+            "/api/sessions/search?q=%22delivery%20n_retry%22&limit=20"
+        ),
+        request.get_header("X-hermes-session-token"),
+        request_kwargs,
     ) == (
         "already_visible",
-        "session.messages",
+        "session.search",
         ["session.active_list", "session.activate"],
+        True,
+        [256 * 1024 + 1],
+        True,
+        "a-secure-test-token",
+        {"timeout": 10.0},
     )
 
 
@@ -310,6 +368,7 @@ def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
         submit_status="streaming",
         projections=[{"messages": []}, {"messages": []}, {"messages": []}],
     )
+    _response, search = _search()
 
     # Act
     def action():
@@ -321,6 +380,7 @@ def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
             max_observations=2,
             poll_s=0,
             connect_fn=lambda *a, **k: socket,
+            urlopen_fn=search,
         )
 
     # Assert

@@ -43,6 +43,20 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _accepted_receipt() -> bytes:
+    exchange_id = "xch_20260913T000000Z_forward_abcdef"
+    return json.dumps(
+        {
+            "exchange_id": exchange_id,
+            "status_code": {
+                "kind": "http",
+                "code": 202,
+                "message": f"accepted; poll `/v1/exchanges/{exchange_id}`",
+            },
+        }
+    ).encode()
+
+
 class _LoopbackHTTP:
     """Bare-bones HTTP/1.1 responder backed by ``asyncio.start_server``.
 
@@ -358,8 +372,7 @@ def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_store):
     from scitex_agent_container._listen import _forward
 
     async def _run() -> object:
-        body = json.dumps({"text": "hello-back"}).encode()
-        async with _LoopbackHTTP(200, body) as srv:
+        async with _LoopbackHTTP(202, _accepted_receipt()) as srv:
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=srv.port))
             return await _forward.forward_to_live_runner(
                 cfg, "agent-x", "ping", {}, timeout=5.0
@@ -368,10 +381,10 @@ def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_store):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert response is not None and response.status_code == 200
+    assert response is not None and response.status_code == 202
 
 
-def test_successful_text_payload_is_unwrapped(isolated_state_store):
+def test_synchronous_text_payload_is_refused(isolated_state_store):
     # Arrange
     from scitex_agent_container._listen import _forward
 
@@ -386,7 +399,10 @@ def test_successful_text_payload_is_unwrapped(isolated_state_store):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert json.loads(response.body)["text"] == "unwrapped-text"
+    assert (
+        response.status_code,
+        json.loads(response.body)["kind"],
+    ) == (502, "invalid_turn_receipt")
 
 
 def test_prompt_is_posted_as_text_field(isolated_state_store):
@@ -469,8 +485,7 @@ def test_allocator_claim_takes_precedence_over_cfg(isolated_state_store):
     from scitex_agent_container._state import port_allocator
 
     async def _run() -> object:
-        body = json.dumps({"text": "from-allocator"}).encode()
-        async with _LoopbackHTTP(200, body) as srv:
+        async with _LoopbackHTTP(202, _accepted_receipt()) as srv:
             port_allocator.claim_port("agent-y", explicit=srv.port)
             cfg = _Cfg(a2a=_A2A(host="127.0.0.1", port=_free_port()))
             return await _forward.forward_to_live_runner(
@@ -480,7 +495,7 @@ def test_allocator_claim_takes_precedence_over_cfg(isolated_state_store):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert json.loads(response.body)["text"] == "from-allocator"
+    assert json.loads(response.body)["status_code"]["code"] == 202
 
 
 def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_store):
@@ -488,8 +503,7 @@ def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_store):
     from scitex_agent_container._listen import _forward
 
     async def _run() -> object:
-        body = json.dumps({"text": "ok"}).encode()
-        async with _LoopbackHTTP(200, body) as srv:
+        async with _LoopbackHTTP(202, _accepted_receipt()) as srv:
             cfg = _Cfg(a2a=_A2A(host=None, port=srv.port))
             return await _forward.forward_to_live_runner(
                 cfg, "agent-z", "hi", {}, timeout=5.0
@@ -498,4 +512,4 @@ def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_store):
     # Act
     response = asyncio.run(_run())
     # Assert
-    assert response.status_code == 200
+    assert response.status_code == 202

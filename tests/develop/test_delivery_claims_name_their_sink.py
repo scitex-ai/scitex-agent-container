@@ -254,7 +254,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # drifts into position 179.
         "scitex_agent_container/runtimes/_tui_bridge_seam.py:40",
         "scitex_agent_container/runtimes/_tui_inject.py:92",
-        "scitex_agent_container/runtimes/_tui_turn_bridge_lifecycle.py:196",
     }
 )
 

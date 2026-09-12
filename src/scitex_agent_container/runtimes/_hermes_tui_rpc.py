@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 
 from ._hermes_tui_owner import GATEWAY_FILE
 
@@ -35,6 +37,9 @@ class HermesVisibleTurnReceipt:
     status: str
     visibility: str
     session_id: str
+
+
+_SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
 
 
 def _gateway_connection(state_dir: Path) -> tuple[str, str]:
@@ -240,6 +245,72 @@ def _delivery_visibility(payload: object, delivery_id: str) -> str | None:
     return None
 
 
+def _stored_delivery_visibility(
+    gateway_url: str,
+    token: str,
+    *,
+    session_key: str,
+    delivery_id: str,
+    timeout_s: float,
+    urlopen_fn: Any = urlopen,
+) -> str | None:
+    """Use Hermes' bounded FTS projection to find an older accepted input.
+
+    ``session.activate(omit_messages=False)`` reconstructs and serializes the
+    complete display lineage.  The management search endpoint instead performs
+    an indexed lookup and returns at most one small result for this delivery's
+    conversation.  It is therefore safe for sessions whose transcript no
+    longer fits the websocket implementation's frame limit.
+    """
+    endpoint = urlsplit(gateway_url)
+    # FTS tokenizes the marker's colon as a separator.  Query the quoted
+    # two-token phrase, then verify the literal marker in the returned snippet;
+    # an unrelated occurrence of the opaque id cannot become delivery proof.
+    exact_query = json.dumps(f"delivery {delivery_id}")
+    search_url = (
+        f"http://{endpoint.hostname}:{endpoint.port}/api/sessions/search"
+        f"?q={quote(exact_query, safe='')}&limit=20"
+    )
+    request = Request(
+        search_url,
+        headers={"X-Hermes-Session-Token": token},
+        method="GET",
+    )
+    try:
+        with urlopen_fn(request, timeout=timeout_s) as response:
+            encoded = response.read(_SEARCH_RESPONSE_MAX_BYTES + 1)
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes bounded delivery search is unavailable: {exc}"
+        ) from exc
+    if len(encoded) > _SEARCH_RESPONSE_MAX_BYTES:
+        raise HermesTuiRpcError("Hermes bounded delivery search response is too large")
+    try:
+        payload = json.loads(encoded)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+        raise HermesTuiRpcError(
+            f"Hermes bounded delivery search returned malformed JSON: {exc}"
+        ) from exc
+    rows = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise HermesTuiRpcError(
+            f"Hermes bounded delivery search returned malformed result: {payload!r}"
+        )
+    marker = f"delivery:{delivery_id}"
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        snippet = str(row.get("snippet") or "").replace(">>>", "").replace("<<<", "")
+        if (
+            row.get("role") == "user"
+            and marker in snippet
+            and session_key
+            in {str(row.get("session_id") or ""), str(row.get("lineage_root") or "")}
+        ):
+            return "session.search"
+    return None
+
+
 def submit_visible_turn(
     state_dir: Path,
     agent_name: str,
@@ -251,14 +322,16 @@ def submit_visible_turn(
     poll_s: float = 0.1,
     connect_fn: Any | None = None,
     sleep_fn: Any = time.sleep,
+    urlopen_fn: Any = urlopen,
 ) -> HermesVisibleTurnReceipt:
     """Idempotently submit and prove a visible user input via Hermes JSON-RPC.
 
-    ``prompt.submit`` is the sole mutation.  The surrounding
-    ``session.activate`` calls attach this short-lived observer to the same
-    live session and expose the canonical transcript/inflight/queue projection
-    used by Hermes clients.  If acceptance or visibility cannot be proved, the
-    caller fails closed and its durable notification remains unconfirmed.
+    ``prompt.submit`` is the sole mutation.  The surrounding lightweight
+    ``session.activate(omit_messages=True)`` calls expose inflight/queue input;
+    Hermes' indexed management search proves an older persisted input on a
+    retry.  No call serializes the complete transcript.  If acceptance or
+    visibility cannot be proved, the caller fails closed and its durable
+    notification remains unconfirmed.
     """
     delivery_id = str(delivery_id or "").strip()
     if not delivery_id:
@@ -269,16 +342,32 @@ def submit_visible_turn(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
             before = _rpc(
                 socket,
                 2,
                 "session.activate",
-                {"session_id": session_id, "omit_messages": False},
+                {"session_id": session_id, "omit_messages": True},
             )
             if visibility := _delivery_visibility(before, delivery_id):
+                return HermesVisibleTurnReceipt(
+                    status="already_visible",
+                    visibility=visibility,
+                    session_id=session_id,
+                )
+            session_key = str(before.get("session_key") or "").strip()
+            if not session_key:
+                raise HermesTuiRpcError(
+                    "Hermes session.activate returned no session key"
+                )
+            if visibility := _stored_delivery_visibility(
+                url,
+                _token,
+                session_key=session_key,
+                delivery_id=delivery_id,
+                timeout_s=timeout_s,
+                urlopen_fn=urlopen_fn,
+            ):
                 return HermesVisibleTurnReceipt(
                     status="already_visible",
                     visibility=visibility,
@@ -300,7 +389,7 @@ def submit_visible_turn(
                     socket,
                     4 + attempt,
                     "session.activate",
-                    {"session_id": session_id, "omit_messages": False},
+                    {"session_id": session_id, "omit_messages": True},
                 )
                 if visibility := _delivery_visibility(observed, delivery_id):
                     return HermesVisibleTurnReceipt(
@@ -327,6 +416,7 @@ __all__ = [
     "HermesTuiRpcError",
     "HermesTurnActivity",
     "HermesVisibleTurnReceipt",
+    "_stored_delivery_visibility",
     "active_sessions",
     "observe_turn_activity",
     "submit_turn",

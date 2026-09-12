@@ -348,6 +348,19 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         visible_delivery_id = body.get("visible_delivery_id")
         if not isinstance(visible_delivery_id, str) or not visible_delivery_id:
             visible_delivery_id = None
+        if visible_delivery_id is not None and (
+            f"<!-- delivery:{visible_delivery_id} -->" not in text
+        ):
+            self._respond(
+                400,
+                {
+                    "error": (
+                        "visible_delivery_id is not bound to the submitted text; "
+                        "include its exact delivery marker before retrying"
+                    )
+                },
+            )
+            return
         requested_exchange_id = body.get("exchange_id")
         if not isinstance(requested_exchange_id, str) or not requested_exchange_id:
             requested_exchange_id = None
@@ -389,12 +402,18 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                exchange_id, opened_at = srv.exchange_open(
-                    agent=srv.agent_name,
-                    probe_url="/v1/exchanges",
-                    exchange_id=requested_exchange_id,
-                    delivery_id=visible_delivery_id,
-                )
+                open_kwargs = {
+                    "agent": srv.agent_name,
+                    "probe_url": "/v1/exchanges",
+                    "exchange_id": requested_exchange_id,
+                    "delivery_id": visible_delivery_id,
+                }
+                # Identity binding applies when adopting a Cards-owned
+                # exchange. Keep the ordinary turn seam compatible with
+                # external ledger adapters that don't consume initiator.
+                if requested_exchange_id is not None:
+                    open_kwargs["initiator"] = from_agent
+                exchange_id, opened_at = srv.exchange_open(**open_kwargs)
             except Exception as exc:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
                 log.exception(
                     "could not persist turn exchange for agent=%s", srv.agent_name

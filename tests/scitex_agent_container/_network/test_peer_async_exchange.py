@@ -102,7 +102,10 @@ def test_async_receipt_is_polled_to_confirmed_delivery() -> None:
 
 def test_nonfinal_exchange_is_polled_until_final() -> None:
     # Arrange
-    results = [_result(202, "still delivering"), _result(200, "accepted")]
+    results = [
+        _result(102, f"still delivering; poll `/v1/exchanges/{EXCHANGE_ID}`"),
+        _result(200, "accepted"),
+    ]
     with _exchange_server(results=results) as (url, paths):
         # Act
         response = post_turn_to_url(url, "hello", timeout_s=2)
@@ -160,6 +163,39 @@ def test_malformed_receipt_names_the_acceptance_contract() -> None:
     assert ("status_code=http/202" in str(error), paths) == (True, ["/v1/turn"])
 
 
+def test_receipt_rejects_noncanonical_exchange_identifier() -> None:
+    # Arrange
+    bad_receipt = {
+        "exchange_id": "request-123",
+        "status_code": {
+            "kind": "http",
+            "code": 202,
+            "message": "accepted; poll `/v1/exchanges/request-123`",
+        },
+    }
+    with _exchange_server(receipt_body=bad_receipt, results=[_result(200, "ok")]) as (
+        url,
+        paths,
+    ):
+        # Act
+        error = _capture_error(url)
+    # Assert
+    assert ("canonical xch_" in str(error), paths) == (True, ["/v1/turn"])
+
+
+def test_synchronous_text_reply_is_not_a_delivery_receipt() -> None:
+    # Arrange
+    with _exchange_server(
+        receipt_code=200,
+        receipt_body={"text": "looks successful"},
+        results=[_result(200, "unused")],
+    ) as (url, paths):
+        # Act
+        error = _capture_error(url)
+    # Assert
+    assert ("expected HTTP 202" in str(error), paths) == (True, ["/v1/turn"])
+
+
 def test_failed_exchange_surfaces_final_message_and_probe_hint() -> None:
     # Arrange
     failure = _result(502, "terminal visibility was not confirmed")
@@ -177,7 +213,9 @@ def test_failed_exchange_surfaces_final_message_and_probe_hint() -> None:
 
 def test_nonfinal_timeout_preserves_exchange_and_says_not_to_resend() -> None:
     # Arrange
-    with _exchange_server(results=[_result(202, "still delivering")]) as (
+    with _exchange_server(
+        results=[_result(102, f"still delivering; poll `/v1/exchanges/{EXCHANGE_ID}`")]
+    ) as (
         url,
         _paths,
     ):

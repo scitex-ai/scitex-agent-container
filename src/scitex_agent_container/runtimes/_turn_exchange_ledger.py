@@ -68,6 +68,8 @@ def open_turn_exchange(
     probe_url: str,
     exchange_id: str | None = None,
     delivery_id: str | None = None,
+    initiator: str | None = None,
+    operation: str = "cards.dm.delivery",
     _store_factory: Callable[[], Any] = _store,
 ) -> tuple[str, str]:
     """Adopt Cards' exchange or persist one stable legacy-delivery exchange.
@@ -82,6 +84,14 @@ def open_turn_exchange(
     from scitex_dev.store import NEW_RECORD, Query, eq
 
     if exchange_id is not None:
+        if not delivery_id:
+            raise ValueError(
+                "an adopted Cards exchange requires its durable delivery id"
+            )
+        if not initiator:
+            raise ValueError(
+                "an adopted Cards exchange requires its authenticated initiator"
+            )
         if not is_exchange_id(exchange_id):
             raise ValueError("the supplied exchange_id is not canonical")
         store = _store_factory()
@@ -98,6 +108,14 @@ def open_turn_exchange(
         if values.get("responder") not in expected_responders:
             raise PermissionError(
                 "the supplied Cards exchange belongs to another responder"
+            )
+        if values.get("initiator") != initiator:
+            raise PermissionError(
+                "the supplied Cards exchange belongs to another initiator"
+            )
+        if values.get("operation") != operation:
+            raise PermissionError(
+                "the supplied Cards exchange belongs to another operation"
             )
         _reject_final_failure(values)
         return exchange_id, str(values["opened_at"])
@@ -185,7 +203,9 @@ def finish_turn_exchange(
         values = dict(existing.values)
         if values.get("final"):
             same_status = (
-                values.get("kind"), values.get("code"), values.get("message")
+                values.get("kind"),
+                values.get("code"),
+                values.get("message"),
             ) == (status.kind, status.code, status.message)
             if same_status:
                 return
