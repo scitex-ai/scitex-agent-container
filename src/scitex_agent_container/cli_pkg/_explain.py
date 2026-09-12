@@ -66,8 +66,8 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
             effective_cards_store,
         )
 
-        _cards_env, cards_store = effective_cards_store(config)
-        checks.append(cards_store_check(config.name, cards_store))
+        cards_env, cards_store = effective_cards_store(config)
+        checks.append(cards_store_check(config.name, cards_store, cards_env))
     card_tools = bool({"cards", "scitex-cards"} & mcp_names)
     checks.append(
         Check.ok(

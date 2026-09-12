@@ -86,8 +86,8 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     def preflight(url, bearer):
         seen["preflight"] = (url, bearer)
 
-    def cards_preflight(name, store):
-        seen["cards_preflight"] = (name, store)
+    def cards_preflight(name, store, env):
+        seen["cards_preflight"] = (name, store, env)
 
     # Act
     pid = lifecycle.start_inbox_bridge(
@@ -104,7 +104,8 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     outcome = (
         pid,
         seen["preflight"],
-        seen["cards_preflight"],
+        seen["cards_preflight"][:2],
+        seen["cards_preflight"][2]["PGUSER"],
         "secret" in seen["argv"],
         seen["env"]["SAC_LISTEN_BEARER"],
         seen["env"]["SCITEX_CARDS_AGENT_ID"],
@@ -119,6 +120,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
             "secret",
         ),
         ("scholar", "postgresql://cards-primary:55432/cards"),
+        seen["env"]["PGUSER"],
         False,
         "secret",
         "scholar",
@@ -172,7 +174,7 @@ def test_start_refuses_when_cards_store_preflight_fails(tmp_path):
     config = _config(tmp_path)
     spawned = []
 
-    def refuse(_name, _store):
+    def refuse(_name, _store, _env):
         raise RuntimeError("Cards database authentication failed")
 
     # Act
@@ -240,3 +242,49 @@ def test_cards_store_check_preserves_unknown_when_observation_raises():
         check.cause.code,
         "secret" not in check.detail,
     ) == (None, 503, True)
+
+
+def test_cards_health_uses_effective_env_for_backend_mode_without_leaking(tmp_path):
+    # Arrange: a tiny stand-in records exactly what backend_mode would read.
+    package = tmp_path / "scitex_cards"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        """import os
+
+def health(*, store, agent_id):
+    observed = (
+        os.environ.get("SCITEX_CARDS_DB"),
+        os.environ.get("SCITEX_CARDS_AGENT_ID"),
+        os.environ.get("PGUSER"),
+    )
+    expected = (store, agent_id, "spec_role")
+    return {"checks": [{"name": "backend_mode", "ok": observed == expected,
+                        "detail": repr(observed), "hint": None}]}
+""",
+        encoding="utf-8",
+    )
+    host_env = {
+        "PATH": os.environ["PATH"],
+        "SCITEX_CARDS_DB": "postgresql://host-default/cards",
+        "SCITEX_CARDS_AGENT_ID": "host-agent",
+        "PGUSER": "host_role",
+    }
+    host_before = dict(host_env)
+    spec_store = "postgresql://spec-primary:55432/cards"
+    spec_env = {
+        "PYTHONPATH": str(tmp_path),
+        "SCITEX_CARDS_DB": spec_store,
+        "SCITEX_CARDS_AGENT_ID": "scholar",
+        "PGUSER": "spec_role",
+    }
+
+    # Act
+    report = lifecycle._cards_health_in_env(
+        store=spec_store,
+        agent_id="scholar",
+        env=spec_env,
+        environ=host_env,
+    )
+
+    # Assert: backend_mode saw the spec values; the parent retained host values.
+    assert (report["checks"][0]["ok"], host_env) == (True, host_before)

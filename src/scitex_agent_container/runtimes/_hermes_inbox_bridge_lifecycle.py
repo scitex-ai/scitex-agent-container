@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -10,7 +11,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .._listen._config import listen_base_url
 from ..config import AgentConfig
@@ -23,6 +24,15 @@ MODULE_PATH = "scitex_agent_container.runtimes._hermes_inbox_bridge"
 PID_FILENAME = "hermes-inbox-bridge.pid"
 LOG_FILENAME = "hermes-inbox-bridge.log"
 _STOP_GRACE_S = 5.0
+_CARDS_HEALTH_PROGRAM = """
+import json
+import sys
+
+from scitex_cards import health
+
+request = json.load(sys.stdin)
+sys.stdout.write(json.dumps(health(**request)))
+"""
 
 
 def _pid_path(config: AgentConfig) -> Path:
@@ -122,6 +132,7 @@ def _listener_accepts_bearer(url: str, bearer: str) -> None:
 def cards_store_check(
     name: str,
     store: str | None,
+    env: dict[str, str] | None = None,
     *,
     health: Callable[..., dict] | None = None,
 ):
@@ -130,11 +141,9 @@ def cards_store_check(
 
     try:
         if health is None:
-            from scitex_cards import health as cards_health
+            report = _cards_health_in_env(store=store, agent_id=name, env=env)
         else:
-            cards_health = health
-
-        report = cards_health(store=store, agent_id=name)
+            report = health(store=store, agent_id=name)
     except Exception as exc:
         return Check.unknown(
             "cards_store_ready",
@@ -170,6 +179,30 @@ def cards_store_check(
     )
 
 
+def _cards_health_in_env(
+    *,
+    store: str | None,
+    agent_id: str,
+    env: dict[str, str] | None,
+    environ: Mapping[str, str] | None = None,
+) -> dict:
+    """Run Cards health under the spec env without changing this process."""
+    child_env = dict(os.environ if environ is None else environ)
+    child_env.update({str(key): str(value) for key, value in (env or {}).items()})
+    result = subprocess.run(
+        [sys.executable, "-c", _CARDS_HEALTH_PROGRAM],
+        input=json.dumps({"store": store, "agent_id": agent_id}),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=child_env,
+    )
+    report = json.loads(result.stdout)
+    if not isinstance(report, dict):
+        raise TypeError("scitex-cards health did not return a JSON object")
+    return report
+
+
 def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | None]:
     """Resolve the one environment/store shared by Cards MCP and ingress."""
     from ._board_identity_env import raw_args_env
@@ -184,9 +217,11 @@ def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | No
     return cards_env, str(store) if store else None
 
 
-def _cards_store_usable(name: str, store: str | None) -> None:
+def _cards_store_usable(
+    name: str, store: str | None, env: dict[str, str] | None = None
+) -> None:
     """Refuse launch unless effective Cards DB authentication is observed."""
-    check = cards_store_check(name, store)
+    check = cards_store_check(name, store, env)
     if check.to_dict()["ok"] is not True:
         raise RuntimeError(
             "Hermes Cards ingress cannot authenticate/use its effective store; "
@@ -199,7 +234,9 @@ def start_inbox_bridge(
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
     preflight: Callable[[str, str], None] = _listener_accepts_bearer,
-    cards_preflight: Callable[[str, str | None], None] = _cards_store_usable,
+    cards_preflight: Callable[[str, str | None, dict[str, str]], None] = (
+        _cards_store_usable
+    ),
     bearer: str | None = None,
     base_url: str | None = None,
     state_dir: Path | None = None,
@@ -221,7 +258,7 @@ def start_inbox_bridge(
     # the operator shell made Cards delivery depend on which shell launched
     # SAC and could poll a different/absent store.
     cards_env, cards_store = effective_cards_store(config)
-    cards_preflight(config.name, cards_store)
+    cards_preflight(config.name, cards_store, cards_env)
     stop(config)
     base_url = (base_url or listen_base_url()).rstrip("/")
     stream_url = f"{base_url}/agents/{config.name}/inbox/stream?ack=explicit"
