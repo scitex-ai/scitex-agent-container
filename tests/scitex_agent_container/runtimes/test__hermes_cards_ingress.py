@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
+
 from scitex_agent_container.runtimes import _hermes_cards_ingress as ingress
 from scitex_agent_container.runtimes import _tui_turn_bridge as turn_bridge
 
@@ -16,6 +18,50 @@ def test_durable_reconcile_bounds_doorbell_loss_to_two_seconds():
 
     # Assert
     assert actual_reconcile_interval_s == expected_reconcile_interval_s
+
+
+def test_consumer_requires_canonical_shared_store():
+    """A retired Cards-specific alias cannot select a private database."""
+    # Arrange
+    environ = {"SCITEX_CARDS_DB": "postgresql://wrong:55432/private"}
+    # Act
+    ctx = pytest.raises(RuntimeError, match="requires SCITEX_STORE_DSN")
+    # Assert
+    with ctx:
+        ingress.canonical_store_dsn(environ)
+
+
+def test_consumer_selects_only_canonical_store():
+    # Arrange
+    canonical = "postgresql://scitex-primary:55432/scitex"
+    environ = {
+        "SCITEX_STORE_DSN": canonical,
+        "SCITEX_CARDS_DB": "postgresql://wrong:55432/private",
+    }
+    # Act
+    observed = ingress.canonical_store_dsn(environ)
+    # Assert
+    assert observed == canonical
+
+
+@pytest.mark.parametrize(
+    "value, message",
+    [
+        ("/tmp/private.db", "must name the canonical shared PostgreSQL store"),
+        (
+            "postgresql://scitex-primary:5432/scitex",
+            "must use the canonical shared PostgreSQL port 55432",
+        ),
+    ],
+)
+def test_canonical_store_rejects_private_or_wrong_port_targets(value, message):
+    # Arrange
+    environ = {"SCITEX_STORE_DSN": value}
+    # Act
+    ctx = pytest.raises(RuntimeError, match=message)
+    # Assert
+    with ctx:
+        ingress.canonical_store_dsn(environ)
 
 
 def test_dm_is_rendered_with_sender_message_and_durable_id():

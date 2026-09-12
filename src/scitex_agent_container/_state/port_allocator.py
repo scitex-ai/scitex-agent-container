@@ -279,7 +279,8 @@ def claim_port(
             return candidate
     raise RuntimeError(
         f"no free a2a port in range [{lo}, {hi}] (every port is either claimed "
-        "in state.db or already has a live listener); extend a2a.port_range in "
+        "in the shared PostgreSQL store or already has a live listener); extend "
+        "a2a.port_range in "
         "~/.scitex/agent-container/config.yaml, or find the stale listener with "
         f"`ss -ltnp | grep -E ':{lo}|:{hi}'` — a stopped agent whose bridge was "
         "never reaped holds a port that no claim row mentions"

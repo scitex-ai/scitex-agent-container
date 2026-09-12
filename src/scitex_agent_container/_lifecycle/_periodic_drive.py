@@ -155,7 +155,7 @@ def build_envelope(
         f"## Current mission\n"
         f"{state.mission}\n"
         f"\n"
-        f"## Current work (state.db + git)\n"
+        f"## Current work (shared store + git)\n"
         f"- workdir: {state.workdir}\n"
         f"- branch: {state.branch}\n"
         f"- active worktree: {state.worktree_name}\n"

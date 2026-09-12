@@ -83,7 +83,7 @@ def _dispatch_remote_delete(name: str) -> bool:
     peers = _load_host_config().peers
     if peer not in peers:
         raise RuntimeError(
-            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"Agent {name!r} active on peer {peer!r} per the shared store, but "
             f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
             f"peers: section. Cannot delete cross-host without an ssh "
             f"target. Add the peer entry and retry."

@@ -12,11 +12,11 @@ from pathlib import Path
 import click
 from rich.table import Table
 
-from ..config import load_config
 from .._reconcile._pass import fleet_agents_dir, fleet_spec_paths
+from .._state._remote_sac_hint import remote_sac_not_found_hint
+from ..config import load_config
 from ._api_tree import get_api_tree
 from ._helpers import _json_flag, agent_name_complete, console
-from .._state._remote_sac_hint import remote_sac_not_found_hint
 
 
 @click.command()
@@ -260,7 +260,7 @@ def _tail_one_remote(
     peers = _load_host_config().peers
     if peer not in peers:
         raise RuntimeError(
-            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"Agent {name!r} active on peer {peer!r} per the shared store, but "
             f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
             f"peers: section. Cannot tail cross-host. Add the peer entry."
         )

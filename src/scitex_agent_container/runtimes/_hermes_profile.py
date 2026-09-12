@@ -30,7 +30,6 @@ _MCP_NON_SECRET_ENV = {
     "PGUSER",
     "SCITEX_CARDS_AGENT_ID",
     "SCITEX_CARDS_SCOPE",
-    "SCITEX_CARDS_DB",
     "SCITEX_CARDS_NOTIFY_DSN",
     "SCITEX_STORE_DSN",
 }
@@ -98,11 +97,7 @@ def _validate_mcp_pg_credentials(
             continue
         postgres_dsns = tuple(
             value
-            for key in (
-                "SCITEX_CARDS_DB",
-                "SCITEX_CARDS_NOTIFY_DSN",
-                "SCITEX_STORE_DSN",
-            )
+            for key in ("SCITEX_CARDS_NOTIFY_DSN", "SCITEX_STORE_DSN")
             if (value := str(declared.get(key, ""))).startswith(
                 ("postgresql://", "postgres://")
             )
@@ -255,13 +250,6 @@ def _bind_mcp_runtime_env(
         PG_PASSFILE_ENV,
     )
 
-    # Hermes MCP processes do not inherit the parent container's env.  The
-    # consolidated store DSN is the authoritative PostgreSQL target; expose
-    # it under scitex-cards' still-consumed spelling when a spec has not
-    # declared a more-specific Cards target.
-    store_dsn = str(runtime_env.get("SCITEX_STORE_DSN", ""))
-    if store_dsn.startswith(("postgresql://", "postgres://")):
-        runtime_env.setdefault("SCITEX_CARDS_DB", store_dsn)
     for name, server in servers.items():
         declared = server.get("env")
         if not isinstance(declared, dict):
@@ -270,6 +258,11 @@ def _bind_mcp_runtime_env(
         command = Path(str(server.get("command", ""))).name
         is_cards = name in {"cards", "scitex-cards"} or command == "scitex-cards"
         is_sac = name in {"sac", "scitex-agent-container"} or command == "sac"
+        if is_cards or is_sac:
+            # This was the deprecated Cards-specific store alias.  Retaining
+            # it permits a generated profile to disagree with the one shared
+            # SciTeX store, so do not carry it across the Hermes boundary.
+            declared.pop("SCITEX_CARDS_DB", None)
         if is_sac:
             declared.update(_MCP_SAC_ENV_REFS)
         keys = (
@@ -283,11 +276,7 @@ def _bind_mcp_runtime_env(
                 declared[key] = str(value)
         has_postgres = any(
             str(declared.get(key, "")).startswith(("postgresql://", "postgres://"))
-            for key in (
-                "SCITEX_CARDS_DB",
-                "SCITEX_CARDS_NOTIFY_DSN",
-                "SCITEX_STORE_DSN",
-            )
+            for key in ("SCITEX_CARDS_NOTIFY_DSN", "SCITEX_STORE_DSN")
         )
         current_passfile = str(declared.get(PG_PASSFILE_ENV, "")).strip()
         if has_postgres and current_passfile in {"", "${PGPASSFILE}"}:

@@ -491,7 +491,7 @@ def try_dispatch_remote(
     peer, row = found
     if peer not in peers:
         raise RuntimeError(
-            f"Agent {name!r} active on peer {peer!r} per state.db, but "
+            f"Agent {name!r} active on peer {peer!r} per the shared store, but "
             f"{peer!r} is NOT in ~/.scitex/agent-container/config.yaml's "
             f"peers: section. Cannot {verb} cross-host without an ssh "
             f"target. Add the peer entry and retry."

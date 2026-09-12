@@ -65,6 +65,7 @@ def test_stale_latch_recovers_and_http_turn_keeps_all_identities(tmp_path):
     identities = {
         "session_id": "hermes-session-unchanged",
         "instance_id": "sac-incarnation-unchanged",
+        # Hermes-private session/context state; not the SciTeX shared store.
         "home/.hermes/state.db": "context-unchanged",
     }
     for relative, body in identities.items():

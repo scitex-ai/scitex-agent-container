@@ -7,9 +7,10 @@ import json
 import logging
 import os
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from typing import Any
+from urllib.parse import urlsplit
 
 from scitex_dev.status import Check, StatusCode
 
@@ -17,6 +18,33 @@ from .._mcp._channel_wake import _wake_turn
 
 log = logging.getLogger(__name__)
 DEFAULT_RECONCILE_INTERVAL_S = 2.0
+
+
+def canonical_store_dsn(environ: Mapping[str, str]) -> str:
+    """Return the one supported shared-state target or fail without leaking it."""
+    store = environ.get("SCITEX_STORE_DSN")
+    if not store:
+        raise RuntimeError(
+            "Hermes Cards ingress requires SCITEX_STORE_DSN; configure the "
+            "canonical shared PostgreSQL store on port 55432 and restart the agent"
+        )
+    try:
+        target = urlsplit(store)
+        port = target.port
+    except ValueError as exc:
+        raise RuntimeError(
+            "SCITEX_STORE_DSN is malformed; configure the canonical shared "
+            "PostgreSQL store on port 55432 and restart the agent"
+        ) from exc
+    if target.scheme not in {"postgres", "postgresql"} or not target.hostname:
+        raise RuntimeError(
+            "SCITEX_STORE_DSN must name the canonical shared PostgreSQL store"
+        )
+    if port != 55432:
+        raise RuntimeError(
+            "SCITEX_STORE_DSN must use the canonical shared PostgreSQL port 55432"
+        )
+    return store
 
 
 def _log_check(
@@ -221,7 +249,7 @@ async def consume(
     """Drain durably on a bounded cadence; use LISTEN only as an accelerator."""
     if watch_notifications is None:
         _poll, _ack, watch_notifications = _cards_api()
-    store = os.environ.get("SCITEX_CARDS_DB") or os.environ.get("SCITEX_STORE_DSN")
+    store = canonical_store_dsn(os.environ)
     watch_impaired = False
     while True:
         try:
@@ -285,6 +313,7 @@ async def consume(
 
 __all__ = [
     "DEFAULT_RECONCILE_INTERVAL_S",
+    "canonical_store_dsn",
     "consume",
     "drain_once",
     "event_from_notification",

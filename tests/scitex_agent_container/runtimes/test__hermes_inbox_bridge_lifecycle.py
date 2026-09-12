@@ -71,7 +71,7 @@ def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
 def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
-    config.env["SCITEX_CARDS_DB"] = "postgresql://cards-primary:55432/cards"
+    config.env["SCITEX_STORE_DSN"] = "postgresql://cards-primary:55432/cards"
     config.env["SCITEX_CARDS_NOTIFY_DSN"] = (
         "postgresql://cards-primary:55433/cards"
     )
@@ -112,7 +112,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         "secret" in seen["argv"],
         seen["env"]["SAC_LISTEN_BEARER"],
         seen["env"]["SCITEX_CARDS_AGENT_ID"],
-        seen["env"]["SCITEX_CARDS_DB"],
+        seen["env"]["SCITEX_STORE_DSN"],
         seen["env"]["SCITEX_CARDS_NOTIFY_DSN"],
         (state_dir / lifecycle.PID_FILENAME).read_text(),
     )
@@ -132,6 +132,40 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         "postgresql://cards-primary:55433/cards",
         "4242\n",
     )
+
+
+def test_start_drops_inherited_cards_store_alias(tmp_path, env_save_restore):
+    # Arrange
+    config = _config(tmp_path)
+    canonical = "postgresql://scitex-primary:55432/scitex"
+    config.env["SCITEX_STORE_DSN"] = canonical
+    env_save_restore.set("SCITEX_CARDS_DB", "postgresql://wrong:55432/private")
+    seen = {}
+
+    class Process:
+        pid = 4242
+
+    def spawn(_argv, **kwargs):
+        seen["env"] = kwargs["env"]
+        return Process()
+
+    # Act
+    lifecycle.start_inbox_bridge(
+        config,
+        spawn=spawn,
+        preflight=lambda *_args: None,
+        cards_preflight=lambda *_args: None,
+        bearer="secret",
+        state_dir=tmp_path / "state",
+        stop=lambda _config: False,
+        sleep=lambda _seconds: None,
+    )
+
+    # Assert
+    assert (
+        seen["env"]["SCITEX_STORE_DSN"],
+        "SCITEX_CARDS_DB" in seen["env"],
+    ) == (canonical, False)
 
 
 def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
@@ -258,7 +292,7 @@ def test_cards_health_uses_effective_env_for_backend_mode_without_leaking(tmp_pa
 
 def health(*, store, agent_id):
     observed = (
-        os.environ.get("SCITEX_CARDS_DB"),
+        os.environ.get("SCITEX_STORE_DSN"),
         os.environ.get("SCITEX_CARDS_AGENT_ID"),
         os.environ.get("PGUSER"),
     )
@@ -270,7 +304,7 @@ def health(*, store, agent_id):
     )
     host_env = {
         "PATH": os.environ["PATH"],
-        "SCITEX_CARDS_DB": "postgresql://host-default/cards",
+        "SCITEX_STORE_DSN": "postgresql://host-default:55432/cards",
         "SCITEX_CARDS_AGENT_ID": "host-agent",
         "PGUSER": "host_role",
     }
@@ -278,7 +312,7 @@ def health(*, store, agent_id):
     spec_store = "postgresql://spec-primary:55432/cards"
     spec_env = {
         "PYTHONPATH": str(tmp_path),
-        "SCITEX_CARDS_DB": spec_store,
+        "SCITEX_STORE_DSN": spec_store,
         "SCITEX_CARDS_AGENT_ID": "scholar",
         "PGUSER": "spec_role",
     }
