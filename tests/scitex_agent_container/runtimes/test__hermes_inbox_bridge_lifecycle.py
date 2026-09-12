@@ -72,6 +72,9 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
     config.env["SCITEX_CARDS_DB"] = "postgresql://cards-primary:55432/cards"
+    config.env["SCITEX_CARDS_NOTIFY_DSN"] = (
+        "postgresql://cards-primary:55433/cards"
+    )
     state_dir = tmp_path / "state"
     seen = {}
 
@@ -110,6 +113,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["env"]["SAC_LISTEN_BEARER"],
         seen["env"]["SCITEX_CARDS_AGENT_ID"],
         seen["env"]["SCITEX_CARDS_DB"],
+        seen["env"]["SCITEX_CARDS_NOTIFY_DSN"],
         (state_dir / lifecycle.PID_FILENAME).read_text(),
     )
     # Assert
@@ -125,6 +129,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         "secret",
         "scholar",
         "postgresql://cards-primary:55432/cards",
+        "postgresql://cards-primary:55433/cards",
         "4242\n",
     )
 

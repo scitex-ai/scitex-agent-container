@@ -84,6 +84,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "migrate-images",
                 "scratch-migrate",
                 "link-specs",
+                "provision-cards-notify",
             ],
         ),
     ]
@@ -326,6 +327,12 @@ _register_migrate_images(agent_group)
 from ._agents_scratch_migrate import register as _register_scratch_migrate  # noqa: E402
 
 _register_scratch_migrate(agent_group)
+
+from ._agents_provision_cards_notify import (  # noqa: E402
+    register as _register_provision_cards_notify,
+)
+
+_register_provision_cards_notify(agent_group)
 
 # `declare-a2a-host` — one-shot fleet sweep making every spec state its own
 # a2a bind address instead of inheriting one from a code default. Sits beside

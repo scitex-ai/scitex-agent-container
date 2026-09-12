@@ -18,7 +18,11 @@ from ._pg_identity_env import (
     _pgpass_target,
 )
 
-_POSTGRES_DSN_KEYS = ("SCITEX_CARDS_DB", "SCITEX_STORE_DSN")
+_POSTGRES_DSN_KEYS = (
+    "SCITEX_CARDS_DB",
+    "SCITEX_CARDS_NOTIFY_DSN",
+    "SCITEX_STORE_DSN",
+)
 PG_PASSFILE_ENV = "PGPASSFILE"
 DEFAULT_CONTAINER_PGPASSFILE = "/home/agent/.sac-pgpass"
 

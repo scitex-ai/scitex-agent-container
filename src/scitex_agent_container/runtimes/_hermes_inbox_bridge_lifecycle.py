@@ -283,6 +283,7 @@ def start_inbox_bridge(
     for key in (
         "SCITEX_CARDS_AGENT_ID",
         "SCITEX_CARDS_DB",
+        "SCITEX_CARDS_NOTIFY_DSN",
         "SCITEX_STORE_DSN",
         "PGHOST",
         "PGPORT",
