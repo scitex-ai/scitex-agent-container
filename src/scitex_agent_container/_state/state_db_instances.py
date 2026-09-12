@@ -74,6 +74,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "end_instance",
     "last_known_instance",
+    "last_local_instance_for_name",
     "list_active_instances",
     "live_instance_for_name",
     "read_instance",
@@ -107,6 +108,11 @@ def record_instance_start(
     name: str,
     *,
     pid: int | None = None,
+    process_start_time: int | None = None,
+    process_uid: int | None = None,
+    control_group: str | None = None,
+    scope_unit: str | None = None,
+    scope_invocation_id: str | None = None,
     screen: str | None = None,
     workdir: str | None = None,
     a2a_port: int | None = None,
@@ -148,6 +154,11 @@ def record_instance_start(
         {
             "name": name,
             "pid": pid,
+            "process_start_time": process_start_time,
+            "process_uid": process_uid,
+            "control_group": control_group,
+            "scope_unit": scope_unit,
+            "scope_invocation_id": scope_invocation_id,
             "a2a_port": port,
             "screen": screen,
             "workdir": workdir,
@@ -321,6 +332,25 @@ def last_known_instance(name: str) -> dict | None:
             instance_as_dict(row)
             for row in scan_instances(store)
             if row.values.get("name") == name
+        ]
+
+    rows = run_with_reconnect(_list)
+    return max(rows, key=sortable_recency) if rows else None
+
+
+def last_local_instance_for_name(name: str, host: str | None = None) -> dict | None:
+    """Newest local incarnation for ``name``, active or ended."""
+    if not name:
+        return None
+    canonical_host = _resolve_host(host)
+
+    def _list(store: "Store") -> list[dict]:
+        return [
+            instance_as_dict(row)
+            for row in scan_instances(store)
+            if row.values.get("name") == name
+            and row.values.get("host") == canonical_host
+            and not bool(row.values.get("remote"))
         ]
 
     rows = run_with_reconnect(_list)

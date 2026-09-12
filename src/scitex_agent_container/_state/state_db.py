@@ -88,6 +88,7 @@ from .state_db_gc import (  # noqa: E402,F401
 )
 from .state_db_instances import (  # noqa: E402,F401
     last_known_instance,
+    last_local_instance_for_name,
     list_active_instances,
     record_instance_start,
     record_instance_stop,

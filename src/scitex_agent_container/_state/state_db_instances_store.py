@@ -229,7 +229,7 @@ def run_with_reconnect(operation: "Callable[[Store], Any]") -> Any:
 def instances_schema() -> Any:
     """The declared ``sac_instances`` schema, as this module opens it.
 
-    Fifteen fields, matching :data:`.._store_plugin.INSTANCES` field for
+    Twenty fields, matching :data:`.._store_plugin.INSTANCES` field for
     field. The store name is the bare table name — ``sac_`` is the plugin
     namespace, not the store's, exactly as ``comms_nodes`` is opened under
     its bare name while the plugin declares ``sac_comms_nodes``.
@@ -287,6 +287,11 @@ def instances_schema() -> Any:
             "host": ident(FieldKind.TEXT),
             "name": data(FieldKind.TEXT, lww, required=True, indexed=True),
             "pid": data(FieldKind.INTEGER, lww),
+            "process_start_time": data(FieldKind.INTEGER, lww),
+            "process_uid": data(FieldKind.INTEGER, lww),
+            "control_group": data(FieldKind.TEXT, lww),
+            "scope_unit": data(FieldKind.TEXT, lww),
+            "scope_invocation_id": data(FieldKind.TEXT, lww),
             "a2a_port": data(FieldKind.INTEGER, lww),
             "screen": data(FieldKind.TEXT, lww),
             "workdir": data(FieldKind.TEXT, lww),
