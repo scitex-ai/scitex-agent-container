@@ -57,7 +57,7 @@ _NO_ANCHOR = "no 'to_home:' line to anchor the declaration to"
 _REASON_CHARS = 240
 
 
-def _reason(agent: str, exc: BaseException) -> str:
+def _reason(agent: str, path: Path, exc: BaseException) -> str:
     """``"<agent>: <Type>: <message>"``, whitespace-collapsed and capped.
 
     Collapsed rather than first-line-only: ``load_config``'s validation error
@@ -65,7 +65,13 @@ def _reason(agent: str, exc: BaseException) -> str:
     that are actually missing on the lines after, so taking line one alone
     reports that something is wrong while discarding what.
     """
-    flat = " ".join(str(exc).split())
+    # Paths are provenance, not the reason. A CI tmp_path can be hundreds of
+    # characters long; keeping it here consumed the entire bounded field and
+    # truncated the first validation finding. The caller and structured plan
+    # already identify the agent/spec, while the full path and exception remain
+    # in the error log above. Normalising the path makes this diagnostic stable
+    # across runner mount layouts and preserves the actionable validation text.
+    flat = " ".join(str(exc).replace(str(path), "<spec>").split())
     if len(flat) > _REASON_CHARS:
         flat = flat[: _REASON_CHARS - 1] + "…"
     return f"{agent}: {type(exc).__name__}: {flat}"
@@ -138,7 +144,7 @@ def plan_spec(path: Path) -> "SpecEdit | str":
         original = path.read_text()
     except Exception as exc:
         logger.error("migrate-layers: cannot read spec %s — %s", path, exc)
-        return _reason(agent, exc)
+        return _reason(agent, path, exc)
 
     if getattr(config, "to_home_layers", None) is not None:
         return SpecEdit(agent=agent, path=path, layers=layers)
