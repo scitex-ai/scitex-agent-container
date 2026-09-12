@@ -54,8 +54,11 @@ tests never shell a real apptainer.
 from __future__ import annotations
 
 import shutil
+import sysconfig
+from importlib import metadata
 from pathlib import Path
 from typing import Callable
+from urllib.parse import unquote, urlparse
 
 # ---------------------------------------------------------------------------
 # Staging
@@ -84,6 +87,121 @@ _COPY_IGNORE = shutil.ignore_patterns(
 # The .def files reference this exact name in their %files section, so
 # changing it requires changing the .def files in lockstep.
 _STAGED_SRC_NAME = "scitex-agent-container-src"
+
+
+class SourceProvenanceMismatch(RuntimeError):
+    """Raised when a build would stage source from a different SAC tree."""
+
+
+def _environment_package_root(purelib: Path | None = None) -> Path | None:
+    """Return SAC's package root installed in the active interpreter env.
+
+    Discovery is deliberately limited to that interpreter's ``purelib``;
+    searching all of ``sys.path`` would let the stale ``PYTHONPATH`` entry we
+    are auditing supply its own distribution metadata too.
+    """
+    purelib = (
+        purelib.resolve()
+        if purelib is not None
+        else Path(sysconfig.get_path("purelib")).resolve()
+    )
+    distribution = next(
+        (
+            item
+            for item in metadata.distributions(path=[str(purelib)])
+            if (item.metadata.get("Name") or "").lower().replace("_", "-")
+            == "scitex-agent-container"
+        ),
+        None,
+    )
+    if distribution is None:
+        return None
+
+    direct_url_text = distribution.read_text("direct_url.json")
+    if direct_url_text:
+        import json
+
+        try:
+            direct_url = json.loads(direct_url_text)
+            parsed = urlparse(str(direct_url.get("url", "")))
+            if direct_url.get("dir_info", {}).get("editable") and parsed.scheme == "file":
+                repo_root = Path(unquote(parsed.path)).resolve()
+                editable_package = repo_root / "src" / "scitex_agent_container"
+                if editable_package.is_dir():
+                    return editable_package.resolve()
+        except (TypeError, ValueError):
+            pass
+
+    files = distribution.files or ()
+    init_file = next(
+        (
+            item
+            for item in files
+            if str(item).replace("\\", "/")
+            == "scitex_agent_container/__init__.py"
+        ),
+        None,
+    )
+    if init_file is None:
+        return None
+    return Path(distribution.locate_file(init_file)).resolve().parent
+
+
+def assert_source_provenance(
+    pkg_root: Path, *, environment_root: Path | None = None
+) -> None:
+    """Refuse a source-bundled build assembled from mixed SAC installs.
+
+    ``pkg_root`` is the package tree that will be copied into the image build
+    context. It must be the same package tree that supplied both the imported
+    top-level package and this staging helper. This catches a stale
+    ``PYTHONPATH`` winning over the environment that launched ``sac`` before
+    the staging directory is reset or a container build starts.
+
+    No repository or current-working-directory assumption is made, so an
+    internally consistent editable install and an internally consistent wheel
+    install are both valid.
+    """
+    import scitex_agent_container
+
+    staged_root = pkg_root.resolve()
+    package_file = getattr(scitex_agent_container, "__file__", None)
+    if package_file is None:
+        raise SourceProvenanceMismatch(
+            "refusing source-bundled image build: the loaded "
+            "scitex_agent_container package has no filesystem origin; "
+            f"staged source root: {staged_root}. Run the build from one "
+            "unambiguous SAC installation (for an editable checkout: "
+            "PYTHONPATH=<checkout>/src uv run sac image build ...)."
+        )
+
+    loaded_package_root = Path(package_file).resolve().parent
+    loaded_helper_root = Path(__file__).resolve().parent.parent
+    installed_root = (
+        environment_root.resolve()
+        if environment_root is not None
+        else _environment_package_root()
+    )
+    roots_match = loaded_package_root == staged_root and loaded_helper_root == staged_root
+    if installed_root is not None:
+        roots_match = roots_match and installed_root == staged_root
+    if roots_match:
+        return
+
+    installed_line = (
+        str(installed_root) if installed_root is not None else "unavailable"
+    )
+    raise SourceProvenanceMismatch(
+        "refusing source-bundled image build: SAC source provenance is mixed.\n"
+        f"  loaded package root: {loaded_package_root}\n"
+        f"  loaded build-helper root: {loaded_helper_root}\n"
+        f"  active-environment package root: {installed_line}\n"
+        f"  staged source root: {staged_root}\n"
+        "The image could otherwise contain source different from the command "
+        "that built it. Remove the stale PYTHONPATH entry or pin it to the "
+        "intended checkout, for example:\n"
+        f"  PYTHONPATH={staged_root.parent} uv run sac image build ..."
+    )
 
 
 def _locate_bundled_sibling(
@@ -511,6 +629,9 @@ __all__ = [
     "locate_bundled_hatch_build",
     "resolve_bootstrap_sif",
     "BootstrapSifMissing",
+    "SourceProvenanceMismatch",
+    "assert_source_provenance",
+    "_environment_package_root",
     "_default_container_build",
     "_container_build",
 ]

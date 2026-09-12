@@ -301,6 +301,44 @@ def test_build_errors_when_recipe_def_file_is_missing(home_tmp):
     assert result.exit_code == 1 and "recipe not found" in result.output
 
 
+@contextmanager
+def _use_environment_package_root(root: Path):
+    saved = ig._image_source_build._environment_package_root
+    ig._image_source_build._environment_package_root = lambda: root
+    try:
+        yield
+    finally:
+        ig._image_source_build._environment_package_root = saved
+
+
+def test_plain_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    with _use_environment_package_root(selected_root):
+        with _use_source_builder(result=Path("/tmp/should-not-build.sif")) as calls:
+            result = CliRunner().invoke(image_group, ["build", "base", "--yes"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "SAC source provenance is mixed" in result.output
+    assert "loaded package root:" in result.output
+    assert f"active-environment package root: {selected_root}" in result.output
+
+
+def test_reproducible_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    with _use_environment_package_root(selected_root):
+        with _use_reproducible_builder() as calls:
+            result = CliRunner().invoke(
+                image_group, ["build", "base", "--yes", "--reproducible"]
+            )
+
+    assert result.exit_code == 1 and calls == []
+    assert "SAC source provenance is mixed" in result.output
+    assert "loaded build-helper root:" in result.output
+    assert f"active-environment package root: {selected_root}" in result.output
+
+
 def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
     # Arrange
     runner = CliRunner()

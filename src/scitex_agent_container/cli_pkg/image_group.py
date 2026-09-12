@@ -304,6 +304,15 @@ def image_build(
     # also delegate to the scitex-container backend.
     pkg_root = _RECIPES_DIR.parent
 
+    # A stale PYTHONPATH can splice the CLI, staging helper and recipes from
+    # different checkouts. Refuse before staging resets build-context or any
+    # heavy process starts; this one gate protects both build branches below.
+    try:
+        _image_source_build.assert_source_provenance(pkg_root)
+    except _image_source_build.SourceProvenanceMismatch as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
     # Layered .defs (currently: ``scitex``) bootstrap off a prior layer's
     # SIF (``From: ./sac-base.sif``). Resolve the prerequisite here — the
     # helper FAILS LOUD when it is missing so apptainer never FATAL's on a
