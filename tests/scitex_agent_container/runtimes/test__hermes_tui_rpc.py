@@ -63,6 +63,9 @@ def test_session_selection_refuses_ambiguous_gateway():
     # Arrange
     rows = [{"id": "one", "title": "other"}, {"id": "two", "title": "another"}]
 
-    # Act / Assert
-    with pytest.raises(HermesTuiRpcError, match="cannot identify one"):
+    # Act
+    def action() -> None:
         _select_session(rows, "sac:hub")
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match="cannot identify one"):
+        action()

@@ -112,12 +112,12 @@ def test_send_turn_uses_native_rpc_for_hermes_busy_input():
         _config(), "/heartbeat every 607s check Cards", wait_ready=False
     )
     # Assert
-    assert delivered is True
-    assert len(calls) == 1 and calls[0][1:] == (
-        "scholar",
-        "/heartbeat every 607s check Cards",
+    assert (delivered, len(calls), calls[0][1:], mux.events) == (
+        True,
+        1,
+        ("scholar", "/heartbeat every 607s check Cards"),
+        [],
     )
-    assert mux.events == []
 
 
 def test_hermes_idle_requires_latest_ready_footer_and_empty_composer():
