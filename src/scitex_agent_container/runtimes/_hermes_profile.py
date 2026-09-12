@@ -187,7 +187,19 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
     )
 
 
-def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
+def _selected_server_names(channels: Sequence[str] | None) -> set[str]:
+    """Return the MCP names explicitly selected by ``server:<name>`` rails."""
+    selected: set[str] = set()
+    for raw in channels or ():
+        channel = str(raw).strip()
+        if channel.startswith("server:") and channel.removeprefix("server:"):
+            selected.add(channel.removeprefix("server:"))
+    return selected
+
+
+def _mcp_servers(
+    home: Path, *, channels: Sequence[str] | None = None
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
     source = home / ".mcp.json"
     if not source.is_file():
         return {}, []
@@ -202,10 +214,11 @@ def _mcp_servers(home: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
         return {}, []
     translated: dict[str, dict[str, Any]] = {}
     eager_toolsets: list[str] = []
+    selected = _selected_server_names(channels)
     for name, entry in servers.items():
         if not isinstance(name, str) or not isinstance(entry, dict):
             continue
-        if entry.get("alwaysLoad") is not True:
+        if entry.get("alwaysLoad") is not True and name not in selected:
             continue
         eager_toolsets.append(f"mcp-{name}")
         rendered = {
@@ -381,9 +394,15 @@ def materialize_hermes_profile(
             "model_name": config.name,
         }
     }
-    servers, eager_toolsets = _mcp_servers(home)
+    servers, eager_toolsets = _mcp_servers(
+        home, channels=getattr(config.claude, "channels", None)
+    )
     if servers:
         _bind_mcp_runtime_env(config, servers)
+    from ._hermes_cct import wire_hermes_cct_rail
+
+    cct_env = wire_hermes_cct_rail(config, home=home, servers=servers)
+    if servers:
         rendered["mcp_servers"] = servers
     if eager_toolsets:
         rendered["toolsets"] = [*rendered.get("toolsets", []), *eager_toolsets]
@@ -402,6 +421,7 @@ def materialize_hermes_profile(
         "API_SERVER_KEY": api_key,
         env_name: provider_key,
         **_sac_profile_env(config, servers),
+        **cct_env,
     }
     for target in targets:
         profile = target / ".hermes"
@@ -440,9 +460,15 @@ def materialize_hermes_tui_profile(
         background_review=config.hermes_background_review,
     )
     _bind_session_affinity(rendered, config=config, plan=plan)
-    servers, eager_toolsets = _mcp_servers(home)
+    servers, eager_toolsets = _mcp_servers(
+        home, channels=getattr(config.claude, "channels", None)
+    )
     if servers:
         _bind_mcp_runtime_env(config, servers)
+    from ._hermes_cct import wire_hermes_cct_rail
+
+    cct_env = wire_hermes_cct_rail(config, home=home, servers=servers)
+    if servers:
         rendered["mcp_servers"] = servers
     if eager_toolsets:
         rendered["toolsets"] = [*rendered.get("toolsets", []), *eager_toolsets]
@@ -456,6 +482,7 @@ def materialize_hermes_tui_profile(
     profile_env = {
         plan.endpoint.auth_env: provider_key,
         **_sac_profile_env(config, servers),
+        **cct_env,
     }
     for target in targets:
         profile = target / ".hermes"

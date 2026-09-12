@@ -389,7 +389,7 @@ def build_run_argv(
     # session. The TUI telegrammer inherits the container env (same path as its
     # bot token via --env-file), so forward the SAME shared-plan wake URL here.
     # Without it an idle TUI agent never wakes on Telegram (the SDK↔TUI drift).
-    if tui and harness_key != HERMES_TUI:
+    if tui:
         from ._apptainer_inner_argv import tui_channel_plan
 
         _wake_url = tui_channel_plan(config).telegrammer_turn_url

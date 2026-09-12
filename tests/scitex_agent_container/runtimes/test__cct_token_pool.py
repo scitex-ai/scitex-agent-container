@@ -347,12 +347,13 @@ def test_missing_token_never_logs_at_error_level(
     assert not [r for r in caplog.records if r.levelno >= scitex_logging.ERROR]
 
 
-def test_missing_token_warning_says_the_agent_still_starts(
+def test_missing_token_warning_distinguishes_hermes_from_degraded_harnesses(
     tmp_path: Path,
     secrets_envrc: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Arrange — the message must SAY it is non-fatal, not merely be non-fatal.
+    # Arrange — resolution stays non-fatal, while Hermes profile validation is
+    # deliberately stricter about a selected but incomplete rail.
     os.environ.pop(_SECRETS_VAR, None)
     dest = tmp_path / "home"
     dest.mkdir()
@@ -360,7 +361,10 @@ def test_missing_token_warning_says_the_agent_still_starts(
     with caplog.at_level(scitex_logging.WARNING):
         ensure_cct_bot_token(_cfg("zz-missing-fixture"), dest)
     # Assert
-    assert "NOT a startup failure" in caplog.text
+    assert (
+        "THE AGENT STARTS NORMALLY for non-Hermes harnesses" in caplog.text
+        and "selected Hermes CCT profile instead refuses" in caplog.text
+    )
 
 
 def test_missing_token_warning_names_pool_source(

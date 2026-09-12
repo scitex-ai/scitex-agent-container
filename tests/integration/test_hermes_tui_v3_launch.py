@@ -132,6 +132,71 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
     )
 
 
+def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    env_save_restore.set("SAC_TEST_HERMES_ENGINE_KEY", "not-a-real-secret")
+    tokenless_home = tmp_path / "tokenless-home"
+    tokenless_home.mkdir()
+    env_save_restore.set("HOME", str(tokenless_home))
+    to_home = tmp_path / "to_home"
+    to_home.mkdir()
+    (to_home / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "claude-code-telegrammer": {
+                        "command": "bun",
+                        "args": ["run", "telegram-server.ts"],
+                        "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"},
+                    },
+                    "optional-browser": {"command": "browser-mcp"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    doc = _canonical_hermes_spec()
+    doc["spec"]["to_home"] = str(to_home)
+    doc["spec"]["available_harnesses"]["hermes"]["channels"] = [
+        "server:claude-code-telegrammer"
+    ]
+    doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"
+    spec_path = tmp_path / "business" / "spec.yaml"
+    spec_path.parent.mkdir()
+    spec_path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+
+    # Act
+    config = load_config(spec_path)
+    select_engine_at_start(config, None, log=False)
+    runtime = _get_runtime(config)
+    home = runtime.materialize_workspace(config)
+    argv = build_run_argv(
+        config,
+        state_dir=home.parent,
+        sif_path=Path("/images/sac-base.sif"),
+        tui=True,
+    )
+    rendered = yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
+    joined = " ".join(argv)
+
+    # Assert
+    assert (
+        set(rendered["mcp_servers"]),
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
+            "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
+        ],
+        "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:4321/v1/turn"
+        in joined,
+        "test-cct-secret" not in joined,
+    ) == (
+        {"claude-code-telegrammer"},
+        "http://127.0.0.1:4321/v1/turn",
+        True,
+        True,
+    )
+
 def test_real_hermes_launch_provisions_exact_project_pg_identity(
     tmp_path, env_save_restore
 ):

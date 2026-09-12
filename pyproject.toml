@@ -129,7 +129,7 @@ mcp = [
     "mcp>=1.29,<2",
 ]
 telegram = [
-    "claude-code-telegrammer>=0.1.0",
+    "claude-code-telegrammer>=0.6.1",
 ]
 notify = [
     # Operator notification surface for the OAuth login-relay (emails the

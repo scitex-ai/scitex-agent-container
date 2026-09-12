@@ -1,4 +1,4 @@
-"""The tmux pane's env-snapshot file — a whole environment, kept private.
+"""The tmux pane's env snapshot — private and secret-value redacted.
 
 WHAT IT IS
 ==========
@@ -11,13 +11,13 @@ source of truth that needs no PID hunting.
 
 WHY IT LIVES IN ITS OWN MODULE
 ==============================
-Because WHERE the file lands and WHO may read it are the load-bearing parts,
+Because WHERE the file lands, WHO may read it, and WHAT it retains are the
+load-bearing parts,
 and they were previously two incidental characters in an f-string inside a
-120-line launcher method. The content is not a status line — it is ``env``,
-the pane's ENTIRE environment: every inherited API key, every
-``CCT_BOT_TOKEN_<SLOT>``, the ``sac listen`` bearer that authorises
-``host_exec`` (RCE-equivalent). A dump of that set deserves a module that
-says so.
+120-line launcher method. The source is the pane's entire ``env``. Values
+whose keys look secret are redacted before any byte reaches disk, using the
+same matcher as SAC's argv redactor; non-secret values remain available for
+ownership diagnostics.
 
 THE TWO DEFECTS THIS MODULE CLOSES
 ==================================
@@ -44,28 +44,31 @@ which is wrong twice over, and fixing only one half fixes nothing.
    which is why tightening the mode alone would have left the hole open.
    The directory has to be one no other user can create a name in.
 
-So both halves are fixed together: the file lands inside a ``0700`` per-user
+All three protections are applied together: the file lands inside a ``0700`` per-user
 directory under sac's own state root (created here, by us, before tmux is
 launched), and the redirection runs inside a ``umask 077`` subshell so the
-file is ``0600`` from its first byte rather than tightened afterwards.
+file is ``0600`` from its first byte rather than tightened afterwards. Before
+that redirection, secret-shaped values are replaced with ``<redacted>``.
 
-The subshell is scoped deliberately — ``(umask 077; env > …)`` — so the mask
+The subshell is scoped deliberately — ``(umask 077; env | sed … > …)`` — so the mask
 applies to this one redirection and NOT to the agent command ``exec``ed two
 lines later, which must keep the inherited umask it has always had.
 
 NOTHING IN-REPO READS THIS FILE TODAY
 =====================================
 Verified across the tree: ``tmux.py`` is the only writer and there is no
-reader. The file is kept anyway rather than deleted — it is a deliberate
+reader. The redacted file is kept anyway rather than deleted — it is a deliberate
 operator-facing affordance from the directive above, and an operator or an
 out-of-tree tool may well read it by path — but its being write-only is
-exactly why the leak survived unnoticed, and exactly why "make it private"
-is the right change rather than "make it correct".
+exactly why the leak survived unnoticed. Secret values are now absent even
+from ignored test-result trees copied from this state.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from ..._state._meta.secrets import _SECRET_ENV
 
 #: Per-user directory holding the snapshots, under sac's own state root
 #: (``$SCITEX_DIR/agent-container/runtime``) rather than world-writable
@@ -103,15 +106,18 @@ def tui_env_snapshot_path(session_name: str) -> Path:
 
 
 def env_snapshot_shell_line(session_name: str) -> str:
-    """The one shell line that writes the snapshot, ``0600``, never failing.
+    """Write a ``0600`` snapshot with secret-shaped values redacted.
 
     ``umask 077`` runs inside a subshell so it governs this redirection only
     and never leaks onto the agent command ``exec``ed afterwards. Errors are
     swallowed (``2>/dev/null || true``) because the snapshot is a diagnostic
     affordance: an unwritable state root must not stop an agent from booting.
     """
+    secret_pattern = _SECRET_ENV.pattern
     return (
-        f"(umask 077; env > '{tui_env_snapshot_path(session_name)}') "
+        "(umask 077; env | "
+        f"sed -E '/^[^=]*{secret_pattern}[^=]*=/I s/=.*/=<redacted>/' "
+        f"> '{tui_env_snapshot_path(session_name)}') "
         "2>/dev/null || true\n"
     )
 

@@ -54,12 +54,10 @@ facts to report and they do not deserve the same volume:
 
 * RESOLUTION failed (:func:`ensure_cct_bot_token`) — a scitex-logging
   WARNING names the pool source, the tried slot names, and the fixes. The
-  start itself proceeds — Telegram is a comms rail, not a boot dependency —
-  so the absence is loud but never silent, and never DRESSED UP AS A STARTUP
-  FAILURE. It used to log at ERROR, which made every brand-new agent (no bot
-  yet, by definition) look stillborn in its boot log next to the genuinely
-  fatal lines; WARNING + an explicit "the agent starts normally" sentence
-  keeps the signal without the false alarm.
+  resolution itself remains non-fatal. A selected Hermes CCT rail is stricter
+  downstream: its profile validator refuses to start without the token, MCP,
+  and turn URL that the spec requested. Other harnesses retain the degraded
+  post-start alarm behavior.
 * A DECLARED mapping is broken (:func:`prune_tokenless_telegrammer_mcp`) —
   ERROR. Different fact, rarer, severe in consequence (the rail is REMOVED,
   not merely quiet), so it earns the loud level without reopening the
@@ -214,10 +212,10 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     cascade fold, so an explicit hand-authored mapping always wins. No-op
     when the spec does not request ``server:claude-code-telegrammer``.
     Never raises for a missing token — it WARNs (scitex-logging) with the
-    pool path and the fixes instead, and says in so many words that the
-    agent starts normally: a missing bot token degrades one comms rail, it
-    does not fail a boot. The token VALUE is never logged; only slot names,
-    paths, and the agent name appear.
+    pool path and the fixes instead. The selected Hermes profile validator
+    separately fails a requested incomplete rail; other harnesses may start
+    degraded. The token VALUE is never logged; only slot names, paths, and the
+    agent name appear.
 
     WHICH token is not decided here. That is
     :func:`._cct_token_resolution.resolve_cct_token`, which this function is
@@ -298,8 +296,10 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
     candidates = list(resolution.candidates)
     _logger().warning(
         "cct: no Telegram bot token for agent %r although spec.claude.channels "
-        "requests %r. Tried pool slot(s) %s against the pool (%s). THE AGENT "
-        "STARTS NORMALLY — this is NOT a startup failure; only the Telegram "
+        "requests %r. Tried pool slot(s) %s against the pool (%s). Token "
+        "resolution itself is non-fatal. THE AGENT STARTS NORMALLY for "
+        "non-Hermes harnesses; a selected Hermes CCT profile instead refuses "
+        "this incomplete rail. The Telegram "
         "rail is down, and it is down in BOTH directions: the telegrammer MCP "
         "entry is REMOVED from the materialised .mcp.json (a server that "
         "cannot start is worse than an absent one), so this agent is MUTE and "
