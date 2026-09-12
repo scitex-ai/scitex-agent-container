@@ -51,8 +51,8 @@ import pytest
 CARD_PACKAGES = frozenset({"scitex_todo", "scitex_cards"})
 
 #: The ONLY files under ``src/`` still permitted to import it, each with the
-#: reason it is not yet gone. Both are out of scope for the change that
-#: introduced this test; neither is a runtime alarm path.
+#: reason it is not yet gone. They are out of scope for the change that
+#: introduced this test; none is a runtime alarm path.
 KNOWN_IMPORTERS: dict[str, str] = {
     "scitex_agent_container/_lifecycle/_rename_cards.py": (
         "sac agents rename migrates that application's records to the new "
@@ -69,10 +69,6 @@ KNOWN_IMPORTERS: dict[str, str] = {
         "The Hermes ingress adapter consumes scitex-cards' public durable "
         "notification and acknowledgement API. This is the explicit package "
         "boundary introduced with the required scitex-cards dependency."
-    ),
-    "scitex_agent_container/runtimes/_hermes_inbox_bridge_lifecycle.py": (
-        "The Hermes ingress lifecycle calls scitex-cards' public health API "
-        "before launch so an unavailable canonical store refuses visibly."
     ),
 }
 
