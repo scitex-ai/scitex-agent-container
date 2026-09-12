@@ -19,7 +19,7 @@
 #
 #   * Local compute nodes (scitex-compute-01..04) — NO /data/gpfs at all:
 #     apptainer is the distro package on PATH (/usr/bin/apptainer), scratch is
-#     host-local under $HOME/.cache/scitex-ci, and the GPFS bind is OMITTED
+#     host-local under /scratch/$USER, and the GPFS bind is OMITTED
 #     (apptainer refuses a bind whose source does not exist, and `mkdir -p` on a
 #     GPFS scratch path would hard-fail here under `set -e`).
 #
@@ -90,15 +90,21 @@ fi
     exit 1
 }
 
-# Apptainer scratch. On Spartan the GPFS project scratch (shared FS) keeps HOME
-# clean; everywhere else that path does not exist, and `mkdir -p` under it would
-# be a hard failure, so fall back to host-local scratch under $HOME.
+# Resolve the job scratch ON THE HOST. The library has no /tmp fallback: a CI
+# runner without provisioned scratch must fail before executing a misleadingly
+# red test suite. Bind this exact root below so host cleanup and inner users of
+# TMPDIR address the same filesystem and path.
 GPFS_PROJECT="/data/gpfs/projects/punim0264"
-if [ -d "$GPFS_PROJECT" ]; then
-    export APPTAINER_TMPDIR="$GPFS_PROJECT/ywatanabe/ci/apptainer-tmp"
-else
-    export APPTAINER_TMPDIR="$HOME/.cache/scitex-ci/apptainer-tmp"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
+if ! SAC_CI_TMPDIR_ROOT="$(_ci_tmpdir_root)" || [ -z "$SAC_CI_TMPDIR_ROOT" ]; then
+    echo "::error::no provisioned CI scratch. Expected a writable /scratch/$USER or $GPFS_PROJECT, or explicit SAC_CI_TMPDIR_ROOT." >&2
+    exit 1
 fi
+export SAC_CI_TMPDIR_ROOT
+mkdir -p "$SAC_CI_TMPDIR_ROOT"
+chmod 700 "$SAC_CI_TMPDIR_ROOT"
+export APPTAINER_TMPDIR="$SAC_CI_TMPDIR_ROOT/apptainer-tmp"
 mkdir -p "$APPTAINER_TMPDIR"
 
 # --- scitex-agent-container-specific (1/2): reap leaked CI processes ----------
@@ -203,8 +209,6 @@ fi
 # the backstop for SIGKILL/reboot; the normal ending is the `if: always()`
 # clean-tmpdir.sh step in each job. Guards (self-exclusion by run identity, 24 h
 # age floor) and the /scratch decision are argued in tmpdir-lib.sh.
-# shellcheck source=/dev/null
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmpdir-lib.sh"
 ci_tmpdir_prune
 # --- end scitex-agent-container-specific -------------------------------------
 
@@ -243,7 +247,7 @@ ci_tmpdir_prune
 # reasoning the tmpdir prune above already uses applies -- age is what separates
 # a leftover from a live concurrent sibling, and a reaper survives SIGKILL and
 # reboots, which a trap does not.
-CI_PG_ROOT="${TMPDIR:-/tmp}/sac-ci-pg"
+CI_PG_ROOT="$SAC_CI_TMPDIR_ROOT/postgres"
 mkdir -p "$CI_PG_ROOT" 2>/dev/null || true
 
 # Reap leftovers from runs that were killed before they could clean up. The 6 h
@@ -342,9 +346,14 @@ fi
 APPTAINER_ARGV=(exec --pwd "$PWD")
 if [ -d "$GPFS_PROJECT" ]; then
     APPTAINER_ARGV+=(--bind "$GPFS_PROJECT")
+    case "$SAC_CI_TMPDIR_ROOT" in
+    "$GPFS_PROJECT" | "$GPFS_PROJECT"/*) ;;
+    *) APPTAINER_ARGV+=(--bind "$SAC_CI_TMPDIR_ROOT") ;;
+    esac
     GPFS_STATE="present (scratch on GPFS, punim0264 bound)"
 else
-    GPFS_STATE="absent (scratch under \$HOME, no GPFS bind)"
+    APPTAINER_ARGV+=(--bind "$SAC_CI_TMPDIR_ROOT")
+    GPFS_STATE="absent (scratch under /scratch/\$USER, no GPFS bind)"
 fi
 
 # Echo the resolved plan: when a run fails on an unfamiliar node, the FIRST
@@ -352,6 +361,7 @@ fi
 echo "exec-in-sif: apptainer=$APPTAINER (via $APPTAINER_FROM)"
 echo "exec-in-sif: sif=$SIF"
 echo "exec-in-sif: $GPFS_PROJECT $GPFS_STATE"
+echo "exec-in-sif: SAC_CI_TMPDIR_ROOT=$SAC_CI_TMPDIR_ROOT"
 echo "exec-in-sif: APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
 echo "exec-in-sif: + $APPTAINER ${APPTAINER_ARGV[*]} $SIF bash .github/ci/$INNER $*"
 

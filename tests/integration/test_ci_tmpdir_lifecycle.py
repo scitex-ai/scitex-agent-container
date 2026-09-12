@@ -83,6 +83,17 @@ def _bash(script: str, root: Path, lib: Path | None = None):
     )
 
 
+def _bash_without_configured_root(script: str):
+    env = dict(os.environ)
+    env.pop("SAC_CI_TMPDIR_ROOT", None)
+    return subprocess.run(
+        ["bash", "-c", f'set -uo pipefail; . "{_LIB}"\n{script}'],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 def _run_clean(root: Path, *args: str):
     return subprocess.run(
         ["bash", str(_CLEAN), *args], capture_output=True, text=True, env=_env(root)
@@ -148,6 +159,53 @@ def test_path_is_the_name_the_scripts_already_used(path_result):
     got = path_result.stdout
     # Assert
     assert got == expected
+
+
+@pytest.fixture
+def default_root_result():
+    """Resolve the default only where this host exposes a provisioned root."""
+    user = os.environ.get("USER")
+    local = Path("/scratch") / user if user else None
+    gpfs = Path("/data/gpfs/projects/punim0264")
+    if not ((local and local.is_dir() and os.access(local, os.W_OK)) or gpfs.is_dir()):
+        pytest.skip("this host has no provisioned compute/HPC scratch root")
+    return _bash_without_configured_root("_ci_tmpdir_root")
+
+
+def test_default_root_resolution_succeeds(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    return_code = result.returncode
+    # Assert
+    assert return_code == 0, result.stderr
+
+
+def test_default_root_is_provisioned_scratch(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    root = result.stdout
+    # Assert
+    assert root.startswith(("/scratch/", "/data/gpfs/projects/"))
+
+
+def test_default_root_is_not_tmp(default_root_result):
+    # Arrange
+    result = default_root_result
+    # Act
+    root = result.stdout
+    # Assert
+    assert root != "/tmp"
+
+
+def test_library_has_no_tmp_or_home_fallback():
+    # Arrange
+    forbidden = ('${SAC_CI_TMPDIR_ROOT:-/tmp}', '.cache/scitex-ci')
+    # Act
+    source = _LIB.read_text(encoding="utf-8")
+    # Assert
+    assert not any(item in source for item in forbidden)
 
 
 @pytest.mark.parametrize(
