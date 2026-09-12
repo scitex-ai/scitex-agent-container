@@ -1710,7 +1710,7 @@ def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
     apptainer_on_path: Path,
 ) -> None:
     # Arrange — the redaction must be scoped to secret-named keys; an
-    # ordinary env entry (e.g. the always-emitted state-db path) must
+    # ordinary env entry (e.g. the always-emitted agent name) must
     # still be readable verbatim for debugging.
     sif = tmp_path / "ready.sif"
     sif.write_bytes(b"\x00")
@@ -1722,7 +1722,7 @@ def test_start_dry_run_argv_file_leaves_non_secret_env_untouched(
 
     # Assert
     argv_file = rt._state_dir(cfg) / "apptainer_run.argv.txt"
-    assert "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db" in argv_file.read_text()
+    assert "SAC_NAME=alpha" in argv_file.read_text()
 
 
 def test_build_run_argv_still_carries_the_real_secret_for_the_subprocess(
