@@ -94,7 +94,7 @@ def fleet_arming_snapshot(spec_paths: "list[Path]") -> ArmingSnapshot:
             origins[agent] = agent_arming(load_config(path))
         except Exception as exc:
             logger.error("arming snapshot: could not measure %s — %s", path, exc)
-            unmeasurable.append(_reason(agent, exc))
+            unmeasurable.append(_reason(agent, path, exc))
     return ArmingSnapshot(origins=origins, unmeasurable=tuple(unmeasurable))
 
 
