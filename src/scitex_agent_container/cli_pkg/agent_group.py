@@ -83,6 +83,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "migrate-engines",
                 "migrate-images",
                 "scratch-migrate",
+                "link-specs",
             ],
         ),
     ]
@@ -282,6 +283,13 @@ agent_group.add_command(_rebind(_archive_claude_bloat_impl, "archive-claude-bloa
 from .refresh_acl import refresh_acl as _refresh_acl_impl  # noqa: E402
 
 agent_group.add_command(_refresh_acl_impl)
+# `link-specs` — install a selected, git-backed agent definition tree as the
+# live SAC path without destroying the prior live copy. Dry-run is the
+# default; apply archives every replaced entry and atomically publishes the
+# links only after the entire batch passes preflight.
+from ._agents_link_specs import register as _register_link_specs  # noqa: E402
+
+_register_link_specs(agent_group)
 # `migrate-layers` — step 3 of the to_home_layers migration: write into each
 # spec the ``to_home`` cascade it ALREADY resolves, so what an agent inherits
 # is readable from the spec instead of only derivable by re-running the
