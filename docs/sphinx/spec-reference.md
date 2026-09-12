@@ -73,6 +73,7 @@ spec:
     hermes:
       session: { mode: continue, max_age_minutes: null }
       channels: []
+      background_review: false
       compression:
         threshold: 0.80
         target_ratio: 0.20
@@ -182,6 +183,20 @@ and `in_place: true`. The ratios must satisfy
 The same block under Claude Code, Codex, or another harness is rejected rather
 than silently ignored. The former top-level `spec.context_management` example
 was removed because that tolerated legacy key has no runtime consumer.
+
+### `spec.available_harnesses.hermes.background_review`
+
+This boolean controls Hermes' automatic post-turn review. It defaults to
+`false`, so SAC-managed Hermes agents do not silently issue a second request
+over the full conversation after completing foreground work. Set it to `true`
+only when that extra review traffic is intentional. SAC compiles the value to
+Hermes' internal `auxiliary.background_review.enabled` setting.
+
+On 2026-09-12, aligned Hermes and inference-server logs showed an automatic
+review replaying about 691,000 tokens while the next foreground turn began on
+the same conversation. After the gateway restarted and cancelled the review,
+the foreground turn performed a cold prefill and took about 276 seconds. This
+field makes that high-cost behavior declared and testable rather than implicit.
 
 ### `spec.claude` — SDK knobs
 

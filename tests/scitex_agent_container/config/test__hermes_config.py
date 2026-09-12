@@ -54,6 +54,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
         "approvals": result["approvals"],
         "compression": result["compression"],
         "busy_input_mode": result["display"]["busy_input_mode"],
+        "auxiliary": result["auxiliary"],
         "secret_absent": "must-not-appear" not in repr(result),
     }
     expected = {
@@ -90,6 +91,10 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "in_place": True,
         },
         "busy_input_mode": "steer",
+        "auxiliary": {
+            "title_generation": {"enabled": False},
+            "background_review": {"enabled": False},
+        },
         "secret_absent": True,
     }
     assert observed == expected
@@ -206,3 +211,23 @@ def test_explicit_parallelism_is_emitted_without_nested_fanout():
         "orchestrator_enabled": False,
         "worktree_isolation": False,
     }
+
+
+def test_explicit_background_review_is_emitted_to_hermes_auxiliary_config():
+    # Arrange
+    plan = compile_launch_plan(_spec())
+    # Act
+    result = compile_hermes_config(plan, workdir="/work", background_review=True)
+    # Assert
+    assert result["auxiliary"]["background_review"] == {"enabled": True}
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false"])
+def test_background_review_refuses_non_boolean_values(value):
+    # Arrange
+    plan = compile_launch_plan(_spec())
+    # Act
+    ctx = pytest.raises(ValueError, match="background_review must be a boolean")
+    # Assert
+    with ctx:
+        compile_hermes_config(plan, workdir="/work", background_review=value)
