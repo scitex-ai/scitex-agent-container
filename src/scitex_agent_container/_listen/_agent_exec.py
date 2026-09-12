@@ -27,12 +27,13 @@ from ._agent_exec_liveness import (
     _probe_post_ack_liveness,
     post_ack_timeout_from_env,
 )
-from ._agent_exec_send import _find_claude_binary, agent_send
+from ._agent_exec_send import _find_claude_binary, agent_exchange, agent_send
 from ._inline_spec import materialize_inline_spec
 
 __all__ = [
     "_find_claude_binary",
     "agent_send",
+    "agent_exchange",
     "agents_start",
 ]
 

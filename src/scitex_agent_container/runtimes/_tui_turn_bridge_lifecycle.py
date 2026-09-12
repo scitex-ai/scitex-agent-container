@@ -185,6 +185,27 @@ def start_turn_bridge(
         host,
     ]
     try:
+        # The host-side bridge writes the same canonical exchange ledger as
+        # Cards. Its child must receive the config-resolved store identity,
+        # not an unrelated SCITEX_STORE_DSN inherited from the operator shell.
+        from ._hermes_inbox_bridge_lifecycle import effective_cards_store
+
+        cards_env, _cards_store = effective_cards_store(config)
+        env = os.environ.copy()
+        for key in (
+            "SCITEX_CARDS_AGENT_ID",
+            "SCITEX_CARDS_DB",
+            "SCITEX_CARDS_NOTIFY_DSN",
+            "SCITEX_STORE_DSN",
+            "PGHOST",
+            "PGPORT",
+            "PGDATABASE",
+            "PGUSER",
+            "PGPASSFILE",
+        ):
+            value = cards_env.get(key)
+            if value is not None:
+                env[key] = str(value)
         log_fh = open(state_dir / LOG_FILENAME, "ab")
         proc = spawn(
             argv,
@@ -192,6 +213,7 @@ def start_turn_bridge(
             stderr=log_fh,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
     except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged for the operator)
         log.warning("tui-turn-bridge: failed to spawn for %r: %s", config.name, exc)

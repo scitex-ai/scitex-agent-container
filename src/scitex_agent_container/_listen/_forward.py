@@ -57,6 +57,7 @@ import urllib.error as _urlerror
 import urllib.request as _urlrequest
 from dataclasses import dataclass
 
+from scitex_dev.status import StatusCode, is_exchange_id
 from starlette.responses import JSONResponse
 
 from .._state import port_allocator
@@ -64,6 +65,7 @@ from .._state import port_allocator
 __all__ = [
     "ForwardOutcome",
     "forward_to_live_runner",
+    "forward_exchange_from_live_runner",
     "post_to_live_runner",
 ]
 
@@ -116,7 +118,7 @@ class ForwardOutcome:
 
 
 async def post_to_live_runner(
-    url: str, port: int, prompt: str, *, timeout: float
+    url: str, port: int, prompt: str, *, timeout: float, method: str = "POST"
 ) -> ForwardOutcome:
     """POST ``prompt`` to a runner sidecar and classify what happened.
 
@@ -124,12 +126,12 @@ async def post_to_live_runner(
     only WHAT HAPPENED and the caller decides WHAT TO DO — the two were
     entangled in the collapsed-sentinel version.
     """
-    body = _json.dumps({"text": prompt}).encode("utf-8")
+    body = _json.dumps({"text": prompt}).encode("utf-8") if method == "POST" else None
     req = _urlrequest.Request(
         url,
         data=body,
         headers={"Content-Type": "application/json"},
-        method="POST",
+        method=method,
     )
 
     def _do_post() -> ForwardOutcome:
@@ -309,10 +311,125 @@ async def forward_to_live_runner(
             },
             status_code=status,
         )
-    return JSONResponse(
-        {
-            "name": name,
-            "route": "live-runner",
-            "text": _json.loads(outcome.payload.decode("utf-8"))["text"],
-        }
-    )
+    try:
+        payload = _json.loads(outcome.payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        return JSONResponse(
+            {
+                "name": name,
+                "route": "live-runner",
+                "kind": "invalid_runner_response",
+                "error": (
+                    f"the live runner returned invalid JSON ({exc}); inspect "
+                    f"`sac agents logs {name}` before retrying"
+                ),
+            },
+            status_code=502,
+        )
+    if not isinstance(payload, dict):
+        return JSONResponse(
+            {
+                "name": name,
+                "route": "live-runner",
+                "kind": "invalid_runner_response",
+                "error": (
+                    "the live runner returned a non-object JSON body; inspect "
+                    f"`sac agents logs {name}` before retrying"
+                ),
+            },
+            status_code=502,
+        )
+    try:
+        receipt = StatusCode.from_dict(payload.get("status_code", {}))
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "name": name,
+                "route": "live-runner",
+                "kind": "invalid_turn_receipt",
+                "error": (
+                    f"the live runner did not return a canonical status_code: {exc}; "
+                    f"inspect `sac agents logs {name}` before retrying"
+                ),
+            },
+            status_code=502,
+        )
+    if not (
+        status == 202
+        and receipt.kind == "http"
+        and receipt.code == 202
+        and not receipt.final
+        and is_exchange_id(payload.get("exchange_id"))
+    ):
+        return JSONResponse(
+            {
+                "name": name,
+                "route": "live-runner",
+                "kind": "invalid_turn_receipt",
+                "error": (
+                    "public send requires HTTP 202 with a non-final http/202 "
+                    "status_code and canonical xch_ exchange_id; the runner's "
+                    "response was not accepted as delivery"
+                ),
+                "hint": f"inspect `sac agents logs {name}` before retrying",
+            },
+            status_code=502,
+        )
+    # Preserve the runner's native status and canonical exchange receipt. The
+    # former wrapper indexed payload['text'] and converted every success to 200,
+    # which made Hermes' legitimate 202 receipt crash in the host proxy.
+    return JSONResponse(payload, status_code=status)
+
+
+async def forward_exchange_from_live_runner(
+    cfg, name: str, exchange_id: str, timeout: float = 30.0
+) -> JSONResponse:
+    """Proxy one canonical exchange lookup without inventing a completion."""
+    if not is_exchange_id(exchange_id):
+        return JSONResponse(
+            {
+                "error": (
+                    "exchange_id is not a canonical xch_ identifier; copy the "
+                    "id verbatim from the send receipt"
+                )
+            },
+            status_code=400,
+        )
+    port = port_allocator.get_port(name)
+    if not port:
+        a2a = getattr(cfg, "a2a", None)
+        raw = getattr(a2a, "port", None) if a2a else None
+        if isinstance(raw, int) and raw > 0:
+            port = raw
+    if not port:
+        return JSONResponse(
+            {
+                "error": (
+                    f"agent {name!r} has no live exchange endpoint; inspect "
+                    f"`sac agents status {name}` and do not resend the accepted turn"
+                )
+            },
+            status_code=409,
+        )
+    a2a = getattr(cfg, "a2a", None)
+    host = getattr(a2a, "host", None) or "127.0.0.1"
+    url = f"http://{host}:{port}/v1/exchanges/{exchange_id}"
+    outcome = await post_to_live_runner(url, port, "", timeout=timeout, method="GET")
+    if outcome.failed:
+        return JSONResponse(
+            {
+                "error": (
+                    f"exchange endpoint {url} is {outcome.kind}: {outcome.detail}; "
+                    f"inspect `sac agents status {name}` and retry this GET"
+                )
+            },
+            status_code=502,
+        )
+    try:
+        payload = _json.loads(outcome.payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        return JSONResponse(
+            {"error": f"exchange endpoint returned invalid JSON: {exc}"},
+            status_code=502,
+        )
+    return JSONResponse(payload, status_code=int(outcome.http_status or 502))

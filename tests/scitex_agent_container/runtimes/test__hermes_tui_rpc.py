@@ -8,6 +8,7 @@ import pytest
 
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
+    DEFAULT_MAX_RPC_FRAME_BYTES,
     HermesTuiRpcError,
     _select_session,
     active_sessions,
@@ -69,9 +70,7 @@ class _VisibleSocket:
         request = self.sent[-1]
         method = request["method"]
         if method == "session.active_list":
-            result = {
-                "sessions": [{"id": "live-1", "title": "sac:hub"}]
-            }
+            result = {"sessions": [{"id": "live-1", "title": "sac:hub"}]}
         elif method == "session.activate":
             result = next(self.projections)
         elif method == "prompt.submit":
@@ -179,9 +178,7 @@ def test_turn_activity_refuses_unknown_native_status(tmp_path):
 
 def _gateway_files(tmp_path):
     (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
-    (tmp_path / "hermes-api.key").write_text(
-        "a-secure-test-token\n", encoding="utf-8"
-    )
+    (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
 
 
 def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
@@ -300,6 +297,34 @@ def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path
         "session.messages",
         ["session.active_list", "session.activate"],
     )
+
+
+def test_visible_marker_handles_transcript_frame_larger_than_one_mib(tmp_path):
+    # Arrange — mirrors a long-lived Hermes session whose activate response is
+    # larger than websockets' default 1 MiB frame ceiling.
+    _gateway_files(tmp_path)
+    text = "delivery <!-- delivery:n_large -->"
+    socket = _VisibleSocket(
+        submit_status="streaming",
+        projections=[{"messages": [{"role": "user", "text": "x" * 1_100_000 + text}]}],
+    )
+    observed: dict = {}
+
+    def connect(*_args, **kwargs):
+        observed.update(kwargs)
+        return socket
+
+    # Act
+    receipt = submit_visible_turn(
+        tmp_path, "hub", text, delivery_id="n_large", connect_fn=connect
+    )
+
+    # Assert
+    assert (
+        receipt.status,
+        observed["max_size"],
+        observed["max_size"] == DEFAULT_MAX_RPC_FRAME_BYTES,
+    ) == ("already_visible", 64 * 1024 * 1024, True)
 
 
 def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):

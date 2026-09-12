@@ -15,6 +15,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from scitex_dev.status import StatusCode, is_exchange_id
+
 POLL_INTERVAL_S = 0.1
 
 
@@ -26,9 +28,6 @@ def resolve_turn_response(
     timeout_s: float,
 ) -> str:
     """Return a synchronous reply or resolve a canonical 202 exchange."""
-    if isinstance(payload, dict) and "text" in payload:
-        return str(payload["text"])
-
     exchange_id = _receipt_exchange_id(payload, http_status=http_status)
     return _poll_exchange(url, exchange_id, timeout_s=timeout_s)
 
@@ -50,15 +49,10 @@ def _receipt_exchange_id(payload: Any, *, http_status: int | None) -> str:
     # The ssh transport cannot currently recover the POST's HTTP status, so
     # ``None`` means "validate the canonical body" rather than inventing one.
     valid_http_status = http_status in (None, 202)
-    if not (
-        valid_http_status
-        and valid_status
-        and isinstance(exchange_id, str)
-        and bool(exchange_id)
-    ):
+    if not (valid_http_status and valid_status and is_exchange_id(exchange_id)):
         raise PeerError(
             "peer returned malformed body (asynchronous receipt): expected HTTP 202 "
-            "with non-empty exchange_id and status_code=http/202; "
+            "with canonical xch_ exchange_id and status_code=http/202; "
             f"got HTTP {http_status!r}, body={payload!r}"
         )
     return exchange_id
@@ -96,13 +90,12 @@ def _poll_exchange(url: str, exchange_id: str, *, timeout_s: float) -> str:
                 f"retry the probe with `{hint}`"
             )
         status = _exchange_status(body, exchange_id=exchange_id)
-        code = status["code"]
-        if code == 202:
+        if not status.final:
             last_body = body
             time.sleep(min(POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
             continue
-        message = str(status.get("message") or "")
-        if code == 200:
+        message = status.message
+        if status.kind == "http" and status.code == 200:
             detail = f": {message}" if message else ""
             return (
                 f"Turn accepted (exchange {exchange_id}){detail}. "
@@ -110,7 +103,7 @@ def _poll_exchange(url: str, exchange_id: str, *, timeout_s: float) -> str:
                 "feedback is asynchronous."
             )
         raise PeerError(
-            f"turn exchange {exchange_id} concluded with http/{code}: "
+            f"turn exchange {exchange_id} concluded with {status.kind}/{status.code}: "
             f"{message or 'no detail supplied'}; inspect the final result with "
             f"`{hint}` before retrying"
         )
@@ -188,21 +181,23 @@ def _decode_json_body(text: str) -> dict[str, Any]:
     return payload
 
 
-def _exchange_status(payload: dict[str, Any], *, exchange_id: str) -> dict[str, Any]:
+def _exchange_status(payload: dict[str, Any], *, exchange_id: str) -> StatusCode:
     """Validate the canonical exchange result envelope."""
     from .peer import PeerError
 
-    status = payload.get("status_code")
-    if not (
-        payload.get("exchange_id") == exchange_id
-        and isinstance(status, dict)
-        and status.get("kind") == "http"
-        and type(status.get("code")) is int
-    ):
+    wire = payload.get("status_code")
+    if payload.get("exchange_id") != exchange_id or not isinstance(wire, dict):
         raise PeerError(
             f"peer exchange {exchange_id} returned malformed result: {payload!r}"
         )
-    return status
+    try:
+        return StatusCode.from_dict(wire)
+    except Exception as exc:
+        raise PeerError(
+            f"peer exchange {exchange_id} returned invalid canonical status: {exc}; "
+            "do not resend an accepted turn; repeat the same exchange GET and "
+            "inspect the peer turn-bridge logs"
+        ) from exc
 
 
 __all__ = ["resolve_turn_response"]

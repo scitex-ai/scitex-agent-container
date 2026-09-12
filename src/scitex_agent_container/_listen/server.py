@@ -231,6 +231,7 @@ async def _annotate_status_reachability(
 # unchanged.
 from ._agent_exec import (  # noqa: E402
     _find_claude_binary,  # noqa: F401  (re-exported for tests)
+    agent_exchange,
     agent_send,
     agents_start,
 )
@@ -359,6 +360,11 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
         Route(f"{prefix}/{{name}}/status", agent_status, methods=["GET"]),
         Route(f"{prefix}/{{name}}/tail", agent_tail, methods=["GET"]),
         Route(f"{prefix}/{{name}}/send", agent_send, methods=["POST"]),
+        Route(
+            f"{prefix}/{{name}}/exchanges/{{exchange_id}}",
+            agent_exchange,
+            methods=["GET"],
+        ),
         Route(f"{prefix}/{{name}}/restart", agent_restart, methods=["POST"]),
         # WI-3 — node-identity-keyed inbox endpoints.
         Route(

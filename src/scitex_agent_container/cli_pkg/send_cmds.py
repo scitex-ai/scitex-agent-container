@@ -70,6 +70,9 @@ def _send_via_host_listen(
     standard outcome table.
     """
     import sys as _sys
+    import time as _time
+
+    from scitex_dev.status import StatusCode, is_exchange_id
 
     from .._lifecycle._in_sif_http_client import (
         HostListenTransportError,
@@ -88,6 +91,57 @@ def _send_via_host_listen(
         body["max_turns"] = max_turns
     try:
         status, resp = host_listen_call("POST", f"/agents/{name}/send", body=body)
+        if status == 202:
+            try:
+                receipt = StatusCode.from_dict(resp.get("status_code", {}))
+                exchange_id = resp.get("exchange_id")
+            except Exception as exc:
+                raise HostListenTransportError(
+                    "host send returned an invalid canonical 202 receipt: "
+                    f"{exc}; inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                ) from exc
+            if receipt.kind != "http" or receipt.code != 202 or receipt.final:
+                raise HostListenTransportError(
+                    "host send returned HTTP 202 without a non-final http/202 "
+                    "status_code; inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                )
+            if not is_exchange_id(exchange_id):
+                raise HostListenTransportError(
+                    "host send returned HTTP 202 without a canonical xch_ exchange_id; "
+                    "inspect the host listen and turn-bridge logs",
+                    url=f"/agents/{name}/send",
+                )
+            deadline = _time.monotonic() + 600.0
+            while True:
+                if _time.monotonic() >= deadline:
+                    raise HostListenTransportError(
+                        f"turn {exchange_id} remains non-final after 600s; it was "
+                        "accepted, so do not resend it; retry GET "
+                        f"/agents/{name}/exchanges/{exchange_id}",
+                        url=f"/agents/{name}/exchanges/{exchange_id}",
+                    )
+                status, resp = host_listen_call(
+                    "GET", f"/agents/{name}/exchanges/{exchange_id}"
+                )
+                try:
+                    final = StatusCode.from_dict(resp.get("status_code", {}))
+                except Exception as exc:
+                    raise HostListenTransportError(
+                        f"exchange {exchange_id} returned invalid status_code: {exc}",
+                        url=f"/agents/{name}/exchanges/{exchange_id}",
+                    ) from exc
+                if resp.get("exchange_id") != exchange_id:
+                    raise HostListenTransportError(
+                        f"exchange endpoint did not echo {exchange_id}; do not resend; "
+                        "inspect the host listen and turn-bridge logs",
+                        url=f"/agents/{name}/exchanges/{exchange_id}",
+                    )
+                if final.final:
+                    status = final.code if final.kind == "http" else 502
+                    break
+                _time.sleep(0.1)
         outcome = build_outcome(http_status=status, body=resp)
     except HostListenTransportError as exc:
         outcome = transport_outcome(str(exc), url=exc.url)

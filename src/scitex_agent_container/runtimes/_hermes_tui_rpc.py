@@ -3,12 +3,42 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ._hermes_tui_owner import GATEWAY_FILE
+
+# Hermes' session.activate result includes transcript history. Long-lived
+# sessions routinely exceed websockets' 1 MiB default; keep an explicit bound
+# large enough for current sessions while still preventing unbounded reads.
+DEFAULT_MAX_RPC_FRAME_BYTES = 64 * 1024 * 1024
+
+
+def _max_rpc_frame_bytes() -> int:
+    """Return the explicit transcript-frame ceiling.
+
+    ``session.activate`` currently has no bounded marker-query RPC and can
+    return the complete Hermes transcript. The limit is configurable so a
+    deployment can cap memory more tightly (or accommodate a larger durable
+    session) without returning to websockets' implicit 1 MiB failure.
+    """
+    raw = os.environ.get("SAC_HERMES_RPC_MAX_FRAME_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_MAX_RPC_FRAME_BYTES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise HermesTuiRpcError(
+            "SAC_HERMES_RPC_MAX_FRAME_BYTES must be a positive integer"
+        ) from exc
+    if value <= 0:
+        raise HermesTuiRpcError(
+            "SAC_HERMES_RPC_MAX_FRAME_BYTES must be a positive integer"
+        )
+    return value
 
 
 class HermesTuiRpcError(RuntimeError):
@@ -60,7 +90,12 @@ def _connect(url: str, timeout_s: float, connect_fn: Any | None) -> Any:
             raise HermesTuiRpcError(
                 "websockets>=15 is required for Hermes TUI delivery"
             ) from exc
-    return connect_fn(url, open_timeout=timeout_s, close_timeout=1)
+    return connect_fn(
+        url,
+        open_timeout=timeout_s,
+        close_timeout=1,
+        max_size=_max_rpc_frame_bytes(),
+    )
 
 
 def active_sessions(
@@ -269,9 +304,7 @@ def submit_visible_turn(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
             before = _rpc(
                 socket,
                 2,
@@ -327,6 +360,7 @@ __all__ = [
     "HermesTuiRpcError",
     "HermesTurnActivity",
     "HermesVisibleTurnReceipt",
+    "DEFAULT_MAX_RPC_FRAME_BYTES",
     "active_sessions",
     "observe_turn_activity",
     "submit_turn",

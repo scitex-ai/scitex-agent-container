@@ -137,6 +137,8 @@ def test_cards_issued_exchange_is_adopted_and_identity_is_preserved(
         agent="scitex-hub",
         probe_url="/v1/exchanges",
         exchange_id=exchange_id,
+        delivery_id="delivery-1",
+        initiator="operator",
     )
     finish_turn_exchange(
         adopted_id,
@@ -162,8 +164,47 @@ def test_cards_issued_exchange_is_adopted_and_identity_is_preserved(
     )
 
 
-def test_legacy_delivery_reuses_one_exchange_across_failure_then_success(
+@pytest.mark.parametrize(
+    ("initiator", "operation", "match"),
+    [
+        ("another-sender", "cards.dm.delivery", "another initiator"),
+        ("operator", "cards.other.operation", "another operation"),
+    ],
+)
+def test_cards_exchange_adoption_rejects_identity_mismatch(
+    initiator: str, operation: str, match: str
 ) -> None:
+    # Arrange
+    memory = _MemoryLedger()
+    exchange_id = new_exchange_id(host="cards")
+    memory.values[exchange_id] = ledger_record(
+        exchange_id=exchange_id,
+        initiator="operator",
+        responder="scitex-hub",
+        operation="cards.dm.delivery",
+        status=StatusCode(
+            kind="http",
+            code=202,
+            message=f"accepted; poll `/v1/exchanges/{exchange_id}`",
+        ),
+        opened_at="2026-09-12T00:00:00+00:00",
+    )
+    # Act
+    caught = pytest.raises(PermissionError, match=match)
+    # Assert
+    with caught:
+        open_turn_exchange(
+            agent="scitex-hub",
+            probe_url="/v1/exchanges",
+            exchange_id=exchange_id,
+            delivery_id="notification-1",
+            initiator=initiator,
+            operation=operation,
+            _store_factory=memory.factory,
+        )
+
+
+def test_legacy_delivery_reuses_one_exchange_across_failure_then_success() -> None:
     # Arrange
     memory_ledger = _MemoryLedger()
     store_factory = memory_ledger.factory
@@ -223,6 +264,7 @@ def _final_failure(memory_ledger: _MemoryLedger) -> tuple[str, str]:
     exchange_id, opened_at = open_turn_exchange(
         agent="scitex-hub",
         probe_url="/v1/exchanges",
+        delivery_id="delivery-final",
         _store_factory=store_factory,
     )
     finish_turn_exchange(
@@ -248,7 +290,7 @@ def test_final_failure_cannot_be_reopened() -> None:
         open_turn_exchange(
             agent="scitex-hub",
             probe_url="/v1/exchanges",
-            exchange_id=exchange_id,
+            delivery_id="delivery-final",
             _store_factory=memory_ledger.factory,
         )
 

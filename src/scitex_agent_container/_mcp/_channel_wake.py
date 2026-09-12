@@ -24,6 +24,8 @@ import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from scitex_dev.status import StatusCode, is_exchange_id
+
 log = logging.getLogger(__name__)
 
 __all__ = ["_should_wake_turn", "_wake_text", "_wake_turn"]
@@ -216,16 +218,23 @@ async def _wake_turn(
         body = resp.json()
         status = body.get("status_code") if isinstance(body, dict) else None
         exchange_id = body.get("exchange_id") if isinstance(body, dict) else None
+        try:
+            accepted_status = (
+                StatusCode.from_dict(status) if isinstance(status, dict) else None
+            )
+        except Exception:
+            accepted_status = None
         if not (
             resp.status_code == 202
-            and isinstance(status, dict)
-            and status.get("kind") == "http"
-            and status.get("code") == 202
-            and isinstance(exchange_id, str)
-            and exchange_id
+            and accepted_status is not None
+            and accepted_status.kind == "http"
+            and accepted_status.code == 202
+            and not accepted_status.final
+            and is_exchange_id(exchange_id)
         ):
             raise RuntimeError(
-                "turn endpoint did not return HTTP 202 plus an exchange_id; leave "
+                "turn endpoint did not return HTTP 202 plus a canonical xch_ "
+                "exchange_id; leave "
                 "the durable notification unconfirmed and inspect "
                 "`sac agents logs <agent>` before retrying"
             )
@@ -243,13 +252,22 @@ async def _wake_turn(
                 if isinstance(result_body, dict)
                 else None
             )
-            if isinstance(final_status, dict) and final_status.get("code") != 202:
-                if (
-                    final_status.get("kind") == "http"
-                    and final_status.get("code") == 200
-                ):
+            try:
+                parsed_status = (
+                    StatusCode.from_dict(final_status)
+                    if isinstance(final_status, dict)
+                    else None
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"turn exchange {exchange_id} returned an invalid canonical "
+                    f"status ({exc}); leave the durable notification unconfirmed "
+                    f"and inspect `{status_url}`"
+                ) from exc
+            if parsed_status is not None and parsed_status.final:
+                if parsed_status.kind == "http" and parsed_status.code == 200:
                     return
-                message = final_status.get("message") if final_status else ""
+                message = parsed_status.message
                 raise RuntimeError(
                     f"turn exchange {exchange_id} reported no confirmed "
                     f"terminal visibility: {message}"

@@ -297,6 +297,7 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
         probe_url: str,
         exchange_id: str | None = None,
         delivery_id: str | None = None,
+        initiator: str | None = None,
     ) -> tuple[str, str]:
         existing_id = next(
             (
@@ -308,8 +309,10 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
         )
         if exchange_id is None and existing_id is None:
             sequence["value"] += 1
-        exchange_id = exchange_id or existing_id or (
-            f"xch_20260912T000000Z_test-{sequence['value']}_abcdef"
+        exchange_id = (
+            exchange_id
+            or existing_id
+            or (f"xch_20260912T000000Z_test-{sequence['value']}_abcdef")
         )
         opened_at = "2026-09-12T00:00:00+00:00"
         exchanges.setdefault(
@@ -319,6 +322,7 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
                 "code": 202,
                 "message": f"accepted; poll `{probe_url}/{exchange_id}`",
                 "delivery_id": delivery_id,
+                "initiator": initiator,
             },
         )
         return exchange_id, opened_at
@@ -541,7 +545,10 @@ def test_visible_delivery_failure_returns_actionable_durable_state(
         port,
         "/v1/turn",
         {
-            "text": '<channel source="operator" msg_id="m_retry">\nhello\n</channel>',
+            "text": (
+                '<channel source="operator" msg_id="m_retry">\nhello\n</channel>'
+                "<!-- delivery:m_retry -->"
+            ),
             "visible_delivery_id": "m_retry",
         },
     )
@@ -680,6 +687,7 @@ def test_cards_exchange_id_is_preserved_through_visible_delivery(
             "text": "<channel>hello</channel><!-- delivery:m_visible -->",
             "visible_delivery_id": "m_visible",
             "exchange_id": cards_exchange,
+            "from_agent": "operator",
         },
     )
     final = _wait_exchange(port, cards_exchange)
@@ -727,6 +735,7 @@ def test_final_cards_exchange_retries_only_ack_without_duplicate_turn(
             "text": "do not inject twice <!-- delivery:n_final -->",
             "visible_delivery_id": "n_final",
             "exchange_id": exchange_id,
+            "from_agent": "operator",
         },
     )
 
@@ -862,6 +871,35 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
     assert str(_PORT) in recorded["argv"]
 
 
+def test_start_turn_bridge_passes_effective_cards_store_to_child(
+    tmp_path: Path, isolated_home: Path, monkeypatch
+) -> None:
+    # Arrange
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"), encoding="utf-8"
+    )
+    recorded: dict = {}
+
+    def fake_spawn(_argv, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(pid=_PID)
+
+    monkeypatch.setenv("SCITEX_STORE_DSN", "postgresql://wrong-shell/store")
+    config = SimpleNamespace(
+        a2a=SimpleNamespace(port=_PORT),
+        apptainer=SimpleNamespace(raw_args=[]),
+        env={"SCITEX_STORE_DSN": "postgresql://cards-store/status"},
+        labels={},
+        name="figrecipe",
+        config_path=str(spec),
+    )
+    # Act
+    bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
+    # Assert
+    assert recorded["env"]["SCITEX_STORE_DSN"] == "postgresql://cards-store/status"
+
+
 def test_start_turn_bridge_returns_spawned_pid(
     tmp_path: Path, isolated_home: Path
 ) -> None:
@@ -920,9 +958,7 @@ def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
     receipt = SimpleNamespace(
         status="steered", visibility="session.inflight.corrections"
     )
-    runtime = SimpleNamespace(
-        send_visible_turn=lambda config, text, **kwargs: receipt
-    )
+    runtime = SimpleNamespace(send_visible_turn=lambda config, text, **kwargs: receipt)
     on_turn = bridge._build_on_turn(SimpleNamespace(name="a"), runtime=runtime)
 
     # Act
