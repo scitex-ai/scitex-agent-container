@@ -8,7 +8,6 @@ import pytest
 
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
-    DEFAULT_MAX_RPC_FRAME_BYTES,
     HermesTuiRpcError,
     _select_session,
     active_sessions,
@@ -73,11 +72,39 @@ class _VisibleSocket:
             result = {"sessions": [{"id": "live-1", "title": "sac:hub"}]}
         elif method == "session.activate":
             result = next(self.projections)
+            result.setdefault("session_key", "stored-1")
         elif method == "prompt.submit":
             result = {"status": self.submit_status}
         else:  # pragma: no cover - a new RPC is itself a test failure
             raise AssertionError(method)
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+class _SearchResponse:
+    def __init__(self, payload: dict):
+        self.encoded = json.dumps(payload).encode()
+        self.read_sizes = []
+        self.requests = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self, size):
+        self.read_sizes.append(size)
+        return self.encoded
+
+
+def _search(payload=None):
+    response = _SearchResponse(payload or {"results": []})
+
+    def open_search(request, **kwargs):
+        response.requests.append((request, kwargs))
+        return response
+
+    return response, open_search
 
 
 def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
@@ -189,6 +216,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         submit_status="streaming",
         projections=[{"messages": []}, {"inflight": {"user": text}}],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -197,6 +225,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         text,
         delivery_id="n_idle",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -227,6 +256,7 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
             {"inflight": {"user": "original", "corrections": [text]}},
         ],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -235,6 +265,7 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
         text,
         delivery_id="n_busy",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -252,6 +283,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
         submit_status="queued",
         projections=[{}, {"queued": {"user": text}}],
     )
+    _response, search = _search()
 
     # Act
     receipt = submit_visible_turn(
@@ -260,6 +292,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
         text,
         delivery_id="n_queued",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -270,12 +303,26 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
 
 
 def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path):
-    # Arrange: native acceptance succeeded, but the downstream Cards ACK did not.
+    # Arrange: native acceptance succeeded long ago, but the downstream Cards
+    # ACK did not. The 7,442-message transcript must never cross the websocket.
     _gateway_files(tmp_path)
     text = "retry delivery <!-- delivery:n_retry -->"
     socket = _VisibleSocket(
         submit_status="streaming",
-        projections=[{"messages": [{"role": "user", "text": text}]}],
+        projections=[{"message_count": 7_442, "messages": []}],
+    )
+    response, search = _search(
+        {
+            "results": [
+                {
+                    "role": "user",
+                    "session_id": "stored-1",
+                    "lineage_root": "stored-1",
+                    "snippet": "retry delivery <!-- >>>delivery:n_retry<<< -->",
+                    "message_count": 7_442,
+                }
+            ]
+        }
     )
 
     # Act
@@ -285,6 +332,7 @@ def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path
         text,
         delivery_id="n_retry",
         connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
     )
 
     # Assert
@@ -294,37 +342,17 @@ def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path
         [request["method"] for request in socket.sent],
     ) == (
         "already_visible",
-        "session.messages",
+        "session.search",
         ["session.active_list", "session.activate"],
     )
-
-
-def test_visible_marker_handles_transcript_frame_larger_than_one_mib(tmp_path):
-    # Arrange — mirrors a long-lived Hermes session whose activate response is
-    # larger than websockets' default 1 MiB frame ceiling.
-    _gateway_files(tmp_path)
-    text = "delivery <!-- delivery:n_large -->"
-    socket = _VisibleSocket(
-        submit_status="streaming",
-        projections=[{"messages": [{"role": "user", "text": "x" * 1_100_000 + text}]}],
+    assert socket.sent[-1]["params"]["omit_messages"] is True
+    assert response.read_sizes == [256 * 1024 + 1]
+    request, request_kwargs = response.requests[0]
+    assert request.full_url.endswith(
+        "/api/sessions/search?q=%22delivery%20n_retry%22&limit=20"
     )
-    observed: dict = {}
-
-    def connect(*_args, **kwargs):
-        observed.update(kwargs)
-        return socket
-
-    # Act
-    receipt = submit_visible_turn(
-        tmp_path, "hub", text, delivery_id="n_large", connect_fn=connect
-    )
-
-    # Assert
-    assert (
-        receipt.status,
-        observed["max_size"],
-        observed["max_size"] == DEFAULT_MAX_RPC_FRAME_BYTES,
-    ) == ("already_visible", 64 * 1024 * 1024, True)
+    assert request.get_header("X-hermes-session-token") == "a-secure-test-token"
+    assert request_kwargs == {"timeout": 10.0}
 
 
 def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
@@ -335,6 +363,7 @@ def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
         submit_status="streaming",
         projections=[{"messages": []}, {"messages": []}, {"messages": []}],
     )
+    _response, search = _search()
 
     # Act
     def action():
@@ -346,6 +375,7 @@ def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
             max_observations=2,
             poll_s=0,
             connect_fn=lambda *a, **k: socket,
+            urlopen_fn=search,
         )
 
     # Assert
