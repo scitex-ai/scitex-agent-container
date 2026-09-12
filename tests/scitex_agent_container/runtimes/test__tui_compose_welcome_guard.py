@@ -39,7 +39,7 @@ _FRESH_BOOT_WELCOME_PANE = (
     "╰─────────────────────────────╯\n"
     "  Fable 5 is included in your weekly limit\n"
     "\n"
-    "❯ Try \"fix the failing tests\"\n"
+    '❯ Try "fix the failing tests"\n'
     "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
 )
 
@@ -126,7 +126,11 @@ class _WelcomeThenStaleUntilCleared:
     full Escape-Escape gestures have been sent, then cleared."""
 
     def __init__(
-        self, sender: _RecordingSend, *, welcome_captures: int, release_after_gestures: int = 1
+        self,
+        sender: _RecordingSend,
+        *,
+        welcome_captures: int,
+        release_after_gestures: int = 1,
     ) -> None:
         self._sender = sender
         self._welcome_captures = welcome_captures

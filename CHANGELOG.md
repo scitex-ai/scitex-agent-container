@@ -6,7 +6,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Plain agent restart preserves the harness conversation.** Internal
+  `start --force` now means process replacement only; it no longer clears
+  `session_id` or `session_id_history` when the resolved session policy is
+  `continue`. Only a forced start with an explicit `fresh` override
+  resets those artifacts.
+
 ### Added
+- **Hermes Cards messages now enter the visible TUI as durable steer turns.**
+  Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
+  doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed
+  terminal rendering, final native HTTP status, and exact notification ACK.
+  Only one turn owns a session, duplicate hints coalesce at the durable poll,
+  staged human input is never overwritten, and a long jittered poll covers
+  missed doorbells. Hermes compiles the Cards MCP server in tools-only mode so
+  its Claude-specific notification poller cannot race this rail. Startup also
+  refuses a Cards database it cannot authenticate, while `agents explain`
+  reports Cards ingress, Cards tools, and optional CCT as separate facts.
 - **An autonomous Hermes TUI wakes through Hermes' own idle heartbeat instead
   of remaining passively `ready` after one turn.** `spec.autonomous.enabled`
   now arms one native `/heartbeat` command at successful launch, using

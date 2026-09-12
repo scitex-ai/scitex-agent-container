@@ -288,11 +288,42 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
     """Start real bridge servers on ephemeral ports; tear them all down."""
     servers = []
     threads = []
+    exchanges: dict[str, dict] = {}
+    sequence = {"value": 0}
+
+    def exchange_open(
+        *, agent: str, probe_url: str, exchange_id: str | None = None
+    ) -> tuple[str, str]:
+        sequence["value"] += 1
+        exchange_id = exchange_id or (
+            f"xch_20260912T000000Z_test-{sequence['value']}_abcdef"
+        )
+        opened_at = "2026-09-12T00:00:00+00:00"
+        exchanges[exchange_id] = {
+            "kind": "http",
+            "code": 202,
+            "message": f"accepted; poll `{probe_url}/{exchange_id}`",
+        }
+        return exchange_id, opened_at
+
+    def exchange_finish(exchange_id: str, **kwargs: object) -> None:
+        status = kwargs["status"]
+        exchanges[exchange_id] = {
+            "kind": status.kind,
+            "code": status.code,
+            "message": status.message,
+        }
+
+    def exchange_read(exchange_id: str) -> dict | None:
+        return exchanges.get(exchange_id)
 
     def start(
         on_turn: Callable[..., None],
         agent_name: str = "figrecipe",
+        *,
         on_control: Callable[[str], None] | None = None,
+        open_exchange: Callable[..., tuple[str, str]] | None = None,
+        read_exchange: Callable[[str], dict | None] | None = None,
     ) -> int:
         server = bridge.build_server(
             host="127.0.0.1",
@@ -300,6 +331,9 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
             on_turn=on_turn,
             agent_name=agent_name,
             on_control=on_control,
+            exchange_open=open_exchange or exchange_open,
+            exchange_finish=exchange_finish,
+            exchange_read=read_exchange or exchange_read,
         )
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -331,23 +365,71 @@ def _post(port: int, path: str, body: dict | None) -> tuple[int, dict]:
         return exc.code, json.loads(exc.read() or b"{}")
 
 
+def _get(port: int, path: str) -> tuple[int, dict]:
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}{path}", timeout=5
+        ) as resp:
+            return resp.status, json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
+
+
+def _wait_exchange(port: int, exchange_id: str) -> dict:
+    for _ in range(100):
+        _status, body = _get(port, f"/v1/exchanges/{exchange_id}")
+        if body["status_code"]["code"] != 202:
+            return body
+        time.sleep(0.001)
+    return body
+
+
 def test_post_v1_turn_delivers_text_to_on_turn(bridge_factory) -> None:
     # Arrange
     received: list[str] = []
     port = bridge_factory(lambda text, **_kw: received.append(text))
     # Act
-    _post(port, "/v1/turn", {"text": "hello fleet"})
+    _status, body = _post(port, "/v1/turn", {"text": "hello fleet"})
+    _wait_exchange(port, body["exchange_id"])
     # Assert
     assert received == ["hello fleet"]
 
 
-def test_post_v1_turn_returns_200_delivered_true(bridge_factory) -> None:
+def test_post_v1_turn_returns_immediate_accepted_exchange(bridge_factory) -> None:
     # Arrange
     port = bridge_factory(lambda text, **_kw: None)
     # Act
     status, body = _post(port, "/v1/turn", {"text": "hi there"})
     # Assert
-    assert status == 200 and body.get("delivered") is True
+    assert (status, body["status_code"]["kind"], body["status_code"]["code"]) == (
+        202,
+        "http",
+        202,
+    )
+
+
+def test_post_refuses_acceptance_when_canonical_ledger_is_unavailable(
+    bridge_factory,
+) -> None:
+    # Arrange: the exception deliberately contains credential-shaped material;
+    # HTTP diagnostics must never echo it.
+    def unavailable(**_kwargs: object) -> tuple[str, str]:
+        raise RuntimeError("postgres://operator:secret@example.invalid/db")
+
+    port = bridge_factory(
+        lambda text, **_kw: None,
+        open_exchange=unavailable,
+    )
+
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": "hi there"})
+
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        "secret" not in json.dumps(body),
+    ) == (503, 503, True)
 
 
 def test_post_v1_control_delivers_enter_without_a_pid_file(bridge_factory) -> None:
@@ -378,7 +460,8 @@ def test_post_named_turn_route_delivers_for_this_agent(bridge_factory) -> None:
         lambda text, **_kw: received.append(text), agent_name="figrecipe"
     )
     # Act
-    _post(port, "/agents/figrecipe/turn", {"text": "named route"})
+    _status, body = _post(port, "/agents/figrecipe/turn", {"text": "named route"})
+    _wait_exchange(port, body["exchange_id"])
     # Assert
     assert received == ["named route"]
 
@@ -393,11 +476,12 @@ def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
 
     port = bridge_factory(rec)
     # Act
-    _post(
+    _status, body = _post(
         port,
         "/v1/turn",
         {"text": "hi", "from_agent": "lead", "dispatch_id": "d1"},
     )
+    _wait_exchange(port, body["exchange_id"])
     # Assert
     assert seen == {"from_agent": "lead", "dispatch_id": "d1"}
 
@@ -411,16 +495,210 @@ def test_post_missing_text_field_returns_400(bridge_factory) -> None:
     assert status == 400
 
 
-def test_post_inject_failure_returns_502(bridge_factory) -> None:
+def test_post_inject_failure_concludes_exchange_with_502(bridge_factory) -> None:
     # Arrange
     def raise_session_gone(text: str, **_kw: object) -> None:
         raise RuntimeError("session gone")
 
     port = bridge_factory(raise_session_gone)
     # Act
-    status, _body = _post(port, "/v1/turn", {"text": "wake up"})
+    status, body = _post(port, "/v1/turn", {"text": "wake up"})
+    final = _wait_exchange(port, body["exchange_id"])
     # Assert
-    assert status == 502
+    assert (status, final["status_code"]["code"]) == (202, 502)
+
+
+def test_visible_delivery_failure_returns_actionable_durable_state(
+    bridge_factory,
+) -> None:
+    # Arrange
+    def refuse_visibility(text: str, **_kw: object) -> None:
+        raise RuntimeError("Hermes composer contains staged operator input")
+
+    port = bridge_factory(refuse_visibility, agent_name="scitex-hub")
+    # Act
+    status, body = _post(
+        port,
+        "/v1/turn",
+        {
+            "text": '<channel source="operator" msg_id="m_retry">\nhello\n</channel>',
+            "visible_delivery_id": "m_retry",
+        },
+    )
+    probe = _wait_exchange(port, body["exchange_id"])
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        probe["status_code"]["code"],
+        "unconfirmed" in probe["status_code"]["message"],
+    ) == (202, 202, 502, True)
+
+
+def test_visible_delivery_http_contract_reports_positive_terminal_render(
+    bridge_factory,
+) -> None:
+    # Arrange
+    observed = {}
+
+    def visible(text: str, **kwargs: object) -> bool:
+        observed["text"] = text
+        observed.update(kwargs)
+        return True
+
+    port = bridge_factory(visible, agent_name="scitex-hub")
+    message = (
+        '<channel source="operator" msg_id="m_visible">\n'
+        "Please inspect signup.\n</channel><!-- delivery:m_visible -->"
+    )
+    # Act
+    status, body = _post(
+        port,
+        "/v1/turn",
+        {
+            "text": message,
+            "from_agent": "operator",
+            "visible_delivery_id": "m_visible",
+        },
+    )
+    probe = _wait_exchange(port, body["exchange_id"])
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        probe["status_code"]["code"],
+        observed,
+    ) == (
+        202,
+        202,
+        200,
+        {
+            "text": message,
+            "from_agent": "operator",
+            "dispatch_id": None,
+            "visible_delivery_id": "m_visible",
+        },
+    )
+
+
+def test_cards_exchange_id_is_preserved_through_visible_delivery(
+    bridge_factory,
+) -> None:
+    # Arrange
+    cards_exchange = "xch_20260912T000000Z_cards_abcdef"
+    port = bridge_factory(lambda _text, **_kwargs: True, agent_name="scitex-hub")
+
+    # Act
+    status, body = _post(
+        port,
+        "/v1/turn",
+        {
+            "text": "<channel>hello</channel><!-- delivery:m_visible -->",
+            "visible_delivery_id": "m_visible",
+            "exchange_id": cards_exchange,
+        },
+    )
+    final = _wait_exchange(port, cards_exchange)
+
+    # Assert
+    assert (status, body["exchange_id"], final["status_code"]["code"]) == (
+        202,
+        cards_exchange,
+        200,
+    )
+
+
+def test_final_cards_exchange_retries_only_ack_without_duplicate_turn(
+    bridge_factory,
+) -> None:
+    # Arrange: terminal delivery previously reached final 200, but the Cards
+    # ACK was interrupted. Its unique marker may already have scrolled away.
+    exchange_id = "xch_20260912T000000Z_cards_final"
+    calls = []
+    read_ids = []
+
+    def open_existing(**_kwargs: object) -> tuple[str, str]:
+        return exchange_id, "2026-09-12T00:00:00+00:00"
+
+    def read_existing(received: str) -> dict | None:
+        read_ids.append(received)
+        return {
+            "kind": "http",
+            "code": 200,
+            "message": "the incoming turn is visible in the Hermes transcript",
+        }
+
+    port = bridge_factory(
+        lambda text, **kwargs: calls.append((text, kwargs)),
+        agent_name="scitex-hub",
+        open_exchange=open_existing,
+        read_exchange=read_existing,
+    )
+
+    # Act
+    status, body = _post(
+        port,
+        "/v1/turn",
+        {
+            "text": "do not inject twice <!-- delivery:n_final -->",
+            "visible_delivery_id": "n_final",
+            "exchange_id": exchange_id,
+        },
+    )
+
+    # Assert
+    assert (status, body["exchange_id"], calls, read_ids) == (
+        202,
+        exchange_id,
+        [],
+        [exchange_id],
+    )
+
+
+def test_turn_admission_coalesces_duplicate_and_rejects_overlap(bridge_factory):
+    # Arrange
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def blocking_visible(text: str, **kwargs: object) -> bool:
+        calls.append((text, kwargs))
+        entered.set()
+        release.wait(timeout=5)
+        return True
+
+    port = bridge_factory(blocking_visible, agent_name="scitex-hub")
+    first_payload = {
+        "text": "first <!-- delivery:n_first -->",
+        "visible_delivery_id": "n_first",
+    }
+
+    # Act
+    first_status, first = _post(port, "/v1/turn", first_payload)
+    entered_before_followups = entered.wait(timeout=2)
+    duplicate_status, duplicate = _post(port, "/v1/turn", first_payload)
+    overlap_status, overlap = _post(
+        port,
+        "/v1/turn",
+        {
+            "text": "second <!-- delivery:n_second -->",
+            "visible_delivery_id": "n_second",
+        },
+    )
+    release.set()
+    _wait_exchange(port, first["exchange_id"])
+
+    # Assert
+    assert (
+        first_status,
+        duplicate_status,
+        duplicate["exchange_id"] == first["exchange_id"],
+        overlap_status,
+        overlap["status_code"]["code"],
+        "retry" in overlap["status_code"]["message"],
+        len(calls),
+        entered_before_followups,
+    ) == (202, 202, True, 429, 429, True, 1, True)
 
 
 def test_post_unknown_route_returns_404(bridge_factory) -> None:

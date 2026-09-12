@@ -49,6 +49,13 @@ from ._start_prelaunch import run_prelaunch
 from ._start_supervision import start_background_supervision
 
 
+def _should_clear_persisted_session(
+    *, force: bool, explicit_session_override: str | None
+) -> bool:
+    """Separate process replacement from explicit conversation replacement."""
+    return force and explicit_session_override == "fresh"
+
+
 def agent_start(
     config_path: str,
     registry: Registry | None = None,
@@ -317,13 +324,13 @@ def agent_start(
     if forced_stop:
         resolve_a2a_port(config)
 
-    # --force = "I want a clean start". Wipe the persisted SDK
-    # ``session_id`` resume marker so the next runtime.start cannot
-    # silently re-resume an aged-out conversation (server-side TTL is
-    # finite; a stale id surfaces as
-    # ``ProcessError: Command failed with exit code 1`` ~90s into the
-    # first turn — see fix/start-force-clears-session-id).
-    if force:
+    # Process replacement and conversation replacement are independent.
+    # ``--force`` guarantees a clean PROCESS cycle; only an explicitly
+    # requested ``--fresh`` session override may wipe the conversation.
+    if _should_clear_persisted_session(
+        force=force,
+        explicit_session_override=session_override,
+    ):
         _clear_persisted_session_id(config.name)
 
     # Hook env vars — let hooks know about the agent context

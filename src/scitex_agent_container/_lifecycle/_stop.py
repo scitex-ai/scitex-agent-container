@@ -468,20 +468,6 @@ def agent_restart(
         sleep_fn=sleep_fn,
         timeout_s=wait_for_stop_timeout_s,
     )
-    # Clear BOTH the persisted session_id AND session_id_history before the
-    # restart. A plain ``agent_restart`` previously called ``agent_start``
-    # WITHOUT force=True (so no session reset ran at all), and the
-    # ``--force`` path itself only cleared ``session_id`` — leaving a dead
-    # uuid in the append-only history that the runner's resume fallback
-    # RE-RESUMED and RE-CRASHED. That is why ``sac agents restart`` could
-    # not recover a DEAD session (clew/neurovista, 2026-05-24): the manual
-    # recovery had to clear both and back them up. Doing it here makes a
-    # plain restart self-recovering regardless of the start path's force
-    # flag. ``_clear_persisted_session_id`` backs both up to
-    # ``session_id_history.dead-<ts>`` and is a no-op on a clean state dir.
-    from ._session_reset import _clear_persisted_session_id
-
-    _clear_persisted_session_id(name)
     # ``assume_yes=True`` — a restart is an ALREADY-authorized action: the
     # ``sac agents restart`` CLI refuses without ``-y`` (see
     # ``cli_pkg/lifecycle/_restart.py``) and the MCP / public-API restart
@@ -527,6 +513,11 @@ def agent_restart(
         registry,
         assume_yes=True,
         force=True,
+        # A plain restart replaces the process while preserving the harness
+        # conversation. Only the CLI's explicit --fresh route may request a
+        # new conversation; internal force is teardown mechanics, not consent
+        # to erase session_id/session_id_history.
+        session_override="continue",
         engine_override=engine_override,
         probe_engine=probe_engine,
         runtime_factory=runtime_factory,

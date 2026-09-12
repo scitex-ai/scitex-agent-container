@@ -1,4 +1,4 @@
-"""Persisted-session-id reset helper for the ``--force`` start path.
+"""Persisted-session-id reset helper for a forced fresh-session start.
 
 Extracted from the former monolithic ``lifecycle.py`` (split for the
 512-line module limit). ``lifecycle`` re-exports ``_clear_persisted_session_id``.
@@ -23,9 +23,10 @@ def _runtime_state_dir(name: str) -> Path:
 
 
 def _clear_persisted_session_id(name: str) -> None:
-    """Wipe BOTH the ``session_id`` marker AND ``session_id_history`` on ``--force``.
+    """Wipe both session artifacts on a forced, explicitly fresh start.
 
-    Called from :func:`agent_start` on the ``--force`` path so a stale SDK
+    Called from :func:`agent_start` only when ``--force`` is paired with a
+    explicit ``fresh`` session override, so a stale SDK
     resume marker can't ambush the next launch (see the module-level
     explanation at the call site).
 

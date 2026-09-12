@@ -71,6 +71,7 @@ def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
 def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
+    config.env["SCITEX_CARDS_DB"] = "postgresql://cards-primary:55432/cards"
     state_dir = tmp_path / "state"
     seen = {}
 
@@ -85,11 +86,15 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     def preflight(url, bearer):
         seen["preflight"] = (url, bearer)
 
+    def cards_preflight(name, store):
+        seen["cards_preflight"] = (name, store)
+
     # Act
     pid = lifecycle.start_inbox_bridge(
         config,
         spawn=spawn,
         preflight=preflight,
+        cards_preflight=cards_preflight,
         bearer="secret",
         base_url="http://127.0.0.1:7878",
         state_dir=state_dir,
@@ -99,8 +104,11 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     outcome = (
         pid,
         seen["preflight"],
+        seen["cards_preflight"],
         "secret" in seen["argv"],
         seen["env"]["SAC_LISTEN_BEARER"],
+        seen["env"]["SCITEX_CARDS_AGENT_ID"],
+        seen["env"]["SCITEX_CARDS_DB"],
         (state_dir / lifecycle.PID_FILENAME).read_text(),
     )
     # Assert
@@ -110,8 +118,11 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
             "http://127.0.0.1:7878/agents/scholar/inbox/stream?ack=explicit",
             "secret",
         ),
+        ("scholar", "postgresql://cards-primary:55432/cards"),
         False,
         "secret",
+        "scholar",
+        "postgresql://cards-primary:55432/cards",
         "4242\n",
     )
 
@@ -135,6 +146,7 @@ def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
             config,
             spawn=lambda *_args, **_kwargs: Process(),
             preflight=lambda *_args: None,
+            cards_preflight=lambda *_args: None,
             bearer="secret",
             base_url="http://127.0.0.1:7878",
             state_dir=state_dir,
@@ -153,3 +165,78 @@ def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
         True,
         False,
     )
+
+
+def test_start_refuses_when_cards_store_preflight_fails(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    spawned = []
+
+    def refuse(_name, _store):
+        raise RuntimeError("Cards database authentication failed")
+
+    # Act
+    try:
+        lifecycle.start_inbox_bridge(
+            config,
+            spawn=lambda *args, **kwargs: spawned.append((args, kwargs)),
+            preflight=lambda *_args: None,
+            cards_preflight=refuse,
+            bearer="secret",
+            state_dir=tmp_path / "state",
+            stop=lambda _config: False,
+        )
+    except RuntimeError as exc:
+        error = exc
+    else:
+        error = None
+
+    # Assert
+    assert (str(error), spawned) == ("Cards database authentication failed", [])
+
+
+def test_cards_store_check_reports_actionable_native_unavailable():
+    # Arrange
+    def health(**_kwargs):
+        return {
+            "checks": [
+                {
+                    "name": "store_identity",
+                    "ok": False,
+                    "detail": "authentication rejected",
+                    "hint": "repair credentials",
+                }
+            ]
+        }
+
+    # Act
+    check = lifecycle.cards_store_check(
+        "scitex-hub", "postgresql://redacted", health=health
+    )
+
+    # Assert
+    assert (
+        check.to_dict()["ok"],
+        check.name,
+        check.cause.kind,
+        check.cause.code,
+        "health" in check.hint,
+    ) == (False, "cards_store_ready", "http", 503, True)
+
+
+def test_cards_store_check_preserves_unknown_when_observation_raises():
+    # Arrange
+    def unavailable(**_kwargs):
+        raise RuntimeError("postgres://user:secret@host/db")
+
+    # Act
+    check = lifecycle.cards_store_check(
+        "scitex-hub", "postgresql://redacted", health=unavailable
+    )
+
+    # Assert: type only, never the credential-bearing exception text.
+    assert (
+        check.to_dict()["ok"],
+        check.cause.code,
+        "secret" not in check.detail,
+    ) == (None, 503, True)

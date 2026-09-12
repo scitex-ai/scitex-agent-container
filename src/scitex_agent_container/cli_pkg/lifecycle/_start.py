@@ -43,7 +43,7 @@ from ._start_preflight_gate import make_preflight_runner
     "force",
     is_flag=True,
     default=False,
-    help="If already running or stale, stop first then start fresh.",
+    help="If already running or stale, replace the process; session policy is unchanged.",
 )
 @session_options
 @engine_options

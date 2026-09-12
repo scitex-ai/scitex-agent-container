@@ -13,7 +13,7 @@ So: assert the isolation, do not assume it.
 
 from __future__ import annotations
 
-import importlib
+import os
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ from .._helpers.fleet_root import (
 
 
 @pytest.fixture
-def board(tmp_path: Path):
+def board(tmp_path: Path, pg_schema: str):
     yield from isolated_board(tmp_path)
 
 
@@ -90,30 +90,30 @@ def test_the_root_env_port_redirects_layout_default(sac_root: Path):
     assert default_root == expected
 
 
-def test_isolated_board_redirects_scitex_todos_default_store(board: Path):
-    """Even a call that FORGOT ``store=`` must land in tmp, not on the board.
+def test_isolated_board_redirects_scitex_cards_default_store(board: Path):
+    """Even a call that forgot ``store=`` must use throwaway PostgreSQL.
 
-    ``store=None`` makes scitex-todo resolve its default store. If that
-    still resolved to the live 1,400-card board, one missing keyword in the
-    rename code would reassign real cards. The fixture points
-    ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, and scitex-cards
-    reads that env var at CALL time — so this holds.
+    ``store=None`` makes scitex-cards resolve its default board. If that
+    resolved to the fleet DSN, one missing keyword in the rename code could
+    reassign live cards. The fixture points both current store inputs at the
+    temporary PostgreSQL schema supplied by ``pg_schema``.
 
     Skips when the optional peer is absent (sac's own CI); there is no
     default store to redirect then, and faking one would prove nothing.
     """
     # Arrange
-    # Skip only when the optional peer is genuinely ABSENT; if it is present
-    # but the submodule path has moved, FAIL. `importorskip` on the full
-    # dotted path cannot tell those apart — ModuleNotFoundError is an
-    # ImportError subclass, so a rename or deletion becomes a silent skip,
-    # which is what scitex_todo._store had already become here.
-    pytest.importorskip("scitex_cards")
-    _store = importlib.import_module("scitex_cards._store")
+    cards = pytest.importorskip("scitex_cards")
+
     # Act
-    resolved = _store.resolve_tasks_path()
+    report = cards.resolve_store()
     # Assert
-    assert resolved == board
+    observed = (
+        board.is_relative_to(Path(os.environ["SCITEX_DIR"])),
+        report["resolved"],
+        report["backend"],
+    )
+    expected = (True, os.environ["SCITEX_STORE_DSN"], "postgresql")
+    assert observed == expected
 
 
 def test_make_fleet_creates_the_spec_file(tmp_path: Path):

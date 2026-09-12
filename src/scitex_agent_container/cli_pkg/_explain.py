@@ -20,6 +20,104 @@ from ..config import AgentConfig, load_config
 from ._explain_engine import engine_lines
 
 
+def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]:
+    """Show declarations, resolved ingress and tool exposure as distinct facts."""
+    if getattr(config, "harness", "") != "hermes":
+        return []
+    from scitex_dev.status import Check, StatusCode
+
+    declared = set(channels)
+    mcp_names = set(getattr(config, "mcp_servers", {}) or {})
+    checks = []
+    checks.append(
+        Check.ok(
+            "sac_inbound_delivery",
+            "server:sac resolves to the explicit-ack SAC inbox consumer and the "
+            "canonical turn-exchange ledger",
+        )
+        if "server:sac" in declared
+        else Check.not_ok(
+            "sac_inbound_delivery",
+            "server:sac is not declared",
+            "add server:sac to spec.available_harnesses.hermes.channels",
+            cause=StatusCode(
+                kind="scitex",
+                code="NOT_RESOLVABLE",
+                message="server:sac is not declared; inspect `sac agents explain`",
+            ),
+        )
+    )
+    checks.append(
+        Check.ok(
+            "cards_inbound_delivery",
+            "server:scitex-cards resolves to durable poll, terminal-visible turn, "
+            "then positive confirmation",
+        )
+        if "server:scitex-cards" in declared
+        else Check.not_ok(
+            "cards_inbound_delivery",
+            "server:scitex-cards is not declared",
+            "add server:scitex-cards to spec.available_harnesses.hermes.channels",
+        )
+    )
+    if "server:scitex-cards" in declared:
+        from ..runtimes._hermes_inbox_bridge_lifecycle import (
+            cards_store_check,
+            effective_cards_store,
+        )
+
+        _cards_env, cards_store = effective_cards_store(config)
+        checks.append(cards_store_check(config.name, cards_store))
+    card_tools = bool({"cards", "scitex-cards"} & mcp_names)
+    checks.append(
+        Check.ok(
+            "cards_tools",
+            "the scitex-cards MCP server is declared and Hermes compiles it in "
+            "tools-only mode; this is tool exposure, not proof of inbound delivery",
+        )
+        if card_tools
+        else Check.not_ok(
+            "cards_tools",
+            "Cards inbound delivery is declared but no scitex-cards MCP tool server "
+            "is present",
+            "declare spec.mcp_servers.scitex-cards if this agent must operate Cards",
+            cause=StatusCode(
+                kind="scitex",
+                code="NOT_RESOLVABLE",
+                message="the Cards MCP server does not resolve; inspect `sac agents explain`",
+            ),
+        )
+    )
+    if "server:claude-code-telegrammer" in declared:
+        from ..runtimes._cct_rail_verdict import RAIL_UP, assess_cct_rail
+
+        rail = assess_cct_rail(config)
+        checks.append(
+            Check.ok("cct_inbound_delivery", rail.detail)
+            if rail.state == RAIL_UP
+            else Check.unknown(
+                "cct_inbound_delivery",
+                rail.detail,
+                rail.remedy(),
+            )
+        )
+    else:
+        checks.append(
+            Check.ok(
+                "cct_inbound_delivery",
+                "server:claude-code-telegrammer is omitted by declaration; CCT is optional",
+            )
+        )
+    lines = ["Hermes channel resolution:"]
+    for check in checks:
+        wire = check.to_dict()
+        state = {True: "resolved", False: "unavailable", None: "unknown"}[wire["ok"]]
+        lines.append(f"  {check.name}: {state} — {check.detail}")
+        if check.hint:
+            lines.append(f"    Hint: {check.hint}")
+    return lines
+
+
 def _spec_path_for(name: str) -> Path | None:
     """Resolve ``name`` → its spec.yaml via the project-over-user cascade."""
     from ._helpers._agent_list import _discover_defined_agents
@@ -73,7 +171,9 @@ def _argv_for(config: AgentConfig) -> list[str]:
     if not callable(state_dir_fn):
         state_dir_fn = getattr(container, "_state_dir", None)
     if not callable(state_dir_fn):
-        raise RuntimeError(f"{type(runtime).__name__} does not expose a state directory")
+        raise RuntimeError(
+            f"{type(runtime).__name__} does not expose a state directory"
+        )
 
     sif = resolve_sif(config)
     sif_path = sif if sif is not None else Path(config.image or "<unresolved>.sif")
@@ -321,6 +421,9 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
         lines.append(f"Flags: {' '.join(flags)}")
     if channels:
         lines.append(f"Channels: {', '.join(channels)}")
+    channel_resolution = _hermes_channel_lines(config, channels)
+    if channel_resolution:
+        lines += channel_resolution
 
     try:
         from ..runtimes.claude_md import build_skills_lines

@@ -1,0 +1,271 @@
+"""Durably deliver SciTeX Cards notifications into a Hermes TUI."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import random
+from collections.abc import Awaitable, Callable
+from functools import partial
+from typing import Any
+
+from scitex_dev.status import Check, StatusCode
+
+from .._mcp._channel_wake import _wake_turn
+
+log = logging.getLogger(__name__)
+DEFAULT_FALLBACK_INTERVAL_S = 90.0
+
+
+def _log_check(
+    level: int, check: Check, *, agent: str, notification_id: str = ""
+) -> None:
+    """Emit the shared three-valued diagnostic shape, never a local taxonomy."""
+    log.log(
+        level,
+        "cards ingress agent=%s notification_id=%s check=%s",
+        agent,
+        notification_id or "-",
+        json.dumps(check.to_dict(), sort_keys=True),
+    )
+
+
+def event_from_notification(record: dict[str, Any]) -> dict[str, Any]:
+    """Translate one Cards pull-inbox row to SAC's neutral channel envelope."""
+    event_type = str(record.get("event_type") or "notification")
+    source = str(record.get("actor") or "scitex-cards")
+    card_id = str(record.get("card_id") or "")
+    notification_id = str(record.get("id") or "")
+    event = {
+        "msg_id": str(record.get("msg_id") or notification_id),
+        "cards_notification_id": notification_id,
+        "kind": "message",
+        "from_agent": source,
+        "content": str(record.get("body") or ""),
+    }
+    if event_type == "dm" and card_id:
+        event["conversation_id"] = card_id
+    if card_id:
+        event["card_id"] = card_id
+    exchange_id = record.get("exchange_id")
+    if isinstance(exchange_id, str) and exchange_id:
+        # Newer Cards producers mint this at the persistence boundary. Carry
+        # the responder-issued handle unchanged through SAC and Hermes; never
+        # substitute a local success id for a sender-visible exchange.
+        event["exchange_id"] = exchange_id
+    event["_persisted"] = True
+    return event
+
+
+def _cards_api() -> tuple[Callable[..., dict], Callable[..., dict], Callable[..., Any]]:
+    try:
+        from scitex_cards import (
+            ack_notifications,
+            poll_notifications,
+            watch_notifications,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "SciTeX Cards ingress is unavailable: install scitex-cards in the "
+            "SAC control environment; persisted Cards notifications remain "
+            "unacknowledged and safe to retry."
+        ) from exc
+    return poll_notifications, ack_notifications, watch_notifications
+
+
+async def drain_once(
+    *,
+    name: str,
+    turn_url: str,
+    bearer: str | None,
+    store: str | None = None,
+    poll_notifications: Callable[..., dict] | None = None,
+    ack_notifications: Callable[..., dict] | None = None,
+    deliver: Callable[..., Awaitable[None]] = _wake_turn,
+) -> int:
+    """Deliver and confirm a batch; never ACK before terminal visibility."""
+    if poll_notifications is None or ack_notifications is None:
+        default_poll, default_ack, _default_watch = _cards_api()
+        poll_notifications = poll_notifications or default_poll
+        ack_notifications = ack_notifications or default_ack
+
+    payload = await asyncio.to_thread(
+        # Read the full view and select ``unconfirmed`` below.  Cards' legacy
+        # Claude-channel transport can mark a record seen after writing JSON
+        # that Hermes ignores; unseen-only would hide that durable, invisible
+        # notification forever.
+        partial(
+            poll_notifications,
+            name,
+            unseen_only=False,
+            ack=False,
+            store=store,
+        )
+    )
+    store = payload.get("store")
+    records = payload.get("notifications") or []
+    unconfirmed = set(payload.get("unconfirmed") or [])
+    delivered_count = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        event = event_from_notification(record)
+        notification_id = event["cards_notification_id"]
+        if notification_id not in unconfirmed:
+            continue
+        if not notification_id or not event["content"].strip():
+            _log_check(
+                logging.ERROR,
+                Check.not_ok(
+                    "notification_valid",
+                    "the persisted Cards notification has a blank id or body",
+                    "repair the notification producer, then leave this row unconfirmed",
+                ),
+                agent=name,
+            )
+            continue
+        try:
+            await deliver(event, turn_url=turn_url, bearer=bearer)
+        except Exception as exc:
+            _log_check(
+                logging.WARNING,
+                Check.unknown(
+                    "terminal_visible",
+                    "the bridge did not establish terminal visibility "
+                    f"({type(exc).__name__})",
+                    "leave the Cards notification unconfirmed; inspect "
+                    f"`tmux capture-pane -pt tui-{name} -S -80` before the durable retry",
+                    cause=StatusCode(
+                        kind="http",
+                        code=502,
+                        message=(
+                            "terminal visibility could not be established; inspect "
+                            f"`sac agents logs {name}`"
+                        ),
+                    ),
+                ),
+                agent=name,
+                notification_id=notification_id,
+            )
+            continue
+
+        receipt = await asyncio.to_thread(
+            partial(ack_notifications, name, [notification_id], store=store)
+        )
+        accepted = set(receipt.get("confirmed") or []) | set(
+            receipt.get("already_confirmed") or []
+        )
+        if notification_id not in accepted or notification_id in set(
+            receipt.get("unknown") or []
+        ):
+            _log_check(
+                logging.ERROR,
+                Check.not_ok(
+                    "cards_confirmation_recorded",
+                    "Cards did not confirm the terminal-visible notification id",
+                    "verify that poll_notifications and ack_notifications resolve the "
+                    "same Cards store, then retry confirmation for this id",
+                ),
+                agent=name,
+                notification_id=notification_id,
+            )
+            continue
+        delivered_count += 1
+    return delivered_count
+
+
+async def _watch_cycle(
+    *,
+    name: str,
+    turn_url: str,
+    bearer: str | None,
+    store: str | None,
+    timeout_s: float,
+    watch_notifications: Callable[..., Any],
+    drain: Callable[..., Awaitable[int]] = drain_once,
+) -> int:
+    """Drain serially after doorbells; stale hints cannot synthesize turns."""
+    manager = await asyncio.to_thread(
+        partial(watch_notifications, name, timeout=timeout_s, store=store)
+    )
+    events = await asyncio.to_thread(manager.__enter__)
+    delivered = 0
+    try:
+        while True:
+            hint = await asyncio.to_thread(next, events, None)
+            if hint is None:
+                return delivered
+            # A hint carries no message data. Polling the durable inbox is the
+            # only way a turn starts; stale/coalesced hints whose poll is empty
+            # therefore start no turn.
+            delivered += await drain(
+                name=name,
+                turn_url=turn_url,
+                bearer=bearer,
+                store=store,
+            )
+    finally:
+        await asyncio.to_thread(manager.__exit__, None, None, None)
+
+
+async def consume(
+    *,
+    name: str,
+    turn_url: str,
+    bearer: str | None,
+    fallback_interval_s: float = DEFAULT_FALLBACK_INTERVAL_S,
+    watch_notifications: Callable[..., Any] | None = None,
+) -> None:
+    """Watch first, draining the durable inbox; long jittered poll is fallback."""
+    if watch_notifications is None:
+        _poll, _ack, watch_notifications = _cards_api()
+    store = os.environ.get("SCITEX_CARDS_DB") or os.environ.get("SCITEX_STORE_DSN")
+    while True:
+        try:
+            await drain_once(
+                name=name,
+                turn_url=turn_url,
+                bearer=bearer,
+                store=store,
+            )
+        except Exception as exc:
+            _log_check(
+                logging.WARNING,
+                Check.unknown(
+                    "cards_notifications_readable",
+                    f"the Cards notification poll raised {type(exc).__name__}",
+                    "run `scitex-cards health`, repair the reported store or dependency, "
+                    "then let the durable poll retry",
+                ),
+                agent=name,
+            )
+        timeout_s = fallback_interval_s * random.uniform(0.8, 1.2)
+        try:
+            await _watch_cycle(
+                name=name,
+                turn_url=turn_url,
+                bearer=bearer,
+                store=store,
+                timeout_s=timeout_s,
+                watch_notifications=watch_notifications,
+            )
+        except Exception as exc:
+            status = getattr(exc, "status", None)
+            cause = status if isinstance(status, StatusCode) else None
+            _log_check(
+                logging.WARNING,
+                Check.unknown(
+                    "cards_notification_watch",
+                    f"the Cards doorbell is unavailable ({type(exc).__name__})",
+                    "durable notifications remain safe; run `scitex-cards health "
+                    "--json` while SAC retries with a long jittered poll",
+                    cause=cause,
+                ),
+                agent=name,
+            )
+            await asyncio.sleep(timeout_s)
+
+
+__all__ = ["consume", "drain_once", "event_from_notification"]

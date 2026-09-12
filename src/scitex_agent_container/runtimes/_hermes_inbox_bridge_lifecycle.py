@@ -119,11 +119,87 @@ def _listener_accepts_bearer(url: str, bearer: str) -> None:
             raise RuntimeError(f"SAC inbox stream returned HTTP {response.status}")
 
 
+def cards_store_check(
+    name: str,
+    store: str | None,
+    *,
+    health: Callable[..., dict] | None = None,
+):
+    """Observe Cards DB readiness in the shared three-valued status shape."""
+    from scitex_dev.status import Check, StatusCode
+
+    try:
+        if health is None:
+            from scitex_cards import health as cards_health
+        else:
+            cards_health = health
+
+        report = cards_health(store=store, agent_id=name)
+    except Exception as exc:
+        return Check.unknown(
+            "cards_store_ready",
+            f"Cards store readiness could not be observed ({type(exc).__name__})",
+            "run `scitex-cards health --json` with this spec's environment",
+            cause=StatusCode(
+                kind="http",
+                code=503,
+                message="Cards store readiness is unknown; run scitex-cards health",
+            ),
+        )
+    required = {"store_canonical", "store_identity", "backend_mode"}
+    failed = sorted(
+        str(check.get("name"))
+        for check in report.get("checks", [])
+        if check.get("name") in required and check.get("ok") is not True
+    )
+    if not failed:
+        return Check.ok(
+            "cards_store_ready",
+            "the effective Cards store passed canonical, identity, and backend checks",
+        )
+    return Check.not_ok(
+        "cards_store_ready",
+        f"the effective Cards store failed: {', '.join(failed)}",
+        "run `scitex-cards health --json` with this spec's environment, repair "
+        "database/authentication, then retry",
+        cause=StatusCode(
+            kind="http",
+            code=503,
+            message="Cards store authentication/readiness failed; inspect health",
+        ),
+    )
+
+
+def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | None]:
+    """Resolve the one environment/store shared by Cards MCP and ingress."""
+    from ._board_identity_env import raw_args_env
+    from ._fleet_env import effective_env
+
+    cards_env = effective_env(config)
+    cards_env.update(
+        raw_args_env(getattr(getattr(config, "apptainer", None), "raw_args", None))
+    )
+    cards_env["SCITEX_CARDS_AGENT_ID"] = config.name
+    store = cards_env.get("SCITEX_CARDS_DB") or cards_env.get("SCITEX_STORE_DSN")
+    return cards_env, str(store) if store else None
+
+
+def _cards_store_usable(name: str, store: str | None) -> None:
+    """Refuse launch unless effective Cards DB authentication is observed."""
+    check = cards_store_check(name, store)
+    if check.to_dict()["ok"] is not True:
+        raise RuntimeError(
+            "Hermes Cards ingress cannot authenticate/use its effective store; "
+            f"{check.detail}. {check.hint}; then retry `sac agents start`."
+        )
+
+
 def start_inbox_bridge(
     config: AgentConfig,
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
     preflight: Callable[[str, str], None] = _listener_accepts_bearer,
+    cards_preflight: Callable[[str, str | None], None] = _cards_store_usable,
     bearer: str | None = None,
     base_url: str | None = None,
     state_dir: Path | None = None,
@@ -140,6 +216,12 @@ def start_inbox_bridge(
     bearer = bearer or _read_listen_bearer()
     if not bearer:
         raise RuntimeError("SAC listen bearer is absent; refusing a deaf Hermes launch")
+    # The bridge is host-side, while the matching Cards MCP server is inside
+    # Apptainer.  Give both the SAME effective store identity; inheriting only
+    # the operator shell made Cards delivery depend on which shell launched
+    # SAC and could poll a different/absent store.
+    cards_env, cards_store = effective_cards_store(config)
+    cards_preflight(config.name, cards_store)
     stop(config)
     base_url = (base_url or listen_base_url()).rstrip("/")
     stream_url = f"{base_url}/agents/{config.name}/inbox/stream?ack=explicit"
@@ -161,6 +243,19 @@ def start_inbox_bridge(
     ]
     env = os.environ.copy()
     env["SAC_LISTEN_BEARER"] = bearer
+    for key in (
+        "SCITEX_CARDS_AGENT_ID",
+        "SCITEX_CARDS_DB",
+        "SCITEX_STORE_DSN",
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGPASSFILE",
+    ):
+        value = cards_env.get(key)
+        if value is not None:
+            env[key] = str(value)
     with open(state_dir / LOG_FILENAME, "ab") as output:
         process = spawn(
             argv,
