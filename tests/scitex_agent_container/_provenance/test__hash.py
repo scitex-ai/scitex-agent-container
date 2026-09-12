@@ -81,6 +81,21 @@ class TestCodeHash:
         # Assert
         assert after == before
 
+    def test_inert_wheel_bundled_python_build_inputs_are_excluded(self, package: Path):
+        # Arrange — hatchling force-includes hatch_build.py only after the
+        # source digest is computed. _bundled has no __init__.py and is not
+        # importable runtime package code.
+        before = code_hash(package)
+        bundled = package / "_bundled"
+        bundled.mkdir()
+
+        # Act
+        (bundled / "hatch_build.py").write_text("import hatchling\n")
+        after = code_hash(package)
+
+        # Assert
+        assert after == before
+
     def test_non_python_files_do_not_move_the_hash(self, package: Path):
         # Arrange
         before = code_hash(package)
@@ -115,5 +130,18 @@ class TestIterPyFiles:
 
         # Assert
         assert not any("__pycache__" in str(p) for p in found)
+
+    def test_bundled_build_inputs_are_never_hashed(self, package: Path):
+        # Arrange
+        bundled = package / "_bundled"
+        bundled.mkdir()
+        (bundled / "hatch_build.py").write_text("import hatchling\n")
+
+        # Act
+        found = iter_py_files(package)
+
+        # Assert
+        assert not any("_bundled" in p.parts for p in found)
+
 
 # EOF

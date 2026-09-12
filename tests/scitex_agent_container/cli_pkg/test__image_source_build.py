@@ -41,6 +41,13 @@ import pytest
 import tomllib
 
 import scitex_agent_container
+from scitex_agent_container._provenance._git import head_sha
+from scitex_agent_container._provenance._hash import code_hash
+from scitex_agent_container._provenance._stamp import (
+    compute_stamp,
+    read_existing_stamp,
+    stamp_path,
+)
 from scitex_agent_container.cli_pkg import _image_source_build as isb
 from scitex_agent_container.cli_pkg.image_group import _LAYERS, _RECIPES_DIR
 
@@ -177,9 +184,7 @@ def _capture_source_provenance_error(
     staged_root: Path, *, environment_root: Path | None = None
 ) -> str:
     try:
-        isb.assert_source_provenance(
-            staged_root, environment_root=environment_root
-        )
+        isb.assert_source_provenance(staged_root, environment_root=environment_root)
     except isb.SourceProvenanceMismatch as exc:
         return str(exc)
     raise AssertionError("SourceProvenanceMismatch was not raised")
@@ -264,6 +269,89 @@ def test_stage_build_context_excludes_pycache_from_staged_source(
     # Assert — __pycache__ inside the package must be filtered out
     pkg = dest / "scitex-agent-container-src" / "src" / "scitex_agent_container"
     assert not (pkg / "__pycache__").exists()
+
+
+def test_stage_build_context_replaces_stale_generated_provenance_from_checkout(
+    tmp_path, fake_def
+):
+    # Arrange — reproduce the real defect: clean current source bytes next to
+    # a generated stamp left by an older build.  Apptainer removes .git, so
+    # copying this stamp would make the inner wheel inherit the old commit.
+    repo = tmp_path / "repo"
+    package = repo / "src" / "scitex_agent_container"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("VALUE = 'current'\n")
+    bundled = package / "_bundled"
+    bundled.mkdir()
+    (bundled / "pyproject.toml").write_text(
+        "[project]\nname = 'scitex-agent-container'\nversion = '9.8.7'\n"
+    )
+    (bundled / "README.md").write_text("# test\n")
+    (bundled / "hatch_build.py").write_text("# hook\n")
+    old_stamp = stamp_path(package)
+    old_stamp.parent.mkdir(parents=True)
+    old_stamp.write_text(
+        "STAMP = {'version': '0.0.1', 'commit': 'old-commit', "
+        "'commit_source': 'git', 'code_hash': 'old-hash'}\n"
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
+    subprocess.run(
+        ["git", "-C", repo, "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", repo, "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", repo, "commit", "-q", "-m", "current"], check=True)
+    expected_commit = head_sha(repo)
+
+    # Act
+    dest = tmp_path / "staging"
+    isb.stage_build_context(package, fake_def, dest)
+    staged_package = (
+        dest / "scitex-agent-container-src" / "src" / "scitex_agent_container"
+    )
+    staged = read_existing_stamp(staged_package)
+
+    # Assert — source commit and staged bytes, never the copied old stamp.
+    assert {
+        "stamp_exists": staged is not None,
+        "version": staged["version"],
+        "commit": staged["commit"],
+        "stale_commit_removed": staged["commit"] != "old-commit",
+        "code_hash": staged["code_hash"],
+        "stale_hash_removed": staged["code_hash"] != "old-hash",
+    } == {
+        "stamp_exists": True,
+        "version": "9.8.7",
+        "commit": expected_commit,
+        "stale_commit_removed": True,
+        "code_hash": code_hash(staged_package),
+        "stale_hash_removed": True,
+    }
+
+
+def test_inner_wheel_build_inherits_fresh_staged_commit_and_hash(tmp_path, fake_def):
+    # Arrange — the loaded package is a real clean checkout.  Staging must
+    # leave enough provenance for the no-.git inner Apptainer wheel build.
+    dest = tmp_path / "staging"
+    isb.stage_build_context(_LOADED_PACKAGE_ROOT, fake_def, dest)
+    staged_root = dest / "scitex-agent-container-src"
+    staged_package = staged_root / "src" / "scitex_agent_container"
+    staged = read_existing_stamp(staged_package)
+
+    # Act — this is the same compute path hatch_build.py executes in %post.
+    inherited = compute_stamp(
+        staged_root,
+        staged_package,
+        version=staged["version"],
+    )
+
+    # Assert
+    expected_commit = head_sha(_REPO_ROOT)
+    assert (
+        inherited["commit"],
+        inherited["commit_source"],
+        inherited["code_hash"],
+    ) == (expected_commit, "inherited", code_hash(staged_package))
 
 
 def test_stage_build_context_uses_bundled_pyproject_for_wheel_install(

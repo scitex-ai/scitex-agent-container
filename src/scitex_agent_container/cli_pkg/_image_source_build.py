@@ -60,6 +60,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
+from .._provenance._git import repo_root_for_package
+from .._provenance._stamp import compute_stamp, render_module, stamp_path
 from ._image_build_lock import image_build_lock
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,11 @@ _COPY_IGNORE = shutil.ignore_patterns(
     ".coverage",
     ".coverage.*",
     ".DS_Store",
+    # Generated metadata belongs to the distribution that produced the
+    # source install.  It is not source code and must never be copied into a
+    # new image build context: once .git disappears inside Apptainer, the
+    # wheel build treats this file as authoritative sdist-style provenance.
+    "_build_info.py",
 )
 
 
@@ -126,7 +133,10 @@ def _environment_package_root(purelib: Path | None = None) -> Path | None:
         try:
             direct_url = json.loads(direct_url_text)
             parsed = urlparse(str(direct_url.get("url", "")))
-            if direct_url.get("dir_info", {}).get("editable") and parsed.scheme == "file":
+            if (
+                direct_url.get("dir_info", {}).get("editable")
+                and parsed.scheme == "file"
+            ):
                 repo_root = Path(unquote(parsed.path)).resolve()
                 editable_package = repo_root / "src" / "scitex_agent_container"
                 if editable_package.is_dir():
@@ -139,8 +149,7 @@ def _environment_package_root(purelib: Path | None = None) -> Path | None:
         (
             item
             for item in files
-            if str(item).replace("\\", "/")
-            == "scitex_agent_container/__init__.py"
+            if str(item).replace("\\", "/") == "scitex_agent_container/__init__.py"
         ),
         None,
     )
@@ -184,7 +193,9 @@ def assert_source_provenance(
         if environment_root is not None
         else _environment_package_root()
     )
-    roots_match = loaded_package_root == staged_root and loaded_helper_root == staged_root
+    roots_match = (
+        loaded_package_root == staged_root and loaded_helper_root == staged_root
+    )
     if installed_root is not None:
         roots_match = roots_match and installed_root == staged_root
     if roots_match:
@@ -292,6 +303,69 @@ def locate_bundled_hatch_build(pkg_root: Path) -> Path:
     return _locate_bundled_sibling(
         pkg_root, "hatch_build.py", editable_rel="src/hatch_build.py"
     )
+
+
+def _declared_version(pyproject_path: Path) -> str:
+    """Return the project version named by the staged build input.
+
+    SAC supports Python 3.10, so this intentionally does not import
+    ``tomllib``.  The project's version is a required, single-line PEP 621
+    field; absence is a malformed image-build input and fails before the
+    expensive container build starts.
+    """
+    in_project = False
+    for raw_line in pyproject_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "[project]":
+            in_project = True
+            continue
+        if in_project and line.startswith("["):
+            break
+        if in_project and line.startswith("version") and "=" in line:
+            value = line.split("=", 1)[1].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                return value[1:-1]
+    raise ValueError(
+        f"image-build pyproject has no quoted [project].version: {pyproject_path}"
+    )
+
+
+def _write_staged_provenance(
+    *, source_package: Path, staged_package: Path, pyproject_path: Path
+) -> None:
+    """Stamp the exact source checkout and bytes entering Apptainer.
+
+    ``copytree`` deliberately excludes ``_build_info.py`` because that file
+    describes an older distribution, not the source being staged.  This
+    function then computes a fresh stamp from the source checkout (where
+    ``.git`` still exists) and from the copied package bytes.  The later
+    wheel build runs without ``.git`` and inherits this freshly generated
+    stamp through the same mechanism used by the supported sdist→wheel path.
+
+    A wheel-installed SAC has no checkout; in that case ``compute_stamp``
+    inherits its packaged commit but still recomputes the content hash from
+    the actual source bytes.  Thus commit provenance never comes from a
+    copied generated file, and content identity always describes this stage.
+    """
+    source_root = repo_root_for_package(source_package) or source_package.parent
+    stamp = compute_stamp(
+        root=source_root,
+        package_dir=source_package,
+        version=_declared_version(pyproject_path),
+    )
+    staged_stamp = compute_stamp(
+        root=source_root,
+        package_dir=staged_package,
+        version=stamp["version"],
+    )
+    # For a non-checkout source, only the source package can carry the prior
+    # distribution's commit.  The staged tree intentionally cannot inherit
+    # it because its old generated file was excluded.
+    staged_stamp["commit"] = stamp["commit"]
+    staged_stamp["commit_source"] = stamp["commit_source"]
+    target = stamp_path(staged_package)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_module(staged_stamp), encoding="utf-8")
 
 
 def stage_build_context(
@@ -419,6 +493,11 @@ def stage_build_context(
     pkg_dest.parent.mkdir(parents=True)
     shutil.copy2(hatch_build_src, staged_src / "src" / "hatch_build.py")
     shutil.copytree(pkg_root, pkg_dest, ignore=_COPY_IGNORE)
+    _write_staged_provenance(
+        source_package=pkg_root,
+        staged_package=pkg_dest,
+        pyproject_path=staged_src / "pyproject.toml",
+    )
 
     return staged_def
 
