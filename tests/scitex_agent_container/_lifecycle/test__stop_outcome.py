@@ -18,9 +18,53 @@ def _instance() -> dict:
     return {
         "id": "01991c62-61ab-7abc-8000-000000000001",
         "host": "scitex-compute-03",
+        "process_start_time": 17,
+        "process_uid": 1000,
+        "control_group": "/user.slice/tmux-spawn-a.scope",
         "scope_invocation_id": "a" * 32,
         "scope_unit": "tmux-spawn-a.scope",
     }
+
+
+def test_pre_ownership_incarnation_ledgers_process_three_without_signal() -> None:
+    # Arrange — exact shape read from the legacy central row on compute-03.
+    instance = {
+        "id": "f571b488-8683-4e57-a6f6-1a12870226c4",
+        "host": "scitex-compute-03",
+        "name": "scitex-app",
+        "pid": 904612,
+        "screen": "tui-scitex-app",
+        "process_start_time": None,
+        "process_uid": None,
+        "control_group": None,
+        "scope_unit": None,
+        "scope_invocation_id": None,
+    }
+    outcomes: list[dict] = []
+    signalled: list[bool] = []
+
+    # Act
+    try:
+        verify_tui_incarnation_stopped(
+            name="scitex-app",
+            instance=instance,
+            runtime_stop_succeeded=False,
+            runtime=_AbsentTui(),
+            config=object(),
+            ensure_scope_down=lambda _row: signalled.append(True),
+            outcome_recorder=lambda **fields: outcomes.append(fields),
+        )
+    except Exception as exc:  # noqa: BLE001 - assertion names exact type
+        error = exc
+    else:
+        error = None
+    # Assert
+    assert (
+        isinstance(error, StopVerificationError),
+        outcomes[0]["status"].code,
+        "process_start_time" in outcomes[0]["status"].message,
+        signalled,
+    ) == (True, 3, True, [])
 
 
 def test_absent_tmux_with_surviving_scope_fails_even_force_shape() -> None:

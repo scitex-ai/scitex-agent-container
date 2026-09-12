@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Legacy TUI ownership fails closed through the SciTeX status protocol.**
+  Existing central instance stores gain the five nullable ownership columns
+  through scitex-dev's public declared-field evolution before a TUI launch. Pre-field incarnation rows
+  now emit `process/3` with explicit unverified ownership instead of leaking a
+  raw `KeyError`, and never authorize a name-based signal.
 - **Plain agent restart preserves the harness conversation.** Internal
   `start --force` now means process replacement only; it no longer clears
   `session_id` or `session_id_history` when the resolved session policy is

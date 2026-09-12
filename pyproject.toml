@@ -370,7 +370,13 @@ dev = [
     # admits silent write loss on exactly the path the migration depends on.
     # The container recipes gate this BY SYMBOL (_SEQ_ALLOCATION_ATTEMPTS) —
     # see apptainer-scitex.def; this specifier is the base layer's half.
-    "scitex-dev>=0.56.6",
+    #
+    # RAISED TO 0.60.0 on 2026-09-12. SAC now gates TUI launch on the public,
+    # lock-protected ``Store.ensure_declared_fields`` API so an existing
+    # central instances store can add the nullable exact-ownership fields
+    # before any new incarnation starts. Earlier releases do not expose that
+    # schema-evolution contract and therefore cannot make launch safe.
+    "scitex-dev>=0.60.0",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",

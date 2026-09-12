@@ -54,8 +54,7 @@ def _load_config_for_teardown(path: str | Path, expected_name: str) -> AgentConf
     config = load_v3(raw, resolved)
     if config.name != expected_name:
         raise ValueError(
-            f"Registry entry for {expected_name!r} resolves to spec for "
-            f"{config.name!r}"
+            f"Registry entry for {expected_name!r} resolves to spec for {config.name!r}"
         )
     return config
 
@@ -140,6 +139,23 @@ def agent_stop(
     is_tui_runtime = isinstance(runtime, TuiSessionRuntime)
     instance_resolver = stop_instance_resolver or resolve_local_stop_instance
     stop_instance = instance_resolver(config, runtime) if is_tui_runtime else None
+    if is_tui_runtime:
+        from ._stop_outcome import (
+            has_complete_scope_ownership,
+            verify_tui_incarnation_stopped,
+        )
+
+        verifier = tui_stop_verifier or verify_tui_incarnation_stopped
+        if stop_instance is not None and not has_complete_scope_ownership(
+            stop_instance
+        ):
+            verifier(
+                name=name,
+                instance=stop_instance,
+                runtime_stop_succeeded=False,
+                runtime=runtime,
+                config=config,
+            )
 
     hook_env = {
         "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
@@ -218,9 +234,6 @@ def agent_stop(
             raise
 
     if is_tui_runtime:
-        from ._stop_outcome import verify_tui_incarnation_stopped
-
-        verifier = tui_stop_verifier or verify_tui_incarnation_stopped
         verifier(
             name=name,
             instance=stop_instance,

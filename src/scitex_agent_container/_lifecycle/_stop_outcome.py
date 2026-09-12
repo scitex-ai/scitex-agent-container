@@ -9,6 +9,14 @@ from typing import Any, Mapping
 
 from scitex_dev.status import StatusCode, ledger_record, ledger_schema, new_exchange_id
 
+_OWNERSHIP_FIELDS = (
+    "process_start_time",
+    "process_uid",
+    "control_group",
+    "scope_unit",
+    "scope_invocation_id",
+)
+
 
 class StopVerificationError(RuntimeError):
     """The exact incarnation could not be proven absent."""
@@ -24,6 +32,14 @@ def _actor() -> str:
 
 def _participant(host: str, name: str, incarnation_id: str) -> str:
     return f"{host}/scitex-agent-container/{name}/{incarnation_id}"
+
+
+def has_complete_scope_ownership(instance: Mapping[str, Any] | None) -> bool:
+    """Whether an incarnation carries every launch-recorded ownership fact."""
+    return bool(
+        instance is not None
+        and all(instance.get(field) not in (None, "") for field in _OWNERSHIP_FIELDS)
+    )
 
 
 def record_stop_outcome(
@@ -87,17 +103,30 @@ def verify_tui_incarnation_stopped(
             f"`sac agents status {name} --json`.",
             exchange_id=exchange_id,
         )
+    if not has_complete_scope_ownership(instance):
+        missing = ", ".join(
+            field for field in _OWNERSHIP_FIELDS if instance.get(field) in (None, "")
+        )
+        message = (
+            f"stop of {name!r} REFUSED for incarnation {instance['id']}: "
+            f"UNVERIFIED LEGACY OWNERSHIP is missing launch-recorded fields "
+            f"({missing}); no process signal is authorized. Probe with "
+            f"`sac agents status {name} --json`. Exchange: {exchange_id}."
+        )
+        outcome_recorder(
+            name=name,
+            instance=instance,
+            status=StatusCode(kind="process", code=3, message=message),
+            exchange_id=exchange_id,
+            opened_at=opened_at,
+        )
+        raise StopVerificationError(message, exchange_id=exchange_id)
     if ensure_scope_down is None:
         from .._runners._scope_ownership import ensure_owned_scope_down
 
         ensure_scope_down = ensure_owned_scope_down
 
-    has_scope_identity = bool(instance.get("scope_invocation_id"))
-    stopped = (
-        bool(ensure_scope_down(instance))
-        if has_scope_identity
-        else bool(runtime_stop_succeeded and not runtime.is_running(config))
-    )
+    stopped = bool(ensure_scope_down(instance))
     if stopped:
         outcome_recorder(
             name=name,
@@ -134,6 +163,7 @@ def verify_tui_incarnation_stopped(
 
 __all__ = [
     "StopVerificationError",
+    "has_complete_scope_ownership",
     "record_stop_outcome",
     "verify_tui_incarnation_stopped",
 ]

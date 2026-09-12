@@ -489,12 +489,19 @@ def resolve_local_stop_instance(config: AgentConfig, runtime: Any) -> dict | Non
         last_local_instance_for_name,
         read_instance,
     )
+    from .._state.state_store_instances_store import InstancesOwnershipSchemaError
 
     state_dir = _state_dir_for(config, runtime)
     if state_dir is not None:
         instance_id = read_instance_id(state_dir)
         if instance_id:
-            row = read_instance(instance_id)
+            try:
+                row = read_instance(instance_id)
+            except (KeyError, InstancesOwnershipSchemaError):
+                # The pre-ownership physical store cannot satisfy the new
+                # row codec.  The name+host legacy reader below resolves the
+                # same central incarnation without authorizing a signal.
+                row = None
             if row is not None:
                 return row
     return last_local_instance_for_name(config.name)
