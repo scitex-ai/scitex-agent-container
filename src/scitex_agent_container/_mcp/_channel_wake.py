@@ -251,7 +251,7 @@ async def _wake_turn(
                     return
                 message = final_status.get("message") if final_status else ""
                 raise RuntimeError(
-                    f"turn exchange {exchange_id} concluded without confirmed "
+                    f"turn exchange {exchange_id} reported no confirmed "
                     f"terminal visibility: {message}"
                 )
             if time.monotonic() >= deadline:

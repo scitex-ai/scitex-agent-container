@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from scitex_dev.status import StatusCode, ledger_record, new_exchange_id
 
 from scitex_agent_container.runtimes._turn_exchange_ledger import (
@@ -16,6 +19,30 @@ from scitex_agent_container.runtimes._turn_exchange_ledger import (
 
 class _PrivilegeDenied(Exception):
     sqlstate = "42501"
+
+
+class _MemoryLedger:
+    """Small store seam: exercise state transitions without live PostgreSQL."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, dict] = {}
+
+    def get(self, key: dict) -> SimpleNamespace | None:
+        values = self.values.get(key["exchange_id"])
+        return None if values is None else SimpleNamespace(values=values)
+
+    def search(self, _query: object) -> list[SimpleNamespace]:
+        return [SimpleNamespace(values=value) for value in self.values.values()]
+
+    def put(self, values: dict, *, expected_revision: object) -> None:
+        del expected_revision
+        self.values[str(values["exchange_id"])] = dict(values)
+
+    def close(self) -> None:
+        return
+
+    def factory(self) -> _MemoryLedger:
+        return self
 
 
 def test_postgres_insufficient_privilege_is_recognised_by_sqlstate() -> None:
@@ -133,3 +160,113 @@ def test_cards_issued_exchange_is_adopted_and_identity_is_preserved(
         "cards.dm.delivery",
         200,
     )
+
+
+def test_legacy_delivery_reuses_one_exchange_across_failure_then_success(
+) -> None:
+    # Arrange
+    memory_ledger = _MemoryLedger()
+    store_factory = memory_ledger.factory
+    first_id, opened_at = open_turn_exchange(
+        agent="scitex-hub",
+        probe_url="/v1/exchanges",
+        delivery_id="n_one-durable-operation",
+        _store_factory=store_factory,
+    )
+    finish_turn_exchange(
+        first_id,
+        agent="scitex-hub",
+        opened_at=opened_at,
+        status=StatusCode(
+            kind="http",
+            code=102,
+            message=f"projection pending; poll `/v1/exchanges/{first_id}`",
+        ),
+        _store_factory=store_factory,
+    )
+
+    # Act
+    retry_id, retry_opened_at = open_turn_exchange(
+        agent="scitex-hub",
+        probe_url="/v1/exchanges",
+        delivery_id="n_one-durable-operation",
+        _store_factory=store_factory,
+    )
+    finish_turn_exchange(
+        retry_id,
+        agent="scitex-hub",
+        opened_at=retry_opened_at,
+        status=StatusCode(kind="http", code=200, message="visible in Hermes"),
+        _store_factory=store_factory,
+    )
+    final = read_turn_exchange(first_id, _store_factory=store_factory)
+
+    # Assert
+    assert (
+        retry_id,
+        retry_opened_at,
+        final["code"],
+        final["final"],
+        len(memory_ledger.values),
+    ) == (
+        first_id,
+        opened_at,
+        200,
+        True,
+        1,
+    )
+
+
+def _final_failure(memory_ledger: _MemoryLedger) -> tuple[str, str]:
+    """Create one terminal exchange in the supplied test ledger."""
+    store_factory = memory_ledger.factory
+    exchange_id, opened_at = open_turn_exchange(
+        agent="scitex-hub",
+        probe_url="/v1/exchanges",
+        _store_factory=store_factory,
+    )
+    finish_turn_exchange(
+        exchange_id,
+        agent="scitex-hub",
+        opened_at=opened_at,
+        status=StatusCode(kind="http", code=502, message="terminal refusal"),
+        _store_factory=store_factory,
+    )
+    return exchange_id, opened_at
+
+
+def test_final_failure_cannot_be_reopened() -> None:
+    # Arrange
+    memory_ledger = _MemoryLedger()
+    exchange_id, _opened_at = _final_failure(memory_ledger)
+
+    # Act
+    caught = pytest.raises(RuntimeError, match="already final at http/502")
+
+    # Assert
+    with caught:
+        open_turn_exchange(
+            agent="scitex-hub",
+            probe_url="/v1/exchanges",
+            exchange_id=exchange_id,
+            _store_factory=memory_ledger.factory,
+        )
+
+
+def test_final_failure_cannot_be_rewritten() -> None:
+    # Arrange
+    memory_ledger = _MemoryLedger()
+    exchange_id, opened_at = _final_failure(memory_ledger)
+
+    # Act
+    caught = pytest.raises(RuntimeError, match="refusing to rewrite")
+
+    # Assert
+    with caught:
+        finish_turn_exchange(
+            exchange_id,
+            agent="scitex-hub",
+            opened_at=opened_at,
+            status=StatusCode(kind="http", code=200, message="visible in Hermes"),
+            _store_factory=memory_ledger.factory,
+        )

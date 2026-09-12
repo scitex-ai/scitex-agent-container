@@ -11,8 +11,10 @@ namespace): on ``POST /v1/turn`` it first persists a durable exchange, then
 asks the selected runtime to deliver ``text``. Hermes uses its native
 shared-session JSON-RPC; legacy TUI adapters retain their runtime-specific
 path. The bridge immediately returns ``202`` plus the exchange id; the caller
-polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``
-or ``502``.
+polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``.
+A failed durable visibility attempt remains non-final ``102`` so the same
+exchange can advance on retry; ordinary, non-durable turn failures are final
+``502``.
 
 Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
 unchanged:
@@ -28,8 +30,9 @@ unchanged:
     404 {"error": "..."}                                  # unknown route / wrong agent
     503 {"error": "...", "status_code": {...}}            # ledger rejected persistence
 
-Terminal injection never changes the already-returned HTTP response. Its
-separate final HTTP 200 or 502 is read from ``GET /v1/exchanges/<id>``.
+Turn delivery never changes the already-returned HTTP response. Its separate
+HTTP 200, retryable 102, or ordinary-turn 502 is read from
+``GET /v1/exchanges/<id>``.
 
 Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
 :mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
@@ -63,7 +66,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Callable
 
-from scitex_dev.status import StatusCode
+from scitex_dev.status import Check, StatusCode
 
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
@@ -225,10 +228,9 @@ class _TurnBridgeServer(ThreadingHTTPServer):
         self.exchange_finish = exchange_finish
         self.exchange_read = exchange_read
         # Cards, SAC A2A and a human-triggered control request can arrive on
-        # different HTTP threads.  Composer inspection + literal paste + Enter
-        # + visibility confirmation is one critical section; serializing it
-        # prevents two SAC-owned deliveries from both observing an empty
-        # composer and interleaving their text.
+        # different HTTP threads. Native submit + session-projection proof is
+        # one critical section; serializing it also makes the delivery-id
+        # precheck and prompt.submit atomic relative to this bridge's callers.
         self.delivery_lock = threading.Lock()
         self.admission_lock = threading.Lock()
         self.active_delivery: tuple[str, str] | None = None
@@ -391,6 +393,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     agent=srv.agent_name,
                     probe_url="/v1/exchanges",
                     exchange_id=requested_exchange_id,
+                    delivery_id=visible_delivery_id,
                 )
             except Exception as exc:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
                 log.exception(
@@ -418,15 +421,14 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 return
             existing = srv.exchange_read(exchange_id)
             if (
-                requested_exchange_id
-                and isinstance(existing, dict)
+                isinstance(existing, dict)
                 and existing.get("kind") == "http"
                 and existing.get("code") == 200
             ):
-                # The terminal turn was already proven visible; the only
+                # The harness turn was already proven visible; the only
                 # remaining work can be the caller's downstream Cards ACK.
-                # Never depend on the marker still fitting in the visible
-                # tmux pane and never inject the same durable message twice.
+                # Never depend on a terminal viewport and never submit the
+                # same durable message twice.
                 self._respond(
                     202,
                     {
@@ -435,7 +437,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                             kind="http",
                             code=202,
                             message=(
-                                "terminal visibility is already final; poll "
+                                "Hermes transcript visibility is already final; poll "
                                 f"`/v1/exchanges/{exchange_id}` and retry only "
                                 "the downstream acknowledgement"
                             ),
@@ -456,25 +458,73 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 with srv.delivery_lock:
                     delivery = srv.on_turn(text, **delivery_kwargs)
                 if visible_delivery_id and not delivery:
-                    raise RuntimeError("terminal visibility was not confirmed")
+                    raise RuntimeError("Hermes transcript visibility was not confirmed")
+                native_status = str(getattr(delivery, "status", "") or "")
+                visibility = str(getattr(delivery, "visibility", "") or "")
+                if native_status == "already_visible" and visibility:
+                    visible_message = (
+                        "Hermes delivery was already visible "
+                        f"(status={native_status}, proof={visibility}); "
+                        "no duplicate prompt was submitted"
+                    )
+                elif native_status and visibility:
+                    visible_message = (
+                        "Hermes prompt.submit accepted the visible turn "
+                        f"(status={native_status}, proof={visibility})"
+                    )
+                else:
+                    visible_message = (
+                        "the incoming turn is visible in the Hermes transcript"
+                    )
                 status = StatusCode(
                     kind="http",
                     code=200,
                     message=(
-                        "the incoming turn is visible in the Hermes transcript"
+                        visible_message
                         if visible_delivery_id
                         else "the TUI accepted the turn"
                     ),
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: the canonical ledger must conclude every accepted exchange, including terminal injection failures)
-                status = StatusCode(
+            except Exception as exc:  # stx-allow: fallback (reason: visibility failure must remain explicitly retryable on the accepted durable operation, never be acknowledged or rewritten from a terminal failure)
+                detail = str(exc).strip() or "no native error detail"
+                cause = StatusCode(
                     kind="http",
                     code=502,
                     message=(
-                        f"terminal visibility was not confirmed ({type(exc).__name__}); "
-                        "leave the Cards notification unconfirmed and inspect "
-                        f"`sac agents logs {srv.agent_name}` before retrying"
+                        "this Hermes visibility attempt failed; no Cards "
+                        "acknowledgement was issued"
                     ),
+                )
+                hint = (
+                    "leave the Cards notification unconfirmed; inspect "
+                    f"`sac agents logs {srv.agent_name}`, then retry that "
+                    "notification; observe the same delivery operation at "
+                    f"`/v1/exchanges/{exchange_id}`"
+                )
+                check = Check.unknown(
+                    "hermes_transcript_visible",
+                    "Hermes transcript visibility was not confirmed "
+                    f"({type(exc).__name__}: {detail})",
+                    hint,
+                    cause=cause,
+                )
+                log.warning(
+                    "turn exchange remains retryable exchange_id=%s check=%s",
+                    exchange_id,
+                    json.dumps(check.to_dict(), sort_keys=True),
+                )
+                status = (
+                    StatusCode(
+                        kind="http",
+                        code=102,
+                        message=(
+                            f"{check.detail}; retryable non-final state; cause="
+                            f"{cause.kind}/{cause.code}: {cause.message}; next: "
+                            f"{check.hint}"
+                        ),
+                    )
+                    if visible_delivery_id
+                    else cause
                 )
             try:
                 srv.exchange_finish(
@@ -647,8 +697,8 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
 # ---------------------------------------------------------------------------
 def _build_on_turn(
     config: AgentConfig, *, runtime: Any | None = None
-) -> Callable[..., None]:
-    """Inject callback that drives one TUI turn via the tmux PTY.
+) -> Callable[..., Any | None]:
+    """Inject callback that drives one TUI turn through its runtime adapter.
 
     Calls :meth:`TuiSessionRuntime.send_turn` with ``wait_ready=False`` (see
     the inline note); raises when the session is gone so the handler answers
@@ -760,7 +810,7 @@ def _build_on_turn(
                 f"with `sac agents start {config.name}` and check "
                 f"`sac agents list {config.name}` first."
             )
-        return bool(delivered) if visible_delivery_id else None
+        return delivered if visible_delivery_id else None
 
     return on_turn
 

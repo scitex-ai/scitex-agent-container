@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import socket
 from datetime import datetime, timezone
-from typing import Any
+from hashlib import sha256
+from typing import Any, Callable
 
 from scitex_dev.status import (
     StatusCode,
@@ -62,15 +63,28 @@ def preflight_turn_exchange_store() -> None:
 
 
 def open_turn_exchange(
-    *, agent: str, probe_url: str, exchange_id: str | None = None
+    *,
+    agent: str,
+    probe_url: str,
+    exchange_id: str | None = None,
+    delivery_id: str | None = None,
+    _store_factory: Callable[[], Any] = _store,
 ) -> tuple[str, str]:
-    """Adopt Cards' exchange or persist a legacy turn's immediate HTTP 202."""
-    from scitex_dev.store import NEW_RECORD
+    """Adopt Cards' exchange or persist one stable legacy-delivery exchange.
+
+    A Cards producer that supplied an exchange owns the identity.  Older
+    notifications did not, so their opaque delivery id is fingerprinted into
+    an immutable, indexed operation name.  Looking that operation up before
+    minting means every retry (including one after a bridge restart) adopts
+    the same durable exchange instead of producing an unbounded trail of
+    terminal attempt rows.
+    """
+    from scitex_dev.store import NEW_RECORD, Query, eq
 
     if exchange_id is not None:
         if not is_exchange_id(exchange_id):
             raise ValueError("the supplied exchange_id is not canonical")
-        store = _store()
+        store = _store_factory()
         try:
             existing = store.get({"exchange_id": exchange_id})
         finally:
@@ -85,11 +99,32 @@ def open_turn_exchange(
             raise PermissionError(
                 "the supplied Cards exchange belongs to another responder"
             )
-        # A final 200 can still need its downstream Cards ACK retried after a
-        # crash; a final 502 can be retried once the staged composer/modal is
-        # gone. The ledger is a current-status row with oplog history, so SAC
-        # adopts the same exchange instead of minting a second identity.
+        _reject_final_failure(values)
         return exchange_id, str(values["opened_at"])
+
+    operation = "cards.notification.terminal_delivery"
+    if delivery_id is not None:
+        fingerprint = sha256(f"{agent}\0{delivery_id}".encode()).hexdigest()
+        operation = f"cards.notification.visible_delivery.sha256:{fingerprint}"
+        store = _store_factory()
+        try:
+            found = store.search(
+                Query().where(
+                    eq("operation", operation),
+                    eq("responder", f"scitex-agent-container/{agent}"),
+                )
+            )
+        finally:
+            store.close()
+        if len(found) > 1:
+            raise RuntimeError(
+                "more than one exchange is associated with this delivery id; "
+                "refusing to guess which durable operation owns the retry"
+            )
+        if found:
+            values = dict(found[0].values)
+            _reject_final_failure(values)
+            return str(values["exchange_id"]), str(values["opened_at"])
 
     exchange_id = new_exchange_id()
     opened_at = datetime.now(timezone.utc).isoformat()
@@ -98,17 +133,17 @@ def open_turn_exchange(
         code=202,
         message=(
             f"turn delivery accepted for {agent!r}; poll `{probe_url}/{exchange_id}` "
-            "for the separately recorded terminal-visibility result"
+            "for the separately recorded harness-visibility result"
         ),
     )
-    store = _store()
+    store = _store_factory()
     try:
         store.put(
             ledger_record(
                 exchange_id=exchange_id,
                 initiator="scitex-cards",
                 responder=f"scitex-agent-container/{agent}",
-                operation="cards.notification.terminal_delivery",
+                operation=operation,
                 status=status,
                 opened_at=opened_at,
             ),
@@ -119,18 +154,46 @@ def open_turn_exchange(
     return exchange_id, opened_at
 
 
+def _reject_final_failure(values: dict[str, Any]) -> None:
+    """Never reopen a terminal failure as if it were mutable progress."""
+    if values.get("final") and not (
+        values.get("kind") == "http" and values.get("code") == 200
+    ):
+        raise RuntimeError(
+            f"exchange {values.get('exchange_id')!r} is already final at "
+            f"{values.get('kind')}/{values.get('code')}; the producer must issue "
+            "a new exchange before delivery can be retried"
+        )
+
+
 def finish_turn_exchange(
-    exchange_id: str, *, agent: str, opened_at: str, status: StatusCode
+    exchange_id: str,
+    *,
+    agent: str,
+    opened_at: str,
+    status: StatusCode,
+    _store_factory: Callable[[], Any] = _store,
 ) -> None:
-    """Conclude one accepted exchange using the shared ledger constructor."""
+    """Advance one exchange, refusing every change after a final status."""
     from scitex_dev.store import ANY_REVISION
 
-    store = _store()
+    store = _store_factory()
     try:
         existing = store.get({"exchange_id": exchange_id})
         if existing is None:
             raise LookupError("the accepted exchange disappeared before completion")
         values = dict(existing.values)
+        if values.get("final"):
+            same_status = (
+                values.get("kind"), values.get("code"), values.get("message")
+            ) == (status.kind, status.code, status.message)
+            if same_status:
+                return
+            raise RuntimeError(
+                f"exchange {exchange_id!r} is already final at "
+                f"{values.get('kind')}/{values.get('code')}; refusing to rewrite "
+                f"it as {status.kind}/{status.code}"
+            )
         store.put(
             ledger_record(
                 exchange_id=exchange_id,
@@ -146,9 +209,11 @@ def finish_turn_exchange(
         store.close()
 
 
-def read_turn_exchange(exchange_id: str) -> dict[str, Any] | None:
+def read_turn_exchange(
+    exchange_id: str, *, _store_factory: Callable[[], Any] = _store
+) -> dict[str, Any] | None:
     """Read one exchange's current canonical row."""
-    store = _store()
+    store = _store_factory()
     try:
         row = store.get({"exchange_id": exchange_id})
         return None if row is None else dict(row.values)

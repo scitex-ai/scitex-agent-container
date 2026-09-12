@@ -5,9 +5,9 @@ from __future__ import annotations
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
+from scitex_agent_container.runtimes._hermes_tui_rpc import HermesVisibleTurnReceipt
 from scitex_agent_container.runtimes.hermes_tui import (
     HermesTuiSessionRuntime,
-    _delivery_copies_in_composer,
     _dismiss_heartbeat_confirmation,
     _hermes_pane_is_idle,
 )
@@ -213,215 +213,49 @@ def test_send_key_refuses_when_tmux_session_is_absent():
     assert delivered is False
 
 
-def test_visible_incoming_turn_confirms_sender_and_message_left_the_composer():
+def test_visible_incoming_turn_uses_only_native_hermes_rpc():
     # Arrange
-    text = (
-        '<channel source="operator" msg_id="m_visible">\n'
-        "check signup\n</channel><!-- delivery:m_visible -->"
+    mux = _Mux(panes=["❯ operator draft that must remain untouched"])
+    calls = []
+    receipt = HermesVisibleTurnReceipt(
+        status="steered",
+        visibility="session.inflight.corrections",
+        session_id="live-1",
     )
-    staged = "❯ [[ <channel source=.. [3 lines] .. delivery:m_visible --> ]]"
-    submitted = staged + "\n◊ Pondering (Ctrl+C to interrupt)\n❯"
-    mux = _Mux(
-        panes=[
-            "─ ready │ qwen38 27b low\n❯",
-            staged,
-            staged,
-            submitted,
-            submitted,
-        ]
+
+    def submit_visible(state, name, text, **kwargs):
+        calls.append((state, name, text, kwargs))
+        return receipt
+
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=mux,
+        rpc_submit_visible=submit_visible,
     )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    text = "<channel>digest</channel><!-- delivery:n_native -->"
+
     # Act
     delivered = runtime.send_visible_turn(
-        _config(), text, visible_delivery_id="m_visible"
+        _config(),
+        text,
+        visible_delivery_id="n_native",
+        max_observations=7,
+        poll_s=0.25,
     )
+
     # Assert
-    assert (
-        delivered,
-        [event for event in mux.events if event[0] == "text"],
-        [event for event in mux.events if event[0] == "key"],
-        [event for event in mux.events if event[0] == "verified-submit"],
-    ) == (
-        True,
-        [("text", "tui-scholar", text)],
-        [("key", "tui-scholar", "Enter")],
+    assert (delivered, calls[0][1:], mux.events) == (
+        receipt,
+        (
+            "scholar",
+            text,
+            {
+                "delivery_id": "n_native",
+                "max_observations": 7,
+                "poll_s": 0.25,
+            },
+        ),
         [],
     )
-
-
-def test_collapsed_delivery_counter_rejects_mixed_operator_text():
-    # Arrange
-    chip = "[[ <channel source=.. [8 lines] .. delivery:n_visible --> ]]"
-    text = "<channel>body</channel><!-- delivery:n_visible -->"
-
-    # Act
-    observations = (
-        _delivery_copies_in_composer(
-            f"❯ {chip} {chip}", text=text, delivery_id="n_visible"
-        ),
-        _delivery_copies_in_composer(
-            f"❯ operator draft {chip}", text=text, delivery_id="n_visible"
-        ),
-    )
-
-    # Assert
-    assert observations == (2, None)
-
-
-def test_visible_delivery_retry_normalizes_identical_collapsed_copies():
-    # Arrange: this is the exact live failure shape.  The old generic echo
-    # verifier appended the same collapsed paste four times because it looked
-    # for a literal prefix Hermes never renders.
-    text = (
-        '<channel source="notifyd" msg_id="">\n'
-        "digest\n</channel><!-- delivery:n_repeat -->"
-    )
-    chip = "[[ <channel source=.. [3 lines] .. delivery:n_repeat --> ]]"
-    repeated = f"❯ {chip} {chip} {chip} {chip}"
-    empty = "─ ready │ qwen38 27b low\n❯"
-    staged_once = f"❯ {chip}"
-    submitted = staged_once + "\n◊ Pondering (Ctrl+C to interrupt)\n❯"
-    mux = _Mux(
-        panes=[
-            repeated,
-            repeated,
-            repeated,
-            empty,
-            staged_once,
-            staged_once,
-            submitted,
-            submitted,
-        ]
-    )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(), text, visible_delivery_id="n_repeat", poll_s=0
-    )
-
-    # Assert
-    assert (
-        delivered,
-        [event for event in mux.events if event[0] == "text"],
-        [event[2] for event in mux.events if event[0] == "key"],
-    ) == (
-        True,
-        [("text", "tui-scholar", text)],
-        ["Escape", "Escape", "Enter"],
-    )
-
-
-def test_visible_delivery_retry_submits_one_staged_copy_without_repasting():
-    # Arrange
-    text = "<channel>digest</channel><!-- delivery:n_once -->"
-    staged = "❯ <channel>digest</channel><!-- delivery:n_once -->"
-    submitted = staged + "\n◊ Pondering (Ctrl+C to interrupt)\n❯"
-    mux = _Mux(panes=[staged, staged, staged, submitted, submitted])
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(), text, visible_delivery_id="n_once", poll_s=0
-    )
-
-    # Assert
-    assert (
-        delivered,
-        [event for event in mux.events if event[0] == "text"],
-        [event[2] for event in mux.events if event[0] == "key"],
-    ) == (True, [], ["Enter"])
-
-
-def test_visible_delivery_never_mutates_mixed_human_and_delivery_text():
-    # Arrange
-    text = "<channel>digest</channel><!-- delivery:n_mixed -->"
-    pane = (
-        "─ ready │ qwen38 27b low\n"
-        "❯ operator draft [[ <channel source=.. [3 lines] .. "
-        "delivery:n_mixed --> ]]"
-    )
-    mux = _Mux(panes=[pane])
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(), text, visible_delivery_id="n_mixed", poll_s=0
-    )
-
-    # Assert
-    assert (
-        delivered,
-        [event for event in mux.events if event[0] in {"text", "key"}],
-    ) == (False, [])
-
-
-def test_visible_incoming_turn_refuses_to_overwrite_staged_human_text():
-    # Arrange
-    mux = _Mux(panes=["\u276f operator is still typing this\nready"])
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(),
-        '<channel source="operator" msg_id="m_wait">\nnew\n</channel>',
-        visible_delivery_id="m_wait",
-    )
-    # Assert
-    assert (delivered, [event[0] for event in mux.events]) == (
-        False,
-        ["exists", "capture"],
-    )
-
-
-def test_visible_incoming_turn_does_not_duplicate_an_already_rendered_delivery():
-    # Arrange: terminal visibility succeeded earlier, but the Cards ACK was
-    # interrupted. The durable retry should confirm, not submit twice.
-    mux = _Mux(
-        panes=[
-            '❯ <channel source="operator" msg_id="m_seen">\n'
-            "already visible\n</channel><!-- delivery:m_seen -->\n❯"
-        ]
-    )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(),
-        '<channel source="operator" msg_id="m_seen">\nnew\n</channel>',
-        visible_delivery_id="m_seen",
-    )
-
-    # Assert
-    assert (delivered, [event[0] for event in mux.events]) == (
-        True,
-        ["exists", "capture"],
-    )
-
-
-def test_visible_incoming_turn_does_not_false_fail_when_hermes_is_pondering():
-    # Arrange
-    text = (
-        '<channel source="operator" msg_id="m_ponder">\n'
-        "continue\n</channel><!-- delivery:m_ponder -->"
-    )
-    staged = "❯ [[ <channel source=.. [3 lines] .. delivery:m_ponder --> ]]"
-    submitted = staged + "\n◊ Pondering (Ctrl+C to interrupt)\n❯"
-    mux = _Mux(
-        panes=[
-            "─ ready │ qwen38 27b low\n❯",
-            staged,
-            staged,
-            submitted,
-            submitted,
-        ]
-    )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
-    # Act
-    delivered = runtime.send_visible_turn(
-        _config(), text, visible_delivery_id="m_ponder", poll_s=0
-    )
-    # Assert
-    assert delivered is True
 
 
 def test_recovery_uses_supported_same_session_controls_in_order():

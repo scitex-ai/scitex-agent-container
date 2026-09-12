@@ -292,23 +292,41 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
     sequence = {"value": 0}
 
     def exchange_open(
-        *, agent: str, probe_url: str, exchange_id: str | None = None
+        *,
+        agent: str,
+        probe_url: str,
+        exchange_id: str | None = None,
+        delivery_id: str | None = None,
     ) -> tuple[str, str]:
-        sequence["value"] += 1
-        exchange_id = exchange_id or (
+        existing_id = next(
+            (
+                key
+                for key, value in exchanges.items()
+                if delivery_id and value.get("delivery_id") == delivery_id
+            ),
+            None,
+        )
+        if exchange_id is None and existing_id is None:
+            sequence["value"] += 1
+        exchange_id = exchange_id or existing_id or (
             f"xch_20260912T000000Z_test-{sequence['value']}_abcdef"
         )
         opened_at = "2026-09-12T00:00:00+00:00"
-        exchanges[exchange_id] = {
-            "kind": "http",
-            "code": 202,
-            "message": f"accepted; poll `{probe_url}/{exchange_id}`",
-        }
+        exchanges.setdefault(
+            exchange_id,
+            {
+                "kind": "http",
+                "code": 202,
+                "message": f"accepted; poll `{probe_url}/{exchange_id}`",
+                "delivery_id": delivery_id,
+            },
+        )
         return exchange_id, opened_at
 
     def exchange_finish(exchange_id: str, **kwargs: object) -> None:
         status = kwargs["status"]
         exchanges[exchange_id] = {
+            **exchanges.get(exchange_id, {}),
             "kind": status.kind,
             "code": status.code,
             "message": status.message,
@@ -495,7 +513,9 @@ def test_post_missing_text_field_returns_400(bridge_factory) -> None:
     assert status == 400
 
 
-def test_post_inject_failure_concludes_exchange_with_502(bridge_factory) -> None:
+def test_post_inject_failure_concludes_ordinary_exchange_with_502(
+    bridge_factory,
+) -> None:
     # Arrange
     def raise_session_gone(text: str, **_kw: object) -> None:
         raise RuntimeError("session gone")
@@ -532,19 +552,80 @@ def test_visible_delivery_failure_returns_actionable_durable_state(
         body["status_code"]["code"],
         probe["status_code"]["code"],
         "unconfirmed" in probe["status_code"]["message"],
-    ) == (202, 202, 502, True)
+    ) == (202, 202, 102, True)
 
 
-def test_visible_delivery_http_contract_reports_positive_terminal_render(
+def test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit(
+    bridge_factory,
+) -> None:
+    # Arrange: the first two native calls represent prompt acceptance followed
+    # by transient projection misses.  On retry the native adapter's marker
+    # precheck reports that same prompt already visible, so it must not submit
+    # a duplicate (covered directly by test__hermes_tui_rpc as well).
+    calls = {"count": 0}
+
+    def transient_then_visible(text: str, **_kw: object) -> object:
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise RuntimeError("gateway projection did not show the marker yet")
+        return SimpleNamespace(
+            status="already_visible",
+            visibility="session.messages[4]",
+        )
+
+    port = bridge_factory(transient_then_visible, agent_name="scitex-hub")
+    payload = {
+        "text": "hello<!-- delivery:n_stable -->",
+        "visible_delivery_id": "n_stable",
+    }
+
+    # Act
+    first_status, first = _post(port, "/v1/turn", payload)
+    first_probe = _wait_exchange(port, first["exchange_id"])
+    second_status, second = _post(port, "/v1/turn", payload)
+    second_probe = _wait_exchange(port, second["exchange_id"])
+    third_status, third = _post(port, "/v1/turn", payload)
+    final = _wait_exchange(port, third["exchange_id"])
+
+    # Assert
+    assert (
+        first_status,
+        first_probe["status_code"]["code"],
+        second_status,
+        second["exchange_id"],
+        second_probe["status_code"]["code"],
+        third_status,
+        third["exchange_id"],
+        final["status_code"]["code"],
+        calls["count"],
+        "no duplicate prompt" in final["status_code"]["message"],
+    ) == (
+        202,
+        102,
+        202,
+        first["exchange_id"],
+        102,
+        202,
+        first["exchange_id"],
+        200,
+        3,
+        True,
+    )
+
+
+def test_visible_delivery_http_contract_reports_native_acceptance_and_proof(
     bridge_factory,
 ) -> None:
     # Arrange
     observed = {}
 
-    def visible(text: str, **kwargs: object) -> bool:
+    def visible(text: str, **kwargs: object) -> object:
         observed["text"] = text
         observed.update(kwargs)
-        return True
+        return SimpleNamespace(
+            status="steered",
+            visibility="session.inflight.corrections",
+        )
 
     port = bridge_factory(visible, agent_name="scitex-hub")
     message = (
@@ -567,11 +648,14 @@ def test_visible_delivery_http_contract_reports_positive_terminal_render(
         status,
         body["status_code"]["code"],
         probe["status_code"]["code"],
+        probe["status_code"]["message"],
         observed,
     ) == (
         202,
         202,
         200,
+        "Hermes prompt.submit accepted the visible turn "
+        "(status=steered, proof=session.inflight.corrections)",
         {
             "text": message,
             "from_agent": "operator",
@@ -829,6 +913,23 @@ def test_build_on_turn_passes_text_and_wait_ready_false() -> None:
     on_turn("wake up")
     # Assert
     assert seen == [("wake up", False)]
+
+
+def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
+    # Arrange
+    receipt = SimpleNamespace(
+        status="steered", visibility="session.inflight.corrections"
+    )
+    runtime = SimpleNamespace(
+        send_visible_turn=lambda config, text, **kwargs: receipt
+    )
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="a"), runtime=runtime)
+
+    # Act
+    result = on_turn("wake up", visible_delivery_id="n_visible")
+
+    # Assert
+    assert result is receipt
 
 
 def test_build_on_turn_raises_when_session_absent() -> None:

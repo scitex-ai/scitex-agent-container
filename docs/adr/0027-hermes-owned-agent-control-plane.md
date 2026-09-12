@@ -217,13 +217,22 @@ gateway has no server-to-TUI notification method. A successful MCP stdio write
 therefore cannot prove that a human or agent saw a Cards notification. For a
 Hermes TUI, SAC instead reads Cards through its public non-destructive
 `poll_notifications(..., ack=False)` API, submits a sender-attributed
-`<channel>` turn through Hermes' official composer. The delivery boundary
-borrows HTTP through `scitex_dev.status`: the turn bridge first persists a
-`202 Accepted` plus exchange id in the shared `status_exchanges` ledger and
-returns immediately, then a serialized worker records the separately observed
-final `200` or `502`. The Cards poller confirms the Cards id only after polling
-that exchange to a final `http/200` whose unique delivery marker was observed
-outside the live composer.
+`<channel>` turn through Hermes' native `prompt.submit` RPC. The delivery
+boundary borrows HTTP through `scitex_dev.status`: the turn bridge first
+persists a `202 Accepted` plus exchange id in the shared `status_exchanges`
+ledger and returns immediately, then a serialized worker records the separately
+observed final `200`. A notification whose producer supplied an exchange keeps
+that identity. For a legacy row with no exchange, SAC associates its delivery
+id with one immutable SHA-256-keyed delivery operation and reuses that
+operation's exchange on every retry and bridge restart. A failed visibility
+attempt advances the same exchange to non-final `http/102`, with an explicit
+unknown Check, `http/502` cause, and next-step probe; it never rewrites a final
+failure. The Cards poller confirms the Cards id only after
+polling that exchange to a final `http/200` whose unique delivery marker was observed
+in Hermes' user-visible `session.activate` projection (`messages`, `inflight`,
+or its native queue). The RPC adapter checks that projection before submission
+as well, so a retry after acceptance but before Cards confirmation proves the
+prior delivery and never submits a duplicate.
 The poll selects Cards' `unconfirmed` ids rather than only unseen ids: the
 legacy Claude channel can stamp a transport push as seen even though Hermes
 ignored its unsupported notification method. A busy turn is accepted through

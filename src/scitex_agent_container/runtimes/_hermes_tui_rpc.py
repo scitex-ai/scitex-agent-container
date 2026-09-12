@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,15 @@ class HermesTurnActivity:
     @property
     def idle(self) -> bool:
         return self.state == "idle"
+
+
+@dataclass(frozen=True)
+class HermesVisibleTurnReceipt:
+    """Native acceptance plus the Hermes-owned visibility proof."""
+
+    status: str
+    visibility: str
+    session_id: str
 
 
 def _gateway_connection(state_dir: Path) -> tuple[str, str]:
@@ -196,10 +206,129 @@ def submit_turn(
     return status
 
 
+def _delivery_visibility(payload: object, delivery_id: str) -> str | None:
+    """Name the Hermes projection containing one durable delivery marker.
+
+    Only user-originated fields count.  An assistant quoting the marker is not
+    proof that Hermes accepted that marker as input, while ``messages``, the
+    live turn's ``user``/``corrections``, and the native queue are precisely
+    the fields the official clients render as user input.
+    """
+    if not isinstance(payload, dict):
+        return None
+    marker = f"<!-- delivery:{delivery_id} -->"
+    messages = payload.get("messages")
+    if isinstance(messages, list) and any(
+        isinstance(message, dict)
+        and message.get("role") == "user"
+        and marker in str(message.get("text") or "")
+        for message in messages
+    ):
+        return "session.messages"
+    inflight = payload.get("inflight")
+    if isinstance(inflight, dict):
+        if marker in str(inflight.get("user") or ""):
+            return "session.inflight.user"
+        corrections = inflight.get("corrections")
+        if isinstance(corrections, list) and any(
+            marker in str(correction) for correction in corrections
+        ):
+            return "session.inflight.corrections"
+    queued = payload.get("queued")
+    if isinstance(queued, dict) and marker in str(queued.get("user") or ""):
+        return "session.queued.user"
+    return None
+
+
+def submit_visible_turn(
+    state_dir: Path,
+    agent_name: str,
+    text: str,
+    *,
+    delivery_id: str,
+    timeout_s: float = 10.0,
+    max_observations: int = 20,
+    poll_s: float = 0.1,
+    connect_fn: Any | None = None,
+    sleep_fn: Any = time.sleep,
+) -> HermesVisibleTurnReceipt:
+    """Idempotently submit and prove a visible user input via Hermes JSON-RPC.
+
+    ``prompt.submit`` is the sole mutation.  The surrounding
+    ``session.activate`` calls attach this short-lived observer to the same
+    live session and expose the canonical transcript/inflight/queue projection
+    used by Hermes clients.  If acceptance or visibility cannot be proved, the
+    caller fails closed and its durable notification remains unconfirmed.
+    """
+    delivery_id = str(delivery_id or "").strip()
+    if not delivery_id:
+        raise HermesTuiRpcError("visible Hermes delivery requires a delivery id")
+    if max_observations < 1:
+        raise ValueError("max_observations must be positive")
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+            before = _rpc(
+                socket,
+                2,
+                "session.activate",
+                {"session_id": session_id, "omit_messages": False},
+            )
+            if visibility := _delivery_visibility(before, delivery_id):
+                return HermesVisibleTurnReceipt(
+                    status="already_visible",
+                    visibility=visibility,
+                    session_id=session_id,
+                )
+            result = _rpc(
+                socket,
+                3,
+                "prompt.submit",
+                {"session_id": session_id, "text": text},
+            )
+            status = str(result.get("status") or "").strip()
+            if status not in {"streaming", "steered", "queued", "redirected"}:
+                raise HermesTuiRpcError(
+                    f"Hermes prompt.submit was not accepted: {result!r}"
+                )
+            for attempt in range(max_observations):
+                observed = _rpc(
+                    socket,
+                    4 + attempt,
+                    "session.activate",
+                    {"session_id": session_id, "omit_messages": False},
+                )
+                if visibility := _delivery_visibility(observed, delivery_id):
+                    return HermesVisibleTurnReceipt(
+                        status=status,
+                        visibility=visibility,
+                        session_id=session_id,
+                    )
+                if poll_s > 0 and attempt + 1 < max_observations:
+                    sleep_fn(poll_s)
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    raise HermesTuiRpcError(
+        "Hermes prompt.submit was accepted "
+        f"(status={status}) but delivery {delivery_id!r} was not visible in "
+        "session messages, inflight input, or the native queue"
+    )
+
+
 __all__ = [
     "HermesTuiRpcError",
     "HermesTurnActivity",
+    "HermesVisibleTurnReceipt",
     "active_sessions",
     "observe_turn_activity",
     "submit_turn",
+    "submit_visible_turn",
 ]
