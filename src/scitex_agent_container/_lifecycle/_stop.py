@@ -22,6 +22,7 @@ from ._a2a_port import release_a2a_port
 from ._handover_loader import _load_handover_module
 from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._instances import end_local_instance as _end_local_instance
+from ._instances import resolve_local_stop_instance
 from ._runtime_select import _get_runtime
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,8 @@ def agent_stop(
     handover_mod: Any = None,
     prune_runtime: bool = False,
     config_resolver: Optional[Callable[[str], str]] = None,
+    stop_instance_resolver: Optional[Callable[[AgentConfig, Any], dict | None]] = None,
+    tui_stop_verifier: Optional[Callable[..., str]] = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -132,6 +135,11 @@ def agent_stop(
 
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
+    from ..runtimes.tui_session import TuiSessionRuntime
+
+    is_tui_runtime = isinstance(runtime, TuiSessionRuntime)
+    instance_resolver = stop_instance_resolver or resolve_local_stop_instance
+    stop_instance = instance_resolver(config, runtime) if is_tui_runtime else None
 
     hook_env = {
         "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
@@ -192,15 +200,34 @@ def agent_stop(
     _fire_forget_hook(config.name, "pre_stop", config.hooks.get("pre_stop", []))
 
     # stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)
+    runtime_stop_succeeded = False
     try:
-        runtime.stop(config)
+        runtime_stop_succeeded = bool(runtime.stop(config))
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         from ..runtimes.tui_session import TuiStopVerificationError
 
         if isinstance(exc, TuiStopVerificationError):
+            if not is_tui_runtime:
+                raise
+            logger.warning(
+                "tmux teardown could not verify %r; checking its exact "
+                "launch-recorded systemd scope before deciding the stop",
+                name,
+            )
+        elif not force:
             raise
-        if not force:
-            raise
+
+    if is_tui_runtime:
+        from ._stop_outcome import verify_tui_incarnation_stopped
+
+        verifier = tui_stop_verifier or verify_tui_incarnation_stopped
+        verifier(
+            name=name,
+            instance=stop_instance,
+            runtime_stop_succeeded=runtime_stop_succeeded,
+            runtime=runtime,
+            config=config,
+        )
 
     # Post-stop hooks
     # stx-allow: fallback (reason: post-stop hooks are best-effort notification; a failed hook must not prevent registry cleanup)

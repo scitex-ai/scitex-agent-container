@@ -278,6 +278,15 @@ versioning follows [SemVer](https://semver.org/).
   (`host_store` resolves without connecting, so neither path pays for it).
 
 ### Fixed
+- **`sac agents stop --force` can no longer report success over an orphaned
+  TUI container.** Each local launch now records the long-lived PID's kernel
+  start time, uid, cgroup, transient scope unit, and systemd InvocationID on
+  its central `instances` incarnation. Stop matches every one before asking
+  systemd to stop that exact scope, then requires both the launch PID identity
+  and every process in the cgroup to disappear. A missing tmux session is no
+  longer accepted as terminal evidence; an unverifiable survivor returns a
+  nonzero process outcome in scitex-dev's central `status_exchanges` ledger
+  and preserves registry/overlay/session state for diagnosis.
 - **`agent_send`'s non-blocking dispatch reported `delivered_subscriber_count:
   1` for an agent that had NEVER been started.** Three task cards were routed
   to `scitex-hpc` (`status=defined`, zero tmux sessions) on 2026-08-29; every

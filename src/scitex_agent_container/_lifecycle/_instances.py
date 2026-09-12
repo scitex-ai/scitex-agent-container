@@ -86,6 +86,16 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     return pid
 
 
+def _runtime_ownership(pid: int | None) -> dict[str, int | str]:
+    """Capture the launch PID's non-reusable systemd scope identity."""
+    if pid is None:
+        return {}
+    from .._runners._scope_ownership import capture_scope_ownership
+
+    ownership = capture_scope_ownership(pid)
+    return {} if ownership is None else ownership.to_record_fields()
+
+
 def _runtime_session_name(config: AgentConfig, runtime: Any) -> str | None:
     """Resolve the multiplexer session the runtime just launched into.
 
@@ -214,11 +224,21 @@ def record_local_instance(
     # three remote call sites leave it NULL for the same reason they leave
     # ``pid`` NULL — a peer's tmux session is not in this host's namespace,
     # so a name recorded here could only ever be probed against the wrong
-    # server.
+    # server. For a systemd scope-backed local runtime, the five ownership
+    # fields bind that PID to its kernel birth time and exact transient scope
+    # invocation. They are what lets stop find and verify the process tree
+    # after tmux itself has forgotten the session.
+    runtime_pid = _runtime_pid(config, runtime)
+    ownership = _runtime_ownership(runtime_pid)
     instance_id = record_instance_start(
         name=config.name,
         host=host,
-        pid=_runtime_pid(config, runtime),
+        pid=runtime_pid,
+        process_start_time=ownership.get("process_start_time"),
+        process_uid=ownership.get("process_uid"),
+        control_group=ownership.get("control_group"),
+        scope_unit=ownership.get("scope_unit"),
+        scope_invocation_id=ownership.get("scope_invocation_id"),
         screen=_runtime_session_name(config, runtime),
         a2a_port=a2a_port,
         bound_port=a2a_port,
@@ -454,3 +474,27 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     if state_dir is not None:
         clear_instance_id(state_dir)
     return updated
+
+
+def resolve_local_stop_instance(config: AgentConfig, runtime: Any) -> dict | None:
+    """Resolve the exact central incarnation that a local stop must settle.
+
+    The persisted id is preferred because it names one lifetime directly.
+    When an earlier faulty stop already cleared that marker, fall back to the
+    newest local central row, including an ended row: a tombstone is not proof
+    that its launch-owned process scope disappeared.
+    """
+    from .._runners._session_state import read_instance_id
+    from .._state.state_db_instances import (
+        last_local_instance_for_name,
+        read_instance,
+    )
+
+    state_dir = _state_dir_for(config, runtime)
+    if state_dir is not None:
+        instance_id = read_instance_id(state_dir)
+        if instance_id:
+            row = read_instance(instance_id)
+            if row is not None:
+                return row
+    return last_local_instance_for_name(config.name)
