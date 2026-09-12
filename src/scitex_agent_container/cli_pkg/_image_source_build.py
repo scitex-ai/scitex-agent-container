@@ -562,6 +562,12 @@ def _stage_hermes_source(build_context: Path) -> Path:
     return stage_hermes_source(build_context)
 
 
+def _stage_cards_source(build_context: Path) -> Path:
+    from ._cards_source import stage_cards_source
+
+    return stage_cards_source(build_context)
+
+
 def build_layer_from_source(
     *,
     layer: str,
@@ -637,6 +643,8 @@ def build_layer_from_source(
         staged_def = stage_build_context(
             pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
         )
+        if layer in {"base", "scitex"}:
+            _stage_cards_source(staging_dir)
         if layer == "base":
             _stage_hermes_source(staging_dir)
 

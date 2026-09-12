@@ -7,7 +7,7 @@ domain dependencies on top:
 
 | Tag       | What's inside                                                                                               | When                                   |
 |-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools, Node 22, pinned Hermes 0.21.1 and its official TUI | **Default** when `spec.image` is unset |
+| `:base`   | Ubuntu 24.04 + dev tools, Node 22, pinned Cards source, pinned Hermes 0.21.1 and its official TUI | **Default** when `spec.image` is unset |
 | `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
 
 Hermes is a capability of `:base`, not a separate `:hermes` layer. The build
@@ -16,6 +16,12 @@ recipe verifies both the installed version and official TUI artifact. Other
 harnesses still have to be present in the selected image — an `openai` agent
 needs the `openai-agents` SDK, and a `codex` agent needs `openai-codex` plus
 its pinned CLI-binary wheel.
+
+The runtime Cards client is installed from an immutable staged Git commit,
+with its commit marker and #1003 DM/doorbell symbols checked during the build.
+This is intentional when a required merged fix is newer than the latest PyPI
+release: neither the local nor Spartan build path asks a live package index to
+choose the Cards code that enters the image.
 
 Recipes ship in the pip wheel — no need to clone the repo to run `sac image build`.
 Built artifacts live under `~/.scitex/agent-container/containers/`, never in git.

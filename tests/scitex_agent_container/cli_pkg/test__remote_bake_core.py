@@ -330,6 +330,29 @@ def test_bake_script_stages_the_pinned_hermes_source_for_base() -> None:
     )
 
 
+def test_bake_script_stages_the_pinned_cards_source_for_runtime_layers() -> None:
+    # Arrange
+    from scitex_agent_container.cli_pkg._cards_source import (
+        CARDS_COMMIT,
+        CARDS_REPOSITORY,
+    )
+
+    # Act
+    text = core.BAKE_SCRIPT.read_text()
+
+    # Assert
+    assert all(
+        expected in text
+        for expected in (
+            f'CARDS_REPO_URL="{CARDS_REPOSITORY}"',
+            f'CARDS_COMMIT="{CARDS_COMMIT}"',
+            'if [ "$LAYER" = "base" ] || [ "$LAYER" = "scitex" ]; then',
+            '"$CTX/scitex-cards-src/SAC_UPSTREAM_COMMIT"',
+            '"$GIT" -C "$CARDS_CACHE" archive "$CARDS_COMMIT"',
+        )
+    )
+
+
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:
     # Arrange — the remote gate is a heredoc copy of sif_symbol_probe.py
     # (the remote host has no wheel). If the two drift, the master could

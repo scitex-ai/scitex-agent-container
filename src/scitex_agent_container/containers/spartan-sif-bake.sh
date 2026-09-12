@@ -71,6 +71,8 @@ REPO_URL="https://github.com/ywatanabe1989/scitex-agent-container.git"
 BRANCH="develop"
 HERMES_REPO_URL="https://github.com/NousResearch/hermes-agent.git"
 HERMES_COMMIT="a74e76632cce62ad6948cf7e4e6b27629d66d147"
+CARDS_REPO_URL="https://github.com/scitex-ai/scitex-cards.git"
+CARDS_COMMIT="c91429ef7f780eaee768d20542ecdc1d1d716eb2"
 RETAIN=3
 MIN_FREE_GB=40
 MIN_FREE_INODES=100000
@@ -234,6 +236,25 @@ cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
+if [ "$LAYER" = "base" ] || [ "$LAYER" = "scitex" ]; then
+    # Both runtime layers install Cards. Export the immutable source commit
+    # rather than asking PyPI for a release that predates the required fix.
+    CARDS_CACHE="$WORKDIR/upstream/scitex-cards.git"
+    mkdir -p "$(dirname "$CARDS_CACHE")" || fail "stage-cards-cache-mkdir"
+    if [ ! -d "$CARDS_CACHE" ]; then
+        "$GIT" init --bare "$CARDS_CACHE" || fail "stage-cards-cache-init"
+    fi
+    if ! "$GIT" -C "$CARDS_CACHE" cat-file -e "$CARDS_COMMIT^{commit}" 2>/dev/null; then
+        "$GIT" -C "$CARDS_CACHE" fetch --depth 1 "$CARDS_REPO_URL" "$CARDS_COMMIT" \
+            || fail "stage-cards-fetch" "$CARDS_COMMIT"
+    fi
+    mkdir -p "$CTX/scitex-cards-src" || fail "stage-cards-mkdir"
+    "$GIT" -C "$CARDS_CACHE" archive "$CARDS_COMMIT" \
+        | tar -x -C "$CTX/scitex-cards-src" \
+        || fail "stage-cards-export" "$CARDS_COMMIT"
+    printf '%s\n' "$CARDS_COMMIT" > "$CTX/scitex-cards-src/SAC_UPSTREAM_COMMIT" \
+        || fail "stage-cards-marker"
+fi
 if [ "$LAYER" = "base" ]; then
     # apptainer-base.def installs Hermes from a sibling %files input. Fetch
     # and export the same immutable commit as cli_pkg/_hermes_source.py; a
@@ -334,6 +355,7 @@ cat > "$PROBE" <<'PYEOF'
 """Artifact gate: assert BY SYMBOL that this SIF is fresh and whole."""
 
 import sys
+from importlib import import_module
 
 # noqa placement is deliberate: this import LOOKS unused and is not. The
 # probe is an artifact gate that asserts BY SYMBOL that the SIF shipped a
@@ -342,6 +364,11 @@ import sys
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
 from scitex_cards._throughput import WIP_STATUSES
+
+canonical_agent_identity = import_module(
+    "scitex_cards._messaging"
+).canonical_agent_identity
+_doorbell_status = import_module("scitex_cards._notification_watch")._doorbell_status
 
 # scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
 # Through 0.48.0, comment_task / update_task rebuilt a card from the doc the
@@ -362,7 +389,7 @@ from scitex_cards._throughput import WIP_STATUSES
 # So the FLOOR is what excludes the broken release; this import only catches
 # a version string that lies; and only a post-deploy write to a card that
 # ALREADY HAS a comment proves the path actually runs.
-from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
+from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: E402,F401
 
 # scitex-dev 0.56.6: the bounded (origin, seq) oplog-allocation retry.
 # Through 0.56.5, Store._append read MAX(seq) ONCE and then inserted, so a
@@ -381,16 +408,23 @@ from scitex_cards._mirror_rows import _merge_unseen_comment_rows  # noqa: F401
 # upstream may rename or inline it with no deprecation, and that would land
 # here as a dead bake far from scitex-dev's repo. If this line is what broke
 # the build, read scitex_dev/store/_store.py before suspecting the image.
-from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: F401
+from scitex_dev.store._store import _SEQ_ALLOCATION_ATTEMPTS  # noqa: E402,F401
 
 if "in_progress" not in WIP_STATUSES:
     print(f"FATAL: 'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
     sys.exit(1)
 
+# scitex-cards #1003: scoped DM recipients must resolve to the durable bare
+# identity SAC subscribes under, and startup must carry the cross-connection
+# doorbell probe instead of treating LISTEN success as delivery evidence.
+if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
+    print("FATAL: scitex-cards #1003 DM recipient canonicalization is absent")
+    sys.exit(1)
+
 # Newer than any published sac release => proves the %files-staged source
 # tree won the install (no transitive PyPI sac wheel overwrote it).
-from scitex_agent_container.runtimes._apptainer_overlay import (
-    ensure_overlay_dirs,  # noqa: F401,E402
+from scitex_agent_container.runtimes._apptainer_overlay import (  # noqa: E402
+    ensure_overlay_dirs,  # noqa: F401
 )
 
 print("OK: artifact symbol probe passed")

@@ -131,6 +131,24 @@ def test_probe_checks_the_comment_merge_symbol() -> None:
     assert ("scitex_cards._mirror_rows", "_merge_unseen_comment_rows") in from_imports
 
 
+def test_probe_checks_cards_1003_dm_and_doorbell_symbols() -> None:
+    # Arrange — v0.52.0 predates Cards #1003 even though the merge retained
+    # that version string. These symbols distinguish the required source tree.
+    source = _probe_source()
+    # Act
+    present = all(
+        token in source
+        for token in (
+            '"scitex_cards._messaging"',
+            '"scitex_cards._notification_watch"',
+            "canonical_agent_identity",
+            "_doorbell_status",
+        )
+    )
+    # Assert
+    assert present
+
+
 def test_probe_checks_the_seq_allocation_symbol() -> None:
     # Arrange - scitex-dev 0.56.6's bounded (origin, seq) oplog-allocation
     # retry. A bare `import scitex_dev.store` CANNOT catch its absence: 0.56.5
@@ -323,3 +341,17 @@ def test_every_probe_copy_carries_the_seq_allocation_symbol(path) -> None:
         f"{path.name} embeds the symbol probe but not the 0.56.6 "
         "seq-allocation check - this copy still passes on a 0.56.5 image"
     )
+
+
+@pytest.mark.parametrize("path", EMBEDS, ids=lambda p: p.name)
+def test_every_probe_copy_carries_cards_1003_symbols(path) -> None:
+    # Arrange
+    source = path.read_text(encoding="utf-8")
+    # Act
+    missing = {
+        symbol
+        for symbol in ("canonical_agent_identity", "_doorbell_status")
+        if symbol not in source
+    }
+    # Assert
+    assert not missing, f"{path.name} lacks Cards #1003 symbols: {sorted(missing)}"
