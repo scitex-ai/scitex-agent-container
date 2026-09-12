@@ -11,8 +11,10 @@ namespace): on ``POST /v1/turn`` it first persists a durable exchange, then
 asks the selected runtime to deliver ``text``. Hermes uses its native
 shared-session JSON-RPC; legacy TUI adapters retain their runtime-specific
 path. The bridge immediately returns ``202`` plus the exchange id; the caller
-polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``
-or ``502``.
+polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``.
+A failed durable visibility attempt remains non-final ``102`` so the same
+exchange can advance on retry; ordinary, non-durable turn failures are final
+``502``.
 
 Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
 unchanged:
@@ -28,8 +30,9 @@ unchanged:
     404 {"error": "..."}                                  # unknown route / wrong agent
     503 {"error": "...", "status_code": {...}}            # ledger rejected persistence
 
-Terminal injection never changes the already-returned HTTP response. Its
-separate final HTTP 200 or 502 is read from ``GET /v1/exchanges/<id>``.
+Turn delivery never changes the already-returned HTTP response. Its separate
+HTTP 200, retryable 102, or ordinary-turn 502 is read from
+``GET /v1/exchanges/<id>``.
 
 Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
 :mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
@@ -63,7 +66,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Callable
 
-from scitex_dev.status import StatusCode
+from scitex_dev.status import Check, StatusCode
 
 from ..config import AgentConfig
 from ._tui_turn_bridge_lifecycle import (
@@ -390,6 +393,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     agent=srv.agent_name,
                     probe_url="/v1/exchanges",
                     exchange_id=requested_exchange_id,
+                    delivery_id=visible_delivery_id,
                 )
             except Exception as exc:  # stx-allow: fallback (reason: without the canonical durable exchange row, 202 would claim an acceptance the responder cannot later answer for)
                 log.exception(
@@ -417,8 +421,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 return
             existing = srv.exchange_read(exchange_id)
             if (
-                requested_exchange_id
-                and isinstance(existing, dict)
+                isinstance(existing, dict)
                 and existing.get("kind") == "http"
                 and existing.get("code") == 200
             ):
@@ -482,17 +485,46 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                         else "the TUI accepted the turn"
                     ),
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: the canonical ledger must conclude every accepted exchange, including native delivery failures)
+            except Exception as exc:  # stx-allow: fallback (reason: visibility failure must remain explicitly retryable on the accepted durable operation, never be acknowledged or rewritten from a terminal failure)
                 detail = str(exc).strip() or "no native error detail"
-                status = StatusCode(
+                cause = StatusCode(
                     kind="http",
                     code=502,
                     message=(
-                        "Hermes transcript visibility was not confirmed "
-                        f"({type(exc).__name__}: {detail}); "
-                        "leave the Cards notification unconfirmed and inspect "
-                        f"`sac agents logs {srv.agent_name}` before retrying"
+                        "this Hermes visibility attempt failed; no Cards "
+                        "acknowledgement was issued"
                     ),
+                )
+                hint = (
+                    "leave the Cards notification unconfirmed; inspect "
+                    f"`sac agents logs {srv.agent_name}`, then retry that "
+                    "notification; observe the same delivery operation at "
+                    f"`/v1/exchanges/{exchange_id}`"
+                )
+                check = Check.unknown(
+                    "hermes_transcript_visible",
+                    "Hermes transcript visibility was not confirmed "
+                    f"({type(exc).__name__}: {detail})",
+                    hint,
+                    cause=cause,
+                )
+                log.warning(
+                    "turn exchange remains retryable exchange_id=%s check=%s",
+                    exchange_id,
+                    json.dumps(check.to_dict(), sort_keys=True),
+                )
+                status = (
+                    StatusCode(
+                        kind="http",
+                        code=102,
+                        message=(
+                            f"{check.detail}; retryable non-final state; cause="
+                            f"{cause.kind}/{cause.code}: {cause.message}; next: "
+                            f"{check.hint}"
+                        ),
+                    )
+                    if visible_delivery_id
+                    else cause
                 )
             try:
                 srv.exchange_finish(
