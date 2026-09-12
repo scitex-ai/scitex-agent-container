@@ -61,8 +61,10 @@ from typing import TYPE_CHECKING
 from .state_store_hostname import resolve_host as _resolve_host
 from .state_store_instances_store import (
     ACTOR,
+    InstancesOwnershipSchemaError,
     instance_as_dict,
     instance_key,
+    run_with_legacy_instances_schema,
     run_with_reconnect,
     sortable_recency,
     strip_unset,
@@ -334,7 +336,14 @@ def last_known_instance(name: str) -> dict | None:
             if row.values.get("name") == name
         ]
 
-    rows = run_with_reconnect(_list)
+    try:
+        rows = run_with_reconnect(_list)
+    except (KeyError, InstancesOwnershipSchemaError):
+        # A central rows table created before launch ownership fields cannot
+        # be decoded by the current scitex-dev schema codec.  Read it through
+        # the old shape only to identify the incarnation; missing ownership
+        # is then a fail-closed process/3, never permission to signal.
+        rows = run_with_legacy_instances_schema(_list)
     return max(rows, key=sortable_recency) if rows else None
 
 
@@ -353,7 +362,11 @@ def last_local_instance_for_name(name: str, host: str | None = None) -> dict | N
             and not bool(row.values.get("remote"))
         ]
 
-    rows = run_with_reconnect(_list)
+    try:
+        rows = run_with_reconnect(_list)
+    except (KeyError, InstancesOwnershipSchemaError):
+        rows = run_with_legacy_instances_schema(_list)
     return max(rows, key=sortable_recency) if rows else None
+
 
 # EOF

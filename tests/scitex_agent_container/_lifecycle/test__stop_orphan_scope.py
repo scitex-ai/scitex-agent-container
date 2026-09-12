@@ -69,6 +69,9 @@ def test_force_stop_preserves_state_when_orphan_scope_survives(tmp_path: Path) -
     instance = {
         "id": "01991c62-61ab-7abc-8000-000000000001",
         "host": "scitex-compute-03",
+        "process_start_time": 17,
+        "process_uid": 1000,
+        "control_group": "/user.slice/tmux-spawn-a.scope",
         "scope_invocation_id": "a" * 32,
         "scope_unit": "tmux-spawn-a.scope",
     }
@@ -103,3 +106,46 @@ def test_force_stop_preserves_state_when_orphan_scope_survives(tmp_path: Path) -
         True,
         True,
     )
+
+
+def test_force_stop_rejects_legacy_row_before_runtime_signal(tmp_path: Path) -> None:
+    # Arrange
+    registry = Registry(registry_dir=tmp_path / "registry")
+    spec = _spec(tmp_path)
+    registry.add("scitex-app", str(spec), "tui-scitex-app")
+    runtime = _NoTmuxRuntime()
+    runtime_calls: list[bool] = []
+    runtime.stop = lambda _config: runtime_calls.append(True)  # type: ignore[method-assign]
+    legacy = {
+        "id": "f571b488-8683-4e57-a6f6-1a12870226c4",
+        "host": "scitex-compute-03",
+        "pid": 904612,
+    }
+
+    def verifier(**fields) -> str:
+        return verify_tui_incarnation_stopped(
+            **fields,
+            outcome_recorder=lambda **_outcome: None,
+        )
+
+    # Act
+    try:
+        lc.agent_stop(
+            "scitex-app",
+            registry=registry,
+            force=True,
+            runtime_factory=lambda _config: runtime,
+            handover_mod=_NoHandover(),
+            stop_instance_resolver=lambda _config, _runtime: legacy,
+            tui_stop_verifier=verifier,
+        )
+    except Exception as exc:  # noqa: BLE001 - assertion names exact type
+        error = exc
+    else:
+        error = None
+    # Assert
+    assert (
+        isinstance(error, StopVerificationError),
+        registry.exists("scitex-app"),
+        runtime_calls,
+    ) == (True, True, [])

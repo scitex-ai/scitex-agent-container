@@ -14,18 +14,18 @@ from typing import Any, Callable, Optional
 
 from .._state.registry import Registry
 from ..config import AgentConfig, load_config, resolve_config
-from ._handover_loader import _load_handover_module
-from ._hook_runner import _fire_forget_hook, _run_hooks
-from ._instances import record_local_instance as _record_local_instance
-from ._runtime_select import _get_runtime
-from ._session_reset import _clear_persisted_session_id
 
 # Re-exported for back-compat: these ran inline in ``agent_start`` before the
 # pre-launch region moved to ``_start_prelaunch`` (512-line cap), and callers /
 # tests import them from here. The CALLS now live in that module.
 from ._a2a_port import resolve_a2a_port  # noqa: F401
+from ._handover_loader import _load_handover_module
+from ._hook_runner import _fire_forget_hook, _run_hooks
 from ._identity_drift import check_board_identity_at_launch  # noqa: F401
+from ._instances import record_local_instance as _record_local_instance
 from ._layers_preflight import check_to_home_layers_at_launch  # noqa: F401
+from ._runtime_select import _get_runtime
+from ._session_reset import _clear_persisted_session_id
 from ._spawn_gate import enforce_spawn_gate, persist_acl_policy  # noqa: F401
 
 # Re-exported from _start_announce for back-compat: this helper lived here
@@ -211,8 +211,19 @@ def agent_start(
         dry_run=dry_run,
     )
 
+    uses_production_runtime = runtime_factory is None
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
+
+    if uses_production_runtime and not dry_run:
+        from ..runtimes.tui_session import TuiSessionRuntime
+
+        if isinstance(runtime, TuiSessionRuntime):
+            from .._state.state_store_instances_store import (
+                ensure_instances_ownership_schema,
+            )
+
+            ensure_instances_ownership_schema()
 
     # Lazy import breaks the ``_start`` <-> ``_stop`` cycle (force-restart
     # stops here; ``agent_restart`` starts there).

@@ -109,12 +109,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ACTOR",
     "CONNECT_TIMEOUT_ENV",
+    "InstancesOwnershipSchemaError",
     "INSTANCES_STORE",
     "instance_as_dict",
     "instance_key",
     "instances_schema",
+    "ensure_instances_ownership_schema",
     "new_instances_store",
     "open_instances_store",
+    "run_with_legacy_instances_schema",
     "reset_instances_store",
     "run_with_reconnect",
     "sortable_recency",
@@ -124,6 +127,19 @@ __all__ = [
 #: Logical store name. Renders as four physical tables
 #: (``instances_rows``, ``_oplog``, ``_identity``, ``_cursor``).
 INSTANCES_STORE = "instances"
+
+OWNERSHIP_FIELDS = (
+    "process_start_time",
+    "process_uid",
+    "control_group",
+    "scope_unit",
+    "scope_invocation_id",
+)
+
+
+class InstancesOwnershipSchemaError(RuntimeError):
+    """The central instances store cannot persist exact process ownership."""
+
 
 ACTOR = "scitex-agent-container"
 
@@ -317,6 +333,45 @@ _HANDLE: "Store | None" = None
 _HANDLE_TARGET: "StoreTarget | None" = None
 
 
+def _legacy_instances_schema() -> Any:
+    """The physical schema deployed before exact scope ownership fields."""
+    from scitex_dev.store import Schema
+
+    current = instances_schema()
+    return Schema(
+        name=current.name,
+        fields={
+            name: policy
+            for name, policy in current.fields.items()
+            if name not in OWNERSHIP_FIELDS
+        },
+    )
+
+
+def ensure_instances_ownership_schema() -> None:
+    """Gate TUI launch on scitex-dev's observed public schema evolution."""
+    store = None
+    try:
+        store = new_instances_store()
+        result = store.ensure_declared_fields()
+    except Exception as exc:
+        raise InstancesOwnershipSchemaError(
+            "central instances ownership schema is NOT READY; required nullable "
+            f"columns are {', '.join(OWNERSHIP_FIELDS)}. No TUI launch is "
+            "authorized until scitex-dev's declared-field evolution succeeds."
+        ) from exc
+    finally:
+        if store is not None:
+            store.close()
+    missing = sorted(set(OWNERSHIP_FIELDS) - set(result.observed))
+    if missing:
+        raise InstancesOwnershipSchemaError(
+            "central instances ownership schema is NOT READY after migration; "
+            f"missing observed columns: {', '.join(missing)}. No TUI launch is "
+            "authorized."
+        )
+
+
 def new_instances_store() -> "Store":
     """Construct a FRESH, caller-owned handle. RAISES if PostgreSQL is down.
 
@@ -329,24 +384,63 @@ def new_instances_store() -> "Store":
     empty local file instead of raising would turn a database outage into a
     fleet-wide "nothing is running" — silently, on the routing path.
     """
-    from scitex_dev.store import Store, WriterPolicy, host_store
+    from scitex_dev.store import (
+        SchemaEvolutionError,
+        Store,
+        WriterPolicy,
+        host_store,
+    )
 
     schema = instances_schema()
-    return Store(
+    try:
+        return Store(
+            _with_connect_timeout(
+                host_store(pkg="scitex_agent_container", name=schema.name)
+            ),
+            schema,
+            node=socket.gethostname(),
+            # SINGLE_WRITER as declared: only the observing host writes its own
+            # telemetry. ``check_owner`` compares the record's owner against the
+            # store's ``actor``, and every sac store passes the same package
+            # constant, so what this refuses in practice is a write from a
+            # different PACKAGE — the cross-host guard is the ``host`` identity
+            # field, which makes a peer's row a different record entirely.
+            writer_policy=WriterPolicy.SINGLE_WRITER,
+            actor=ACTOR,
+        )
+    except SchemaEvolutionError as exc:
+        raise InstancesOwnershipSchemaError(
+            "central instances declared-field evolution was refused; no TUI "
+            "lifecycle operation may treat its schema as ready"
+        ) from exc
+
+
+def run_with_legacy_instances_schema(operation: Callable[["Store"], Any]) -> Any:
+    """Read a pre-ownership central store without treating it as authority.
+
+    The scitex-dev row codec expects every declared field to have a physical
+    column.  A deployed ``instances_rows`` table created before ownership
+    capture therefore raises ``KeyError`` when opened with the current
+    schema.  This narrower schema can identify the same central incarnation
+    so stop can report an explicit unverified ``process/3`` outcome.  It is
+    read-only and must never authorize a signal.
+    """
+    from scitex_dev.store import Store, WriterPolicy, host_store
+
+    legacy = _legacy_instances_schema()
+    store = Store(
         _with_connect_timeout(
-            host_store(pkg="scitex_agent_container", name=schema.name)
+            host_store(pkg="scitex_agent_container", name=legacy.name)
         ),
-        schema,
+        legacy,
         node=socket.gethostname(),
-        # SINGLE_WRITER as declared: only the observing host writes its own
-        # telemetry. ``check_owner`` compares the record's owner against the
-        # store's ``actor``, and every sac store passes the same package
-        # constant, so what this refuses in practice is a write from a
-        # different PACKAGE — the cross-host guard is the ``host`` identity
-        # field, which makes a peer's row a different record entirely.
         writer_policy=WriterPolicy.SINGLE_WRITER,
         actor=ACTOR,
     )
+    try:
+        return operation(store)
+    finally:
+        store.close()
 
 
 def open_instances_store() -> "Store":
@@ -492,6 +586,11 @@ def instance_as_dict(row: "Row") -> dict[str, Any]:
         "host": str(values["host"]),
         "name": str(values["name"]) if values.get("name") is not None else None,
         "pid": None if values.get("pid") is None else int(values["pid"]),
+        "process_start_time": values.get("process_start_time"),
+        "process_uid": values.get("process_uid"),
+        "control_group": values.get("control_group"),
+        "scope_unit": values.get("scope_unit"),
+        "scope_invocation_id": values.get("scope_invocation_id"),
         "screen": values.get("screen"),
         "workdir": values.get("workdir"),
         "a2a_port": port,
@@ -506,5 +605,6 @@ def instance_as_dict(row: "Row") -> dict[str, Any]:
         "ended_at": values.get("ended_at"),
         "exit_reason": values.get("exit_reason"),
     }
+
 
 # EOF

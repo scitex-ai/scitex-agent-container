@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import importlib
 
-
 from scitex_agent_container._state.state_store_instances import (
     end_instance,
     last_known_instance,
+    last_local_instance_for_name,
     list_active_instances,
     live_instance_for_name,
     read_instance,
@@ -155,10 +155,10 @@ def test_the_module_schema_matches_the_plugin_declaration_field_for_field() -> N
     # Arrange — the plugin says what sac's rows MEAN and the opener is what
     # actually creates them. A drift between the two is invisible until a
     # merge resolves a field by a rule nobody declared.
-    from scitex_agent_container._store_plugin import INSTANCES
     from scitex_agent_container._state.state_store_instances_store import (
         instances_schema,
     )
+    from scitex_agent_container._store_plugin import INSTANCES
 
     opened = instances_schema()
     # Act
@@ -169,6 +169,47 @@ def test_the_module_schema_matches_the_plugin_declaration_field_for_field() -> N
     }
     # Assert
     assert drift == set()
+
+
+def test_pre_ownership_physical_store_is_read_as_unverified_legacy(
+    pg_schema: str,
+) -> None:
+    # Arrange — create the exact pre-#1378 physical shape before opening the
+    # current schema, whose codec otherwise raises KeyError(process_start_time).
+    from scitex_dev.store import NEW_RECORD
+
+    from scitex_agent_container._state.state_store_instances_store import (
+        ACTOR,
+        ensure_instances_ownership_schema,
+        run_with_legacy_instances_schema,
+    )
+
+    run_with_legacy_instances_schema(
+        lambda store: store.put(
+            {
+                "id": "f571b488-8683-4e57-a6f6-1a12870226c4",
+                "host": "scitex-compute-03",
+                "name": "scitex-app",
+                "pid": 904612,
+                "screen": "tui-scitex-app",
+                "started_at": "2026-09-11T19:43:49Z",
+                "remote": False,
+            },
+            expected_revision=NEW_RECORD,
+            actor=ACTOR,
+        )
+    )
+    ensure_instances_ownership_schema()
+    ensure_instances_ownership_schema()
+    # Act
+    row = last_local_instance_for_name("scitex-app", host="scitex-compute-03")
+    # Assert
+    assert (
+        row["id"],
+        row["pid"],
+        row["process_start_time"],
+        row["scope_invocation_id"],
+    ) == ("f571b488-8683-4e57-a6f6-1a12870226c4", 904612, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +380,9 @@ def test_end_instance_writes_the_supplied_stamp_verbatim(pg_schema: str) -> None
     # branch that can honestly name a moment of death.
     instance_id = record_instance_start("alpha", host="host-a")
     # Act
-    end_instance(instance_id, exit_reason="reboot-swept", ended_at="2020-01-01T00:00:00Z")
+    end_instance(
+        instance_id, exit_reason="reboot-swept", ended_at="2020-01-01T00:00:00Z"
+    )
     # Assert
     assert read_instance(instance_id)["ended_at"] == "2020-01-01T00:00:00Z"
 
@@ -489,8 +532,12 @@ def test_list_active_instances_orders_newest_first(pg_schema: str) -> None:
     # rewrite is a silently rejected MergeConflict and the test would have
     # passed on the ``id`` tiebreak instead — green for the wrong reason,
     # which is the failure mode this whole port keeps running into.
-    seed_instance("b-newer", name="alpha", host="host-a", started_at="2026-01-02T00:00:00Z")
-    seed_instance("a-older", name="alpha", host="host-a", started_at="2026-01-01T00:00:00Z")
+    seed_instance(
+        "b-newer", name="alpha", host="host-a", started_at="2026-01-02T00:00:00Z"
+    )
+    seed_instance(
+        "a-older", name="alpha", host="host-a", started_at="2026-01-01T00:00:00Z"
+    )
     # Act
     rows = list_active_instances()
     # Assert
