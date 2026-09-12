@@ -50,6 +50,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from ._image_build_lock import image_build_lock
 from ._image_source_build import _stage_hermes_source, stage_build_context
 
 
@@ -157,23 +158,22 @@ def build_layer_reproducible(
         Propagated from :func:`stage_build_context` if inputs are missing.
     """
     artifact_dir = output_dir / f"sac-{layer}"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with image_build_lock(artifact_dir, layer=layer):
+        staging_dir = artifact_dir / "build-context"
+        staged_def = stage_build_context(
+            pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
+        )
+        if layer == "base":
+            stage_hermes(staging_dir)
 
-    staging_dir = artifact_dir / "build-context"
-    staged_def = stage_build_context(
-        pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
-    )
-    if layer == "base":
-        stage_hermes(staging_dir)
-
-    return _container_build_reproducible(
-        def_path=staged_def,
-        output_dir=output_dir,
-        cwd=staging_dir,
-        image_name=f"sac-{layer}",
-        force=force,
-        verify=verify,
-    )
+        return _container_build_reproducible(
+            def_path=staged_def,
+            output_dir=output_dir,
+            cwd=staging_dir,
+            image_name=f"sac-{layer}",
+            force=force,
+            verify=verify,
+        )
 
 
 def describe_result(result: Any) -> list[str]:
