@@ -380,10 +380,10 @@ def remote_tail_env(tmp_path):
     )
     script.chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
-    from scitex_agent_container._state.state_db import record_instance_start
+    importlib.reload(_state_store_mod)
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     try:
@@ -399,7 +399,7 @@ def remote_tail_env(tmp_path):
             else:
                 os.environ[k] = v
         os.environ["PATH"] = saved_path
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _ssh_invocations(log):

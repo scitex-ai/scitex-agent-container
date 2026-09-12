@@ -51,9 +51,8 @@ import click
 
 from ._helpers import console
 
-# Env override for the user-scope fleet registry dir. Mirrors the
-# ``SCITEX_AGENT_CONTAINER_STATE_DB`` override used by the state DB: it
-# lets the command be pointed at an isolated on-disk registry (tests /
+# Env override for the user-scope fleet registry dir. It lets the command be
+# pointed at an isolated on-disk registry (tests /
 # a non-default install root) without touching the production default.
 _REGISTRY_ENV = "SCITEX_AGENT_CONTAINER_AGENTS_DIR"
 
@@ -108,7 +107,7 @@ def refresh_acl(dry_run: bool) -> None:
       $ sac agents refresh-acl --dry-run
     """
     from .._lifecycle._spawn_gate import persist_acl_policy
-    from .._state.state_db_nodes import read_comms_policy
+    from .._state.state_store_nodes import read_comms_policy
     from ..config import load_config
     from ..config._group_resolver import all_named_groups
 

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from scitex_agent_container._state.state_db_instances import record_instance_start
+from scitex_agent_container._state.state_store_instances import record_instance_start
 
 from scitex_agent_container._listen._liveness_tick import (
     DEFAULT_INTERVAL_S,
@@ -356,7 +356,7 @@ class TestRegistryAvailability:
         # reset hook drops the cached handle so the next test reconnects.
         import os
 
-        from scitex_agent_container._state.state_db_instances_store import (
+        from scitex_agent_container._state.state_store_instances_store import (
             reset_instances_store,
         )
 

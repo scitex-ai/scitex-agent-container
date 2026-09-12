@@ -10,7 +10,7 @@ identities, one join key:
     certificate and the ExitRecord all key on it.
 
 The incarnation id IS the ``instances.id`` uuid7 the start path mints
-(:func:`.._state.state_db.record_instance_start`) and persists to
+(:func:`.._state.state_store.record_instance_start`) and persists to
 ``<state_dir>/instance_id``. This module owns how the RUNNER PROCESS
 adopts that id and how it testifies about its own death.
 
@@ -314,7 +314,7 @@ def write_exit_record(
     atomic_write_text(Path(state_dir) / EXIT_RECORD_FILENAME, json.dumps(record))
     if incarnation_id:
         try:
-            from .._state.state_db_incarnations import record_incarnation_exit
+            from .._state.state_store_incarnations import record_incarnation_exit
 
             record_incarnation_exit(
                 incarnation_id, reason=reason, code=int(code)

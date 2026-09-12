@@ -43,7 +43,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from scitex_agent_container._lifecycle._off_loop import run_blocking
-from scitex_agent_container._state.state_db_channel import (
+from scitex_agent_container._state.state_store_channel import (
     persist_event,
 )
 from scitex_agent_container.a2a._card import (

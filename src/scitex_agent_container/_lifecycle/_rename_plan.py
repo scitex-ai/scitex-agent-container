@@ -43,7 +43,7 @@ class Layout:
     ``$HOME`` afterwards CANNOT redirect them. A test that trusted that would
     look isolated while reading — and writing — the live fleet.
 
-    ``state_db.DEFAULT_DB_PATH`` was the third name in that list until
+    ``state_store.DEFAULT_DB_PATH`` was the third name in that list until
     2026-08-30, when it was deleted along with the ``state.db`` it addressed.
     It is dropped rather than left as an example, because an import-time
     hazard illustrated with a constant that no longer exists teaches the
@@ -52,7 +52,7 @@ class Layout:
 
     root: Path
 
-    #: ``state_db`` was a property here until 2026-08-29. It named
+    #: ``state_store`` was a property here until 2026-08-29. It named
     #: ``<root>/runtime/state.db``, and its only readers were the deleted
     #: ``_rename_db`` and the pid probe below. sac's ``init_schema`` issues no
     #: DDL at all, so the file it pointed at holds nothing a rename could
@@ -153,7 +153,7 @@ def _open_instance_pid(name: str) -> int | None:
     # ``list_active_instances`` already applies ``ended_at IS NULL`` and
     # orders by ``started_at DESC``, so only this function's two extra
     # conditions remain here: the name, and a pid that is actually recorded.
-    from .._state.state_db_instances import list_active_instances
+    from .._state.state_store_instances import list_active_instances
 
     try:
         rows = list_active_instances()
@@ -274,8 +274,8 @@ def _count_rows_everywhere(plan: "RenamePlan", old: str) -> dict[str, int]:
     act on. So the failure is caught and SAID, per counter, naming which half
     is missing rather than leaving the total quietly short.
     """
-    from .._state.state_db_grants_rename import count_grant_rename_rows
-    from .._state.state_db_instances_rename import count_instance_rename_rows
+    from .._state.state_store_grants_rename import count_grant_rename_rows
+    from .._state.state_store_instances_rename import count_instance_rename_rows
 
     counts: dict[str, int] = {}
     for label, counter in (

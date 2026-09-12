@@ -268,7 +268,7 @@ def _local_host() -> str:
     """
     # stx-allow: fallback (reason: an unresolvable hostname must not manufacture a cross-host mismatch that skips the whole fleet — "" makes the rule's other-host guard stand down, and the remote=1 guard still holds)
     try:
-        from .._state.state_db_hostname import resolve_host
+        from .._state.state_store_hostname import resolve_host
 
         return str(resolve_host(None))
     except Exception:
@@ -379,7 +379,7 @@ def reconcile_pass(
         probe_ran, present = _observe(config, snapshot, in_sif_fn)
         row = None
         if policy in MANAGED_POLICIES:
-            from .._state.state_db_instances import last_known_instance
+            from .._state.state_store_instances import last_known_instance
 
             row = last_known_instance(name)
 

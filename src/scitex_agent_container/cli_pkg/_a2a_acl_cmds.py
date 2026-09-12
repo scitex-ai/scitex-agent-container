@@ -3,7 +3,7 @@
 Extracted from :mod:`.a2a_group` (over the per-file cap) and registered
 onto it by :func:`register`, the same way :mod:`._host_sync` attaches to
 ``sac host``. Thin click wrappers over the cross-group ACL primitives in
-``_state.state_db_nodes`` (``grant_send`` / ``revoke_send`` /
+``_state.state_store_nodes`` (``grant_send`` / ``revoke_send`` /
 ``list_comms_grants``). Operators previously had to drop into a Python
 REPL to amend the comms-grants table — a footgun (silently granting too
 much on wrong argument order). The CLI makes it auditable and validates
@@ -12,7 +12,7 @@ the positional order at the Click layer.
 Imports happen inside the callbacks (not at module import) to keep the
 Click cold-start cheap: ``sac --help`` and tab-completion press should
 never load a database driver. The same lazy pattern used by
-``host_group`` / ``peer_group`` for state_db consumers.
+``host_group`` / ``peer_group`` for state_store consumers.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ def a2a_block(sender: str, target: str, note: str | None) -> None:
 def a2a_revoke(sender: str, target: str) -> None:
     """Revoke ``SENDER``'s permission to send messages to ``TARGET``.
 
-    Thin wrapper over ``_state.state_db_nodes.revoke_send`` — removes
+    Thin wrapper over ``_state.state_store_nodes.revoke_send`` — removes
     the single ``sender → target`` row in ``comms_grants``. No
     confirmation prompt: the operation is narrow (one row, one
     direction) and idempotent — revoking a non-existent grant prints
@@ -194,7 +194,7 @@ def a2a_revoke(sender: str, target: str) -> None:
             err=True,
         )
         raise SystemExit(2)
-    from .._state.state_db_nodes import revoke_send
+    from .._state.state_store_nodes import revoke_send
     from ._helpers import console
 
     removed = revoke_send(sender=sender, target=target)
@@ -214,7 +214,7 @@ def a2a_revoke(sender: str, target: str) -> None:
 def a2a_grants(as_json: bool) -> None:
     """List every row in the ``comms_grants`` table.
 
-    Thin wrapper over ``_state.state_db_nodes.list_comms_grants``.
+    Thin wrapper over ``_state.state_store_nodes.list_comms_grants``.
     Rows are emitted in insertion order with their audit ``note`` (if
     any). Empty table renders as ``(no grants)`` in rich mode and
     ``[]`` in JSON mode.
@@ -224,7 +224,7 @@ def a2a_grants(as_json: bool) -> None:
       $ sac a2a grants
       $ sac a2a grants --json | jq '.[] | select(.sender == "worker-a")'
     """
-    from .._state.state_db_nodes import list_comms_grants
+    from .._state.state_store_nodes import list_comms_grants
 
     rows = list_comms_grants()
     if as_json:

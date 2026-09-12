@@ -237,7 +237,7 @@ def pg_schema(_no_accidental_fleet_store_writes: None) -> Iterator[str]:
     Real ``os.environ`` save/restore, not ``monkeypatch`` — PA-306 forbids
     mocks, and the point is that the REAL resolver reads the REAL variable.
 
-    (``_state/test_state_db_verdict_dedup.py`` still carries its own copy of
+    (``_state/test_state_store_verdict_dedup.py`` still carries its own copy of
     this fixture, written before this shared one existed. It is the same
     code; consolidating it is a tidy-up for a PR that already touches that
     file, not for this one.)

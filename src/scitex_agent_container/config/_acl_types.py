@@ -16,7 +16,7 @@ the five clew capsule-isolation gaps:
 These are PURE declarations. Server-side enforcement reads the
 persisted values from the ``node_comms_policy`` table at ACL-check
 time (see :mod:`scitex_agent_container._listen._acl` and
-:mod:`scitex_agent_container._state.state_db_nodes`).
+:mod:`scitex_agent_container._state.state_store_nodes`).
 
 Defaults intentionally preserve pre-Phase-3 behaviour (everything
 ``"allow"`` / ``True`` / ``""``), so a spec that omits both

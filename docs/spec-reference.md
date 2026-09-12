@@ -413,7 +413,7 @@ pinned regex catches this early.
 | Field        | Description                                                                          |
 |--------------|--------------------------------------------------------------------------------------|
 | `a2a.host`   | Bind interface for the per-agent A2A sidecar (default `127.0.0.1`).                  |
-| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists in `state.db`, surfaces via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
+| `a2a.port`   | `auto` (default) — sac claims a free port from `~/.scitex/agent-container/config.yaml`'s `a2a.port_range` (default 19000-19999), persists it in the shared PostgreSQL store, and surfaces it via `sac agents list`. Set an explicit int (e.g. `7901`) to pin for a stable external URL. Set `null` to disable the sidecar entirely. **Most operators never touch this** — auto is the right default. |
 | `listen[]`   | LIST of side-port DECLARATIONS (NOT a single port override). Each item: `{port, proto, path, name, owner}`. `proto`: `tcp` (default) / `udp` / `unix`. Entries that fail validation (`tcp`/`udp` needs `port>0`; `unix` needs `path`) are silently dropped. **The container does NOT bind these — declarations only**, surfaced on the AgentCard for peers. The host-level `sac listen` server port (default 7878) is configured in `~/.scitex/agent-container/config.yaml` under `listen.port`, NOT here. |
 
 The per-agent sidecar binds the **same URL shape** as `sac listen`

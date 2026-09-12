@@ -58,7 +58,7 @@ def _remote_instance_status(name: str) -> dict | None:
     resolves rather than erroring.
     """
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r.get("name") == name]
         if not rows:

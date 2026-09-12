@@ -38,8 +38,8 @@ from ..._lifecycle.lifecycle import agent_stop
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.host_config import load as _load_host_config
-from ..._state.state_db import now_iso, record_instance_stop
-from ..._state.state_db_comms_nodes import unregister_comms_node
+from ..._state.state_store import now_iso, record_instance_stop
+from ..._state.state_store_comms_nodes import unregister_comms_node
 from ...config import load_config
 from ...config._resolve import resolve_with_prefix
 from .._helpers import agent_name_complete, console

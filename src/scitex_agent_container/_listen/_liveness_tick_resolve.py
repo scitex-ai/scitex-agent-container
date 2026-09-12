@@ -238,7 +238,7 @@ def _live_agent_pids() -> dict[str, int] | None:
     function never looked at their registry at all — which is precisely the
     absence-as-evidence confusion the ``None`` return exists to prevent."""
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = list_active_instances()
     except Exception as exc:  # stx-allow: fallback (registry unreadable → UNKNOWN, never "dead")

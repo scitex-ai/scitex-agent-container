@@ -71,7 +71,7 @@ def persist_acl_policy(config: Any) -> None:
     touched. ``AgentProxy`` kinds (no SDK, no inbound) are written too
     so ``read_comms_policy`` always finds a row for any started agent.
     """
-    from .._state.state_db_nodes import record_comms_policy
+    from .._state.state_store_nodes import record_comms_policy
     from ..config._group_resolver import all_named_groups, group_from_labels
 
     comms = config.comms
@@ -168,7 +168,7 @@ def enforce_spawn_gate(
             keeps the existing parent in-place, so restarts are allowed.)
     """
     from .._listen._acl import check_spawn
-    from .._state.state_db_nodes import record_lineage
+    from .._state.state_store_nodes import record_lineage
 
     if caller is None:
         caller = resolve_spawn_caller()

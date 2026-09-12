@@ -8,7 +8,7 @@ Three different questions need the same answer:
   this agent's ``.env``?* (the writer, and the only one with a side effect)
 * :mod:`._cct_token_collision` — *do two specs take the SAME bot?* (the
   fleet-wide static census)
-* the ownership ledger (:mod:`.._state.state_db_token_owner`) — *who holds
+* the ownership ledger (:mod:`.._state.state_store_token_owner`) — *who holds
   this bot right now?*
 
 They used to be able to disagree, because only the first one existed and the

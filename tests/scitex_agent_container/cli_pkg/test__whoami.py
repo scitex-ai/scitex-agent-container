@@ -77,8 +77,6 @@ def _blank_env(tmp_path: Path, **overrides) -> dict:
         "SCITEX_AGENT_CONTAINER_LISTEN_BASE_URL": None,
         "SAC_LISTEN_BEARER": None,
         "SCITEX_AGENT_CONTAINER_LISTEN_BEARER": None,
-        "SAC_STATE_DB": None,
-        "SCITEX_AGENT_CONTAINER_STATE_DB": None,
         "APPTAINER_CONTAINER": None,
         "SINGULARITY_CONTAINER": None,
         "SCITEX_AGENT_CONTAINER_YAML_DIRS": None,

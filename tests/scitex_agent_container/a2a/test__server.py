@@ -704,7 +704,7 @@ def _channel_rows(sql: str) -> list:
     which no longer exists. The queries are unchanged apart from the table
     name and the placeholder style.
     """
-    from scitex_agent_container._state.state_db_channel_store import (
+    from scitex_agent_container._state.state_store_channel_store import (
         new_channel_connection,
     )
 

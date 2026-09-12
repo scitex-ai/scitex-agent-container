@@ -99,7 +99,7 @@ sac image switch X
 
 | Command | Purpose |
 |---|---|
-| `sac db clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `db clean` replaces the legacy `registry clean`. |
+| `sac store clean / migrate / tick` | Maintain the instance registry: sweep dead rows, import a legacy JSON registry, run the sweep silently for cron. `db clean` replaces the legacy `registry clean`. |
 | `sac registry reconcile` | Reconcile singleton agent placement across the fleet. |
 | `sac event ingest` | Append a Claude Code hook event to the per-agent ring buffer. |
 

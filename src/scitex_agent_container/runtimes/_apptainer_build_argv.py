@@ -236,9 +236,11 @@ def build_run_argv(
         # No `--env HOME=...`: apptainer protects HOME from --env override
         # and inherits the host /etc/passwd entry, so HOME points at a real
         # writable home automatically.
-        "--env",
-        "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db",
-        # AND ITS SIBLING, which was missing and blinded fleet liveness.
+        # The retired per-agent SQLite path is deliberately not injected.
+        # State access goes through SCITEX_STORE_DSN/scitex_dev.store.
+        # The runtime-root binding below remains necessary for heartbeat files.
+        # It was once the database path's sibling and was missing, blinding
+        # fleet liveness.
         #
         # `beat_is_recent(name)` resolves `runtime_base_dir() / name /
         # heartbeat.json`, and `runtime_base_dir()` honours this env var

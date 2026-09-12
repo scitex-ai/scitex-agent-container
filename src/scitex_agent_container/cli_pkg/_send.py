@@ -179,7 +179,7 @@ def send_to_agent(
         raise ValueError("either prompt or key is required")
 
     from .._network.peer import PeerError
-    from .._state.state_db import _resolve_host
+    from .._state.state_store import _resolve_host
     from ._send_broker import (
         PeerLookupUnavailable,
         resolve_send_endpoint_via_host,

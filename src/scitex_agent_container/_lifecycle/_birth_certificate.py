@@ -171,7 +171,7 @@ def write_birth_certificate(
         )
         snapshot = compiled_launch_snapshot(config, image_identity=image_identity)
         payload = json.dumps(snapshot, ensure_ascii=False, default=str)
-        from .._state.state_db_incarnations import record_incarnation_birth
+        from .._state.state_store_incarnations import record_incarnation_birth
 
         record_incarnation_birth(
             incarnation_id,

@@ -37,7 +37,7 @@ from scitex_agent_container.cli_pkg._registry_register import registry_register
 def db_path(tmp_path: Path, env_save_restore) -> Path:
     p = tmp_path / "state.db"
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     yield p
@@ -60,7 +60,7 @@ def test_registry_register_writes_comms_nodes_row_with_given_name(
         ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     assert result.exit_code == 0 and lookup_comms_node(name="lead") is not None
 
@@ -75,7 +75,7 @@ def test_registry_register_records_host_and_port_verbatim(db_path: Path, pg_sche
         ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["host"] == "lead-host" and info["a2a_port"] == 7878
@@ -96,7 +96,7 @@ def test_registry_register_reports_this_host_as_the_origin(
         ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["source_host"] == socket.gethostname()
@@ -125,7 +125,7 @@ def test_explicit_source_host_relays_without_claiming_the_name(
         ],
     )
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     assert result.exit_code == 0 and lookup_comms_node(name="peer-2") is not None
 
@@ -143,7 +143,7 @@ def test_registry_register_after_resolves_via_resolve_node_host(
         ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Act
-    from scitex_agent_container._state.state_db_nodes import resolve_node_host
+    from scitex_agent_container._state.state_store_nodes import resolve_node_host
 
     info = resolve_node_host(name="lead")
     # Assert
@@ -171,7 +171,7 @@ def test_registry_register_idempotent_when_same_host_and_port(
         ["--name", "lead", "--host", "lead-host", "--a2a-port", "7878"],
     )
     # Assert
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
 
     rows = [r for r in list_comms_nodes() if r["name"] == "lead"]
     assert second.exit_code == 0 and len(rows) == 1
@@ -254,7 +254,7 @@ def test_registry_register_does_not_overwrite_existing_row_on_conflict(
         ],
     )
     # Act
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     # Assert — original row is intact

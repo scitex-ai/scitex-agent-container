@@ -42,7 +42,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from scitex_agent_container._lifecycle._off_loop import run_blocking
-from scitex_agent_container._state.state_db_channel import (
+from scitex_agent_container._state.state_store_channel import (
     list_since_id,
     list_undelivered,
     mark_delivered,

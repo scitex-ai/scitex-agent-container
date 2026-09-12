@@ -76,7 +76,7 @@ def _registry_active_on(name: str, host: str) -> bool:
     """Default bound-host liveness oracle: True iff the lead-side
     ``instances`` table holds an active row for ``name`` on ``host``.
 
-    Reads :func:`state_db.list_active_instances` (host-unfiltered) and
+    Reads :func:`state_store.list_active_instances` (host-unfiltered) and
     matches name+host exactly. Any failure (state.db missing, schema
     mismatch, OS error) yields False — "no evidence of liveness" —
     which is the conservative answer for the caller
@@ -89,7 +89,7 @@ def _registry_active_on(name: str, host: str) -> bool:
     # and the start path proceeds; this is the conservative answer that
     # never blocks)
     try:
-        from ..._state.state_db import list_active_instances
+        from ..._state.state_store import list_active_instances
 
         rows = list_active_instances(host=None)
     except Exception:

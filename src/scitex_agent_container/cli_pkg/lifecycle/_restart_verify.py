@@ -14,7 +14,7 @@ IDENTITY-OF-RUN
 ---------------
 
 ``<runtime-dir>/<agent>/instance_id`` is a uuid7 minted by
-``_state.state_db.record_instance_start`` at launch, written by
+``_state.state_store.record_instance_start`` at launch, written by
 ``_lifecycle._instances.record_local_instance`` (synchronously, before
 ``agent_start`` returns) and deleted by ``end_local_instance`` on stop.
 It therefore names THE RUN, not the agent: a cycled agent has a new one,
@@ -197,7 +197,7 @@ def recorded_session_name(
 ) -> str | None:
     """The multiplexer session ``name``'s newest ``instances`` row names.
 
-    ``instances.screen``, read through :func:`_state.state_db
+    ``instances.screen``, read through :func:`_state.state_store
     .last_known_instance` so an ENDED row still answers — a row that says
     "stopped" while its session is demonstrably alive is precisely the
     disagreement this module has to be able to see.
@@ -218,7 +218,7 @@ def recorded_session_name(
     to have left behind — a host-dependent test either way. Never raises.
     """
     try:
-        from ..._state.state_db import last_known_instance
+        from ..._state.state_store import last_known_instance
 
         row = last_known_instance(name)
     except Exception:  # stx-allow: fallback (an unreadable registry is "we could not look", never a claim about the session)

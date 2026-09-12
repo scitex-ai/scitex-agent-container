@@ -1,6 +1,6 @@
 """Tests for :mod:`scitex_agent_container._state.host_config` ssh ControlMaster wiring.
 
-Conventions (mirroring test_dispatch_ledger.py / test_state_db_turns_*.py):
+Conventions (mirroring test_dispatch_ledger.py / test_state_store_turns_*.py):
 
   * One assertion per test (STX-TQ007). Related invariants collapse
     into ``pytest.parametrize``.

@@ -23,7 +23,7 @@ place, the rows survive the restart in ``comms_nodes`` and
 DESIGN
 ------
 
-* **Idempotent**: :func:`_state.state_db_nodes.register_comms_node`
+* **Idempotent**: :func:`_state.state_store_nodes.register_comms_node`
   is an UPSERT keyed on ``name``. Re-running on every listen start
   bumps ``updated_at`` for existing rows; it never duplicates.
 * **Best-effort**: every failure (port parse, DB error, conflict) is
@@ -148,7 +148,7 @@ def persist_discovered_self_peers(
         return 0
 
     try:
-        from .._state.state_db_nodes import (
+        from .._state.state_store_nodes import (
             CommsNodeConflictError,
             register_comms_node,
         )

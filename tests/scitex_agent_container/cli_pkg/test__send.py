@@ -114,14 +114,14 @@ def fresh_lead_creds_path(tmp_path) -> Path:
 
 
 @pytest.fixture
-def state_db_env(tmp_path):
+def state_store_env(tmp_path):
     saved_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     saved_host = os.environ.get("SAC_HOST")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(tmp_path / "state.db")
     os.environ["SAC_HOST"] = "lead-host"
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -133,19 +133,19 @@ def state_db_env(tmp_path):
             os.environ.pop("SAC_HOST", None)
         else:
             os.environ["SAC_HOST"] = saved_host
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _seed_local(name: str, a2a_port: int) -> None:
     """Record an active instance row on the current host."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name=name, host="lead-host", a2a_port=a2a_port)
 
 
 def _seed_remote(name: str, peer: str, a2a_port: int) -> None:
     """Record an active instance row on a peer host."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name=name, host=peer, a2a_port=a2a_port)
 
@@ -155,7 +155,7 @@ def _seed_remote(name: str, peer: str, a2a_port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_returns_dict_with_status_field(state_db_env, fresh_lead_creds_path):
+def test_agent_send_returns_dict_with_status_field(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
 
@@ -172,7 +172,7 @@ def test_agent_send_returns_dict_with_status_field(state_db_env, fresh_lead_cred
 
 
 def test_agent_send_status_ok_on_successful_response(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -190,7 +190,7 @@ def test_agent_send_status_ok_on_successful_response(
 
 
 def test_agent_send_returns_response_text_field_on_success(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -212,7 +212,7 @@ def test_agent_send_returns_response_text_field_on_success(
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_status_error_when_agent_not_running(state_db_env):
+def test_agent_send_status_error_when_agent_not_running(state_store_env):
     # Arrange — no rows seeded
     # Act
     result = send_to_agent("ghost", "hi")
@@ -220,7 +220,7 @@ def test_agent_send_status_error_when_agent_not_running(state_db_env):
     assert result["status"] == "error"
 
 
-def test_agent_send_error_message_when_agent_not_running(state_db_env):
+def test_agent_send_error_message_when_agent_not_running(state_store_env):
     # Arrange
     # Act
     result = send_to_agent("ghost", "hi")
@@ -233,7 +233,7 @@ def test_agent_send_error_message_when_agent_not_running(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_status_timeout_on_slow_sidecar(state_db_env, fresh_lead_creds_path):
+def test_agent_send_status_timeout_on_slow_sidecar(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -255,7 +255,7 @@ def test_agent_send_status_timeout_on_slow_sidecar(state_db_env, fresh_lead_cred
 
 
 def test_agent_send_timeout_error_message_quotes_timeout_value(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -282,7 +282,7 @@ def test_agent_send_timeout_error_message_quotes_timeout_value(
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_prompt_and_key_mutually_exclusive(state_db_env):
+def test_agent_send_prompt_and_key_mutually_exclusive(state_store_env):
     # Arrange
     # Act
     raised: Exception | None = None
@@ -294,7 +294,7 @@ def test_agent_send_prompt_and_key_mutually_exclusive(state_db_env):
     assert isinstance(raised, ValueError)
 
 
-def test_agent_send_neither_prompt_nor_key_raises_value_error(state_db_env):
+def test_agent_send_neither_prompt_nor_key_raises_value_error(state_store_env):
     # Arrange
     name = "alpha"
     # Act
@@ -312,7 +312,7 @@ def test_agent_send_neither_prompt_nor_key_raises_value_error(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_send_cross_host_routes_through_ssh(state_db_env, fresh_lead_creds_path):
+def test_agent_send_cross_host_routes_through_ssh(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_remote("beta", peer="peer-x", a2a_port=18888)
     captured: dict = {}
@@ -342,7 +342,7 @@ def test_agent_send_cross_host_routes_through_ssh(state_db_env, fresh_lead_creds
     assert captured["url"] == "ssh://peer-x:18888/v1/turn"
 
 
-def test_agent_send_local_host_uses_loopback_url(state_db_env, fresh_lead_creds_path):
+def test_agent_send_local_host_uses_loopback_url(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     captured: dict = {}
@@ -364,7 +364,7 @@ def test_agent_send_local_host_uses_loopback_url(state_db_env, fresh_lead_creds_
 
 
 def test_agent_send_includes_response_metadata_on_success(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -381,9 +381,9 @@ def test_agent_send_includes_response_metadata_on_success(
     assert result["response_metadata"]["name"] == "alpha"
 
 
-def test_agent_send_error_when_row_has_no_a2a_port(state_db_env):
+def test_agent_send_error_when_row_has_no_a2a_port(state_store_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="alpha", host="lead-host", a2a_port=None)
     # Act
@@ -393,7 +393,7 @@ def test_agent_send_error_when_row_has_no_a2a_port(state_db_env):
 
 
 def test_agent_send_error_when_sidecar_returns_non_200(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -428,14 +428,14 @@ def test_agent_send_error_when_sidecar_returns_non_200(
 
 def _record_heartbeat(name: str, state: str, *, pid=None, ts=None) -> None:
     """Append one real ``heartbeats`` row for ``name`` (no mocks)."""
-    from scitex_agent_container._state.state_db import record_heartbeat
+    from scitex_agent_container._state.state_store import record_heartbeat
 
     record_heartbeat(name=name, host="lead-host", pid=pid, state=state, ts=ts)
 
 
 def _seed_local_with_pid(name: str, a2a_port: int, pid: int) -> None:
     """Record an active local instance row carrying a specific pid."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name=name, host="lead-host", pid=pid, a2a_port=a2a_port)
 
@@ -458,7 +458,7 @@ def _real_listener() -> Iterator[int]:
         srv.close()
 
 
-def test_agent_send_timeout_includes_diagnosis(state_db_env, fresh_lead_creds_path):
+def test_agent_send_timeout_includes_diagnosis(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -479,7 +479,7 @@ def test_agent_send_timeout_includes_diagnosis(state_db_env, fresh_lead_creds_pa
     assert "diagnosis" in result
 
 
-def test_agent_send_error_includes_diagnosis(state_db_env, fresh_lead_creds_path):
+def test_agent_send_error_includes_diagnosis(state_store_env, fresh_lead_creds_path):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
     from scitex_agent_container._network.peer import PeerError
@@ -501,7 +501,7 @@ def test_agent_send_error_includes_diagnosis(state_db_env, fresh_lead_creds_path
 
 
 def test_agent_send_diagnosis_reports_registry_running(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -523,7 +523,7 @@ def test_agent_send_diagnosis_reports_registry_running(
     assert result["diagnosis"]["registry_status"] == "running"
 
 
-def test_agent_send_not_running_diagnosis_reports_stopped(state_db_env):
+def test_agent_send_not_running_diagnosis_reports_stopped(state_store_env):
     # Arrange — no rows seeded
     # Act
     result = send_to_agent("ghost", "hi")
@@ -533,7 +533,7 @@ def test_agent_send_not_running_diagnosis_reports_stopped(state_db_env):
 
 def test_agent_send_diagnosis_reports_busy_heartbeat_state(
     pg_schema: str,
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     _seed_local("alpha", a2a_port=12345)
@@ -558,7 +558,7 @@ def test_agent_send_diagnosis_reports_busy_heartbeat_state(
 
 def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
     pg_schema: str,
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — real listener so the port is reachable and the heartbeat
     # state (working) is what drives likely_causes.
@@ -585,7 +585,7 @@ def test_agent_send_diagnosis_busy_likely_cause_says_in_progress(
 
 def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
     pg_schema: str,
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — real listener (port reachable) but heartbeat far older
     # than the staleness window, so "stale/dead" is the deciding factor.
@@ -611,7 +611,7 @@ def test_agent_send_diagnosis_stale_heartbeat_likely_cause_says_dead(
 
 
 def test_agent_send_diagnosis_dead_pid_reports_pid_not_alive(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — a pid that is essentially guaranteed not to exist.
     dead_pid = 2_147_483_646
@@ -635,7 +635,7 @@ def test_agent_send_diagnosis_dead_pid_reports_pid_not_alive(
 
 
 def test_agent_send_diagnosis_port_unreachable_when_nothing_listening(
-    state_db_env, fresh_lead_creds_path, dead_port
+    state_store_env, fresh_lead_creds_path, dead_port
 ):
     # Arrange — an a2a_port no process is listening on. The port is bound
     # WITHOUT listening (so the connect refuses) and HELD for the test (so
@@ -660,7 +660,7 @@ def test_agent_send_diagnosis_port_unreachable_when_nothing_listening(
 
 
 def test_agent_send_diagnosis_port_reachable_when_listener_bound(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — bind a real listener so the diagnosis sees a live port.
     import socket as _socket
@@ -722,7 +722,7 @@ def _exploding_post_turn() -> Iterator[list]:
 
 
 def test_agent_send_nonblocking_returns_dispatched_status(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — real bound listener so the sidecar port is reachable.
     with _real_listener() as port:
@@ -735,7 +735,7 @@ def test_agent_send_nonblocking_returns_dispatched_status(
 
 
 def test_agent_send_nonblocking_does_not_fire_blocking_post(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     with _real_listener() as port:
@@ -748,7 +748,7 @@ def test_agent_send_nonblocking_does_not_fire_blocking_post(
 
 
 def test_agent_send_nonblocking_payload_carries_track_command(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     with _real_listener() as port:
@@ -763,7 +763,7 @@ def test_agent_send_nonblocking_payload_carries_track_command(
 
 
 def test_agent_send_nonblocking_track_command_argv_is_a_list(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     with _real_listener() as port:
@@ -776,7 +776,7 @@ def test_agent_send_nonblocking_track_command_argv_is_a_list(
 
 
 def test_agent_send_nonblocking_reports_delivered_subscriber_count(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange
     with _real_listener() as port:
@@ -789,7 +789,7 @@ def test_agent_send_nonblocking_reports_delivered_subscriber_count(
 
 
 def test_agent_send_nonblocking_fails_loud_when_port_unreachable(
-    state_db_env, fresh_lead_creds_path, dead_port
+    state_store_env, fresh_lead_creds_path, dead_port
 ):
     # Arrange — a port bound but never listened on, and HELD, so nothing is
     # listening on it and nothing can start.
@@ -802,7 +802,7 @@ def test_agent_send_nonblocking_fails_loud_when_port_unreachable(
 
 
 def test_agent_send_nonblocking_port_unreachable_error_carries_diagnosis(
-    state_db_env, fresh_lead_creds_path, dead_port
+    state_store_env, fresh_lead_creds_path, dead_port
 ):
     # Arrange
     _seed_local("alpha", a2a_port=dead_port())
@@ -814,7 +814,7 @@ def test_agent_send_nonblocking_port_unreachable_error_carries_diagnosis(
 
 
 def test_agent_send_nonblocking_fails_loud_when_dead_pid(
-    state_db_env, fresh_lead_creds_path
+    state_store_env, fresh_lead_creds_path
 ):
     # Arrange — a recorded pid that is essentially guaranteed not to exist.
     dead_pid = 2_147_483_646
@@ -826,7 +826,7 @@ def test_agent_send_nonblocking_fails_loud_when_dead_pid(
     assert result["status"] == "error"
 
 
-def test_agent_send_nonblocking_not_running_still_errors(state_db_env):
+def test_agent_send_nonblocking_not_running_still_errors(state_store_env):
     # Arrange — no rows seeded (mode-independent failure, before dispatch).
     # Act
     result = send_to_agent("ghost", "hi")
@@ -851,9 +851,9 @@ def test_agent_send_nonblocking_not_running_still_errors(state_db_env):
 # to reproduce the split-brain, and a REAL bound listener so the
 # reachability gate sees a live sidecar — no mocks.
 #
-# They take ``pg_schema`` on top of ``state_db_env`` because the claim ledger
+# They take ``pg_schema`` on top of ``state_store_env`` because the claim ledger
 # moved to PostgreSQL on 2026-08-28. It is requested on these three tests
-# rather than folded into ``state_db_env``, which the rest of this module
+# rather than folded into ``state_store_env``, which the rest of this module
 # shares: those tests never touch the allocator, and making the whole module
 # depend on a database would skip all of agent_send's coverage on a host that
 # has none.
@@ -868,7 +868,7 @@ def _seed_port_claim(name: str, port: int) -> None:
 
 
 def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
-    state_db_env, fresh_lead_creds_path, pg_schema
+    state_store_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only a durable allocator claim on a
     # REAL bound port (the post-restart split-brain state).
@@ -882,7 +882,7 @@ def test_agent_send_reaches_agent_with_only_allocator_claim_nonblocking(
 
 
 def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
-    state_db_env, fresh_lead_creds_path, pg_schema
+    state_store_env, fresh_lead_creds_path, pg_schema
 ):
     # Arrange — NO instances row; only an allocator claim. The blocking
     # POST must target the CLAIMED port's loopback /v1/turn.
@@ -901,7 +901,7 @@ def test_agent_send_allocator_claim_url_uses_claimed_port_blocking(
 
 
 def test_agent_send_allocator_claim_diagnosis_reports_running(
-    state_db_env, fresh_lead_creds_path, dead_port, pg_schema
+    state_store_env, fresh_lead_creds_path, dead_port, pg_schema
 ):
     # Arrange — only an allocator claim (no row) on a port nothing is
     # listening on, so the dispatch fails its reachability gate and we
@@ -917,7 +917,7 @@ def test_agent_send_allocator_claim_diagnosis_reports_running(
     assert result["diagnosis"]["registry_status"] == "running"
 
 
-def test_agent_send_genuinely_absent_still_reports_not_running(state_db_env):
+def test_agent_send_genuinely_absent_still_reports_not_running(state_store_env):
     # Arrange — neither a row NOR a claim: the agent is genuinely gone.
     # The split-brain fix must not paper over a real "not running".
     # Act

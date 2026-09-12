@@ -110,7 +110,7 @@ misses ones that do.
 ## The ownership ledger
 
 At every start each agent records its claim into the per-host PostgreSQL store
-`cct_token_owner` (`_state/state_db_token_owner.py`):
+`cct_token_owner` (`_state/state_store_token_owner.py`):
 
 ```
 (token_fp, host, agent)  ->  pid, started_at, source, slot

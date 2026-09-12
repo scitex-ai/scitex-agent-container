@@ -31,13 +31,13 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state.state_db_blocks import has_block
-from scitex_agent_container._state.state_db_channel import list_undelivered
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_blocks import has_block
+from scitex_agent_container._state.state_store_channel import list_undelivered
+from scitex_agent_container._state.state_store_nodes import (
     has_grant,
     record_lineage,
 )
-from scitex_agent_container._state.state_db_pending_approval import (
+from scitex_agent_container._state.state_store_pending_approval import (
     has_pending_prompt,
 )
 
@@ -107,7 +107,7 @@ def test_record_pending_prompt_first_call_returns_true(
     isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db_pending_approval import (
+    from scitex_agent_container._state.state_store_pending_approval import (
         record_pending_prompt,
     )
 
@@ -123,7 +123,7 @@ def test_record_pending_prompt_dedupes_second_call(
     isolated_state: Path, pg_schema: str,
 ) -> None:
     # Arrange — the second record for the same pair must NOT re-prompt.
-    from scitex_agent_container._state.state_db_pending_approval import (
+    from scitex_agent_container._state.state_store_pending_approval import (
         record_pending_prompt,
     )
 
@@ -194,7 +194,7 @@ def test_unblock_clears_the_pending_prompt(isolated_state: Path, pg_schema: str)
     from scitex_agent_container._state.grant_flush import (
         unblock_and_clear_pending,
     )
-    from scitex_agent_container._state.state_db_pending_approval import (
+    from scitex_agent_container._state.state_store_pending_approval import (
         record_pending_prompt,
     )
 
@@ -246,7 +246,7 @@ def test_block_clears_the_pending_prompt(isolated_state: Path, pg_schema: str) -
     from scitex_agent_container._state.grant_flush import (
         block_and_clear_pending,
     )
-    from scitex_agent_container._state.state_db_pending_approval import (
+    from scitex_agent_container._state.state_store_pending_approval import (
         record_pending_prompt,
     )
 

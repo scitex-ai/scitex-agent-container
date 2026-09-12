@@ -170,7 +170,7 @@ def _dispatch_remote_start(
     from ..._state._remote_sac_hint import remote_sac_not_found_hint
     from ..._state.host_config import build_ssh_argv
     from ..._state.host_config import load as _load_host_config
-    from ..._state.state_db import record_instance_start
+    from ..._state.state_store import record_instance_start
 
     peers_map = _load_host_config().peers
     # NOTE: the remote process's state root (``SCITEX_DIR=<registry root>``)
@@ -245,7 +245,7 @@ def _dispatch_remote_start(
     # for and no window in which a just-placed agent is unaddressable.
     if bound is not None:
         try:
-            from ..._state.state_db_nodes import register_comms_node
+            from ..._state.state_store_nodes import register_comms_node
 
             register_comms_node(
                 name=name,
@@ -422,7 +422,7 @@ def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
     host, a2a_port, started_at, ended_at, ...). Callers care about
     ``host`` and ``a2a_port`` mostly.
 
-    Resolution chain for current_host matches ``state_db._resolve_host``
+    Resolution chain for current_host matches ``state_store._resolve_host``
     (env override → ``host.canonical`` → ``host.aliases`` → ``hostname -s``),
     so a row written under one alias is matched when the same alias is
     set on this run.
@@ -432,7 +432,7 @@ def lookup_remote_peer(name: str) -> tuple[str, dict] | None:
     instances row is a legitimate "not running" signal, but a missing
     database when one was expected is a configuration error.
     """
-    from ..._state.state_db import _resolve_host, list_active_instances
+    from ..._state.state_store import _resolve_host, list_active_instances
 
     rows = list_active_instances()
     matching = [r for r in rows if r.get("name") == name]

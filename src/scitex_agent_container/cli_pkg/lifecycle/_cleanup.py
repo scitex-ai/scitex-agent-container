@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""``sac db clean`` (a.k.a. legacy ``clean-registry``) — drop stale entries."""
+"""``sac store clean`` (a.k.a. legacy ``clean-registry``) — drop stale entries."""
 
 from __future__ import annotations
 

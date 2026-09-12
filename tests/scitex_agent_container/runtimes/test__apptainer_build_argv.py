@@ -271,22 +271,6 @@ def test_build_run_argv_omits_agent_env_file_when_absent(tui_config, tmp_path) -
     assert str(state_dir / "home" / ".env") not in argv
 
 
-def test_build_run_argv_env_file_precedes_curated_env(tui_config, tmp_path) -> None:
-    # Arrange — .env present; a curated --env (state-db) must be emitted
-    # AFTER the --env-file so it wins on conflict (precedence by position).
-    state_dir = tmp_path / "state"
-    (state_dir / "home").mkdir(parents=True, exist_ok=True)
-    (state_dir / "home" / ".env").write_text("FOO=bar\n", encoding="utf-8")
-    # Act
-    argv = build_run_argv(
-        tui_config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
-    )
-    # Assert
-    assert argv.index("--env-file") < argv.index(
-        "SCITEX_AGENT_CONTAINER_STATE_DB=/state/state.db"
-    )
-
-
 # ---------------------------------------------------------------------------
 # credentials_file_bind — writable single-source-of-truth mount
 # ---------------------------------------------------------------------------

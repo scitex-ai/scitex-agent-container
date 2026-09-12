@@ -30,9 +30,9 @@ at ``agent_start``; every gate then trusts it. So authority became a
 function of *where an agent had previously been started* rather than of
 what its spec says:
 
-* **Inside a container** ``$SCITEX_AGENT_CONTAINER_STATE_DB`` points at
-  ``/state/<name>/state.db`` — a private overlay shard holding only what
-  that one agent wrote, and no ``node_comms_policy`` row for anybody.
+* **Inside a container** the retired SQLite cache was a private overlay shard
+  holding only what that one agent wrote, and no ``node_comms_policy`` row for
+  anybody.
   Measured on scitex-compute-04, 2026-08-11, from inside this very
   container: ``resolve_group_names`` returned ``[]`` for *every* agent
   including itself, while the spec on the same filesystem, resolvable in

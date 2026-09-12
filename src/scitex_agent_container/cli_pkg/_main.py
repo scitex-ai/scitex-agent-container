@@ -69,7 +69,7 @@ COMMAND_CATEGORIES = [
         "Network & Peer",
         ["host", "peer", "a2a", "fleet", "listen", "gui"],
     ),
-    ("Registry & Events", ["db", "registry", "event"]),
+    ("Registry & Events", ["store", "registry", "event"]),
     ("Build & Install", ["image", "installation"]),
     ("Host hygiene", ["worktree"]),
     (
@@ -101,7 +101,7 @@ class _MainGroup(LazyGroup):
         # Noun groups
         "agents": f"{_PKG}.agent_group:agent_group",
         "subagent": f"{_PKG}.subagent_group:subagent_group",
-        "db": f"{_PKG}.db_group:db_group",
+        "store": f"{_PKG}.store_group:store_group",
         "dev": f"{_PKG}.dev_group:dev_group",
         "host": f"{_PKG}.host_group:host_group",
         "registry": f"{_PKG}.registry_group:registry_group",
@@ -248,10 +248,10 @@ class _MainGroup(LazyGroup):
     LAZY_SHORT_HELPS = {
         "agents": "Agent lifecycle, status, introspection, and snapshots.",
         "accounts": "Inspect provider accounts and manage Claude credentials.",
-        "db": "Inspect and maintain the sac state database (state.db).",
+        "store": "Inspect and maintain the shared sac state store.",
         "dev": "Developer / maintainer plumbing (CI secrets, etc.).",
         "host": "Local host identity and peer routing for sac.",
-        "registry": "Registry maintenance — folded into ``sac db`` (F-CS11).",
+        "registry": "Registry maintenance — folded into ``sac store`` (F-CS11).",
         "event": "Event log operations: ingest hook events into the per-agent ring buffer.",
         "image": "Container image operations: build the runtime base image.",
         "skills": "Agent-facing skills bundled with scitex-agent-container.",
@@ -310,7 +310,7 @@ class _MainGroup(LazyGroup):
         "ingest-hook-event": (f"{_PKG}.hook_cmds:hook_event", "sac event ingest"),
         # Registry — ``registry clean`` is now ``db clean`` (F-CS11 phase 5);
         # send the top-level alias straight there to avoid double-redirect.
-        "clean-registry": (f"{_PKG}.lifecycle:cleanup", "sac db clean"),
+        "clean-registry": (f"{_PKG}.lifecycle:cleanup", "sac store clean"),
         "reconcile-singletons": (
             f"{_PKG}.priority_cmds:singleton_reconcile",
             "sac registry reconcile",

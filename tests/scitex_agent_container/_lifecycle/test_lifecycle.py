@@ -565,12 +565,12 @@ def test_agent_start_launches_when_liveness_verifier_returns_false(
 
 
 def test_verify_real_liveness_default_returns_true_for_recorded_instance(
-    tmp_path: Path, isolated_state_db: Path
+    tmp_path: Path, isolated_state_store: Path
 ) -> None:
     # Arrange — write a real instances row and call the default verifier
     # against it.
     from scitex_agent_container._lifecycle._start import _verify_real_liveness
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="alpha", host="h", a2a_port=19111)
     cfg = AgentConfig(name="alpha")
@@ -581,7 +581,7 @@ def test_verify_real_liveness_default_returns_true_for_recorded_instance(
 
 
 def test_verify_real_liveness_default_returns_false_when_no_row(
-    tmp_path: Path, isolated_state_db: Path
+    tmp_path: Path, isolated_state_store: Path
 ) -> None:
     # Arrange — fresh isolated state.db with no rows.
     from scitex_agent_container._lifecycle._start import _verify_real_liveness
@@ -630,11 +630,11 @@ def test_verify_real_liveness_ignores_rows_for_other_agents(
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_store(tmp_path: Path) -> Iterator[Path]:
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (explicit
     save/restore).
 
-    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_db`` read this
+    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_store`` read this
     variable at import into a module-level ``DEFAULT_DB_PATH`` until
     2026-08-30, and reloading was how a fixture made that constant follow the
     env it had just set. The constant is deleted with the storage engine, and
@@ -646,7 +646,7 @@ def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -686,10 +686,13 @@ def _force_restart_running_agent(
 
 
 def test_agent_start_force_restart_records_single_active_instance_row(
-    pg_schema: str, tmp_path: Path, registry: Registry, isolated_state_db: Path
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+    isolated_state_store: Path,
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     # Act
     _force_restart_running_agent(tmp_path, registry)
@@ -699,7 +702,10 @@ def test_agent_start_force_restart_records_single_active_instance_row(
 
 
 def test_agent_start_force_restart_records_non_none_a2a_port(
-    pg_schema: str, tmp_path: Path, registry: Registry, isolated_state_db: Path
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+    isolated_state_store: Path,
 ) -> None:
     """Regression: before the fix, the ``--force`` ``agent_stop`` released
     the port claim that the line-249 resolve had inserted, so
@@ -707,7 +713,7 @@ def test_agent_start_force_restart_records_non_none_a2a_port(
     ``a2a_port=None`` — breaking ``/v1/turn`` routing even though the
     sidecar bound. The post-force-stop re-resolve keeps it non-None."""
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     # Act
     _force_restart_running_agent(tmp_path, registry)
@@ -717,14 +723,17 @@ def test_agent_start_force_restart_records_non_none_a2a_port(
 
 
 def test_agent_start_force_restart_instances_port_matches_claim(
-    pg_schema: str, tmp_path: Path, registry: Registry, isolated_state_db: Path
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+    isolated_state_store: Path,
 ) -> None:
     """After a force restart the ``instances`` row a2a_port must equal the
     live ``a2a_ports`` claim — the two tables stay consistent so ``sac
     listen`` / ``/v1/turn`` agree on the port."""
     # Arrange
     from scitex_agent_container._state.port_allocator import get_port
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     # Act
     _force_restart_running_agent(tmp_path, registry)
@@ -2024,7 +2033,7 @@ def test_agent_restart_warns_about_still_running_previous_runtime(
 
 
 def test_agent_status_unknown_raises(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_store: Path
 ) -> None:
     # Arrange — empty file registry AND an isolated empty state.db, so
     # neither the local registry nor the cross-host instances fallback
@@ -2039,13 +2048,13 @@ def test_agent_status_unknown_raises(
 
 
 def test_agent_status_resolves_remote_agent_from_instances_row(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_store: Path
 ) -> None:
     # Arrange — a remote-dispatched agent has NO local file-registry
     # entry; its row lives only in the instances table (remote=1, peer
     # host, peer-resolved bound_port). Status must resolve it instead of
     # raising "not found".
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(
         name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
@@ -2057,10 +2066,10 @@ def test_agent_status_resolves_remote_agent_from_instances_row(
 
 
 def test_agent_status_remote_row_reports_bound_port(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_store: Path
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(
         name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
@@ -2072,10 +2081,10 @@ def test_agent_status_remote_row_reports_bound_port(
 
 
 def test_agent_status_remote_row_marks_remote_true(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_store: Path
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(
         name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"
@@ -2087,10 +2096,10 @@ def test_agent_status_remote_row_marks_remote_true(
 
 
 def test_agent_status_remote_row_reports_spawned_by(
-    tmp_path: Path, registry: Registry, isolated_state_db: Path
+    tmp_path: Path, registry: Registry, isolated_state_store: Path
 ) -> None:
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(
         name="clew", host="spartan", bound_port=19123, remote=True, spawned_by="lead"

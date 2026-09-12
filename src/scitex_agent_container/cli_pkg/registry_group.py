@@ -1,7 +1,7 @@
 """``sac registry`` noun-group — registry maintenance verbs.
 
 Post-F-CS11: ``registry clean`` is folded into the state-backed
-``sac db clean``. The old verb still parses but hard-errors per
+``sac store clean``. The old verb still parses but hard-errors per
 scitex CLI convention §5 with a redirect to the new path.
 
 ``registry reconcile`` is unchanged — it concerns fleet-level
@@ -32,10 +32,10 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
 
 @click.group(name="registry", cls=HelpRecursiveGroup)
 def registry_group() -> None:
-    """Registry maintenance — folded into ``sac db`` (F-CS11)."""
+    """Registry maintenance — folded into ``sac store`` (F-CS11)."""
 
 
-# `registry clean` -> hard-error redirect to `sac db clean`.
+# `registry clean` -> hard-error redirect to `sac store clean`.
 # The wrapped command is a no-op stub whose callback is replaced by
 # renamed_redirect's exit-2 path; the surface stays minimal so the
 # redirect fires before any arg parsing surprises. ``--dry-run`` and
@@ -45,11 +45,11 @@ def registry_group() -> None:
 @click.option("--dry-run", is_flag=True, default=False, hidden=True)
 @click.option("-y", "--yes", "yes", is_flag=True, default=False, hidden=True)
 def _clean_stub(dry_run: bool, yes: bool) -> None:
-    """[RENAMED] Use ``sac db clean`` instead.
+    """[RENAMED] Use ``sac store clean`` instead.
 
     \b
     Example:
-      $ sac db clean             # the new path
+      $ sac store clean             # the new path
     """
     del dry_run, yes  # never invoked; renamed_redirect intercepts
 
@@ -57,20 +57,20 @@ def _clean_stub(dry_run: bool, yes: bool) -> None:
 registry_group.add_command(
     renamed_redirect(
         _clean_stub,
-        new_path="sac db clean",
+        new_path="sac store clean",
         old_path="sac registry clean",
     )
 )
 registry_group.add_command(_rebind(_reconcile_impl, "reconcile"))
 # ``registry sync`` was here until 2026-08-28. It was the ADR-0014
 # anti-entropy sweep, and it existed for exactly ONE table: it ssh-ran
-# ``sac db export --tables comms_nodes`` on a peer and fed the payload to
+# ``sac store export --tables comms_nodes`` on a peer and fed the payload to
 # ``import_state``. That table moved to the shared PostgreSQL store, where
 # every host reads and writes the SAME directory, so there is nothing left
 # to converge — and by then the verb could no longer even run, because
 # ``comms_nodes`` had left ``KNOWN_TABLES`` and ``export_state`` rejected
-# the name. Both halves of that wire pair, and the ``sac db export`` /
-# ``sac db import`` commands quoted above, were themselves deleted on
+# the name. Both halves of that wire pair, and the ``sac store export`` /
+# ``sac store import`` commands quoted above, were themselves deleted on
 # 2026-08-29, so the sweep could not be revived even in principle.
 #
 # DELETED rather than left as a no-op, under the ruling this repo applies to

@@ -57,8 +57,6 @@ from typing import Any, Iterator
 # Env vars whose VALUE identifies the agent, and how to rewrite each.
 #
 #   "identity" — the whole value IS the agent name.
-#   "path"     — the value is a path with the agent name as a component
-#                (e.g. SCITEX_AGENT_CONTAINER_STATE_DB=/state/<name>/state.db).
 #   "scope"    — the value is the board scope string ``agent:<name>``.
 #
 # SCITEX_TODO_AGENT_ID is the board identity: the shared ``.mcp.json``
@@ -87,7 +85,6 @@ ENV_RULES: dict[str, str] = {
     "SCITEX_AGENT_CONTAINER_NAME": "identity",
     "SCITEX_AGENT_CONTAINER_AGENT": "identity",
     "SAC_AGENT": "identity",
-    "SCITEX_AGENT_CONTAINER_STATE_DB": "path",
     "SCITEX_TODO_SCOPE": "scope",
 }
 

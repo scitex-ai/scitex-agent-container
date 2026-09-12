@@ -48,7 +48,7 @@ _LOCAL_HOST = "lead-host"
 
 
 @pytest.fixture
-def state_db_env(tmp_path, pg_schema: str):
+def state_store_env(tmp_path, pg_schema: str):
     """Redirect state.db + host to a temp sandbox; reload the module.
 
     Mirrors ``test__send.py``'s fixture so the resolver reads an empty db
@@ -62,9 +62,9 @@ def state_db_env(tmp_path, pg_schema: str):
     saved_host = os.environ.get("SAC_HOST")
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(tmp_path / "state.db")
     os.environ["SAC_HOST"] = _LOCAL_HOST
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -76,12 +76,12 @@ def state_db_env(tmp_path, pg_schema: str):
             os.environ.pop("SAC_HOST", None)
         else:
             os.environ["SAC_HOST"] = saved_host
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _seed_row(name: str, *, host: str = _LOCAL_HOST, a2a_port=None, bound_port=None):
     """Insert a real active ``instances`` row."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(
         name=name, host=host, a2a_port=a2a_port, bound_port=bound_port
@@ -100,7 +100,7 @@ def _seed_claim(name: str, port: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_uses_instance_row_port_when_present(state_db_env):
+def test_resolve_uses_instance_row_port_when_present(state_store_env):
     # Arrange
     _seed_row("alpha", a2a_port=12345)
     # Act
@@ -109,7 +109,7 @@ def test_resolve_uses_instance_row_port_when_present(state_db_env):
     assert ep.a2a_port == 12345
 
 
-def test_resolve_instance_row_source_label(state_db_env):
+def test_resolve_instance_row_source_label(state_store_env):
     # Arrange
     _seed_row("alpha", a2a_port=12345)
     # Act
@@ -119,7 +119,7 @@ def test_resolve_instance_row_source_label(state_db_env):
 
 
 def test_resolve_reads_the_one_stored_port_under_the_bound_port_key(
-    state_db_env,
+    state_store_env,
 ):
     """The two columns are ONE field now, so there is nothing to prefer.
 
@@ -143,7 +143,7 @@ def test_resolve_reads_the_one_stored_port_under_the_bound_port_key(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_falls_back_to_allocator_when_no_row(state_db_env):
+def test_resolve_falls_back_to_allocator_when_no_row(state_store_env):
     # Arrange — NO instances row, but a durable allocator claim exists.
     # This is the health-monitor-restart case: the row was ended but the
     # claim (released only on stop/--force) survives.
@@ -154,7 +154,7 @@ def test_resolve_falls_back_to_allocator_when_no_row(state_db_env):
     assert ep.a2a_port == 19007
 
 
-def test_resolve_allocator_fallback_source_label(state_db_env):
+def test_resolve_allocator_fallback_source_label(state_store_env):
     # Arrange
     _seed_claim("beta", 19007)
     # Act
@@ -163,7 +163,7 @@ def test_resolve_allocator_fallback_source_label(state_db_env):
     assert ep.source == "port_allocator"
 
 
-def test_resolve_allocator_fallback_host_is_local(state_db_env):
+def test_resolve_allocator_fallback_host_is_local(state_store_env):
     # Arrange — an allocator claim is local by construction.
     _seed_claim("beta", 19007)
     # Act
@@ -172,7 +172,7 @@ def test_resolve_allocator_fallback_host_is_local(state_db_env):
     assert ep.host == _LOCAL_HOST
 
 
-def test_resolve_falls_back_to_allocator_when_row_port_is_null(state_db_env):
+def test_resolve_falls_back_to_allocator_when_row_port_is_null(state_store_env):
     # Arrange — a row exists but carries NO port; the claim supplies it.
     _seed_row("beta", a2a_port=None)
     _seed_claim("beta", 19007)
@@ -187,7 +187,7 @@ def test_resolve_falls_back_to_allocator_when_row_port_is_null(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_cross_host_row_preserves_peer_host(state_db_env):
+def test_resolve_cross_host_row_preserves_peer_host(state_store_env):
     # Arrange — a remote row (different host) carries the peer + port.
     _seed_row("gamma", host="peer-x", a2a_port=18888)
     # Act
@@ -201,7 +201,7 @@ def test_resolve_cross_host_row_preserves_peer_host(state_db_env):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_nothing_known_returns_source_none(state_db_env):
+def test_resolve_nothing_known_returns_source_none(state_store_env):
     # Arrange — no row, no claim.
     # Act
     ep = resolve_send_endpoint("ghost", current_host=_LOCAL_HOST)
@@ -209,7 +209,7 @@ def test_resolve_nothing_known_returns_source_none(state_db_env):
     assert ep.source == "none"
 
 
-def test_resolve_nothing_known_returns_null_port(state_db_env):
+def test_resolve_nothing_known_returns_null_port(state_store_env):
     # Arrange — no row, no claim.
     # Act
     ep = resolve_send_endpoint("ghost", current_host=_LOCAL_HOST)

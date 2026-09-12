@@ -490,10 +490,10 @@ def cross_host_delete_env(tmp_path, pg_schema: str):
     )
     script.chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved_path}"
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
-    from scitex_agent_container._state.state_db import record_instance_start
+    importlib.reload(_state_store_mod)
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     try:
@@ -509,7 +509,7 @@ def cross_host_delete_env(tmp_path, pg_schema: str):
             else:
                 os.environ[k] = v
         os.environ["PATH"] = saved_path
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _ssh_invocations_delete(log):
@@ -545,7 +545,7 @@ def test_cross_host_delete_ssh_includes_stop_and_rm(cross_host_delete_env):
 
 def test_cross_host_delete_closes_lead_side_row(cross_host_delete_env):
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act

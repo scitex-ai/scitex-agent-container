@@ -13,7 +13,7 @@ over the per-file cap) and are registered at the bottom, the same way
   a2a-card`` from outside the agent process.
 * ``grant`` / ``unblock`` / ``block`` / ``revoke`` / ``grants``
   (:mod:`._a2a_acl_cmds`) are thin click wrappers over the cross-group
-  ACL primitives in ``_state.state_db_nodes``. Operators previously had
+  ACL primitives in ``_state.state_store_nodes``. Operators previously had
   to drop into a Python REPL to amend the comms-grants table — a footgun
   (silently granting too much on wrong argument order). The CLI makes it
   auditable and validates the positional order at the Click layer.

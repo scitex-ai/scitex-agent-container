@@ -68,7 +68,7 @@ class RuntimeBase(ABC):
         TUI agent's launcher spawns a tmux session and exits within
         seconds, so recording it would store a pid that is dead almost
         immediately, and every consumer probing it (``os.kill(pid, 0)``
-        in :func:`_state.state_db_gc.gc_dead_instances`,
+        in :func:`_state.state_store_gc.gc_dead_instances`,
         :func:`_lifecycle._stale_lease.clear_stale_instance_lease`,
         :func:`cli_pkg._send_diagnosis.diagnose_send_failure`) would
         report a LIVE agent as dead.

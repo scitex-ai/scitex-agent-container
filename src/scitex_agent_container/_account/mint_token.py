@@ -71,12 +71,12 @@ def _read_scopes(credentials_path: Path) -> list[str]:
 def _resolve_master_host(hostname: str | None) -> str:
     """Resolve the master host label stamped into the artifact meta.
 
-    Delegates to :func:`_state.state_db_hostname.resolve_host` — the
+    Delegates to :func:`_state.state_store_hostname.resolve_host` — the
     canonical single-name resolver (``$SAC_HOST`` → config.yaml canonical
     → short ``socket.gethostname()``). ``hostname`` is an explicit
     override / test seam.
     """
-    from .._state.state_db_hostname import resolve_host
+    from .._state.state_store_hostname import resolve_host
 
     return resolve_host(hostname)
 

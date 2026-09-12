@@ -48,7 +48,7 @@ def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (save/restore).
 
     IT NO LONGER SELECTS A DATABASE, and the two ``importlib.reload`` calls
-    that used to bracket it are gone with the reason for them. ``state_db``
+    that used to bracket it are gone with the reason for them. ``state_store``
     read this variable at import into ``DEFAULT_DB_PATH``, so a fixture that
     set the env had to reload the module for ``has_grant`` and friends to
     follow. That constant was deleted on 2026-08-30 and those helpers address
@@ -90,7 +90,7 @@ def test_record_local_instance_grants_self_to_lead(pg_schema: str,
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db_nodes import has_grant
+    from scitex_agent_container._state.state_store_nodes import has_grant
 
     cfg = AgentConfig(name="grant-1", runtime="apptainer")
     # Act
@@ -131,7 +131,7 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
     # hide a later contract check. Keeping it as a raise says which of the
     # two it is.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db_nodes import list_comms_grants
+    from scitex_agent_container._state.state_store_nodes import list_comms_grants
 
     cfg = AgentConfig(name="grant-2", runtime="apptainer")
     rt = _RuntimeStub(tmp_path)
@@ -187,7 +187,7 @@ def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(pg_
 # shipped defaults).
 #
 # The callback used to take no ``db_path``, so each write re-resolved
-# ``state_db.DEFAULT_DB_PATH`` -- a MUTABLE PROCESS-GLOBAL -- at the moment
+# ``state_store.DEFAULT_DB_PATH`` -- a MUTABLE PROCESS-GLOBAL -- at the moment
 # the monitor fired. Whatever the process then called "default" got the row:
 #
 #   * under pytest, a LATER, UNRELATED test's isolated tmp DB. That is the
@@ -270,7 +270,7 @@ def _fire_monitor_restart(db_path: Path, tmp_path: Path, name: str) -> None:
 
     WAS ``_fire_monitor_restart_against_foreign_db`` UNTIL 2026-08-30, and the
     dropped half of the name is the point. It used to swap
-    ``state_db.DEFAULT_DB_PATH`` to a "foreign" path around the callback, so a
+    ``state_store.DEFAULT_DB_PATH`` to a "foreign" path around the callback, so a
     caller could tell a write that went to the right store from one that was
     lost. That constant is deleted; before it was, it had already stopped
     selecting where a lifecycle record lands. Swapping it steered nothing, so
@@ -302,7 +302,7 @@ def _fire_monitor_restart(db_path: Path, tmp_path: Path, name: str) -> None:
     restart_cb(config)  # the leaked monitor thread fires
 
 
-# ``test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_db``
+# ``test_monitor_restart_does_not_record_the_instance_into_a_foreign_state_store``
 # was here until 2026-08-28, and it is the SECOND time this test outlived its
 # own premise — which is why it is deleted rather than re-pointed again.
 #
@@ -347,7 +347,7 @@ def test_monitor_restart_callback_still_auto_grants_self_to_lead(
     says only that.
     """
     # Arrange
-    from scitex_agent_container._state.state_db_nodes import has_grant
+    from scitex_agent_container._state.state_store_nodes import has_grant
 
     name = "pinned-2"
     # Act

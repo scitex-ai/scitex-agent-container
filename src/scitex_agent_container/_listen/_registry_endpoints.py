@@ -50,7 +50,7 @@ def _instance_endpoint(agent_name: str) -> tuple[int | None, str | None]:
     — caller surfaces the missing field rather than a stack trace).
     """
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r.get("name") == agent_name]
         if not rows:

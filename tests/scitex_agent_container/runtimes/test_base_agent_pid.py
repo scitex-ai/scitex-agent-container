@@ -7,7 +7,7 @@ long-lived LOCAL pid (docker / podman / SSHRemote — the process lives in
 another namespace or on another host) must leave it ``None``.
 
 ``None`` is honestly "unknown", and every consumer treats it as such
-(``state_db_gc`` skips it, ``_stale_lease`` leaves the row alone,
+(``state_store_gc`` skips it, ``_stale_lease`` leaves the row alone,
 ``_send_diagnosis._pid_alive`` returns ``None``, not ``False``). A
 plausible-but-wrong pid is strictly WORSE, because pids get REUSED — a stale
 one can be recycled by an unrelated process and would then vouch for a dead

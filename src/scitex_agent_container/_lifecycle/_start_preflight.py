@@ -46,12 +46,12 @@ def _verify_real_liveness(
     the silent no-op.
 
     The ``instances_oracle`` seam is the no-mocks knob for tests; it
-    defaults to a host-unfiltered :func:`state_db.list_active_instances`
+    defaults to a host-unfiltered :func:`state_store.list_active_instances`
     call (we want ANY active row for the name, not just rows on the
     current host — handover may have moved it).
     """
     if instances_oracle is None:
-        from .._state.state_db import list_active_instances as _default
+        from .._state.state_store import list_active_instances as _default
 
         def instances_oracle():  # type: ignore[no-redef]
             # Explicit host=None so the call is unambiguous and the

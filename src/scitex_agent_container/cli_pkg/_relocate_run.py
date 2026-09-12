@@ -57,7 +57,7 @@ EXIT_UNMEASURED = 6
 def _local_host() -> str:
     """The fleet name of the host this coordinator's commands land on.
 
-    Read through :func:`.._state.state_db_hostname.resolve_host`, the same
+    Read through :func:`.._state.state_store_hostname.resolve_host`, the same
     resolver every state-db write uses ($SAC_HOST, then ``config.yaml``'s
     canonical, then the short hostname), rather than calling
     ``socket.gethostname`` here. Two answers to "which host am I" is how a
@@ -67,7 +67,7 @@ def _local_host() -> str:
     It decides ONE thing — whether a command goes through ssh or runs directly —
     so a wrong "this is not me" costs an extra hop and nothing else.
     """
-    from .._state.state_db_hostname import resolve_host
+    from .._state.state_store_hostname import resolve_host
 
     return resolve_host(None)
 

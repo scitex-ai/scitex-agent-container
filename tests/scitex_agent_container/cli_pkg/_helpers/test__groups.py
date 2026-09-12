@@ -72,7 +72,7 @@ def old_path_override_result(runner):
         pass
 
     aliased = renamed_redirect(
-        _clean, new_path="sac db clean", old_path="sac registry clean"
+        _clean, new_path="sac store clean", old_path="sac registry clean"
     )
     # Act
     return runner.invoke(aliased, [], standalone_mode=True)
@@ -160,10 +160,10 @@ def test_renamed_redirect_help_mentions_new_path(help_aliased):
 
 TOP_LEVEL_REDIRECTS = [
     # (argv, new_path_substring_in_stderr, test_id)
-    pytest.param(["clean-registry"], "sac db clean", id="clean-registry"),
+    pytest.param(["clean-registry"], "sac store clean", id="clean-registry"),
     pytest.param(["probe-network"], "sac host probe-hub", id="probe-network"),
     pytest.param(["start", "any-name"], "sac agents start", id="start-alias"),
-    pytest.param(["registry", "clean"], "sac db clean", id="registry-clean-subcommand"),
+    pytest.param(["registry", "clean"], "sac store clean", id="registry-clean-subcommand"),
 ]
 
 

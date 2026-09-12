@@ -229,7 +229,7 @@ def registry_signal(
 
     if rows is None:
         try:
-            from .._state.state_db import list_active_instances
+            from .._state.state_store import list_active_instances
 
             rows = list_active_instances(host=None)
         except Exception as exc:  # stx-allow: fallback (an unreadable registry is UNKNOWN — reading it as "every agent is dead" is the documented flood)

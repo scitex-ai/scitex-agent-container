@@ -63,7 +63,7 @@ _DIARY_WARN_EVERY = 100
 
 
 class _DefaultDBWriter:
-    """Production writer that forwards to ``_state.state_db_diary``.
+    """Production writer that forwards to ``_state.state_store_diary``.
 
     Imports lazily so test environments (which may not have the
     container venv fully wired) don't pay the import cost. The
@@ -124,7 +124,7 @@ class _DefaultDBWriter:
 
     def record_heartbeat(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_heartbeat
+            from .._state.state_store_diary import record_heartbeat
 
             return record_heartbeat(**kwargs)
 
@@ -132,7 +132,7 @@ class _DefaultDBWriter:
 
     def record_turn(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_turn
+            from .._state.state_store_diary import record_turn
 
             return record_turn(**kwargs)
 
@@ -140,7 +140,7 @@ class _DefaultDBWriter:
 
     def record_error(self, **kwargs):
         def _write():
-            from .._state.state_db_diary import record_error
+            from .._state.state_store_diary import record_error
 
             return record_error(**kwargs)
 

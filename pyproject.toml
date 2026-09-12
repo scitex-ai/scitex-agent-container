@@ -541,7 +541,7 @@ scitex-agent-container = "scitex_agent_container._system_deps:provide"
 # not privileged.
 #
 # The declaration is the deliverable because sac's previous cross-host path
-# was unsafe in a way that was invisible: state_db_export.import_state did
+# was unsafe in a way that was invisible: state_store_export.import_state did
 # INSERT OR IGNORE, so a row that CONTRADICTED the local one and a
 # byte-identical duplicate both returned rowcount 0. The success value was
 # also the didn't-happen value, and two hosts could disagree forever with
