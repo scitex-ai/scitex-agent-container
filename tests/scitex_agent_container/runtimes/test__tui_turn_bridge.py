@@ -872,7 +872,7 @@ def test_start_turn_bridge_passes_resolved_port_to_spawn(
 
 
 def test_start_turn_bridge_passes_effective_cards_store_to_child(
-    tmp_path: Path, isolated_home: Path, monkeypatch
+    tmp_path: Path, isolated_home: Path, env_save_restore
 ) -> None:
     # Arrange
     spec = tmp_path / "spec.yaml"
@@ -885,7 +885,7 @@ def test_start_turn_bridge_passes_effective_cards_store_to_child(
         recorded.update(kwargs)
         return SimpleNamespace(pid=_PID)
 
-    monkeypatch.setenv("SCITEX_STORE_DSN", "postgresql://wrong-shell/store")
+    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://wrong-shell/store")
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT),
         apptainer=SimpleNamespace(raw_args=[]),

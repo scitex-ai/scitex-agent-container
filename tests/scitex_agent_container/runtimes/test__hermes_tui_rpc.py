@@ -336,23 +336,28 @@ def test_visible_retry_reuses_transcript_proof_without_duplicate_submit(tmp_path
     )
 
     # Assert
+    request, request_kwargs = response.requests[0]
     assert (
         receipt.status,
         receipt.visibility,
         [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"]["omit_messages"],
+        response.read_sizes,
+        request.full_url.endswith(
+            "/api/sessions/search?q=%22delivery%20n_retry%22&limit=20"
+        ),
+        request.get_header("X-hermes-session-token"),
+        request_kwargs,
     ) == (
         "already_visible",
         "session.search",
         ["session.active_list", "session.activate"],
+        True,
+        [256 * 1024 + 1],
+        True,
+        "a-secure-test-token",
+        {"timeout": 10.0},
     )
-    assert socket.sent[-1]["params"]["omit_messages"] is True
-    assert response.read_sizes == [256 * 1024 + 1]
-    request, request_kwargs = response.requests[0]
-    assert request.full_url.endswith(
-        "/api/sessions/search?q=%22delivery%20n_retry%22&limit=20"
-    )
-    assert request.get_header("X-hermes-session-token") == "a-secure-test-token"
-    assert request_kwargs == {"timeout": 10.0}
 
 
 def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):

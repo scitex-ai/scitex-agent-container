@@ -215,7 +215,7 @@ def start_turn_bridge(
             start_new_session=True,
             env=env,
         )
-    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged for the operator)
+    except Exception as exc:  # stx-allow: fallback (reason: best-effort sidecar — a spawn failure must not wedge agent start; logged to stderr and the rotating ~/.scitex/logging/runtime/scitex-<date>.log)
         log.warning("tui-turn-bridge: failed to spawn for %r: %s", config.name, exc)
         return None
     pid = getattr(proc, "pid", None)
