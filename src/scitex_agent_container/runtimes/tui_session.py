@@ -55,6 +55,7 @@ __all__ = [
     "TuiAuthStageError",
     "TuiInputNotReadyError",
     "TuiSessionRuntime",
+    "TuiStopVerificationError",
     "_compose_pending_live",
     "clear_compose_buffer",
     "drain_modals_until_ready",
@@ -63,6 +64,10 @@ __all__ = [
     "state_dir_for_config",
     "verify_submit_by_advancement",
 ]
+
+
+class TuiStopVerificationError(RuntimeError):
+    """The owned tmux session or process cgroup survived teardown."""
 
 
 _CLAUDE_BIN_DEFAULT = "claude"
@@ -345,17 +350,26 @@ class TuiSessionRuntime(
         # Redirect the inner ``apptainer exec … claude`` STDERR (apptainer FATAL
         # mount errors / an immediate claude exit) to a DURABLE per-agent log so
         # ``agent_start`` surfaces the real boot failure instead of a cause-less
-        # ``<empty>`` pane tail. ``2>`` truncates per start.
+        # ``<empty>`` pane tail. Host-side truncation occurs before tmux starts;
+        # TmuxManager installs the stderr redirect before its first shell step,
+        # so even a failed ``cd`` or venv activation survives the pane's exit.
         boot_stderr_log = state_dir_for_config(config) / "boot.stderr.log"
-        command = " ".join(shlex.quote(a) for a in argv) + (
-            f" 2> {shlex.quote(str(boot_stderr_log))}"
-        )
+        boot_stderr_log.parent.mkdir(parents=True, exist_ok=True)
+        boot_stderr_log.write_text("")
+        boot_stderr_log.chmod(0o600)
+        command = " ".join(shlex.quote(a) for a in argv)
         started = bool(
             self._mux.start(
                 session_name=name,
                 command=command,
                 workdir=str(workdir),
-                session_env={"CLAUDE_DISABLE_AUTO_UPDATE": "1"},
+                session_env={
+                    "CLAUDE_DISABLE_AUTO_UPDATE": "1",
+                    "SAC_TMUX_BOOT_STDERR_PATH": str(boot_stderr_log),
+                    "SAC_TMUX_START_DIAGNOSTICS_PATH": str(
+                        state_dir_for_config(config) / "tmux.start.json"
+                    ),
+                },
             )
         )
         # BUG 3 (false success): whether the boot-drain observed a ready
@@ -431,7 +445,14 @@ class TuiSessionRuntime(
         # before the tmux session it injects into goes away.
         self._maybe_stop_turn_bridge(config)
         name = session_name_for(config)
-        return bool(self._mux.stop(name))
+        if not self._mux.exists(name):
+            return False
+        if not self._mux.stop(name):
+            raise TuiStopVerificationError(
+                f"TUI stop for {config.name!r} could not verify that both "
+                f"tmux session {name!r} and its owned process cgroup are gone"
+            )
+        return True
 
     def is_running(
         self, config: AgentConfig, max_idle_s: float = _DEFAULT_MAX_IDLE_S

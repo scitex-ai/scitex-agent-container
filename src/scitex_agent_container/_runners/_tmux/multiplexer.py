@@ -21,6 +21,7 @@ class MultiplexerProtocol(Protocol):
         workdir: str,
         env_exports: str = "",
         venv: str = "",
+        session_env: dict[str, str] | None = None,
     ) -> bool: ...
 
     @staticmethod
