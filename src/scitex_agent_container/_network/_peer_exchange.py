@@ -57,7 +57,7 @@ def _receipt_exchange_id(payload: Any, *, http_status: int | None) -> str:
         and bool(exchange_id)
     ):
         raise PeerError(
-            "peer returned malformed asynchronous receipt: expected HTTP 202 "
+            "peer returned malformed body (asynchronous receipt): expected HTTP 202 "
             "with non-empty exchange_id and status_code=http/202; "
             f"got HTTP {http_status!r}, body={payload!r}"
         )
