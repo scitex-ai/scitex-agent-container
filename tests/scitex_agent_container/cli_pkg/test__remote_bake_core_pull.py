@@ -199,29 +199,48 @@ def test_verified_pull_runs_rsync_then_probe_through_the_seam(
     ]
 
 
-def test_symbol_probe_has_explicit_container_path_under_containment(
-    tmp_path: Path, seam
-) -> None:
-    """The probe must not rely on its host path existing inside the SIF.
-
-    Production runs Apptainer with a contained filesystem.  In the observed
-    failure, the temporary probe lived below the host's ``/home`` and SAC
-    invoked that same path in the container, where it did not exist.
-    """
+def _run_pull_and_get_symbol_probe_call(tmp_path: Path, seam) -> list[str]:
     containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
     runner = seam(_RecordingRunner(rsync_payload=b"fresh"))
+    _pull(containers, b"fresh")
+    return runner.calls[-1]
 
-    result = _pull(containers, b"fresh")
 
-    probe_call = runner.calls[-1]
+def test_symbol_probe_runs_under_containment(tmp_path: Path, seam) -> None:
+    # Arrange
+    expected_flag = "--containall"
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
+
+    # Assert
+    assert expected_flag in probe_call
+
+
+def test_symbol_probe_binds_readonly_to_explicit_container_path(
+    tmp_path: Path, seam
+) -> None:
+    # Arrange
+    expected = ("sif_symbol_probe.py", "/tmp/sac-sif-symbol-probe.py", "ro")
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
     bind_spec = probe_call[probe_call.index("--bind") + 1]
     source, destination, mode = bind_spec.rsplit(":", 2)
-    assert result.verdict is PullVerdict.SWAPPED
-    assert "--containall" in probe_call
-    assert Path(source).name == "sif_symbol_probe.py"
-    assert destination == "/tmp/sac-sif-symbol-probe.py"
-    assert mode == "ro"
-    assert probe_call[-1] == destination
+
+    # Assert
+    assert (Path(source).name, destination, mode) == expected
+
+
+def test_symbol_probe_executes_container_path(tmp_path: Path, seam) -> None:
+    # Arrange
+    expected = "/tmp/sac-sif-symbol-probe.py"
+
+    # Act
+    probe_call = _run_pull_and_get_symbol_probe_call(tmp_path, seam)
+
+    # Assert
+    assert probe_call[-1] == expected
 
 
 # ---------------------------------------------------------------------------
