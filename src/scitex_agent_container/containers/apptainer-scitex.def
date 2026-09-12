@@ -36,6 +36,7 @@ From: ./sac-base.sif
     # version mismatch between base and scitex is structurally
     # impossible (both came from the same `sac image build` invocation).
     scitex-agent-container-src /opt/scitex-agent-container-src
+    scitex-cards-src /opt/scitex-cards-src
 
 %post
     set -e
@@ -159,6 +160,20 @@ From: ./sac-base.sif
         echo "FATAL: staged source has no pyproject.toml — wrong tree staged." >&2
         exit 1
     fi
+    # Cards is also present in :base, so the same Apptainer directory-copy
+    # semantics can nest this layer's fresh tree below the inherited one.
+    if [ -d /opt/scitex-cards-src/scitex-cards-src ]; then
+        echo "INFO: %files nested the staged Cards source; flattening."
+        rm -rf /opt/.cards-src-fresh
+        mv /opt/scitex-cards-src/scitex-cards-src /opt/.cards-src-fresh
+        rm -rf /opt/scitex-cards-src
+        mv /opt/.cards-src-fresh /opt/scitex-cards-src
+    fi
+    if [ -d /opt/scitex-cards-src/scitex-cards-src ] \
+        || [ ! -f /opt/scitex-cards-src/pyproject.toml ]; then
+        echo "FATAL: staged Cards source has an unexpected shape." >&2
+        exit 1
+    fi
 
     if command -v uv >/dev/null; then
         # ``-U`` — A FLOOR ALONE DOES NOT UPGRADE. This layer bakes ONTO a
@@ -228,7 +243,7 @@ From: ./sac-base.sif
         # spells it --no-cache-dir) — belt, not the mechanism. Keep the command
         # starting with ``uv pip install``: the def contract tests locate this
         # block with startswith("uv pip install"), so an env-var prefix hides it.
-        uv pip install --no-cache --python /opt/venv-sac/bin/python \
+        uv pip install --no-cache --no-deps --python /opt/venv-sac/bin/python \
             --reinstall-package scitex-agent-container --no-deps \
             /opt/scitex-agent-container-src
         # scitex-dev keystone (system-deps aggregator) + the 3 leaf providers,
@@ -354,8 +369,13 @@ From: ./sac-base.sif
         # attribute read AND WROTE the host store (cross-tenant under a
         # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
         # occurrences of that fallback, the copy in the CURRENT image has 1.
-        uv pip install --python /opt/venv-sac/bin/python -U \
-            "scitex-cards>=0.49.1"
+        # CURRENT DELIVERY EXCEPTION (Cards #1003): reinstall the exact staged
+        # merge commit after the broader scientific-stack resolution, which
+        # could otherwise replace base's source build with the older v0.52.0
+        # wheel. This is immutable source, never a moving Git branch.
+        uv pip install --no-cache --python /opt/venv-sac/bin/python \
+            --reinstall-package scitex-cards \
+            /opt/scitex-cards-src
     else
         /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
             pip setuptools wheel
@@ -453,8 +473,9 @@ From: ./sac-base.sif
         # exclusion the old text argued for is subsumed — 0.17.0 destroys card
         # databases, and >=0.19.0 is strictly stronger than the >=0.17.2 that
         # was guarding against it.
-        /opt/venv-sac/bin/pip install --no-cache-dir --upgrade \
-            "scitex-cards>=0.49.1"
+        # Same exact staged-source reinstall as the uv branch above.
+        /opt/venv-sac/bin/pip install --no-cache-dir --force-reinstall --no-deps \
+            /opt/scitex-cards-src
     fi
 
     # ---- 2b. FAIL-LOUD staleness gate — assert BY SYMBOL ----------------
@@ -521,6 +542,8 @@ import sys
 # it as dead because nothing references the name, and removing it on that
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
+from scitex_cards._messaging import canonical_agent_identity
+from scitex_cards._notification_watch import _doorbell_status  # noqa: F401
 from scitex_cards._throughput import WIP_STATUSES
 
 # scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
@@ -642,6 +665,8 @@ else:
 # states must never occupy a WIP slot.
 if "in_progress" not in WIP_STATUSES:
     failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
+    failures.append("scitex-cards #1003 DM recipient canonicalization is absent")
 terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
 if terminal:
     failures.append(
@@ -672,6 +697,7 @@ if failures:
 
 print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "c91429ef7f780eaee768d20542ecdc1d1d716eb2"
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
 
@@ -778,6 +804,7 @@ EOF
     org.scitex.layer scitex
     org.scitex.runtime apptainer
     org.scitex.from scitex-agent-container:base
+    org.scitex.cards.commit c91429ef7f780eaee768d20542ecdc1d1d716eb2
     org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest build hatchling latex latexmk biber"
 
 %help

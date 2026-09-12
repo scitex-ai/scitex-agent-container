@@ -49,6 +49,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # path below against the build CWD, which the CLI sets to that
     # staging dir. See sac image build for the staging implementation.
     scitex-agent-container-src /opt/scitex-agent-container-src
+    scitex-cards-src /opt/scitex-cards-src
     hermes-agent-src /opt/hermes-agent
 
 %post
@@ -623,10 +624,16 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
     # weaken ``--reinstall-package``: that stays the stronger lever for
     # sac's own rebuild-from-staged-source.
+    # CURRENT DELIVERY EXCEPTION (Cards #1003): the history above describes
+    # the normal published-release policy. v0.52.0 was published before the
+    # required fix merged, so this build takes the exact, verified merge commit
+    # exported by the build frontend. This is not a moving branch ref and the
+    # local path is explicit in the resolver transaction.
     uv pip install --no-cache --python /opt/venv-sac/bin/python -U \
+        --reinstall-package scitex-cards \
         --reinstall-package scitex-agent-container \
         "claude-agent-sdk" \
-        "scitex-cards>=0.49.1" \
+        "/opt/scitex-cards-src" \
         "/opt/scitex-agent-container-src[all,dev]"
 
     # ---- 6c. Hermes harness + official TUI ---------------------------
@@ -651,6 +658,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     npm cache clean --force
 
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "c91429ef7f780eaee768d20542ecdc1d1d716eb2"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
     "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.1"'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
@@ -728,6 +736,8 @@ import sys
 # it as dead because nothing references the name, and removing it on that
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
+from scitex_cards._messaging import canonical_agent_identity
+from scitex_cards._notification_watch import _doorbell_status  # noqa: F401
 from scitex_cards._throughput import WIP_STATUSES
 
 # scitex-cards 0.49.1: the comment-preserving mirror write, CORRECTED.
@@ -909,6 +919,8 @@ else:
 # states must never occupy a WIP slot.
 if "in_progress" not in WIP_STATUSES:
     failures.append(f"'in_progress' missing from WIP_STATUSES: {sorted(WIP_STATUSES)}")
+if canonical_agent_identity("agent:scitex-hub") != "scitex-hub":
+    failures.append("scitex-cards #1003 DM recipient canonicalization is absent")
 terminal = {"deferred", "cancelled", "done"} & set(WIP_STATUSES)
 if terminal:
     failures.append(
@@ -1013,6 +1025,7 @@ EOF
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.1
     org.scitex.hermes.commit a74e76632cce62ad6948cf7e4e6b27629d66d147
+    org.scitex.cards.commit c91429ef7f780eaee768d20542ecdc1d1d716eb2
 
 %help
     scitex-agent-container :base layer.

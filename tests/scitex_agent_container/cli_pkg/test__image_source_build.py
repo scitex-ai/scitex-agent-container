@@ -106,11 +106,14 @@ def fake_def(tmp_path: Path) -> Path:
 def isolated_hermes_source_stager():
     """Keep unrelated image-build tests offline and deterministic."""
     saved = isb._stage_hermes_source
+    saved_cards = isb._stage_cards_source
     isb._stage_hermes_source = lambda build_context: build_context
+    isb._stage_cards_source = lambda build_context: build_context
     try:
         yield
     finally:
         isb._stage_hermes_source = saved
+        isb._stage_cards_source = saved_cards
 
 
 @contextmanager
@@ -933,6 +936,35 @@ def test_base_build_stages_hermes_source_in_same_build_context(
 
     # Assert
     assert staged == [out_dir / "sac-base" / "build-context"]
+
+
+def test_cards_runtime_layers_stage_cards_source_in_same_build_context(
+    tmp_path, fake_pkg_root, fake_def
+):
+    # Arrange
+    staged: list[Path] = []
+    saved = isb._stage_cards_source
+    isb._stage_cards_source = lambda path: staged.append(path)
+    out_dir = tmp_path / "out"
+
+    # Act
+    try:
+        with _use_container_build(_stub_build_result):
+            for layer in ("base", "scitex"):
+                isb.build_layer_from_source(
+                    layer=layer,
+                    def_path=fake_def,
+                    pkg_root=fake_pkg_root,
+                    output_dir=out_dir,
+                )
+    finally:
+        isb._stage_cards_source = saved
+
+    # Assert
+    assert staged == [
+        out_dir / "sac-base" / "build-context",
+        out_dir / "sac-scitex" / "build-context",
+    ]
 
 
 def test_non_base_build_does_not_stage_hermes_source(tmp_path, fake_pkg_root, fake_def):
