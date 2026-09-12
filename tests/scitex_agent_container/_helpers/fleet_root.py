@@ -405,6 +405,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
         _env_overrides(
             {
                 "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
+                "SCITEX_CARDS_TASKS_YAML_SHARED": str(store),
                 # *** THE CARDS STORE — isolating the YAML IS NOT ENOUGH. ***
                 #
                 # Redirecting the store above protects the YAML and nothing
@@ -434,6 +435,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
                 # absence destroyed the board; do not bet on a transition
                 # window closing cleanly.
                 "SCITEX_TODO_DB": cards_store,
+                "SCITEX_CARDS_AGENT_ID": "sac-test",
                 "SAC_CARD_EVENT_DELIVERY_DISABLED": "1",
                 "SCITEX_TODO_STORE_GIT_AUTOCOMMIT": "0",
                 # `list_tasks(scope=None)` falls back to this. A stray value

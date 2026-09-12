@@ -56,7 +56,9 @@ def test_cards_issued_exchange_is_adopted_and_identity_is_preserved(
                 responder="scitex-hub",
                 operation="cards.dm.delivery",
                 status=StatusCode(
-                    kind="http", code=202, message="accepted; poll the exchange"
+                    kind="http",
+                    code=202,
+                    message=f"accepted; poll `/v1/exchanges/{exchange_id}`",
                 ),
                 opened_at=opened_at,
             ),
