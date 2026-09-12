@@ -404,6 +404,7 @@ def materialize_hermes_tui_profile(
 ) -> list[Path]:
     """Write the isolated profile consumed by an official Hermes TUI."""
     state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_api_key(state_dir)
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
     if deploy_home:

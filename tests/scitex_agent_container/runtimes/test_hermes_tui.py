@@ -55,6 +55,25 @@ def test_fresh_session_does_not_request_continuation():
     assert "--continue" not in argv and "--create-if-missing" not in argv
 
 
+def test_tui_launches_through_single_gateway_owner():
+    # Arrange
+    config = _config()
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert argv[:9] == [
+        "/usr/bin/tini",
+        "-s",
+        "--",
+        "python3",
+        "-m",
+        "scitex_agent_container.runtimes._hermes_tui_owner",
+        "--state-dir",
+        "/state/scholar",
+        "--",
+    ]
+
+
 def test_continue_session_resumes_the_stable_agent_session_name():
     # Arrange
     config = AgentConfig(
@@ -73,40 +92,32 @@ def test_continue_session_resumes_the_stable_agent_session_name():
     ]
 
 
-def test_send_turn_uses_settled_submit_for_hermes_busy_input():
+def test_send_turn_uses_native_rpc_for_hermes_busy_input():
     # Arrange
     mux = _Mux(
         panes=[
             "Hub is compacting...",
-            "♥ Heartbeat set (every 607s): check Cards\n"
-            "end · ↑/↓ scroll · Esc/q close",
+            "♥ Heartbeat set (every 607s): check Cards\nend · ↑/↓ scroll · Esc/q close",
         ]
     )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    calls = []
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=mux,
+        rpc_submit=lambda state, name, text: (
+            calls.append((state, name, text)) or "steered"
+        ),
+    )
     # Act
     delivered = runtime.send_turn(
         _config(), "/heartbeat every 607s check Cards", wait_ready=False
     )
     # Assert
-    assert (delivered, mux.events) == (
-        True,
-        [
-            ("exists", "tui-scholar", None),
-            (
-                "settled-submit",
-                "tui-scholar",
-                "/heartbeat every 607s check Cards",
-            ),
-            ("capture", "tui-scholar", "Hub is compacting..."),
-            (
-                "capture",
-                "tui-scholar",
-                "♥ Heartbeat set (every 607s): check Cards\n"
-                "end · ↑/↓ scroll · Esc/q close",
-            ),
-            ("key", "tui-scholar", "Escape"),
-        ],
+    assert delivered is True
+    assert len(calls) == 1 and calls[0][1:] == (
+        "scholar",
+        "/heartbeat every 607s check Cards",
     )
+    assert mux.events == []
 
 
 def test_hermes_idle_requires_latest_ready_footer_and_empty_composer():
@@ -119,9 +130,7 @@ def test_hermes_idle_requires_latest_ready_footer_and_empty_composer():
     )
     human_text = "\n ─ ready │ qwen38 27b low │ 44% ─ sac:stats\n ❯ inspect this first"
     # Act
-    observed = tuple(
-        _hermes_pane_is_idle(pane) for pane in (ready, busy, human_text)
-    )
+    observed = tuple(_hermes_pane_is_idle(pane) for pane in (ready, busy, human_text))
     # Assert
     assert observed == (
         True,
@@ -132,12 +141,12 @@ def test_hermes_idle_requires_latest_ready_footer_and_empty_composer():
 
 def test_autonomous_idle_observation_is_read_only():
     # Arrange
-    mux = _Mux(
-        panes=[
-            " ─ brainstorming… │ qwen38 27b low │ 66% ─ sac:scholar\n ❯ "
-        ]
+    mux = _Mux(panes=[" ─ brainstorming… │ qwen38 27b low │ 66% ─ sac:scholar\n ❯ "])
+    calls = []
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=mux,
+        rpc_submit=lambda state, name, text: calls.append(text) or "streaming",
     )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
     # Act
     idle = runtime.autonomous_control_is_idle(_config())
     # Assert
@@ -176,28 +185,25 @@ def test_non_heartbeat_turn_does_not_probe_or_dismiss_the_pane():
     # Arrange
     mux = _Mux(
         panes=[
-            "♥ Heartbeat set (every 607s): old command\n"
-            "end · ↑/↓ scroll · Esc/q close"
+            "♥ Heartbeat set (every 607s): old command\nend · ↑/↓ scroll · Esc/q close"
         ]
     )
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    calls = []
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=mux,
+        rpc_submit=lambda state, name, text: calls.append(text) or "streaming",
+    )
     # Act
     delivered = runtime.send_turn(_config(), "new guidance", wait_ready=False)
     # Assert
-    assert (delivered, mux.events) == (
-        True,
-        [
-            ("exists", "tui-scholar", None),
-            ("settled-submit", "tui-scholar", "new guidance"),
-        ],
-    )
+    assert (delivered, calls, mux.events) == (True, ["new guidance"], [])
 
 
-def test_send_turn_refuses_when_tmux_session_is_absent():
+def test_send_key_refuses_when_tmux_session_is_absent():
     # Arrange
     runtime = HermesTuiSessionRuntime(multiplexer=_Mux(exists=False))
     # Act
-    delivered = runtime.send_turn(_config(), "not lost", wait_ready=False)
+    delivered = runtime.send_key(_config(), "Enter")
     # Assert
     assert delivered is False
 
@@ -208,7 +214,11 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     config.model = "qwen38-27b"
     config.engine_key = "qwen38-27b"
     mux = _Mux()
-    runtime = HermesTuiSessionRuntime(multiplexer=mux)
+    calls = []
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=mux,
+        rpc_submit=lambda state, name, text: calls.append(text) or "steered",
+    )
     # Act
     paused = runtime.suspend_autonomous_turns(config)
     recovered = runtime.recover_turn_admission(config)
@@ -216,7 +226,7 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     assert (
         paused,
         recovered,
-        [event[2] for event in mux.events if event[0] == "settled-submit"],
+        calls,
     ) == (
         True,
         True,

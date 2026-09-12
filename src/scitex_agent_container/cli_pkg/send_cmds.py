@@ -24,7 +24,6 @@ to stdout.
 
 from __future__ import annotations
 
-import os
 from typing import NoReturn
 
 import click
@@ -57,10 +56,10 @@ def _send_via_host_listen(
 
     PR-3 Checkpoint 3 — the path the ``sac agents send <name>
     <prompt>`` CLI takes when running inside an apptainer SIF. The
-    ``--key`` (SIGINT) path is excluded by the call site because
-    it needs local pid access; prompts route through the host
-    listen so the running agent's in-process SDK session handles
-    the turn end-to-end.
+    ``--key`` is excluded by the call site because the host-listen send
+    endpoint carries messages, not UI controls; prompts route through the
+    host listen so the running agent's in-process SDK session handles the
+    turn end-to-end.
 
     The host's lineage-scoped ACL gate denies cross-lineage sends
     with ``kind=acl_deny`` + exit 5; other failures map per the
@@ -384,8 +383,8 @@ def send(
         raise click.UsageError("Either PROMPT or --key is required.")
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
-    # sending a PROMPT (the ``--key`` SIGINT path needs local pid
-    # access and is excluded), auto-proxy to ``POST /agents/<name>/send``
+    # sending a PROMPT (the UI-control path has its own A2A endpoint and is
+    # excluded), auto-proxy to ``POST /agents/<name>/send``
     # on the host listen. The host's existing lineage-scoped ACL gate
     # (already wired into node_message_send + the per-agent send
     # surface) enforces caller permission. Outcome JSON + exit code
@@ -401,27 +400,16 @@ def send(
         )
         return  # noreturn — _send_via_host_listen sys.exits
     if key:
-        # ESC / C-c → SIGINT to the runner pid. Other keys are reserved
-        # for a future tty-bridge implementation.
-        if key not in ("ESC", "C-c", "SIGINT"):
+        if key not in ("ESC", "Escape", "Enter", "C-c", "SIGINT"):
             raise click.UsageError(
-                f"--key {key!r} not supported. Only ESC / C-c / SIGINT are "
-                "wired (cancel current turn). Use a prompt otherwise."
+                f"--key {key!r} not supported. Use Enter, Escape, or C-c."
             )
-        import signal as _signal
+        from ._send import send_to_agent
 
-        state_dir = state_dir_for(name)
-        pid_file = state_dir / "pid"
-        if not pid_file.is_file():
-            raise click.ClickException(
-                f"No pid file at {pid_file} — agent {name!r} not running."
-            )
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, _signal.SIGINT)
-        except (OSError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        click.echo(f"# interrupt {name}: SIGINT → pid={pid}", err=True)
+        result = send_to_agent(name, key=key, wait=True)
+        if result.get("status") != "ok":
+            raise click.ClickException(str(result.get("error") or result))
+        click.echo(f"# control {name}: {key}", err=True)
         return
 
     # Cross-host: when the agent's active state.db.instances row lives

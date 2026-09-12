@@ -195,17 +195,20 @@ That artifact and the exact Hermes version/commit are included in the launch
 receipt; they are not edited by operators and are not shared state. Runtime
 state remains in the configured state stores.
 
-The existing neutral PostgreSQL inbox and TUI bridge are transitional rollback
-mechanisms. The Hermes adapter uses the inbox only as a durable transport: it
+The neutral PostgreSQL inbox and TUI bridge are transport adapters. The Hermes adapter uses the inbox only as a durable transport: it
 requests `ack=explicit` and acknowledges a row only after Hermes accepts the
-turn through the existing neutral TUI endpoint. That endpoint submits into the
-official Hermes TUI, whose generated profile sets busy input to native
-`steer`. A bridge failure before acceptance therefore leaves the row
+turn through the neutral TUI endpoint. SAC starts one loopback-only Hermes
+WebSocket/JSON-RPC gateway as the session owner and attaches the official Ink
+TUI to it. The adapter calls `session.activate` and `prompt.submit` against
+that same live session; Hermes fans events out to the visible TUI, and its
+generated profile maps busy input to native `steer`. It never types messages
+into tmux. A bridge failure before acceptance therefore leaves the row
 replayable. The host-side adapter receives the listener bearer only through
 its environment, and its stop path signals a recorded PID only after Linux
 process identity proves the exact module, agent name, and authored spec path.
-This is delivery plumbing, not a second queue or scheduler. The mechanisms are
-not extended with new scheduling or steering behavior.
+This is delivery plumbing, not a second queue or scheduler. Explicit
+`/v1/control` events are limited to Enter and Escape for human modal control;
+they use the attached tmux PTY and are never used for message delivery.
 They can be removed only after the image-installed Hermes path demonstrates
 durable replay across process restart, MCP/tool availability, model provenance,
 and one representative Scholar task. Absolute-workdir isolation has passed

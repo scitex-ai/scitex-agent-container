@@ -182,6 +182,23 @@ class TuiSessionRuntime(
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
 
+    def send_key(self, config: AgentConfig, key: str) -> bool:
+        """Deliver one bounded, explicit control key to the owned TUI pane."""
+        normalized = {
+            "ESC": "Escape",
+            "Escape": "Escape",
+            "Enter": "Enter",
+            "C-c": "C-c",
+            "SIGINT": "C-c",
+        }.get(key)
+        if normalized is None:
+            raise ValueError(f"unsupported TUI control key: {key!r}")
+        name = self.session_name(config)
+        if not name or not self._mux.exists(name):
+            return False
+        self._mux.send_keys(name, normalized)
+        return True
+
     def _default_argv(self, config: AgentConfig) -> list[str] | None:
         """Resolve the SIF and render the ``apptainer exec ... claude`` argv
         (``tui=True``) — the production launch command. Returns ``None`` when no
@@ -195,15 +212,11 @@ class TuiSessionRuntime(
         if sif_path is None:
             return None
         state_dir = state_dir_for_config(config)
-        argv = build_run_argv(
-            config, state_dir=state_dir, sif_path=sif_path, tui=True
-        )
+        argv = build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
         if getattr(config, "harness", "") == "hermes":
             from ._hermes_profile import validate_hermes_tui_profile
 
-            validate_hermes_tui_profile(
-                config, state_dir=state_dir, launch_argv=argv
-            )
+            validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
         return argv
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
@@ -215,9 +228,7 @@ class TuiSessionRuntime(
         for the per-step rationale (SDK-parity $HOME surface, settings.json USER
         scope, overlay upper-home, onboarding pre-seed).
         """
-        home = _materialize_workspace(
-            config, state_dir_for_config=state_dir_for_config
-        )
+        home = _materialize_workspace(config, state_dir_for_config=state_dir_for_config)
         if home is not None and getattr(config, "harness", "") == "hermes":
             from ._hermes_profile import materialize_hermes_tui_profile
 

@@ -75,6 +75,14 @@ def _dismiss_heartbeat_confirmation(
 class HermesTuiSessionRuntime(TuiSessionRuntime):
     """Tmux/Apptainer holder for the profile-backed Hermes TUI."""
 
+    def __init__(self, *args, rpc_submit: Callable[..., str] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if rpc_submit is None:
+            from ._hermes_tui_rpc import submit_turn
+
+            rpc_submit = submit_turn
+        self._rpc_submit = rpc_submit
+
     def _start_session(self, config: AgentConfig, **kwargs) -> bool:
         return super().start(config, **kwargs)
 
@@ -141,22 +149,12 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         boundary, while idle input remains an ordinary new turn.
         """
         del wait_ready
-        name = self.session_name(config)
-        if not name or not self._mux.exists(name):
-            return False
-        # Keep text and submit as separate tmux events, but use the shared
-        # primitive's text-to-Enter settle.  An immediate Enter can arrive
-        # before prompt_toolkit has rendered the literal paste, leaving the
-        # command visibly parked in Hermes' composer.
-        self._mux.send_text_and_submit(name, text)
-        if text.strip().lower().startswith(_HEARTBEAT_SET_COMMAND):
-            return _dismiss_heartbeat_confirmation(
-                name,
-                text,
-                capture_fn=self._mux.capture_content,
-                send_keys_fn=self._mux.send_keys,
-            )
+        self._rpc_submit(state_dir_for_config(config), config.name, text)
         return True
+
+    def send_key(self, config: AgentConfig, key: str) -> bool:
+        """Send an explicit UI-control key; prompts never use this path."""
+        return super().send_key(config, key)
 
     def autonomous_control_is_idle(self, config: AgentConfig) -> bool:
         """Observe whether SAC may safely use Hermes' shared composer now."""
@@ -168,10 +166,11 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         )
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
-        name = self.session_name(config)
-        if name and self._mux.exists(name):
+        from ._hermes_tui_owner import GATEWAY_FILE
+
+        if (state_dir_for_config(config) / GATEWAY_FILE).is_file():
             return None
-        return "the Hermes TUI tmux session is absent"
+        return "the Hermes native TUI gateway is absent"
 
     def control_state(self, config: AgentConfig) -> dict | None:
         return read_control_state(state_dir_for_config(config))

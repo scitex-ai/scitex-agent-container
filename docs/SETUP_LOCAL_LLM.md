@@ -119,6 +119,14 @@ bridge calls `POST /agents/<name>/inbox/ack` with the SSE event id. A crash
 before admission causes replay; a busy Hermes gateway causes bounded retry of
 the same event and idempotency key.
 
+For `runtime: tui`, the official Hermes Ink TUI and SAC's inbound adapter are
+two clients of one loopback Hermes gateway. A2A, Cards, and CCT messages enter
+through SAC's neutral inbox event, then Hermes `prompt.submit`; an active turn
+returns `steered` under the generated `display.busy_input_mode: steer`.
+Accepted input and later events remain visible in the attached TUI. `sac
+agents send NAME --key Enter|Escape` uses a separate bounded UI-control route
+for resolving an open modal and does not depend on a runner PID file.
+
 Hermes launches do not materialize `.claude` commands, hooks, settings, or the
 developer host deep-merge. The neutral `to_home` cascade still supplies MCP,
 environment, and git configuration. This distinction is selected from
