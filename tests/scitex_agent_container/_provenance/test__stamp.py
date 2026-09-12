@@ -109,6 +109,7 @@ class TestComputeStamp:
     def test_explicit_image_head_beats_stale_gitless_stamp(
         self, tmp_path: Path, commit_env
     ):
+        # Arrange
         # A remote image context has no .git. It may contain a generated stamp
         # from an earlier build, so the checkout HEAD supplied by the staging
         # process must outrank that inherited value.
@@ -122,10 +123,11 @@ class TestComputeStamp:
         expected = "6b1da1a092464010fa63c86be1d3d086eaae4953"
         commit_env(expected)
 
+        # Act
         stamp = compute_stamp(root, package, version="1.2.3")
 
-        assert stamp["commit"] == expected
-        assert stamp["commit_source"] == "env"
+        # Assert
+        assert (stamp["commit"], stamp["commit_source"]) == (expected, "env")
 
     def test_inherits_the_commit_when_git_is_absent(self, tmp_path: Path):
         # Arrange — reproduce the sdist->wheel hop exactly: an unpacked
@@ -236,6 +238,7 @@ class TestStampPath:
     def test_hatch_write_stamps_exact_head_into_gitless_image_context(
         self, tmp_path: Path
     ):
+        # Arrange
         # Reproduce remote staging: copied source, no .git, and a stale
         # generated stamp. The supported --write adapter must replace it with
         # the checkout HEAD supplied by spartan-sif-bake.sh.
@@ -253,6 +256,7 @@ class TestStampPath:
         expected = "6b1da1a092464010fa63c86be1d3d086eaae4953"
         env = dict(os.environ, SAC_BUILD_COMMIT=expected)
 
+        # Act
         subprocess.run(
             [sys.executable, str(root / "src" / "hatch_build.py"), "--write"],
             check=True,
@@ -262,8 +266,9 @@ class TestStampPath:
         )
 
         found = read_existing_stamp(package)
-        assert found["commit"] == expected
-        assert found["commit_source"] == "env"
+
+        # Assert
+        assert (found["commit"], found["commit_source"]) == (expected, "env")
 
 
 class TestReadExistingStamp:

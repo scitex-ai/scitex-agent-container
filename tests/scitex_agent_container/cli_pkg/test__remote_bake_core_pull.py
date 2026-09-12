@@ -275,6 +275,7 @@ def test_probe_failure_reports_failed(tmp_path: Path, seam) -> None:
 def test_base_with_unknown_in_image_commit_refuses_before_swap(
     tmp_path: Path, seam
 ) -> None:
+    # Arrange
     # Exact 2026-09-13 incident shape: the remote result named HEAD 6b1da1a0,
     # but the gitless wheel had commit=None and `sac --version` therefore
     # displayed its had62ef96 code hash. A new timestamp/checksum is not source
@@ -282,14 +283,20 @@ def test_base_with_unknown_in_image_commit_refuses_before_swap(
     containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
     runner = seam(_RecordingRunner(rsync_payload=b"fresh", provenance_commit=None))
 
+    # Act
     result = _pull(containers, b"fresh")
 
-    assert result.verdict is PullVerdict.FAILED
-    assert "artifact provenance status MISMATCH" in result.detail
-    assert _HEAD in result.detail
-    assert "commit=(unknown)" in result.detail
-    assert (containers / "sac-base.sif").resolve().name == _OLD
-    assert [Path(call[0]).name for call in runner.calls] == ["rsync", "apptainer"]
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "artifact provenance status MISMATCH" in result.detail,
+            _HEAD in result.detail,
+            "commit=(unknown)" in result.detail,
+            (containers / "sac-base.sif").resolve().name == _OLD,
+            [Path(call[0]).name for call in runner.calls] == ["rsync", "apptainer"],
+        )
+    )
 
 
 def test_probe_failure_names_the_gate(tmp_path: Path, seam) -> None:
@@ -392,6 +399,7 @@ def _make_scitex_chain(tmp_path: Path, *, local_base_sha: str) -> Path:
 def test_scitex_dependency_mismatch_refuses_before_transfer(
     tmp_path: Path, seam
 ) -> None:
+    # Arrange
     containers = _make_scitex_chain(tmp_path, local_base_sha="ca9fe2")
     runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
     name = "sac-scitex-2026-0913-033507.sif"
@@ -403,19 +411,26 @@ def test_scitex_dependency_mismatch_refuses_before_transfer(
         base_sha256="older-base",
     )
 
+    # Act
     result = pull_and_publish(
         host="spartan", outcome=outcome, containers_dir=containers, retain=3
     )
 
-    assert result.verdict is PullVerdict.FAILED
-    assert "SciTeX dependency status MISMATCH" in result.detail
-    assert "ca9fe2" in result.detail
-    assert "older-base" in result.detail
-    assert runner.calls == []
-    assert not (containers / "sac-scitex.sif").exists()
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "SciTeX dependency status MISMATCH" in result.detail,
+            "ca9fe2" in result.detail,
+            "older-base" in result.detail,
+            runner.calls == [],
+            not (containers / "sac-scitex.sif").exists(),
+        )
+    )
 
 
 def test_scitex_dependency_match_allows_verified_publish(tmp_path: Path, seam) -> None:
+    # Arrange
     containers = _make_scitex_chain(tmp_path, local_base_sha="same-base")
     seam(_RecordingRunner(rsync_payload=b"scitex"))
     name = "sac-scitex-2026-0913-033507.sif"
@@ -427,17 +442,22 @@ def test_scitex_dependency_match_allows_verified_publish(tmp_path: Path, seam) -
         base_sha256="same-base",
     )
 
+    # Act
     result = pull_and_publish(
         host="spartan", outcome=outcome, containers_dir=containers, retain=3
     )
 
-    assert result.verdict is PullVerdict.SWAPPED
-    assert (containers / "sac-scitex.sif").resolve().name == name
+    # Assert
+    assert (
+        result.verdict,
+        (containers / "sac-scitex.sif").resolve().name,
+    ) == (PullVerdict.SWAPPED, name)
 
 
 def test_scitex_without_local_base_provenance_fails_actionably(
     tmp_path: Path, seam
 ) -> None:
+    # Arrange
     base_name = "sac-base-2026-0912-194122.sif"
     containers = _make_store(tmp_path, "base", [base_name], live=base_name)
     runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
@@ -450,11 +470,17 @@ def test_scitex_without_local_base_provenance_fails_actionably(
         base_sha256="remote-base",
     )
 
+    # Act
     result = pull_and_publish(
         host="spartan", outcome=outcome, containers_dir=containers, retain=3
     )
 
-    assert result.verdict is PullVerdict.FAILED
-    assert "SciTeX dependency status UNKNOWN" in result.detail
-    assert "checksum sidecar" in result.detail
-    assert runner.calls == []
+    # Assert
+    assert all(
+        (
+            result.verdict is PullVerdict.FAILED,
+            "SciTeX dependency status UNKNOWN" in result.detail,
+            "checksum sidecar" in result.detail,
+            runner.calls == [],
+        )
+    )
