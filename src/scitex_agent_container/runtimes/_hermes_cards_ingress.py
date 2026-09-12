@@ -85,7 +85,7 @@ async def drain_once(
     ack_notifications: Callable[..., dict] | None = None,
     deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> int:
-    """Deliver and confirm a batch; never ACK before terminal visibility."""
+    """Deliver and confirm a batch; never ACK before Hermes visibility."""
     if poll_notifications is None or ack_notifications is None:
         default_poll, default_ack, _default_watch = _cards_api()
         poll_notifications = poll_notifications or default_poll
@@ -132,16 +132,16 @@ async def drain_once(
             _log_check(
                 logging.WARNING,
                 Check.unknown(
-                    "terminal_visible",
-                    "the bridge did not establish terminal visibility "
+                    "hermes_transcript_visible",
+                    "the bridge did not establish Hermes transcript visibility "
                     f"({type(exc).__name__})",
                     "leave the Cards notification unconfirmed; inspect "
-                    f"`tmux capture-pane -pt tui-{name} -S -80` before the durable retry",
+                    f"`sac agents logs {name}` before the durable retry",
                     cause=StatusCode(
                         kind="http",
                         code=502,
                         message=(
-                            "terminal visibility could not be established; inspect "
+                            "Hermes transcript visibility could not be established; inspect "
                             f"`sac agents logs {name}`"
                         ),
                     ),

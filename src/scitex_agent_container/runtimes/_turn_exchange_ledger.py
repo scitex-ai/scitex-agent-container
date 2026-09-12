@@ -86,8 +86,8 @@ def open_turn_exchange(
                 "the supplied Cards exchange belongs to another responder"
             )
         # A final 200 can still need its downstream Cards ACK retried after a
-        # crash; a final 502 can be retried once the staged composer/modal is
-        # gone. The ledger is a current-status row with oplog history, so SAC
+        # crash; a final 502 can be retried once Hermes' native gateway is
+        # healthy. The ledger is a current-status row with oplog history, so SAC
         # adopts the same exchange instead of minting a second identity.
         return exchange_id, str(values["opened_at"])
 
@@ -98,7 +98,7 @@ def open_turn_exchange(
         code=202,
         message=(
             f"turn delivery accepted for {agent!r}; poll `{probe_url}/{exchange_id}` "
-            "for the separately recorded terminal-visibility result"
+            "for the separately recorded harness-visibility result"
         ),
     )
     store = _store()

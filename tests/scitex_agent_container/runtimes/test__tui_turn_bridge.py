@@ -535,16 +535,19 @@ def test_visible_delivery_failure_returns_actionable_durable_state(
     ) == (202, 202, 502, True)
 
 
-def test_visible_delivery_http_contract_reports_positive_terminal_render(
+def test_visible_delivery_http_contract_reports_native_acceptance_and_proof(
     bridge_factory,
 ) -> None:
     # Arrange
     observed = {}
 
-    def visible(text: str, **kwargs: object) -> bool:
+    def visible(text: str, **kwargs: object) -> object:
         observed["text"] = text
         observed.update(kwargs)
-        return True
+        return SimpleNamespace(
+            status="steered",
+            visibility="session.inflight.corrections",
+        )
 
     port = bridge_factory(visible, agent_name="scitex-hub")
     message = (
@@ -567,11 +570,14 @@ def test_visible_delivery_http_contract_reports_positive_terminal_render(
         status,
         body["status_code"]["code"],
         probe["status_code"]["code"],
+        probe["status_code"]["message"],
         observed,
     ) == (
         202,
         202,
         200,
+        "Hermes prompt.submit accepted the visible turn "
+        "(status=steered, proof=session.inflight.corrections)",
         {
             "text": message,
             "from_agent": "operator",
@@ -829,6 +835,23 @@ def test_build_on_turn_passes_text_and_wait_ready_false() -> None:
     on_turn("wake up")
     # Assert
     assert seen == [("wake up", False)]
+
+
+def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
+    # Arrange
+    receipt = SimpleNamespace(
+        status="steered", visibility="session.inflight.corrections"
+    )
+    runtime = SimpleNamespace(
+        send_visible_turn=lambda config, text, **kwargs: receipt
+    )
+    on_turn = bridge._build_on_turn(SimpleNamespace(name="a"), runtime=runtime)
+
+    # Act
+    result = on_turn("wake up", visible_delivery_id="n_visible")
+
+    # Assert
+    assert result is receipt
 
 
 def test_build_on_turn_raises_when_session_absent() -> None:
