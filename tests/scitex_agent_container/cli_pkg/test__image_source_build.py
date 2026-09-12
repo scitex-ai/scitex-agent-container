@@ -135,10 +135,16 @@ def _use_container_build(build_fn) -> Iterator[list[tuple]]:
 
 
 def test_source_provenance_accepts_loaded_package_root():
-    isb.assert_source_provenance(_LOADED_PACKAGE_ROOT)
+    # Arrange
+    package_root = _LOADED_PACKAGE_ROOT
+    # Act
+    result = isb.assert_source_provenance(package_root)
+    # Assert
+    assert result is None
 
 
 def test_environment_package_root_reads_editable_origin_from_selected_purelib(tmp_path):
+    # Arrange
     repo = tmp_path / "selected-worktree"
     package = repo / "src" / "scitex_agent_container"
     package.mkdir(parents=True)
@@ -151,25 +157,41 @@ def test_environment_package_root_reads_editable_origin_from_selected_purelib(tm
     (dist_info / "direct_url.json").write_text(
         '{"url":"' + repo.as_uri() + '","dir_info":{"editable":true}}'
     )
-
-    assert isb._environment_package_root(purelib) == package
+    # Act
+    result = isb._environment_package_root(purelib)
+    # Assert
+    assert result == package
 
 
 def test_source_provenance_accepts_symlink_to_loaded_package_root(tmp_path):
+    # Arrange
     linked_root = tmp_path / "scitex_agent_container"
     linked_root.symlink_to(_LOADED_PACKAGE_ROOT, target_is_directory=True)
+    # Act
+    result = isb.assert_source_provenance(linked_root)
+    # Assert
+    assert result is None
 
-    isb.assert_source_provenance(linked_root)
+
+def _capture_source_provenance_error(
+    staged_root: Path, *, environment_root: Path | None = None
+) -> str:
+    try:
+        isb.assert_source_provenance(
+            staged_root, environment_root=environment_root
+        )
+    except isb.SourceProvenanceMismatch as exc:
+        return str(exc)
+    raise AssertionError("SourceProvenanceMismatch was not raised")
 
 
 def test_source_provenance_refuses_mixed_root_and_names_both_paths(tmp_path):
+    # Arrange
     staged_root = tmp_path / "other" / "scitex_agent_container"
     staged_root.mkdir(parents=True)
-
-    with pytest.raises(isb.SourceProvenanceMismatch) as caught:
-        isb.assert_source_provenance(staged_root)
-
-    message = str(caught.value)
+    # Act
+    message = _capture_source_provenance_error(staged_root)
+    # Assert
     assert (
         str(_LOADED_PACKAGE_ROOT) in message
         and str(staged_root.resolve()) in message
@@ -180,15 +202,14 @@ def test_source_provenance_refuses_mixed_root_and_names_both_paths(tmp_path):
 def test_source_provenance_refuses_wrong_pythonpath_checkout_for_active_environment(
     tmp_path,
 ):
+    # Arrange
     environment_root = tmp_path / "selected-worktree" / "src" / "scitex_agent_container"
     environment_root.mkdir(parents=True)
-
-    with pytest.raises(isb.SourceProvenanceMismatch) as caught:
-        isb.assert_source_provenance(
-            _LOADED_PACKAGE_ROOT, environment_root=environment_root
-        )
-
-    message = str(caught.value)
+    # Act
+    message = _capture_source_provenance_error(
+        _LOADED_PACKAGE_ROOT, environment_root=environment_root
+    )
+    # Assert
     assert (
         f"loaded package root: {_LOADED_PACKAGE_ROOT}" in message
         and f"staged source root: {_LOADED_PACKAGE_ROOT}" in message

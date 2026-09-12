@@ -312,31 +312,42 @@ def _use_environment_package_root(root: Path):
 
 
 def test_plain_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    # Arrange
     selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
     selected_root.mkdir(parents=True)
+    # Act
     with _use_environment_package_root(selected_root):
         with _use_source_builder(result=Path("/tmp/should-not-build.sif")) as calls:
             result = CliRunner().invoke(image_group, ["build", "base", "--yes"])
-
-    assert result.exit_code == 1 and calls == []
-    assert "SAC source provenance is mixed" in result.output
-    assert "loaded package root:" in result.output
-    assert f"active-environment package root: {selected_root}" in result.output
+    # Assert
+    assert (
+        result.exit_code == 1
+        and calls == []
+        and "SAC source provenance is mixed" in result.output
+        and "loaded package root:" in result.output
+        and f"active-environment package root: {selected_root}" in result.output
+    )
 
 
 def test_reproducible_build_refuses_mixed_source_provenance_before_builder(home_tmp):
+    # Arrange
     selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
     selected_root.mkdir(parents=True)
+    # Act
     with _use_environment_package_root(selected_root):
         with _use_reproducible_builder() as calls:
             result = CliRunner().invoke(
                 image_group, ["build", "base", "--yes", "--reproducible"]
             )
 
-    assert result.exit_code == 1 and calls == []
-    assert "SAC source provenance is mixed" in result.output
-    assert "loaded build-helper root:" in result.output
-    assert f"active-environment package root: {selected_root}" in result.output
+    # Assert
+    assert (
+        result.exit_code == 1
+        and calls == []
+        and "SAC source provenance is mixed" in result.output
+        and "loaded build-helper root:" in result.output
+        and f"active-environment package root: {selected_root}" in result.output
+    )
 
 
 def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
