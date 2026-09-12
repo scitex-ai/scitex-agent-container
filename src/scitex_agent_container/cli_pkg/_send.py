@@ -60,7 +60,6 @@ from ._send_status_code import (
 from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
     build_track_command,
     build_track_command_argv,
-    resolve_track_strategy,
 )
 
 __all__ = ["send_to_agent", "build_track_command"]

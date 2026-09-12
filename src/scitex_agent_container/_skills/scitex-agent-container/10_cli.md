@@ -73,9 +73,6 @@ sac agents find <capability>            # Find agents with a specific capability
 
 ```bash
 sac agents send <name> "<prompt>"          # Resume the agent's session for one more turn
-sac agents send <name> --key ESC           # Cancel the current turn (SIGINT to the runner pid)
-sac agents send <name> --no-stream         # Buffer the reply instead of streaming
-sac agents send <name> "..." -- --debug    # Anything after `--` is forwarded verbatim to claude
 ```
 
 Reads `session_id` from the per-agent state dir and shells out to `claude --resume <sid> -p ...` inside the agent's `workdir`. See `15_claude-session.md` for the long-lived alternative that keeps the SDK client open across turns.

@@ -45,18 +45,6 @@ def _instances_store(pg_schema: str):
     yield
 
 
-@contextmanager
-def _swap_library_send(fn: Callable) -> Iterator[None]:
-    from scitex_agent_container.cli_pkg import _send
-
-    saved = _send.send_to_agent
-    _send.send_to_agent = fn  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        _send.send_to_agent = saved  # type: ignore[assignment]
-
-
 def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
     yaml_root = tmp_path / "agents"
     agent_dir = yaml_root / name
@@ -160,7 +148,7 @@ def isolated_env(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_invocation_without_prompt_or_key_exits_nonzero(isolated_env):
+def test_invocation_without_prompt_exits_nonzero(isolated_env):
     # Arrange
     runner = CliRunner()
     # Act
@@ -169,7 +157,7 @@ def test_invocation_without_prompt_or_key_exits_nonzero(isolated_env):
     assert result.exit_code != 0
 
 
-def test_invocation_without_prompt_or_key_reports_requirement_in_output(
+def test_invocation_without_prompt_reports_requirement_in_output(
     isolated_env,
 ):
     # Arrange
@@ -177,88 +165,17 @@ def test_invocation_without_prompt_or_key_reports_requirement_in_output(
     # Act
     result = runner.invoke(send, ["alpha"])
     # Assert
-    assert "Either PROMPT or --key is required" in result.output
+    assert "PROMPT is required" in result.output
 
 
-def test_invocation_with_both_prompt_and_key_exits_nonzero(isolated_env):
+def test_send_no_longer_exposes_a_key_option(isolated_env):
+    """Terminal control is not a prompt-delivery transport."""
     # Arrange
     runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
+    result = runner.invoke(send, ["alpha", "--key", "ESC"])
     # Assert
-    assert result.exit_code != 0
-
-
-def test_invocation_with_both_prompt_and_key_reports_mutual_exclusion(
-    isolated_env,
-):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "hello", "--key", "ESC"])
-    # Assert
-    assert "mutually exclusive" in result.output
-
-
-# ---------------------------------------------------------------------------
-# --key: neutral live-TUI control delivery
-# ---------------------------------------------------------------------------
-
-
-def _invoke_key_capturing_send(key="ESC"):
-    """Run one control send and return its CLI result and library call."""
-    calls: list[tuple[str, str | None, bool]] = []
-
-    def deliver(name, *, key=None, wait=False):
-        calls.append((name, key, wait))
-        return {"status": "ok"}
-
-    with _swap_library_send(deliver):
-        runner = CliRunner()
-        result = runner.invoke(send, ["alpha", "--key", key])
-    return result, calls
-
-
-@pytest.mark.parametrize("key", ["ESC", "Escape", "Enter"])
-def test_supported_key_uses_live_control_endpoint(isolated_env, key):
-    # Arrange
-    invoke = _invoke_key_capturing_send
-    # Act
-    result, calls = invoke(key)
-    # Assert
-    assert (result.exit_code, calls) == (0, [("alpha", key, True)])
-
-
-def test_key_unsupported_exits_nonzero(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
-    # Assert
-    assert result.exit_code != 0
-
-
-def test_key_unsupported_reports_not_supported(isolated_env):
-    # Arrange
-    runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "F12"])
-    # Assert
-    assert "not supported" in result.output
-
-
-def test_control_failure_is_reported_to_operator(isolated_env):
-    # Arrange
-    runner = CliRunner()
-
-    def failed(*_args, **_kwargs):
-        return {"status": "error", "error": "modal endpoint unavailable"}
-
-    # Act
-    with _swap_library_send(failed):
-        result = runner.invoke(send, ["alpha", "--key", "ESC"])
-    # Assert
-    assert result.exit_code != 0 and "modal endpoint unavailable" in result.output
+    assert "no such option" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +313,7 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     try:
         runner = CliRunner()
         # Act
-        result = runner.invoke(send, ["zeta", "hi"])
+        runner.invoke(send, ["zeta", "hi"])
     finally:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert

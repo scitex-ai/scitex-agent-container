@@ -252,7 +252,6 @@ sac agents forget <name> [--force]        # local-only state.db cleanup for the
                                            # "agent is gone, only stale rows persist" case
                                            # (no ssh, no signal)
 sac agents send   <name> "<prompt>"       # send a follow-up turn to a running session
-sac agents send   <name> --key ESC        # interrupt current turn
 sac agents status [<name>] [--snapshot] [--priority]   # FLEET-WIDE view if no name;
                                                        # per-agent JSON payload otherwise
 sac agents list   [<name>]                # alias of `status` (same renderer)
