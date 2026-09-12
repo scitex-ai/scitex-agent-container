@@ -112,6 +112,34 @@ def _same_link(target: Path, source: Path) -> bool:
         return False
 
 
+def _existing_ancestor(path: Path) -> Path:
+    """Return the nearest existing path used to predict rename semantics."""
+    candidate = path
+    while not candidate.exists() and not candidate.is_symlink():
+        parent = candidate.parent
+        if parent == candidate:
+            raise click.ClickException(
+                f"no existing ancestor found for archive path: {path}"
+            )
+        candidate = parent
+    return candidate
+
+
+def _validate_atomic_archives(plans: list[LinkPlan]) -> None:
+    """Refuse archive plans whose rename would cross filesystem devices."""
+    for plan in plans:
+        if plan.backup is None:
+            continue
+        target = Path(plan.target)
+        backup = Path(plan.backup)
+        target_device = target.lstat().st_dev
+        backup_device = _existing_ancestor(backup.parent).stat().st_dev
+        if target_device != backup_device:
+            raise click.ClickException(
+                "backup must be on the same filesystem as its live target for "
+                f"an atomic archive: target={target} backup={backup}. Choose a "
+                "same-filesystem --backup-root and retry; nothing was changed."
+            )
 def build_link_plans(
     *,
     source_root: Path,
@@ -163,6 +191,7 @@ def build_link_plans(
 
 def apply_link_plans(plans: list[LinkPlan]) -> None:
     actionable = [plan for plan in plans if plan.state != "current"]
+    _validate_atomic_archives(actionable)
     for plan in actionable:
         source = Path(plan.source)
         target = Path(plan.target)
