@@ -119,14 +119,22 @@ def _listener_accepts_bearer(url: str, bearer: str) -> None:
             raise RuntimeError(f"SAC inbox stream returned HTTP {response.status}")
 
 
-def cards_store_check(name: str, store: str | None):
+def cards_store_check(
+    name: str,
+    store: str | None,
+    *,
+    health: Callable[..., dict] | None = None,
+):
     """Observe Cards DB readiness in the shared three-valued status shape."""
     from scitex_dev.status import Check, StatusCode
 
     try:
-        from scitex_cards import health
+        if health is None:
+            from scitex_cards import health as cards_health
+        else:
+            cards_health = health
 
-        report = health(store=store, agent_id=name)
+        report = cards_health(store=store, agent_id=name)
     except Exception as exc:
         return Check.unknown(
             "cards_store_ready",

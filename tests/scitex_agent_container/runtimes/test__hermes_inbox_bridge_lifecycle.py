@@ -195,14 +195,10 @@ def test_start_refuses_when_cards_store_preflight_fails(tmp_path):
     assert (str(error), spawned) == ("Cards database authentication failed", [])
 
 
-def test_cards_store_check_reports_actionable_native_unavailable(monkeypatch):
+def test_cards_store_check_reports_actionable_native_unavailable():
     # Arrange
-    import scitex_cards
-
-    monkeypatch.setattr(
-        scitex_cards,
-        "health",
-        lambda **_kwargs: {
+    def health(**_kwargs):
+        return {
             "checks": [
                 {
                     "name": "store_identity",
@@ -211,11 +207,12 @@ def test_cards_store_check_reports_actionable_native_unavailable(monkeypatch):
                     "hint": "repair credentials",
                 }
             ]
-        },
-    )
+        }
 
     # Act
-    check = lifecycle.cards_store_check("scitex-hub", "postgresql://redacted")
+    check = lifecycle.cards_store_check(
+        "scitex-hub", "postgresql://redacted", health=health
+    )
 
     # Assert
     assert (
@@ -227,17 +224,15 @@ def test_cards_store_check_reports_actionable_native_unavailable(monkeypatch):
     ) == (False, "cards_store_ready", "http", 503, True)
 
 
-def test_cards_store_check_preserves_unknown_when_observation_raises(monkeypatch):
+def test_cards_store_check_preserves_unknown_when_observation_raises():
     # Arrange
-    import scitex_cards
-
     def unavailable(**_kwargs):
         raise RuntimeError("postgres://user:secret@host/db")
 
-    monkeypatch.setattr(scitex_cards, "health", unavailable)
-
     # Act
-    check = lifecycle.cards_store_check("scitex-hub", "postgresql://redacted")
+    check = lifecycle.cards_store_check(
+        "scitex-hub", "postgresql://redacted", health=unavailable
+    )
 
     # Assert: type only, never the credential-bearing exception text.
     assert (

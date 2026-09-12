@@ -41,7 +41,7 @@ NEW = "scitex-cards"
 
 
 @pytest.fixture
-def board(tmp_path: Path):
+def board(tmp_path: Path, pg_schema: str):
     yield from isolated_board(tmp_path)
 
 
@@ -61,9 +61,7 @@ def foreign_scoped(board: Path) -> str:
     scope as ownership is the trap: it would make the rename hand this card
     to the new name, taking it from the agent who actually owns it.
     """
-    return add_card(
-        board, "drifted", owner="other-agent", scope=f"agent:{OLD}"
-    )
+    return add_card(board, "drifted", owner="other-agent", scope=f"agent:{OLD}")
 
 
 def _owner_of(store: Path, task_id: str) -> str | None:
@@ -137,9 +135,7 @@ def test_a_foreign_scoped_card_is_reported_rather_than_silently_ignored(
     assert reported == expected
 
 
-def test_a_card_the_agent_owns_is_never_reported_as_foreign(
-    board: Path, owned: list
-):
+def test_a_card_the_agent_owns_is_never_reported_as_foreign(board: Path, owned: list):
     # Arrange
     store = board
     # Act
@@ -182,9 +178,7 @@ def test_migrate_rescopes_every_card_to_the_new_agent(board: Path, owned: list):
     assert scopes == {f"agent:{NEW}"}
 
 
-def test_migrate_moves_the_legacy_assignee_field_in_lockstep(
-    board: Path, owned: list
-):
+def test_migrate_moves_the_legacy_assignee_field_in_lockstep(board: Path, owned: list):
     # Arrange
     migrate_cards(OLD, NEW, store=board)
     # Act
@@ -212,9 +206,7 @@ def test_migrate_does_not_touch_another_agents_cards(board: Path, owned: list):
     assert stranger_owner == "other-agent"
 
 
-def test_migrate_does_not_steal_a_foreign_scoped_card(
-    board: Path, foreign_scoped: str
-):
+def test_migrate_does_not_steal_a_foreign_scoped_card(board: Path, foreign_scoped: str):
     """The card is scoped to OLD but owned by another agent. It stays theirs."""
     # Arrange
     migrate_cards(OLD, NEW, store=board)

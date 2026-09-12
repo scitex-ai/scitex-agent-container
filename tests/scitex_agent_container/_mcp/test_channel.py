@@ -1261,6 +1261,7 @@ class _FakeTurnServer:
 
     def __init__(self) -> None:
         self.turns: list[dict[str, Any]] = []
+        self.exchange_paths: list[str] = []
         self.synchronous = False
         self._server: asyncio.base_events.Server | None = None
         self.host = "127.0.0.1"
@@ -1316,7 +1317,7 @@ class _FakeTurnServer:
                         },
                     }
             else:
-                assert path.startswith("/v1/exchanges/")
+                self.exchange_paths.append(path)
                 response_status = b"200 OK"
                 response = {
                     "exchange_id": path.rsplit("/", 1)[-1],
@@ -1534,8 +1535,13 @@ async def test_wake_named_turn_route_polls_root_exchange_route(fake_turn):
     event = {"from_agent": "operator", "content": "hello", "msg_id": "m1"}
     named_turn_url = f"http://{fake_turn.host}:{fake_turn.port}/agents/scitex-hub/turn"
 
-    # Act / Assert: the fake server asserts every GET uses /v1/exchanges/.
+    # Act
     await _wake_turn(event, turn_url=named_turn_url, bearer=None)
+
+    # Assert
+    assert fake_turn.exchange_paths == [
+        "/v1/exchanges/xch_20260912T000000Z_test_abcdef"
+    ]
 
 
 @pytest.mark.asyncio

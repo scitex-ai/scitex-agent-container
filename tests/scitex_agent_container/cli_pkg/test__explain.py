@@ -121,9 +121,11 @@ def test_hermes_channel_explain_separates_cards_ingress_from_tools() -> None:
     )
 
     # Assert
-    assert "cards_inbound_delivery: resolved" in rendered
-    assert "cards_tools: unavailable" in rendered
-    assert "CCT is optional" in rendered
+    assert (
+        "cards_inbound_delivery: resolved" in rendered,
+        "cards_tools: unavailable" in rendered,
+        "CCT is optional" in rendered,
+    ) == (True, True, True)
 
 
 def test_hermes_channel_explain_reports_cards_tools_independently() -> None:
@@ -137,8 +139,10 @@ def test_hermes_channel_explain_reports_cards_tools_independently() -> None:
     )
 
     # Assert
-    assert "cards_inbound_delivery: resolved" in rendered
-    assert "cards_tools: resolved" in rendered
+    assert (
+        "cards_inbound_delivery: resolved" in rendered,
+        "cards_tools: resolved" in rendered,
+    ) == (True, True)
 
 
 def test_explain_unknown_agent_raises_click_exception() -> None:

@@ -29,7 +29,7 @@ from .._helpers.fleet_root import (
 
 
 @pytest.fixture
-def board(tmp_path: Path):
+def board(tmp_path: Path, pg_schema: str):
     yield from isolated_board(tmp_path)
 
 

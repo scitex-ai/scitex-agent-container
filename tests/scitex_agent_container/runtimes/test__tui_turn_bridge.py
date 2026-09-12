@@ -525,11 +525,14 @@ def test_visible_delivery_failure_returns_actionable_durable_state(
             "visible_delivery_id": "m_retry",
         },
     )
-    # Assert
-    assert (status, body["status_code"]["code"]) == (202, 202)
     probe = _wait_exchange(port, body["exchange_id"])
-    assert probe["status_code"]["code"] == 502
-    assert "unconfirmed" in probe["status_code"]["message"]
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        probe["status_code"]["code"],
+        "unconfirmed" in probe["status_code"]["message"],
+    ) == (202, 202, 502, True)
 
 
 def test_visible_delivery_http_contract_reports_positive_terminal_render(
@@ -558,13 +561,16 @@ def test_visible_delivery_http_contract_reports_positive_terminal_render(
             "visible_delivery_id": "m_visible",
         },
     )
-    # Assert
-    assert (status, body["status_code"]["code"]) == (
-        202,
-        202,
-    )
     probe = _wait_exchange(port, body["exchange_id"])
-    assert (probe["status_code"]["code"], observed) == (
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        probe["status_code"]["code"],
+        observed,
+    ) == (
+        202,
+        202,
         200,
         {
             "text": message,
@@ -609,12 +615,13 @@ def test_final_cards_exchange_retries_only_ack_without_duplicate_turn(
     # ACK was interrupted. Its unique marker may already have scrolled away.
     exchange_id = "xch_20260912T000000Z_cards_final"
     calls = []
+    read_ids = []
 
     def open_existing(**_kwargs: object) -> tuple[str, str]:
         return exchange_id, "2026-09-12T00:00:00+00:00"
 
     def read_existing(received: str) -> dict | None:
-        assert received == exchange_id
+        read_ids.append(received)
         return {
             "kind": "http",
             "code": 200,
@@ -640,7 +647,12 @@ def test_final_cards_exchange_retries_only_ack_without_duplicate_turn(
     )
 
     # Assert
-    assert (status, body["exchange_id"], calls) == (202, exchange_id, [])
+    assert (status, body["exchange_id"], calls, read_ids) == (
+        202,
+        exchange_id,
+        [],
+        [exchange_id],
+    )
 
 
 def test_turn_admission_coalesces_duplicate_and_rejects_overlap(bridge_factory):
@@ -663,7 +675,7 @@ def test_turn_admission_coalesces_duplicate_and_rejects_overlap(bridge_factory):
 
     # Act
     first_status, first = _post(port, "/v1/turn", first_payload)
-    assert entered.wait(timeout=2)
+    entered_before_followups = entered.wait(timeout=2)
     duplicate_status, duplicate = _post(port, "/v1/turn", first_payload)
     overlap_status, overlap = _post(
         port,
@@ -685,7 +697,8 @@ def test_turn_admission_coalesces_duplicate_and_rejects_overlap(bridge_factory):
         overlap["status_code"]["code"],
         "retry" in overlap["status_code"]["message"],
         len(calls),
-    ) == (202, 202, True, 429, 429, True, 1)
+        entered_before_followups,
+    ) == (202, 202, True, 429, 429, True, 1, True)
 
 
 def test_post_unknown_route_returns_404(bridge_factory) -> None:

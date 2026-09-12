@@ -65,6 +65,15 @@ KNOWN_IMPORTERS: dict[str, str] = {
         "image for OTHER agents to use. sac distributing a package is not sac "
         "depending on one — this file is never imported by sac at runtime."
     ),
+    "scitex_agent_container/runtimes/_hermes_cards_ingress.py": (
+        "The Hermes ingress adapter consumes scitex-cards' public durable "
+        "notification and acknowledgement API. This is the explicit package "
+        "boundary introduced with the required scitex-cards dependency."
+    ),
+    "scitex_agent_container/runtimes/_hermes_inbox_bridge_lifecycle.py": (
+        "The Hermes ingress lifecycle calls scitex-cards' public health API "
+        "before launch so an unavailable canonical store refuses visibly."
+    ),
 }
 
 _SRC = Path(__file__).resolve().parents[2] / "src"

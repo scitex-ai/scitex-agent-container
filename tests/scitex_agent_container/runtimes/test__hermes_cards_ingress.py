@@ -163,13 +163,15 @@ def test_one_cards_exchange_survives_202_visible_turn_and_final_ack():
     }
     transcript = []
     acknowledgements = []
+    opened_exchange_ids = []
+    finished_exchange_ids = []
 
     def open_existing(**kwargs):
-        assert kwargs["exchange_id"] == exchange_id
+        opened_exchange_ids.append(kwargs["exchange_id"])
         return exchange_id, opened_at
 
     def finish_existing(received_id, **kwargs):
-        assert received_id == exchange_id
+        finished_exchange_ids.append(received_id)
         status = kwargs["status"]
         exchanges[received_id] = {
             "kind": status.kind,
@@ -237,6 +239,8 @@ def test_one_cards_exchange_survives_202_visible_turn_and_final_ack():
         "operator" in transcript[0][0],
         "Please inspect signup." in transcript[0][0],
         acknowledgements,
+        opened_exchange_ids,
+        finished_exchange_ids,
     ) == (
         1,
         200,
@@ -244,6 +248,8 @@ def test_one_cards_exchange_survives_202_visible_turn_and_final_ack():
         True,
         True,
         [("scitex-hub", ["n_visible"], {"store": "cards-primary"})],
+        [exchange_id],
+        [exchange_id],
     )
 
 

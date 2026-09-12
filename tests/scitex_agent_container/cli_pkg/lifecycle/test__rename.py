@@ -41,7 +41,7 @@ def sac_root(tmp_path: Path):
 
 
 @pytest.fixture
-def board(tmp_path: Path):
+def board(tmp_path: Path, pg_schema: str):
     yield from isolated_board(tmp_path)
 
 
@@ -275,9 +275,7 @@ def test_json_dry_run_lists_the_current_board_identity_change(fleet: Layout):
     # Act
     result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
     # Assert
-    assert any(
-        needle in c["path"] for c in json.loads(result.stdout)["spec_changes"]
-    )
+    assert any(needle in c["path"] for c in json.loads(result.stdout)["spec_changes"])
 
 
 def test_json_dry_run_reports_the_store_row_counts(fleet: Layout):
@@ -302,9 +300,7 @@ def test_json_dry_run_still_carries_the_deprecated_state_db_rows_alias(
     edit rather than a silent one.
     """
     # Arrange
-    envelope = json.loads(
-        _run(OLD, NEW, "--dry-run", "--json", "--no-cards").stdout
-    )
+    envelope = json.loads(_run(OLD, NEW, "--dry-run", "--json", "--no-cards").stdout)
     # Act
     alias = envelope["state_db_rows"]
     # Assert
@@ -317,9 +313,7 @@ def test_json_dry_run_lists_the_spec_changes(fleet: Layout):
     # Act
     result = _run(OLD, NEW, "--dry-run", "--json", "--no-cards")
     # Assert
-    assert any(
-        needle in c["path"] for c in json.loads(result.stdout)["spec_changes"]
-    )
+    assert any(needle in c["path"] for c in json.loads(result.stdout)["spec_changes"])
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +330,7 @@ def test_dry_run_reports_the_card_count(fleet: Layout, board: Path):
     assert "3 card(s)" in result.output
 
 
-def test_dry_run_names_the_port_it_migrates_cards_through(
-    fleet: Layout, board: Path
-):
+def test_dry_run_names_the_port_it_migrates_cards_through(fleet: Layout, board: Path):
     """Ports and adapters, stated in the UI: sac calls the board's primitive."""
     # Arrange
     _seed(board, 1)
