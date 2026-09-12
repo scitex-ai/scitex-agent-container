@@ -78,6 +78,8 @@ class RemoteBakeOutcome:
     sif: str = ""
     sha256: str = ""
     head: str = ""
+    base_sif: str = ""
+    base_sha256: str = ""
     detail: str = ""
 
     def __post_init__(self) -> None:
@@ -240,12 +242,48 @@ def parse_bake_result(output: str, *, layer: str) -> RemoteBakeOutcome:
             detail=f"unparseable SAC_BAKE_RESULT line: {exc}",
         )
     verdict = BakeVerdict(payload.get("verdict", "NO_RESULT"))
+    reported_layer = payload.get("layer", layer)
+    if reported_layer != layer:
+        return RemoteBakeOutcome(
+            verdict=BakeVerdict.FAILED,
+            layer=layer,
+            detail=(
+                "remote result authority mismatch: requested "
+                f"layer={layer}, but SAC_BAKE_RESULT reported "
+                f"layer={reported_layer!r}; refusing to let one layer publish "
+                "another layer's live symlink"
+            ),
+        )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED):
+        if not payload.get("head"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote green result omitted source HEAD provenance; "
+                    "refusing an artifact whose expected in-image SAC commit "
+                    "cannot be stated"
+                ),
+            )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED) and layer == "scitex":
+        if not payload.get("base_sif") or not payload.get("base_sha256"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote scitex result omitted base_sif/base_sha256 dependency "
+                    "provenance; redeploy SAC on the caller so the wheel-shipped "
+                    "bake script reports the exact base it layered on"
+                ),
+            )
     return RemoteBakeOutcome(
         verdict=verdict,
-        layer=payload.get("layer", layer),
+        layer=layer,
         sif=payload.get("sif", ""),
         sha256=payload.get("sha256", ""),
         head=payload.get("head", ""),
+        base_sif=payload.get("base_sif", ""),
+        base_sha256=payload.get("base_sha256", ""),
         detail=payload.get("reason", "") or payload.get("step", ""),
     )
 
@@ -388,6 +426,46 @@ def pull_and_publish(
             layer,
             f"remote reported non-canonical name {sif_name!r}",
         )
+    if layer == "scitex":
+        base_link = containers_dir / "sac-base.sif"
+        if not base_link.is_symlink() or not base_link.resolve().is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status FAILED: no local live sac-base.sif; "
+                "publish the matching base before refreshing layer=scitex",
+            )
+        local_base = base_link.resolve()
+        sidecar = Path(str(local_base) + ".sha256")
+        if not sidecar.is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: local live base "
+                f"{local_base.name} has no checksum sidecar {sidecar}; refusing "
+                "an unprovable layer=scitex activation",
+            )
+        fields = sidecar.read_text(encoding="utf-8").split()
+        local_sha256 = fields[0] if fields else ""
+        remote_base_name = Path(outcome.base_sif).name
+        if not outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: remote result omitted "
+                "base_sha256; refusing an unprovable layer=scitex activation",
+            )
+        if local_sha256 != outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status MISMATCH: remote scitex artifact was "
+                f"built on {remote_base_name or '(unnamed base)'} "
+                f"sha256={outcome.base_sha256}, but local live base is "
+                f"{local_base.name} sha256={local_sha256 or '(missing)'}; "
+                "leaving both live symlinks untouched. Bake/publish base and "
+                "scitex from one dependency chain, then retry.",
+            )
     layer_dir = containers_dir / f"sac-{layer}"
     layer_dir.mkdir(parents=True, exist_ok=True)
     final = layer_dir / sif_name
@@ -474,6 +552,45 @@ def pull_and_publish(
             layer,
             f"symbol probe missing from wheel: {SYMBOL_PROBE}",
         )
+    # The artifact must prove that its installed SAC came from the checkout
+    # HEAD the remote result names. A build can copy the current source bytes
+    # yet ship a gitless wheel whose generated stamp says only ``unknown`` (the
+    # 2026-09-13 base-045400 incident displayed ``had62ef96``, its code hash,
+    # while the bake result claimed HEAD 6b1da1a0). Neither build success nor
+    # the artifact checksum detects that provenance break.
+    provenance_proc = _run(
+        [
+            apptainer,
+            "exec",
+            "--cleanenv",
+            "--pwd",
+            "/",
+            str(incoming),
+            "/opt/venv-sac/bin/sac",
+            "provenance",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        provenance = json.loads(provenance_proc.stdout or "")
+    except (json.JSONDecodeError, TypeError):
+        provenance = {}
+    artifact_commit = provenance.get("commit")
+    if provenance_proc.returncode != 0 or artifact_commit != outcome.head:
+        evidence = (provenance_proc.stderr or provenance_proc.stdout or "").strip()
+        return PullOutcome(
+            PullVerdict.FAILED,
+            layer,
+            "SciTeX artifact provenance status MISMATCH: remote bake result "
+            f"expected SAC commit={outcome.head or '(missing)'}, but pulled "
+            f"{sif_name} reports commit={artifact_commit or '(unknown)'} "
+            f"(probe rc={provenance_proc.returncode}); leaving live symlinks "
+            "untouched. Ensure the gitless build context is stamped with "
+            "SAC_BUILD_COMMIT before rebuilding."
+            + (f" Probe output: {evidence}" if evidence else ""),
+        )
     with tempfile.TemporaryDirectory(prefix="sac-sif-probe-") as td:
         probe = Path(td) / "sif_symbol_probe.py"
         shutil.copy2(SYMBOL_PROBE, probe)
@@ -481,6 +598,9 @@ def pull_and_publish(
             [
                 apptainer,
                 "exec",
+                "--cleanenv",
+                "--pwd",
+                "/",
                 "--bind",
                 td,
                 str(incoming),

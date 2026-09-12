@@ -114,11 +114,23 @@ class BuildStampHook(BuildHookInterface):
 
 
 def main() -> None:
-    """Dry-run: print the stamp a build would bake, writing nothing."""
+    """Print the stamp; ``--write`` also materializes it in the source tree.
+
+    ``--write`` is the supported adapter for a gitless image build context.
+    Its caller supplies ``SAC_BUILD_COMMIT`` from the checkout that created
+    that context, so the later PEP-517 wheel build inherits an exact commit
+    rather than an older generated stamp (or ``commit=unknown``).
+    """
     stamp_mod = load_stamp_module()
     stamp = stamp_mod.compute_stamp(
         root=_ROOT, package_dir=_PKG_DIR, version=_declared_version()
     )
+    if sys.argv[1:] == ["--write"]:
+        target = stamp_mod.stamp_path(_PKG_DIR)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(stamp_mod.render_module(stamp), encoding="utf-8")
+    elif sys.argv[1:]:
+        raise SystemExit("usage: hatch_build.py [--write]")
     print(f"version:    {stamp['version']}")
     print(f"commit:     {stamp['commit'] or 'unknown'} ({stamp['commit_source']})")
     print(f"code_hash:  {stamp['code_hash']}")

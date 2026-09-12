@@ -31,6 +31,7 @@ _BAKED_LINE = (
     'sac-base-2026-0717-182108.sif","sha256":"abc123","pruned":"",'
     '"duration_sec":900}\n'
 )
+_HEAD = "65004f4b"
 
 
 def _make_store(tmp_path: Path, layer: str, names: list[str], live: str) -> Path:
@@ -119,6 +120,79 @@ def test_parse_failed_verdict_names_the_reason() -> None:
     outcome = parse_bake_result(out, layer="base")
     # Assert
     assert outcome.detail == "quota-low"
+
+
+def test_parse_refuses_result_for_a_different_layer() -> None:
+    # Arrange
+    # A layer-scitex invocation must never grant a remote base result the
+    # authority to select the local base publish directory/symlink.
+
+    # Act
+    outcome = parse_bake_result(_BAKED_LINE, layer="scitex")
+
+    # Assert
+    assert all(
+        (
+            outcome.verdict is BakeVerdict.FAILED,
+            outcome.layer == "scitex",
+            "requested layer=scitex" in outcome.detail,
+            "reported layer='base'" in outcome.detail,
+        )
+    )
+
+
+def test_parse_refuses_scitex_green_without_base_provenance() -> None:
+    # Arrange
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
+        '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
+        f'"sha256":"abc123","head":"{_HEAD}"}}\n'
+    )
+
+    # Act
+    outcome = parse_bake_result(out, layer="scitex")
+
+    # Assert
+    assert outcome.verdict is BakeVerdict.FAILED and (
+        "omitted base_sif/base_sha256" in outcome.detail
+    )
+
+
+def test_parse_scitex_carries_base_dependency_provenance() -> None:
+    # Arrange
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
+        '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
+        f'"sha256":"abc123","head":"{_HEAD}",'
+        '"base_sif":"/store/sac-base/sac-base-2026-0717-000000.sif",'
+        '"base_sha256":"base456"}\n'
+    )
+
+    # Act
+    outcome = parse_bake_result(out, layer="scitex")
+
+    # Assert
+    assert (
+        Path(outcome.base_sif).name,
+        outcome.base_sha256,
+    ) == ("sac-base-2026-0717-000000.sif", "base456")
+
+
+def test_parse_refuses_green_without_expected_source_head() -> None:
+    # Arrange
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"base",'
+        '"sif":"/store/sac-base/sac-base-2026-0717-182108.sif",'
+        '"sha256":"abc123"}\n'
+    )
+
+    # Act
+    outcome = parse_bake_result(out, layer="base")
+
+    # Assert
+    assert outcome.verdict is BakeVerdict.FAILED and (
+        "omitted source HEAD provenance" in outcome.detail
+    )
 
 
 def test_parse_garbage_json_is_no_result() -> None:
@@ -351,6 +425,36 @@ def test_bake_script_stages_the_pinned_cards_source_for_runtime_layers() -> None
             '"$GIT" -C "$CARDS_CACHE" archive "$CARDS_COMMIT"',
         )
     )
+
+
+def test_bake_script_keys_scitex_cache_on_base_content_and_reports_it() -> None:
+    # Arrange
+    expected = (
+        'BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"',
+        '"base_sif":"%s","base_sha256":"%s"',
+        'fail "missing-base-provenance"',
+    )
+
+    # Act
+    text = core.BAKE_SCRIPT.read_text(encoding="utf-8")
+
+    # Assert
+    assert all(item in text for item in expected)
+
+
+def test_remote_stage_stamps_gitless_source_with_checkout_head() -> None:
+    # Arrange
+    expected = (
+        'rm -f "$CTX/scitex-agent-container-src/src/scitex_agent_container/_provenance/_build_info.py"',
+        'SAC_BUILD_COMMIT="$HEAD_SHA" "$PYTHON"',
+        'src/hatch_build.py" --write',
+    )
+
+    # Act
+    text = core.BAKE_SCRIPT.read_text(encoding="utf-8")
+
+    # Assert
+    assert all(item in text for item in expected)
 
 
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:

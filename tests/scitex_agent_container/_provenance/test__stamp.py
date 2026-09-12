@@ -10,7 +10,9 @@ unknown commit, and the wheel is the only artifact anyone installs.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -103,6 +105,29 @@ class TestComputeStamp:
 
         # Assert
         assert stamp["commit"] == "f" * 40
+
+    def test_explicit_image_head_beats_stale_gitless_stamp(
+        self, tmp_path: Path, commit_env
+    ):
+        # Arrange
+        # A remote image context has no .git. It may contain a generated stamp
+        # from an earlier build, so the checkout HEAD supplied by the staging
+        # process must outrank that inherited value.
+        root = tmp_path / "gitless-context"
+        package = root / "src" / "scitex_agent_container"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("VALUE = 2\n")
+        stale = stamp_path(package)
+        stale.parent.mkdir(parents=True)
+        stale.write_text(render_module({"commit": "a" * 40}))
+        expected = "6b1da1a092464010fa63c86be1d3d086eaae4953"
+        commit_env(expected)
+
+        # Act
+        stamp = compute_stamp(root, package, version="1.2.3")
+
+        # Assert
+        assert (stamp["commit"], stamp["commit_source"]) == (expected, "env")
 
     def test_inherits_the_commit_when_git_is_absent(self, tmp_path: Path):
         # Arrange — reproduce the sdist->wheel hop exactly: an unpacked
@@ -210,6 +235,41 @@ class TestStampPath:
         # Assert
         assert found["commit"] == "abc123"
 
+    def test_hatch_write_stamps_exact_head_into_gitless_image_context(
+        self, tmp_path: Path
+    ):
+        # Arrange
+        # Reproduce remote staging: copied source, no .git, and a stale
+        # generated stamp. The supported --write adapter must replace it with
+        # the checkout HEAD supplied by spartan-sif-bake.sh.
+        source_root = Path(__file__).resolve().parents[3]
+        root = tmp_path / "image-context"
+        package = root / "src" / "scitex_agent_container"
+        package.parent.mkdir(parents=True)
+        shutil.copy2(source_root / "pyproject.toml", root / "pyproject.toml")
+        shutil.copy2(source_root / "src" / "hatch_build.py", root / "src")
+        shutil.copytree(
+            source_root / "src" / "scitex_agent_container" / "_provenance",
+            package / "_provenance",
+        )
+        stamp_path(package).write_text(render_module({"commit": "a" * 40}))
+        expected = "6b1da1a092464010fa63c86be1d3d086eaae4953"
+        env = dict(os.environ, SAC_BUILD_COMMIT=expected)
+
+        # Act
+        subprocess.run(
+            [sys.executable, str(root / "src" / "hatch_build.py"), "--write"],
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        found = read_existing_stamp(package)
+
+        # Assert
+        assert (found["commit"], found["commit_source"]) == (expected, "env")
+
 
 class TestReadExistingStamp:
     def test_absent_stamp_reads_as_none(self, tmp_path: Path):
@@ -236,5 +296,6 @@ class TestReadExistingStamp:
 
         # Assert
         assert found is None
+
 
 # EOF
