@@ -40,7 +40,7 @@ spec:
   workdir: /home/agent/work
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
 
   claude:
@@ -111,7 +111,7 @@ def test_orientation_where_line_has_image_basename(loaded_config, tmp_path):
     # Act
     text = _generated_text(loaded_config, tmp_path)
     # Assert
-    assert "image=sac-base.sif" in text
+    assert "image=sac-base" in text
 
 
 def test_orientation_run_as_has_runtime(loaded_config, tmp_path):

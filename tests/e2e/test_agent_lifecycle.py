@@ -74,7 +74,7 @@ def _write_minimal_spec(home: Path, name: str) -> Path:
               host: ${{HOSTNAME}}
               workdir: {home}/work
               apptainer:
-                image: {home}/.scitex/agent-container/containers/sac-base.sif
+                image: sac-base
                 binds: []
               claude:
                 model: haiku

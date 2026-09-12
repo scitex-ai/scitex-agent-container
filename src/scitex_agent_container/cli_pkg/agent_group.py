@@ -81,6 +81,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "declare-a2a-host",
                 "migrate-layers",
                 "migrate-engines",
+                "migrate-images",
                 "scratch-migrate",
             ],
         ),
@@ -304,6 +305,10 @@ _register_migrate_layers(agent_group)
 from ._agents_migrate_engines import register as _register_migrate_engines  # noqa: E402
 
 _register_migrate_engines(agent_group)
+
+from ._agents_migrate_images import register as _register_migrate_images  # noqa: E402
+
+_register_migrate_images(agent_group)
 
 # `scratch-migrate` — ADR-0024: move each STOPPED agent's overlay-upper
 # ``/uvwork`` (11.7 GB for sac alone on the root LV, measured 2026-09-03)

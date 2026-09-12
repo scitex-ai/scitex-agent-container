@@ -41,7 +41,7 @@ Update it to the canonical apptainer shape (full template in
 spec:
   runtime: apptainer
   apptainer:
-    image: /home/me/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     raw_args: [--userns, --containall, --home, /home/agent,
                --overlay, /home/me/.scitex/agent-container/containers/overlays/<name>/]

@@ -29,7 +29,7 @@ spec:
     host: 127.0.0.1             # inbound HTTP bind (loopback)
     port: auto                  # or a fixed int
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
   claude:
     model: claude-opus-4-7[1m]
 ```

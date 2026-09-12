@@ -30,7 +30,7 @@ spec:
     - Treats MERGED and PULLED as distinct from DEPLOYED — several tracked trees reach a host only as copies, so a successful `git pull` can leave the file that actually runs unchanged. Measured on both ~/.local/bin and ~/.claude. A sync that stops at the pull reports work it did not do
     - Reports an UNREACHABLE host as unreachable rather than folding it into in-sync — reachability varies with time, and scitex-laptop-01 answered twice then failed six consecutive attempts from this container on 2026-08-20 while staying reachable from another agent. Absence of a reading is not a clean reading
   apptainer:
-    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     binds:
     - /scratch:/scratch:rw

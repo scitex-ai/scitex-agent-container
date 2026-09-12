@@ -323,7 +323,18 @@ def record_local_instance(
     # sibling side-writes above — see ``_birth_certificate``.
     from ._birth_certificate import write_birth_certificate
 
-    write_birth_certificate(config, instance_id)
+    identity_reader = getattr(runtime, "resolved_image_identity", None)
+    try:
+        image_identity = identity_reader() if callable(identity_reader) else None
+    except OSError as exc:
+        logger.error(
+            "image identity NOT recorded for incarnation %s (agent %s): %s",
+            instance_id,
+            config.name,
+            exc,
+        )
+        image_identity = None
+    write_birth_certificate(config, instance_id, image_identity=image_identity)
     return instance_id
 
 

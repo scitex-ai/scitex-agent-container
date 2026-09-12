@@ -69,7 +69,7 @@ spec:
   workdir: {home}/proj/{name}
 
   apptainer:
-    image: {home}/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     binds:
       - {home}:{home}:rw

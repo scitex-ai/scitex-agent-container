@@ -20,6 +20,7 @@ from pathlib import Path
 
 from scitex_agent_container._lifecycle._birth_certificate import (
     SPEC_SHA_UNRESOLVABLE,
+    compiled_launch_snapshot,
     compiled_spec_snapshot,
     spec_git_sha,
     write_birth_certificate,
@@ -78,6 +79,16 @@ def test_snapshot_is_json_serializable(tmp_path: Path) -> None:
     text = json.dumps(compiled_spec_snapshot(cfg), default=str)
     # Assert
     assert json.loads(text)["name"] == "alpha"
+
+
+def test_launch_snapshot_records_exact_apptainer_artifact_identity() -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    identity = {"path": "/images/sac-base-1.sif", "sha256": "abc123"}
+    # Act
+    snapshot = compiled_launch_snapshot(cfg, image_identity=identity)
+    # Assert
+    assert snapshot["launch_artifacts"]["apptainer_image"] == identity
 
 
 # ---------------------------------------------------------------------------

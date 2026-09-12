@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "SPEC_SHA_UNRESOLVABLE",
+    "compiled_launch_snapshot",
     "compiled_spec_snapshot",
     "spec_git_sha",
     "write_birth_certificate",
@@ -101,6 +102,18 @@ def compiled_spec_snapshot(config: Any) -> dict:
     return _redact(raw)
 
 
+def compiled_launch_snapshot(
+    config: Any,
+    *,
+    image_identity: dict[str, str] | None = None,
+) -> dict:
+    """Compiled declaration plus immutable artifacts selected at launch."""
+    snapshot = compiled_spec_snapshot(config)
+    if image_identity is not None:
+        snapshot["launch_artifacts"] = {"apptainer_image": dict(image_identity)}
+    return snapshot
+
+
 def spec_git_sha(config_path: str | None, *, timeout_s: float = 5.0) -> str:
     """The spec repo's HEAD commit, or ``"unresolvable"`` — never a guess.
 
@@ -132,6 +145,8 @@ def spec_git_sha(config_path: str | None, *, timeout_s: float = 5.0) -> str:
 def write_birth_certificate(
     config: Any,
     incarnation_id: str,
+    *,
+    image_identity: dict[str, str] | None = None,
 ) -> bool:
     """Record the birth certificate for ``incarnation_id``. Best-effort.
 
@@ -154,7 +169,7 @@ def write_birth_certificate(
             or getattr(config, "spec_path", None)
             or None
         )
-        snapshot = compiled_spec_snapshot(config)
+        snapshot = compiled_launch_snapshot(config, image_identity=image_identity)
         payload = json.dumps(snapshot, ensure_ascii=False, default=str)
         from .._state.state_db_incarnations import record_incarnation_birth
 

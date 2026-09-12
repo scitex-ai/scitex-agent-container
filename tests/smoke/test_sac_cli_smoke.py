@@ -144,7 +144,7 @@ spec:
   host: ${HOSTNAME}
   workdir: /home/agent/work
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
   claude:
     model: haiku

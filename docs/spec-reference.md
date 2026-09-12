@@ -162,7 +162,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 
 | Field         | Type                          | Description                                                |
 |---------------|-------------------------------|------------------------------------------------------------|
-| `image`       | path to `.sif`                | `sac-scitex.sif` (full stack) or `sac-base.sif` (minimal). Optional; empty falls back to the sac default SIF at dispatch. |
+| `image`       | logical name or custom path   | Use `sac-base`, `sac-scitex`, or `sac-proxy` for SAC-owned images. SAC resolves the host-local live link and records the exact immutable path plus SHA-256 in incarnation state. Timestamped and stable-link filesystem paths for SAC-owned images are rejected. An absolute `.sif` path remains valid for a custom image. |
 | `overlay`     | path                          | Writable rw layer above the SIF                            |
 | `overlay_size` | size string (e.g. `"5G"`, `"500M"`) | When set together with `overlay`, sac auto-creates the overlay image at that path with the given size if it doesn't exist (declarative — no manual `apptainer overlay create` step). Units: M/MB/G/GB only (K/KB rejected). Empty = no auto-create (missing overlay raises a clear FileNotFoundError at launch). |
 | `overlay_create_if_missing` | bool (default `true`) | Gate for the auto-create behaviour above. When `false` AND the overlay is missing, sac raises FileNotFoundError without attempting creation (operator must pre-create with `apptainer overlay create`). |

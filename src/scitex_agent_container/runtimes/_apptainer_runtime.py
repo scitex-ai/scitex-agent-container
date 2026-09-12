@@ -141,7 +141,18 @@ class ApptainerContainerRuntime(RuntimeBase):
             return None
         cache_dir = self._image_cache_dir(config)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        return _resolve_sif(config, cache_dir)
+        resolved = _resolve_sif(config, cache_dir)
+        self._resolved_sif_path = resolved
+        return resolved
+
+    def resolved_image_identity(self) -> dict[str, str] | None:
+        """Exact immutable artifact selected for this runtime's last launch."""
+        path = getattr(self, "_resolved_sif_path", None)
+        if path is None:
+            return None
+        from ._apptainer_image_ref import image_artifact_identity
+
+        return image_artifact_identity(path)
 
     # ------------------------------------------------------------------
     # lifecycle

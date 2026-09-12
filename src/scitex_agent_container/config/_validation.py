@@ -314,6 +314,17 @@ def validate_raw(raw: dict, path: str) -> list[str]:
             errors.append(
                 f"spec.apptainer.image must be a string, got {type(ap_image).__name__}"
             )
+        if isinstance(ap_image, str):
+            from ..runtimes._apptainer_image_ref import legacy_managed_image_name
+
+            logical = legacy_managed_image_name(ap_image)
+            if logical is not None:
+                errors.append(
+                    "spec.apptainer.image must not name a SAC image filesystem "
+                    f"artifact ({ap_image!r}); use the portable logical image "
+                    f"name {logical!r}. The incarnation birth certificate records "
+                    "the exact resolved path and SHA-256."
+                )
 
         # spec.dockerfile dropped 2026-05-13 with the docker ripout.
         # Keep type check around for one minor version so explicit

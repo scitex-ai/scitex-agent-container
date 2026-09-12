@@ -218,7 +218,7 @@ kind: AgentProxy
 
 spec:
   runtime: apptainer
-  apptainer: { image: ~/.scitex/agent-container/containers/sac-proxy.sif }
+  apptainer: { image: sac-proxy }
   proxy:
     upstream: https://peer.example.com
     trust: local-mesh
