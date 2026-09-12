@@ -46,12 +46,21 @@ def _make_store(tmp_path: Path, layer: str, names: list[str], live: str) -> Path
     return containers
 
 
-def _outcome(layer: str, name: str, payload: bytes) -> RemoteBakeOutcome:
+def _outcome(
+    layer: str,
+    name: str,
+    payload: bytes,
+    *,
+    base_sif: str = "",
+    base_sha256: str = "",
+) -> RemoteBakeOutcome:
     return RemoteBakeOutcome(
         verdict=BakeVerdict.BAKED,
         layer=layer,
         sif=f"/remote/store/sac-{layer}/{name}",
         sha256=_sha256(payload),
+        base_sif=base_sif,
+        base_sha256=base_sha256,
     )
 
 
@@ -323,3 +332,89 @@ def test_live_artifact_with_differing_checksum_refuses_to_guess(
     result = _pull(containers, b"different-remote-bytes")
     # Assert
     assert result.verdict is PullVerdict.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Layer dependency authority — scitex may publish only over its exact base
+# ---------------------------------------------------------------------------
+
+
+def _make_scitex_chain(tmp_path: Path, *, local_base_sha: str) -> Path:
+    base_name = "sac-base-2026-0912-194122.sif"
+    containers = _make_store(tmp_path, "base", [base_name], live=base_name)
+    base = containers / "sac-base" / base_name
+    Path(str(base) + ".sha256").write_text(
+        f"{local_base_sha}  {base_name}\n", encoding="utf-8"
+    )
+    return containers
+
+
+def test_scitex_dependency_mismatch_refuses_before_transfer(
+    tmp_path: Path, seam
+) -> None:
+    containers = _make_scitex_chain(tmp_path, local_base_sha="ca9fe2")
+    runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="older-base",
+    )
+
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    assert result.verdict is PullVerdict.FAILED
+    assert "SciTeX dependency status MISMATCH" in result.detail
+    assert "ca9fe2" in result.detail
+    assert "older-base" in result.detail
+    assert runner.calls == []
+    assert not (containers / "sac-scitex.sif").exists()
+
+
+def test_scitex_dependency_match_allows_verified_publish(tmp_path: Path, seam) -> None:
+    containers = _make_scitex_chain(tmp_path, local_base_sha="same-base")
+    seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="same-base",
+    )
+
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    assert result.verdict is PullVerdict.SWAPPED
+    assert (containers / "sac-scitex.sif").resolve().name == name
+
+
+def test_scitex_without_local_base_provenance_fails_actionably(
+    tmp_path: Path, seam
+) -> None:
+    base_name = "sac-base-2026-0912-194122.sif"
+    containers = _make_store(tmp_path, "base", [base_name], live=base_name)
+    runner = seam(_RecordingRunner(rsync_payload=b"scitex"))
+    name = "sac-scitex-2026-0913-033507.sif"
+    outcome = _outcome(
+        "scitex",
+        name,
+        b"scitex",
+        base_sif="/remote/store/sac-base/sac-base-2026-0913-032154.sif",
+        base_sha256="remote-base",
+    )
+
+    result = pull_and_publish(
+        host="spartan", outcome=outcome, containers_dir=containers, retain=3
+    )
+
+    assert result.verdict is PullVerdict.FAILED
+    assert "SciTeX dependency status UNKNOWN" in result.detail
+    assert "checksum sidecar" in result.detail
+    assert runner.calls == []

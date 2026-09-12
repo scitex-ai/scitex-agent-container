@@ -78,6 +78,8 @@ class RemoteBakeOutcome:
     sif: str = ""
     sha256: str = ""
     head: str = ""
+    base_sif: str = ""
+    base_sha256: str = ""
     detail: str = ""
 
     def __post_init__(self) -> None:
@@ -240,12 +242,37 @@ def parse_bake_result(output: str, *, layer: str) -> RemoteBakeOutcome:
             detail=f"unparseable SAC_BAKE_RESULT line: {exc}",
         )
     verdict = BakeVerdict(payload.get("verdict", "NO_RESULT"))
+    reported_layer = payload.get("layer", layer)
+    if reported_layer != layer:
+        return RemoteBakeOutcome(
+            verdict=BakeVerdict.FAILED,
+            layer=layer,
+            detail=(
+                "remote result authority mismatch: requested "
+                f"layer={layer}, but SAC_BAKE_RESULT reported "
+                f"layer={reported_layer!r}; refusing to let one layer publish "
+                "another layer's live symlink"
+            ),
+        )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED) and layer == "scitex":
+        if not payload.get("base_sif") or not payload.get("base_sha256"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote scitex result omitted base_sif/base_sha256 dependency "
+                    "provenance; redeploy SAC on the caller so the wheel-shipped "
+                    "bake script reports the exact base it layered on"
+                ),
+            )
     return RemoteBakeOutcome(
         verdict=verdict,
-        layer=payload.get("layer", layer),
+        layer=layer,
         sif=payload.get("sif", ""),
         sha256=payload.get("sha256", ""),
         head=payload.get("head", ""),
+        base_sif=payload.get("base_sif", ""),
+        base_sha256=payload.get("base_sha256", ""),
         detail=payload.get("reason", "") or payload.get("step", ""),
     )
 
@@ -388,6 +415,46 @@ def pull_and_publish(
             layer,
             f"remote reported non-canonical name {sif_name!r}",
         )
+    if layer == "scitex":
+        base_link = containers_dir / "sac-base.sif"
+        if not base_link.is_symlink() or not base_link.resolve().is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status FAILED: no local live sac-base.sif; "
+                "publish the matching base before refreshing layer=scitex",
+            )
+        local_base = base_link.resolve()
+        sidecar = Path(str(local_base) + ".sha256")
+        if not sidecar.is_file():
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: local live base "
+                f"{local_base.name} has no checksum sidecar {sidecar}; refusing "
+                "an unprovable layer=scitex activation",
+            )
+        fields = sidecar.read_text(encoding="utf-8").split()
+        local_sha256 = fields[0] if fields else ""
+        remote_base_name = Path(outcome.base_sif).name
+        if not outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status UNKNOWN: remote result omitted "
+                "base_sha256; refusing an unprovable layer=scitex activation",
+            )
+        if local_sha256 != outcome.base_sha256:
+            return PullOutcome(
+                PullVerdict.FAILED,
+                layer,
+                "SciTeX dependency status MISMATCH: remote scitex artifact was "
+                f"built on {remote_base_name or '(unnamed base)'} "
+                f"sha256={outcome.base_sha256}, but local live base is "
+                f"{local_base.name} sha256={local_sha256 or '(missing)'}; "
+                "leaving both live symlinks untouched. Bake/publish base and "
+                "scitex from one dependency chain, then retry.",
+            )
     layer_dir = containers_dir / f"sac-{layer}"
     layer_dir.mkdir(parents=True, exist_ok=True)
     final = layer_dir / sif_name

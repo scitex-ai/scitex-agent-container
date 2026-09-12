@@ -202,19 +202,31 @@ echo "clone: $REPO at $HEAD_SHA (origin/$BRANCH)"
 STEP="skip-check"
 STATE_FILE="$WORKDIR/state/$LAYER.last"
 BASE_LIVE=""
+BASE_SHA256=""
 if [ "$LAYER" = "scitex" ]; then
     BASE_LIVE="$(readlink -f "$STORE/sac-base.sif" 2>/dev/null || true)"
     [ -n "$BASE_LIVE" ] && [ -f "$BASE_LIVE" ] \
         || fail "missing-base" "no live sac-base.sif in $STORE — bake base first"
+    BASE_SHA256="$(awk 'NR==1 {print $1}' "$BASE_LIVE.sha256" 2>/dev/null || true)"
+    [ -n "$BASE_SHA256" ] \
+        || fail "missing-base-provenance" "$BASE_LIVE.sha256 has no checksum — cannot prove the scitex dependency"
 fi
-STATE_KEY="$HEAD_SHA:$(basename "${BASE_LIVE:-none}")"
+BASE_KEY="none"
+if [ "$LAYER" = "scitex" ]; then
+    # The filename is useful to humans but is not content identity. Including
+    # the checksum prevents SKIPPED from relabelling an older scitex artifact
+    # with the provenance of different bytes later placed under the same name.
+    BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"
+fi
+STATE_KEY="$HEAD_SHA:$BASE_KEY"
 if [ "$FORCE" -eq 0 ] && [ -f "$STATE_FILE" ]; then
     read -r LAST_KEY LAST_SIF < "$STATE_FILE" || true
     if [ "${LAST_KEY:-}" = "$STATE_KEY" ] && [ -f "${LAST_SIF:-/nonexistent}" ]; then
         echo "skip: source unchanged since last successful bake ($STATE_KEY)"
-        printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","head":"%s","sif":"%s","sha256":"%s","reason":"source-unchanged"}\n' \
+        printf 'SAC_BAKE_RESULT={"verdict":"SKIPPED","layer":"%s","head":"%s","sif":"%s","sha256":"%s","base_sif":"%s","base_sha256":"%s","reason":"source-unchanged"}\n' \
             "$LAYER" "$HEAD_SHA" "$LAST_SIF" \
-            "$(cat "${LAST_SIF}.sha256" 2>/dev/null | awk '{print $1}')"
+            "$(cat "${LAST_SIF}.sha256" 2>/dev/null | awk '{print $1}')" \
+            "${BASE_LIVE:-}" "${BASE_SHA256:-}"
         exit 0
     fi
 fi
@@ -479,5 +491,6 @@ for sif in $(ls -1 "$LAYER_DIR"/sac-"$LAYER"-*.sif 2>/dev/null | sort -r); do
 done
 
 DURATION=$(( $(date +%s) - START_EPOCH ))
-printf 'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"%s","ts":"%s","head":"%s","sif":"%s","sha256":"%s","pruned":"%s","duration_sec":%s}\n' \
-    "$LAYER" "$TS" "$HEAD_SHA" "$FINAL_SIF" "$SHA256" "${PRUNED# }" "$DURATION"
+printf 'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"%s","ts":"%s","head":"%s","sif":"%s","sha256":"%s","base_sif":"%s","base_sha256":"%s","pruned":"%s","duration_sec":%s}\n' \
+    "$LAYER" "$TS" "$HEAD_SHA" "$FINAL_SIF" "$SHA256" \
+    "${BASE_LIVE:-}" "${BASE_SHA256:-}" "${PRUNED# }" "$DURATION"

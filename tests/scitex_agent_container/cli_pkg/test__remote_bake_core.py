@@ -121,6 +121,44 @@ def test_parse_failed_verdict_names_the_reason() -> None:
     assert outcome.detail == "quota-low"
 
 
+def test_parse_refuses_result_for_a_different_layer() -> None:
+    # A layer-scitex invocation must never grant a remote base result the
+    # authority to select the local base publish directory/symlink.
+    outcome = parse_bake_result(_BAKED_LINE, layer="scitex")
+
+    assert outcome.verdict is BakeVerdict.FAILED
+    assert outcome.layer == "scitex"
+    assert "requested layer=scitex" in outcome.detail
+    assert "reported layer='base'" in outcome.detail
+
+
+def test_parse_refuses_scitex_green_without_base_provenance() -> None:
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
+        '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
+        '"sha256":"abc123"}\n'
+    )
+
+    outcome = parse_bake_result(out, layer="scitex")
+
+    assert outcome.verdict is BakeVerdict.FAILED
+    assert "omitted base_sif/base_sha256" in outcome.detail
+
+
+def test_parse_scitex_carries_base_dependency_provenance() -> None:
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
+        '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
+        '"sha256":"abc123","base_sif":"/store/sac-base/sac-base-2026-0717-000000.sif",'
+        '"base_sha256":"base456"}\n'
+    )
+
+    outcome = parse_bake_result(out, layer="scitex")
+
+    assert outcome.base_sif.endswith("sac-base-2026-0717-000000.sif")
+    assert outcome.base_sha256 == "base456"
+
+
 def test_parse_garbage_json_is_no_result() -> None:
     # Arrange — a truncated/corrupt verdict line must not crash NOR pass.
     out = 'SAC_BAKE_RESULT={"verdict":"BAK'
@@ -351,6 +389,14 @@ def test_bake_script_stages_the_pinned_cards_source_for_runtime_layers() -> None
             '"$GIT" -C "$CARDS_CACHE" archive "$CARDS_COMMIT"',
         )
     )
+
+
+def test_bake_script_keys_scitex_cache_on_base_content_and_reports_it() -> None:
+    text = core.BAKE_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"' in text
+    assert '"base_sif":"%s","base_sha256":"%s"' in text
+    assert 'fail "missing-base-provenance"' in text
 
 
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:
