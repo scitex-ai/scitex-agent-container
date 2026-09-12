@@ -8,6 +8,20 @@ import pytest
 
 from scitex_agent_container.cli_pkg import _cards_source as source
 
+EXPECTED_CARDS_COMMIT = "ce192fe043babe9f476f6d48490b35f933fe4b90"
+
+
+def test_canonical_cards_source_pin_is_the_merged_commit():
+    """Make an intentional test edit mandatory for every Cards pin rotation."""
+    # Arrange
+    expected = EXPECTED_CARDS_COMMIT
+
+    # Act
+    actual = source.CARDS_COMMIT
+
+    # Assert
+    assert actual == expected
+
 
 def test_explicit_source_must_contain_pinned_commit(tmp_path):
     # Arrange
