@@ -127,6 +127,16 @@ hundreds-of-thousands-token request still requires substantial compute, and
 the two-active-request admission limit is therefore part of the serving
 profile, not merely a client-side preference.
 
+Another measured source of avoidable work was Hermes' automatic background
+review. On 2026-09-12, aligned Hermes and inference-server logs showed that a
+completed foreground turn immediately started a review over about 691,000
+tokens on the same conversation. A gateway restart cancelled that review as
+the next foreground turn began; the foreground request then had zero cached
+tokens and took about 276 seconds. SAC therefore defaults
+`spec.available_harnesses.hermes.background_review` to `false`. An agent may
+set it to `true`, but the resulting extra full-conversation request is then an
+explicit capacity decision rather than hidden traffic.
+
 ## Gateway lifecycle incident
 
 Live testing observed stale gateway in-flight/capacity accounting after a

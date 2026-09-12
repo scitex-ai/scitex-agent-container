@@ -8,6 +8,7 @@ from ._engine_library import resolve_engine_namespace
 from ._engine_types import apply_default_engine
 from ._explicit_validation import validate as _validate_explicit_fields
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
+from ._hermes_background_review import parse_selected_hermes_background_review
 from ._hermes_compression import parse_selected_hermes_compression
 from ._host import (
     contains_hostname_placeholder,
@@ -435,6 +436,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
+        hermes_background_review=parse_selected_hermes_background_review(spec),
         hermes_compression=parse_selected_hermes_compression(spec),
         apptainer=apptainer_spec,
         hooks=hooks,

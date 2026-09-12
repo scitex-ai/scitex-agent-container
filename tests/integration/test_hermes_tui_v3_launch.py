@@ -52,6 +52,7 @@ def _canonical_hermes_spec() -> dict:
                 "hermes": {
                     "session": {"mode": "continue", "max_age_minutes": None},
                     "channels": [],
+                    "background_review": True,
                     "compression": {
                         "threshold": 0.85,
                         "target_ratio": 0.25,
@@ -110,6 +111,8 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and profile_env == "SAC_TEST_HERMES_ENGINE_KEY=not-a-real-secret\n"
         and config.claude.channels == ["server:sac"]
         and config.hermes_compression.threshold == 0.85
+        and config.hermes_background_review is True
+        and profile["auxiliary"]["background_review"] == {"enabled": True}
         and profile["compression"]
         == {
             "enabled": True,

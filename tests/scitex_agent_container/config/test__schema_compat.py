@@ -52,6 +52,69 @@ def test_canonical_hermes_compression_is_accepted():
     assert errors == []
 
 
+def test_canonical_hermes_background_review_is_accepted():
+    # Arrange
+    entry = _hermes_entry()
+    entry["background_review"] = True
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == []
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false", {}])
+def test_hermes_background_review_requires_a_boolean(value):
+    # Arrange
+    entry = _hermes_entry()
+    entry["background_review"] = value
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.hermes.background_review must be a boolean"
+    ]
+
+
+def test_background_review_is_rejected_on_non_hermes_harness():
+    # Arrange
+    raw = {
+        "spec": {
+            "harness": "codex",
+            "runtime": "tui",
+            "available_harnesses": {
+                "codex": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "channels": [],
+                    "approval_policy": "never",
+                    "sandbox_mode": "danger-full-access",
+                    "background_review": False,
+                }
+            },
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.codex.background_review is only valid for the "
+        "Hermes harness"
+    ]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

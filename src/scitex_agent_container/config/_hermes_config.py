@@ -28,6 +28,7 @@ def compile_hermes_config(
     run_budget_seconds: int = 1200,
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
+    background_review: bool = False,
 ) -> dict[str, Any]:
     """Return a credential-free Hermes configuration derived from ``plan``."""
     if plan.harness != "hermes":
@@ -51,6 +52,8 @@ def compile_hermes_config(
         raise ValueError("run_budget_seconds must be a positive integer")
     if approval_mode not in {"manual", "smart", "off"}:
         raise ValueError("approval_mode must be manual, smart, or off")
+    if type(background_review) is not bool:
+        raise ValueError("background_review must be a boolean")
     compression = compression or HermesCompressionSpec()
     workspace = str(PurePosixPath(workdir))
     if not workspace.startswith("/"):
@@ -121,7 +124,10 @@ def compile_hermes_config(
             "cwd": workspace,
             "auto_source_bashrc": False,
         },
-        "auxiliary": {"title_generation": {"enabled": False}},
+        "auxiliary": {
+            "title_generation": {"enabled": False},
+            "background_review": {"enabled": background_review},
+        },
     }
 
 

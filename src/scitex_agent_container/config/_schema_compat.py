@@ -166,6 +166,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
         required = set(_COMMON_HARNESS_ENTRY_KEYS)
         if "compression" in raw_entry:
             allowed.add("compression")
+        if "background_review" in raw_entry:
+            allowed.add("background_review")
         if family == "claude-code":
             allowed.update({"approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
@@ -173,7 +175,7 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
-            allowed.add("compression")
+            allowed.update({"background_review", "compression"})
         missing = sorted(required - entry_keys)
         unknown = sorted(entry_keys - allowed)
         if missing:
@@ -192,6 +194,14 @@ def canonical_surface_errors(raw: object) -> list[str]:
                     path=f"{path}.compression",
                     errors=errors,
                 )
+
+        if "background_review" in raw_entry:
+            if family != "hermes":
+                errors.append(
+                    f"{path}.background_review is only valid for the Hermes harness"
+                )
+            elif type(raw_entry.get("background_review")) is not bool:
+                errors.append(f"{path}.background_review must be a boolean")
 
         session = raw_entry.get("session")
         if not isinstance(session, Mapping):

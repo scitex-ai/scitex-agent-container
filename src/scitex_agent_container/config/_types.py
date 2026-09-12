@@ -331,6 +331,7 @@ class AgentConfig:
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
+    hermes_background_review: bool = False
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )
