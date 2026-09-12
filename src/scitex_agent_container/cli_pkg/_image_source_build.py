@@ -60,6 +60,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
+from ._image_build_lock import image_build_lock
+
 # ---------------------------------------------------------------------------
 # Staging
 # ---------------------------------------------------------------------------
@@ -500,7 +502,9 @@ def build_layer_from_source(
     then delegates to :func:`scitex_container.build` with that staging dir
     as the build context (``cwd``). The build is atomic: it lands a
     timestamped SIF and swaps stable symlinks all-at-once, leaving the
-    prior image intact on failure.
+    prior image intact on failure. A non-blocking per-layer process lock
+    covers staging through build completion; a concurrent build for the
+    same layer is refused before it can reset this build's context.
 
     Parameters
     ----------
@@ -549,33 +553,27 @@ def build_layer_from_source(
         Propagated from :func:`stage_build_context` if inputs are missing.
     """
     artifact_dir = output_dir / f"sac-{layer}"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with image_build_lock(artifact_dir, layer=layer):
+        staging_dir = artifact_dir / "build-context"
+        staged_def = stage_build_context(
+            pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
+        )
+        if layer == "base":
+            _stage_hermes_source(staging_dir)
 
-    staging_dir = artifact_dir / "build-context"
-    staged_def = stage_build_context(
-        pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
-    )
-    if layer == "base":
-        _stage_hermes_source(staging_dir)
+        image_name = f"sac-{layer}"
+        result = _container_build(
+            def_path=staged_def,
+            output_dir=output_dir,
+            cwd=staging_dir,
+            image_name=image_name,
+            sandbox=sandbox,
+            force=force,
+        )
 
-    image_name = f"sac-{layer}"
-    result = _container_build(
-        def_path=staged_def,
-        output_dir=output_dir,
-        cwd=staging_dir,
-        image_name=image_name,
-        sandbox=sandbox,
-        force=force,
-    )
-
-    if sandbox:
-        # Sandbox: scitex-container returns the sandbox dir itself
-        # (<artifact_dir>/<image_name>.sandbox); no symlink layer.
-        return Path(result)
-    # SIF: scitex-container returns the RESOLVED timestamped real SIF.
-    # Callers (and the next layer's bootstrap_sif) want the STABLE inner
-    # boot symlink, which is layout-invariant across rebuilds.
-    return artifact_dir / f"{image_name}.sif"
+        if sandbox:
+            return Path(result)
+        return artifact_dir / f"{image_name}.sif"
 
 
 class BootstrapSifMissing(FileNotFoundError):
