@@ -107,9 +107,13 @@ def test_isolated_board_redirects_scitex_cards_default_store(board: Path):
     # Act
     report = cards.resolve_store()
     # Assert
-    assert board.is_relative_to(Path(os.environ["SCITEX_DIR"]))
-    assert report["resolved"] == os.environ["SCITEX_STORE_DSN"]
-    assert report["backend"] == "postgresql"
+    observed = (
+        board.is_relative_to(Path(os.environ["SCITEX_DIR"])),
+        report["resolved"],
+        report["backend"],
+    )
+    expected = (True, os.environ["SCITEX_STORE_DSN"], "postgresql")
+    assert observed == expected
 
 
 def test_make_fleet_creates_the_spec_file(tmp_path: Path):
