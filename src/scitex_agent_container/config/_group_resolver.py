@@ -1,7 +1,7 @@
 """Named-group resolver for the group-based a2a ACL (operator 2026-06-25).
 
 A SECOND grouping axis layered on top of the existing lineage-derived
-group mesh (:func:`scitex_agent_container._state.state_db_nodes.derive_group`):
+group mesh (:func:`scitex_agent_container._state.state_store_nodes.derive_group`):
 
   * Each agent has a NAMED group. Source of truth is the spec
     ``metadata.labels``. The convention is the PLURAL list form
@@ -42,8 +42,8 @@ This module is PURE (no DB, no I/O) — string in, string out — so it is
 trivially testable without fixtures. The persistence half (writing the
 resolved group into ``node_comms_policy`` at ``agent_start`` and reading
 it back at ACL-check time) lives in
-:mod:`scitex_agent_container._state.state_db_acl_policy` /
-:mod:`scitex_agent_container._state.state_db_nodes`.
+:mod:`scitex_agent_container._state.state_store_acl_policy` /
+:mod:`scitex_agent_container._state.state_store_nodes`.
 
 The developer-role set deliberately mirrors the long-lived-coordinator
 set in :mod:`._session_continuity` (the same ``project-maintainer`` /

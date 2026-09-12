@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from .._lifecycle._off_loop import run_blocking
-from .._state.state_db_channel import mark_delivered
+from .._state.state_store_channel import mark_delivered
 
 
 async def inbox_ack(

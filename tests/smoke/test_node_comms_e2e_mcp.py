@@ -55,7 +55,7 @@ from scitex_agent_container._mcp.channel import (  # noqa: E402
     _recent,
     _register_tools,
 )
-from scitex_agent_container._state.state_db_nodes import grant_send  # noqa: E402
+from scitex_agent_container._state.state_store_nodes import grant_send  # noqa: E402
 from tests.smoke._node_comms import (  # noqa: E402
     _await_subscribed_and_read_one,
     _bearer,

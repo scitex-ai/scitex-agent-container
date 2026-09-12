@@ -5,7 +5,7 @@ Lets an agent running INSIDE an apptainer container ask the host's
 canonical (ADR-0010 mechanism #3) spawn path — the only sanctioned
 agent-driven spawn, because the listen-server gate
 (:func:`_listen._acl.check_spawn`) and the lineage recorder
-(:func:`_state.state_db_nodes.record_lineage`) run on every accepted
+(:func:`_state.state_store_nodes.record_lineage`) run on every accepted
 request. Apptainer-in-apptainer is avoided structurally: the child is
 booted on the bare host, never nested.
 

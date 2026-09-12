@@ -107,7 +107,7 @@ def detect_contradicting_remote_instance(
     if not resolved_local:
         return None
     try:
-        from .._state.state_db import list_active_instances
+        from .._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r.get("name") == agent_name]
     except Exception:  # stx-allow: fallback (reason: best-effort contradiction probe — a registry read glitch must not crash a send that would otherwise work)
@@ -123,7 +123,7 @@ def detect_contradicting_remote_instance(
 def _last_known(agent_name: str) -> dict | None:
     """Best-effort fetch of the last-known instance row for ``agent_name``."""
     try:
-        from .._state.state_db import last_known_instance
+        from .._state.state_store import last_known_instance
 
         return last_known_instance(agent_name)
     except Exception:  # stx-allow: fallback (reason: best-effort evidence read for the error message — a registry glitch must not mask the underlying PeerError)

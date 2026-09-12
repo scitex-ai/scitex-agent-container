@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 
 from scitex_agent_container._listen.server import _annotate_status_reachability
-from scitex_agent_container._state.state_db import _resolve_host
+from scitex_agent_container._state.state_store import _resolve_host
 
 
 class _Inbox:

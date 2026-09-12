@@ -16,7 +16,7 @@ became calls to ``list_comms_nodes`` / ``lookup_comms_node``: reading a
 store's physical table by hand would test scitex-dev's dialect rather than
 this module, and the public reader is what production uses.
 
-The ``isolated_state_db`` fixture STAYS. This module still resolves the
+The ``isolated_state_store`` fixture STAYS. This module still resolves the
 state-db env var through ``discover_self_peers``' cwd walk, and pinning it
 keeps the walk off the operator's real tree.
 
@@ -38,7 +38,7 @@ import pytest
 from scitex_agent_container._listen._self_peer_persistence import (
     persist_discovered_self_peers,
 )
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_nodes import (
     CommsNodeConflictError,
     register_comms_node,
 )
@@ -62,7 +62,7 @@ def _swap_env(name: str, value: str | None) -> str | None:
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_store(tmp_path: Path) -> Iterator[Path]:
     """Redirect ``state.db`` writes to a per-test tmp file (no ``monkeypatch``)."""
     db = tmp_path / "state.db"
     prev_env = _swap_env(_STATE_DB_ENV, str(db))
@@ -79,7 +79,7 @@ def _count_comms_nodes(name: str | None = None) -> int:
     table: the physical layout belongs to scitex-dev, and the reader
     production uses is the one worth asserting against.
     """
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
 
     rows = list_comms_nodes()
     if name is None:
@@ -89,7 +89,7 @@ def _count_comms_nodes(name: str | None = None) -> int:
 
 def _fetch_comms_node_port(name: str) -> int | None:
     """Helper — return ``a2a_port`` for ``name`` or None if absent."""
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name=name)
     return None if info is None else int(info["a2a_port"])
@@ -97,7 +97,7 @@ def _fetch_comms_node_port(name: str) -> int | None:
 
 def _fetch_comms_node_host(name: str) -> str | None:
     """Helper — return ``host`` for ``name`` or None if absent."""
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name=name)
     return None if info is None else str(info["host"])
@@ -109,7 +109,7 @@ def _fetch_comms_node_host(name: str) -> str | None:
 
 
 def test_persist_writes_a_row_for_a_discovered_self_peer(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -125,7 +125,7 @@ def test_persist_writes_a_row_for_a_discovered_self_peer(
 
 
 def test_persist_records_port_parsed_from_listen_url(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -139,7 +139,7 @@ def test_persist_records_port_parsed_from_listen_url(
 
 
 def test_persist_records_canonical_host_argument(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -153,7 +153,7 @@ def test_persist_records_canonical_host_argument(
 
 
 def test_persist_returns_count_of_written_rows(
-    isolated_state_db: Path, pg_schema: str
+    isolated_state_store: Path, pg_schema: str
 ) -> None:
     # Arrange
     peers = [
@@ -175,7 +175,7 @@ def test_persist_returns_count_of_written_rows(
 
 
 def test_persist_is_idempotent_no_duplicate_rows_on_second_call(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -197,7 +197,7 @@ def test_persist_is_idempotent_no_duplicate_rows_on_second_call(
 
 
 def test_persist_skips_peer_with_missing_listen_url(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange — peer dict has no listen_url key.
@@ -211,7 +211,7 @@ def test_persist_skips_peer_with_missing_listen_url(
 
 
 def test_persist_skips_peer_with_empty_listen_url(
-    isolated_state_db: Path, pg_schema: str
+    isolated_state_store: Path, pg_schema: str
 ) -> None:
     # Arrange
     peers = [{"name": "ghost", "listen_url": ""}]
@@ -224,7 +224,7 @@ def test_persist_skips_peer_with_empty_listen_url(
 
 
 def test_persist_skips_peer_with_zero_port(
-    isolated_state_db: Path, pg_schema: str
+    isolated_state_store: Path, pg_schema: str
 ) -> None:
     # Arrange: port=0 is the EXACT production-bug signature
     # _channel_self_register was created to close.
@@ -238,7 +238,7 @@ def test_persist_skips_peer_with_zero_port(
 
 
 def test_persist_skips_peer_with_portless_listen_url(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -252,7 +252,7 @@ def test_persist_skips_peer_with_portless_listen_url(
 
 
 def test_persist_skips_peer_with_empty_name(
-    isolated_state_db: Path, pg_schema: str
+    isolated_state_store: Path, pg_schema: str
 ) -> None:
     # Arrange
     peers = [{"name": "", "listen_url": "http://127.0.0.1:7878"}]
@@ -270,7 +270,7 @@ def test_persist_skips_peer_with_empty_name(
 
 
 def test_persist_skips_batch_when_canonical_host_is_empty(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange — empty host string means "no canonical host known".
@@ -289,7 +289,7 @@ def test_persist_skips_batch_when_canonical_host_is_empty(
 
 
 def test_persist_logs_and_continues_on_comms_node_conflict(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     caplog: pytest.LogCaptureFixture,
     pg_schema: str,
 ) -> None:
@@ -314,7 +314,7 @@ def test_persist_logs_and_continues_on_comms_node_conflict(
 
 
 def test_persist_does_not_raise_on_conflict(
-    isolated_state_db: Path, pg_schema: str
+    isolated_state_store: Path, pg_schema: str
 ) -> None:
     # Arrange
     register_comms_node(
@@ -342,7 +342,7 @@ def test_persist_does_not_raise_on_conflict(
 
 
 def test_persist_returns_zero_for_empty_peer_list(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -361,7 +361,7 @@ def test_persist_returns_zero_for_empty_peer_list(
 
 
 def test_persist_skips_peer_whose_name_is_in_skip_names(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange — the literal self/spec.yaml resolves to the listen's own
@@ -379,7 +379,7 @@ def test_persist_skips_peer_whose_name_is_in_skip_names(
 
 
 def test_persist_skips_only_the_named_peer_and_writes_the_rest(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange — `lead` is skipped, the unrelated `capsule-3` is not.
@@ -398,7 +398,7 @@ def test_persist_skips_only_the_named_peer_and_writes_the_rest(
 
 
 def test_persist_skip_names_leaves_skipped_peer_absent_from_db(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -428,7 +428,7 @@ def _write_self_spec(root: Path, body: str, dirname: str = "self") -> Path:
 
 
 def test_persist_end_to_end_with_real_discover_self_peers(
-    isolated_state_db: Path, tmp_path: Path, pg_schema: str
+    isolated_state_store: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange — a real spec.yaml under an agents-base dir.
     from scitex_agent_container._listen._self_peers import discover_self_peers
@@ -448,7 +448,7 @@ def test_persist_end_to_end_with_real_discover_self_peers(
 
 
 def test_persist_end_to_end_records_correct_port(
-    isolated_state_db: Path, tmp_path: Path, pg_schema: str
+    isolated_state_store: Path, tmp_path: Path, pg_schema: str
 ) -> None:
     # Arrange
     from scitex_agent_container._listen._self_peers import discover_self_peers

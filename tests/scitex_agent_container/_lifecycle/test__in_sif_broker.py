@@ -558,7 +558,7 @@ def isolated_state(tmp_path: Path) -> Iterator[Path]:
     # then tests/scitex_agent_container/runtimes/test__cct_token_pool.py, gave
     # 89 passed / 61 errors in one process purely from this leak.
     # Rebinding it explicitly makes the redirect deliberate and, crucially,
-    # UNDOES it. (This used to say "same shape as ``state_db.DEFAULT_DB_PATH``
+    # UNDOES it. (This used to say "same shape as ``state_store.DEFAULT_DB_PATH``
     # above"; that constant was deleted with the storage engine on 2026-08-30,
     # so ``DEFAULT_STATE_ROOT`` is now the only constant this fixture swaps.)
     saved_state_root = _session_state.DEFAULT_STATE_ROOT

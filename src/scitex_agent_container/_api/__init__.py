@@ -4,7 +4,7 @@ Each submodule re-exports the verb functions for one CLI noun
 group, so users can write::
 
     sac.agent.list()
-    sac.db.clean()
+    sac.store.clean()
     sac.host.list()
 
 …instead of the flat ``sac.agent_list()`` form. Both shapes work;
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from . import (  # noqa: F401
         account,
         agent,
-        db,
+        store,
         host,
         image,
         mcp,
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "agent",
-    "db",
+    "store",
     "host",
     "image",
     "account",

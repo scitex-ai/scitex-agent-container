@@ -48,7 +48,7 @@ import pytest
 from scitex_agent_container._lifecycle._tui_heartbeat_loop import tui_heartbeat_loop
 from scitex_agent_container._runners._session_state import write_heartbeat
 from scitex_agent_container._state import port_allocator
-from scitex_agent_container._state.state_db import (
+from scitex_agent_container._state.state_store import (
     list_active_instances,
     record_instance_start,
 )

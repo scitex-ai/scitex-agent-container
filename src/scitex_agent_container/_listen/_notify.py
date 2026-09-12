@@ -66,7 +66,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .._lifecycle._off_loop import run_blocking
-from .._state.state_db_channel import persist_event
+from .._state.state_store_channel import persist_event
 from ..a2a._inbox_bus import Broker, mint_event
 
 logger = logging.getLogger(__name__)

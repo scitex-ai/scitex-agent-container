@@ -67,7 +67,7 @@ def _runtime_pid(config: AgentConfig, runtime: Any) -> int | None:
     pid — an older/injected runtime without the seam, a docker/podman
     container, or a probe that failed. ``None`` is SAFE by construction:
     every consumer treats a NULL pid as "no verdict"
-    (:func:`_state.state_db_gc.gc_dead_instances` skips it,
+    (:func:`_state.state_store_gc.gc_dead_instances` skips it,
     :func:`_lifecycle._stale_lease.clear_stale_instance_lease` leaves the
     row alone, :func:`cli_pkg._send_diagnosis._pid_alive` returns
     ``None``), whereas a WRONG pid is strictly worse — pids get REUSED,
@@ -181,7 +181,7 @@ def record_local_instance(
     """
     from .._runners._session_state import write_instance_id
     from .._state.port_allocator import get_port
-    from .._state.state_db import (
+    from .._state.state_store import (
         _resolve_host,
         list_active_instances,
         record_instance_start,
@@ -257,7 +257,7 @@ def record_local_instance(
     # unreachable must not stop an agent from running).
     if a2a_port is not None:
         try:
-            from .._state.state_db_nodes import (
+            from .._state.state_store_nodes import (
                 CommsNodeConflictError,
                 register_comms_node,
             )
@@ -318,7 +318,7 @@ def record_local_instance(
     # no-op, no timestamp bump), so repeat starts do not duplicate
     # the row.
     try:
-        from .._state.state_db_nodes import grant_send
+        from .._state.state_store_nodes import grant_send
 
         grant_send(
             sender=config.name,
@@ -374,7 +374,7 @@ def restart_and_record(
     That was survivable while ``pid`` was always NULL. It is NOT survivable
     now that the row carries a real pid: the restarted agent's old pid is
     GONE, so ``os.kill(old_pid, 0)`` fails and every consumer
-    (:func:`cli_pkg._send_diagnosis`, :func:`_state.state_db_gc`) would
+    (:func:`cli_pkg._send_diagnosis`, :func:`_state.state_store_gc`) would
     declare a perfectly LIVE agent dead — ``agent_send`` would refuse with
     "recorded pid is not alive". A stale pid is worse than no pid, so the
     restart path MUST re-record.
@@ -437,7 +437,7 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     name+host. Returns True iff a row was updated.
     """
     from .._runners._session_state import clear_instance_id, read_instance_id
-    from .._state.state_db import (
+    from .._state.state_store import (
         _resolve_host,
         list_active_instances,
         record_instance_stop,
@@ -463,7 +463,7 @@ def end_local_instance(config: AgentConfig, runtime: Any) -> bool:
     # the registration did. Best-effort.
     if updated:
         try:
-            from .._state.state_db_nodes import unregister_comms_node
+            from .._state.state_store_nodes import unregister_comms_node
 
             unregister_comms_node(name=config.name)
         except (
@@ -485,7 +485,7 @@ def resolve_local_stop_instance(config: AgentConfig, runtime: Any) -> dict | Non
     that its launch-owned process scope disappeared.
     """
     from .._runners._session_state import read_instance_id
-    from .._state.state_db_instances import (
+    from .._state.state_store_instances import (
         last_local_instance_for_name,
         read_instance,
     )

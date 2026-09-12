@@ -92,7 +92,7 @@ def only_alpha_defined(tmp_path: Path) -> Iterator[Path]:
     """
     import importlib
 
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
     yaml_root = tmp_path / "agents"
     yaml_root.mkdir()
@@ -101,11 +101,11 @@ def only_alpha_defined(tmp_path: Path) -> Iterator[Path]:
     with _env(_YAML_DIRS, str(yaml_root)), _env(
         _STATE_DB, str(tmp_path / "isolated-state.db")
     ):
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
         try:
             yield tmp_path
         finally:
-            importlib.reload(_state_db_mod)
+            importlib.reload(_state_store_mod)
 
 
 def _refuse(name: str) -> str:

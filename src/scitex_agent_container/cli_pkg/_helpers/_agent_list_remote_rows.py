@@ -183,7 +183,7 @@ def remote_instance_rows(
     namespace so the suite's real-attribute seams keep working.
     """
     from ..._state.auth_state import verdict_for
-    from ..._state.state_db import list_active_instances
+    from ..._state.state_store import list_active_instances
     from ...config import load_config
     from . import _agent_list as _al
 

@@ -281,9 +281,8 @@ spec:
     # Per-agent env. SCITEX_CARDS_AGENT_ID makes scitex-cards writes
     # attribute to THIS agent; it is the CANONICAL board-identity name (its
     # predecessor SCITEX_TODO_AGENT_ID is retired and must not be emitted
-    # into a new spec). (sac AUTO-injects SCITEX_AGENT_CONTAINER_STATE_DB +
-    # binds the per-agent state dir, so the state DB needs no manual entry
-    # here.)
+    # into a new spec). sac binds the per-agent state dir; durable state uses
+    # the shared PostgreSQL store and needs no per-agent database entry here.
     env:
       SCITEX_CARDS_AGENT_ID: {name}
 

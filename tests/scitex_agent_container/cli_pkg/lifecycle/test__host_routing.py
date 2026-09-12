@@ -59,7 +59,7 @@ def fake_home(tmp_path: Path, env_save_restore):
 
 
 @pytest.fixture
-def state_db(fake_home: Path):
+def state_store(fake_home: Path):
     """Redirect state.db under fake_home (module reload; see test__dispatch)."""
     import importlib
     import os as _os
@@ -67,9 +67,9 @@ def state_db(fake_home: Path):
     db = fake_home / "state.db"
     saved = _os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield db
     finally:
@@ -77,7 +77,7 @@ def state_db(fake_home: Path):
             _os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
             _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _write_spec(home: Path, name: str, host_line: str) -> Path:
@@ -254,7 +254,7 @@ def test_unknown_host_error_with_no_peers_says_none_registered():
 # ---------------------------------------------------------------------------
 
 
-def test_has_active_row_false_on_fresh_state_db(fake_home, state_db):
+def test_has_active_row_false_on_fresh_state_store(fake_home, state_store):
     # Arrange — no instances written at all.
     name = "hr-alpha"
     # Act
@@ -263,9 +263,9 @@ def test_has_active_row_false_on_fresh_state_db(fake_home, state_db):
     assert present is False
 
 
-def test_has_active_row_true_after_record_instance_start(fake_home, state_db):
+def test_has_active_row_true_after_record_instance_start(fake_home, state_store):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="hr-alpha", host="peer-host")
     # Act
@@ -368,10 +368,10 @@ def test_resolve_spec_with_hostname_placeholder_is_local(fake_home, env_save_res
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_returns_none_when_an_active_row_exists(fake_home, state_db):
+def test_fallback_returns_none_when_an_active_row_exists(fake_home, state_store):
     # Arrange — a live row (even remote) means the row-driven dispatcher's
     # answer stands; the spec fallback must not engage.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="hr-rowed", host="peer-host")
     # Act
@@ -381,7 +381,7 @@ def test_fallback_returns_none_when_an_active_row_exists(fake_home, state_db):
 
 
 def test_fallback_routes_by_spec_pin_when_no_row_exists(
-    fake_home, state_db, env_save_restore
+    fake_home, state_store, env_save_restore
 ):
     # Arrange — no row; the spec pins a registered peer. The env override
     # (both forms, so no SacEnvConflict with a pre-set SAC_HOSTNAME) keeps

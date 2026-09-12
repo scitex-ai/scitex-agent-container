@@ -162,7 +162,7 @@ def decide(
         where we stand, and ``session_present`` is then meaningless.
     row
         The latest ``instances`` row for ``name``
-        (:func:`.._state.state_db_instances.last_known_instance`), or
+        (:func:`.._state.state_store_instances.last_known_instance`), or
         ``None`` when the agent has never appeared in this host's registry.
     local_host
         This machine's name as ``instances.host`` records it. When given, a

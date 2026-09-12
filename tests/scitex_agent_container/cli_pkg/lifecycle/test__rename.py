@@ -288,12 +288,12 @@ def test_json_dry_run_reports_the_store_row_counts(fleet: Layout):
     assert expected in json.loads(result.stdout)["store_rows"]
 
 
-def test_json_dry_run_still_carries_the_deprecated_state_db_rows_alias(
+def test_json_dry_run_still_carries_the_deprecated_state_store_rows_alias(
     fleet: Layout,
 ):
     """A published output shape is a migration, not a rename.
 
-    ``--json`` exists to be parsed. Dropping ``state_db_rows`` in the same
+    ``--json`` exists to be parsed. Dropping ``state_store_rows`` in the same
     release that introduces ``store_rows`` would break every reader at once
     with no window to move, so both ship for one release carrying the
     identical dict. This test is what makes the alias's removal a deliberate
@@ -302,7 +302,7 @@ def test_json_dry_run_still_carries_the_deprecated_state_db_rows_alias(
     # Arrange
     envelope = json.loads(_run(OLD, NEW, "--dry-run", "--json", "--no-cards").stdout)
     # Act
-    alias = envelope["state_db_rows"]
+    alias = envelope["state_store_rows"]
     # Assert
     assert alias == envelope["store_rows"]
 

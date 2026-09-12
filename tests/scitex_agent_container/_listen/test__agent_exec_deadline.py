@@ -89,7 +89,7 @@ def short_deadline():
     ``agents_start`` imports ``AGENT_START_DEADLINE_S`` INSIDE the function
     body, so reassigning the module attribute is picked up on the next call —
     the same save/restore-seam idiom the sibling tests used for
-    ``state_db.DEFAULT_DB_PATH`` until that constant was deleted with the
+    ``state_store.DEFAULT_DB_PATH`` until that constant was deleted with the
     storage engine on 2026-08-30.
     """
     saved = _handler_deadline.AGENT_START_DEADLINE_S

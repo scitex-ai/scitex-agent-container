@@ -155,22 +155,22 @@ class _SilentHTTP:
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path, pg_schema: str):
+def isolated_state_store(tmp_path: Path, pg_schema: str):
     """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at ``tmp_path``.
 
     DEPENDS ON ``pg_schema`` since 2026-08-28: the port this module resolves
     comes from the a2a claim ledger, which moved to PostgreSQL, so redirecting
     ``state.db`` alone no longer isolates what these tests read. It also
-    pinned ``state_db.DEFAULT_DB_PATH`` until 2026-08-30, when that constant
+    pinned ``state_store.DEFAULT_DB_PATH`` until 2026-08-30, when that constant
     was deleted with the storage engine — the env half is all that is left,
     and ``pg_schema`` is what does the isolating.
     """
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(tmp_path / "state.db")
-    import scitex_agent_container._state.state_db as state_db_mod
+    import scitex_agent_container._state.state_store as state_store_mod
 
-    importlib.reload(state_db_mod)
+    importlib.reload(state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -178,13 +178,13 @@ def isolated_state_db(tmp_path: Path, pg_schema: str):
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
-        importlib.reload(state_db_mod)
+        importlib.reload(state_store_mod)
 
 
 # --- Tests ------------------------------------------------------------------
 
 
-def test_returns_none_when_no_port_resolvable(isolated_state_db):
+def test_returns_none_when_no_port_resolvable(isolated_state_store):
     # Arrange — no allocator claim, cfg.a2a missing.
     from scitex_agent_container._listen import _forward
 
@@ -197,7 +197,7 @@ def test_returns_none_when_no_port_resolvable(isolated_state_db):
     assert result is None
 
 
-def test_returns_none_when_port_is_auto_sentinel(isolated_state_db):
+def test_returns_none_when_port_is_auto_sentinel(isolated_state_store):
     # Arrange — legacy cfg with the "auto" string but no allocator claim.
     from scitex_agent_container._listen import _forward
 
@@ -226,7 +226,7 @@ def _refuse(name: str = "ghost"):
     )
 
 
-def test_refused_port_does_not_return_none(isolated_state_db):
+def test_refused_port_does_not_return_none(isolated_state_store):
     """A RECORDED-but-unbound port must fail loud, never return ``None``.
 
     THIS TEST REPLACES ``test_returns_none_when_runner_unreachable``,
@@ -252,7 +252,7 @@ def test_refused_port_does_not_return_none(isolated_state_db):
     assert result is not None, "refused port fell through to the re-launch path"
 
 
-def test_refused_port_uses_503(isolated_state_db):
+def test_refused_port_uses_503(isolated_state_store):
     """Service-unavailable is the honest code: the transport, not the agent."""
     # Arrange
     # Act
@@ -261,7 +261,7 @@ def test_refused_port_uses_503(isolated_state_db):
     assert result.status_code == 503
 
 
-def test_refused_response_reports_the_port_as_a_field(isolated_state_db):
+def test_refused_response_reports_the_port_as_a_field(isolated_state_store):
     """Machine-readable: callers branch on the field, not on prose."""
     # Arrange
     # Act
@@ -270,7 +270,7 @@ def test_refused_response_reports_the_port_as_a_field(isolated_state_db):
     assert json.loads(result.body)["a2a_port"] == port
 
 
-def test_refused_error_text_names_the_port(isolated_state_db):
+def test_refused_error_text_names_the_port(isolated_state_store):
     """Human-readable: the port is the one actionable fact, so say it."""
     # Arrange
     # Act
@@ -279,7 +279,7 @@ def test_refused_error_text_names_the_port(isolated_state_db):
     assert str(port) in json.loads(result.body)["error"]
 
 
-def test_refused_response_points_at_the_a2a_rail(isolated_state_db):
+def test_refused_response_points_at_the_a2a_rail(isolated_state_store):
     """The hint must name the rail that DOES work for most agents."""
     # Arrange
     # Act
@@ -288,7 +288,7 @@ def test_refused_response_points_at_the_a2a_rail(isolated_state_db):
     assert "a2a send" in json.loads(result.body)["hint"]
 
 
-def test_refused_response_is_not_a_death_verdict(isolated_state_db):
+def test_refused_response_is_not_a_death_verdict(isolated_state_store):
     """Wording guard: must not tell the reader the agent crashed.
 
     Most agents in this fleet never bind ``/v1/turn`` at all and are
@@ -303,7 +303,7 @@ def test_refused_response_is_not_a_death_verdict(isolated_state_db):
     assert "crashed" not in json.loads(result.body)["error"].lower()
 
 
-def test_refused_is_distinguishable_from_timeout(isolated_state_db):
+def test_refused_is_distinguishable_from_timeout(isolated_state_store):
     """``kind`` must separate the two — collapsing them caused the incident."""
     # Arrange
     # Act
@@ -312,7 +312,7 @@ def test_refused_is_distinguishable_from_timeout(isolated_state_db):
     assert json.loads(result.body)["kind"] == "refused"
 
 
-def test_silent_sidecar_is_a_timeout_504(isolated_state_db):
+def test_silent_sidecar_is_a_timeout_504(isolated_state_store):
     """Bound-but-mute → 504, never the 503 that means "nothing is bound".
 
     The discriminator matters operationally: ``refused`` means start the
@@ -335,7 +335,7 @@ def test_silent_sidecar_is_a_timeout_504(isolated_state_db):
     assert result.status_code == 504
 
 
-def test_silent_sidecar_kind_is_timeout(isolated_state_db):
+def test_silent_sidecar_kind_is_timeout(isolated_state_store):
     """The named signal, not merely the status code."""
     # Arrange
     from scitex_agent_container._listen import _forward
@@ -353,7 +353,7 @@ def test_silent_sidecar_kind_is_timeout(isolated_state_db):
     assert json.loads(result.body)["kind"] == "timeout"
 
 
-def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_db):
+def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_store):
     # Arrange — no allocator claim; cfg pins the explicit port.
     from scitex_agent_container._listen import _forward
 
@@ -371,7 +371,7 @@ def test_explicit_port_from_cfg_reaches_live_runner(isolated_state_db):
     assert response is not None and response.status_code == 200
 
 
-def test_successful_text_payload_is_unwrapped(isolated_state_db):
+def test_successful_text_payload_is_unwrapped(isolated_state_store):
     # Arrange
     from scitex_agent_container._listen import _forward
 
@@ -389,7 +389,7 @@ def test_successful_text_payload_is_unwrapped(isolated_state_db):
     assert json.loads(response.body)["text"] == "unwrapped-text"
 
 
-def test_prompt_is_posted_as_text_field(isolated_state_db):
+def test_prompt_is_posted_as_text_field(isolated_state_store):
     # Arrange
     from scitex_agent_container._listen import _forward
 
@@ -410,7 +410,7 @@ def test_prompt_is_posted_as_text_field(isolated_state_db):
     assert json.loads(captured["body"].decode())["text"] == "the-prompt"
 
 
-def test_post_targets_v1_turn_endpoint(isolated_state_db):
+def test_post_targets_v1_turn_endpoint(isolated_state_store):
     # Arrange
     from scitex_agent_container._listen import _forward
 
@@ -429,7 +429,7 @@ def test_post_targets_v1_turn_endpoint(isolated_state_db):
     assert captured["path"] == "/v1/turn"
 
 
-def test_http_error_status_is_propagated(isolated_state_db):
+def test_http_error_status_is_propagated(isolated_state_store):
     # Arrange — runner replies 500.
     from scitex_agent_container._listen import _forward
 
@@ -446,7 +446,7 @@ def test_http_error_status_is_propagated(isolated_state_db):
     assert response.status_code == 500
 
 
-def test_http_error_body_is_wrapped_under_error_key(isolated_state_db):
+def test_http_error_body_is_wrapped_under_error_key(isolated_state_store):
     # Arrange
     from scitex_agent_container._listen import _forward
 
@@ -463,7 +463,7 @@ def test_http_error_body_is_wrapped_under_error_key(isolated_state_db):
     assert json.loads(response.body)["error"] == "missing"
 
 
-def test_allocator_claim_takes_precedence_over_cfg(isolated_state_db):
+def test_allocator_claim_takes_precedence_over_cfg(isolated_state_store):
     # Arrange — allocator has a claim; cfg pins a *different* (dead) port.
     from scitex_agent_container._listen import _forward
     from scitex_agent_container._state import port_allocator
@@ -483,7 +483,7 @@ def test_allocator_claim_takes_precedence_over_cfg(isolated_state_db):
     assert json.loads(response.body)["text"] == "from-allocator"
 
 
-def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_db):
+def test_default_host_is_loopback_when_cfg_omits_host(isolated_state_store):
     # Arrange — cfg has port but no host; default 127.0.0.1 must be used.
     from scitex_agent_container._listen import _forward
 

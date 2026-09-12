@@ -1,17 +1,17 @@
 """Lineage walk helpers (PR-3 — transitive descendants and ancestors).
 
-Extracted from :mod:`._state.state_db_nodes` (which hit the per-file line
+Extracted from :mod:`._state.state_store_nodes` (which hit the per-file line
 cap) so the PR-3 lineage-scoped ACL gate has a focused module to import
 from. The edges themselves (``child_name``, ``parent_name``,
 ``created_at``) are written by
-:func:`._state.state_db_lineage_group.record_lineage`; this module is
+:func:`._state.state_store_lineage_group.record_lineage`; this module is
 read-only.
 
 ON POSTGRESQL SINCE 2026-08-28. ``db_path`` is gone from both signatures —
 it named a file and there is no file. What changed for the walks
 themselves is the number of round-trips, and it went DOWN: each function
 now reads the edge set ONCE through
-:func:`.state_db_lineage_store.read_edges` and walks it in memory, where
+:func:`.state_store_lineage_store.read_edges` and walks it in memory, where
 :func:`descendants_of` previously issued one ``SELECT ... WHERE parent_name
 IN (...)`` PER BFS LEVEL and :func:`ancestors_to_root` one per ancestor.
 The cycle guards are unchanged and still do the work described below —
@@ -50,7 +50,7 @@ def descendants_of(
     The walk is breadth-first over the lineage edges; the return set does
     NOT include ``name`` itself (callers checking self-management should do
     so before calling this). Cycles (which
-    :func:`~.state_db_lineage_group.record_lineage` prevents, but which a
+    :func:`~.state_store_lineage_group.record_lineage` prevents, but which a
     contradictory edge set could still contain) are guarded by both the
     seen set AND a depth ceiling — a runaway walk is bounded to
     ``max_depth`` levels deep.
@@ -86,7 +86,7 @@ def descendants_of(
     if not name:
         return set()
 
-    from .state_db_lineage_store import read_edges
+    from .state_store_lineage_store import read_edges
 
     edges = read_edges()
     out: set[str] = set()
@@ -128,7 +128,7 @@ def ancestors_to_root(
 
     Cycle guard: a ``seen`` set plus the ``max_depth`` ceiling bound the
     walk so a parent cycle (which
-    :func:`~.state_db_lineage_group.record_lineage` never produces) cannot
+    :func:`~.state_store_lineage_group.record_lineage` never produces) cannot
     loop the listen server — same rationale as :func:`descendants_of`.
 
     Args:
@@ -142,7 +142,7 @@ def ancestors_to_root(
     if not name:
         return []
 
-    from .state_db_lineage_store import read_edges
+    from .state_store_lineage_store import read_edges
 
     edges = read_edges()
     chain: list[str] = []

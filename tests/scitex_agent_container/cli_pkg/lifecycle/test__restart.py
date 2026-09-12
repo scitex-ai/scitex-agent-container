@@ -329,7 +329,7 @@ def test_failure_reports_exception_message():
 
 
 @pytest.fixture
-def cross_host_state_db(tmp_path):
+def cross_host_state_store(tmp_path):
     """Per-test state.db at tmp_path; SCITEX_AGENT_CONTAINER_STATE_DB +
     module reload so the env override actually takes effect. The current
     host resolves to ``lead-host`` and one peer ``peer-x`` is declared.
@@ -347,9 +347,9 @@ def cross_host_state_db(tmp_path):
         "host:\n  fallback: hostname-short\npeers:\n  peer-x:\n    ssh: peer-x\n"
     )
     os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -362,13 +362,13 @@ def cross_host_state_db(tmp_path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 @pytest.fixture
-def remote_row_for_zeta(cross_host_state_db):
+def remote_row_for_zeta(cross_host_state_store):
     """Seed an active row for agent ``zeta`` on peer ``peer-x``."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     # Port reads as a whole (carve-out, see _skills .../14_numeric-literals.md).
     port = 18_888
@@ -498,7 +498,7 @@ def test_cross_host_restart_json_envelope_marks_dispatched(
 
 def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_shim):
     # Arrange
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     runner = CliRunner()
     # Act
@@ -515,7 +515,7 @@ def test_cross_host_restart_reopens_fresh_remote_row(remote_row_for_zeta, ssh_sh
 # ---------------------------------------------------------------------------
 
 
-def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim):
+def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_store, ssh_shim):
     # Arrange — no row seeded for ``solo``; agent_restart swapped to a recorder.
     called: list[str] = []
     runner = CliRunner()
@@ -527,7 +527,7 @@ def test_no_row_agent_restarts_locally_without_ssh(cross_host_state_db, ssh_shim
 
 
 def test_local_restart_json_envelope_marks_not_dispatched(
-    cross_host_state_db, ssh_shim
+    cross_host_state_store, ssh_shim
 ):
     import json as _json
 
@@ -542,7 +542,7 @@ def test_local_restart_json_envelope_marks_not_dispatched(
 
 
 def test_local_restart_failure_json_envelope_carries_error(
-    cross_host_state_db, ssh_shim
+    cross_host_state_store, ssh_shim
 ):
     import json as _json
 
@@ -1328,7 +1328,7 @@ def runtime_root(_isolate_runtime_root):
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path, pg_schema: str):
+def isolated_state_store(tmp_path, pg_schema: str):
     """Pin the ``instances`` registry at a real, EMPTY, per-test state.db.
 
     The postcondition now reads a SECOND witness — ``instances.screen``, the
@@ -1345,7 +1345,7 @@ def isolated_state_db(tmp_path, pg_schema: str):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(tmp_path / "state.db")
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -1382,7 +1382,7 @@ def _envelope(result):
 
 
 @pytest.fixture
-def armed_run_marker(runtime_root, isolated_state_db):
+def armed_run_marker(runtime_root, isolated_state_store):
     """Give ``verify-me`` a real run marker and PROVE the CLI can read it.
 
     Arming is checked HERE, not in each test: a fixture that silently
@@ -1401,7 +1401,7 @@ def armed_run_marker(runtime_root, isolated_state_db):
 
 
 @pytest.fixture
-def no_run_marker(runtime_root, isolated_state_db):
+def no_run_marker(runtime_root, isolated_state_store):
     """Prove ``ghost-agent`` has NO run marker (the abstention case)."""
     assert _current_run("ghost-agent") is None, (
         "fixture failed to arm the no-evidence case — a stray marker would "

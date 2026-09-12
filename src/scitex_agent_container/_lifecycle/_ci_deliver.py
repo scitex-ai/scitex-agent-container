@@ -125,15 +125,15 @@ def deliver_verdict(
 
         ancestors = ancestors_to_root
     if already_delivered is None:
-        from .._state.state_db_verdict_dedup import verdict_already_delivered
+        from .._state.state_store_verdict_dedup import verdict_already_delivered
 
         already_delivered = verdict_already_delivered
     if record is None:
-        from .._state.state_db_verdict_dedup import record_verdict_delivered
+        from .._state.state_store_verdict_dedup import record_verdict_delivered
 
         record = record_verdict_delivered
     if failure_streak is None:
-        from .._state.state_db_verdict_dedup import failures_since_last_success
+        from .._state.state_store_verdict_dedup import failures_since_last_success
 
         failure_streak = failures_since_last_success
 

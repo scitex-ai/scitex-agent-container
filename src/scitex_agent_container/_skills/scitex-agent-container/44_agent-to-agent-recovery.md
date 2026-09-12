@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Agent-to-agent recovery — WHEN to use each fleet self-heal mechanism (prompt / tmux client-command / MCP tool / hook) to un-wedge a peer from YOUR session, so agents recover each other into fleet resilience.
-  [DETAILS] A wedged agent (auth-expired, MCP disconnected, stuck mid-turn) can be recovered agent-to-agent without the operator. Four mechanisms, one decision tree keyed on the TARGET's state: PROMPT (cct/a2a to a live main loop), CLIENT-COMMAND (`tmux send-keys -l` into a live TUI pane — bypasses registry/MCP; full recipe in the companion [45_agent-to-agent-recovery-tmux.md](45_agent-to-agent-recovery-tmux.md)), MCP (`agent_status` for the verdict, `agent_send` to deliver — but heed the in-container read-path caveat below), and HOOK/cron (the auth-heal watchdog and friends). Load before recovering a peer or before trusting a cross-agent "down" verdict. Grounds in source: `cli_pkg/status_cmds.py` (status brokers to host-listen; health does not), `cli_pkg/_send_resolve.py`, `_state/state_db.py`, `runtimes/_tui_outbound.py`.
+  [DETAILS] A wedged agent (auth-expired, MCP disconnected, stuck mid-turn) can be recovered agent-to-agent without the operator. Four mechanisms, one decision tree keyed on the TARGET's state: PROMPT (cct/a2a to a live main loop), CLIENT-COMMAND (`tmux send-keys -l` into a live TUI pane — bypasses registry/MCP; full recipe in the companion [45_agent-to-agent-recovery-tmux.md](45_agent-to-agent-recovery-tmux.md)), MCP (`agent_status` for the verdict, `agent_send` to deliver — but heed the in-container read-path caveat below), and HOOK/cron (the auth-heal watchdog and friends). Load before recovering a peer or before trusting a cross-agent "down" verdict. Grounds in source: `cli_pkg/status_cmds.py` (status brokers to host-listen; health does not), `cli_pkg/_send_resolve.py`, `_state/state_store.py`, `runtimes/_tui_outbound.py`.
 tags: [scitex-agent-container-agent-to-agent-recovery, recovery, a2a, tmux, watchdog]
 ---
 
@@ -72,7 +72,7 @@ Why: `agents health` builds a local `Registry()` and returns
 *"Agent '<name>' not found"* for any peer (no host-listen broker —
 `status_cmds.py::health`), and `agent_send` resolves the endpoint from
 the local `instances` / port-allocator tables (`_send_resolve.py`,
-`_state/state_db.py`). Only `status` brokers to the host.
+`_state/state_store.py`). Only `status` brokers to the host.
 
 **RULE:** for a cross-agent verdict from inside a container, trust
 **`agent_status`** (or read the host

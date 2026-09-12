@@ -41,7 +41,7 @@ from starlette.testclient import TestClient
 from scitex_agent_container._listen import _agent_restart as restart_handler_mod
 from scitex_agent_container._listen._agent_restart import _build_detached_restart_argv
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_nodes import record_comms_policy
+from scitex_agent_container._state.state_store_nodes import record_comms_policy
 
 HOST_TOKEN = "test-host-bearer"
 
@@ -54,11 +54,11 @@ def isolated_env(tmp_path: Path, env_save_restore):
     runtime.mkdir()
     yaml_dir = home / ".scitex" / "agent-container" / "agents"
     yaml_dir.mkdir(parents=True, exist_ok=True)
-    state_db_path = tmp_path / "state.db"
+    state_store_path = tmp_path / "state.db"
     env_save_restore.set("HOME", str(home))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
-    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_db_path))
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_store_path))
     import importlib
 
     import scitex_agent_container._runners._session_state as ss

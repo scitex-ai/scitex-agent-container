@@ -170,7 +170,7 @@ async def agents_start(request: Request) -> JSONResponse:
     # caller's group. ``caller=None`` → no lineage record (admin /
     # operator path; the new agent starts as a root).
     if caller:
-        from .._state.state_db_nodes import record_lineage as _record_lineage
+        from .._state.state_store_nodes import record_lineage as _record_lineage
 
         try:
             _record_lineage(child=name, parent=caller)

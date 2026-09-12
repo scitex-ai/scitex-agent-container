@@ -89,11 +89,11 @@ spec:
 
 
 @contextmanager
-def _empty_state_db(tmp_path: Path) -> Iterator[None]:
+def _empty_state_store(tmp_path: Path) -> Iterator[None]:
     """Point ``state.db`` at a fresh empty file for the duration.
 
     The local-send branch in ``send`` consults
-    ``state_db.list_active_instances()`` to decide whether an agent is
+    ``state_store.list_active_instances()`` to decide whether an agent is
     running locally with a bound a2a_port. Without isolation a row left
     by an earlier test in the shared default db (CI runs the whole
     suite) makes ``alpha`` look "running" and the send POSTs to a dead
@@ -106,12 +106,12 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
     """
     import importlib
 
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(tmp_path / "isolated-state.db")
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield
     finally:
@@ -119,7 +119,7 @@ def _empty_state_db(tmp_path: Path) -> Iterator[None]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = saved
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 @pytest.fixture
@@ -144,7 +144,7 @@ def isolated_env(tmp_path):
     send_mod.state_dir_for = (  # type: ignore[assignment]
         lambda name, root=None: tmp_path / "state" / name
     )
-    with _empty_state_db(tmp_path):
+    with _empty_state_store(tmp_path):
         try:
             yield tmp_path
         finally:
@@ -347,9 +347,9 @@ def remote_send_env(tmp_path):
     os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
     os.environ["SAC_HOST"] = "lead-host"
     os.environ["SCITEX_AGENT_CONTAINER_CONFIG"] = str(cfg)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield tmp_path
     finally:
@@ -362,12 +362,12 @@ def remote_send_env(tmp_path):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
     # Arrange — seed a row with NO a2a_port (the proj-scitex-stats case).
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=None)
     runner = CliRunner()
@@ -379,7 +379,7 @@ def test_remote_send_without_a2a_port_raises_typed_error(remote_send_env):
 
 def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_env):
     # Arrange — seed remote row + stub post_turn_to_url collaborator.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     captured: dict = {}
@@ -405,7 +405,7 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
 
 def test_remote_send_prints_reply_from_peer(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     import scitex_agent_container._network.peer as _peer_mod
@@ -449,7 +449,7 @@ def _swap_peer_post_turn_to_url(fn: Callable) -> Iterator[None]:
 
 def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env):
     # Arrange — seed a LOCAL row (host == current SAC_HOST) with a port.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
@@ -467,7 +467,7 @@ def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env)
 
 def test_local_send_forwards_the_prompt_text(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
@@ -485,7 +485,7 @@ def test_local_send_forwards_the_prompt_text(remote_send_env):
 
 def test_local_send_prints_reply_from_loopback(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
@@ -497,7 +497,7 @@ def test_local_send_prints_reply_from_loopback(remote_send_env):
 
 def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     # Act
@@ -509,7 +509,7 @@ def test_local_send_exits_zero_on_loopback_reply(remote_send_env):
 
 def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env):
     # Arrange — a LOCAL row WITHOUT a bound port must not be POSTed to.
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
     posted: dict = {}
@@ -528,7 +528,7 @@ def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env
 def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_env):
     """The old name for this was "falls through to resume" — it no longer does."""
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
 
@@ -545,7 +545,7 @@ def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_e
 def test_local_send_failure_wraps_peer_error(remote_send_env):
     # Arrange
     from scitex_agent_container._network.peer import PeerError
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
 

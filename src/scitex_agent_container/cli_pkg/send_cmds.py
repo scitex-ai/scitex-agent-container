@@ -169,7 +169,7 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
             get from ``sac peer post-turn``.
     """
     from .._network.peer import PeerError, post_turn_to_url
-    from .._state.state_db import _resolve_host, list_active_instances
+    from .._state.state_store import _resolve_host, list_active_instances
 
     current_host = _resolve_host(None)
     rows = list_active_instances()
@@ -284,7 +284,7 @@ def _is_known_agent(name: str) -> bool:
     # (latest row for the name, active OR ended, ``None`` when never seen),
     # so nothing new had to be written — the accessor was there and this call
     # site was simply going around it.
-    from .._state.state_db_instances import last_known_instance
+    from .._state.state_store_instances import last_known_instance
 
     return last_known_instance(name) is not None
 

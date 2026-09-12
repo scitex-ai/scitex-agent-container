@@ -85,7 +85,7 @@ def _emit_report_json(
     """The structured ``--json`` report — same fields as before, plus
     ``verify`` when a launch verdict exists."""
     from ..._state.port_allocator import get_port as _get_port
-    from ..._state.state_db import now_iso as _now_iso
+    from ..._state.state_store import now_iso as _now_iso
 
     _raw_port = getattr(getattr(config, "a2a", None), "port", None)
     _resolved_port: int | None = (

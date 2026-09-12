@@ -9,7 +9,7 @@ alive, and every pid consumer degraded:
     ``isinstance(pid, int)`` -> dropped every agent -> ``resolve_liveness``
     reported every card owner DEAD (the stuck-card alarm misfired on live
     agents).
-  * ``_state.state_db_gc.gc_dead_instances`` pid-liveness heuristic and
+  * ``_state.state_store_gc.gc_dead_instances`` pid-liveness heuristic and
     ``_lifecycle._stale_lease.clear_stale_instance_lease`` both skip a NULL
     pid -> both were permanent no-ops (0 ``crashed`` / ``stale-cleared``
     rows in 1229).
@@ -55,7 +55,7 @@ def db_path(tmp_path: Path, pg_schema: str):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -103,7 +103,7 @@ class _LegacyRuntime:
 
 
 def _row_for(name: str) -> dict:
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     return [r for r in list_active_instances() if r["name"] == name][0]
 
@@ -222,7 +222,7 @@ def test_live_agent_resolves_pid_alive_through_send_diagnosis(
     # agent_start does, with a bound sidecar port.
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state import port_allocator
-    from scitex_agent_container._state.state_db import _resolve_host
+    from scitex_agent_container._state.state_store import _resolve_host
     from scitex_agent_container.cli_pkg._send_diagnosis import diagnose_send_failure
 
     port_allocator.claim_port("pid-live", explicit=7931)
@@ -244,7 +244,7 @@ def test_dead_agent_still_resolves_pid_not_alive(db_path, tmp_path) -> None:
     # fix cannot mask a crash by over-claiming liveness.
     from scitex_agent_container._lifecycle._instances import record_local_instance
     from scitex_agent_container._state import port_allocator
-    from scitex_agent_container._state.state_db import _resolve_host
+    from scitex_agent_container._state.state_store import _resolve_host
     from scitex_agent_container.cli_pkg._send_diagnosis import diagnose_send_failure
 
     port_allocator.claim_port("pid-dead", explicit=7932)
@@ -286,7 +286,7 @@ def test_gc_reaps_row_whose_recorded_pid_is_dead(db_path, tmp_path) -> None:
     # Arrange — before the fix this heuristic never fired: with pid NULL,
     # gc_dead_instances skipped every row (0 'crashed' rows in 1229).
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db_gc import gc_dead_instances
+    from scitex_agent_container._state.state_store_gc import gc_dead_instances
 
     record_local_instance(
         AgentConfig(name="pid-gc", runtime="apptainer"),
@@ -301,8 +301,8 @@ def test_gc_reaps_row_whose_recorded_pid_is_dead(db_path, tmp_path) -> None:
 def test_gc_spares_row_whose_recorded_pid_is_alive(db_path, tmp_path) -> None:
     # Arrange — the reaper must never sweep a LIVE agent.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db import list_active_instances
-    from scitex_agent_container._state.state_db_gc import gc_dead_instances
+    from scitex_agent_container._state.state_store import list_active_instances
+    from scitex_agent_container._state.state_store_gc import gc_dead_instances
 
     record_local_instance(
         AgentConfig(name="pid-gc-live", runtime="apptainer"),
@@ -325,7 +325,7 @@ def test_gc_spares_live_process_owned_by_another_uid(db_path, tmp_path) -> None:
     # precisely what makes send_to_agent report "agent not running". The
     # branch was dormant while pids were NULL; recording pids activates it.
     from scitex_agent_container._lifecycle._instances import record_local_instance
-    from scitex_agent_container._state.state_db_gc import gc_dead_instances
+    from scitex_agent_container._state.state_store_gc import gc_dead_instances
 
     record_local_instance(
         AgentConfig(name="pid-gc-foreign", runtime="apptainer"),

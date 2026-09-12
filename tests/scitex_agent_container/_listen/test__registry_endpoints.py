@@ -23,7 +23,7 @@ import pytest
 
 from scitex_agent_container._listen import _registry_endpoints as _re
 from scitex_agent_container._state import port_allocator as _pa
-from scitex_agent_container._state import state_db_instances as _instances
+from scitex_agent_container._state import state_store_instances as _instances
 
 
 @pytest.fixture(autouse=True)
@@ -63,11 +63,11 @@ def _swap_env(name: str, value: str | None) -> str | None:
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path) -> Iterator[Path]:
+def isolated_state_store(tmp_path: Path) -> Iterator[Path]:
     """Give this test a private ``$SCITEX_AGENT_CONTAINER_STATE_DB``.
 
     Mirrors the ``cross_host_env`` fixture in ``test_server.py``. Both used to
-    swap ``state_db.DEFAULT_DB_PATH`` as well, because that constant was
+    swap ``state_store.DEFAULT_DB_PATH`` as well, because that constant was
     captured at import and setting the env var alone did not move it. The
     constant was deleted with the storage engine on 2026-08-30; the env var is
     what a subprocess reads and all that is swapped here now.
@@ -99,7 +99,7 @@ def isolated_host_env(tmp_path: Path) -> Iterator[Path]:
 
 
 def test_resolve_a2a_port_returns_allocator_value_when_present(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
     pg_schema: str,
 ) -> None:
     # Arrange
@@ -111,7 +111,7 @@ def test_resolve_a2a_port_returns_allocator_value_when_present(
 
 
 def test_resolve_a2a_port_falls_back_to_instance_when_allocator_empty(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
 ) -> None:
     # Arrange — no port_allocator claim; an instance row holds the port.
     _instances.record_instance_start(
@@ -124,7 +124,7 @@ def test_resolve_a2a_port_falls_back_to_instance_when_allocator_empty(
 
 
 def test_resolve_a2a_port_returns_none_when_both_sources_empty(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
 ) -> None:
     # Arrange — empty db.
     name = "ghost"
@@ -140,7 +140,7 @@ def test_resolve_a2a_port_returns_none_when_both_sources_empty(
 
 
 def test_resolve_a2a_host_returns_instance_host_when_set(
-    isolated_state_db: Path,
+    isolated_state_store: Path,
 ) -> None:
     # Arrange — cross-host instance row pinned to a non-local host.
     _instances.record_instance_start(

@@ -23,7 +23,7 @@ from scitex_agent_container._lifecycle._spawn_gate import (
     enforce_spawn_gate,
     resolve_spawn_caller,
 )
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_nodes import (
     derive_group,
     record_lineage,
 )
@@ -33,7 +33,7 @@ from scitex_agent_container._state.state_db_nodes import (
 def db_path(tmp_path: Path) -> Iterator[Path]:
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB``, overridden then restored.
 
-    This also re-bound ``state_db.DEFAULT_DB_PATH`` until 2026-08-30, back when
+    This also re-bound ``state_store.DEFAULT_DB_PATH`` until 2026-08-30, back when
     the gate's internal calls passed ``db_path=None`` and resolved through that
     constant. It is deleted with the storage engine and the gate addresses the
     shared PostgreSQL store, so ``pg_schema`` is what isolates these now. No

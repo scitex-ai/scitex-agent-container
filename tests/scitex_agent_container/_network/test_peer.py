@@ -203,7 +203,7 @@ class TestResolvePeerUrl:
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path):
+def isolated_state_store(tmp_path: Path):
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` (explicit save/restore).
 
     The reload picked up a module-level ``DEFAULT_DB_PATH`` until 2026-08-30.
@@ -217,7 +217,7 @@ def isolated_state_db(tmp_path: Path):
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(db)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -247,14 +247,14 @@ def _write_auto_port_yaml(tmp_path: Path) -> Path:
 
 class TestResolvePeerUrlCrossHostFallback:
     def test_remote_instances_row_resolves_to_ssh_url(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML (no static port, no local allocator
         # claim) + a remote instances row recording the peer-resolved
         # bound port and host.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", bound_port=19123, remote=True
@@ -265,13 +265,13 @@ class TestResolvePeerUrlCrossHostFallback:
         assert url == "ssh://spartan:19123/v1/turn"
 
     def test_remote_instances_row_without_local_claim_does_not_raise(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — same shape; the pre-fix behaviour was a PeerError
         # ("port: auto and no bound port recorded").
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", bound_port=19123, remote=True
@@ -286,14 +286,14 @@ class TestResolvePeerUrlCrossHostFallback:
         assert raised == []
 
     def test_legacy_row_without_bound_port_falls_back_to_a2a_port(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — a row written before the family-tree columns existed
         # carries the port only in ``a2a_port``; the fallback must still
         # resolve it.
         env_save_restore.set("SAC_HOST", "lead-host")
         resolve_yaml_to(_write_auto_port_yaml(tmp_path))
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(
             name="clew", host="spartan", a2a_port=19200, bound_port=None
@@ -304,7 +304,7 @@ class TestResolvePeerUrlCrossHostFallback:
         assert url == "ssh://spartan:19200/v1/turn"
 
     def test_no_instances_row_still_raises_auto_port_error(
-        self, tmp_path: Path, resolve_yaml_to, isolated_state_db, env_save_restore
+        self, tmp_path: Path, resolve_yaml_to, isolated_state_store, env_save_restore
     ) -> None:
         # Arrange — auto-port YAML, NO instances row, NO local claim:
         # the honest "is the agent running?" error must still fire.

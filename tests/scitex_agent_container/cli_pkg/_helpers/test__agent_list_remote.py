@@ -9,7 +9,7 @@ gc reaper's ``remote=0`` guard never tombstones it locally.
 
 No-mocks, per the repo's STX-TQ rules:
 
-* real on-disk ``state.db`` via the ``isolated_state_db`` fixture (env override +
+* real on-disk ``state.db`` via the ``isolated_state_store`` fixture (env override +
   module reload — the exact pattern the ``_stale_lease`` / lifecycle suites use),
 * all ``instances`` state through the real ``record_instance_start`` /
   ``record_instance_stop`` / ``gc_dead_instances``,
@@ -67,11 +67,11 @@ def _instances_store(pg_schema: str):
 
 
 @pytest.fixture
-def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
+def isolated_state_store(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     """Per-test ``$SCITEX_AGENT_CONTAINER_STATE_DB`` value (explicit
     save/restore).
 
-    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_db`` read this
+    THE RELOAD BELOW NO LONGER RE-DERIVES ANYTHING. ``state_store`` read this
     variable at import into a module-level ``DEFAULT_DB_PATH`` until
     2026-08-30; the constant is deleted with the storage engine, and the
     ``instances`` writes it guarded address the shared PostgreSQL store, which
@@ -82,7 +82,7 @@ def isolated_state_db(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
     key = "SCITEX_AGENT_CONTAINER_STATE_DB"
     saved = os.environ.get(key)
     os.environ[key] = str(p)
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     try:
@@ -233,7 +233,7 @@ def _record_remote(
     name: str = "spartan-dev", host: str = "spartan", a2a: int = 8123
 ) -> str:
     """Record a cross-host (remote=1) active instances row; return its id."""
-    from scitex_agent_container._state.state_db import record_instance_start
+    from scitex_agent_container._state.state_store import record_instance_start
 
     return record_instance_start(name=name, host=host, a2a_port=a2a, remote=True)
 
@@ -277,7 +277,7 @@ def _spartan_row(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_remote_dispatched_agent_surfaces_exactly_once(isolated_state_db, tmp_path):
+def test_remote_dispatched_agent_surfaces_exactly_once(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -286,7 +286,7 @@ def test_remote_dispatched_agent_surfaces_exactly_once(isolated_state_db, tmp_pa
     assert [r["name"] for r in rows].count("spartan-dev") == 1
 
 
-def test_remote_row_status_is_running_when_probe_alive(isolated_state_db, tmp_path):
+def test_remote_row_status_is_running_when_probe_alive(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act — rc 0 == tmux session up on the peer == ALIVE.
@@ -295,7 +295,7 @@ def test_remote_row_status_is_running_when_probe_alive(isolated_state_db, tmp_pa
     assert _spartan_row(rows)["status"] == "running"
 
 
-def test_remote_row_reports_the_peer_host(isolated_state_db, tmp_path):
+def test_remote_row_reports_the_peer_host(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -304,7 +304,7 @@ def test_remote_row_reports_the_peer_host(isolated_state_db, tmp_path):
     assert _spartan_row(rows)["host"] == "spartan"
 
 
-def test_remote_row_host_display_is_the_peer(isolated_state_db, tmp_path):
+def test_remote_row_host_display_is_the_peer(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -313,7 +313,7 @@ def test_remote_row_host_display_is_the_peer(isolated_state_db, tmp_path):
     assert _spartan_row(rows)["host_display"] == "spartan"
 
 
-def test_remote_row_carries_the_bound_a2a_port(isolated_state_db, tmp_path):
+def test_remote_row_carries_the_bound_a2a_port(isolated_state_store, tmp_path):
     # Arrange
     _record_remote(a2a=8123)
     # Act
@@ -322,7 +322,7 @@ def test_remote_row_carries_the_bound_a2a_port(isolated_state_db, tmp_path):
     assert _spartan_row(rows)["a2a_port"] == 8123
 
 
-def test_remote_row_is_flagged_remote(isolated_state_db, tmp_path):
+def test_remote_row_is_flagged_remote(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -331,7 +331,7 @@ def test_remote_row_is_flagged_remote(isolated_state_db, tmp_path):
     assert _spartan_row(rows)["remote"] is True
 
 
-def test_remote_row_is_not_emitted_as_defined_local(isolated_state_db, tmp_path):
+def test_remote_row_is_not_emitted_as_defined_local(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -346,7 +346,7 @@ def test_remote_row_is_not_emitted_as_defined_local(isolated_state_db, tmp_path)
 # ---------------------------------------------------------------------------
 
 
-def test_remote_probe_dead_maps_to_stopped(isolated_state_db):
+def test_remote_probe_dead_maps_to_stopped(isolated_state_store):
     # Arrange — rc 1 == ssh connected, peer tmux has NO session == DEAD.
     _record_remote()
     # Act
@@ -355,7 +355,7 @@ def test_remote_probe_dead_maps_to_stopped(isolated_state_db):
     assert _spartan_row(rows)["status"] == "stopped"
 
 
-def test_remote_probe_unknown_maps_to_unknown(isolated_state_db):
+def test_remote_probe_unknown_maps_to_unknown(isolated_state_store):
     # Arrange — rc 255 == wedged/auth/bare-PATH/broken-ProxyJump ssh == UNKNOWN.
     _record_remote()
     # Act
@@ -370,7 +370,7 @@ def test_remote_probe_unknown_maps_to_unknown(isolated_state_db):
 # ---------------------------------------------------------------------------
 
 
-def test_local_registry_row_wins_over_remote_instance(isolated_state_db, tmp_path):
+def test_local_registry_row_wins_over_remote_instance(isolated_state_store, tmp_path):
     # Arrange — same name registered locally AND active as a remote instance.
     spec = _write_valid_spec(tmp_path / "spartan-dev")
     registry = Registry(registry_dir=tmp_path / "reg")
@@ -389,9 +389,9 @@ def test_local_registry_row_wins_over_remote_instance(isolated_state_db, tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_tombstoned_remote_row_disappears(isolated_state_db, tmp_path):
+def test_tombstoned_remote_row_disappears(isolated_state_store, tmp_path):
     # Arrange
-    from scitex_agent_container._state.state_db import record_instance_stop
+    from scitex_agent_container._state.state_store import record_instance_stop
 
     instance_id = _record_remote()
     record_instance_stop(instance_id)
@@ -406,9 +406,9 @@ def test_tombstoned_remote_row_disappears(isolated_state_db, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_reaper_leaves_remote_row_active(isolated_state_db):
+def test_reaper_leaves_remote_row_active(isolated_state_store):
     # Arrange
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         gc_dead_instances,
         list_active_instances,
     )
@@ -421,17 +421,17 @@ def test_reaper_leaves_remote_row_active(isolated_state_db):
     assert len(active) == 1
 
 
-def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_state_db):
+def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_state_store):
     # Arrange — force a long-stale last_heartbeat_at onto the remote row; only
     # the ``AND remote=0`` guard keeps the heartbeat sweep from reaping it.
     from scitex_dev.store import ANY_REVISION
 
-    from scitex_agent_container._state.state_db import (
+    from scitex_agent_container._state.state_store import (
         gc_dead_instances,
         list_active_instances,
     )
-    from scitex_agent_container._state.state_db_instances import read_instance
-    from scitex_agent_container._state.state_db_instances_store import (
+    from scitex_agent_container._state.state_store_instances import read_instance
+    from scitex_agent_container._state.state_store_instances_store import (
         ACTOR,
         run_with_reconnect,
     )
@@ -468,7 +468,7 @@ def test_reaper_remote_guard_keeps_row_with_forced_stale_heartbeat(isolated_stat
 # ---------------------------------------------------------------------------
 
 
-def test_running_only_view_retains_running_remote_row(isolated_state_db, tmp_path):
+def test_running_only_view_retains_running_remote_row(isolated_state_store, tmp_path):
     # Arrange
     _record_remote()
     # Act
@@ -483,7 +483,7 @@ def test_running_only_view_retains_running_remote_row(isolated_state_db, tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_machine_label_includes_matching_remote_row(isolated_state_db, tmp_path):
+def test_machine_label_includes_matching_remote_row(isolated_state_store, tmp_path):
     # Arrange — spec on disk carries machine="spartan"; the instances row is remote.
     spec = _write_valid_spec(tmp_path / "spartan-dev", machine="spartan")
     _record_remote()
@@ -497,7 +497,7 @@ def test_machine_label_includes_matching_remote_row(isolated_state_db, tmp_path)
     assert any(r["name"] == "spartan-dev" and r.get("remote") for r in rows)
 
 
-def test_machine_label_excludes_non_matching_remote_row(isolated_state_db, tmp_path):
+def test_machine_label_excludes_non_matching_remote_row(isolated_state_store, tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "spartan-dev", machine="spartan")
     _record_remote()
@@ -554,7 +554,7 @@ def test_default_remote_status_probe_rc255_is_unknown():
 
 
 def test_get_agent_list_data_remote_unknown_probe_status_is_unknown(
-    isolated_state_db, tmp_path
+    isolated_state_store, tmp_path
 ):
     # Arrange — an active remote row whose live probe cannot observe the peer.
     _record_remote()
@@ -565,7 +565,7 @@ def test_get_agent_list_data_remote_unknown_probe_status_is_unknown(
 
 
 def test_get_agent_list_data_remote_unknown_row_hidden_from_default_view(
-    isolated_state_db, tmp_path
+    isolated_state_store, tmp_path
 ):
     # Arrange — an active remote row whose live probe cannot observe the peer.
     _record_remote()
@@ -584,7 +584,7 @@ def test_get_agent_list_data_remote_unknown_row_hidden_from_default_view(
 # ---------------------------------------------------------------------------
 
 
-def test_remote_row_account_is_spec_derived(isolated_state_db, tmp_path):
+def test_remote_row_account_is_spec_derived(isolated_state_store, tmp_path):
     # Arrange — a real spec carrying a claude.account pin; discover feeds it.
     from scitex_agent_container.cli_pkg._helpers._agent_list import _safe_account_for
     from scitex_agent_container.config import load_config

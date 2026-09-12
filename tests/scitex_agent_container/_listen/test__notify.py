@@ -38,7 +38,7 @@ from scitex_agent_container._listen._notify import publish_to_agent
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
-from scitex_agent_container._state.state_db_channel import list_undelivered
+from scitex_agent_container._state.state_store_channel import list_undelivered
 from scitex_agent_container.a2a._inbox_bus import Broker
 
 TOKEN = "test-notify-token"

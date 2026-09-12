@@ -1,8 +1,8 @@
 """The ``a2a_ports`` claim ledger — storage adapter, on PostgreSQL only.
 
 Extracted from :mod:`.port_allocator` so that module stays under the per-file
-line cap, the same way :mod:`.state_db_grants` was carved out of
-:mod:`.state_db_nodes`. The split is by RESPONSIBILITY rather than by size
+line cap, the same way :mod:`.state_store_grants` was carved out of
+:mod:`.state_store_nodes`. The split is by RESPONSIBILITY rather than by size
 alone: this file knows how a claim is STORED, and ``port_allocator`` knows
 which port an agent should get. Its surface is re-exported from
 ``port_allocator`` so the existing import sites are unchanged.
@@ -128,7 +128,7 @@ def _schema() -> Any:
     """The claim-ledger schema.
 
     Built lazily so importing this module does not import scitex-dev; the
-    original was equally lazy about ``state_db``, for the same reason
+    original was equally lazy about ``state_store``, for the same reason
     (import cost off the hot path).
 
     ``port`` is the sole IDENTITY (the store requires IMMUTABLE on
@@ -197,7 +197,7 @@ def open_port_store() -> "Store":
     in :func:`port_store` instead, so the agent-start path does not pay the
     connect per call.
 
-    MULTI_WRITER, for the reason ``state_db_grants`` gives about its own
+    MULTI_WRITER, for the reason ``state_store_grants`` gives about its own
     store: a claim has no single stable owner. It is written by the host that
     starts the agent and released by whoever stops it, and a cross-host
     ``sac agents stop`` is routine — under SINGLE_WRITER that ordinary stop

@@ -36,8 +36,8 @@ from scitex_agent_container._listen._acl import (
     check_send_acl,
     check_spawn,
 )
-from scitex_agent_container._state.state_db_blocks import block_send
-from scitex_agent_container._state.state_db_nodes import (
+from scitex_agent_container._state.state_store_blocks import block_send
+from scitex_agent_container._state.state_store_nodes import (
     grant_send,
     record_comms_policy,
     record_lineage,

@@ -141,14 +141,14 @@ class TestCLI:
         # Assert
         assert result.exit_code != 0
 
-    def test_db_clean_sweep_exits_zero(self):
+    def test_store_clean_sweep_exits_zero(self):
         # Arrange
-        # F-CS11 phase 5: `registry clean` was renamed to `db clean`.
+        # F-CS11 phase 5: `registry clean` is now `store clean`.
         # The new path is the GC sweep — runs against the store,
         # exits 0 with zero-or-more swept entries.
         runner = CliRunner()
         # Act
-        result = runner.invoke(main, ["db", "clean"])
+        result = runner.invoke(main, ["store", "clean"])
         # Assert
         assert result.exit_code == 0
 

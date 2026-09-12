@@ -174,7 +174,7 @@ def env_save_restore():
     ``reload_after_restore(module)`` additionally re-imports ``module`` AFTER
     the env has been reverted. Use it for any module whose constants are
     computed at IMPORT time from an env var this fixture is mutating —
-    ``_state.state_db``, ``_state.registry``, ``_runners._session_state``.
+    ``_state.state_store``, ``_state.registry``, ``_runners._session_state``.
 
     That ordering is the entire point, and getting it wrong is a REAL bug this
     package shipped. ``importlib.reload`` re-derives such a constant from

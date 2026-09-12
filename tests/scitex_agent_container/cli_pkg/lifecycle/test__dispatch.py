@@ -170,7 +170,7 @@ def shim_bin(tmp_path: Path, env_save_restore) -> Path:
 
 
 @pytest.fixture
-def state_db(fake_home: Path) -> Path:
+def state_store(fake_home: Path) -> Path:
     """Point ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at a tmp path under
     fake_home.
 
@@ -190,9 +190,9 @@ def state_db(fake_home: Path) -> Path:
     db = fake_home / "state.db"
     saved = _os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
     _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(db)
-    import scitex_agent_container._state.state_db as _state_db_mod
+    import scitex_agent_container._state.state_store as _state_store_mod
 
-    importlib.reload(_state_db_mod)
+    importlib.reload(_state_store_mod)
     try:
         yield db
     finally:
@@ -200,7 +200,7 @@ def state_db(fake_home: Path) -> Path:
             _os.environ.pop("SCITEX_AGENT_CONTAINER_STATE_DB", None)
         else:
             _os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = saved
-        importlib.reload(_state_db_mod)
+        importlib.reload(_state_store_mod)
 
 
 def _write_peer_config(
@@ -341,7 +341,7 @@ class TestDispatchDriftBlocksWithoutForce:
         assert scen.shipped_count == 0
 
     def test_a_peer_only_file_alone_does_not_block_a_start(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         """The handoff no longer deletes, so a file only the peer has is news
         rather than a conflict — losing scitex-nas-03's sidecar launcher to a
@@ -479,20 +479,20 @@ class TestDispatchMissingSpecDir:
 
 class TestDispatchSshSuccessPath:
     def test_dispatch_ssh_success_writes_instances_row(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
         # Act
         _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert — query state.db via the project API so schema is init'd.
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "alpha"]
         assert (rows[0]["host"], rows[0]["a2a_port"]) == ("peer-host", 47213)
 
     def test_dispatch_ssh_success_returns_zero(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -502,7 +502,7 @@ class TestDispatchSshSuccessPath:
         assert scen.returned == 0
 
     def test_dispatch_ssh_success_prints_started_message(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -512,7 +512,7 @@ class TestDispatchSshSuccessPath:
         assert "started on 'peer-host'" in scen.captured_stdout
 
     def test_dispatch_ssh_success_prints_assigned_port(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -522,7 +522,7 @@ class TestDispatchSshSuccessPath:
         assert "a2a_port=47213" in scen.captured_stdout
 
     def test_dispatch_ssh_success_marks_row_remote(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — a cross-host dispatch must record remote=1 so
         # resolve_peer_url / agent_status know to reach the agent on the
@@ -531,13 +531,13 @@ class TestDispatchSshSuccessPath:
         # Act
         _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "alpha"]
         assert rows[0]["remote"] == 1
 
     def test_dispatch_ssh_success_records_bound_port_from_peer_json(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — the bound port captured back from the peer's --json
         # output is the concrete int the peer's allocator resolved (the
@@ -546,13 +546,13 @@ class TestDispatchSshSuccessPath:
         # Act
         _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "alpha"]
         assert rows[0]["bound_port"] == 47213
 
     def test_dispatch_ssh_success_records_cli_spawned_by(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — a bare lead dispatch (no SAC_NAME) records the
         # lineage edge as "cli".
@@ -561,13 +561,13 @@ class TestDispatchSshSuccessPath:
         # Act
         _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "alpha"]
         assert rows[0]["spawned_by"] == "cli"
 
     def test_dispatch_ssh_success_propagates_a2a_port_none_when_spec_omits_it(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — when peer JSON has ``a2a_port: null`` (sidecar
         # disabled), lead MUST write NULL into the instances row
@@ -581,7 +581,7 @@ class TestDispatchSshSuccessPath:
         # Act
         _act_dispatch(shim_bin, capsys, ssh_kwargs=sk_null)
         # Assert
-        from scitex_agent_container._state.state_db import list_active_instances
+        from scitex_agent_container._state.state_store import list_active_instances
 
         rows = [r for r in list_active_instances() if r["name"] == "alpha"]
         assert rows[0]["a2a_port"] is None
@@ -589,7 +589,7 @@ class TestDispatchSshSuccessPath:
 
 class TestDispatchSshFailurePaths:
     def test_dispatch_ssh_failure_raises_runtime_error(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -600,7 +600,7 @@ class TestDispatchSshFailurePaths:
         assert isinstance(scen.raised, RuntimeError)
 
     def test_dispatch_ssh_failure_message_mentions_remote_failed(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -611,7 +611,7 @@ class TestDispatchSshFailurePaths:
         assert "Remote `sac agents start alpha` failed" in scen.message
 
     def test_dispatch_ssh_non_json_stdout_raises_runtime_error(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -622,7 +622,7 @@ class TestDispatchSshFailurePaths:
         assert isinstance(scen.raised, RuntimeError)
 
     def test_dispatch_ssh_non_json_message_mentions_phase(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -643,7 +643,7 @@ _LMOD_PREAMBLE = ["module load GCCcore/11.3.0", "module load Apptainer/1.3.3"]
 
 class TestDispatchSshArgv:
     def test_dispatch_ssh_argv_includes_no_redispatch_flag(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — peer-side MUST NOT re-trigger the dispatch branch.
         _write_peer_config(fake_home, env_save_restore)
@@ -653,7 +653,7 @@ class TestDispatchSshArgv:
         assert "--no-redispatch" in " ".join(_ssh_invocations(shim_bin)[-1])
 
     def test_dispatch_ssh_argv_includes_json_flag(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — peer must emit machine-parseable output.
         _write_peer_config(fake_home, env_save_restore)
@@ -663,7 +663,7 @@ class TestDispatchSshArgv:
         assert "--json" in " ".join(_ssh_invocations(shim_bin)[-1])
 
     def test_dispatch_env_preamble_forwarded_via_build_ssh_argv(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — peer with env_preamble; build_ssh_argv wraps in
         # `bash -c '<preamble> && <cmd>'`.
@@ -676,7 +676,7 @@ class TestDispatchSshArgv:
         )
 
     def test_dispatch_env_preamble_wrapper_uses_bash_lc(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — bash -c wrapper is the explicit env_preamble shape.
         _write_peer_config(fake_home, env_save_restore, env_preamble=_LMOD_PREAMBLE)
@@ -699,7 +699,7 @@ class TestDispatchSshArgv:
 
 class TestDispatchStrictHostKeyChecking:
     def test_dispatch_ssh_argv_includes_accept_new_strict_host_key(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange
         _write_peer_config(fake_home, env_save_restore)
@@ -711,7 +711,7 @@ class TestDispatchStrictHostKeyChecking:
         )
 
     def test_every_dispatch_leg_carries_the_tofu_policy(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — manifest read, transfer, verification and remote start.
         _write_peer_config(fake_home, env_save_restore)
@@ -724,7 +724,7 @@ class TestDispatchStrictHostKeyChecking:
         )
 
     def test_the_spec_transfer_is_one_of_those_legs(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         """Guards the claim above from passing vacuously — if the transfer
         stopped going over ssh, `all(...)` would still be True."""
@@ -742,18 +742,18 @@ class TestDispatchStrictHostKeyChecking:
 
 
 class TestLookupRemotePeer:
-    def test_no_active_row_returns_none(self, fake_home, state_db, env_save_restore):
+    def test_no_active_row_returns_none(self, fake_home, state_store, env_save_restore):
         # Arrange — fresh state.db with no instances row for "alpha".
         # Act
         result = lookup_remote_peer("alpha")
         # Assert
         assert result is None
 
-    def test_local_active_row_returns_none(self, fake_home, state_db, env_save_restore):
+    def test_local_active_row_returns_none(self, fake_home, state_store, env_save_restore):
         # Arrange — write a row whose host matches the current_host (so
-        # ``state_db._resolve_host`` will collapse to the same value).
+        # ``state_store._resolve_host`` will collapse to the same value).
         env_save_restore.set("SAC_HOST", "local-host-x")
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(name="alpha", host="local-host-x")
         # Act
@@ -762,11 +762,11 @@ class TestLookupRemotePeer:
         assert result is None
 
     def test_remote_active_row_returns_peer_and_row(
-        self, fake_home, state_db, env_save_restore
+        self, fake_home, state_store, env_save_restore
     ):
         # Arrange — row's host differs from this run's current_host.
         env_save_restore.set("SAC_HOST", "lead-host")
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(name="alpha", host="peer-host", a2a_port=18888)
         # Act
@@ -781,7 +781,7 @@ class TestTryDispatchRemote:
 
         return {n: PeerSpec(name=n, ssh=n) for n in names}
 
-    def test_no_active_row_returns_false(self, fake_home, state_db, env_save_restore):
+    def test_no_active_row_returns_false(self, fake_home, state_store, env_save_restore):
         # Arrange — no row; caller proceeds local.
         calls: list = []
         # Act
@@ -795,11 +795,11 @@ class TestTryDispatchRemote:
         assert dispatched is False
 
     def test_remote_row_calls_handler_returns_true(
-        self, fake_home, state_db, env_save_restore
+        self, fake_home, state_store, env_save_restore
     ):
         # Arrange
         env_save_restore.set("SAC_HOST", "lead-host")
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(name="alpha", host="peer-host", a2a_port=18888)
         calls: list = []
@@ -814,12 +814,12 @@ class TestTryDispatchRemote:
         assert dispatched is True and calls == [("peer-host", 18888)]
 
     def test_remote_peer_not_in_peers_raises_runtime_error(
-        self, fake_home, state_db, env_save_restore
+        self, fake_home, state_store, env_save_restore
     ):
         # Arrange — row points at a peer that the lead's config.yaml
         # does NOT define. Must surface, not silently skip.
         env_save_restore.set("SAC_HOST", "lead-host")
-        from scitex_agent_container._state.state_db import record_instance_start
+        from scitex_agent_container._state.state_store import record_instance_start
 
         record_instance_start(name="alpha", host="unknown-peer")
 
@@ -972,7 +972,7 @@ class TestTryDispatchClassification:
         assert out is False
 
     def test_known_peer_dispatches_remote_with_expected_ssh_argv(
-        self, spec_dir, shim_bin, state_db, fake_home, env_save_restore, capsys
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):
         # Arrange — host is a known peer distinct from the caller; the PATH-shim
         # ssh stands in for the network across every phase of the handoff.

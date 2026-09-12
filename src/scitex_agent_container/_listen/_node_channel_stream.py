@@ -29,7 +29,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .._lifecycle._off_loop import run_blocking
-from .._state.state_db_channel import (
+from .._state.state_store_channel import (
     list_since_id,
     list_undelivered,
     mark_delivered,

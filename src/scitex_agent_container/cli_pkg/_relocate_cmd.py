@@ -221,7 +221,7 @@ def _residency_history(name: str):
     """
     from .._lifecycle._residency import Residency
     from .._state.relocation_pg import read_residency_history
-    from .._state.state_db_instances import list_active_instances
+    from .._state.state_store_instances import list_active_instances
 
     stays = read_residency_history(name)
     if stays:

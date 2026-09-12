@@ -13,6 +13,15 @@ versioning follows [SemVer](https://semver.org/).
   `continue`. Only a forced start with an explicit `fresh` override
   resets those artifacts.
 
+### Removed
+- **The retired per-agent SQLite contract and its misleading Python namespace.**
+  The inert `SCITEX_AGENT_CONTAINER_STATE_DB` injection, rename rule, and
+  `sac whoami` field are gone; durable state continues to use
+  `scitex_dev.store` and the PostgreSQL endpoint on port 55432. The active
+  `_state/state_db*` modules and tests are now named `_state/state_store*`,
+  with no compatibility modules under the old import paths. Historical ADRs
+  and shipped-version changelog entries retain the old names as records.
+
 ### Added
 - **Hermes Cards messages now enter the visible TUI as durable steer turns.**
   Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL

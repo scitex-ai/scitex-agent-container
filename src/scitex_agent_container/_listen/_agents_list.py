@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .._state.registry import Registry
-from .._state.state_db_instances_store import INSTANCES_STORE
+from .._state.state_store_instances_store import INSTANCES_STORE
 
 __all__ = ["list_agents"]
 
@@ -36,7 +36,7 @@ def _resolved_store() -> str:
     store costs this route nothing. All three sources below read the same
     per-host PostgreSQL, so one locator describes every one of them.
 
-    This printed ``state_db.DEFAULT_DB_PATH`` until 2026-08-29 — a
+    This printed ``state_store.DEFAULT_DB_PATH`` until 2026-08-29 — a
     path this route had stopped opening, and by then never opened at all.
     Dropping the field was the wrong repair: the field exists because on
     2026-08-09 an empty ``agents`` list was read as "the fleet is gone"
@@ -134,7 +134,7 @@ async def list_agents(request: Request) -> JSONResponse:
     #
     # We cannot tell those apart from row counts alone — both are zero. So
     # publish what the caller needs to judge for itself: WHICH store was
-    # consulted, and what each source contributed. `sac db show` carried the
+    # consulted, and what each source contributed. `sac store show` carried the
     # same remedy until it was deleted with the per-agent read surface on
     # 2026-08-29. `agents` keeps its shape, so existing consumers are
     # untouched.
@@ -275,7 +275,7 @@ def _append_comms_nodes(rows: list[dict], seen_names: set[str]) -> None:
     here. Best-effort: a read failure must not mask the rest of the response.
     """
     try:
-        from .._state.state_db_comms_nodes import list_comms_nodes
+        from .._state.state_store_comms_nodes import list_comms_nodes
 
         for node in list_comms_nodes():
             if node["name"] in seen_names:

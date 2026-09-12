@@ -89,9 +89,9 @@ def test_env_relocates_module_constant(
     assert Path(got) == expected
 
 
-# ``test_per_file_state_db_override_still_wins`` was here until 2026-08-30. It
+# ``test_per_file_state_store_override_still_wins`` was here until 2026-08-30. It
 # pinned the precedence ``$SCITEX_AGENT_CONTAINER_STATE_DB`` beat
-# ``$SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` when ``state_db.DEFAULT_DB_PATH``
+# ``$SCITEX_AGENT_CONTAINER_RUNTIME_DIR`` when ``state_store.DEFAULT_DB_PATH``
 # recomputed. Both halves of that sentence are gone: the constant is deleted
 # with the storage engine, and there is no longer any consumer for which the
 # two variables could compete. The variable itself survives — sac injects it

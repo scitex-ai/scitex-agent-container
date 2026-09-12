@@ -229,7 +229,7 @@ def test_main_returns_zero_when_queue_empty(tmp_path: Path, pg_schema: str) -> N
     assert rc == 0
 
 
-def test_main_still_flushes_without_the_retired_state_db_env(
+def test_main_still_flushes_without_the_retired_state_store_env(
     tmp_path: Path, pg_schema: str
 ) -> None:
     """The ledger moved to PostgreSQL, so a local path must not gate the flush.

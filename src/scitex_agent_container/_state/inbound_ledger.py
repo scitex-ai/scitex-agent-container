@@ -121,7 +121,7 @@ def _schema() -> Any:
     """The inbound-dispatch schema.
 
     Built lazily so importing this module does not import scitex-dev; the old
-    module was equally lazy about ``state_db``, for the same reason.
+    module was equally lazy about ``state_store``, for the same reason.
 
     ``status`` is LAST_WRITER_WINS because the whole point is that it moves:
     pending -> reporting -> reported/failed. ``reported_ts`` likewise, and it

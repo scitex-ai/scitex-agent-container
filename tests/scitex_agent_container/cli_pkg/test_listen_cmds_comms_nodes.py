@@ -28,7 +28,7 @@ import yaml
 def db_path(tmp_path: Path, env_save_restore):
     p = tmp_path / "state.db"
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(p))
-    import scitex_agent_container._state.state_db as mod
+    import scitex_agent_container._state.state_store as mod
 
     importlib.reload(mod)
     yield p
@@ -69,7 +69,7 @@ def test_register_self_writes_comms_nodes_row_for_lead_identity(
     # Act
     _register_self_comms_node(port=8642)
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info is not None and info["host"] == "lead-host"
@@ -84,7 +84,7 @@ def test_register_self_records_correct_port(
     # Act
     _register_self_comms_node(port=9000)
     # Assert
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["a2a_port"] == 9000
@@ -96,7 +96,7 @@ def test_register_self_no_lead_block_writes_no_row(
     # Arrange — pin the "no row written" half of the contract; the
     # warning-emission half is its own test below so each assertion
     # stays single-fact.
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
     from scitex_agent_container.cli_pkg.listen_cmds import _register_self_comms_node
 
     # Act
@@ -136,7 +136,7 @@ def test_register_self_records_this_host_as_the_origin(
     _register_self_comms_node(port=8642)
     # Assert — provenance is the store's ``_origin``, stamped from the
     # writing node, where the old ``source_host`` column held NULL.
-    from scitex_agent_container._state.state_db_nodes import lookup_comms_node
+    from scitex_agent_container._state.state_store_nodes import lookup_comms_node
 
     info = lookup_comms_node(name="lead")
     assert info["source_host"] == socket.gethostname()
@@ -149,7 +149,7 @@ def test_register_self_with_missing_config_writes_no_row(
     # is missing-tolerant so the hook should land in the "no lead"
     # silent-noop branch and write no row.
     env_save_restore.set("SCITEX_AGENT_CONTAINER_CONFIG", str(tmp_path / "absent.yaml"))
-    from scitex_agent_container._state.state_db_nodes import list_comms_nodes
+    from scitex_agent_container._state.state_store_nodes import list_comms_nodes
     from scitex_agent_container.cli_pkg.listen_cmds import (
         _register_self_comms_node,
     )

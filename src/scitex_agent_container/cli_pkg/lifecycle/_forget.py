@@ -41,11 +41,11 @@ from typing import Any
 
 import click
 
-from ..._state.state_db_instances import (
+from ..._state.state_store_instances import (
     list_active_instances,
     record_instance_stop,
 )
-from ..._state.state_db_nodes import unregister_comms_node
+from ..._state.state_store_nodes import unregister_comms_node
 
 __all__ = ["forget"]
 

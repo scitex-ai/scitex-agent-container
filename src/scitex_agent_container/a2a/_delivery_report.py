@@ -11,7 +11,7 @@ believed delivered that silently failed is never acceptable.
 WHY ZERO IS ``INFO`` AND NOT AN ERROR
 Every caller in this package persists the event to ``channel_events`` BEFORE
 publishing, and a fresh subscriber replays its undelivered rows on connect
-(:func:`_state.state_db_channel.list_undelivered`). So a zero here is not lost
+(:func:`_state.state_store_channel.list_undelivered`). So a zero here is not lost
 data — it is "nobody was listening at this instant, the row is waiting". An
 agent that is simply stopped is a normal and expected state; emitting an ERROR
 per publish per stopped agent would train the reader to skip exactly the line

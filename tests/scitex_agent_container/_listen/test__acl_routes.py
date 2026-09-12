@@ -21,8 +21,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen.server import create_app
-from scitex_agent_container._state.state_db_blocks import has_block
-from scitex_agent_container._state.state_db_nodes import has_grant
+from scitex_agent_container._state.state_store_blocks import has_block
+from scitex_agent_container._state.state_store_nodes import has_grant
 
 _TOKEN = "test-token-acl-routes"
 

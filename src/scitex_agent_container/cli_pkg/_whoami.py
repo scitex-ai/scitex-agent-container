@@ -25,8 +25,6 @@ Environment facts surveyed (injection sites, for the record):
 * ``SCITEX_AGENT_CONTAINER_YAML_DIRS`` — the spec search path that makes
   the HOST-side ``spec.yaml`` resolvable in-container (the host home is
   bind-visible even though ``$HOME`` differs).
-* ``SCITEX_AGENT_CONTAINER_STATE_DB`` — per-agent state DB
-  (``runtimes/_apptainer_build_argv.py``).
 * ``APPTAINER_CONTAINER`` / ``SINGULARITY_CONTAINER`` — image path, set
   by apptainer itself.
 
@@ -288,9 +286,6 @@ def collect_whoami() -> dict:
             "listen_url": listen_url,
             "listen_bearer": "set" if _env_pair("LISTEN_BEARER") else "unset",
             "a2a_port": a2a_port,
-            "state_db": _env_pair("STATE_DB")
-            or os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
-            or None,
         },
         "role": {**role, "source": role_source},
         "howto": _howto_lines(board_id),
@@ -369,8 +364,6 @@ def render_whoami_text(facts: dict) -> str:
     elif a2a_port is None and execution["spec_path"]:
         a2a_port = "disabled"
     lines.append(_kv("a2a-port:", a2a_port))
-    lines.append(_kv("state-db:", execution["state_db"]))
-
     lines.append("ROLE")
     if role.get("role") or role.get("purpose"):
         source = role.get("source") or ""

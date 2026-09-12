@@ -15,7 +15,7 @@ import yaml as _yaml
 
 from scitex_agent_container._reconcile._pass import reconcile_pass
 from scitex_agent_container._reconcile._rule import Verdict
-from scitex_agent_container._state import state_db
+from scitex_agent_container._state import state_store
 
 #: A fixed clock. Every suite injects it, so no test can be flaky on time.
 NOW = 1_800_000_000.0
@@ -89,13 +89,13 @@ def sessions(*names: str) -> dict[str, int]:
 
 def ghost(name: str = "alpha") -> str:
     """Tonight's corpse: a row still claiming ACTIVE, session long gone."""
-    return state_db.record_instance_start(name=name, host=HOST, pid=4242)
+    return state_store.record_instance_start(name=name, host=HOST, pid=4242)
 
 
 def ended(name: str, reason: str) -> None:
     """A row whose end WAS recorded, with the given ``exit_reason``."""
-    instance_id = state_db.record_instance_start(name=name, host=HOST, pid=4242)
-    state_db.record_instance_stop(instance_id, exit_reason=reason)
+    instance_id = state_store.record_instance_start(name=name, host=HOST, pid=4242)
+    state_store.record_instance_stop(instance_id, exit_reason=reason)
 
 
 def run_pass(registry, db_path, history, events, **overrides):

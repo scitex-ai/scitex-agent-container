@@ -37,11 +37,11 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._state.state_db_acl_policy import (
+from scitex_agent_container._state.state_store_acl_policy import (
     read_comms_policy,
     record_comms_policy,
 )
-from scitex_agent_container._state.state_db_groups import (
+from scitex_agent_container._state.state_store_groups import (
     is_developer,
     resolve_group_name,
     resolve_group_names,

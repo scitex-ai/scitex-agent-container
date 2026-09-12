@@ -8,7 +8,7 @@ approve the sender. Task #27 adds two pieces alongside the existing
 
 1. The original (denied) message is HELD in the
    ``pending_approvals`` table (see
-   :mod:`_state.state_db_pending_approval`) keyed on
+   :mod:`_state.state_store_pending_approval`) keyed on
    ``(sender, target)`` with latest-wins dedupe.
 2. A NORMAL push prompt is emitted at the receiver carrying the
    exact ``sac a2a grant <sender> <target>`` command. On grant the

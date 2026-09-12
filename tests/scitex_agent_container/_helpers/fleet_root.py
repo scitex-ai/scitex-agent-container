@@ -12,7 +12,7 @@ Two escape routes exist and both are closed:
    (``Registry.REGISTRY_DIR``, ``_session_state.DEFAULT_STATE_ROOT``) are
    computed from ``$HOME`` at IMPORT time, so a fixture that only sets
    ``$HOME`` CANNOT redirect them — it would read and write the live fleet
-   while looking isolated. (``state_db.DEFAULT_DB_PATH`` was a third until
+   while looking isolated. (``state_store.DEFAULT_DB_PATH`` was a third until
    2026-08-30, when it was deleted with the storage engine.)
 
 2. **The board.** ``$SCITEX_CARDS_DB`` points at a throwaway PostgreSQL
@@ -243,11 +243,11 @@ def make_fleet(
     return layout
 
 
-# ``make_state_db`` was here until 2026-08-29. It called sac's own
-# ``init_schema`` on ``Layout.state_db`` so the rename suites walked the
+# ``make_state_store`` was here until 2026-08-29. It called sac's own
+# ``init_schema`` on ``Layout.state_store`` so the rename suites walked the
 # production schema rather than a hand-rolled one. Both halves of that
 # sentence stopped being true: ``init_schema`` issues ZERO ``CREATE TABLE``,
-# and ``Layout.state_db`` is gone with ``_lifecycle/_rename_db.py`` — there is
+# and ``Layout.state_store`` is gone with ``_lifecycle/_rename_db.py`` — there is
 # no state.db path for a rename to touch, so there is nothing for a helper to
 # create. Its only surviving caller went with it.
 #
@@ -280,23 +280,23 @@ def seed_identity_and_history(name: str) -> None:
     then ``instances.name`` — which left the same day for the shared store
     as well. It is written here through ``record_instance_start``, the same
     verb ``sac agents start`` uses, and carried by
-    ``state_db_instances_rename.rename_instance_rows`` as its own step in
+    ``state_store_instances_rename.rename_instance_rows`` as its own step in
     ``_rename.apply_plan``.
 
     The history half moved four times: ``turns`` (the diary trio, to
     per-host PostgreSQL), then ``attempts`` (deleted, zero writers), then
     ``channel_events.target``, now ``sac_channel_events`` in the shared
     PostgreSQL (ADR-0023). It is written through the real ``persist_event``
-    and carried by ``state_db_channel.rename_channel_events``.
+    and carried by ``state_store_channel.rename_channel_events``.
 
     The AUTHORISATION half was the last of the three to need seeding: it rode
     inside ``_rename_db``'s ``comms_grants`` pairs until 2026-08-29, which is
     to say it was not carried at all once the table moved. It is written
     through the real ``grant_send`` and carried by
-    ``state_db_grants_rename.rename_comms_grants``.
+    ``state_store_grants_rename.rename_comms_grants``.
 
     NO ``layout`` ARGUMENT, and no ``state.db``. It took one only to build
-    that file, ``Layout.state_db`` was deleted on 2026-08-29 with the rename
+    that file, ``Layout.state_store`` was deleted on 2026-08-29 with the rename
     step that was its last reader, and a parameter kept past its last use is
     the shape that made ``_open_instance_pid`` answer "not running" for a live
     agent. Nothing here is rooted on disk any more; every record it writes is
@@ -305,9 +305,9 @@ def seed_identity_and_history(name: str) -> None:
     CALLERS MUST TAKE ``pg_schema``: all three write to a real PostgreSQL
     schema, so a caller without it resolves the unreachable DSN and fails.
     """
-    from scitex_agent_container._state.state_db_channel import persist_event
-    from scitex_agent_container._state.state_db_grants import grant_send
-    from scitex_agent_container._state.state_db_instances import (
+    from scitex_agent_container._state.state_store_channel import persist_event
+    from scitex_agent_container._state.state_store_grants import grant_send
+    from scitex_agent_container._state.state_store_instances import (
         record_instance_start,
     )
 

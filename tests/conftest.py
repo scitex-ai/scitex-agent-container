@@ -119,15 +119,6 @@ os.environ["SAC_LISTEN_NOTIFY"] = "0"
 #   SCITEX_AGENT_CONTAINER_REGISTRY_DIR  -> _state.registry.REGISTRY_DIR
 #   SCITEX_AGENT_CONTAINER_RUNTIME_DIR   -> _runners._session_state.DEFAULT_STATE_ROOT
 #
-# `SCITEX_AGENT_CONTAINER_STATE_DB` was a third until 2026-08-30, feeding
-# `_state.state_db.DEFAULT_DB_PATH`. That constant is deleted; the variable is
-# still force-set below because it remains load-bearing on THREE other paths —
-# sac injects it into every container (`runtimes/_apptainer_build_argv`), a
-# rename rewrites it inside the spec (`_lifecycle/_rename_spec.ENV_RULES`), and
-# `sac whoami` reports it. It no longer selects any storage, so a test that
-# leaks it can no longer make a WRITE land off the floor; it is sandboxed here
-# so subprocesses inherit the sandbox and report it truthfully.
-#
 # Because they are computed at import, a *fixture* that only sets the env var
 # is too late — the value is already baked. Setting the env HERE, in the
 # conftest module body, is early enough: pytest imports this before it imports
@@ -187,7 +178,6 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
 _SAC_STATE_FLOOR = (
     _PROJECT_ROOT / "tests" / "results" / "sac-state" / f"floor-{_XDIST_WORKER}"
 )
-os.environ["SCITEX_AGENT_CONTAINER_STATE_DB"] = str(_SAC_STATE_FLOOR / "state.db")
 os.environ["SCITEX_AGENT_CONTAINER_REGISTRY_DIR"] = str(_SAC_STATE_FLOOR / "registry")
 # Also reached by `_listen._single_instance.default_lock_dir()`, which used to
 # hard-code Path.home() and so was NOT redirected by this floor at all — on the
@@ -467,36 +457,6 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-test `$SCITEX_AGENT_CONTAINER_STATE_DB` isolation, layered ON TOP of the
-# floor above.
-#
-# WHAT THIS FIXTURE IS FOR NOW, STATED PLAINLY, BECAUSE IT IS NOT WHAT IT WAS
-# FOR. It was per-test DATABASE isolation, and the second layer earned its keep
-# by stopping the port ratchet re-forming inside a single run: `claim_port`
-# never releases, so ~4900 tests sharing one floor database marched through
-# [19000, 19999] and exhausted it from the inside — the mechanism that killed
-# ghost tag v0.21.18. That argument is SPENT. `a2a_ports` moved to PostgreSQL
-# on 2026-08-28 and the storage engine itself was deleted on 2026-08-29, so
-# there is no database here to give a test its own copy of, and the exhaustion
-# it prevented is prevented by the `pg_schema` fixture instead.
-#
-# What survives is narrower and worth keeping on its own terms: this variable
-# is still injected into every container, rewritten by a rename, and reported
-# by `sac whoami`, and a subprocess inherits whatever the parent leaves in the
-# env. Giving each test a distinct value keeps that inheritance sandboxed and
-# keeps the floor alarm below able to name the test that dropped it.
-#
-# It redirects ONE handle. It used to redirect two — the env var and
-# `state_db.DEFAULT_DB_PATH` — because the constant was baked at import while a
-# subprocess read only the env. The constant went with the engine on
-# 2026-08-30; the env var was always the half that reached anything.
-# ---------------------------------------------------------------------------
-
-_STATE_DB_KEY = "SCITEX_AGENT_CONTAINER_STATE_DB"
-_state_db_seq = itertools.count()
-
-
-# ---------------------------------------------------------------------------
 # THE FLOOR MUST BE ABLE TO DETECT ITS OWN BREACH.
 #
 # Everything above sets the env EARLY so the three import-time constants are
@@ -529,22 +489,7 @@ _state_db_seq = itertools.count()
 # module the run had not already loaded — a check that changes what it measures
 # is not a check.
 #
-# ORDERING IS LOAD-BEARING: ``_isolate_state_db`` below legitimately points
-# ``$SCITEX_AGENT_CONTAINER_STATE_DB`` at a per-test tmp path and restores it on
-# teardown, so this assertion has to run AFTER that restore. Fixture
-# finalization is LIFO, so this fixture must be SET UP FIRST — which is why
-# ``_isolate_state_db`` requests it by name rather than relying on declaration
-# order.
 # ---------------------------------------------------------------------------
-
-# `("..._state.state_db", "DEFAULT_DB_PATH")` was the first entry until
-# 2026-08-30. It is NOT replaced, and the loss is smaller than the missing line
-# looks: the two constants left are the two that still SELECT STORAGE, and the
-# env-var checks below cover the exact escape the deleted entry watched for. A
-# mis-pinned `DEFAULT_DB_PATH` could not have moved a byte since the engine was
-# deleted — `getattr(..., None)` would simply have skipped it forever once the
-# attribute was gone, which is a sentinel that reports "intact" because it can
-# no longer look. Deleting it is the honest form of that.
 _STATE_FLOOR_CONSTANTS = (
     ("scitex_agent_container._state.registry", "REGISTRY_DIR"),
     ("scitex_agent_container._runners._session_state", "DEFAULT_STATE_ROOT"),
@@ -570,38 +515,6 @@ def _assert_state_floor_intact(request: pytest.FixtureRequest) -> Iterator[None]
         resolved = Path(value).resolve()
         if resolved != floor and floor not in resolved.parents:
             breaches.append(f"  {module_path}.{attr}\n      -> {resolved}")
-
-    # THE ENV VAR IS PART OF THE FLOOR, AND ITS ABSENCE IS A BREACH.
-    #
-    # `$SCITEX_AGENT_CONTAINER_STATE_DB` is force-set at the top of this file so
-    # every subprocess inherits the same sandbox. It used to be half of a pair —
-    # the other half being `state_db.DEFAULT_DB_PATH`, which the loop above read
-    # — and the pairing is why this clause exists: a test that DROPPED the env
-    # var without restoring it left the constant looking perfectly correct right
-    # up until the next `importlib.reload(state_db)`, at which point the
-    # fallback re-pinned it at the operator's REAL runtime directory for the
-    # rest of the worker's session. That was the Errno-122 escape, arriving one
-    # reload later through the half nothing was watching.
-    #
-    # THE CONSTANT IS GONE (2026-08-30) AND THIS CLAUSE IS NOT, because what it
-    # now guards is different and still real: the variable is inherited by every
-    # subprocess a test spawns, and sac injects, rewrites and REPORTS it. A test
-    # that drops it hands the next subprocess the operator's value.
-    #
-    # So UNSET is NOT "nothing to assert about". It is the floor already
-    # dismantled, and reporting it as a breach is the only reading that does
-    # not depend on what some later test happens to spawn.
-    state_db_env = os.environ.get(_STATE_DB_KEY)
-    if state_db_env is None:
-        breaches.append(
-            f"  ${_STATE_DB_KEY}\n"
-            "      -> UNSET (dropped without restore; the next subprocess\n"
-            "         inherits the operator's value, not the sandbox)"
-        )
-    else:
-        resolved_env = Path(state_db_env).resolve()
-        if resolved_env != floor and floor not in resolved_env.parents:
-            breaches.append(f"  ${_STATE_DB_KEY}\n      -> {resolved_env}")
 
     # The card board is checked by ASKING THE RESOLVER, not by reading a
     # constant: `scitex_cards._db.resolve_db_path()` is a function evaluated at
@@ -650,49 +563,6 @@ def _assert_state_floor_intact(request: pytest.FixtureRequest) -> Iterator[None]
         )
 
 
-# scope="function" is SPELLED OUT (it is also pytest's default) because a
-# future "let's not do this 4900 times" widening to scope="session"/"module"
-# would stop the value being per-test, and per-test is the entire remaining
-# point: a shared value cannot tell you WHICH test leaked it, which is what the
-# floor alarm above is built to say. The original reason was sharper — a shared
-# DATABASE re-accumulated `a2a_ports` rows until [19000, 19999] was exhausted
-# mid-run, the ghost-tag mechanism — and that reason expired with the engine.
-# The scope is kept on the weaker argument, and the weaker argument is stated
-# rather than left to look like the strong one.
-@pytest.fixture(autouse=True, scope="function")
-def _isolate_state_db(
-    tmp_path_factory: pytest.TempPathFactory,
-    _assert_state_floor_intact: None,
-) -> Iterator[Path]:
-    """Give this test a private ``$SCITEX_AGENT_CONTAINER_STATE_DB``.
-
-    Requests ``_assert_state_floor_intact`` purely for ORDERING: that makes the
-    floor assertion set up FIRST and therefore (LIFO) finalize LAST, so it
-    observes the env var after the restore below rather than while this fixture
-    still has it pointed at a tmp path.
-    """
-    # A PATH, NOT A DATABASE, and never created. Nothing opens it — the engine
-    # that would have was deleted on 2026-08-29 — so this is a distinct value
-    # to hand each test's subprocesses, not a file. It is still per-test rather
-    # than one shared value because a leak between tests is what the floor
-    # alarm above is trying to be able to name.
-    db = (
-        tmp_path_factory.getbasetemp()
-        / "state-db"
-        / f"t{next(_state_db_seq)}"
-        / "state.db"
-    )
-    saved_env = os.environ.get(_STATE_DB_KEY)
-    os.environ[_STATE_DB_KEY] = str(db)
-    try:
-        yield db
-    finally:
-        if saved_env is None:
-            os.environ.pop(_STATE_DB_KEY, None)
-        else:
-            os.environ[_STATE_DB_KEY] = saved_env
-
-
 # ---------------------------------------------------------------------------
 # sac event log isolation
 # ---------------------------------------------------------------------------
@@ -701,7 +571,7 @@ _EVENT_LOG_KEY = "SAC_EVENT_LOG"
 _event_log_seq = itertools.count()
 
 
-# Same shape and the same reason as `_isolate_state_db` above. sac's alarm
+# Same shape and the same reason as `_isolate_state_store` above. sac's alarm
 # rails record to an append-only event log whose path is resolved PER CALL
 # from this env var, and several of them default ON (the worktree GC alarms
 # under `--apply`; the reconcile and auth-heal passes record every pass). Any

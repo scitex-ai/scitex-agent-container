@@ -25,7 +25,7 @@ from scitex_agent_container._lifecycle._birth_certificate import (
     spec_git_sha,
     write_birth_certificate,
 )
-from scitex_agent_container._state.state_db_incarnations import get_incarnation
+from scitex_agent_container._state.state_store_incarnations import get_incarnation
 from scitex_agent_container.config import AgentConfig
 
 

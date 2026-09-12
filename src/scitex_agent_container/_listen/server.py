@@ -408,7 +408,7 @@ def create_app(
     inside :func:`node_message_send`. ``local_host`` configures the
     name this app sees as "itself" so the resolver can tell
     local-vs-remote targets apart. When omitted, falls back to
-    :func:`state_db._resolve_host` (env + config + hostname chain).
+    :func:`state_store._resolve_host` (env + config + hostname chain).
     Passing the value explicitly matters for in-process multi-host
     tests where the env is shared.
 

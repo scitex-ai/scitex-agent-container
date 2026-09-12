@@ -174,7 +174,7 @@ async def run_session_daemon(
     # turn / error) tags the same hostname. _resolve_host falls back
     # to hostname -s when config.yaml is malformed, so this never
     # raises.
-    from .._state.state_db import _resolve_host
+    from .._state.state_store import _resolve_host
 
     host = _resolve_host(None)
 

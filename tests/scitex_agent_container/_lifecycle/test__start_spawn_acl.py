@@ -35,7 +35,7 @@ import pytest
 
 from scitex_agent_container._lifecycle._start import agent_start
 from scitex_agent_container._state.registry import Registry
-from scitex_agent_container._state.state_db_nodes import derive_group, record_lineage
+from scitex_agent_container._state.state_store_nodes import derive_group, record_lineage
 from scitex_agent_container.config import AgentConfig
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ def test_mcp_tool_spawn_deny_does_not_launch_child(
     os.environ["SCITEX_AGENT_CONTAINER_YAML_DIRS"] = str(yaml_root)
     os.environ["SAC_ANTHROPIC_API_KEY"] = "sk-ant-api-test-dummy"
     from scitex_agent_container._mcp._tools._agent import agent_start as mcp_start
-    from scitex_agent_container._state.state_db import list_active_instances
+    from scitex_agent_container._state.state_store import list_active_instances
 
     try:
         # Act

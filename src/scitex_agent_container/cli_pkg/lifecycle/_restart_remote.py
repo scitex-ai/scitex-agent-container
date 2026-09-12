@@ -30,7 +30,7 @@ from typing import Any
 
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
-from ..._state.state_db import record_instance_start, record_instance_stop
+from ..._state.state_store import record_instance_start, record_instance_stop
 
 logger = logging.getLogger(__name__)
 

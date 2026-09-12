@@ -1,7 +1,7 @@
 """Relocation state — residency, leases and the attempt journal, on PostgreSQL.
 
 Step 4 of the operator's move to PostgreSQL (approved 2026-08-24).
-Adopts :mod:`scitex_dev.store` the way :mod:`.state_db_incarnations` and
+Adopts :mod:`scitex_dev.store` the way :mod:`.state_store_incarnations` and
 :mod:`.port_allocator_pg` do, so the fleet keeps one storage primitive and
 one failure mode: the store resolves ``SCITEX_STORE_DSN`` or the per-host
 PostgreSQL and has NO local-file fallback, so an unreachable database raises
@@ -220,7 +220,7 @@ def _journal_store() -> "Store":
 def init_relocation_schema() -> str:
     """Create all three stores if missing. Idempotent. Returns the locator.
 
-    NO LONGER CALLS ``state_db.init_schema``, a function that no longer
+    NO LONGER CALLS ``state_store.init_schema``, a function that no longer
     exists. The version this replaces did, and returned its ``Path`` — a
     dependency that made relocation state inseparable from the rest of the
     per-agent database. Cutting it is part of the
