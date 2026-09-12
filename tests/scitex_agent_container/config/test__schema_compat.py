@@ -46,8 +46,10 @@ def test_canonical_hermes_compression_is_accepted():
             "available_harnesses": {"hermes": entry},
         }
     }
-    # Act / Assert
-    assert canonical_surface_errors(raw) == []
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == []
 
 
 @pytest.mark.parametrize(
