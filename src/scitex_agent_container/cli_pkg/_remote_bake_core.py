@@ -254,6 +254,17 @@ def parse_bake_result(output: str, *, layer: str) -> RemoteBakeOutcome:
                 "another layer's live symlink"
             ),
         )
+    if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED):
+        if not payload.get("head"):
+            return RemoteBakeOutcome(
+                verdict=BakeVerdict.FAILED,
+                layer=layer,
+                detail=(
+                    "remote green result omitted source HEAD provenance; "
+                    "refusing an artifact whose expected in-image SAC commit "
+                    "cannot be stated"
+                ),
+            )
     if verdict in (BakeVerdict.BAKED, BakeVerdict.SKIPPED) and layer == "scitex":
         if not payload.get("base_sif") or not payload.get("base_sha256"):
             return RemoteBakeOutcome(
@@ -541,6 +552,45 @@ def pull_and_publish(
             layer,
             f"symbol probe missing from wheel: {SYMBOL_PROBE}",
         )
+    # The artifact must prove that its installed SAC came from the checkout
+    # HEAD the remote result names. A build can copy the current source bytes
+    # yet ship a gitless wheel whose generated stamp says only ``unknown`` (the
+    # 2026-09-13 base-045400 incident displayed ``had62ef96``, its code hash,
+    # while the bake result claimed HEAD 6b1da1a0). Neither build success nor
+    # the artifact checksum detects that provenance break.
+    provenance_proc = _run(
+        [
+            apptainer,
+            "exec",
+            "--cleanenv",
+            "--pwd",
+            "/",
+            str(incoming),
+            "/opt/venv-sac/bin/sac",
+            "provenance",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        provenance = json.loads(provenance_proc.stdout or "")
+    except (json.JSONDecodeError, TypeError):
+        provenance = {}
+    artifact_commit = provenance.get("commit")
+    if provenance_proc.returncode != 0 or artifact_commit != outcome.head:
+        evidence = (provenance_proc.stderr or provenance_proc.stdout or "").strip()
+        return PullOutcome(
+            PullVerdict.FAILED,
+            layer,
+            "SciTeX artifact provenance status MISMATCH: remote bake result "
+            f"expected SAC commit={outcome.head or '(missing)'}, but pulled "
+            f"{sif_name} reports commit={artifact_commit or '(unknown)'} "
+            f"(probe rc={provenance_proc.returncode}); leaving live symlinks "
+            "untouched. Ensure the gitless build context is stamped with "
+            "SAC_BUILD_COMMIT before rebuilding."
+            + (f" Probe output: {evidence}" if evidence else ""),
+        )
     with tempfile.TemporaryDirectory(prefix="sac-sif-probe-") as td:
         probe = Path(td) / "sif_symbol_probe.py"
         shutil.copy2(SYMBOL_PROBE, probe)
@@ -548,6 +598,9 @@ def pull_and_publish(
             [
                 apptainer,
                 "exec",
+                "--cleanenv",
+                "--pwd",
+                "/",
                 "--bind",
                 td,
                 str(incoming),

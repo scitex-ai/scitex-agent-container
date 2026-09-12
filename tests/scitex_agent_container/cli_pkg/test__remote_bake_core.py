@@ -31,6 +31,7 @@ _BAKED_LINE = (
     'sac-base-2026-0717-182108.sif","sha256":"abc123","pruned":"",'
     '"duration_sec":900}\n'
 )
+_HEAD = "65004f4b"
 
 
 def _make_store(tmp_path: Path, layer: str, names: list[str], live: str) -> Path:
@@ -136,7 +137,7 @@ def test_parse_refuses_scitex_green_without_base_provenance() -> None:
     out = (
         'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
         '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
-        '"sha256":"abc123"}\n'
+        f'"sha256":"abc123","head":"{_HEAD}"}}\n'
     )
 
     outcome = parse_bake_result(out, layer="scitex")
@@ -149,7 +150,8 @@ def test_parse_scitex_carries_base_dependency_provenance() -> None:
     out = (
         'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"scitex",'
         '"sif":"/store/sac-scitex/sac-scitex-2026-0717-182108.sif",'
-        '"sha256":"abc123","base_sif":"/store/sac-base/sac-base-2026-0717-000000.sif",'
+        f'"sha256":"abc123","head":"{_HEAD}",'
+        '"base_sif":"/store/sac-base/sac-base-2026-0717-000000.sif",'
         '"base_sha256":"base456"}\n'
     )
 
@@ -157,6 +159,19 @@ def test_parse_scitex_carries_base_dependency_provenance() -> None:
 
     assert outcome.base_sif.endswith("sac-base-2026-0717-000000.sif")
     assert outcome.base_sha256 == "base456"
+
+
+def test_parse_refuses_green_without_expected_source_head() -> None:
+    out = (
+        'SAC_BAKE_RESULT={"verdict":"BAKED","layer":"base",'
+        '"sif":"/store/sac-base/sac-base-2026-0717-182108.sif",'
+        '"sha256":"abc123"}\n'
+    )
+
+    outcome = parse_bake_result(out, layer="base")
+
+    assert outcome.verdict is BakeVerdict.FAILED
+    assert "omitted source HEAD provenance" in outcome.detail
 
 
 def test_parse_garbage_json_is_no_result() -> None:
@@ -397,6 +412,17 @@ def test_bake_script_keys_scitex_cache_on_base_content_and_reports_it() -> None:
     assert 'BASE_KEY="$(basename "$BASE_LIVE")@$BASE_SHA256"' in text
     assert '"base_sif":"%s","base_sha256":"%s"' in text
     assert 'fail "missing-base-provenance"' in text
+
+
+def test_remote_stage_stamps_gitless_source_with_checkout_head() -> None:
+    text = core.BAKE_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'rm -f "$CTX/scitex-agent-container-src/src/scitex_agent_container/_provenance/_build_info.py"'
+        in text
+    )
+    assert 'SAC_BUILD_COMMIT="$HEAD_SHA" "$PYTHON"' in text
+    assert 'src/hatch_build.py" --write' in text
 
 
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:

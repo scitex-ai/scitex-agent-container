@@ -146,6 +146,7 @@ SQUEUE="$(command -v squeue)" || fail "squeue-missing"
 SRUN="$(command -v srun)" || fail "srun-missing"
 APPTAINER="$(command -v apptainer)" || fail "apptainer-missing"
 GIT="$(command -v git)" || fail "git-missing"
+PYTHON="$(command -v python3)" || fail "python3-missing"
 
 # ---------------------------------------------------------------------------
 # workdir + single-flight lock
@@ -248,6 +249,15 @@ cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
+# The staged tree is intentionally gitless. Stamp it with the checkout HEAD
+# explicitly before PEP-517 sees it; otherwise hatch can inherit a stale
+# generated _build_info.py, or truthfully-but-uselessly report commit=unknown.
+# Delete first so the env-provided commit is the only authority.
+rm -f "$CTX/scitex-agent-container-src/src/scitex_agent_container/_provenance/_build_info.py" \
+    || fail "stage-provenance-reset"
+SAC_BUILD_COMMIT="$HEAD_SHA" "$PYTHON" \
+    "$CTX/scitex-agent-container-src/src/hatch_build.py" --write < /dev/null \
+    || fail "stage-provenance" "$HEAD_SHA"
 if [ "$LAYER" = "base" ] || [ "$LAYER" = "scitex" ]; then
     # Both runtime layers install Cards. Export the immutable source commit
     # rather than asking PyPI for a release that predates the required fix.

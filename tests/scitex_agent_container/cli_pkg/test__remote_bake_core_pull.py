@@ -29,6 +29,7 @@ from scitex_agent_container.cli_pkg._remote_bake_core import (
 
 _OLD = "sac-base-2026-0710-000000.sif"
 _NEW = "sac-base-2026-0717-000000.sif"
+_HEAD = "6b1da1a092464010fa63c86be1d3d086eaae4953"
 
 
 def _sha256(data: bytes) -> str:
@@ -59,6 +60,7 @@ def _outcome(
         layer=layer,
         sif=f"/remote/store/sac-{layer}/{name}",
         sha256=_sha256(payload),
+        head=_HEAD,
         base_sif=base_sif,
         base_sha256=base_sha256,
     )
@@ -72,10 +74,17 @@ class _RecordingRunner:
     ``probe_rc``. Every argv is recorded for order/count assertions.
     """
 
-    def __init__(self, *, rsync_payload: bytes | None, probe_rc: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        rsync_payload: bytes | None,
+        probe_rc: int = 0,
+        provenance_commit: str | None = _HEAD,
+    ) -> None:
         self.calls: list[list[str]] = []
         self._rsync_payload = rsync_payload
         self._probe_rc = probe_rc
+        self._provenance_commit = provenance_commit
 
     def __call__(self, args, **kwargs):
         self.calls.append(list(args))
@@ -88,6 +97,13 @@ class _RecordingRunner:
             Path(args[-1]).write_bytes(self._rsync_payload)
             return subprocess.CompletedProcess(args, 0, "", "")
         if exe == "apptainer":
+            if args[-2:] == ["provenance", "--json"]:
+                payload = '{"commit": %s}' % (
+                    f'"{self._provenance_commit}"'
+                    if self._provenance_commit is not None
+                    else "null"
+                )
+                return subprocess.CompletedProcess(args, 0, payload, "")
             out = "OK" if self._probe_rc == 0 else "FATAL: probe failed"
             return subprocess.CompletedProcess(args, self._probe_rc, out, "")
         raise AssertionError(f"unexpected subprocess: {args}")
@@ -176,7 +192,11 @@ def test_verified_pull_runs_rsync_then_probe_through_the_seam(
     # Act
     _pull(containers, b"fresh")
     # Assert
-    assert [Path(c[0]).name for c in runner.calls] == ["rsync", "apptainer"]
+    assert [Path(c[0]).name for c in runner.calls] == [
+        "rsync",
+        "apptainer",
+        "apptainer",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +270,26 @@ def test_probe_failure_reports_failed(tmp_path: Path, seam) -> None:
     result = _pull(containers, b"stale")
     # Assert
     assert result.verdict is PullVerdict.FAILED
+
+
+def test_base_with_unknown_in_image_commit_refuses_before_swap(
+    tmp_path: Path, seam
+) -> None:
+    # Exact 2026-09-13 incident shape: the remote result named HEAD 6b1da1a0,
+    # but the gitless wheel had commit=None and `sac --version` therefore
+    # displayed its had62ef96 code hash. A new timestamp/checksum is not source
+    # provenance and must not replace the newer local base.
+    containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
+    runner = seam(_RecordingRunner(rsync_payload=b"fresh", provenance_commit=None))
+
+    result = _pull(containers, b"fresh")
+
+    assert result.verdict is PullVerdict.FAILED
+    assert "artifact provenance status MISMATCH" in result.detail
+    assert _HEAD in result.detail
+    assert "commit=(unknown)" in result.detail
+    assert (containers / "sac-base.sif").resolve().name == _OLD
+    assert [Path(call[0]).name for call in runner.calls] == ["rsync", "apptainer"]
 
 
 def test_probe_failure_names_the_gate(tmp_path: Path, seam) -> None:
