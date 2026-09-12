@@ -16,7 +16,7 @@ from scitex_dev.status import Check, StatusCode
 from .._mcp._channel_wake import _wake_turn
 
 log = logging.getLogger(__name__)
-DEFAULT_FALLBACK_INTERVAL_S = 90.0
+DEFAULT_RECONCILE_INTERVAL_S = 2.0
 
 
 def _log_check(
@@ -215,13 +215,14 @@ async def consume(
     name: str,
     turn_url: str,
     bearer: str | None,
-    fallback_interval_s: float = DEFAULT_FALLBACK_INTERVAL_S,
+    reconcile_interval_s: float = DEFAULT_RECONCILE_INTERVAL_S,
     watch_notifications: Callable[..., Any] | None = None,
 ) -> None:
-    """Watch first, draining the durable inbox; long jittered poll is fallback."""
+    """Drain durably on a bounded cadence; use LISTEN only as an accelerator."""
     if watch_notifications is None:
         _poll, _ack, watch_notifications = _cards_api()
     store = os.environ.get("SCITEX_CARDS_DB") or os.environ.get("SCITEX_STORE_DSN")
+    watch_impaired = False
     while True:
         try:
             await drain_once(
@@ -241,7 +242,7 @@ async def consume(
                 ),
                 agent=name,
             )
-        timeout_s = fallback_interval_s * random.uniform(0.8, 1.2)
+        timeout_s = reconcile_interval_s * random.uniform(0.8, 1.2)
         try:
             await _watch_cycle(
                 name=name,
@@ -251,21 +252,40 @@ async def consume(
                 timeout_s=timeout_s,
                 watch_notifications=watch_notifications,
             )
+            if watch_impaired:
+                _log_check(
+                    logging.INFO,
+                    Check.ok(
+                        "cards_notification_watch",
+                        "the Cards doorbell accepted a complete watch cycle",
+                        hint="continue the bounded durable reconcile sweep",
+                    ),
+                    agent=name,
+                )
+                watch_impaired = False
         except Exception as exc:
             status = getattr(exc, "status", None)
             cause = status if isinstance(status, StatusCode) else None
-            _log_check(
-                logging.WARNING,
-                Check.unknown(
-                    "cards_notification_watch",
-                    f"the Cards doorbell is unavailable ({type(exc).__name__})",
-                    "durable notifications remain safe; run `scitex-cards health "
-                    "--json` while SAC retries with a long jittered poll",
-                    cause=cause,
-                ),
-                agent=name,
-            )
+            if not watch_impaired:
+                _log_check(
+                    logging.WARNING,
+                    Check.unknown(
+                        "cards_notification_watch",
+                        f"the Cards doorbell is unavailable ({type(exc).__name__})",
+                        "durable notifications remain safe; run `scitex-cards health "
+                        "--json` while SAC reconciles the durable inbox every "
+                        f"{reconcile_interval_s:g} seconds",
+                        cause=cause,
+                    ),
+                    agent=name,
+                )
+                watch_impaired = True
             await asyncio.sleep(timeout_s)
 
 
-__all__ = ["consume", "drain_once", "event_from_notification"]
+__all__ = [
+    "DEFAULT_RECONCILE_INTERVAL_S",
+    "consume",
+    "drain_once",
+    "event_from_notification",
+]
