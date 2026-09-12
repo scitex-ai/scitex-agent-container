@@ -65,6 +65,7 @@ class _FakeApptainerBackend:
             "switch_version": None,
             "rollback": rollback_result,
             "status": status_result if status_result is not None else [],
+            "list_builds": status_result if status_result is not None else [],
         }
         self._raises = raises or {}
 
@@ -94,6 +95,15 @@ class _FakeApptainerBackend:
 
     def status(self, *a, **kw):
         return self._record("status", a, kw)
+
+    def list_builds(self, *a, **kw):
+        entries = self._record("list_builds", a, kw)
+        layer = str(a[1])
+        return [
+            entry
+            for entry in entries
+            if Path(str(entry.get("sif", ""))).parent.name == layer
+        ]
 
 
 @contextmanager
@@ -835,7 +845,7 @@ def test_rollback_prints_previous_version_returned_by_backend(home_tmp):
     assert result.exit_code == 0 and "1.0.0" in result.output
 
 
-def test_status_with_empty_backend_payload_reports_no_containers(home_tmp):
+def test_status_with_no_active_build_reports_no_active_images(home_tmp):
     # Arrange
     backend = _FakeApptainerBackend(status_result=[])
     runner = CliRunner()
@@ -843,14 +853,21 @@ def test_status_with_empty_backend_payload_reports_no_containers(home_tmp):
     with _use_backend(backend):
         result = runner.invoke(image_group, ["status"])
     # Assert
-    assert result.exit_code == 0 and "no containers" in result.output
+    assert result.exit_code == 0 and "no active SAC images" in result.output
 
 
-def test_status_renders_rebuild_marker_for_entries_with_needs_rebuild_true(home_tmp):
+def test_status_renders_active_current_layout_image(home_tmp):
     # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x" * 1024)
     entries = [
-        {"name": "alpha", "sif_size": "100MB", "needs_rebuild": False},
-        {"name": "beta", "sif_size": "200MB", "needs_rebuild": True},
+        {
+            "ts": "2026-0912-140710",
+            "sif": str(artifact),
+            "verified": True,
+            "active": True,
+        }
     ]
     backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
@@ -860,14 +877,45 @@ def test_status_renders_rebuild_marker_for_entries_with_needs_rebuild_true(home_
     # Assert
     assert (
         result.exit_code == 0
-        and "alpha" in result.output
-        and "REBUILD" in result.output
+        and "sac-base" in result.output
+        and "verified" in result.output
+        and "2026-0912-140710" in result.output
     )
 
 
-def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
+def test_status_discovers_real_current_artifact_store_layout(home_tmp):
     # Arrange
-    entries = [{"name": "a", "sif_size": "1MB", "needs_rebuild": False}]
+    layer_dir = ig._CONTAINERS_DIR / "sac-base"
+    layer_dir.mkdir(parents=True)
+    artifact = layer_dir / "sac-base-2026-0912-140710.sif"
+    artifact.write_bytes(b"x" * 1024)
+    artifact.with_suffix(".verified").write_text("round-trip verified\n")
+    (ig._CONTAINERS_DIR / "sac-base.sif").symlink_to(Path("sac-base") / artifact.name)
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["status", "--json"])
+    data = json.loads(result.stdout)
+    # Assert
+    assert result.exit_code == 0
+    assert data[0]["name"] == "sac-base"
+    assert data[0]["version"] == "2026-0912-140710"
+    assert data[0]["verification"] == "verified"
+    assert data[0]["sif_size_bytes"] == 1024
+
+
+def test_status_json_reports_active_artifact_fields(home_tmp):
+    # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x" * 1024)
+    entries = [
+        {
+            "ts": "2026-0912-140710",
+            "sif": str(artifact),
+            "verified": None,
+            "active": True,
+        }
+    ]
     backend = _FakeApptainerBackend(status_result=entries)
     runner = CliRunner()
     # Act
@@ -875,7 +923,40 @@ def test_status_json_passes_backend_payload_through_verbatim(home_tmp):
         result = runner.invoke(image_group, ["status", "--json"])
     data = json.loads(result.stdout)
     # Assert
-    assert result.exit_code == 0 and data == entries
+    assert result.exit_code == 0
+    assert data == [
+        {
+            "name": "sac-base",
+            "version": "2026-0912-140710",
+            "sif_path": str(artifact),
+            "sif_size_bytes": 1024,
+            "sif_date": data[0]["sif_date"],
+            "verification": "unknown",
+        }
+    ]
+
+
+def test_status_ignores_inactive_builds(home_tmp):
+    # Arrange
+    artifact = ig._CONTAINERS_DIR / "sac-base" / "sac-base-2026-0912-120102.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"x")
+    backend = _FakeApptainerBackend(
+        status_result=[
+            {
+                "ts": "2026-0912-120102",
+                "sif": str(artifact),
+                "verified": True,
+                "active": False,
+            }
+        ]
+    )
+    runner = CliRunner()
+    # Act
+    with _use_backend(backend):
+        result = runner.invoke(image_group, ["status"])
+    # Assert
+    assert result.exit_code == 0 and "no active SAC images" in result.output
 
 
 def test_snapshot_with_no_output_flag_writes_json_to_stdout(home_tmp):
