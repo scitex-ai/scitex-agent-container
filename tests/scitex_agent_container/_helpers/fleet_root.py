@@ -15,21 +15,11 @@ Two escape routes exist and both are closed:
    while looking isolated. (``state_db.DEFAULT_DB_PATH`` was a third until
    2026-08-30, when it was deleted with the storage engine.)
 
-2. **The board.** Every scitex-cards call takes an explicit ``store=``.
-   That explicit argument is the PRIMARY isolation and it is what these
-   tests actually rely on.
-
-   Belt and braces, :func:`isolated_board` ALSO points
-   ``$SCITEX_TODO_TASKS_YAML_SHARED`` at the tmp store, so a call that
-   forgot to pass ``store=`` would land in the tmp file rather than on the
-   real board. WARNING, 2026-08-16: that second net is now INERT —
-   scitex_cards does not read ``SCITEX_TODO_TASKS_YAML_SHARED`` (its axis
-   is ``SCITEX_CARDS_DB``), so a forgotten ``store=`` would no longer be
-   caught. The env var is left as-is rather than renamed on a guess:
-   pointing it at the right variable without checking what scitex_cards
-   actually resolves would restore the APPEARANCE of a safety net while a
-   forgotten ``store=`` reached the live board. Verify the resolution
-   first, then re-arm it.
+2. **The board.** ``$SCITEX_CARDS_DB`` points at a throwaway PostgreSQL
+   schema and every scitex-cards call also receives that store explicitly.
+   ``$SCITEX_DIR`` redirects Cards' separate local-state root, including
+   the non-card ``tasks.yaml`` sidecar. A call that omits either explicit
+   path therefore remains inside the test root.
 
 No mocks: the store is a real YAML file that real ``scitex_todo`` reads
 and writes, and the store is real, with the real schema.
@@ -364,9 +354,9 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
     opt-out, not a mock — the code paths stay exactly as they ship; the
     test simply does not ride them.
 
-    * **the store** — ``$SCITEX_TODO_TASKS_YAML_SHARED`` points at a tmp
-      YAML file, so even a call that forgot ``store=`` lands in tmp rather
-      than on the live 1,400-card board.
+    * **the local state root** — ``$SCITEX_DIR`` points at a tmp root, so
+      Cards' non-card YAML sidecar, pidfiles and delivery state cannot land
+      below the real user's home.
 
     * **the Cards store** — ``$SCITEX_CARDS_DB`` (+ its pre-rename alias
       ``$SCITEX_TODO_DB``) points at the throwaway PostgreSQL schema supplied
@@ -390,7 +380,8 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
 
     Generator — call from a fixture with ``yield from``.
     """
-    store = tmp_path / "board" / "tasks.yaml"
+    scitex_dir = tmp_path / ".scitex"
+    store = scitex_dir / "cards" / "tasks.yaml"
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text("tasks: []\n")
     cards_store = os.environ.get("SCITEX_STORE_DSN")
@@ -404,8 +395,7 @@ def isolated_board(tmp_path: Path) -> Iterator[Path]:
         store,
         _env_overrides(
             {
-                "SCITEX_TODO_TASKS_YAML_SHARED": str(store),
-                "SCITEX_CARDS_TASKS_YAML_SHARED": str(store),
+                "SCITEX_DIR": str(scitex_dir),
                 # *** THE CARDS STORE — isolating the YAML IS NOT ENOUGH. ***
                 #
                 # Redirecting the store above protects the YAML and nothing
