@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import click
+import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg._agents_link_specs import (
@@ -49,6 +51,13 @@ def _capture_exception(operation) -> BaseException:
     except BaseException as error:
         return error
     raise AssertionError("operation did not raise")
+
+
+def _other_device_or_skip(path: Path) -> Path:
+    candidate = Path("/dev/shm")
+    if not candidate.is_dir() or candidate.stat().st_dev == path.stat().st_dev:
+        pytest.skip("test host exposes no distinct writable filesystem")
+    return candidate
 
 
 def test_current_link_is_an_idempotent_plan(tmp_path: Path) -> None:
@@ -302,6 +311,37 @@ def test_missing_later_source_prevents_any_apply(tmp_path: Path) -> None:
         "target_text": (old / "spec.yaml").read_text(),
     } == {
         "error": f"source agent must contain spec.yaml: {source_root / 'missing'}",
+        "target_is_link": False,
+        "target_text": "old: alpha\n",
+    }
+
+
+def test_cross_device_backup_is_refused_before_target_mutation(tmp_path: Path) -> None:
+    # Arrange
+    other_device = _other_device_or_skip(tmp_path)
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "live"
+    _agent(source_root, "alpha", "name: alpha\n")
+    old = _agent(target_root, "alpha", "old: alpha\n")
+    plans = build_link_plans(
+        source_root=source_root,
+        target_root=target_root,
+        names=("alpha",),
+        backup_root=other_device / f"sac-link-specs-test-{os.getpid()}",
+    )
+
+    # Act
+    error = _capture_exception(lambda: apply_link_plans(plans))
+
+    # Assert
+    assert {
+        "error_type": type(error),
+        "diagnostic": "same filesystem" in str(error),
+        "target_is_link": old.is_symlink(),
+        "target_text": (old / "spec.yaml").read_text(),
+    } == {
+        "error_type": click.ClickException,
+        "diagnostic": True,
         "target_is_link": False,
         "target_text": "old: alpha\n",
     }
