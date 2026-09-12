@@ -194,7 +194,11 @@ def agent_stop(
     # stx-allow: fallback (reason: tmux/screen session may already be dead; force-stop should still proceed to clean up registry)
     try:
         runtime.stop(config)
-    except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
+        from ..runtimes.tui_session import TuiStopVerificationError
+
+        if isinstance(exc, TuiStopVerificationError):
+            raise
         if not force:
             raise
 

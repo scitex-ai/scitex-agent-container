@@ -32,6 +32,7 @@ from scitex_agent_container.runtimes._apptainer_runtime import (
 )
 from scitex_agent_container.runtimes.tui_session import (
     TuiSessionRuntime,
+    TuiStopVerificationError,
     session_name_for,
 )
 
@@ -570,6 +571,27 @@ def test_tui_runtime_stop_returns_false_when_no_session(
     assert ok is False
 
 
+def test_tui_runtime_stop_raises_when_mux_cannot_verify_teardown() -> None:
+    # Arrange
+    class _UnverifiedStopMux(_MemoryMultiplexer):
+        @classmethod
+        def stop(cls, session_name: str) -> bool:
+            cls._stop_log.append(session_name)
+            return False
+
+    _UnverifiedStopMux.reset()
+    runtime = TuiSessionRuntime(
+        multiplexer=_UnverifiedStopMux, command_builder=_fake_builder
+    )
+    config = _Config(name="unverified-stop")
+    runtime.start(config)
+    # Act
+    call = lambda: runtime.stop(config)  # noqa: E731
+    # Assert
+    with pytest.raises(TuiStopVerificationError, match="owned process cgroup"):
+        call()
+
+
 # ---------------------------------------------------------------------------
 # is_running — IDENTITY-BASED liveness (session exists AND pane alive)
 # ---------------------------------------------------------------------------
@@ -746,9 +768,7 @@ def test_tui_runtime_logs_returns_captured_pane_text(
     # Act
     text = runtime.logs(config, lines=10)
     # Assert
-    assert text.startswith(
-        "<pane lines=10>apptainer exec img.sif claude 2> "
-    ) and text.endswith("/boot.stderr.log@/data/nu")
+    assert text == "<pane lines=10>apptainer exec img.sif claude@/data/nu"
 
 
 def test_tui_runtime_logs_returns_empty_when_session_absent(

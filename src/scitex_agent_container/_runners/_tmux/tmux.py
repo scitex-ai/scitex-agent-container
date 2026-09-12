@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -89,6 +90,7 @@ class TmuxManager:
         env_exports: str = "",
         venv: str = "",
         session_env: dict[str, str] | None = None,
+        runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> bool:
         """Launch a command inside a new detached tmux session.
 
@@ -112,6 +114,8 @@ class TmuxManager:
                 staged $STATE/home dropped to interactive OAuth login
                 because the inner ``claude`` read the operator's
                 real ``~/.claude/`` instead of the staged one).
+                The two SAC-owned diagnostic keys are consumed by this
+                launcher and are not forwarded to the pane.
 
         Returns:
             True if the tmux session was created successfully.
@@ -130,11 +134,25 @@ class TmuxManager:
                 activate = venv_path.expanduser() / "bin" / "activate"
             venv_activate = f"source '{activate}' || exit 1\n"
 
+        effective_session_env = dict(session_env or {})
+        diagnostics_path = effective_session_env.pop(
+            "SAC_TMUX_START_DIAGNOSTICS_PATH", None
+        )
+        boot_stderr_path = effective_session_env.pop(
+            "SAC_TMUX_BOOT_STDERR_PATH", None
+        )
+        stderr_redirect = (
+            f"exec 2>> {shlex.quote(str(boot_stderr_path))}\n"
+            if boot_stderr_path
+            else ""
+        )
+
         # Per-session env snapshot, written 0600 into a 0700 per-user dir
         # immediately before ``exec``. It dumps the pane's WHOLE environment,
         # so its mode and its directory are the security-relevant parts —
         # see ``._env_snapshot`` for the two defects that shaped both.
         shell_script = (
+            f"{stderr_redirect}"
             f"cd '{workdir}' || exit 1\n"
             f"{venv_activate}"
             f"{env_exports}\n"
@@ -154,7 +172,6 @@ class TmuxManager:
         # helper skips-if-missing + appends-not-clobbers (see
         # ``runtimes._apptainer_host_env``). No-op when ``~/.cargo/bin``
         # is absent or the command is not an apptainer launch.
-        effective_session_env = dict(session_env or {})
         if command.lstrip().startswith("apptainer "):
             from ...runtimes._apptainer_host_env import host_cargo_bin_append_env
 
@@ -170,7 +187,13 @@ class TmuxManager:
             for key, value in effective_session_env.items():
                 argv += ["-e", f"{key}={value}"]
         argv += ["bash", "-c", shell_script]
-        subprocess.run(argv, check=False)
+        result = runner(argv, check=False, capture_output=True, text=True)
+        if diagnostics_path is not None:
+            from ._launch_diagnostic import persist_tmux_start_result
+
+            persist_tmux_start_result(Path(diagnostics_path), result)
+        if result.returncode != 0:
+            return False
 
         time.sleep(2)
         return TmuxManager.exists(session_name)
@@ -179,11 +202,24 @@ class TmuxManager:
     def stop(session_name: str) -> bool:
         """Terminate a tmux session.
 
-        Returns True if the session was alive and has been terminated.
+        Returns True only after the exact session and the identity-snapshotted
+        pane process group are both gone.
         """
         if not TmuxManager.exists(session_name):
             return False
 
+        pane_pid = TmuxManager.pane_pid(session_name)
+        if pane_pid is None:
+            return False
+        from ._process_group import (
+            capture_owned_process_tree,
+            terminate_owned_process_tree,
+        )
+
+        owned_processes = capture_owned_process_tree(pane_pid)
+        if not owned_processes:
+            return False
+        process_tree_dead = terminate_owned_process_tree(owned_processes)
         subprocess.run(
             ["tmux", "kill-session", "-t", exact_target(session_name)],
             capture_output=True,
@@ -191,7 +227,7 @@ class TmuxManager:
         )
 
         time.sleep(0.5)
-        return not TmuxManager.exists(session_name)
+        return process_tree_dead and not TmuxManager.exists(session_name)
 
     @staticmethod
     def session_activity(session_name: str) -> int | None:

@@ -176,8 +176,11 @@ def capture_pane_diag(config: Any) -> str:
     sess = session_name_for(config)
     pane = TmuxManager.capture_logs(sess, lines=60).rstrip()
     boot_log = _state_dir(config) / "boot.stderr.log"
+    from .._runners._tmux._launch_diagnostic import format_tmux_start_result
+
     return (
         f"\n  tmux session: exists={TmuxManager.exists(sess)} (session {sess!r})"
+        f"{format_tmux_start_result(_state_dir(config) / 'tmux.start.json')}"
         f"{_format_boot_stderr_section(boot_log)}"
         f"\n  pane tail:\n{_indent_block(pane or '<empty>')}"
     )

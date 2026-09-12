@@ -1404,6 +1404,41 @@ def test_agent_stop_runtime_stop_failure_without_force_raises(
         call()
 
 
+def test_agent_stop_tui_unverified_exception_preserves_registry_even_with_force(
+    pg_schema: str, tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+
+    from scitex_agent_container.runtimes.tui_session import TuiStopVerificationError
+
+    class _UnverifiedStopRuntime(FakeRuntime):
+        def stop(self, config: AgentConfig) -> None:
+            self.stop_calls.append(config)
+            raise TuiStopVerificationError("could not verify")
+
+    runtime = _UnverifiedStopRuntime()
+    call = lambda: lc.agent_stop(  # noqa: E731
+        "alpha",
+        registry=registry,
+        force=True,
+        runtime_factory=lambda _c: runtime,
+        handover_mod=FakeHandover(),
+    )
+    # Act
+    caught = None
+    try:
+        call()
+    except RuntimeError as exc:
+        caught = exc
+    # Assert
+    assert ("could not verify" in str(caught), registry.exists("alpha")) == (
+        True,
+        True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # agent_stop_all — injected real per-agent stop callable
 # ---------------------------------------------------------------------------
