@@ -5,6 +5,12 @@ when this CLI is itself inside a SIF, the peer's ``/v1/turn`` when the
 agent's active row lives on another host, else the agent's loopback
 ``/v1/turn``. There is no fourth path.
 
+An asynchronous adapter returns the SciTeX status protocol's responder-issued
+``http/202`` receipt and exchange id. The shared HTTP client reconciles that
+exchange through ``GET /v1/exchanges/<id>`` before reporting delivery. Hermes'
+receiver implements the endpoint with its native ``prompt.submit`` RPC; the
+CLI never pastes prompts or Enter into tmux.
+
 In particular there is no host-side ``claude --resume`` shellout. That
 fallback existed for a "non-A2A, host-side runtime" which no longer
 exists — apptainer is the only container engine
@@ -56,10 +62,8 @@ def _send_via_host_listen(
 
     PR-3 Checkpoint 3 — the path the ``sac agents send <name>
     <prompt>`` CLI takes when running inside an apptainer SIF. The
-    ``--key`` is excluded by the call site because the host-listen send
-    endpoint carries messages, not UI controls; prompts route through the
-    host listen so the running agent's in-process SDK session handles the
-    turn end-to-end.
+    host-listen endpoint carries prompts so the running agent's in-process
+    session handles the turn end-to-end.
 
     The host's lineage-scoped ACL gate denies cross-lineage sends
     with ``kind=acl_deny`` + exit 5; other failures map per the
@@ -345,14 +349,6 @@ def _refuse_unknown_agent(name: str) -> NoReturn:
     default=None,
     help="Cap autonomous turns within this send. Default: claude's own default.",
 )
-@click.option(
-    "--key",
-    default=None,
-    help=(
-        "Send a control key instead of a prompt (tmux-style, e.g. ``ESC``, "
-        "``C-c``). Mutually exclusive with PROMPT."
-    ),
-)
 # ``--no-stream`` and the trailing ``-- <forward>`` escape hatch were
 # REMOVED with the host-side shellout: both existed only to shape a
 # ``claude`` argv this command no longer builds. Keeping flags that
@@ -363,35 +359,32 @@ def send(
     prompt: str | None,
     model: str | None,
     max_turns: int | None,
-    key: str | None,
 ) -> None:
-    """Send a follow-up PROMPT (or control key) to an agent's live session.
+    """Send a follow-up PROMPT to an agent's live session.
 
     \b
     Examples:
       sac agent send coverage-runner "now bump the threshold to 95%"
-      sac agent send coverage-runner --key ESC
       sac agent send coverage-runner --model opus --max-turns 3 "..."
 
-    Delivery is always HTTP to the running (containerized) agent. If no
-    A2A port is recorded the command refuses — it will not run the turn
-    on the bare host.
+    Delivery is always HTTP to the running (containerized) agent. Async
+    adapters return a SciTeX http/202 exchange receipt which this command
+    reconciles to a final result. If no A2A port is recorded the command
+    refuses — it will not inject a prompt into tmux or run the turn on the
+    bare host.
     """
-    if key and prompt:
-        raise click.UsageError("--key is mutually exclusive with PROMPT.")
-    if not key and not prompt:
-        raise click.UsageError("Either PROMPT or --key is required.")
+    if not prompt:
+        raise click.UsageError("PROMPT is required.")
 
     # PR-3 — in-SIF auto-fallback. When inside an apptainer SIF and
-    # sending a PROMPT (the UI-control path has its own A2A endpoint and is
-    # excluded), auto-proxy to ``POST /agents/<name>/send``
+    # sending a PROMPT, auto-proxy to ``POST /agents/<name>/send``
     # on the host listen. The host's existing lineage-scoped ACL gate
     # (already wired into node_message_send + the per-agent send
     # surface) enforces caller permission. Outcome JSON + exit code
     # follow the same Checkpoint 2 contract as the other in-SIF verbs.
     from .._lifecycle._in_sif_broker import is_in_sif
 
-    if is_in_sif() and prompt and not key:
+    if is_in_sif():
         _send_via_host_listen(
             name=name,
             prompt=prompt,
@@ -399,19 +392,6 @@ def send(
             max_turns=max_turns,
         )
         return  # noreturn — _send_via_host_listen sys.exits
-    if key:
-        if key not in ("ESC", "Escape", "Enter", "C-c", "SIGINT"):
-            raise click.UsageError(
-                f"--key {key!r} not supported. Use Enter, Escape, or C-c."
-            )
-        from ._send import send_to_agent
-
-        result = send_to_agent(name, key=key, wait=True)
-        if result.get("status") != "ok":
-            raise click.ClickException(str(result.get("error") or result))
-        click.echo(f"# control {name}: {key}", err=True)
-        return
-
     # Cross-host: when the agent's active state.db.instances row lives
     # on a peer, POST one turn to the peer's /v1/turn endpoint over the
     # ssh control plane and short-circuit before the local resume path.

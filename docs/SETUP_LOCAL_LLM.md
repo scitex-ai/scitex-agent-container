@@ -123,9 +123,9 @@ For `runtime: tui`, the official Hermes Ink TUI and SAC's inbound adapter are
 two clients of one loopback Hermes gateway. A2A, Cards, and CCT messages enter
 through SAC's neutral inbox event, then Hermes `prompt.submit`; an active turn
 returns `steered` under the generated `display.busy_input_mode: steer`.
-Accepted input and later events remain visible in the attached TUI. `sac
-agents send NAME --key Enter|Escape` uses a separate bounded UI-control route
-for resolving an open modal and does not depend on a runner PID file.
+Accepted input and later events remain visible in the attached TUI. Prompt
+delivery does not expose terminal-control key injection; interactive modal
+control belongs to the attached native TUI.
 
 Hermes launches do not materialize `.claude` commands, hooks, settings, or the
 developer host deep-merge. The neutral `to_home` cascade still supplies MCP,
