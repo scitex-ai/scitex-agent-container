@@ -92,6 +92,7 @@ def test_materialization_honours_wildcard_targets_and_escaped_fields(tmp_path):
 
 
 def test_materialization_covers_data_and_direct_notify_targets(tmp_path):
+    # Arrange
     role = f"{getpass.getuser()}__scitex-hub"
     source = tmp_path / "host.pgpass"
     source.write_text(
@@ -105,6 +106,7 @@ def test_materialization_covers_data_and_direct_notify_targets(tmp_path):
         "postgresql://scitex-primary:55433/scitex"
     )
 
+    # Act
     [result] = materialize_project_pgpass(
         _config(),
         home_backings=[tmp_path / "home"],
@@ -113,6 +115,7 @@ def test_materialization_covers_data_and_direct_notify_targets(tmp_path):
         fleet_defaults={},
     )
 
+    # Assert
     assert result.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
 
 
