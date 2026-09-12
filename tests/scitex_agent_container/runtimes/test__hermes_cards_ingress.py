@@ -7,6 +7,17 @@ from scitex_agent_container.runtimes import _hermes_cards_ingress as ingress
 from scitex_agent_container.runtimes import _tui_turn_bridge as turn_bridge
 
 
+def test_durable_reconcile_bounds_doorbell_loss_to_two_seconds():
+    # Arrange
+    expected_reconcile_interval_s = 2.0
+
+    # Act
+    actual_reconcile_interval_s = ingress.DEFAULT_RECONCILE_INTERVAL_S
+
+    # Assert
+    assert actual_reconcile_interval_s == expected_reconcile_interval_s
+
+
 def test_dm_is_rendered_with_sender_message_and_durable_id():
     # Arrange
     record = {
