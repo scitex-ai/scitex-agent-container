@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from ._hermes_compression import HermesCompressionSpec
 from ._launch_plan import LaunchPlan
 
 
@@ -26,6 +27,7 @@ def compile_hermes_config(
     max_turns: int = 50,
     run_budget_seconds: int = 1200,
     approval_mode: str = "off",
+    compression: HermesCompressionSpec | None = None,
 ) -> dict[str, Any]:
     """Return a credential-free Hermes configuration derived from ``plan``."""
     if plan.harness != "hermes":
@@ -49,6 +51,7 @@ def compile_hermes_config(
         raise ValueError("run_budget_seconds must be a positive integer")
     if approval_mode not in {"manual", "smart", "off"}:
         raise ValueError("approval_mode must be manual, smart, or off")
+    compression = compression or HermesCompressionSpec()
     workspace = str(PurePosixPath(workdir))
     if not workspace.startswith("/"):
         raise ValueError("workdir must be an absolute container path")
@@ -107,10 +110,10 @@ def compile_hermes_config(
         "approvals": {"mode": approval_mode},
         "compression": {
             "enabled": True,
-            "threshold": 0.80,
-            "target_ratio": 0.20,
-            "tail_mode": "lean",
-            "in_place": True,
+            "threshold": compression.threshold,
+            "target_ratio": compression.target_ratio,
+            "tail_mode": compression.tail_mode,
+            "in_place": compression.in_place,
         },
         "display": {"busy_input_mode": "steer"},
         "terminal": {

@@ -69,11 +69,15 @@ spec:
     ready_poll_interval_seconds: 0.5
     ready_timeout_seconds: 60
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
-  context_management:                    # context auto-management (compact/restart/noop)
-    trigger_at_percent: 70
-    strategy: noop                       # compact | restart | noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
+  available_harnesses:
+    hermes:
+      session: { mode: continue, max_age_minutes: null }
+      channels: []
+      compression:
+        threshold: 0.80
+        target_ratio: 0.20
+        tail_mode: lean
+        in_place: true
   telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
   hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
@@ -166,6 +170,18 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `post` / `environment` / `def_file` | string / KV dict / path | Apptainer `%post` shell snippet, `%environment` KV map, and override `.def` path for `apptainer build`. Empty / missing → no build extension. |
 | `relaxed`     | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: opt OUT of hardened-by-default isolation. When `false` (default), sac auto-prepends `--containall` / `--cleanenv` / `--writable-tmpfs` / `--home /home/agent`. Set `true` to disable; see [`docs/isolation.md`](isolation.md) + [`docs/adr/0001-isolation-hardening.md`](adr/0001-isolation-hardening.md). TODO: wire into `ApptainerSpec`. |
 | `fakeroot`    | bool (default `false`)        | **(DESIGN — not yet implemented in the parser.)** Intent: apptainer `--fakeroot` — uid 0 inside via user-namespace remap; host uid unchanged. D5 preflight detects userns-fakeroot via `/proc/self/uid_map` and accepts uid 0 only when remapped. TODO: wire into `ApptainerSpec`. |
+
+### `spec.available_harnesses.<key>.compression` — Hermes only
+
+Hermes context compaction is configured beside the Hermes harness that owns
+the behavior. The block is optional; omitting it preserves SAC's current
+Hermes defaults: `threshold: 0.80`, `target_ratio: 0.20`, `tail_mode: lean`,
+and `in_place: true`. The ratios must satisfy
+`0 < target_ratio < threshold < 1`; `tail_mode` is `lean` or `legacy`, and
+`in_place` is a boolean.
+The same block under Claude Code, Codex, or another harness is rejected rather
+than silently ignored. The former top-level `spec.context_management` example
+was removed because that tolerated legacy key has no runtime consumer.
 
 ### `spec.claude` — SDK knobs
 

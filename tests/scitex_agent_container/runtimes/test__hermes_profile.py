@@ -9,6 +9,7 @@ import yaml
 
 from scitex_agent_container._listen import _config as listen_config
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._hermes_compression import HermesCompressionSpec
 from scitex_agent_container.config._provider_registry import resolve_provider
 from scitex_agent_container.config._provider_types import ProviderSpec
 from scitex_agent_container.runtimes import (
@@ -567,6 +568,12 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     config.model = "qwen-model"
     config.reasoning_effort = "low"
     config.autonomous.enabled = True
+    config.hermes_compression = HermesCompressionSpec(
+        threshold=0.85,
+        target_ratio=0.30,
+        tail_mode="legacy",
+        in_place=False,
+    )
     config.claude.provider = ProviderSpec(
         base_url="http://qwen.example:8000/v1",
         auth_token_env="QWEN_KEY",
@@ -591,6 +598,14 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         and "mode: 'off'" in rendered
         and "api_server:" not in rendered
         and parsed["providers"]["sac-qwen"]["extra_headers"] == expected_headers
+        and parsed["compression"]
+        == {
+            "enabled": True,
+            "threshold": 0.85,
+            "target_ratio": 0.30,
+            "tail_mode": "legacy",
+            "in_place": False,
+        }
         and env_text == "QWEN_KEY=secret\n"
     )
 

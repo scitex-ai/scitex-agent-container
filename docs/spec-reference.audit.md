@@ -113,11 +113,11 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
 | `proxy.timeout_s` | float > 0, default 30.0 | Matches | ✓ | `_parsers/_proxy.py:74-82` |
 | AgentProxy ↔ Agent coupling | proxy required when AgentProxy; claude/startup_* rejected; proxy rejected when Agent | Matches exactly | ✓ | `_validation.py:378-408` |
 
-## Other implemented-but-undocumented blocks (`!`)
+## Other schema blocks and tolerated legacy keys (`!`)
 
 | Block | Effect | Source |
 | --- | --- | --- |
-| `spec.context_management` | trigger %/strategy/intervals for context auto-management | `_parsers/_context_management.py`, `_KNOWN_SPEC_KEYS` |
+| `spec.context_management` | Tolerated migration fossil; it has no parser or runtime consumer and should be removed from specs | `_spec_keys.py`, `_types.py` |
 | `spec.startup` (vs `startup_commands`) | opt-in block with `ready_patterns`, `ready_idle_ticks`, `ready_poll_interval_seconds`, `ready_timeout_seconds`, `on_timeout`, `commands` | `_parsers/_startup.py:26-86` |
 | `spec.container` | legacy container block (`runtime`, `image`, `volumes`, `network`, `mount_host_claude`) | `_parsers/_container.py`, `_validation.py:253-274` |
 | `spec.scheduling` | rejected with hint (replaced by host/hosts) | `_validation.py:411-416` |
@@ -141,7 +141,7 @@ in code · `!` implemented but undocumented · `?` design-only / unclear.
   * `screen.name`, top-level `session`, `apptainer.container_workdir`,
     `apptainer.post`/`environment`/`def_file`, `apptainer.binds` legacy
     dict form, `autonomous.idle_kick_after_s`, `a2a.host`,
-    `hooks.post_stop`, `spec.context_management`, `spec.startup`,
+    `hooks.post_stop`, inert legacy `spec.context_management`, `spec.startup`,
     `spec.container`, `spec.scheduling` rejection, `spec.dockerfile`,
     dead `parse_skills`.
 

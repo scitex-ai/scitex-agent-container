@@ -14,16 +14,18 @@ from ._acl_types import CommsSpec, LineageSpec  # noqa: E402,F401
 # re-exported here so ``from ...config._types import ApptainerSpec`` resolves.
 from ._apptainer_spec import ApptainerSpec  # noqa: E402,F401
 from ._delegation_types import DelegationSpec  # noqa: E402,F401
-from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
-from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
-# ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
-# ``from ...config._types import ProviderSpec`` is an existing import path.
-from ._provider_types import ProviderSpec  # noqa: E402,F401
 
 # EngineSpec — one entry of the MULTI-backend ``spec.engines`` surface.
 # Imported for the ``AgentConfig.engines`` field type; ``_engine_types``
 # imports nothing from this module, so the dependency is one-way.
 from ._engine_types import EngineSpec  # noqa: E402,F401
+from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
+from ._hermes_compression import HermesCompressionSpec
+
+# ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
+# ``from ...config._types import ProviderSpec`` is an existing import path.
+from ._provider_types import ProviderSpec  # noqa: E402,F401
+from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
 
 
 @dataclass
@@ -45,7 +47,6 @@ class ContainerSpec:
 # cap, same split as ApptainerSpec/ProviderSpec above); re-exported here
 # so ``from ...config._types import ClaudeSpec`` keeps resolving.
 from ._claude_spec import ClaudeSpec  # noqa: E402,F401
-
 
 
 @dataclass
@@ -330,6 +331,9 @@ class AgentConfig:
     watchdog: WatchdogSpec = field(default_factory=WatchdogSpec)
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
+    hermes_compression: HermesCompressionSpec = field(
+        default_factory=HermesCompressionSpec
+    )
     apptainer: ApptainerSpec = field(default_factory=ApptainerSpec)
     hooks: dict[str, list[str]] = field(default_factory=dict)
     listen: list[ListenPort] = field(default_factory=list)

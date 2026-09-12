@@ -354,6 +354,7 @@ def materialize_hermes_profile(
         max_turns=max_turns,
         run_budget_seconds=1200,
         approval_mode="off",
+        compression=config.hermes_compression,
     )
     _bind_session_affinity(rendered, config=config, plan=plan)
     rendered["gateway"] = {
@@ -419,6 +420,7 @@ def materialize_hermes_tui_profile(
         max_turns=max_turns,
         run_budget_seconds=1200,
         approval_mode="off",
+        compression=config.hermes_compression,
     )
     _bind_session_affinity(rendered, config=config, plan=plan)
     servers, eager_toolsets = _mcp_servers(home)

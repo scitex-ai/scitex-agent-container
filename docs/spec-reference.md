@@ -69,11 +69,15 @@ spec:
     ready_poll_interval_seconds: 0.5
     ready_timeout_seconds: 60
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
-  context_management:                    # context auto-management (compact/restart/noop)
-    trigger_at_percent: 70
-    strategy: noop                       # compact | restart | noop
-    warn_before_n_checks: 0
-    check_interval_seconds: 300
+  available_harnesses:
+    hermes:
+      session: { mode: continue, max_age_minutes: null }
+      channels: []
+      compression:
+        threshold: 0.80
+        target_ratio: 0.20
+        tail_mode: lean
+        in_place: true
   telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
   hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
@@ -179,6 +183,18 @@ ENDPOINT that answers it. They are independent — either flips without touching
 the other, in one line — and the fleet-wide default engine lives in one line of
 one file. **Full reference, the three worked YAML cases, the precedence, and the
 harness × engine refusal table: [harness-and-engine.md](harness-and-engine.md).**
+
+### `spec.available_harnesses.<key>.compression` — Hermes only
+
+Hermes context compaction is configured beside the Hermes harness that owns
+the behavior. The block is optional; omitting it preserves SAC's current
+Hermes defaults: `threshold: 0.80`, `target_ratio: 0.20`, `tail_mode: lean`,
+and `in_place: true`. The ratios must satisfy
+`0 < target_ratio < threshold < 1`; `tail_mode` is `lean` or `legacy`, and
+`in_place` is a boolean.
+The same block under Claude Code, Codex, or another harness is rejected rather
+than silently ignored. The former top-level `spec.context_management` example
+was removed because that tolerated legacy key has no runtime consumer.
 
 ### `spec.engines` — several backends, one picked at start
 
