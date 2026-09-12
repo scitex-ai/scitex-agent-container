@@ -208,12 +208,32 @@ async def _consume_sse(
                                         continue
                                     await on_event(event)
                                     if pending_id is not None and ack_url is not None:
-                                        ack_response = await client.post(
-                                            ack_url,
-                                            headers=headers,
-                                            json={"id": int(pending_id)},
-                                        )
-                                        ack_response.raise_for_status()
+                                        # The ack is a best-effort server-side
+                                        # confirmation sent AFTER on_event has
+                                        # already delivered the event to the
+                                        # agent. A failed ack (e.g. a stale
+                                        # daemon 404ing the route) must NOT
+                                        # block the cursor from advancing —
+                                        # otherwise the reconnect re-serves an
+                                        # already-delivered row forever. The
+                                        # event was already handed over, so
+                                        # advancing is safe; at-least-once
+                                        # semantics are preserved because a
+                                        # FRESH connect (no cursor) still uses
+                                        # list_undelivered.
+                                        try:
+                                            ack_response = await client.post(
+                                                ack_url,
+                                                headers=headers,
+                                                json={"id": int(pending_id)},
+                                            )
+                                            ack_response.raise_for_status()
+                                        except Exception as exc:  # stx-allow: fallback (reason: ack is best-effort; the event is already delivered to on_event, so a failed ack must not hold the cursor — see block comment)
+                                            log.warning(
+                                                "sac channel SSE ack for row %s failed (%s); advancing cursor anyway — event already delivered",
+                                                pending_id,
+                                                exc,
+                                            )
                                     # Advance the cursor ONLY after on_event
                                     # returns. Advancing on receipt would ack
                                     # an event we then failed to hand over —
