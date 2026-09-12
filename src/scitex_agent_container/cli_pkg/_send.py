@@ -57,7 +57,6 @@ from ._send_status_code import (
     not_resolvable_status_code,
     timed_out_status_code,
 )
-
 from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
     build_track_command,
     build_track_command_argv,
@@ -308,16 +307,13 @@ def send_to_agent(
         url = f"http://127.0.0.1:{a2a_port}/v1/turn"
 
     if key:
-        # Key-passthrough isn't wired into /v1/turn yet; the CLI handles
-        # ESC via os.kill(SIGINT) on a local pid file. Surfacing this
-        # as a loud error is the no-silent-fallback choice.
-        return {
-            "status": "error",
-            "error": (
-                f"key={key!r} dispatch not supported via send_to_agent; "
-                "use the CLI's local SIGINT path (`sac agents send --key`)"
-            ),
-        }
+        from .._network.peer import post_control_to_url
+
+        try:
+            response = post_control_to_url(url, key, timeout_s=timeout_seconds)
+        except PeerError as exc:
+            return {"status": "error", "error": str(exc), "agent": name}
+        return {"status": "ok", "agent": name, "response_metadata": response}
 
     text = prompt or ""
     metadata_extras: dict[str, Any] = {}

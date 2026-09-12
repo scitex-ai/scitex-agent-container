@@ -45,19 +45,16 @@ def _instances_store(pg_schema: str):
     yield
 
 
-# The generic ``_swap(name, fn)`` module-namespace helper lived here and is
-# gone with its last caller: every remaining swap targets a specific
-# collaborator (``os.kill``, ``post_turn_to_url``) and says so in its name.
-
-
 @contextmanager
-def _swap_os_kill(fn: Callable) -> Iterator[None]:
-    saved = send_mod.os.kill
-    send_mod.os.kill = fn  # type: ignore[assignment]
+def _swap_library_send(fn: Callable) -> Iterator[None]:
+    from scitex_agent_container.cli_pkg import _send
+
+    saved = _send.send_to_agent
+    _send.send_to_agent = fn  # type: ignore[assignment]
     try:
         yield
     finally:
-        send_mod.os.kill = saved  # type: ignore[assignment]
+        _send.send_to_agent = saved  # type: ignore[assignment]
 
 
 def _seed_agent(tmp_path: Path, name: str, session_id: str) -> Path:
@@ -204,49 +201,32 @@ def test_invocation_with_both_prompt_and_key_reports_mutual_exclusion(
 
 
 # ---------------------------------------------------------------------------
-# --key ESC: SIGINT delivery
+# --key: neutral live-TUI control delivery
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def alpha_with_pid(isolated_env):
-    """isolated_env plus a recorded pid file for the alpha agent."""
-    (isolated_env / "state" / "alpha" / "pid").write_text("4242")
-    return isolated_env
+def _invoke_key_capturing_send(key="ESC"):
+    """Run one control send and return its CLI result and library call."""
+    calls: list[tuple[str, str | None, bool]] = []
 
+    def deliver(name, *, key=None, wait=False):
+        calls.append((name, key, wait))
+        return {"status": "ok"}
 
-def _invoke_key_esc_capturing_kill():
-    """Run ``send alpha --key ESC`` and return (result, kill_call)."""
-    kill_call: dict = {}
-    with _swap_os_kill(lambda pid, sig: kill_call.update(pid=pid, sig=sig)):
+    with _swap_library_send(deliver):
         runner = CliRunner()
-        result = runner.invoke(send, ["alpha", "--key", "ESC"])
-    return result, kill_call
+        result = runner.invoke(send, ["alpha", "--key", key])
+    return result, calls
 
 
-def test_key_esc_with_recorded_pid_exits_zero(alpha_with_pid):
+@pytest.mark.parametrize("key", ["ESC", "Escape", "Enter"])
+def test_supported_key_uses_live_control_endpoint(isolated_env, key):
     # Arrange
-    invoke = _invoke_key_esc_capturing_kill
+    invoke = _invoke_key_capturing_send
     # Act
-    result, _ = invoke()
+    result, calls = invoke(key)
     # Assert
-    assert result.exit_code == 0, result.output
-
-
-@pytest.mark.parametrize(
-    "field,expected",
-    [
-        ("pid", 4_242),
-        ("sig", 2),  # signal.SIGINT
-    ],
-)
-def test_key_esc_delivers_sigint_to_recorded_pid(alpha_with_pid, field, expected):
-    # Arrange
-    invoke = _invoke_key_esc_capturing_kill
-    # Act
-    _, kill_call = invoke()
-    # Assert
-    assert kill_call[field] == expected
+    assert (result.exit_code, calls) == (0, [("alpha", key, True)])
 
 
 def test_key_unsupported_exits_nonzero(isolated_env):
@@ -267,22 +247,18 @@ def test_key_unsupported_reports_not_supported(isolated_env):
     assert "not supported" in result.output
 
 
-def test_key_esc_without_pid_file_exits_nonzero(isolated_env):
+def test_control_failure_is_reported_to_operator(isolated_env):
     # Arrange
     runner = CliRunner()
-    # Act
-    result = runner.invoke(send, ["alpha", "--key", "ESC"])
-    # Assert
-    assert result.exit_code != 0
 
+    def failed(*_args, **_kwargs):
+        return {"status": "error", "error": "modal endpoint unavailable"}
 
-def test_key_esc_without_pid_file_reports_not_running(isolated_env):
-    # Arrange
-    runner = CliRunner()
     # Act
-    result = runner.invoke(send, ["alpha", "--key", "ESC"])
+    with _swap_library_send(failed):
+        result = runner.invoke(send, ["alpha", "--key", "ESC"])
     # Assert
-    assert "not running" in result.output
+    assert result.exit_code != 0 and "modal endpoint unavailable" in result.output
 
 
 # ---------------------------------------------------------------------------

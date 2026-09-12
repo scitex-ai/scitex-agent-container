@@ -1,4 +1,4 @@
-"""Host-side A2A ``/v1/turn`` → tmux bridge for ``runtime: tui`` agents.
+"""Host-side A2A ``/v1/turn`` bridge for ``runtime: tui`` agents.
 
 Closes the wake-on-push gap for interactive TUI agents. The SDK runtime
 serves ``/v1/turn`` from its in-SIF runner so the ``sac mcp channel``
@@ -7,8 +7,10 @@ agent to act; the TUI runtime runs ``claude`` in tmux with no in-process
 HTTP server, so that POST hit a dead port and the message never woke it.
 This module gives TUI agents the SAME endpoint host-side (the in-SIF
 subscriber POSTs to ``127.0.0.1:<port>`` — apptainer shares the host net
-namespace): on ``POST /v1/turn`` it injects ``text`` into the tmux session
-via :meth:`TuiSessionRuntime.send_turn` and returns ``200`` once delivered.
+namespace): on ``POST /v1/turn`` it asks the selected runtime to deliver
+``text`` and returns ``200`` only after that runtime accepts it. Hermes uses
+its native shared-session JSON-RPC; legacy TUI adapters retain their own
+runtime-specific path.
 
 Wire format mirrors ``_session_http`` so ``_wake_turn`` + A2A clients work
 unchanged:
@@ -19,10 +21,10 @@ unchanged:
     Content-Type: application/json
     {"text": "...", "from_agent": "<peer>"?, "dispatch_id": "<id>"?}
 
-    200 {"text": "", "delivered": true, "mode": "tui-tmux-inject", "agent": "<name>"}
+    200 {"text": "", "delivered": true, "mode": "tui-session-delivery", "agent": "<name>"}
     400 {"error": "missing or empty 'text' field"}        # schema mismatch, loud
     404 {"error": "..."}                                  # unknown route / wrong agent
-    502 {"error": "tui inject failed: ..."}               # session gone / input wedged
+    502 {"error": "tui delivery failed: ..."}             # session unavailable / refused
 
 Lifecycle (``start_turn_bridge`` / ``stop_turn_bridge`` + helpers) lives in
 :mod:`_tui_turn_bridge_lifecycle` (module line cap) and is re-exported here so
@@ -167,6 +169,14 @@ def is_turn_route(path: str, agent_name: str) -> bool:
     return False
 
 
+def is_control_route(path: str, agent_name: str) -> bool:
+    """True for the neutral SAC UI-control endpoint for this agent."""
+    clean = path.split("?", 1)[0].rstrip("/")
+    return clean == "/v1/control" or (
+        bool(agent_name) and clean == f"/agents/{agent_name}/control"
+    )
+
+
 # ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
@@ -186,10 +196,12 @@ class _TurnBridgeServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         on_turn: Callable[..., None],
         agent_name: str,
+        on_control: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(server_address, _TurnBridgeHandler)
         self.on_turn = on_turn
         self.agent_name = agent_name
+        self.on_control = on_control
 
 
 class _TurnBridgeHandler(BaseHTTPRequestHandler):
@@ -229,7 +241,9 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         # never leaves an unread body on the socket.
         length = int(self.headers.get("Content-Length", 0) or 0)
         raw = self.rfile.read(length) if length > 0 else b""
-        if not is_turn_route(self.path, srv.agent_name):
+        turn_route = is_turn_route(self.path, srv.agent_name)
+        control_route = is_control_route(self.path, srv.agent_name)
+        if not turn_route and not control_route:
             self._respond(404, {"error": f"no turn route {self.path!r}"})
             return
         try:
@@ -237,6 +251,32 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._respond(400, {"error": f"bad JSON: {exc}"})
             return
+        if control_route:
+            key = body.get("key") if isinstance(body, dict) else None
+            if key not in {"Enter", "Escape", "ESC", "C-c", "SIGINT"}:
+                self._respond(
+                    400, {"error": "control key must be Enter, Escape, or C-c"}
+                )
+                return
+            if srv.on_control is None:
+                self._respond(501, {"error": "this runtime has no UI-control surface"})
+                return
+            try:
+                srv.on_control(str(key))
+            except Exception as exc:
+                self._respond(502, {"error": f"tui control failed: {exc}"})
+                return
+            self._respond(
+                200,
+                {
+                    "delivered": True,
+                    "mode": "tui-control",
+                    "key": key,
+                    "agent": srv.agent_name,
+                },
+            )
+            return
+
         text, envelope_meta = extract_turn_text(body)
         if not isinstance(text, str) or not text.strip():
             self._respond(400, {"error": "missing or empty 'text' field"})
@@ -256,14 +296,14 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         try:
             srv.on_turn(text, from_agent=from_agent, dispatch_id=dispatch_id)
         except Exception as exc:  # stx-allow: fallback (reason: surface inject failure as 502 instead of crashing the bridge; the wake POST's raise_for_status then propagates it loud to the channel subscriber)
-            self._respond(502, {"error": f"tui inject failed: {exc}"})
+            self._respond(502, {"error": f"tui delivery failed: {exc}"})
             return
         self._respond(
             200,
             {
                 "text": "",
                 "delivered": True,
-                "mode": "tui-tmux-inject",
+                "mode": "tui-session-delivery",
                 "agent": srv.agent_name,
             },
         )
@@ -328,7 +368,12 @@ def _emit(
 
 
 def build_server(
-    *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
+    *,
+    host: str,
+    port: int,
+    on_turn: Callable[..., None],
+    agent_name: str,
+    on_control: Callable[[str], None] | None = None,
 ) -> _TurnBridgeServer:
     """Construct (but do not run) the bridge server. Test seam.
 
@@ -337,16 +382,27 @@ def build_server(
     remediation, not a bare ``OSError [Errno 98] Address already in use``.
     """
     try:
-        return _TurnBridgeServer((host, port), on_turn, agent_name)
+        return _TurnBridgeServer((host, port), on_turn, agent_name, on_control)
     except OSError as exc:
         raise port_busy_error(host, port, agent_name, cause=exc) from exc
 
 
 def serve(  # pragma: no cover - integration entry: installs main-thread-only signal handlers + blocks in serve_forever; the server logic is unit-tested via build_server, the full serve path is exercised end-to-end
-    *, host: str, port: int, on_turn: Callable[..., None], agent_name: str
+    *,
+    host: str,
+    port: int,
+    on_turn: Callable[..., None],
+    agent_name: str,
+    on_control: Callable[[str], None] | None = None,
 ) -> None:
     """Run the bridge server until the process is signalled. Blocking."""
-    server = build_server(host=host, port=port, on_turn=on_turn, agent_name=agent_name)
+    server = build_server(
+        host=host,
+        port=port,
+        on_turn=on_turn,
+        agent_name=agent_name,
+        on_control=on_control,
+    )
 
     def _graceful(*_a: Any) -> None:
         # serve_forever() runs in the main thread here; shutdown() must be
@@ -391,9 +447,9 @@ def _build_on_turn(
     if (
         runtime is None
     ):  # pragma: no cover - trivial default-construct of the real runtime
-        from .tui_session import TuiSessionRuntime
+        from .._lifecycle._runtime_select import _get_runtime
 
-        runtime = TuiSessionRuntime()
+        runtime = _get_runtime(config)
 
     def on_turn(
         text: str,
@@ -484,6 +540,24 @@ def _build_on_turn(
     return on_turn
 
 
+def _build_on_control(
+    config: AgentConfig, *, runtime: Any | None = None
+) -> Callable[[str], None]:
+    if runtime is None:
+        from .._lifecycle._runtime_select import _get_runtime
+
+        runtime = _get_runtime(config)
+
+    def on_control(key: str) -> None:
+        send_key = getattr(runtime, "send_key", None)
+        if not callable(send_key):
+            raise RuntimeError("runtime does not expose explicit UI controls")
+        if not send_key(config, key):
+            raise RuntimeError("the live TUI tmux session is absent")
+
+    return on_control
+
+
 def main(
     argv: list[str] | None = None,
 ) -> int:  # pragma: no cover - subprocess entry: parses args, loads the spec, and blocks in serve(); exercised end-to-end (the launcher spawns it), not unit
@@ -504,6 +578,7 @@ def main(
         host=args.host or resolved_a2a_host(config),
         port=args.port,
         on_turn=_build_on_turn(config),
+        on_control=_build_on_control(config),
         agent_name=config.name,
     )
     return 0
@@ -517,6 +592,7 @@ __all__ = [
     "resolved_a2a_host",
     "resolved_a2a_port",
     "is_turn_route",
+    "is_control_route",
     "build_server",
     "serve",
     "main",

@@ -607,6 +607,8 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
             "in_place": False,
         }
         and env_text == "QWEN_KEY=secret\n"
+        and len((tmp_path / profile.API_KEY_FILE).read_text().strip()) >= 16
+        and (tmp_path / profile.API_KEY_FILE).stat().st_mode & 0o777 == 0o600
     )
 
 

@@ -50,10 +50,80 @@ from typing import Any
 __all__ = [
     "post_turn",
     "post_turn_to_url",
+    "post_control_to_url",
     "resolve_peer_url",
     "PeerError",
-    "PeerTimeoutPending",
+    "PeerTimeoutPending",  # noqa: F822 - lazy export resolved by __getattr__
 ]
+
+
+def post_control_to_url(
+    url: str, key: str, *, timeout_s: float = 10.0
+) -> dict[str, Any]:
+    """POST one explicit UI key to a live TUI's neutral control endpoint."""
+    if not url.endswith("/v1/turn"):
+        raise PeerError(f"control base URL must end in /v1/turn (got {url!r})")
+    if key not in {"Enter", "Escape", "ESC", "C-c", "SIGINT"}:
+        raise PeerError(
+            f"unsupported UI control key {key!r}; use Enter, Escape, or C-c"
+        )
+    control_url = url.removesuffix("/v1/turn") + "/v1/control"
+    body = json.dumps({"kind": "control", "action": "ui.key", "key": key}).encode()
+    if control_url.startswith("ssh://"):
+        import urllib.parse
+
+        from ._ssh_curl import _post_via_ssh_curl
+
+        parsed = urllib.parse.urlparse(control_url)
+        if not parsed.hostname or not parsed.port:
+            raise PeerError(f"malformed ssh URL: {control_url!r}")
+        rc, output, error = _post_via_ssh_curl(
+            host=parsed.hostname,
+            port=parsed.port,
+            path="/v1/control",
+            body=body,
+            timeout_s=timeout_s,
+        )
+        if rc != 0:
+            detail = error.decode("utf-8", "replace") or output.decode(
+                "utf-8", "replace"
+            )
+            raise PeerError(f"ssh+curl control failed (rc={rc}): {detail}")
+        try:
+            payload = json.loads(output.decode("utf-8"))
+        except ValueError as exc:
+            raise PeerError(
+                f"peer returned malformed control body: {output!r}"
+            ) from exc
+    else:
+        request = urllib.request.Request(
+            control_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                raw = response.read()
+                try:
+                    payload = json.loads(raw.decode())
+                except ValueError as exc:
+                    raise PeerError(
+                        f"peer returned malformed control body: {raw!r}"
+                    ) from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            raise PeerError(
+                f"peer returned HTTP {exc.code}: {detail or exc.reason}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise PeerError(
+                f"peer control endpoint unreachable at {control_url}: {exc}"
+            ) from exc
+    if not isinstance(payload, dict) or payload.get("delivered") is not True:
+        raise PeerError(f"peer returned malformed control response: {payload!r}")
+    return payload
+
 
 log = logging.getLogger(__name__)
 

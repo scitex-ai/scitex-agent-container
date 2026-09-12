@@ -289,9 +289,17 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
     servers = []
     threads = []
 
-    def start(on_turn: Callable[..., None], agent_name: str = "figrecipe") -> int:
+    def start(
+        on_turn: Callable[..., None],
+        agent_name: str = "figrecipe",
+        on_control: Callable[[str], None] | None = None,
+    ) -> int:
         server = bridge.build_server(
-            host="127.0.0.1", port=0, on_turn=on_turn, agent_name=agent_name
+            host="127.0.0.1",
+            port=0,
+            on_turn=on_turn,
+            agent_name=agent_name,
+            on_control=on_control,
         )
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -340,6 +348,27 @@ def test_post_v1_turn_returns_200_delivered_true(bridge_factory) -> None:
     status, body = _post(port, "/v1/turn", {"text": "hi there"})
     # Assert
     assert status == 200 and body.get("delivered") is True
+
+
+def test_post_v1_control_delivers_enter_without_a_pid_file(bridge_factory) -> None:
+    # Arrange
+    received: list[str] = []
+    port = bridge_factory(lambda _text, **_kw: None, on_control=received.append)
+    # Act
+    status, body = _post(
+        port, "/v1/control", {"kind": "control", "action": "ui.key", "key": "Enter"}
+    )
+    # Assert
+    assert (status, body.get("mode"), received) == (200, "tui-control", ["Enter"])
+
+
+def test_post_v1_control_rejects_unbounded_keys(bridge_factory) -> None:
+    # Arrange
+    port = bridge_factory(lambda _text, **_kw: None, on_control=lambda _key: None)
+    # Act
+    status, body = _post(port, "/v1/control", {"key": "F12"})
+    # Assert
+    assert status == 400 and "Enter, Escape, or C-c" in body["error"]
 
 
 def test_post_named_turn_route_delivers_for_this_agent(bridge_factory) -> None:

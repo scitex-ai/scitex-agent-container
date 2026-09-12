@@ -159,10 +159,10 @@ def test_hermes_headless_is_rejected_during_v3_validation():
     )
 
 
-def test_hermes_channels_are_rejected_until_the_tui_runtime_wires_them():
+def test_hermes_channels_are_accepted_by_native_gateway_inbox_bridge():
     # Arrange
     entry = _hermes_entry()
-    entry["channels"] = ["telegram"]
+    entry["channels"] = ["cct", "cards", "sac"]
     raw = {
         "spec": {
             "harness": "hermes",
@@ -173,10 +173,7 @@ def test_hermes_channels_are_rejected_until_the_tui_runtime_wires_them():
     # Act
     errors = validate_raw(raw, "/tmp/hermes/spec.yaml")
     # Assert
-    assert any(
-        "available_harnesses.hermes.channels must be empty" in error
-        for error in errors
-    )
+    assert not any("available_harnesses.hermes.channels" in error for error in errors)
 
 
 def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
