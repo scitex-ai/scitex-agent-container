@@ -167,7 +167,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
         "scitex_agent_container/_lifecycle/_relocate_transcript.py:172",
-        "scitex_agent_container/_lifecycle/_restart_client.py:142",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:188",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:289",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:328",

@@ -11,13 +11,15 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
     active_sessions,
+    observe_turn_activity,
     submit_turn,
 )
 
 
 class _Socket:
-    def __init__(self):
+    def __init__(self, status: str | None = None):
         self.sent = []
+        self.status = status
 
     def __enter__(self):
         return self
@@ -32,7 +34,15 @@ class _Socket:
         request = self.sent[-1]
         method = request["method"]
         result = {
-            "session.active_list": {"sessions": [{"id": "live-1", "title": "sac:hub"}]},
+            "session.active_list": {
+                "sessions": [
+                    {
+                        "id": "live-1",
+                        "title": "sac:hub",
+                        **({"status": self.status} if self.status else {}),
+                    }
+                ]
+            },
             "session.activate": {"id": "live-1"},
             "prompt.submit": {"status": "steered"},
         }[method]
@@ -67,6 +77,7 @@ def test_session_selection_refuses_ambiguous_gateway():
     # Act
     def action() -> None:
         _select_session(rows, "sac:hub")
+
     # Assert
     with pytest.raises(HermesTuiRpcError, match="cannot identify one"):
         action()
@@ -82,8 +93,53 @@ def test_active_sessions_is_observation_only(tmp_path):
     rows = active_sessions(tmp_path, connect_fn=lambda *a, **k: socket)
 
     # Assert
-    # Observing liveness must not activate a session/viewer.
     assert (rows, [row["method"] for row in socket.sent]) == (
         [{"id": "live-1", "title": "sac:hub"}],
         ["session.active_list"],
     )
+
+
+@pytest.mark.parametrize(
+    ("native_status", "expected_state"),
+    [
+        ("idle", "idle"),
+        ("working", "active"),
+        ("waiting", "active"),
+        ("starting", "active"),
+    ],
+)
+def test_turn_activity_uses_native_live_session_status(
+    tmp_path, native_status, expected_state
+):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
+    (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
+    socket = _Socket(status=native_status)
+
+    # Act
+    observed = observe_turn_activity(tmp_path, "hub", connect_fn=lambda *a, **k: socket)
+
+    # Assert
+    assert (
+        observed.state,
+        observed.session_status,
+        observed.session_id,
+        [row["method"] for row in socket.sent],
+    ) == (expected_state, native_status, "live-1", ["session.active_list"])
+
+
+def test_turn_activity_refuses_unknown_native_status(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
+    (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
+
+    def action():
+        observe_turn_activity(
+            tmp_path, "hub", connect_fn=lambda *a, **k: _Socket(status="mystery")
+        )
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match="unknown activity status"):
+        run()

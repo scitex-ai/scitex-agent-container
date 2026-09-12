@@ -70,6 +70,9 @@ def agent_stop(
     config_resolver: Optional[Callable[[str], str]] = None,
     stop_instance_resolver: Optional[Callable[[AgentConfig, Any], dict | None]] = None,
     tui_stop_verifier: Optional[Callable[..., str]] = None,
+    drain_timeout_s: float = 0.0,
+    allow_active_turn_kill: bool | None = None,
+    managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -95,6 +98,11 @@ def agent_stop(
             registry row is absent, stop resolves the declared spec and tears
             down that runtime instead of abandoning a live tmux session or
             bridge solely because registry state was lost.
+        drain_timeout_s: Maximum seconds to wait for an active Hermes turn to
+            become idle. Zero observes once and refuses immediately.
+        allow_active_turn_kill: Explicit destructive override for the Hermes
+            turn guard. ``None`` follows ``force`` for compatibility with
+            direct force-stop callers; restart passes ``False`` explicitly.
     """
     registry = registry or Registry()
     entry = registry.get(name)
@@ -156,6 +164,29 @@ def agent_stop(
                 runtime=runtime,
                 config=config,
             )
+
+    # Guard BEFORE handover snapshots, hooks, inbox teardown, or any other
+    # mutation. Hermes' native session registry is the authority for whether
+    # the model/tool turn is active; a TUI footer is only presentation and can
+    # be stale. A normal stop therefore leaves a working agent wholly intact.
+    if (
+        is_tui_runtime
+        and str(getattr(config, "harness", "") or "").lower() == "hermes"
+        and runtime.is_running(config)
+    ):
+        from ._managed_turn_drain import guard_managed_turn
+
+        guard_kwargs: dict[str, Any] = {}
+        if managed_turn_probe is not None:
+            guard_kwargs["probe"] = managed_turn_probe
+        guard_managed_turn(
+            config,
+            allow_active_turn_kill=(
+                force if allow_active_turn_kill is None else allow_active_turn_kill
+            ),
+            timeout_s=drain_timeout_s,
+            **guard_kwargs,
+        )
 
     hook_env = {
         "SCITEX_AGENT_CONTAINER_CONFIG_PATH": str(Path(entry["config"]).resolve()),
@@ -331,6 +362,8 @@ def agent_restart(
     thread_factory: Callable[..., Any] = threading.Thread,
     engine_override: str | None = None,
     probe_engine: bool | None = None,
+    drain_timeout_s: float = 0.0,
+    managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
 ) -> bool:
     """Restart an agent by name: resolve spec → stop → settle → start.
 
@@ -416,6 +449,9 @@ def agent_restart(
             SIGKILL. Default 15 s — ~10× a healthy apptainer teardown.
             Set to 0 to skip the gate entirely (legacy behaviour,
             retained for tests of unrelated code paths).
+        drain_timeout_s: Maximum seconds to wait for an active Hermes turn to
+            finish before refusing the restart. This is distinct from the
+            post-SIGTERM process-exit timeout above.
 
     Raises:
         RuntimeError: When ``name`` has neither a registry row NOR a
@@ -496,6 +532,11 @@ def agent_restart(
         force=True,
         runtime_factory=runtime_factory,
         handover_mod=handover_mod,
+        drain_timeout_s=drain_timeout_s,
+        # ``force=True`` here historically tolerates missing/stale registry
+        # state; it is NOT operator consent to kill an active model turn.
+        allow_active_turn_kill=False,
+        managed_turn_probe=managed_turn_probe,
     )
     # Escalate (SIGKILL) or RAISE — never "proceed to start anyway" into a
     # collision this gate already knows is coming. See ._stop_escalate.

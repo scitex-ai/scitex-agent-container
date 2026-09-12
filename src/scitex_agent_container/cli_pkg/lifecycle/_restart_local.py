@@ -90,7 +90,11 @@ def _observe_run(name: str, *, min_ts: float | None = None, wait_s: float = 0.0)
 
 
 def _restart_locally(
-    name: str, *, as_json: bool, engine: str | None = None
+    name: str,
+    *,
+    as_json: bool,
+    engine: str | None = None,
+    drain_timeout_s: float = 0.0,
 ) -> tuple[dict, bool]:
     """Perform the restart on THIS host (ssh-dispatching to a peer if needed).
 
@@ -130,9 +134,20 @@ def _restart_locally(
     envelope_holder: dict = {}
 
     def _handler(
-        peer, row, ps, _name=name, _holder=envelope_holder, _engine=engine
+        peer,
+        row,
+        ps,
+        _name=name,
+        _holder=envelope_holder,
+        _engine=engine,
+        _drain_timeout_s=drain_timeout_s,
     ):
-        _holder.update(_dispatch_remote_restart(peer, row, ps, _name, _engine))
+        dispatch_kwargs = {}
+        if _drain_timeout_s > 0:
+            dispatch_kwargs["drain_timeout_s"] = _drain_timeout_s
+        _holder.update(
+            _dispatch_remote_restart(peer, row, ps, _name, _engine, **dispatch_kwargs)
+        )
         _holder["_peer"] = peer
 
     dispatched = try_dispatch_remote(name, "restart", peers, handler=_handler)
@@ -222,7 +237,10 @@ def _restart_locally(
     before = read_run_identity(name)
     session_before = _observe_run(name)
     restart_began = time.time()
-    _result = agent_restart(name, engine_override=engine)
+    restart_kwargs = {"engine_override": engine}
+    if drain_timeout_s > 0:
+        restart_kwargs["drain_timeout_s"] = drain_timeout_s
+    _result = agent_restart(name, **restart_kwargs)
     restarted = _result is not False
     if outcome_kind(_result) == KIND_ALREADY_RUNNING:
         restarted = False
@@ -316,9 +334,18 @@ def _print_local_outcome(name, restarted, no_op_reason, verdict) -> None:
     )
 
 
-def _restart_via_broker(name: str, *, as_json: bool, fresh: bool) -> tuple[dict, bool]:
+def _restart_via_broker(
+    name: str,
+    *,
+    as_json: bool,
+    fresh: bool,
+    drain_timeout_s: float = 0.0,
+) -> tuple[dict, bool]:
     """Hand the whole restart to the host listen and report ITS verdict."""
-    out, ok = brokered_restart(name, fresh=fresh)
+    broker_kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        broker_kwargs["drain_timeout_s"] = drain_timeout_s
+    out, ok = brokered_restart(name, **broker_kwargs)
     if not as_json:
         verb = "fresh-restarted" if fresh else "restarted"
         if out.get("scheduled"):

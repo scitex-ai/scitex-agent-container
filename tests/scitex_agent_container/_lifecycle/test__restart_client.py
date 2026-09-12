@@ -206,6 +206,26 @@ def test_post_body_omits_fresh_by_default(listen_env) -> None:
     assert "fresh" not in json.loads(captured["body"])
 
 
+def test_post_body_carries_explicit_drain_timeout(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"returncode":0}')
+    # Act
+    request_restart("peer", drain_timeout_s=45.5, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["drain_timeout_seconds"] == 45.5
+
+
+def test_post_body_omits_zero_drain_timeout(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"returncode":0}')
+    # Act
+    request_restart("peer", opener=opener)
+    # Assert
+    assert "drain_timeout_seconds" not in json.loads(captured["body"])
+
+
 def test_explicit_caller_arg_overrides_sac_name_env(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")

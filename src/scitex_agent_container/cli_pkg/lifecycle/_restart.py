@@ -75,7 +75,12 @@ from ._selection import (
 
 
 def _restart_one(
-    name: str, *, as_json: bool, fresh: bool, engine: str | None = None
+    name: str,
+    *,
+    as_json: bool,
+    fresh: bool,
+    engine: str | None = None,
+    drain_timeout_s: float = 0.0,
 ) -> tuple[dict, bool]:
     """Restart ONE agent; return ``(json_envelope, ok)``.
 
@@ -132,11 +137,17 @@ def _restart_one(
                 console.print(f"[red]{msg}[/red]")
             out, ok = {"name": name, "error": msg, "restarted": False}, False
         elif broker:
-            out, ok = _restart_via_broker(name, as_json=as_json, fresh=fresh)
+            broker_kwargs = {"as_json": as_json, "fresh": fresh}
+            if drain_timeout_s > 0:
+                broker_kwargs["drain_timeout_s"] = drain_timeout_s
+            out, ok = _restart_via_broker(name, **broker_kwargs)
         elif fresh:
             out, ok = _refuse_fresh_on_bare_host(name, as_json=as_json)
         else:
-            out, ok = _restart_locally(name, as_json=as_json, engine=engine)
+            local_kwargs = {"as_json": as_json, "engine": engine}
+            if drain_timeout_s > 0:
+                local_kwargs["drain_timeout_s"] = drain_timeout_s
+            out, ok = _restart_locally(name, **local_kwargs)
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if not as_json:
             console.print(f"[red]Error: {exc}[/red]")
@@ -202,6 +213,18 @@ def _restart_one(
     ),
 )
 @click.option(
+    "--drain-timeout",
+    "drain_timeout_s",
+    type=click.FloatRange(min=0.0),
+    default=0.0,
+    show_default=True,
+    metavar="SECONDS",
+    help=(
+        "Wait up to SECONDS for Hermes' native session state to become idle; "
+        "zero observes once and refuses an active restart."
+    ),
+)
+@click.option(
     "--engine",
     "engine",
     type=str,
@@ -230,6 +253,7 @@ def restart(
     yes: bool,
     as_json: bool,
     fresh: bool,
+    drain_timeout_s: float,
     engine: str | None,
 ) -> None:
     """Restart one or more agents.
@@ -311,12 +335,33 @@ def restart(
             )
         raise SystemExit(2)
 
+    if fresh and drain_timeout_s > 0:
+        click.echo(
+            "Error: --fresh force-bounces into a new harness session and cannot "
+            "honour --drain-timeout. Use a plain restart to drain the current "
+            "turn, or retry --fresh without --drain-timeout only when discarding "
+            "the active turn/session is intentional.",
+            err=True,
+        )
+        raise SystemExit(2)
+    if fresh:
+        click.echo(
+            "WARNING: --fresh force-bounces the harness; an active response, "
+            "session context, and SGLang prefix-cache continuity may be lost.",
+            err=True,
+        )
+
     results: list[dict] = []
     any_failed = False
     for name in targets:
-        envelope, ok = _restart_one(
-            name, as_json=as_json, fresh=fresh, engine=engine
-        )
+        restart_kwargs = {
+            "as_json": as_json,
+            "fresh": fresh,
+            "engine": engine,
+        }
+        if drain_timeout_s > 0:
+            restart_kwargs["drain_timeout_s"] = drain_timeout_s
+        envelope, ok = _restart_one(name, **restart_kwargs)
         results.append(envelope)
         if not ok:
             any_failed = True

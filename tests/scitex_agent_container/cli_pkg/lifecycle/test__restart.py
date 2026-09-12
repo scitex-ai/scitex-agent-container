@@ -736,6 +736,27 @@ def test_brokered_restart_threads_fresh_to_the_host_client():
     assert seen == [("alpha", True)]
 
 
+def test_brokered_restart_threads_explicit_drain_timeout_to_host_client():
+    # Arrange
+    import scitex_agent_container.cli_pkg.lifecycle._restart_remote as remote_mod
+
+    seen: list[tuple[str, bool, float]] = []
+
+    def _client(name, fresh=False, *, drain_timeout_s=0.0):
+        seen.append((name, fresh, drain_timeout_s))
+        return {"returncode": 0, "stdout": ""}
+
+    saved = remote_mod._restart_via_host_bypass
+    remote_mod._restart_via_host_bypass = _client
+    # Act
+    try:
+        remote_mod.brokered_restart("alpha", drain_timeout_s=12.5)
+    finally:
+        remote_mod._restart_via_host_bypass = saved
+    # Assert
+    assert seen == [("alpha", False, 12.5)]
+
+
 # ---------------------------------------------------------------------------
 # Variadic NAME... + --all (operator TODO 2026-07-04): restart accepts
 # multiple names in one call and an --all flag that enumerates the same
