@@ -13,6 +13,62 @@ class HermesTuiRpcError(RuntimeError):
     """The live Hermes session could not accept an inbound event."""
 
 
+def _gateway_connection(state_dir: Path) -> tuple[str, str]:
+    """Resolve the private websocket endpoint without exposing its bearer."""
+    try:
+        descriptor = json.loads((state_dir / GATEWAY_FILE).read_text(encoding="utf-8"))
+        port = int(descriptor["port"])
+        token = (state_dir / "hermes-api.key").read_text(encoding="utf-8").strip()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway state is unavailable: {exc}"
+        ) from exc
+    if not 0 < port < 65536 or len(token) < 16:
+        raise HermesTuiRpcError("Hermes TUI gateway descriptor is invalid")
+    return f"ws://127.0.0.1:{port}/api/ws?token={token}", token
+
+
+def _connect(url: str, timeout_s: float, connect_fn: Any | None) -> Any:
+    if connect_fn is None:
+        try:
+            from websockets.sync.client import connect as connect_fn
+        except ImportError as exc:
+            raise HermesTuiRpcError(
+                "websockets>=15 is required for Hermes TUI delivery"
+            ) from exc
+    return connect_fn(url, open_timeout=timeout_s, close_timeout=1)
+
+
+def active_sessions(
+    state_dir: Path,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> list[dict]:
+    """Return Hermes' authoritative process-local live-session snapshot.
+
+    This deliberately does not activate a session.  The short-lived observer
+    therefore cannot become a viewer, cancel an orphan reap, or receive the
+    agent's token stream.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            result = _rpc(socket, 1, "session.active_list", {})
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    rows = result.get("sessions")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise HermesTuiRpcError(
+            f"Hermes session.active_list returned malformed result: {result!r}"
+        )
+    return rows
+
+
 def _rpc(socket: Any, request_id: int, method: str, params: dict) -> dict:
     socket.send(
         json.dumps(
@@ -67,24 +123,9 @@ def submit_turn(
     connect_fn: Any | None = None,
 ) -> str:
     """Submit through Hermes' native busy-input policy and return its status."""
+    url, _token = _gateway_connection(state_dir)
     try:
-        descriptor = json.loads((state_dir / GATEWAY_FILE).read_text(encoding="utf-8"))
-        port = int(descriptor["port"])
-        token = (state_dir / "hermes-api.key").read_text(encoding="utf-8").strip()
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise HermesTuiRpcError(
-            f"Hermes TUI gateway state is unavailable: {exc}"
-        ) from exc
-    if connect_fn is None:
-        try:
-            from websockets.sync.client import connect as connect_fn
-        except ImportError as exc:
-            raise HermesTuiRpcError(
-                "websockets>=15 is required for Hermes TUI delivery"
-            ) from exc
-    url = f"ws://127.0.0.1:{port}/api/ws?token={token}"
-    try:
-        with connect_fn(url, open_timeout=timeout_s, close_timeout=1) as socket:
+        with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
             session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
             _rpc(
@@ -108,4 +149,4 @@ def submit_turn(
     return status
 
 
-__all__ = ["HermesTuiRpcError", "submit_turn"]
+__all__ = ["HermesTuiRpcError", "active_sessions", "submit_turn"]
