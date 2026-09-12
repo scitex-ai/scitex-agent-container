@@ -48,9 +48,7 @@ def image_list(as_json: bool) -> None:
     root = ig._SCITEX_USER_STATE_ROOT
     entries: list[Path] = []
     entries.extend(sorted(root.glob("*/containers/*.sif")))
-    entries.extend(
-        sorted(p for p in root.glob("*/containers/*.sandbox") if p.is_dir())
-    )
+    entries.extend(sorted(p for p in root.glob("*/containers/*.sandbox") if p.is_dir()))
 
     def _dir_size_bytes(d: Path) -> int:
         total = 0
@@ -140,7 +138,7 @@ def image_list(as_json: bool) -> None:
 @click.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def image_status(as_json: bool) -> None:
-    """Unified container dashboard (active version, sandboxes, sizes).
+    """Report the active immutable image for each SAC layer.
 
     \b
     Example:
@@ -149,20 +147,46 @@ def image_status(as_json: bool) -> None:
     """
     from . import image_group as ig
 
-    sc_status = ig._load_apptainer().status
-
-    info = sc_status(containers_dir=ig._CONTAINERS_DIR)
+    apptainer = ig._load_apptainer()
+    info = []
+    for layer in ig._LAYERS:
+        image_name = f"sac-{layer}"
+        builds = apptainer.list_builds(ig._CONTAINERS_DIR, image_name)
+        active = next((build for build in builds if build["active"]), None)
+        if active is None:
+            continue
+        sif = Path(active["sif"])
+        stat = sif.stat()
+        verified = active["verified"]
+        verification = (
+            "verified"
+            if verified is True
+            else "unverified"
+            if verified is False
+            else "unknown"
+        )
+        info.append(
+            {
+                "name": image_name,
+                "version": active["ts"],
+                "sif_path": str(sif),
+                "sif_size_bytes": stat.st_size,
+                "sif_date": _dt.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "verification": verification,
+            }
+        )
     if as_json:
         click.echo(json.dumps(info, indent=2, default=str))
         return
     if not info:
-        console.print(f"[dim](no containers in {ig._CONTAINERS_DIR})[/dim]")
+        console.print(f"[dim](no active SAC images in {ig._CONTAINERS_DIR})[/dim]")
         return
     for entry in info:
-        name = entry.get("name", "?")
-        size = entry.get("sif_size", "-")
-        rebuild = "REBUILD" if entry.get("needs_rebuild") else "ok"
-        console.print(f"  {name:30s}  {size!s:>10}  {rebuild}")
+        size_mb = entry["sif_size_bytes"] / (1024 * 1024)
+        console.print(
+            f"  {entry['name']:16s}  {size_mb:>8.1f} MB  "
+            f"{entry['verification']:10s}  {entry['version']}"
+        )
 
 
 @click.command("snapshot")
