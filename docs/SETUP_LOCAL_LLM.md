@@ -57,7 +57,7 @@ spec:
       provider:
         base_url: http://scitex-compute-04:18772
         auth_token_env: SCITEX_GENAI_GATEWAY_API_KEY
-      max_context_tokens: 1048576
+      max_context_tokens: 1000000
       reasoning_effort: low
       timeouts:
         upstream_deadline_seconds: 1800
@@ -213,6 +213,11 @@ response body when diagnosing them.
 - model profile: Qwen3.8-27B FP8, FP8 KV, YaRN, DeepGEMM, MTP/EAGLE, TP=2
 - performance target: at least 100 generated tok/s once scheduled; queue delay
   under concurrent long prefills requires additional TP=2 replicas
+
+The measured two-H100 production profile, cache tiers, admission limits,
+throughput window, reproducible image digest, and unresolved risks are recorded
+in [QWEN_AGENT_FLEET.md](QWEN_AGENT_FLEET.md). Treat that file as a dated
+observation rather than a permanent capacity promise.
 
 The engine mechanics and acceptance tests are documented in
 `scitex-genai/docs/SETUP_LOCAL_LLM.md`. Allocation recovery is documented in
