@@ -9,8 +9,9 @@ conversation.
 Two surfaces:
 
 * ``post_turn_to_url(url, text, *, exit_after=False, timeout_s=600.0)``
-  — low-level. Posts the JSON envelope to a known URL, returns the
-  response ``text`` string.
+  — low-level. Posts the JSON envelope to a known URL. Returns the response
+  ``text`` for synchronous runners; for an asynchronous HTTP 202 receipt it
+  polls the named exchange and returns a delivery-acceptance description.
 
 * ``post_turn(agent_name, text, *, exit_after=False, timeout_s=600.0)``
   — high-level. Resolves the target agent's YAML via the project +
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -164,15 +166,20 @@ def post_turn_to_url(
     to_agent: str | None = None,
     conversation_id: str | None = None,
 ) -> str:
-    """POST a single turn to a known ``/v1/turn`` URL; return the ``text`` string.
+    """POST a turn; return its reply or confirmed delivery acceptance.
 
-    Raises ``PeerError`` on transport failure or non-200 status with the
-    server's error message included.
+    Synchronous runners return a body containing ``text``. Asynchronous
+    adapters return HTTP 202 plus a canonical ``exchange_id`` and
+    ``status_code``; this client polls that exchange to a terminal result and
+    explicitly reports that delivery acceptance is not agent completion.
+    Raises ``PeerError`` on transport failure, a malformed contract, or a
+    terminal non-200 exchange result.
 
     Mints a dispatch-ledger ``dispatch_id`` and records a row with
     ``status="sent"`` before the POST, stamping the same id into the
     request body so the receiver can correlate. Once the round-trip
-    resolves the status is moved to ``delivered`` (clean reply),
+    resolves the status is moved to ``delivered`` (clean reply or confirmed
+    adapter acceptance),
     ``timeout`` (deadline tripped), or ``failed`` (any other transport /
     HTTP error). ``from_agent`` defaults to this container's ``SAC_NAME``.
     """
@@ -205,6 +212,7 @@ def post_turn_to_url(
         dispatch_id=dispatch_id,
     )
 
+    started_at = time.monotonic()
     if url.startswith("ssh://"):
         try:
             reply = _post_turn_via_ssh(
@@ -214,10 +222,15 @@ def post_turn_to_url(
                 timeout_s=timeout_s,
                 dispatch_id=dispatch_id,
                 from_agent=requester,
+                started_at=started_at,
             )
         except PeerError as exc:
+            from ._peer_timeout import PeerTimeoutPending
+
             terminal = (
-                STATUS_TIMEOUT if "timeout" in str(exc).lower() else STATUS_FAILED
+                STATUS_TIMEOUT
+                if isinstance(exc, PeerTimeoutPending) or "timeout" in str(exc).lower()
+                else STATUS_FAILED
             )
             update_dispatch_safe(dispatch_id, terminal)
             raise
@@ -240,6 +253,7 @@ def post_turn_to_url(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            http_status = int(resp.status)
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -267,11 +281,28 @@ def post_turn_to_url(
     except TimeoutError as exc:
         update_dispatch_safe(dispatch_id, STATUS_TIMEOUT)
         raise PeerError(f"peer timeout at {url} after {timeout_s:.0f}s") from exc
-    if not isinstance(payload, dict) or "text" not in payload:
+    from ._peer_exchange import resolve_turn_response
+
+    try:
+        reply = resolve_turn_response(
+            url,
+            payload,
+            http_status=http_status,
+            timeout_s=max(0.0, timeout_s - (time.monotonic() - started_at)),
+        )
+    except PeerError as exc:
+        from ._peer_timeout import PeerTimeoutPending
+
+        terminal = (
+            STATUS_TIMEOUT if isinstance(exc, PeerTimeoutPending) else STATUS_FAILED
+        )
+        update_dispatch_safe(dispatch_id, terminal)
+        raise
+    except (TypeError, ValueError) as exc:
         update_dispatch_safe(dispatch_id, STATUS_FAILED)
-        raise PeerError(f"peer returned malformed body: {payload!r}")
+        raise PeerError(f"peer returned malformed body: {payload!r}") from exc
     update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
-    return str(payload["text"])
+    return reply
 
 
 def post_turn(
@@ -341,6 +372,7 @@ def _post_turn_via_ssh(
     timeout_s: float,
     dispatch_id: str | None = None,
     from_agent: str | None = None,
+    started_at: float | None = None,
 ) -> str:
     """Dispatch a turn via ``ssh <host> curl ...`` and parse the response.
 
@@ -406,9 +438,15 @@ def _post_turn_via_ssh(
 
         if payload.get("status") == TIMEOUT_STATUS:
             raise _interpret_504(json.dumps(payload), fallback_label=f"{host}:{port}")
-    if not isinstance(payload, dict) or "text" not in payload:
-        raise PeerError(f"peer returned malformed body: {payload!r}")
-    return str(payload["text"])
+    from ._peer_exchange import resolve_turn_response
+
+    elapsed = 0.0 if started_at is None else time.monotonic() - started_at
+    return resolve_turn_response(
+        url,
+        payload,
+        http_status=None,
+        timeout_s=max(0.0, timeout_s - elapsed),
+    )
 
 
 # Agent-name → URL resolution moved to ``_peer_resolve`` under the

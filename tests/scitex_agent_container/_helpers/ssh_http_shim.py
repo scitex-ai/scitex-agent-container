@@ -11,8 +11,9 @@ that:
    body via ssh stdin).
 3. Parses the inner curl invocation for the URL (``http://127.0.0.1:PORT
    /path``) and the optional ``Authorization: Bearer ...`` header.
-4. Performs a **real** :class:`httpx.Client` POST to that URL with the
-   same body + Authorization header. That URL resolves to the local
+4. Performs a **real** :class:`httpx.Client` request to that URL with the
+   same body + Authorization header. It preserves POST for delivery and GET
+   for exchange polling. That URL resolves to the local
    ``sac listen`` running on the test's loopback port — so the test
    substitutes the ssh tunnel with a direct loopback call to the same
    in-process destination, no Python-level mock anywhere.
@@ -71,7 +72,8 @@ class _SshHttpShim:
 
     def invocations(self) -> list[dict]:
         """Return every invocation as a list of dicts:
-        ``{argv, host, remote_cmd, url, port, path, bearer, body, status}``.
+        ``{argv, host, remote_cmd, method, url, port, path, bearer, body,
+        status}``.
         """
         if not self._argv_log.exists():
             return []
@@ -173,9 +175,11 @@ def main() -> int:
     if bearer:
         headers["Authorization"] = f"Bearer {{bearer}}"
 
+    method = "POST" if "-X POST" in remote_cmd else "GET"
     log_record = {{
         "host": host,
         "remote_cmd": remote_cmd,
+        "method": method,
         "url": parsed["url"],
         "port": parsed["port"],
         "path": parsed["path"],
@@ -185,7 +189,7 @@ def main() -> int:
 
     try:
         with httpx.Client(timeout={timeout_s}) as client:
-            resp = client.post(parsed["url"], content=body, headers=headers)
+            resp = client.request(method, parsed["url"], content=body, headers=headers)
     except (httpx.HTTPError, OSError) as exc:
         log_record["status"] = None
         log_record["error"] = str(exc)
@@ -201,6 +205,8 @@ def main() -> int:
     # Curl prints the response body to stdout. Match that so the
     # production parser sees the same shape it would over real ssh.
     sys.stdout.buffer.write(resp.content)
+    if method == "GET":
+        sys.stdout.write(f"\\nSAC_SSH_CURL status={{resp.status_code}}\\n")
     sys.stdout.flush()
     return 0
 
