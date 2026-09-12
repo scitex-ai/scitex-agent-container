@@ -18,6 +18,52 @@ _HEARTBEAT_SET_CONFIRMATION = "heartbeat set (every "
 _HEARTBEAT_CONFIRMATION_CLOSE = "esc/q close"
 _HERMES_STATUS_RE = re.compile(r"(?m)^[ \t]*─+\s+([^\u2502\n]+?)\s*\u2502")
 _HERMES_COMPOSER_RE = re.compile(r"(?m)^[ \t]*❯(?P<body>[^\n]*)$")
+_WS_RE = re.compile(r"[\s\xa0]+")
+
+
+def _live_composer_body(pane: str) -> str | None:
+    """Return the whitespace-free live Hermes composer, or ``None``.
+
+    Hermes hard-wraps a long paste across terminal rows, so the body is the
+    text after the bottom-most composer marker plus every following row.
+    Whitespace is presentation-only here; removing it lets a raw payload and
+    its wrapped rendering compare without guessing the terminal width.
+    """
+    rows = (pane or "").splitlines()
+    for index in range(len(rows) - 1, -1, -1):
+        marker = rows[index].find("❯")
+        if marker >= 0:
+            body = rows[index][marker + 1 :] + "".join(rows[index + 1 :])
+            return _WS_RE.sub("", body)
+    return None
+
+
+def _delivery_copies_in_composer(
+    pane: str, *, text: str, delivery_id: str
+) -> int | None:
+    """Count copies of exactly one delivery in the live composer.
+
+    Returns ``None`` if anything besides copies of ``text`` (raw rendering) or
+    Hermes' collapsed paste chip for ``delivery_id`` is present.  That refusal
+    is load-bearing: SAC may normalize its own duplicate retry, but it must
+    never clear or submit unrelated operator text.
+    """
+    body = _live_composer_body(pane)
+    if not body:
+        return None
+
+    raw = _WS_RE.sub("", text)
+    if raw and len(body) % len(raw) == 0 and body == raw * (len(body) // len(raw)):
+        return len(body) // len(raw)
+
+    escaped_id = re.escape(delivery_id)
+    collapsed = re.compile(
+        rf"(?:\[\[<channelsource=\.\.\[\d+lines\]\.\."
+        rf"delivery:{escaped_id}-->\]\])+"
+    )
+    if collapsed.fullmatch(body):
+        return len(re.findall(rf"delivery:{escaped_id}-->", body))
+    return None
 
 
 def _hermes_pane_is_idle(pane: str) -> bool:
@@ -189,26 +235,49 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         if not name or not self._mux.exists(name):
             return False
         initial = self._mux.capture_content(name)
-        if visible_delivery_id in initial and not composer_holds_fragment(
+        marker_seen = visible_delivery_id in initial
+        marker_staged = marker_seen and composer_holds_fragment(
             initial, visible_delivery_id
-        ):
+        )
+        if marker_seen and not marker_staged:
             # A prior delivery reached the transcript but its downstream Cards
             # ACK did not. Re-prove the same observation without injecting a
             # duplicate turn, then let the durable poller retry only the ACK.
             return True
-        if _compose_pending_live(initial):
+        copies = None
+        if marker_staged:
+            copies = _delivery_copies_in_composer(
+                initial,
+                text=text,
+                delivery_id=visible_delivery_id,
+            )
+            if copies is None:
+                # The marker is mixed with text SAC cannot prove it owns.
+                # Never clear or submit a human's staged input.
+                return False
+            if copies > 1 and not self._clear_compose_buffer(name):
+                return False
+        elif _compose_pending_live(initial):
             return False
 
-        verified_submit = getattr(self._mux, "send_text_and_submit_verified", None)
-        if not callable(verified_submit):
-            return False
-        verified_submit(
+        # Paste ONCE.  Hermes renders multiline paste as a collapsed chip, so
+        # the generic tmux helper's literal-prefix echo check cannot see it and
+        # used to paste the same envelope four times before giving up.  The
+        # durable delivery marker survives that collapse and is the correct
+        # observation seam.  On retry, one already-staged copy is submitted as
+        # is; multiple proven-identical copies are cleared and normalized to
+        # one.  No retry ever appends another copy.
+        if copies != 1:
+            self._mux.send_text_literal(name, text)
+        if not self._verify_submitted(
             name,
-            text,
-            capture_fn=self._mux.capture_content,
-            send_text_fn=self._mux.send_text_literal,
-            send_enter_fn=lambda session: self._mux.send_keys(session, "Enter"),
-        )
+            pasted=visible_delivery_id,
+            max_resends=4,
+            poll_s=poll_s,
+            appear_timeout_s=max(2.0, max_captures * poll_s),
+            idle_wait_s=30.0,
+        ):
+            return False
 
         for attempt in range(max_captures):
             pane = self._mux.capture_content(name)
