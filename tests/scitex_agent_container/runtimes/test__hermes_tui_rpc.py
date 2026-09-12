@@ -10,6 +10,7 @@ from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
+    active_sessions,
     submit_turn,
 )
 
@@ -69,3 +70,20 @@ def test_session_selection_refuses_ambiguous_gateway():
     # Assert
     with pytest.raises(HermesTuiRpcError, match="cannot identify one"):
         action()
+
+
+def test_active_sessions_is_observation_only(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
+    (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
+    socket = _Socket()
+
+    # Act
+    rows = active_sessions(tmp_path, connect_fn=lambda *a, **k: socket)
+
+    # Assert
+    # Observing liveness must not activate a session/viewer.
+    assert (rows, [row["method"] for row in socket.sent]) == (
+        [{"id": "live-1", "title": "sac:hub"}],
+        ["session.active_list"],
+    )

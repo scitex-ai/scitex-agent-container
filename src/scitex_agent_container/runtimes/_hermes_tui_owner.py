@@ -8,10 +8,18 @@ import os
 import signal
 import subprocess
 import time
+from collections import deque
 from pathlib import Path
+from typing import Any, Callable
 
 GATEWAY_FILE = "hermes-tui-gateway.json"
 READY_FILE = "hermes-tui-gateway.ready.json"
+SUPERVISION_FILE = "hermes-tui-supervision.json"
+POLL_SECONDS = 3.0
+STARTUP_GRACE_SECONDS = 30.0
+ABSENT_POLLS_BEFORE_RECOVERY = 2
+MAX_RECOVERIES_PER_WINDOW = 3
+RECOVERY_WINDOW_SECONDS = 300.0
 
 
 def _wait_for_port(
@@ -45,6 +53,185 @@ def _atomic_json(path: Path, value: dict) -> None:
     os.chmod(path, 0o600)
 
 
+def _continue_title(command: list[str]) -> str:
+    """Return the stable title from SAC's ``--continue <title>`` contract."""
+    for index, value in enumerate(command[:-1]):
+        if value in {"--continue", "-c"}:
+            return str(command[index + 1]).strip()
+    return ""
+
+
+def _resume_command(command: list[str], stored_session_id: str) -> list[str]:
+    """Resume one exact transcript without replaying the startup task."""
+    rebuilt: list[str] = []
+    skip_value = False
+    value_flags = {"--continue", "-c", "--resume", "-r", "--query"}
+    for value in command:
+        if skip_value:
+            skip_value = False
+            continue
+        if value in value_flags:
+            skip_value = True
+            continue
+        if value == "--create-if-missing":
+            continue
+        rebuilt.append(value)
+    return rebuilt + ["--resume", stored_session_id]
+
+
+def _select_resume_key(
+    sessions: list[dict], *, expected_title: str, previous: str
+) -> str:
+    """Track the durable key for this isolated SAC TUI session."""
+    matches = [
+        row
+        for row in sessions
+        if row.get("title") == expected_title
+        or row.get("session_key") in {expected_title, previous}
+    ]
+    candidate = matches[0] if len(matches) == 1 else None
+    if candidate is None and len(sessions) == 1:
+        candidate = sessions[0]
+    return str((candidate or {}).get("session_key") or previous).strip()
+
+
+def _terminate(process: Any, *, timeout_s: float = 5.0) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=timeout_s)
+
+
+def _write_supervision(state_dir: Path, **fields: object) -> None:
+    path = state_dir / SUPERVISION_FILE
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        previous = {}
+    if isinstance(previous, dict):
+        comparable = {key: value for key, value in previous.items() if key != "observed_at"}
+        if comparable == fields:
+            return
+    _atomic_json(
+        path,
+        {"observed_at": time.time(), **fields},
+    )
+
+
+def _supervise_tui(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    state_dir: Path,
+    gateway: Any,
+    spawn: Callable[..., Any] = subprocess.Popen,
+    active_list: Callable[[Path], list[dict]] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+    poll_s: float = POLL_SECONDS,
+    startup_grace_s: float = STARTUP_GRACE_SECONDS,
+    on_spawn: Callable[[Any], None] | None = None,
+) -> tuple[Any, int]:
+    """Keep the official TUI attached to Hermes' authoritative live session.
+
+    Hermes may detach a slow fanout peer without closing its websocket.  The
+    Ink client consequently cannot run its own close-triggered reconnect and
+    can display ``computing`` forever after the backend has completed.  This
+    owner watches ``session.active_list`` through a short-lived, non-viewer RPC
+    and relaunches only the TUI child when the isolated gateway transitions
+    from a live session to none.  The exact stored session id is resumed, so
+    persisted context and a reply completed during the disconnect are loaded
+    back into the official TUI.
+    """
+    if active_list is None:
+        from ._hermes_tui_rpc import active_sessions as active_list
+
+    expected_title = _continue_title(command)
+    tui = spawn(command, env=env)
+    if on_spawn is not None:
+        on_spawn(tui)
+    generation_started = monotonic()
+    ever_observed = False
+    absent_polls = 0
+    resume_key = ""
+    recoveries: deque[float] = deque()
+    _write_supervision(state_dir, state="starting", recoveries=0)
+
+    while gateway.poll() is None and tui.poll() is None:
+        try:
+            sessions = active_list(state_dir)
+        except Exception as exc:
+            # An observation failure is not evidence that the TUI detached.
+            _write_supervision(
+                state_dir,
+                state="observation_unavailable",
+                detail=str(exc),
+                recoveries=len(recoveries),
+            )
+            sleep(poll_s)
+            continue
+
+        if sessions:
+            ever_observed = True
+            absent_polls = 0
+            resume_key = _select_resume_key(
+                sessions, expected_title=expected_title, previous=resume_key
+            )
+            _write_supervision(
+                state_dir,
+                state="attached",
+                active_sessions=len(sessions),
+                stored_session_id=resume_key,
+                recoveries=len(recoveries),
+            )
+            sleep(poll_s)
+            continue
+
+        outside_grace = monotonic() - generation_started >= startup_grace_s
+        if ever_observed and outside_grace:
+            absent_polls += 1
+        if absent_polls < ABSENT_POLLS_BEFORE_RECOVERY:
+            sleep(poll_s)
+            continue
+
+        now = monotonic()
+        while recoveries and now - recoveries[0] > RECOVERY_WINDOW_SECONDS:
+            recoveries.popleft()
+        if not resume_key or len(recoveries) >= MAX_RECOVERIES_PER_WINDOW:
+            _write_supervision(
+                state_dir,
+                state="recovery_refused",
+                detail=(
+                    "no durable Hermes session id was observed"
+                    if not resume_key
+                    else "TUI transport recovery budget exhausted"
+                ),
+                recoveries=len(recoveries),
+            )
+            return tui, 70
+
+        recoveries.append(now)
+        _write_supervision(
+            state_dir,
+            state="recovering",
+            detail="Hermes active-session set became empty; relaunching official TUI",
+            stored_session_id=resume_key,
+            recoveries=len(recoveries),
+        )
+        _terminate(tui)
+        tui = spawn(_resume_command(command, resume_key), env=env)
+        if on_spawn is not None:
+            on_spawn(tui)
+        generation_started = monotonic()
+        absent_polls = 0
+
+    return tui, int(tui.poll() or 0)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sac-hermes-tui-owner")
     parser.add_argument("--state-dir", required=True)
@@ -74,6 +261,17 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
     )
     tui: subprocess.Popen | None = None
+
+    def remember_tui(process: subprocess.Popen) -> None:
+        nonlocal tui
+        tui = process
+
+    def forward(signum: int, _frame: object) -> None:
+        if tui is not None and tui.poll() is None:
+            tui.send_signal(signum)
+
+    signal.signal(signal.SIGTERM, forward)
+    signal.signal(signal.SIGINT, forward)
     try:
         port = _wait_for_port(ready_path, gateway)
         _atomic_json(descriptor_path, {"port": port, "pid": gateway.pid})
@@ -81,18 +279,18 @@ def main(argv: list[str] | None = None) -> int:
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
         )
-        tui = subprocess.Popen(command, env=tui_env)
-
-        def forward(signum: int, _frame: object) -> None:
-            if tui is not None and tui.poll() is None:
-                tui.send_signal(signum)
-
-        signal.signal(signal.SIGTERM, forward)
-        signal.signal(signal.SIGINT, forward)
-        return tui.wait()
+        tui, result = _supervise_tui(
+            command,
+            env=tui_env,
+            state_dir=state_dir,
+            gateway=gateway,
+            on_spawn=remember_tui,
+        )
+        return result
     finally:
         descriptor_path.unlink(missing_ok=True)
         ready_path.unlink(missing_ok=True)
+        _write_supervision(state_dir, state="stopped")
         if tui is not None and tui.poll() is None:
             tui.terminate()
             try:
