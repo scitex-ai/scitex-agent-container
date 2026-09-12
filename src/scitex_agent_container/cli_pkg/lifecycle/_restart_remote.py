@@ -89,7 +89,9 @@ def log_restart_decision(**entry: Any) -> None:
         logger.warning("restart decision log append failed at %s: %s", path, exc)
 
 
-def remote_restart_argv(name: str, engine: str | None = None) -> list[str]:
+def remote_restart_argv(
+    name: str, engine: str | None = None, *, drain_timeout_s: float = 0.0
+) -> list[str]:
     """The argv the peer runs for a cross-host restart.
 
     Split out from :func:`_dispatch_remote_restart` so the forwarding can be
@@ -111,6 +113,8 @@ def remote_restart_argv(name: str, engine: str | None = None) -> list[str]:
     strictly better than the peer quietly obeying half the request.
     """
     argv = ["sac", "agents", "restart", name, "--yes", "--json"]
+    if drain_timeout_s > 0:
+        argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
     if engine:
         argv += ["--engine", engine]
     return argv
@@ -122,6 +126,7 @@ def _dispatch_remote_restart(
     peers: dict,
     name: str,
     engine: str | None = None,
+    drain_timeout_s: float = 0.0,
 ) -> dict:
     """SSH into ``peer`` and run ``sac agents restart <name> --yes --json``.
 
@@ -143,7 +148,10 @@ def _dispatch_remote_restart(
     # restart needs (the engine's auth_token_env among them); a bare ssh
     # command sees none of them and the peer refuses the engine as "unset".
     ssh_argv = build_ssh_argv(
-        peer, remote_restart_argv(name, engine), peers, login=True
+        peer,
+        remote_restart_argv(name, engine, drain_timeout_s=drain_timeout_s),
+        peers,
+        login=True,
     )
     result = subprocess.run(
         ssh_argv,
@@ -248,7 +256,9 @@ def must_broker_to_host() -> bool:
     return is_in_sif()
 
 
-def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
+def _restart_via_host_bypass(
+    name: str, fresh: bool = False, *, drain_timeout_s: float = 0.0
+) -> dict:
     """Broker the restart to the HOST listen and return its JSON envelope.
 
     Mirrors the spawn broker (``agent_spawn`` → ``request_spawn``): the
@@ -261,7 +271,10 @@ def _restart_via_host_bypass(name: str, fresh: bool = False) -> dict:
     """
     from ..._lifecycle._restart_client import request_restart
 
-    return request_restart(name, fresh=fresh)
+    kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        kwargs["drain_timeout_s"] = drain_timeout_s
+    return request_restart(name, **kwargs)
 
 
 def _parse_host_cli_envelope(stdout: Any) -> dict:
@@ -288,7 +301,9 @@ def _parse_host_cli_envelope(stdout: Any) -> dict:
     return {}
 
 
-def brokered_restart(name: str, *, fresh: bool = False) -> tuple[dict, bool]:
+def brokered_restart(
+    name: str, *, fresh: bool = False, drain_timeout_s: float = 0.0
+) -> tuple[dict, bool]:
     """Ask the host to restart ``name``; return ``(envelope, ok)``.
 
     The verdict is the HOST'S, never one invented here. The host CLI runs
@@ -314,7 +329,10 @@ def brokered_restart(name: str, *, fresh: bool = False) -> tuple[dict, bool]:
         (the host CLI exits 1 on any failed restart) but it is NOT a
         postcondition, so it never yields ``verified: true``.
     """
-    envelope = _restart_via_host_bypass(name, fresh=fresh)
+    restart_kwargs = {"fresh": fresh}
+    if drain_timeout_s > 0:
+        restart_kwargs["drain_timeout_s"] = drain_timeout_s
+    envelope = _restart_via_host_bypass(name, **restart_kwargs)
     out: dict = {
         "name": name,
         "dispatched": False,

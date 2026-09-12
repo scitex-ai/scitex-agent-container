@@ -38,6 +38,7 @@ first, then force-bounces the agent, and returns ``202`` with
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import shlex
 import subprocess
@@ -208,6 +209,21 @@ async def agent_restart(request: Request) -> JSONResponse:
     # whose queued-input buffer returns on every plain restart. Default (absent
     # / falsey) keeps the byte-identical plain-restart argv below.
     fresh = bool(body.get("fresh"))
+    raw_drain_timeout = body.get("drain_timeout_seconds", 0.0)
+    try:
+        if isinstance(raw_drain_timeout, bool):
+            raise ValueError("boolean is not a duration")
+        drain_timeout_s = float(raw_drain_timeout)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            {"error": "'drain_timeout_seconds' must be a non-negative number"},
+            status_code=400,
+        )
+    if not math.isfinite(drain_timeout_s) or drain_timeout_s < 0:
+        return JSONResponse(
+            {"error": "'drain_timeout_seconds' must be a non-negative number"},
+            status_code=400,
+        )
 
     try:
         sac_bin = sac_binary()
@@ -290,6 +306,8 @@ async def agent_restart(request: Request) -> JSONResponse:
         inner_argv = [sac_bin, "agents", "start", name, "--force", "--fresh", "--json"]
     else:
         inner_argv = [sac_bin, "agents", "restart", name, "--yes", "--json"]
+        if drain_timeout_s > 0:
+            inner_argv += ["--drain-timeout", f"{drain_timeout_s:g}"]
 
     try:
         proc = await asyncio.create_subprocess_exec(

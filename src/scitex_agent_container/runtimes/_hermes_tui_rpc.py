@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,19 @@ from ._hermes_tui_owner import GATEWAY_FILE
 
 class HermesTuiRpcError(RuntimeError):
     """The live Hermes session could not accept an inbound event."""
+
+
+@dataclass(frozen=True)
+class HermesTurnActivity:
+    """Authoritative live-turn observation from Hermes' session registry."""
+
+    state: str
+    session_status: str
+    session_id: str
+
+    @property
+    def idle(self) -> bool:
+        return self.state == "idle"
 
 
 def _gateway_connection(state_dir: Path) -> tuple[str, str]:
@@ -92,7 +106,7 @@ def _rpc(socket: Any, request_id: int, method: str, params: dict) -> dict:
         return result
 
 
-def _select_session(rows: object, expected_title: str) -> str:
+def _select_session_row(rows: object, expected_title: str) -> dict:
     sessions = (
         [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
     )
@@ -108,10 +122,43 @@ def _select_session(rows: object, expected_title: str) -> str:
             f"cannot identify one live Hermes session for {expected_title!r}: "
             f"{len(exact)} exact matches among {len(sessions)} live sessions"
         )
-    session_id = str(candidates[0].get("id") or "").strip()
+    row = candidates[0]
+    session_id = str(row.get("id") or "").strip()
     if not session_id:
         raise HermesTuiRpcError("Hermes active session has no id")
-    return session_id
+    return row
+
+
+def _select_session(rows: object, expected_title: str) -> str:
+    return str(_select_session_row(rows, expected_title)["id"])
+
+
+def observe_turn_activity(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesTurnActivity:
+    """Read live turn activity without activating or mutating the session.
+
+    ``session.active_list`` is Hermes' own synchronized session registry. It
+    covers model/tool execution, approval/input boundaries, and construction
+    before the first turn can safely be torn down.
+    """
+    rows = active_sessions(state_dir, timeout_s=timeout_s, connect_fn=connect_fn)
+    row = _select_session_row(rows, f"sac:{agent_name}")
+    status = str(row.get("status") or "").strip().lower()
+    session_id = str(row.get("id") or "").strip()
+    if status == "idle":
+        state = "idle"
+    elif status in {"working", "waiting", "starting"}:
+        state = "active"
+    else:
+        raise HermesTuiRpcError(
+            f"Hermes session {session_id!r} returned unknown activity status {status!r}"
+        )
+    return HermesTurnActivity(state=state, session_status=status, session_id=session_id)
 
 
 def submit_turn(
@@ -149,4 +196,10 @@ def submit_turn(
     return status
 
 
-__all__ = ["HermesTuiRpcError", "active_sessions", "submit_turn"]
+__all__ = [
+    "HermesTuiRpcError",
+    "HermesTurnActivity",
+    "active_sessions",
+    "observe_turn_activity",
+    "submit_turn",
+]
