@@ -51,7 +51,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ._image_build_lock import image_build_lock
-from ._image_source_build import _stage_hermes_source, stage_build_context
+from ._image_source_build import (
+    _stage_cards_source,
+    _stage_hermes_source,
+    stage_build_context,
+)
 
 
 def _default_container_build_reproducible(
@@ -105,6 +109,7 @@ def build_layer_reproducible(
     force: bool = True,
     bootstrap_sif: Path | None = None,
     verify: bool = True,
+    stage_cards: Callable[[Path], Path] = _stage_cards_source,
     stage_hermes: Callable[[Path], Path] = _stage_hermes_source,
 ) -> Any:
     """Build a sac SIF through scitex-container's reproducible round trip.
@@ -163,6 +168,8 @@ def build_layer_reproducible(
         staged_def = stage_build_context(
             pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
         )
+        if layer in {"base", "scitex"}:
+            stage_cards(staging_dir)
         if layer == "base":
             stage_hermes(staging_dir)
 

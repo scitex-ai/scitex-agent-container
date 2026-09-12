@@ -98,6 +98,8 @@ class _FakeResult:
 
 
 def _build(tmp_path, pkg_root, recipe, **kw):
+    kw.setdefault("stage_cards", lambda path: path)
+    kw.setdefault("stage_hermes", lambda path: path)
     return irb.build_layer_reproducible(
         layer=kw.pop("layer", "proxy"),
         def_path=recipe,
@@ -152,6 +154,60 @@ class TestBuildContextReachesTheRoundTrip:
             )
         # Assert
         assert staged == [tmp_path / "containers" / "sac-base" / "build-context"]
+
+    @pytest.mark.parametrize("layer", ["base", "scitex"])
+    def test_cards_runtime_layers_stage_cards_source_before_roundtrip(
+        self, tmp_path, fake_pkg_root, recipe, layer
+    ):
+        # Arrange
+        staged: list[Path] = []
+
+        def _stage_cards(path: Path) -> Path:
+            staged.append(path)
+            destination = path / "scitex-cards-src"
+            destination.mkdir()
+            (destination / "SAC_UPSTREAM_COMMIT").write_text("exact-commit\n")
+            return destination
+
+        with _use_roundtrip(result=_FakeResult()) as calls:
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer=layer,
+                stage_cards=_stage_cards,
+            )
+        # Assert — the backend can resolve the recipe's relative %files input.
+        expected = tmp_path / "containers" / f"sac-{layer}" / "build-context"
+        assert (
+            staged,
+            calls[0]["cwd"],
+            (
+                calls[0]["cwd"] / "scitex-cards-src" / "SAC_UPSTREAM_COMMIT"
+            ).read_text(),
+        ) == (
+            [expected],
+            expected,
+            "exact-commit\n",
+        )
+
+    def test_proxy_does_not_stage_cards_source(
+        self, tmp_path, fake_pkg_root, recipe
+    ):
+        # Arrange
+        staged: list[Path] = []
+        with _use_roundtrip(result=_FakeResult()):
+            # Act
+            _build(
+                tmp_path,
+                fake_pkg_root,
+                recipe,
+                layer="proxy",
+                stage_cards=lambda path: staged.append(path) or path,
+            )
+        # Assert
+        assert staged == []
 
     def test_non_base_does_not_stage_hermes_source(
         self, tmp_path, fake_pkg_root, recipe
