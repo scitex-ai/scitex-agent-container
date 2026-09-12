@@ -12,9 +12,9 @@
 #   spec:
 #     runtime: apptainer
 #     apptainer:
-#       image: ~/.scitex/agent-container/containers/sac-scitex.sif   # opt-in :scitex
+#       image: sac-scitex   # portable logical reference to :scitex
 #     # or:
-#       image: ~/.scitex/agent-container/containers/sac-base.sif     # bare-metal :base
+#       image: sac-base     # portable logical reference to host-local :base
 #       image: /scratch/${USER}/cuda-agent.sif                       # custom GPU SIF
 #
 # Apptainer images are *single-file* (.sif), no daemon, no registry pull

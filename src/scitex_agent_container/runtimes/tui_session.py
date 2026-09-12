@@ -216,6 +216,7 @@ class TuiSessionRuntime(
         sif_path = container_rt.resolve_sif(config)
         if sif_path is None:
             return None
+        self._resolved_sif_path = sif_path
         state_dir = state_dir_for_config(config)
         argv = build_run_argv(config, state_dir=state_dir, sif_path=sif_path, tui=True)
         if getattr(config, "harness", "") == "hermes":
@@ -223,6 +224,15 @@ class TuiSessionRuntime(
 
             validate_hermes_tui_profile(config, state_dir=state_dir, launch_argv=argv)
         return argv
+
+    def resolved_image_identity(self) -> dict[str, str] | None:
+        """Exact immutable artifact selected for this runtime's last launch."""
+        path = getattr(self, "_resolved_sif_path", None)
+        if path is None:
+            return None
+        from ._apptainer_image_ref import image_artifact_identity
+
+        return image_artifact_identity(path)
 
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         """Materialise per-agent ``to_home/`` + CLAUDE.md into the container

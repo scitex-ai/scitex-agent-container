@@ -21,7 +21,7 @@ spec:
   workdir: /home/agent/work
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []                   # explicit mounts; [] = nothing beyond state
 
     env: {}

@@ -83,7 +83,7 @@ spec:
   runtime: apptainer
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
 
   claude:
     model: haiku

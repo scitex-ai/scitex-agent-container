@@ -614,6 +614,60 @@ def test_resolve_sif_uses_existing_local_sif_path(
     assert resolved == sif
 
 
+def test_resolve_sif_logical_sac_image_uses_host_live_link(
+    tmp_path: Path, apptainer_on_path: Path, home_redirect: Path
+) -> None:
+    # Arrange — the source spec names a portable image, while this host's
+    # live link selects its locally distributed immutable build.
+    containers = home_redirect / ".scitex" / "agent-container" / "containers"
+    artifact = containers / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"host-specific immutable bytes")
+    (containers / "sac-base.sif").symlink_to(artifact)
+    cfg = _config(tmp_path, image="sac-base")
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert
+    assert resolved == artifact.resolve()
+
+
+def test_resolve_sif_missing_logical_sac_image_refuses_without_pull(
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    home_redirect: Path,
+    subprocess_shim,
+) -> None:
+    # Arrange — this host has not received the managed image.
+    cfg = _config(tmp_path, image="sac-base")
+    # Act
+    resolved = ApptainerContainerRuntime().resolve_sif(cfg)
+    # Assert — never reinterpret the logical name as docker://sac-base.
+    assert (resolved, subprocess_shim.call_count("apptainer")) == (None, 0)
+
+
+def test_resolved_image_identity_records_target_path_and_sha256(
+    tmp_path: Path, apptainer_on_path: Path, home_redirect: Path
+) -> None:
+    # Arrange
+    import hashlib
+
+    containers = home_redirect / ".scitex" / "agent-container" / "containers"
+    artifact = containers / "sac-base" / "sac-base-2026-0912-140710.sif"
+    artifact.parent.mkdir(parents=True)
+    payload = b"immutable-image"
+    artifact.write_bytes(payload)
+    (containers / "sac-base.sif").symlink_to(artifact)
+    runtime = ApptainerContainerRuntime()
+    runtime.resolve_sif(_config(tmp_path, image="sac-base"))
+    # Act
+    identity = runtime.resolved_image_identity()
+    # Assert
+    assert identity == {
+        "path": str(artifact.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
 def test_resolve_sif_returns_none_when_apptainer_missing(
     tmp_path: Path, no_apptainer_on_path: Path
 ) -> None:

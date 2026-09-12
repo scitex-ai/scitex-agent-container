@@ -54,7 +54,7 @@ Set `spec.apptainer.image` in your `spec.yaml`:
 ```yaml
 spec:
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base/sac-base.sif
+    image: sac-base
 ```
 
 Or use a relative path (resolved relative to `spec.yaml`):

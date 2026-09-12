@@ -64,7 +64,7 @@ spec:
   host: $PEER
   runtime: apptainer
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    image: sac-scitex
 YAML
 
 echo

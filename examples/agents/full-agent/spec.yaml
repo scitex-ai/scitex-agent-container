@@ -112,7 +112,7 @@ spec:
   apptainer:
     # REQUIRED. sac-scitex.sif has the full Python/scitex stack;
     # sac-base.sif is the minimal layer (faster, no scitex).
-    image: ~/.scitex/agent-container/containers/sac-scitex.sif
+    image: sac-scitex
 
     # Writable overlay layered on top of the SIF.
     # overlay: ./overlay.img

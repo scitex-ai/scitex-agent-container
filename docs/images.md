@@ -74,14 +74,42 @@ sac image snapshot -o env.json         # full reproducibility capsule
 The build / sandbox / version / rollback verbs all delegate to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
 
-## Pinning a custom image
+## Selecting an image
+
+SAC-owned images use a portable logical name. Each host resolves the name
+through its atomically switched live link; the incarnation birth certificate
+records the exact resolved artifact path and SHA-256:
+
+```yaml
+spec:
+  apptainer:
+    image: sac-base
+```
+
+Timestamped paths such as `sac-base-2026-0912-140710.sif` are build artifacts,
+not valid source-spec declarations. They are deliberately rejected because an
+artifact built on one host may never have been distributed to another.
+
+Audit and migrate an existing spec tree before deploying this schema:
+
+```bash
+sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents
+sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents --apply
+sac agents migrate-images --root ~/.dotfiles/src/.scitex/agent-container/agents --check
+```
+
+Dry-run is the default. `--apply` writes each changed spec atomically and
+`--check` exits non-zero until the tree contains no managed filesystem-form
+image references.
+
+### Custom image
 
 Set `spec.apptainer.image` in your `spec.yaml`:
 
 ```yaml
 spec:
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base/sac-base.sif
+    image: /srv/images/my-custom.sif
 ```
 
 Or use a relative path (resolved relative to `spec.yaml`):

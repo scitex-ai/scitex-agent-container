@@ -340,7 +340,7 @@ spec:
   workdir: ~/proj/SAC_PLACEHOLDER_PROJECT/SAC_PLACEHOLDER_AGENT_ID
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
 
   claude:
@@ -604,7 +604,7 @@ spec:
   workdir: /home/ywatanabe/proj/SAC_PLACEHOLDER_PROJECT
 
   apptainer:
-    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     binds:
       - /home/ywatanabe:/home/ywatanabe:rw

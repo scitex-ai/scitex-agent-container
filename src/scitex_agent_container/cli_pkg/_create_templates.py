@@ -68,7 +68,7 @@ spec:
     mount_host_claude: false
 
   apptainer:
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     binds: []
     env: {{}}
     raw_args: []
@@ -257,7 +257,7 @@ spec:
     # sac-base.sif = the minimal layer; the agent editable-installs its
     # own stack into the overlay below. Swap to sac-scitex.sif to start
     # from the full pre-baked scitex stack instead.
-    image: ~/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
 
     # Relaxed isolation — the dev agent shares the operator's identity and
     # host tree (the fleet dev default). Pairs with the raw_args below,

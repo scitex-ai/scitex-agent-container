@@ -18,7 +18,7 @@ spec:
   host: scitex-compute-01
   workdir: /home/ywatanabe/proj/business
   apptainer:
-    image: /home/ywatanabe/.scitex/agent-container/containers/sac-base.sif
+    image: sac-base
     relaxed: true
     binds:
     - /scratch:/scratch:rw
