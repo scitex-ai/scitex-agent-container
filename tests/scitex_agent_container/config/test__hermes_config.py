@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+from scitex_agent_container.config._hermes_compression import HermesCompressionSpec
 from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._launch_plan import compile_launch_plan
 
@@ -92,6 +93,28 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
         "secret_absent": True,
     }
     assert observed == expected
+
+
+def test_compiles_explicit_hermes_compression_controls():
+    # Arrange
+    compression = HermesCompressionSpec(
+        threshold=0.85,
+        target_ratio=0.30,
+        tail_mode="legacy",
+        in_place=False,
+    )
+    # Act
+    result = compile_hermes_config(
+        compile_launch_plan(_spec()), workdir="/work", compression=compression
+    )
+    # Assert
+    assert result["compression"] == {
+        "enabled": True,
+        "threshold": 0.85,
+        "target_ratio": 0.30,
+        "tail_mode": "legacy",
+        "in_place": False,
+    }
 
 
 def test_refuses_relative_workdir():

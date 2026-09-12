@@ -52,6 +52,12 @@ def _canonical_hermes_spec() -> dict:
                 "hermes": {
                     "session": {"mode": "continue", "max_age_minutes": None},
                     "channels": [],
+                    "compression": {
+                        "threshold": 0.85,
+                        "target_ratio": 0.25,
+                        "tail_mode": "legacy",
+                        "in_place": False,
+                    },
                 }
             },
         }
@@ -103,6 +109,15 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         == "http://engine.example:8000/v1"
         and profile_env == "SAC_TEST_HERMES_ENGINE_KEY=not-a-real-secret\n"
         and config.claude.channels == ["server:sac"]
+        and config.hermes_compression.threshold == 0.85
+        and profile["compression"]
+        == {
+            "enabled": True,
+            "threshold": 0.85,
+            "target_ratio": 0.25,
+            "tail_mode": "legacy",
+            "in_place": False,
+        }
         and "HERMES_HOME=/home/agent/.hermes" in argv
         and "ANTHROPIC_BASE_URL=http://engine.example:8000/v1" not in argv
         and "SAC_LISTEN_BASE_URL" not in rendered_argv

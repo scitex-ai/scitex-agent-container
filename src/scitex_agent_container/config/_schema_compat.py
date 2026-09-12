@@ -25,6 +25,39 @@ _COMMON_HARNESS_ENTRY_KEYS = frozenset(
 _SESSION_KEYS = frozenset({"mode", "max_age_minutes"})
 _WATCHDOG_KEYS = frozenset({"enabled", "interval", "responses"})
 _WATCHDOG_RESPONSE_KEYS = frozenset({"y_n", "y_y_n", "waiting"})
+_HERMES_COMPRESSION_KEYS = frozenset(
+    {"threshold", "target_ratio", "tail_mode", "in_place"}
+)
+
+
+def _is_number(value: object) -> bool:
+    return type(value) in {int, float}
+
+
+def _validate_hermes_compression(
+    value: object, *, path: str, errors: list[str]
+) -> None:
+    if not isinstance(value, Mapping):
+        errors.append(f"{path} must be a mapping")
+        return
+    unknown = sorted(set(map(str, value)) - _HERMES_COMPRESSION_KEYS)
+    if unknown:
+        errors.append(f"{path} has unknown fields: {unknown}")
+    threshold = value.get("threshold", 0.80)
+    threshold_valid = _is_number(threshold) and 0 < threshold < 1
+    if not threshold_valid:
+        errors.append(f"{path}.threshold must be a number between 0 and 1")
+    target_ratio = value.get("target_ratio", 0.20)
+    target_valid = _is_number(target_ratio) and 0 < target_ratio < 1
+    if not target_valid:
+        errors.append(f"{path}.target_ratio must be a number between 0 and 1")
+    elif threshold_valid and target_ratio >= threshold:
+        errors.append(f"{path}.target_ratio must be less than threshold")
+    tail_mode = value.get("tail_mode", "lean")
+    if tail_mode not in {"lean", "legacy"}:
+        errors.append(f"{path}.tail_mode must be lean or legacy")
+    if type(value.get("in_place", True)) is not bool:
+        errors.append(f"{path}.in_place must be a boolean")
 
 
 def _public_harness(name: str) -> str | None:
@@ -131,18 +164,34 @@ def canonical_surface_errors(raw: object) -> list[str]:
         entry_keys = set(map(str, raw_entry))
         allowed = set(_COMMON_HARNESS_ENTRY_KEYS)
         required = set(_COMMON_HARNESS_ENTRY_KEYS)
+        if "compression" in raw_entry:
+            allowed.add("compression")
         if family == "claude-code":
             allowed.update({"approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
         elif family == "codex":
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
+        elif family == "hermes":
+            allowed.add("compression")
         missing = sorted(required - entry_keys)
         unknown = sorted(entry_keys - allowed)
         if missing:
             errors.append(f"{path} is missing required fields: {missing}")
         if unknown:
             errors.append(f"{path} has unknown fields: {unknown}")
+
+        if "compression" in raw_entry:
+            if family != "hermes":
+                errors.append(
+                    f"{path}.compression is only valid for the Hermes harness"
+                )
+            else:
+                _validate_hermes_compression(
+                    raw_entry.get("compression"),
+                    path=f"{path}.compression",
+                    errors=errors,
+                )
 
         session = raw_entry.get("session")
         if not isinstance(session, Mapping):

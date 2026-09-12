@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from scitex_agent_container.config._schema_compat import canonical_surface_errors
 from scitex_agent_container.config._validation import validate_raw
 
@@ -26,6 +28,96 @@ def test_canonical_hermes_harness_entry_is_accepted():
     errors = canonical_surface_errors(raw)
     # Assert
     assert errors == []
+
+
+def test_canonical_hermes_compression_is_accepted():
+    # Arrange
+    entry = _hermes_entry()
+    entry["compression"] = {
+        "threshold": 0.40,
+        "target_ratio": 0.15,
+        "tail_mode": "legacy",
+        "in_place": False,
+    }
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act / Assert
+    assert canonical_surface_errors(raw) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("threshold", 0, "threshold must be a number between 0 and 1"),
+        ("threshold", True, "threshold must be a number between 0 and 1"),
+        ("target_ratio", 0, "target_ratio must be a number between 0 and 1"),
+        ("tail_mode", "compact", "tail_mode must be lean or legacy"),
+        ("in_place", "yes", "in_place must be a boolean"),
+    ],
+)
+def test_hermes_compression_rejects_invalid_values(field, value, message):
+    # Arrange
+    entry = _hermes_entry()
+    entry["compression"] = {field: value}
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert any(message in error for error in errors)
+
+
+def test_hermes_compression_target_must_be_below_trigger():
+    # Arrange
+    entry = _hermes_entry()
+    entry["compression"] = {"threshold": 0.40, "target_ratio": 0.40}
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert any("target_ratio must be less than threshold" in error for error in errors)
+
+
+def test_compression_is_rejected_on_non_hermes_harness():
+    # Arrange
+    raw = {
+        "spec": {
+            "harness": "codex",
+            "runtime": "tui",
+            "available_harnesses": {
+                "codex": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "channels": [],
+                    "approval_policy": "never",
+                    "sandbox_mode": "danger-full-access",
+                    "compression": {"threshold": 0.80},
+                }
+            },
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.codex.compression is only valid for the "
+        "Hermes harness"
+    ]
 
 
 def test_canonical_harness_unknown_fields_reach_validation():

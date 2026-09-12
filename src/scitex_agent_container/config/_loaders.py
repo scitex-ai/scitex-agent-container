@@ -4,15 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ._explicit_validation import validate as _validate_explicit_fields
 from ._engine_library import resolve_engine_namespace
 from ._engine_types import apply_default_engine
+from ._explicit_validation import validate as _validate_explicit_fields
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
-from ._residency_types import resolve_spec_residency
+from ._hermes_compression import parse_selected_hermes_compression
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
     substitute_hostnames,
+)
+
+# The two defaults ``load_v3`` injects into every agent — the guarded
+# direnv-allow startup command and the generic boot kick — live in the
+# sibling ``_loader_startup_defaults`` module (extracted when this
+# orchestrator hit the per-file line cap). Re-imported here so every
+# existing consumer keeps its ``config._loaders`` import path.
+from ._loader_startup_defaults import (
+    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
+    DEFAULT_STARTUP_PROMPT,
+    _with_default_direnv_allow,
 )
 from ._parsers import (
     MODEL_ENV_KEY,
@@ -37,18 +48,8 @@ from ._parsers import (
     parse_watchdog,
     resolve_model_surface,
 )
+from ._residency_types import resolve_spec_residency
 from ._types import AgentConfig, HostsSpec
-
-# The two defaults ``load_v3`` injects into every agent — the guarded
-# direnv-allow startup command and the generic boot kick — live in the
-# sibling ``_loader_startup_defaults`` module (extracted when this
-# orchestrator hit the per-file line cap). Re-imported here so every
-# existing consumer keeps its ``config._loaders`` import path.
-from ._loader_startup_defaults import (
-    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
-    DEFAULT_STARTUP_PROMPT,
-    _with_default_direnv_allow,
-)
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -434,6 +435,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         watchdog=parse_watchdog(spec),
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
+        hermes_compression=parse_selected_hermes_compression(spec),
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),
