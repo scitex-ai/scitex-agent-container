@@ -30,10 +30,11 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from ._bake_space import check_space
 
 # ---------------------------------------------------------------------------
 # Wheel-shipped assets (same package-relative convention as image_group's
@@ -43,13 +44,12 @@ from pathlib import Path
 _CONTAINERS_ASSETS = Path(__file__).resolve().parent.parent / "containers"
 BAKE_SCRIPT = _CONTAINERS_ASSETS / "spartan-sif-bake.sh"
 SYMBOL_PROBE = _CONTAINERS_ASSETS / "sif_symbol_probe.py"
+_SYMBOL_PROBE_IN_CONTAINER = "/tmp/sac-sif-symbol-probe.py"
 
 LAYERS = ("base", "scitex")
 
 # Timestamped artifact name, e.g. sac-scitex-2026-0717-092952.sif —
 # matches scitex-container's ``_store`` timestamp shape.
-from ._bake_space import check_space
-
 SIF_RE = re.compile(r"^sac-(?P<layer>base|scitex)-(?P<ts>\d{4}-\d{4}-\d{6})\.sif$")
 
 # Module-level seams (save/restore in tests, same pattern as image_group's
@@ -591,25 +591,23 @@ def pull_and_publish(
             "SAC_BUILD_COMMIT before rebuilding."
             + (f" Probe output: {evidence}" if evidence else ""),
         )
-    with tempfile.TemporaryDirectory(prefix="sac-sif-probe-") as td:
-        probe = Path(td) / "sif_symbol_probe.py"
-        shutil.copy2(SYMBOL_PROBE, probe)
-        proc = _run(
-            [
-                apptainer,
-                "exec",
-                "--cleanenv",
-                "--pwd",
-                "/",
-                "--bind",
-                td,
-                str(incoming),
-                "/opt/venv-sac/bin/python",
-                str(probe),
-            ],
-            capture_output=True,
-            text=True,
-        )
+    proc = _run(
+        [
+            apptainer,
+            "exec",
+            "--cleanenv",
+            "--containall",
+            "--pwd",
+            "/",
+            "--bind",
+            f"{SYMBOL_PROBE}:{_SYMBOL_PROBE_IN_CONTAINER}:ro",
+            str(incoming),
+            "/opt/venv-sac/bin/python",
+            _SYMBOL_PROBE_IN_CONTAINER,
+        ],
+        capture_output=True,
+        text=True,
+    )
     if proc.returncode != 0:
         return PullOutcome(
             PullVerdict.FAILED,

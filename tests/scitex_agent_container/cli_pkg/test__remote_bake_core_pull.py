@@ -199,6 +199,31 @@ def test_verified_pull_runs_rsync_then_probe_through_the_seam(
     ]
 
 
+def test_symbol_probe_has_explicit_container_path_under_containment(
+    tmp_path: Path, seam
+) -> None:
+    """The probe must not rely on its host path existing inside the SIF.
+
+    Production runs Apptainer with a contained filesystem.  In the observed
+    failure, the temporary probe lived below the host's ``/home`` and SAC
+    invoked that same path in the container, where it did not exist.
+    """
+    containers = _make_store(tmp_path, "base", [_OLD], live=_OLD)
+    runner = seam(_RecordingRunner(rsync_payload=b"fresh"))
+
+    result = _pull(containers, b"fresh")
+
+    probe_call = runner.calls[-1]
+    bind_spec = probe_call[probe_call.index("--bind") + 1]
+    source, destination, mode = bind_spec.rsplit(":", 2)
+    assert result.verdict is PullVerdict.SWAPPED
+    assert "--containall" in probe_call
+    assert Path(source).name == "sif_symbol_probe.py"
+    assert destination == "/tmp/sac-sif-symbol-probe.py"
+    assert mode == "ro"
+    assert probe_call[-1] == destination
+
+
 # ---------------------------------------------------------------------------
 # WATCH IT FAIL — each broken leg leaves the live image untouched
 # ---------------------------------------------------------------------------
