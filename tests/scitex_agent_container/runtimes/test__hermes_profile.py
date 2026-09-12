@@ -228,7 +228,7 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
             "PGUSER": "ywatanabe__scholar",
             "PGPASSFILE": "/home/ywatanabe/.pgpass",
             "SCITEX_CARDS_AGENT_ID": "scholar",
-            "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+            "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
             "SCITEX_CARDS_NOTIFY_DSN": "postgresql://scitex-primary:55433/scitex",
         }
 
@@ -240,7 +240,7 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
         "PGUSER": "ywatanabe__scholar",
         "PGPASSFILE": "/home/ywatanabe/.pgpass",
         "SCITEX_CARDS_AGENT_ID": "scholar",
-        "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+        "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
         "SCITEX_CARDS_NOTIFY_DSN": "postgresql://scitex-primary:55433/scitex",
     }
 
@@ -259,7 +259,7 @@ def test_mcp_pg_binding_derives_and_validates_provisioned_project_role(tmp_path)
         name="scitex-agent-container-gui",
         harness="hermes",
         labels={"project": "scitex-agent-container"},
-        env={"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex"},
+        env={"SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex"},
     )
     # Act
     with _replace_attributes(
@@ -305,9 +305,33 @@ def test_signup_variant_gets_project_role_passfile_and_cards_target():
         "PGPASSFILE": "/home/agent/.sac-pgpass",
         "PGUSER": "operator__scitex-hub",
         "SCITEX_CARDS_AGENT_ID": "scitex-hub-signup",
-        "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
         "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     }
+
+
+def test_cards_mcp_removes_retired_store_alias():
+    # Arrange
+    config = AgentConfig(
+        name="scholar",
+        harness="hermes",
+        env={"SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex"},
+    )
+    servers = {
+        "scitex-cards": {
+            "command": "scitex-cards",
+            "env": {"SCITEX_CARDS_DB": "postgresql://wrong:55432/private"},
+        }
+    }
+
+    # Act
+    profile._bind_mcp_runtime_env(config, servers)
+
+    # Assert
+    env = servers["scitex-cards"]["env"]
+    assert (
+        env["SCITEX_STORE_DSN"].endswith(":55432/scitex"),
+        "SCITEX_CARDS_DB" in env,
+    ) == (True, False)
 
 
 def test_mcp_pg_validation_refuses_unprovisioned_variant_role(tmp_path):
@@ -320,7 +344,7 @@ def test_mcp_pg_validation_refuses_unprovisioned_variant_role(tmp_path):
     servers = {
         "scitex-cards": {
             "env": {
-                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
                 "PGUSER": "operator__scitex-agent-container-gui",
                 "PGPASSFILE": str(passfile),
             }
@@ -344,7 +368,7 @@ def test_mcp_pg_validation_rejects_dsn_userinfo_that_overrides_pguser(tmp_path):
     servers = {
         "scitex-cards": {
             "env": {
-                "SCITEX_CARDS_DB": (
+                "SCITEX_STORE_DSN": (
                     "postgresql://different_role@scitex-primary:55432/scitex"
                 ),
                 "PGUSER": "operator__scitex-hub",
@@ -379,7 +403,7 @@ def test_mcp_pg_validation_does_not_treat_unbound_host_passfile_as_container_fil
     servers = {
         "scitex-cards": {
             "env": {
-                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
                 "PGUSER": "operator__project",
                 "PGPASSFILE": "/home/agent/.pgpass",
             }
@@ -409,7 +433,7 @@ def test_raw_args_env_and_bind_are_the_hermes_mcp_identity_source(tmp_path):
     config = AgentConfig(
         name="scitex-hub-deepseek",
         harness="hermes",
-        env={"SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex"},
+        env={"SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex"},
         labels={"project": "scitex-hub"},
     )
     config.apptainer.raw_args = [
@@ -450,7 +474,7 @@ def test_pg_validation_uses_first_bind_for_duplicate_destination(tmp_path):
     servers = {
         "scitex-cards": {
             "env": {
-                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
                 "PGUSER": "operator__scitex-hub",
                 "PGPASSFILE": "/creds/.pgpass",
             }
@@ -491,7 +515,7 @@ def test_pg_validation_uses_longest_covering_bind_destination(tmp_path):
     servers = {
         "scitex-cards": {
             "env": {
-                "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
+                "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
                 "PGUSER": "operator__scitex-hub",
                 "PGPASSFILE": "/home/agent/.pgpass",
             }
@@ -541,7 +565,6 @@ def test_sac_mcp_receives_bus_auth_refs_without_persisting_bearer(env_save_resto
         "SAC_NAME": "${env:SAC_NAME}",
         "PGUSER": "ywatanabe__scholar",
         "PGPASSFILE": "/home/ywatanabe/.pgpass",
-        "SCITEX_CARDS_DB": "postgresql://scitex-primary:55432/scitex",
         "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
     } and "actual-secret" not in json.dumps(servers)
 

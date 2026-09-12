@@ -99,7 +99,8 @@ def test_recovery_rebinds_same_model_and_provider_without_global_write(tmp_path)
 
 def test_recovery_tick_preserves_session_context_and_incarnation(tmp_path):
     # Arrange: these are the three durable identities the adapter must not
-    # replace or delete.  The context sentinel represents Hermes state.db.
+    # replace or delete. The context sentinel represents Hermes-private
+    # session/context state.db, never the shared SciTeX store.
     config = _config(tmp_path)
     state_dir = tmp_path / "state"
     sentinels = {

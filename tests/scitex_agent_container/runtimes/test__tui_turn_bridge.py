@@ -885,11 +885,11 @@ def test_start_turn_bridge_passes_effective_cards_store_to_child(
         recorded.update(kwargs)
         return SimpleNamespace(pid=_PID)
 
-    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://wrong-shell/store")
+    env_save_restore.set("SCITEX_STORE_DSN", "postgresql://wrong-shell:55432/store")
     config = SimpleNamespace(
         a2a=SimpleNamespace(port=_PORT),
         apptainer=SimpleNamespace(raw_args=[]),
-        env={"SCITEX_STORE_DSN": "postgresql://cards-store/status"},
+        env={"SCITEX_STORE_DSN": "postgresql://cards-store:55432/status"},
         labels={},
         name="figrecipe",
         config_path=str(spec),
@@ -897,7 +897,9 @@ def test_start_turn_bridge_passes_effective_cards_store_to_child(
     # Act
     bridge.start_turn_bridge(config, spawn=fake_spawn, port_free_fn=_gate_says_free)
     # Assert
-    assert recorded["env"]["SCITEX_STORE_DSN"] == "postgresql://cards-store/status"
+    assert recorded["env"]["SCITEX_STORE_DSN"] == (
+        "postgresql://cards-store:55432/status"
+    )
 
 
 def test_start_turn_bridge_returns_spawned_pid(

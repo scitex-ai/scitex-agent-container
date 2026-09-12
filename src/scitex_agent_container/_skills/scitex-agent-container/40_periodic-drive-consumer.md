@@ -18,7 +18,7 @@ The envelope:
 ```json
 {
   "kind": "periodic_drive",
-  "body": "[sac periodic drive — <name>]\n\n## Standing rules\n…\n## Current mission\n…\n## Current work (state.db + git)\n…\n## Action\n…",
+  "body": "[sac periodic drive — <name>]\n\n## Standing rules\n…\n## Current mission\n…\n## Current work (shared store + git)\n…\n## Action\n…",
   "generated_at": <unix_ts>,
   "from_agent": "sac-periodic-drive"
 }

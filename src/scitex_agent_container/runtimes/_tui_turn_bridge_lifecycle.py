@@ -192,9 +192,9 @@ def start_turn_bridge(
 
         cards_env, _cards_store = effective_cards_store(config)
         env = os.environ.copy()
+        env.pop("SCITEX_CARDS_DB", None)
         for key in (
             "SCITEX_CARDS_AGENT_ID",
-            "SCITEX_CARDS_DB",
             "SCITEX_CARDS_NOTIFY_DSN",
             "SCITEX_STORE_DSN",
             "PGHOST",

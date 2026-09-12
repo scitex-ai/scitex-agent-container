@@ -204,7 +204,7 @@ def _cards_health_in_env(
 
 
 def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | None]:
-    """Resolve the one environment/store shared by Cards MCP and ingress."""
+    """Resolve the canonical environment/store shared by Cards MCP and ingress."""
     from ._board_identity_env import raw_args_env
     from ._fleet_env import effective_env
 
@@ -213,8 +213,10 @@ def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | No
         raw_args_env(getattr(getattr(config, "apptainer", None), "raw_args", None))
     )
     cards_env["SCITEX_CARDS_AGENT_ID"] = config.name
-    store = cards_env.get("SCITEX_CARDS_DB") or cards_env.get("SCITEX_STORE_DSN")
-    return cards_env, str(store) if store else None
+    from ._hermes_cards_ingress import canonical_store_dsn
+
+    store = canonical_store_dsn(cards_env)
+    return cards_env, store
 
 
 def _cards_store_usable(
@@ -279,10 +281,10 @@ def start_inbox_bridge(
         config_path,
     ]
     env = os.environ.copy()
+    env.pop("SCITEX_CARDS_DB", None)
     env["SAC_LISTEN_BEARER"] = bearer
     for key in (
         "SCITEX_CARDS_AGENT_ID",
-        "SCITEX_CARDS_DB",
         "SCITEX_CARDS_NOTIFY_DSN",
         "SCITEX_STORE_DSN",
         "PGHOST",

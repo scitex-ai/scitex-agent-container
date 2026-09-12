@@ -182,7 +182,7 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     a2a_port = row.get("a2a_port")
     if not isinstance(a2a_port, int) or a2a_port <= 0:
         raise _RemoteA2APortMissingError(
-            f"agent {name!r} is active on peer {peer!r} but state.db "
+            f"agent {name!r} is active on peer {peer!r} but the shared store "
             f"records no a2a_port for it (a2a_port={a2a_port!r}). The "
             f"remote agent did not register an A2A port; cannot send. "
             f"Restart the agent on the peer with spec.a2a.port set, or "
