@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 from datetime import datetime, timezone
 from typing import Any
@@ -15,16 +16,49 @@ from scitex_dev.status import (
 )
 
 
+class TurnExchangeStoreUnavailable(RuntimeError):
+    """The shared protocol ledger exists but this bridge cannot use it."""
+
+
+def _privilege_failure(exc: BaseException) -> bool:
+    """True for PostgreSQL ``insufficient_privilege`` without importing psycopg."""
+    return getattr(exc, "sqlstate", None) == "42501"
+
+
+def _access_error(exc: BaseException) -> TurnExchangeStoreUnavailable:
+    role = os.environ.get("PGUSER", "<libpq default>")
+    return TurnExchangeStoreUnavailable(
+        "the SciTeX protocol status_exchanges store is not usable by "
+        f"PGUSER={role!r}: PostgreSQL denied access. The database provisioner "
+        "must make scitex_store_owner own public.status_exchanges_{rows,oplog,"
+        "cursor,identity} and grant SELECT, INSERT, UPDATE, DELETE on those "
+        "tables to scitex_rw. SAC will not change shared-database ownership "
+        "from an agent process. Re-run the bridge only after an owner-level "
+        "catalogue and DML probe both pass."
+    )
+
+
 def _store():
     from scitex_dev.store import Store, WriterPolicy, host_store
 
-    return Store(
-        host_store(pkg="dev", name="status_exchanges"),
-        ledger_schema(),
-        node=socket.gethostname(),
-        writer_policy=WriterPolicy.MULTI_WRITER,
-        actor="scitex-agent-container",
-    )
+    try:
+        return Store(
+            host_store(pkg="dev", name="status_exchanges"),
+            ledger_schema(),
+            node=socket.gethostname(),
+            writer_policy=WriterPolicy.MULTI_WRITER,
+            actor="scitex-agent-container",
+        )
+    except Exception as exc:
+        if _privilege_failure(exc):
+            raise _access_error(exc) from exc
+        raise
+
+
+def preflight_turn_exchange_store() -> None:
+    """Prove the canonical ledger can be opened before the HTTP bridge binds."""
+    store = _store()
+    store.close()
 
 
 def open_turn_exchange(
@@ -122,4 +156,10 @@ def read_turn_exchange(exchange_id: str) -> dict[str, Any] | None:
         store.close()
 
 
-__all__ = ["finish_turn_exchange", "open_turn_exchange", "read_turn_exchange"]
+__all__ = [
+    "TurnExchangeStoreUnavailable",
+    "finish_turn_exchange",
+    "open_turn_exchange",
+    "preflight_turn_exchange_store",
+    "read_turn_exchange",
+]
