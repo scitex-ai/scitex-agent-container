@@ -205,10 +205,17 @@ def agent_status(
     #
     # ``liveness`` says WHICH and WHY: "ALIVE (delivery: 1 live inbox
     # subscriber)" / "UNKNOWN (heartbeat: beat is 5086s stale …; registry: …)".
-    # ``status`` is left untouched for back-compat — this is ADDITIVE, the same
-    # discipline ``inbox_reachable`` follows (observation published NEXT TO the
-    # declaration, never overwriting it).
-    result["liveness"] = _liveness_block(name, config, runtime_factory)
+    # Positive ALIVE evidence is nevertheless allowed to repair the legacy
+    # projection.  A config that became invalid after an agent started makes
+    # the runtime-specific boolean probe unavailable, but it does not stop the
+    # already-running process.  Returning ``status=stopped`` beside a fresh
+    # heartbeat saying ALIVE hid that process from ``--all-running``.  This is
+    # monotonic: UNKNOWN/DEAD never manufactures ``running`` and the complete
+    # evidence remains available beside the compatibility field.
+    liveness = _liveness_block(name, config, runtime_factory)
+    result["liveness"] = liveness
+    if liveness.get("verdict") == "alive":
+        result["status"] = "running"
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.

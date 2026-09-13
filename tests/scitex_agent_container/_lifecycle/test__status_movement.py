@@ -12,8 +12,6 @@ separate lines; one assertion per test (STX-TQ007).
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import importlib
 import json
 import os
@@ -21,6 +19,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture
@@ -247,3 +247,32 @@ def test_status_payload_existing_keys_remain_after_movement_enrichment(
     result = agent_status("compat", registry=isolated_registry)
     # Assert
     assert set(("name", "status", "hooks_configured", "listen")) <= set(result)
+
+
+def test_fresh_heartbeat_repairs_stopped_projection_when_spec_no_longer_loads(
+    tmp_path: Path, isolated_runtime: Path, isolated_registry, env_save_restore
+):
+    # Arrange — this is the live Hub incident shape: the process predates a
+    # schema migration, so its registered spec no longer loads, while the
+    # listen-side observer continues to publish positive heartbeat evidence.
+    missing_spec = tmp_path / "retired-authority-snapshot" / "spec.yaml"
+    isolated_registry.add("hub", str(missing_spec), "cld-hub")
+    # Liveness deliberately resolves its observer-owned heartbeat from HOME,
+    # independently of the session-movement runtime root above.
+    env_save_restore.set("HOME", str(tmp_path))
+    state_dir = tmp_path / ".scitex" / "agent-container" / "runtime" / "hub"
+    state_dir.mkdir(parents=True)
+    (state_dir / "heartbeat.json").write_text(
+        json.dumps({"ts": time.time(), "pid": 0, "state": "running"}),
+        encoding="utf-8",
+    )
+    from scitex_agent_container._lifecycle._status import agent_status
+
+    # Act
+    result = agent_status("hub", registry=isolated_registry)
+
+    # Assert
+    assert (result["status"], result["liveness"]["verdict"]) == (
+        "running",
+        "alive",
+    )
