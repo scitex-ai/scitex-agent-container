@@ -214,15 +214,15 @@ def test_spec_claim_replaces_same_origin_self_peer_pointer(pg_schema: str) -> No
     )
     info = lookup_comms_node(name="lead-spec-owner")
     # Assert
-    assert result == "replaced"
-    assert info is not None and info["a2a_port"] == 19003
+    observed = (result, None if info is None else info["a2a_port"])
+    assert observed == ("replaced", 19003)
 
 
 def test_spec_replace_still_refuses_cross_origin_claim(pg_schema: str) -> None:
     # Arrange — this node owns the existing global name.
     register_comms_node(name="foreign-spec-owner", host=THIS_NODE, a2a_port=7878)
-    # Act / Assert — ``replace`` is not authority over another origin.
-    with pytest.raises(CommsNodeConflictError):
+    # Act
+    def _replace_foreign_origin() -> None:
         register_comms_node(
             name="foreign-spec-owner",
             host=FOREIGN_HOST,
@@ -231,6 +231,10 @@ def test_spec_replace_still_refuses_cross_origin_claim(pg_schema: str) -> None:
             kind="spec",
             replace=True,
         )
+
+    # Assert — ``replace`` is not authority over another origin.
+    with pytest.raises(CommsNodeConflictError):
+        _replace_foreign_origin()
 
 
 def test_conflict_message_names_the_incoming_kind(pg_schema: str) -> None:
@@ -295,8 +299,8 @@ def test_conflict_message_names_the_exposed_spec_restart_repair(pg_schema: str) 
     ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
         raised = exc
     # Assert
-    assert raised is not None and "starting/restarting" in str(raised)
-    assert "--prefer" not in str(raised)
+    message = str(raised)
+    assert ("starting/restarting" in message, "--prefer" in message) == (True, False)
 
 
 def test_a_refused_write_leaves_the_record_unchanged(pg_schema: str) -> None:

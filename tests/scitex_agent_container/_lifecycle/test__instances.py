@@ -126,10 +126,13 @@ def test_live_spec_incarnation_owns_same_origin_comms_pointer(
     incarnation_id = record_local_instance(cfg, _RuntimeStub(tmp_path))
     info = lookup_comms_node(name=name)
     # Assert — routing and the operator log identify the winning incarnation.
-    assert info is not None and info["a2a_port"] == 19003
-    assert incarnation_id is not None
-    assert f"incarnation_id={incarnation_id}" in caplog.text
-    assert "result=replaced" in caplog.text
+    observed = (
+        None if info is None else info["a2a_port"],
+        incarnation_id is not None,
+        f"incarnation_id={incarnation_id}" in caplog.text,
+        "result=replaced" in caplog.text,
+    )
+    assert observed == (19003, True, True, True)
 
 
 def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
