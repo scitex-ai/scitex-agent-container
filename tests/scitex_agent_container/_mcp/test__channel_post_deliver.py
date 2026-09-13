@@ -144,8 +144,10 @@ async def test_run_post_deliver_only_reaction_posts_when_auto_ack_disabled(
 
 @pytest.mark.asyncio
 async def test_normal_delivery_consumes_one_rate_slot_not_two(fake_listen):
+    # Arrange
     _auto_ack_window.clear()
     _auto_ack_tripped.clear()
+    # Act
     with _env("SAC_AUTO_ACK_RATE_MAX", "20"):
         for index in range(11):
             await run_post_deliver_receipts(
@@ -160,15 +162,20 @@ async def test_normal_delivery_consumes_one_rate_slot_not_two(fake_listen):
         for _path, payload in fake_listen.posts
         if payload.get("params", {}).get("metadata", {}).get("kind") == "reaction"
     ]
-    assert len(reaction_posts) == 11
-    assert len(_auto_ack_window["bob"]) == 11
-    assert "bob" not in _auto_ack_tripped
+    # Assert
+    assert (
+        len(reaction_posts),
+        len(_auto_ack_window["bob"]),
+        "bob" in _auto_ack_tripped,
+    ) == (11, 11, False)
 
 
 @pytest.mark.asyncio
 async def test_synthetic_daemon_delivery_never_consumes_receipt_budget(fake_listen):
+    # Arrange
     _auto_ack_window.clear()
     _auto_ack_tripped.clear()
+    # Act
     for index in range(25):
         await run_post_deliver_receipts(
             {
@@ -182,6 +189,9 @@ async def test_synthetic_daemon_delivery_never_consumes_receipt_budget(fake_list
             bearer=None,
         )
 
-    assert fake_listen.posts == []
-    assert "daemon" not in _auto_ack_window
-    assert "daemon" not in _auto_ack_tripped
+    # Assert
+    assert (
+        fake_listen.posts,
+        "daemon" in _auto_ack_window,
+        "daemon" in _auto_ack_tripped,
+    ) == ([], False, False)

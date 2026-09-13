@@ -875,8 +875,10 @@ def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
     condition = str(cleanup.get("if", ""))
     command = str(cleanup.get("run", "")).strip()
     # Assert
-    assert "always()" in condition
-    assert command == "bash .github/ci/clean-tmpdir.sh docs 3.12"
+    assert ("always()" in condition, command) == (
+        True,
+        "bash .github/ci/clean-tmpdir.sh docs 3.12",
+    )
 
 
 def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -888,9 +890,9 @@ def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
     # Act
     result = _run_clean(root, "docs", "3.12")
     # Assert
-    assert result.returncode == 0, result.stderr
-    assert not docs.exists()
-    assert sibling.is_dir()
+    assert (result.returncode, docs.exists(), sibling.is_dir()) == (0, False, True), (
+        result.stderr
+    )
 
 
 def _import_steps() -> list[dict]:
@@ -925,8 +927,10 @@ def test_import_job_removes_its_exact_scratch_scope_even_after_failure():
     condition = str(cleanup.get("if", ""))
     command = str(cleanup.get("run", "")).strip()
     # Assert
-    assert "always()" in condition
-    assert command == "bash .github/ci/clean-tmpdir.sh import-smoke 3.12"
+    assert ("always()" in condition, command) == (
+        True,
+        "bash .github/ci/clean-tmpdir.sh import-smoke 3.12",
+    )
 
 
 def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
@@ -938,9 +942,11 @@ def test_import_cleanup_removes_only_its_managed_run_directory(root: Path):
     # Act
     result = _run_clean(root, "import-smoke", "3.12")
     # Assert
-    assert result.returncode == 0, result.stderr
-    assert not current.exists()
-    assert sibling.is_dir()
+    assert (result.returncode, current.exists(), sibling.is_dir()) == (
+        0,
+        False,
+        True,
+    ), result.stderr
 
 
 @pytest.mark.parametrize(
@@ -970,10 +976,12 @@ def test_bare_scratch_helper_exports_managed_job_paths(
     )
     exported = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
     # Assert
-    assert result.returncode == 0, result.stderr
-    assert f"TMPDIR={expected_root}/tmp\n" in exported
-    assert f"UV_CACHE_DIR={expected_root}/uv-cache\n" in exported
-    assert f"{venv_key}={expected_root}/venv\n" in exported
+    assert (
+        result.returncode,
+        f"TMPDIR={expected_root}/tmp\n" in exported,
+        f"UV_CACHE_DIR={expected_root}/uv-cache\n" in exported,
+        f"{venv_key}={expected_root}/venv\n" in exported,
+    ) == (0, True, True, True), result.stderr
 
 
 @pytest.mark.parametrize(
@@ -1013,8 +1021,7 @@ def test_other_self_hosted_uv_jobs_use_managed_scratch_and_cleanup(
     actual_prepare = str(prepare.get("run", "")).strip()
     condition = str(cleanup.get("if", ""))
     # Assert
-    assert actual_prepare == prepare_command
-    assert "always()" in condition
+    assert (actual_prepare, "always()" in condition) == (prepare_command, True)
 
 
 def test_exec_wrapper_sources_the_lifecycle_library():

@@ -1010,9 +1010,13 @@ def test_should_auto_ack_false_when_sender_missing():
     ],
 )
 def test_should_auto_ack_false_for_receipts_and_synthetic_senders(event):
+    # Arrange
     from scitex_agent_container._mcp.channel import _should_auto_ack
 
-    assert _should_auto_ack(event) is False
+    # Act
+    decision = _should_auto_ack(event)
+    # Assert
+    assert decision is False
 
 
 @pytest.mark.asyncio

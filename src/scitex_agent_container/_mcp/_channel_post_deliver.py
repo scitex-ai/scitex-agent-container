@@ -97,7 +97,7 @@ async def run_post_deliver_receipts(
                 listen_url=listen_url,
                 bearer=bearer,
             )
-        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
+        except Exception as exc:  # stx-allow: fallback (reason: best-effort auto-ack; a failed receipt must not block injection or kill the SSE consumer — logged to stderr by the MCP process logger)
             log.warning(
                 "sac channel: auto-ack to %r failed: %s",
                 sender,
@@ -118,7 +118,7 @@ async def run_post_deliver_receipts(
                 listen_url=listen_url,
                 bearer=bearer,
             )
-        except Exception as exc:  # stx-allow: fallback (reason: best-effort reaction-ack; a failed receipt must not block injection or kill the SSE consumer — logged loudly, never silent)
+        except Exception as exc:  # stx-allow: fallback (reason: best-effort reaction-ack; a failed receipt must not block injection or kill the SSE consumer — logged to stderr by the MCP process logger)
             log.warning(
                 "sac channel: reaction-ack to %r failed: %s",
                 sender,

@@ -1016,6 +1016,7 @@ def test_a2a_published_ack_event_is_not_re_acked(_persisted_ack_event):
 
 
 def test_a2a_send_path_preserves_structural_receipt_metadata(_isolated_db, tmp_path):
+    # Arrange
     metadata = {
         "from_agent": "bob",
         "ack": True,
@@ -1028,15 +1029,24 @@ def test_a2a_send_path_preserves_structural_receipt_metadata(_isolated_db, tmp_p
     app = build_app([yml])
     payload = _ack_send_payload(from_agent="bob")
     payload["params"]["metadata"] = metadata
+    # Act
     with TestClient(app) as client:
         response = client.post("/agents/alice/message:send", json=payload)
-    assert response.status_code in (200, 201, 202), response.text
     rows = _channel_rows(
         "SELECT meta_json FROM sac_channel_events WHERE target = 'alice'"
     )
     event = json.loads(rows[0][0])
-
-    assert event["ack"] is True
-    assert event["kind"] == "reaction"
-    assert event["dispatch_id"] == "dispatch-original"
-    assert event["extra"] == {"reacted_dispatch_id": "dispatch-original"}
+    # Assert
+    assert (
+        response.status_code in (200, 201, 202),
+        event["ack"],
+        event["kind"],
+        event["dispatch_id"],
+        event["extra"],
+    ) == (
+        True,
+        True,
+        "reaction",
+        "dispatch-original",
+        {"reacted_dispatch_id": "dispatch-original"},
+    ), response.text
