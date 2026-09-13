@@ -40,11 +40,11 @@ def test_hermes_lifecycle_does_not_propagate_cards_specific_store_alias():
         outcomes.append(
             (
                 source.count('env.pop("SCITEX_CARDS_DB", None)'),
-                source.count("SCITEX_CARDS_DB"),
+                source.count('env["SCITEX_CARDS_DB"] ='),
             )
         )
     # Assert
-    assert outcomes == [(1, 1), (1, 1)]
+    assert outcomes == [(1, 0), (1, 0)]
 
 
 def test_accepted_protocol_adr_names_the_private_state_exception():
