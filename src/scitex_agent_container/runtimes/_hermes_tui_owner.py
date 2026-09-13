@@ -79,20 +79,39 @@ def _resume_command(command: list[str], stored_session_id: str) -> list[str]:
     return rebuilt + ["--resume", stored_session_id]
 
 
-def _select_resume_key(
+def _reconcile_command(command: list[str]) -> list[str]:
+    """Re-open the named session without replaying its startup turn."""
+    rebuilt: list[str] = []
+    skip_value = False
+    for value in command:
+        if skip_value:
+            skip_value = False
+            continue
+        if value in {"--query", "--query-file", "-q"}:
+            skip_value = True
+            continue
+        rebuilt.append(value)
+    return rebuilt
+
+
+def _select_owned_session(
     sessions: list[dict], *, expected_title: str, previous: str
-) -> str:
-    """Track the durable key for this isolated SAC TUI session."""
+) -> dict | None:
+    """Select only the one session proven to belong to this owner."""
+    identities = {expected_title}
+    if previous:
+        identities.add(previous)
     matches = [
         row
         for row in sessions
-        if row.get("title") == expected_title
-        or row.get("session_key") in {expected_title, previous}
+        if row.get("title") in identities or row.get("session_key") in identities
     ]
-    candidate = matches[0] if len(matches) == 1 else None
-    if candidate is None and len(sessions) == 1:
-        candidate = sessions[0]
-    return str((candidate or {}).get("session_key") or previous).strip()
+    if len(matches) > 1 or (sessions and len(matches) != 1):
+        raise RuntimeError(
+            f"Hermes gateway identity mismatch for {expected_title!r}: "
+            f"{len(matches)} owned matches among {len(sessions)} live sessions"
+        )
+    return matches[0] if matches else None
 
 
 def _terminate(process: Any, *, timeout_s: float = 5.0) -> None:
@@ -142,10 +161,10 @@ def _supervise_tui(
     Ink client consequently cannot run its own close-triggered reconnect and
     can display ``computing`` forever after the backend has completed.  This
     owner watches ``session.active_list`` through a short-lived, non-viewer RPC
-    and relaunches only the TUI child when the isolated gateway transitions
-    from a live session to none.  The exact stored session id is resumed, so
-    persisted context and a reply completed during the disconnect are loaded
-    back into the official TUI.
+    and relaunches only the TUI child when its configured session is absent.
+    An observed durable session id is resumed exactly.  Before any id has been
+    observed, the stable named continuation is reconciled with its startup
+    query removed, so recovery cannot replay a turn.
     """
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
@@ -155,7 +174,6 @@ def _supervise_tui(
     if on_spawn is not None:
         on_spawn(tui)
     generation_started = monotonic()
-    ever_observed = False
     absent_polls = 0
     resume_key = ""
     recoveries: deque[float] = deque()
@@ -175,12 +193,23 @@ def _supervise_tui(
             sleep(poll_s)
             continue
 
-        if sessions:
-            ever_observed = True
-            absent_polls = 0
-            resume_key = _select_resume_key(
+        try:
+            owned_session = _select_owned_session(
                 sessions, expected_title=expected_title, previous=resume_key
             )
+        except RuntimeError as exc:
+            _write_supervision(
+                state_dir,
+                state="recovery_refused",
+                detail=str(exc),
+                active_sessions=len(sessions),
+                recoveries=len(recoveries),
+            )
+            return tui, 70
+
+        if owned_session is not None:
+            absent_polls = 0
+            resume_key = str(owned_session.get("session_key") or resume_key).strip()
             _write_supervision(
                 state_dir,
                 state="attached",
@@ -192,7 +221,7 @@ def _supervise_tui(
             continue
 
         outside_grace = monotonic() - generation_started >= startup_grace_s
-        if ever_observed and outside_grace:
+        if outside_grace:
             absent_polls += 1
         if absent_polls < ABSENT_POLLS_BEFORE_RECOVERY:
             sleep(poll_s)
@@ -201,13 +230,13 @@ def _supervise_tui(
         now = monotonic()
         while recoveries and now - recoveries[0] > RECOVERY_WINDOW_SECONDS:
             recoveries.popleft()
-        if not resume_key or len(recoveries) >= MAX_RECOVERIES_PER_WINDOW:
+        if not expected_title or len(recoveries) >= MAX_RECOVERIES_PER_WINDOW:
             _write_supervision(
                 state_dir,
                 state="recovery_refused",
                 detail=(
-                    "no durable Hermes session id was observed"
-                    if not resume_key
+                    "the TUI command has no stable --continue session identity"
+                    if not expected_title
                     else "TUI transport recovery budget exhausted"
                 ),
                 recoveries=len(recoveries),
@@ -218,12 +247,20 @@ def _supervise_tui(
         _write_supervision(
             state_dir,
             state="recovering",
-            detail="Hermes active-session set became empty; relaunching official TUI",
-            stored_session_id=resume_key,
+            detail=(
+                "configured Hermes session is absent; reconciling official TUI "
+                "without replaying its startup turn"
+            ),
+            **({"stored_session_id": resume_key} if resume_key else {}),
             recoveries=len(recoveries),
         )
         _terminate(tui)
-        tui = spawn(_resume_command(command, resume_key), env=env)
+        recovery_command = (
+            _resume_command(command, resume_key)
+            if resume_key
+            else _reconcile_command(command)
+        )
+        tui = spawn(recovery_command, env=env)
         if on_spawn is not None:
             on_spawn(tui)
         generation_started = monotonic()

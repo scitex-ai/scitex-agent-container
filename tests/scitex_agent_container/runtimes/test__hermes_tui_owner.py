@@ -152,3 +152,191 @@ def test_observation_failure_never_causes_a_destructive_restart(tmp_path):
 
     # Assert
     assert (result, len(spawned), spawned[0].terminated) == (0, 1, False)
+
+
+def test_never_observed_session_is_reconciled_without_replaying_startup_turn(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        process = _Process()
+        spawned.append((list(command), env, process))
+        return process
+
+    snapshots = iter(([], [], [{"id": "live-1", "title": "sac:ui"}]))
+
+    def active_list(_state_dir):
+        try:
+            return next(snapshots)
+        except StopIteration:
+            spawned[-1][2].returncode = 0
+            return [{"id": "live-1", "title": "sac:ui"}]
+
+    # Act
+    process, result = owner._supervise_tui(
+        [
+            "hermes",
+            "chat",
+            "--tui",
+            "--continue",
+            "sac:ui",
+            "--create-if-missing",
+            "--query",
+            "initial task",
+        ],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=active_list,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    assert (
+        result,
+        process is spawned[-1][2],
+        len(spawned),
+        spawned[0][2].terminated,
+        spawned[1][0],
+    ) == (
+        0,
+        True,
+        2,
+        True,
+        [
+            "hermes",
+            "chat",
+            "--tui",
+            "--continue",
+            "sac:ui",
+            "--create-if-missing",
+        ],
+    )
+
+
+def test_live_owned_session_is_left_untouched(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        del command, env
+        process = _Process()
+        spawned.append(process)
+        return process
+
+    def active_list(_state_dir):
+        spawned[0].returncode = 0
+        return [{"id": "live-1", "title": "sac:ui", "session_key": "stored-1"}]
+
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=active_list,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    assert (result, len(spawned), spawned[0].terminated) == (0, 1, False)
+
+
+def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        del command, env
+        process = _Process()
+        spawned.append(process)
+        return process
+
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=lambda _state_dir: [
+            {"id": "live-1", "title": "sac:ui"},
+            {"id": "live-2", "title": "sac:ui"},
+        ],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    supervision = (tmp_path / owner.SUPERVISION_FILE).read_text(encoding="utf-8")
+    assert (result, len(spawned), spawned[0].terminated, "identity mismatch" in supervision) == (
+        70,
+        1,
+        False,
+        True,
+    )
+
+
+def test_never_observed_reconcile_retry_is_idempotent(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        process = _Process()
+        spawned.append((list(command), env, process))
+        return process
+
+    calls = 0
+
+    def active_list(_state_dir):
+        nonlocal calls
+        calls += 1
+        if calls == 5:
+            spawned[-1][2].returncode = 0
+        return []
+
+    # Act
+    _process, result = owner._supervise_tui(
+        [
+            "hermes",
+            "chat",
+            "--tui",
+            "--continue",
+            "sac:ui",
+            "--create-if-missing",
+            "--query",
+            "initial task",
+        ],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=active_list,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    recovery_commands = [row[0] for row in spawned[1:]]
+    assert (
+        result,
+        len(recovery_commands),
+        len({tuple(command) for command in recovery_commands}),
+        any("--query" in command for command in recovery_commands),
+    ) == (0, 2, 1, False)
