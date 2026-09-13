@@ -26,6 +26,7 @@ import click
 
 from .. import _build_priority
 from . import (
+    _image_distribute_cmd,
     _image_inventory_cmds,
     _image_remote_bake,
     _image_repro_build,
@@ -167,6 +168,7 @@ image_group.add_command(_image_inventory_cmds.image_snapshot)
 # Periodic remote bake (Spartan lease) + pull/verify/atomic-swap —
 # extracted to _image_remote_bake / _remote_bake_core (512-line budget).
 image_group.add_command(_image_remote_bake.image_bake_remote)
+image_group.add_command(_image_distribute_cmd.image_distribute)
 
 
 # ---------------------------------------------------------------------------
