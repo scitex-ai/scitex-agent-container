@@ -205,14 +205,12 @@ def _run_monitor_loop(
     if wait(_stable_initial_delay(config.name)):
         return
     recovered_fingerprint = ""
-    heartbeat_armed = False
+    periodic_wakeup_suspended = False
     while mux.exists(session):
         try:
-            if not heartbeat_armed:
-                from ._hermes_autonomous_wakeup import arm_hermes_autonomous_wakeup
-
-                heartbeat_armed = bool(
-                    arm_hermes_autonomous_wakeup(runtime, config)
+            if not periodic_wakeup_suspended:
+                periodic_wakeup_suspended = bool(
+                    runtime.suspend_autonomous_turns(config)
                 )
             recovered_fingerprint = recovery_tick(
                 config,

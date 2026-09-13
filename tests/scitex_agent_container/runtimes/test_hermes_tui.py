@@ -367,7 +367,6 @@ def test_recovery_uses_supported_same_session_controls_in_order():
         [
             "/heartbeat pause",
             "/model qwen38-27b --provider sac-qwen38-27b --session",
-            "/heartbeat resume",
         ],
     )
 
