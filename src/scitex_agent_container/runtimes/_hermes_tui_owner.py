@@ -51,22 +51,30 @@ def _wait_for_readiness(
     process: subprocess.Popen,
     *,
     timeout_s: float = 30.0,
+    detailed_health: Callable[..., dict] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> dict:
     """Wait for authenticated readiness, not the public liveness route."""
-    from ._hermes_tui_rpc import HermesTuiRpcError, _detailed_health
+    from ._hermes_tui_rpc import HermesTuiRpcError
 
-    deadline = time.monotonic() + timeout_s
+    if detailed_health is None:
+        from ._hermes_tui_rpc import _detailed_health
+
+        detailed_health = _detailed_health
+
+    deadline = monotonic() + timeout_s
     last_error = "no readiness observation"
-    while time.monotonic() < deadline:
+    while monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError(
                 f"Hermes gateway exited before ready (rc={process.returncode})"
             )
         try:
-            return _detailed_health(port, token, timeout_s=1.0)
+            return detailed_health(port, token, timeout_s=1.0)
         except HermesTuiRpcError as exc:
             last_error = str(exc)
-            time.sleep(0.1)
+            sleep(0.1)
     raise RuntimeError(
         f"Hermes gateway did not become ready within {timeout_s:g}s: {last_error}"
     )

@@ -81,6 +81,8 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         rpc_submit: Callable[..., str] | None = None,
         rpc_submit_visible: Callable[..., object] | None = None,
         rpc_pause_heartbeat: Callable[..., str] | None = None,
+        gateway_health: Callable[[Path], dict] | None = None,
+        control_state_reader: Callable[[Path], dict | None] = read_control_state,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -99,6 +101,15 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         self._rpc_submit = rpc_submit
         self._rpc_submit_visible = rpc_submit_visible
         self._rpc_pause_heartbeat = rpc_pause_heartbeat
+        self._gateway_health = gateway_health
+        self._control_state_reader = control_state_reader
+
+    def _read_gateway_health(self, state_dir: Path) -> dict:
+        if self._gateway_health is not None:
+            return self._gateway_health(state_dir)
+        from ._hermes_tui_rpc import gateway_detailed_health
+
+        return gateway_detailed_health(state_dir)
 
     def _start_session(self, config: AgentConfig, **kwargs) -> bool:
         return super().start(config, **kwargs)
@@ -214,20 +225,21 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         )
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
-        from ._hermes_tui_rpc import HermesTuiRpcError, gateway_detailed_health
+        from ._hermes_tui_rpc import HermesTuiRpcError
 
         try:
-            gateway_detailed_health(state_dir_for_config(config))
+            self._read_gateway_health(state_dir_for_config(config))
             return None
         except HermesTuiRpcError as exc:
             return str(exc)
 
     def control_state(self, config: AgentConfig) -> dict | None:
-        from ._hermes_tui_rpc import HermesTuiRpcError, gateway_detailed_health
+        from ._hermes_tui_rpc import HermesTuiRpcError
 
-        state = dict(read_control_state(state_dir_for_config(config)) or {})
+        state_dir = state_dir_for_config(config)
+        state = dict(self._control_state_reader(state_dir) or {})
         try:
-            readiness = gateway_detailed_health(state_dir_for_config(config))
+            readiness = self._read_gateway_health(state_dir)
         except HermesTuiRpcError as exc:
             readiness = {"status": "unavailable", "detail": str(exc)}
         state["gateway_readiness"] = readiness

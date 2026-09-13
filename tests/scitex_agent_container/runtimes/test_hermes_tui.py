@@ -216,14 +216,13 @@ def test_send_key_refuses_when_tmux_session_is_absent():
     assert delivered is False
 
 
-def test_deliverability_requires_authenticated_gateway_readiness(monkeypatch):
+def test_deliverability_requires_authenticated_gateway_readiness():
     # Arrange
-    runtime = HermesTuiSessionRuntime(multiplexer=_Mux())
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_tui_rpc.gateway_detailed_health",
-        lambda _state: (_ for _ in ()).throw(
-            HermesTuiRpcError("Hermes authenticated readiness is degraded")
-        ),
+    def degraded(_state):
+        raise HermesTuiRpcError("Hermes authenticated readiness is degraded")
+
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(), gateway_health=degraded
     )
 
     # Act
@@ -233,20 +232,16 @@ def test_deliverability_requires_authenticated_gateway_readiness(monkeypatch):
     assert reason == "Hermes authenticated readiness is degraded"
 
 
-def test_control_state_surfaces_authenticated_readiness_json(monkeypatch):
+def test_control_state_surfaces_authenticated_readiness_json():
     # Arrange
-    runtime = HermesTuiSessionRuntime(multiplexer=_Mux())
     readiness = {
         "status": "ok",
         "readiness": {"checks": [{"name": "disk", "ok": True}]},
     }
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes.hermes_tui.read_control_state",
-        lambda _state: {"turn_admission": "ready"},
-    )
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_tui_rpc.gateway_detailed_health",
-        lambda _state: readiness,
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(),
+        control_state_reader=lambda _state: {"turn_admission": "ready"},
+        gateway_health=lambda _state: readiness,
     )
 
     # Act

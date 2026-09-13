@@ -66,7 +66,7 @@ def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
     ) == (False, False)
 
 
-def test_gateway_owner_waits_for_authenticated_readiness(monkeypatch):
+def test_gateway_owner_waits_for_authenticated_readiness():
     # Arrange
     process = _Process()
     observations = []
@@ -79,13 +79,16 @@ def test_gateway_owner_waits_for_authenticated_readiness(monkeypatch):
             raise HermesTuiRpcError("degraded")
         return response
 
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_tui_rpc._detailed_health", detailed
-    )
-    monkeypatch.setattr(owner.time, "sleep", lambda _seconds: None)
-
     # Act
-    payload = owner._wait_for_readiness(43123, "secret-token-1234", process)
+    ticks = iter((0.0, 0.0, 0.1, 0.2))
+    payload = owner._wait_for_readiness(
+        43123,
+        "secret-token-1234",
+        process,
+        detailed_health=detailed,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(ticks),
+    )
 
     # Assert
     assert (payload["status"], observations) == (
