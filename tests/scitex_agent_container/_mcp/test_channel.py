@@ -1001,6 +1001,20 @@ def test_should_auto_ack_false_when_sender_missing():
     assert decision is False
 
 
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"from_agent": "bob", "kind": "reaction", "content": "eyes"},
+        {"from_agent": "daemon", "kind": "reminder", "content": "work"},
+        {"from_agent": "system", "content": "notice"},
+    ],
+)
+def test_should_auto_ack_false_for_receipts_and_synthetic_senders(event):
+    from scitex_agent_container._mcp.channel import _should_auto_ack
+
+    assert _should_auto_ack(event) is False
+
+
 @pytest.mark.asyncio
 async def test_push_channel_event_still_injects_notification(fake_listen):
     """Existing push behavior is preserved: the notification reaches the

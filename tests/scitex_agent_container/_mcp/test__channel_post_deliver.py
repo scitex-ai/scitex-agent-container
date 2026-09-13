@@ -27,6 +27,10 @@ import pytest_asyncio
 
 pytest.importorskip("mcp.types")
 
+from scitex_agent_container._mcp._channel_auto_ack import (  # noqa: E402
+    _auto_ack_tripped,
+    _auto_ack_window,
+)
 from scitex_agent_container._mcp._channel_post_deliver import (  # noqa: E402
     run_post_deliver_receipts,
 )
@@ -136,3 +140,48 @@ async def test_run_post_deliver_only_reaction_posts_when_auto_ack_disabled(
         )
     ]
     assert len(reaction_posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_normal_delivery_consumes_one_rate_slot_not_two(fake_listen):
+    _auto_ack_window.clear()
+    _auto_ack_tripped.clear()
+    with _env("SAC_AUTO_ACK_RATE_MAX", "20"):
+        for index in range(11):
+            await run_post_deliver_receipts(
+                {"from_agent": "bob", "content": "hi", "msg_id": f"m{index}"},
+                agent_name="alice",
+                listen_url=fake_listen.base_url,
+                bearer=None,
+            )
+
+    reaction_posts = [
+        payload
+        for _path, payload in fake_listen.posts
+        if payload.get("params", {}).get("metadata", {}).get("kind") == "reaction"
+    ]
+    assert len(reaction_posts) == 11
+    assert len(_auto_ack_window["bob"]) == 11
+    assert "bob" not in _auto_ack_tripped
+
+
+@pytest.mark.asyncio
+async def test_synthetic_daemon_delivery_never_consumes_receipt_budget(fake_listen):
+    _auto_ack_window.clear()
+    _auto_ack_tripped.clear()
+    for index in range(25):
+        await run_post_deliver_receipts(
+            {
+                "from_agent": "daemon",
+                "kind": "reminder",
+                "content": "work",
+                "msg_id": f"m{index}",
+            },
+            agent_name="alice",
+            listen_url=fake_listen.base_url,
+            bearer=None,
+        )
+
+    assert fake_listen.posts == []
+    assert "daemon" not in _auto_ack_window
+    assert "daemon" not in _auto_ack_tripped
