@@ -283,6 +283,14 @@ def start_inbox_bridge(
     env = os.environ.copy()
     env.pop("SCITEX_CARDS_DB", None)
     env["SAC_LISTEN_BEARER"] = bearer
+    # scitex-cards keeps notification-backend selection explicit: the task
+    # store argument passed to poll_notifications identifies the data store,
+    # but the inbox transport itself is selected from SCITEX_CARDS_INBOX_DSN.
+    # Bind that rail to the same canonical Store DSN already validated above.
+    # Do not restore SCITEX_CARDS_DB: it is a legacy, broader alias which can
+    # silently select a second task store from the launching shell.
+    if cards_store is not None:
+        env["SCITEX_CARDS_INBOX_DSN"] = cards_store
     for key in (
         "SCITEX_CARDS_AGENT_ID",
         "SCITEX_CARDS_NOTIFY_DSN",

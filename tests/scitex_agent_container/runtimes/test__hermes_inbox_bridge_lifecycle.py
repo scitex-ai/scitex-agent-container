@@ -113,6 +113,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["env"]["SAC_LISTEN_BEARER"],
         seen["env"]["SCITEX_CARDS_AGENT_ID"],
         seen["env"]["SCITEX_STORE_DSN"],
+        seen["env"]["SCITEX_CARDS_INBOX_DSN"],
         seen["env"]["SCITEX_CARDS_NOTIFY_DSN"],
         (state_dir / lifecycle.PID_FILENAME).read_text(),
     )
@@ -128,6 +129,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         False,
         "secret",
         "scholar",
+        "postgresql://cards-primary:55432/cards",
         "postgresql://cards-primary:55432/cards",
         "postgresql://cards-primary:55433/cards",
         "4242\n",
@@ -164,8 +166,9 @@ def test_start_drops_inherited_cards_store_alias(tmp_path, env_save_restore):
     # Assert
     assert (
         seen["env"]["SCITEX_STORE_DSN"],
+        seen["env"]["SCITEX_CARDS_INBOX_DSN"],
         "SCITEX_CARDS_DB" in seen["env"],
-    ) == (canonical, False)
+    ) == (canonical, canonical, False)
 
 
 def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
