@@ -116,7 +116,7 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="CHANNEL",
         help=(
-            "spec.claude.channels passthrough. Channel adapters are "
+            "spec.comms.channels passthrough. Channel adapters are "
             "Claude-SDK-specific; the codex turn driver warns LOUDLY and "
             "ignores them rather than degrading silently."
         ),

@@ -179,7 +179,7 @@ def _slot_candidates(name: str, workdir: str) -> list[str]:
 
 
 def _channel_requested(config) -> bool:
-    """True iff ``spec.claude.channels`` asks for the telegrammer rail.
+    """True iff ``spec.comms.channels`` asks for the telegrammer rail.
 
     Read by :func:`ensure_cct_bot_token` (whether to resolve at all) and by
     :func:`prune_tokenless_telegrammer_mcp` (whether resolution was even
@@ -295,7 +295,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
 
     candidates = list(resolution.candidates)
     _logger().warning(
-        "cct: no Telegram bot token for agent %r although spec.claude.channels "
+        "cct: no Telegram bot token for agent %r although spec.comms.channels "
         "requests %r. Tried pool slot(s) %s against the pool (%s). Token "
         "resolution itself is non-fatal. THE AGENT STARTS NORMALLY for "
         "non-Hermes harnesses; a selected Hermes CCT profile instead refuses "
@@ -309,7 +309,7 @@ def ensure_cct_bot_token(config, dest: Path) -> None:
         "(canonical pool; restart `sac listen` afterwards if it provides the "
         "env), (2) set spec.apptainer.env %s: <existing-slot> to reuse "
         "another project's bot, or (3) export %s via the project's .envrc "
-        "(%s/.envrc). Or drop %r from spec.claude.channels if this agent "
+        "(%s/.envrc). Or drop %r from spec.comms.channels if this agent "
         "needs no Telegram rail.",
         agent_name,
         _TELEGRAMMER_CHANNEL,

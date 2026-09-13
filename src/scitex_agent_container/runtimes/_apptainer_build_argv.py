@@ -474,7 +474,7 @@ def build_run_argv(
             ):
                 tui_settings = f"{ch}/{_rel}"
                 break
-        # SDK-parity channels: spec.claude.channels → dev-channels flag +
+        # SDK-parity channels: spec.comms.channels → dev-channels flag +
         # an inline ``sac mcp channel`` subscriber MCP (server:sac only).
         from ._apptainer_inner_argv import tui_channel_config
 

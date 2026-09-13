@@ -11,8 +11,6 @@ ApptainerContainerRuntime's resolver API), same as the session-seed suite.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 
@@ -34,6 +32,7 @@ from scitex_agent_container._runners._session_state import (
 )
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import ClaudeSpec
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 _UUID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -212,6 +211,20 @@ def test_derive_drops_telegrammer_channel():
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
     assert out["spec"]["claude"]["channels"] == ["server:sac"]
+
+
+def test_derive_drops_telegrammer_from_neutral_channels():
+    # Arrange
+    doc = _parent_doc()
+    doc["spec"]["comms"] = {
+        "channels": ["server:sac", "server:claude-code-telegrammer"]
+    }
+    # Act
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert out["spec"]["comms"]["channels"] == ["server:sac"]
 
 
 # ─── derive_twin_spec: inheritance / role / to_home / boot-kick ───────────

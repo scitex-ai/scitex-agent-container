@@ -117,7 +117,7 @@ extensions by URI:
 
 | URI | Emitted when | Purpose |
 |---|---|---|
-| `https://scitex.ai/a2a/extensions/sac-push-channel/v1` | `spec.claude.channels` contains `server:sac` | Advertises the in-session MCP push: `sac mcp channel` SSE-subscribes to `/agents/<name>/inbox/stream` and forwards events as `notifications/claude/channel` to the agent's Claude session. `params.sse_path` + `params.mcp_tools` enumerate the wire details. |
+| `https://scitex.ai/a2a/extensions/sac-push-channel/v1` | `spec.comms.channels` contains `server:sac` | Advertises the in-session MCP push: `sac mcp channel` SSE-subscribes to `/agents/<name>/inbox/stream` and forwards events through the selected harness adapter. `params.sse_path` + `params.mcp_tools` enumerate the wire details. |
 
 ### Fleet card fields (`fleet_card`)
 

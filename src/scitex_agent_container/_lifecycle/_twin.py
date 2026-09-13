@@ -221,6 +221,13 @@ def derive_twin_spec(
             claude["channels"] = [
                 c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
             ]
+    comms = spec.get("comms")
+    if isinstance(comms, dict):
+        channels = comms.get("channels")
+        if isinstance(channels, list):
+            comms["channels"] = [
+                c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
+            ]
 
     env = spec.setdefault("env", {})
     if isinstance(env, dict):

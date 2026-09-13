@@ -12,6 +12,9 @@ from scitex_agent_container._lifecycle._engine_select import select_engine_at_st
 from scitex_agent_container._lifecycle._runtime_select import _get_runtime
 from scitex_agent_container.config import load_config
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
+from scitex_agent_container.runtimes._apptainer_inner_argv_tui import (
+    tui_channel_config,
+)
 from scitex_agent_container.runtimes._hermes_profile import (
     validate_hermes_tui_profile,
 )
@@ -30,6 +33,12 @@ def _canonical_hermes_spec() -> dict:
             "to_home_layers": [],
             "startup_prompts": ["Continue the assigned task."],
             "a2a": {"host": "127.0.0.1", "port": 4321},
+            "comms": {
+                "channels": [],
+                "outbound": {"siblings": "allow", "parent": "allow"},
+                "inbound": {"siblings": "allow", "parent": "allow"},
+                "a2a": {"listen": True},
+            },
             "available_engines": {
                 "qwen": {
                     "model": "qwen38-27b",
@@ -51,7 +60,6 @@ def _canonical_hermes_spec() -> dict:
             "available_harnesses": {
                 "hermes": {
                     "session": {"mode": "continue", "max_age_minutes": None},
-                    "channels": [],
                     "background_review": True,
                     "run_budget_seconds": 90,
                     "compression": {
@@ -69,6 +77,83 @@ def _canonical_hermes_spec() -> dict:
     for legacy_key in ("engines", "claude", "watchdog", "container"):
         doc["spec"].pop(legacy_key, None)
     return doc
+
+
+def _canonical_codex_spec() -> dict:
+    doc = explicit_doc(
+        {
+            "harness": "codex",
+            "runtime": "tui",
+            "engine": "qwen",
+            "workdir": "/work",
+            "to_home": "",
+            "to_home_layers": [],
+            "startup_prompts": ["Continue the assigned task."],
+            "a2a": {"host": "127.0.0.1", "port": 4321},
+            "comms": {
+                "channels": ["server:sac"],
+                "outbound": {"siblings": "allow", "parent": "allow"},
+                "inbound": {"siblings": "allow", "parent": "allow"},
+                "a2a": {"listen": True},
+            },
+            "available_engines": {
+                "qwen": {
+                    "model": "qwen38-27b",
+                    "provider": {
+                        "base_url": "http://engine.example:8000/v1",
+                        "auth_token_env": "SAC_TEST_CODEX_ENGINE_KEY",
+                    },
+                    "reasoning_effort": "low",
+                    "max_context_tokens": 1_048_576,
+                }
+            },
+            "available_harnesses": {
+                "codex": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "approval_policy": "never",
+                    "sandbox_mode": "danger-full-access",
+                }
+            },
+        }
+    )
+    for legacy_key in ("engines", "claude", "watchdog", "container"):
+        doc["spec"].pop(legacy_key, None)
+    return doc
+
+
+def test_real_canonical_codex_spec_reaches_the_sac_channel_adapter(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    env_save_restore.set("SAC_TEST_CODEX_ENGINE_KEY", "not-a-real-secret")
+    spec_path = tmp_path / "codex-worker" / "spec.yaml"
+    spec_path.parent.mkdir()
+    spec_path.write_text(
+        yaml.safe_dump(_canonical_codex_spec(), sort_keys=False), encoding="utf-8"
+    )
+
+    # Act
+    config = load_config(spec_path)
+    dev_channels, channel_mcp = tui_channel_config(config)
+    mcp = json.loads(channel_mcp or "{}")
+    sidecar = mcp.get("mcpServers", {}).get("sac", {})
+
+    # Assert
+    assert (
+        config.comms.channels == ["server:sac"]
+        and config.claude.channels == ["server:sac"]
+        and dev_channels == "server:sac"
+        and sidecar.get("command") == "/bin/sh"
+        and sidecar.get("args", [])[-6:]
+        == [
+            "mcp",
+            "channel",
+            "--name",
+            "codex-worker",
+            "--turn-url",
+            "http://127.0.0.1:4321/v1/turn",
+        ]
+    )
 
 
 def test_real_canonical_spec_reaches_hermes_profile_and_argv(
@@ -111,6 +196,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         == "http://engine.example:8000/v1"
         and profile_env == "SAC_TEST_HERMES_ENGINE_KEY=not-a-real-secret\n"
         and config.claude.channels == ["server:sac"]
+        and config.comms.channels == ["server:sac"]
         and config.hermes_compression.threshold == 0.85
         and config.hermes_background_review is True
         and config.hermes_run_budget_seconds == 90
@@ -162,7 +248,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     )
     doc = _canonical_hermes_spec()
     doc["spec"]["to_home"] = str(to_home)
-    doc["spec"]["available_harnesses"]["hermes"]["channels"] = [
+    doc["spec"]["comms"]["channels"] = [
         "server:claude-code-telegrammer"
     ]
     doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"

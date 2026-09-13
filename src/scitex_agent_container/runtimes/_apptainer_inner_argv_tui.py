@@ -154,7 +154,7 @@ def _tui_runner_argv(
     "No MCP servers configured".
 
     Channels (SDK parity — see ``runtimes._sdk_channels.apply_channels``):
-    ``spec.claude.channels`` drives two flags. ``dev_channels`` →
+    ``spec.comms.channels`` drives two flags. ``dev_channels`` →
     ``--dangerously-load-development-channels <set>`` (any channel).
     ``channel_mcp`` → an inline ``--mcp-config`` JSON registering the
     ``sac mcp channel`` stdio subscriber (``server:sac`` only) so the TUI
@@ -357,7 +357,8 @@ def _sac_channel_mcp_server(channel_args: list[str]) -> dict:
 def tui_channel_plan(config: "AgentConfig") -> "ChannelPlan":
     """Compute the shared :class:`ChannelPlan` for a TUI agent from its config.
 
-    The bridge from the TUI's config-shaped inputs (``spec.claude.channels``,
+    The bridge from the normalized runner carrier (authored as
+    ``spec.comms.channels``),
     the resolved ``spec.a2a.port``, the agent name) to the runtime-agnostic
     ``_sdk_channels.compute_channel_plan``. Both :func:`tui_channel_config`
     (the inner ``--mcp-config`` / ``--dangerously-load-development-channels``)
@@ -380,7 +381,7 @@ def tui_channel_plan(config: "AgentConfig") -> "ChannelPlan":
 
 
 def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
-    """Resolve ``spec.claude.channels`` into TUI channel flags.
+    """Resolve authored ``spec.comms.channels`` into TUI channel flags.
 
     Returns ``(dev_channels, channel_mcp_json)`` — SDK parity with
     :func:`runtimes._sdk_channels.apply_channels`:

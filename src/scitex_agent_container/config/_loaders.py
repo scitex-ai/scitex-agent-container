@@ -374,6 +374,10 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # existing sidecar-disable path (A2ASpec.is_disabled) carries
     # both surfaces without a second code branch downstream.
     comms_spec = parse_comms(spec)
+    if not comms_spec.channels and claude_spec.channels:
+        # Migration window for the deployed v3 corpus. Canonical specs with
+        # available_harnesses are validated to use spec.comms.channels.
+        comms_spec.channels = list(claude_spec.channels)
     lineage_spec = parse_lineage(spec)
     delegation_spec = parse_delegation(spec)
     a2a_spec = parse_a2a(spec)
@@ -390,14 +394,18 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # merge for the tools server.
     _sac_optout = str(labels.get("sac-builtin", "")).strip().lower()
     if _sac_optout not in ("off", "false", "0", "no"):
-        if "server:sac" not in {c.strip() for c in claude_spec.channels}:
-            claude_spec.channels.append("server:sac")
+        if "server:sac" not in {c.strip() for c in comms_spec.channels}:
+            comms_spec.channels.append("server:sac")
         if "scitex-agent-container" not in mcp_servers:
             mcp_servers["scitex-agent-container"] = {
                 "type": "stdio",
                 "command": "/opt/venv-sac/bin/sac",
                 "args": ["mcp", "start"],
             }
+    # Runtime adapters still consume the resolved ClaudeSpec while the v4
+    # layering refactor proceeds. Project the one neutral declaration into
+    # that internal carrier; no harness owns the configuration surface.
+    claude_spec.channels = list(comms_spec.channels)
 
     # The engine NAMESPACE this spec can name: the fleet engine library
     # UNION the spec's own ``engines:`` block, spec-local winning a

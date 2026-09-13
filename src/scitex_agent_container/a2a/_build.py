@@ -97,8 +97,10 @@ def build_executor(
             f"agent {name!r}: unknown a2a handler {handler_key!r}; "
             f"pick one of {sorted(HANDLERS)}"
         )
-    claude_block = (v3.get("spec") or {}).get("claude") or {}
-    channels = list(claude_block.get("channels") or [])
+    spec = v3.get("spec") or {}
+    claude_block = spec.get("claude") or {}
+    comms_block = spec.get("comms") or {}
+    channels = list(comms_block.get("channels") or claude_block.get("channels") or [])
     permission_mode = select_permission_mode(claude_block)
     return cls(
         agent_name=name,

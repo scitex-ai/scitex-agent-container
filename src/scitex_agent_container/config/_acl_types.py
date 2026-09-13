@@ -84,8 +84,9 @@ class A2ACommsToggle:
 
 @dataclass
 class CommsSpec:
-    """Top-level ``spec.comms`` block: outbound / inbound / a2a."""
+    """Harness-neutral communication declaration and access policy."""
 
+    channels: list[str] = field(default_factory=list)
     outbound: OutboundCommsSpec = field(default_factory=OutboundCommsSpec)
     inbound: InboundCommsSpec = field(default_factory=InboundCommsSpec)
     a2a: A2ACommsToggle = field(default_factory=A2ACommsToggle)

@@ -5,7 +5,7 @@ one place and the runtime file stays under sac's 512-line cap. Mirrors
 the ``_apptainer_iso_flags.compute_iso_prepend`` extraction pattern.
 
 The in-container ``sac mcp channel`` adapter (registered when
-``spec.claude.channels`` contains ``server:sac``) resolves the bus from
+``spec.comms.channels`` contains ``server:sac``) resolves the bus from
 two env vars at start:
 
 * ``SAC_LISTEN_BASE_URL`` — the host-stable ``sac listen`` URL the
@@ -201,7 +201,7 @@ def listen_env_flags(config, *, include_listener: bool = True) -> list[str]:
             flags += ["--env", f"SAC_LISTEN_BEARER={bearer}"]
         elif wants_bus:
             raise RuntimeError(
-                "spec.claude.channels includes 'server:sac' but the bus bearer "
+                "spec.comms.channels includes 'server:sac' but the bus bearer "
                 f"token file {_listen_token_path()} is absent or empty, so the "
                 "in-container channel adapter could never authenticate to "
                 "`sac listen` (401). Subscriptions would never land and every "

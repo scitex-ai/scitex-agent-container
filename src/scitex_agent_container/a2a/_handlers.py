@@ -42,7 +42,7 @@ EXEC_TIMEOUT_S = float(_sac_env("A2A_EXEC_TIMEOUT_S", "25"))
 # want sac to override the operator's prompt for the A2A turn path.
 #
 # Prior versions of this file hardcoded `"Do not run any tools"` in
-# the default — that silently neutered `spec.claude.channels:
+# the default — that silently neutered `spec.comms.channels:
 # [server:sac]` (tools registered, then refused). Removed wholesale:
 # no surprise prompts in production.
 
@@ -163,7 +163,7 @@ def handle_claude_session(
     # pass None and the agent uses its own configured persona.
     system = _sac_env("A2A_CLAUDE_SYSTEM", "").strip() or None
     model = _sac_env("A2A_CLAUDE_MODEL")
-    # Forward `spec.claude.channels` + the agent's own A2A port. The sac
+    # Forward `spec.comms.channels` + the agent's own A2A port. The sac
     # MCP sidecar (auto-injected when `server:sac` is in channels)
     # subscribes to the inbox SSE on the BUS (`sac listen`, resolved from
     # SAC_LISTEN_BASE_URL), not the a2a_port. a2a_port is forwarded only so
