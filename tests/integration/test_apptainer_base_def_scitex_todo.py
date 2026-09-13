@@ -161,9 +161,9 @@ def _effective_floor(
 @pytest.mark.parametrize(
     ("install_requirement", "project_requirement", "expected"),
     [
-        ("/opt/scitex-cards-src[mcp,postgres]", "scitex-cards>=0.52.0", (0, 52, 0)),
+        ("/opt/scitex-cards-src[mcp,postgres]", "scitex-cards>=0.52.1", (0, 52, 1)),
         ("/opt/scitex-cards-src[mcp,postgres]", "scitex-cards", None),
-        ("scitex-cards", "scitex-cards>=0.52.0", None),
+        ("scitex-cards", "scitex-cards>=0.52.1", None),
     ],
 )
 def test_effective_floor_trusts_the_project_floor_only_for_the_exact_staged_path(
@@ -305,6 +305,19 @@ def test_uv_pip_install_block_pins_scitex_todo_minimum_version(
         f" source; got install={requirement!r}, project={project_requirement!r}"
         f" in:\n{block}"
     )
+
+
+def test_project_floor_excludes_cards_that_read_the_retired_local_config(
+    project_requirement: str,
+) -> None:
+    # Arrange — v0.52.0 predates Cards #1005. It still consults
+    # ~/.scitex/cards/config.json and can therefore route one unattended client
+    # to the retired loopback database instead of scitex-dev's shared store.
+    minimum = (0, 52, 1)
+    # Act
+    floor = _requirement_floor(project_requirement)
+    # Assert
+    assert floor is not None and floor >= minimum, project_requirement
 
 
 def test_scitex_todo_floor_is_at_least_the_wip_gate_capability(
