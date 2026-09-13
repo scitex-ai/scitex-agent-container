@@ -64,7 +64,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .._state.host_scratch import ScratchRoot, ScratchRootError, resolve_scratch_root
+from .._state.host_scratch import (
+    SCRATCH_AGENTS_SUBDIR,
+    ScratchRoot,
+    ScratchRootError,
+    resolve_scratch_root,
+    scratch_agent_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +80,8 @@ UVWORK_CONTAINER_PATH = "/uvwork"
 #: Owner-only: one agent's venv, uv cache and TMPDIR are its private working set.
 UVWORK_DIR_MODE = 0o700
 
+
 #: ``<scratch_root>/sac/agents/<agent>/uvwork`` — the per-agent layout.
-SCRATCH_AGENTS_SUBDIR = ("sac", "agents")
-
-
 def uvwork_agent_key(config) -> str:
     """The agent identity that becomes a scratch path component for ``config``.
 
@@ -96,11 +100,7 @@ def scratch_uvwork_dir(root: Path, agent: str) -> Path:
     name that is empty, ``.``/``..`` or carries a separator is refused here
     rather than resolving to somebody else's directory.
     """
-    if not agent or agent in (".", "..") or "/" in agent or os.sep in agent:
-        raise ValueError(
-            f"agent name {agent!r} cannot be a scratch path component under {root}"
-        )
-    return root.joinpath(*SCRATCH_AGENTS_SUBDIR, agent, "uvwork")
+    return scratch_agent_dir(root, agent) / "uvwork"
 
 
 def scratch_uvwork_dir_for(root: Path, config) -> Path:

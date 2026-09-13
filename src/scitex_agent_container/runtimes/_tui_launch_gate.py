@@ -56,6 +56,14 @@ def run_launch_gate(config: Any, argv: list[str], *, state_dir: Path) -> None:
     with a soft ``False`` (see ``_state.host_scratch.ScratchRootError`` and
     ``_entry_point_gate``'s own error for the two that can fire).
     """
+    from ._launch_storage import verify_launch_storage
+
+    verify_launch_storage(argv)
+
+    from ._apptainer_tmpfs import verify_tmpfs_headroom
+
+    verify_tmpfs_headroom(config, state_dir)
+
     from ._apptainer_scratch import ensure_uvwork_for_launch
 
     ensure_uvwork_for_launch(config, argv)

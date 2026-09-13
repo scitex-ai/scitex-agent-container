@@ -105,7 +105,20 @@ def test_full_template_declares_directory_overlay(tmp_path: Path) -> None:
     # Act
     overlay = doc["spec"]["apptainer"]["overlay"]
     # Assert — persistent per-agent overlay (MISSING on the stale template).
-    assert overlay.endswith("/overlays/proj-x/")
+    assert overlay.endswith("/sac/agents/proj-x/overlay")
+
+
+def test_minimal_template_declares_scratch_overlay(tmp_path: Path) -> None:
+    # Arrange
+    runner = CliRunner()
+    base = tmp_path / "agents"
+    # Act
+    runner.invoke(
+        create_cmd, ["minimal-x", "--base-dir", str(base), "--template", "minimal"]
+    )
+    doc = yaml.safe_load((base / "minimal-x" / "spec.yaml").read_text())
+    # Assert
+    assert doc["spec"]["apptainer"]["overlay"].endswith("/sac/agents/minimal-x/overlay")
 
 
 def test_full_template_wires_scitex_cards_agent_id(tmp_path: Path) -> None:

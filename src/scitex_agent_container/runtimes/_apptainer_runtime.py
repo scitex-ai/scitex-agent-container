@@ -154,6 +154,11 @@ class ApptainerContainerRuntime(RuntimeBase):
 
         return image_artifact_identity(path)
 
+    def resolved_storage_identity(self) -> dict[str, str] | None:
+        """Exact write-heavy paths selected for this runtime's last launch."""
+        value = getattr(self, "_resolved_launch_storage", None)
+        return dict(value) if value is not None else None
+
     # ------------------------------------------------------------------
     # lifecycle
     # ------------------------------------------------------------------
@@ -229,6 +234,11 @@ class ApptainerContainerRuntime(RuntimeBase):
         from ._apptainer_tmpfs import verify_tmpfs_headroom
 
         verify_tmpfs_headroom(config, state_dir)
+
+        from ._launch_storage import launch_storage_identity, verify_launch_storage
+
+        verify_launch_storage(argv)
+        self._resolved_launch_storage = launch_storage_identity(argv)
 
         # /uvwork LIVES ON SCRATCH (ADR-0024) — create the bind source, and
         # REFUSE when this host has nowhere to put it.

@@ -334,7 +334,8 @@ def build_run_argv(
     # Sized /tmp scratch (spec.apptainer.tmpfs_size, default "2G").
     # A --containall container otherwise gets a 64 MB session tmpfs
     # at /tmp, which fills mid-run during the full test suite. The
-    # helper emits `--workdir <state_dir>/tmp-scratch` to relocate
+    # helper emits `--workdir <scratch_root>/sac/agents/<agent>/
+    # apptainer-workdir` to relocate
     # /tmp + /var/tmp onto the host filesystem (capacity >> 64 MB)
     # and fails loud (TmpfsSpaceError) if that filesystem has less
     # than tmpfs_size free. No-op when tmpfs_size is "" (opt-out) or

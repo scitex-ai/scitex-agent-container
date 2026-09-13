@@ -369,7 +369,23 @@ def record_local_instance(
             exc,
         )
         image_identity = None
-    write_birth_certificate(config, instance_id, image_identity=image_identity)
+    storage_reader = getattr(runtime, "resolved_storage_identity", None)
+    try:
+        storage_identity = storage_reader() if callable(storage_reader) else None
+    except OSError as exc:
+        logger.error(
+            "storage identity NOT recorded for incarnation %s (agent %s): %s",
+            instance_id,
+            config.name,
+            exc,
+        )
+        storage_identity = None
+    write_birth_certificate(
+        config,
+        instance_id,
+        image_identity=image_identity,
+        storage_identity=storage_identity,
+    )
     return instance_id
 
 
