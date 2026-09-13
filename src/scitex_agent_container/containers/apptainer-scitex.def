@@ -369,10 +369,9 @@ From: ./sac-base.sif
         # attribute read AND WROTE the host store (cross-tenant under a
         # multi-tenant mount). Verified in the artifact: the 0.19.0 wheel has 0
         # occurrences of that fallback, the copy in the CURRENT image has 1.
-        # CURRENT DELIVERY EXCEPTION (Cards #1003): reinstall the exact staged
-        # merge commit after the broader scientific-stack resolution, which
-        # could otherwise replace base's source build with the older v0.52.0
-        # wheel. This is immutable source, never a moving Git branch.
+        # Reinstall the exact staged 0.52.1 release commit after the broader
+        # scientific-stack resolution. This is immutable source, never a
+        # moving Git branch.
         uv pip install --no-cache --python /opt/venv-sac/bin/python \
             --reinstall-package scitex-cards \
             "/opt/scitex-cards-src[mcp,postgres]"
@@ -699,7 +698,7 @@ if failures:
 
 print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "ce192fe043babe9f476f6d48490b35f933fe4b90"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "9733e1d5f2c29a6a9376392d0f7246e7eabddff6"
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
 
@@ -806,7 +805,7 @@ EOF
     org.scitex.layer scitex
     org.scitex.runtime apptainer
     org.scitex.from scitex-agent-container:base
-    org.scitex.cards.commit ce192fe043babe9f476f6d48490b35f933fe4b90
+    org.scitex.cards.commit 9733e1d5f2c29a6a9376392d0f7246e7eabddff6
     org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest build hatchling latex latexmk biber"
 
 %help
