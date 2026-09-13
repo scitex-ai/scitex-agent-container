@@ -541,22 +541,30 @@ def test_codex_session_exposes_the_native_active_turn_and_steers_it():
 
 def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():
     # Arrange
-    async def _scenario() -> list[str]:
+    async def _scenario() -> tuple[str | None, list[str]]:
         handle = _NativeTurnHandle()
         session = CodexSession("ag-cx-stale")
         session._started = True
         session._active_turn = handle
-        with pytest.raises(CodexSessionError, match="active Codex turn changed"):
+        try:
             await session.steer(
                 SimpleNamespace(role="user", content="must not send"),
                 expected_turn_id="turn_old",
             )
-        return handle.steered
+        except CodexSessionError as exc:
+            detail = str(exc)
+        else:
+            detail = None
+        return detail, handle.steered
 
     # Act
-    steered = asyncio.run(_scenario())
+    detail, steered = asyncio.run(_scenario())
     # Assert: local compare prevents an ambiguous RPC against a newer turn.
-    assert steered == []
+    assert (detail, steered) == (
+        "active Codex turn changed: expected 'turn_old', "
+        "observed 'turn_native_1'.",
+        [],
+    )
 
 
 @pytest.mark.parametrize(
@@ -637,7 +645,7 @@ def test_driver_reports_neutral_steer_failure_without_replaying_as_a_turn(
     tmp_path, channels
 ):
     # Arrange
-    async def _scenario() -> tuple[str, int]:
+    async def _scenario() -> tuple[str | None, str, int]:
         inbox = make_inbox()
         stop = asyncio.Event()
         first = TurnEnvelope(
@@ -667,25 +675,33 @@ def test_driver_reports_neutral_steer_failure_without_replaying_as_a_turn(
         session = _RejectingNativeSteerSession.latest
         await session.handle.started.wait()
         await inbox.put(rejected)
-        with pytest.raises(RuntimeError, match="turn/steer rejected"):
+        try:
             await rejected.response
+        except RuntimeError as exc:
+            detail = str(exc)
+        else:
+            detail = None
         session.handle.release.set()
         await first.response
         await inbox.put(ShutdownEnvelope())
         await driver
-        return rejected.text, len(session.handle.steered)
+        return detail, rejected.text, len(session.handle.steered)
 
     # Act
-    text, replay_count = asyncio.run(
+    detail, text, replay_count = asyncio.run(
         asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S)
     )
     # Assert: an ambiguous failed acknowledgement is surfaced, never resent.
-    assert (text, replay_count) == ("do not replay", 0)
+    assert (detail, text, replay_count) == (
+        "turn/steer rejected",
+        "do not replay",
+        0,
+    )
 
 
 def test_driver_resolves_accepted_steer_with_the_active_turn_crash(tmp_path):
     # Arrange
-    async def _scenario() -> str:
+    async def _scenario() -> tuple[str | None, str | None]:
         inbox = make_inbox()
         first = TurnEnvelope(
             text="first", response=asyncio.get_running_loop().create_future()
@@ -714,16 +730,24 @@ def test_driver_resolves_accepted_steer_with_the_active_turn_crash(tmp_path):
         while not session.handle.steered:
             await asyncio.sleep(0)
         session.handle.release.set()
-        with pytest.raises(RuntimeError, match="native turn crashed"):
+        try:
             await driver
-        with pytest.raises(RuntimeError, match="native turn crashed") as seen:
+        except RuntimeError as exc:
+            driver_detail = str(exc)
+        else:
+            driver_detail = None
+        try:
             await steered.response
-        return str(seen.value)
+        except RuntimeError as exc:
+            steer_detail = str(exc)
+        else:
+            steer_detail = None
+        return driver_detail, steer_detail
 
     # Act
-    detail = asyncio.run(asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S))
+    details = asyncio.run(asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S))
     # Assert
-    assert detail == "native turn crashed"
+    assert details == ("native turn crashed", "native turn crashed")
 
 
 # ---------------------------------------------------------------------------
