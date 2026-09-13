@@ -195,6 +195,48 @@ def test_same_source_different_target_overwrites_with_replace(pg_schema: str) ->
     assert info["a2a_port"] == 9000
 
 
+def test_spec_claim_replaces_same_origin_self_peer_pointer(pg_schema: str) -> None:
+    # Arrange — listener discovery wrote its host-level port first.
+    register_comms_node(
+        name="lead-spec-owner",
+        host=THIS_NODE,
+        a2a_port=7878,
+        kind="self-peer",
+    )
+    # Act — a live spec incarnation owns its per-agent A2A endpoint.
+    result = register_comms_node(
+        name="lead-spec-owner",
+        host=THIS_NODE,
+        a2a_port=19003,
+        kind="spec",
+        source_path="/agents/scitex-lead/spec.yaml",
+        replace=True,
+    )
+    info = lookup_comms_node(name="lead-spec-owner")
+    # Assert
+    observed = (result, None if info is None else info["a2a_port"])
+    assert observed == ("replaced", 19003)
+
+
+def test_spec_replace_still_refuses_cross_origin_claim(pg_schema: str) -> None:
+    # Arrange — this node owns the existing global name.
+    register_comms_node(name="foreign-spec-owner", host=THIS_NODE, a2a_port=7878)
+    # Act
+    def _replace_foreign_origin() -> None:
+        register_comms_node(
+            name="foreign-spec-owner",
+            host=FOREIGN_HOST,
+            a2a_port=19003,
+            source_host=FOREIGN_HOST,
+            kind="spec",
+            replace=True,
+        )
+
+    # Assert — ``replace`` is not authority over another origin.
+    with pytest.raises(CommsNodeConflictError):
+        _replace_foreign_origin()
+
+
 def test_conflict_message_names_the_incoming_kind(pg_schema: str) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
@@ -245,7 +287,7 @@ def test_conflict_message_names_the_existing_target(pg_schema: str) -> None:
     assert raised is not None and "8642" in str(raised)
 
 
-def test_conflict_message_mentions_the_prefer_flag_hint(pg_schema: str) -> None:
+def test_conflict_message_names_the_exposed_spec_restart_repair(pg_schema: str) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     raised: BaseException | None = None
@@ -257,7 +299,8 @@ def test_conflict_message_mentions_the_prefer_flag_hint(pg_schema: str) -> None:
     ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
         raised = exc
     # Assert
-    assert raised is not None and "--prefer" in str(raised)
+    message = str(raised)
+    assert ("starting/restarting" in message, "--prefer" in message) == (True, False)
 
 
 def test_a_refused_write_leaves_the_record_unchanged(pg_schema: str) -> None:

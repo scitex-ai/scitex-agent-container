@@ -105,6 +105,36 @@ def test_record_local_instance_persists_resolved_a2a_port(db_path, tmp_path) -> 
     assert row["a2a_port"] == 7901
 
 
+def test_live_spec_incarnation_owns_same_origin_comms_pointer(
+    db_path, tmp_path, caplog
+) -> None:
+    # Arrange — the listener's generic self-peer pointer predates the launch.
+    from scitex_agent_container._lifecycle._instances import record_local_instance
+    from scitex_agent_container._state.state_store import _resolve_host
+    from scitex_agent_container._state.state_store_nodes import (
+        lookup_comms_node,
+        register_comms_node,
+    )
+
+    name = "rec-spec-owner"
+    host = _resolve_host(None)
+    register_comms_node(name=name, host=host, a2a_port=7878, kind="self-peer")
+    _claim_port(name, 19003)
+    cfg = AgentConfig(name=name, runtime="apptainer")
+    caplog.set_level("INFO", logger="scitex_agent_container._lifecycle._instances")
+    # Act
+    incarnation_id = record_local_instance(cfg, _RuntimeStub(tmp_path))
+    info = lookup_comms_node(name=name)
+    # Assert — routing and the operator log identify the winning incarnation.
+    observed = (
+        None if info is None else info["a2a_port"],
+        incarnation_id is not None,
+        f"incarnation_id={incarnation_id}" in caplog.text,
+        "result=replaced" in caplog.text,
+    )
+    assert observed == (19003, True, True, True)
+
+
 def test_record_local_instance_mirrors_bound_port(db_path, tmp_path) -> None:
     # Arrange — local row's bound_port mirrors the allocator-claimed port.
     from scitex_agent_container._lifecycle._instances import record_local_instance

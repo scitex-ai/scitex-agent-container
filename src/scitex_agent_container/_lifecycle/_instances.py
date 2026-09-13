@@ -262,7 +262,7 @@ def record_local_instance(
                 register_comms_node,
             )
 
-            register_comms_node(
+            registration_result = register_comms_node(
                 name=config.name,
                 host=host,
                 a2a_port=int(a2a_port),
@@ -277,6 +277,21 @@ def record_local_instance(
                 source_path=getattr(config, "config_path", None)
                 or getattr(config, "spec_path", None)
                 or f"<spec:{config.name}>",
+                # A successful spec-driven launch is the canonical live
+                # incarnation on this host.  It therefore owns the
+                # same-origin routing pointer and replaces stale listener /
+                # self-peer discovery ports.  The primitive still refuses
+                # every cross-origin claim before consulting ``replace``.
+                replace=True,
+            )
+            logger.info(
+                "comms_nodes registration OWNED by live spec incarnation: "
+                "name=%r incarnation_id=%s endpoint=%s:%d result=%s",
+                config.name,
+                instance_id,
+                host,
+                int(a2a_port),
+                registration_result,
             )
         except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
             logger.warning(
