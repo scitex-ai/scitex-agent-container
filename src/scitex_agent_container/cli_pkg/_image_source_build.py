@@ -568,6 +568,38 @@ def _stage_cards_source(build_context: Path) -> Path:
     return stage_cards_source(build_context)
 
 
+def stage_layer_build_context(
+    *,
+    layer: str,
+    pkg_root: Path,
+    def_path: Path,
+    staging_dir: Path,
+    bootstrap_sif: Path | None = None,
+    stage_cards: Callable[[Path], Path] | None = None,
+    stage_hermes: Callable[[Path], Path] | None = None,
+) -> Path:
+    """Stage every source input required by one image layer.
+
+    This is the single staging policy shared by ordinary and reproducible
+    builds. Keeping the layer-to-source mapping here prevents the round-trip
+    path from drifting behind the ordinary build whenever a recipe gains a
+    new relative ``%files`` source.
+    """
+    staged_def = stage_build_context(
+        pkg_root,
+        def_path,
+        staging_dir,
+        bootstrap_sif=bootstrap_sif,
+    )
+    cards_stager = stage_cards or _stage_cards_source
+    hermes_stager = stage_hermes or _stage_hermes_source
+    if layer in {"base", "scitex"}:
+        cards_stager(staging_dir)
+    if layer == "base":
+        hermes_stager(staging_dir)
+    return staged_def
+
+
 def build_layer_from_source(
     *,
     layer: str,
@@ -640,13 +672,13 @@ def build_layer_from_source(
     artifact_dir = output_dir / f"sac-{layer}"
     with image_build_lock(artifact_dir, layer=layer):
         staging_dir = artifact_dir / "build-context"
-        staged_def = stage_build_context(
-            pkg_root, def_path, staging_dir, bootstrap_sif=bootstrap_sif
+        staged_def = stage_layer_build_context(
+            layer=layer,
+            pkg_root=pkg_root,
+            def_path=def_path,
+            staging_dir=staging_dir,
+            bootstrap_sif=bootstrap_sif,
         )
-        if layer in {"base", "scitex"}:
-            _stage_cards_source(staging_dir)
-        if layer == "base":
-            _stage_hermes_source(staging_dir)
 
         image_name = f"sac-{layer}"
         result = _container_build(
