@@ -135,25 +135,12 @@ def test_real_canonical_codex_spec_reaches_the_sac_channel_adapter(
     # Act
     config = load_config(spec_path)
     dev_channels, channel_mcp = tui_channel_config(config)
-    mcp = json.loads(channel_mcp or "{}")
-    sidecar = mcp.get("mcpServers", {}).get("sac", {})
 
     # Assert
-    assert (
-        config.comms.channels == ["server:sac"]
-        and config.claude.channels == ["server:sac"]
-        and dev_channels == "server:sac"
-        and sidecar.get("command") == "/bin/sh"
-        and sidecar.get("args", [])[-6:]
-        == [
-            "mcp",
-            "channel",
-            "--name",
-            "codex-worker",
-            "--turn-url",
-            "http://127.0.0.1:4321/v1/turn",
-        ]
-    )
+    assert config.comms.channels == ["server:sac"]
+    assert config.claude.channels == ["server:sac"]
+    assert dev_channels is None
+    assert channel_mcp is None
 
 
 def test_real_canonical_spec_reaches_hermes_profile_and_argv(

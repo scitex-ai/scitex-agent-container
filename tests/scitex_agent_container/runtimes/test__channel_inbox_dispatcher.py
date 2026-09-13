@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from scitex_agent_container.runtimes import _hermes_inbox_bridge as bridge
+from scitex_agent_container.runtimes import _channel_inbox_dispatcher as bridge
 
 
 def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
@@ -77,5 +77,5 @@ def test_consumer_refuses_to_subscribe_without_bearer():
     # Assert
     assert (type(error), str(error)) == (
         RuntimeError,
-        "SAC listen bearer is required for Hermes inbox delivery",
+        "SAC listen bearer is required for channel inbox delivery",
     )

@@ -188,7 +188,7 @@ def start_turn_bridge(
         # The host-side bridge writes the same canonical exchange ledger as
         # Cards. Its child must receive the config-resolved store identity,
         # not an unrelated SCITEX_STORE_DSN inherited from the operator shell.
-        from ._hermes_inbox_bridge_lifecycle import effective_cards_store
+        from ._channel_inbox_dispatcher_lifecycle import effective_cards_store
 
         cards_env, _cards_store = effective_cards_store(config)
         env = os.environ.copy()

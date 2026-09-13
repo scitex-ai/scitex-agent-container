@@ -61,7 +61,7 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
         )
     )
     if "server:scitex-cards" in declared:
-        from ..runtimes._hermes_inbox_bridge_lifecycle import (
+        from ..runtimes._channel_inbox_dispatcher_lifecycle import (
             cards_store_check,
             effective_cards_store,
         )

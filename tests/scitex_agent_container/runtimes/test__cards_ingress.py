@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from scitex_agent_container.runtimes import _hermes_cards_ingress as ingress
+from scitex_agent_container.runtimes import _cards_ingress as ingress
 from scitex_agent_container.runtimes import _tui_turn_bridge as turn_bridge
 
 

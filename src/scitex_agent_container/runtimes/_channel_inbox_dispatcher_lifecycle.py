@@ -1,4 +1,4 @@
-"""Host-side lifecycle for Hermes' authenticated SAC inbox consumer."""
+"""Host-side lifecycle for the harness-neutral durable inbox dispatcher."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
 log = logging.getLogger(__name__)
-MODULE_PATH = "scitex_agent_container.runtimes._hermes_inbox_bridge"
-PID_FILENAME = "hermes-inbox-bridge.pid"
-LOG_FILENAME = "hermes-inbox-bridge.log"
+MODULE_PATH = "scitex_agent_container.runtimes._channel_inbox_dispatcher"
+PID_FILENAME = "channel-inbox-dispatcher.pid"
+LOG_FILENAME = "channel-inbox-dispatcher.log"
 _STOP_GRACE_S = 5.0
 _CARDS_HEALTH_PROGRAM = """
 import json
@@ -46,7 +46,7 @@ def _argv_value(argv: list[str], flag: str) -> str | None:
         return None
 
 
-def _owns_bridge_process(
+def _owns_dispatcher_process(
     pid: int,
     *,
     name: str,
@@ -66,25 +66,25 @@ def _owns_bridge_process(
     )
 
 
-def bridge_running(config: AgentConfig) -> bool:
+def dispatcher_running(config: AgentConfig) -> bool:
     try:
         pid = int(_pid_path(config).read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return False
-    return _owns_bridge_process(
+    return _owns_dispatcher_process(
         pid,
         name=config.name,
         config_path=str(getattr(config, "config_path", "") or ""),
     )
 
 
-def stop_inbox_bridge(
+def stop_inbox_dispatcher(
     config: AgentConfig,
     *,
     kill: Callable[[int, int], None] = os.kill,
     sleep: Callable[[float], None] = time.sleep,
     state_dir: Path | None = None,
-    owns: Callable[..., bool] = _owns_bridge_process,
+    owns: Callable[..., bool] = _owns_dispatcher_process,
 ) -> bool:
     """Stop only the identity-proven bridge recorded for this agent."""
     path = (state_dir / PID_FILENAME) if state_dir is not None else _pid_path(config)
@@ -96,7 +96,7 @@ def stop_inbox_bridge(
     config_path = str(getattr(config, "config_path", "") or "")
     if not owns(pid, name=config.name, config_path=config_path):
         log.warning(
-            "Hermes inbox bridge PID %s is not owned by %s; not signalling",
+            "channel inbox dispatcher PID %s is not owned by %s; not signalling",
             pid,
             config.name,
         )
@@ -213,7 +213,7 @@ def effective_cards_store(config: AgentConfig) -> tuple[dict[str, str], str | No
         raw_args_env(getattr(getattr(config, "apptainer", None), "raw_args", None))
     )
     cards_env["SCITEX_CARDS_AGENT_ID"] = config.name
-    from ._hermes_cards_ingress import canonical_store_dsn
+    from ._cards_ingress import canonical_store_dsn
 
     store = canonical_store_dsn(cards_env)
     return cards_env, store
@@ -226,12 +226,28 @@ def _cards_store_usable(
     check = cards_store_check(name, store, env)
     if check.to_dict()["ok"] is not True:
         raise RuntimeError(
-            "Hermes Cards ingress cannot authenticate/use its effective store; "
+            "Cards ingress cannot authenticate/use its effective store; "
             f"{check.detail}. {check.hint}; then retry `sac agents start`."
         )
 
 
-def start_inbox_bridge(
+def declared_durable_channels(config: AgentConfig) -> tuple[str, ...]:
+    """Return durable inbound rails from the harness-neutral declaration."""
+    comms = getattr(config, "comms", None)
+    authored = getattr(comms, "channels", None)
+    if authored is None:
+        authored = getattr(getattr(config, "claude", None), "channels", [])
+    supported = {"server:sac", "server:scitex-cards"}
+    return tuple(
+        dict.fromkeys(
+            str(channel).strip()
+            for channel in (authored or [])
+            if str(channel).strip() in supported
+        )
+    )
+
+
+def start_inbox_dispatcher(
     config: AgentConfig,
     *,
     spawn: Callable[..., Any] = subprocess.Popen,
@@ -242,16 +258,19 @@ def start_inbox_bridge(
     bearer: str | None = None,
     base_url: str | None = None,
     state_dir: Path | None = None,
-    stop: Callable[..., bool] = stop_inbox_bridge,
+    stop: Callable[..., bool] = stop_inbox_dispatcher,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """Start one explicit-ack consumer after its listener route is reachable."""
+    """Start one explicit-ack consumer after its declared rails are reachable."""
+    channels = declared_durable_channels(config)
+    if not channels:
+        return 0
     port = resolved_a2a_port(config)
     config_path = str(getattr(config, "config_path", "") or "")
     if port is None:
-        raise RuntimeError("Hermes inbox delivery requires a resolved spec.a2a.port")
+        raise RuntimeError("channel inbox delivery requires a resolved spec.a2a.port")
     if not config_path:
-        raise RuntimeError("Hermes inbox delivery requires config.config_path")
+        raise RuntimeError("channel inbox delivery requires config.config_path")
     bearer = bearer or _read_listen_bearer()
     if not bearer:
         raise RuntimeError("SAC listen bearer is absent; refusing a deaf Hermes launch")
@@ -259,8 +278,11 @@ def start_inbox_bridge(
     # Apptainer.  Give both the SAME effective store identity; inheriting only
     # the operator shell made Cards delivery depend on which shell launched
     # SAC and could poll a different/absent store.
-    cards_env, cards_store = effective_cards_store(config)
-    cards_preflight(config.name, cards_store, cards_env)
+    cards_env: dict[str, str] = {}
+    cards_store: str | None = None
+    if "server:scitex-cards" in channels:
+        cards_env, cards_store = effective_cards_store(config)
+        cards_preflight(config.name, cards_store, cards_env)
     stop(config)
     base_url = (base_url or listen_base_url()).rstrip("/")
     stream_url = f"{base_url}/agents/{config.name}/inbox/stream?ack=explicit"
@@ -280,6 +302,8 @@ def start_inbox_bridge(
         "--config-path",
         config_path,
     ]
+    for channel in channels:
+        argv += ["--channel", channel]
     env = os.environ.copy()
     env.pop("SCITEX_CARDS_DB", None)
     env["SAC_LISTEN_BEARER"] = bearer
@@ -315,7 +339,7 @@ def start_inbox_bridge(
         )
     pid = getattr(process, "pid", None)
     if not isinstance(pid, int):
-        raise RuntimeError("Hermes inbox bridge spawn returned no PID")
+        raise RuntimeError("channel inbox dispatcher spawn returned no PID")
     pid_path = state_dir / PID_FILENAME
     pid_path.write_text(f"{pid}\n", encoding="utf-8")
     sleep(0.2)
@@ -323,7 +347,7 @@ def start_inbox_bridge(
     if callable(poll) and poll() is not None:
         pid_path.unlink(missing_ok=True)
         raise RuntimeError(
-            f"Hermes inbox bridge exited during startup; inspect "
+            f"channel inbox dispatcher exited during startup; inspect "
             f"{state_dir / LOG_FILENAME}"
         )
     return pid
@@ -333,7 +357,8 @@ __all__ = [
     "LOG_FILENAME",
     "MODULE_PATH",
     "PID_FILENAME",
-    "bridge_running",
-    "start_inbox_bridge",
-    "stop_inbox_bridge",
+    "declared_durable_channels",
+    "dispatcher_running",
+    "start_inbox_dispatcher",
+    "stop_inbox_dispatcher",
 ]

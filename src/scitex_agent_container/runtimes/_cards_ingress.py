@@ -1,4 +1,11 @@
-"""Durably deliver SciTeX Cards notifications into a Hermes TUI."""
+"""Translate and durably deliver SciTeX Cards notifications.
+
+This module owns the Cards source adapter only.  It knows how to poll and
+confirm Cards notifications, but it deliberately knows nothing about the
+selected agent harness.  The channel inbox dispatcher supplies the delivery
+callable and confirms a Cards row only after that target adapter returns a
+positive receipt.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +32,7 @@ def canonical_store_dsn(environ: Mapping[str, str]) -> str:
     store = environ.get("SCITEX_STORE_DSN")
     if not store:
         raise RuntimeError(
-            "Hermes Cards ingress requires SCITEX_STORE_DSN; configure the "
+            "Cards ingress requires SCITEX_STORE_DSN; configure the "
             "canonical shared PostgreSQL store on port 55432 and restart the agent"
         )
     try:
@@ -113,7 +120,7 @@ async def drain_once(
     ack_notifications: Callable[..., dict] | None = None,
     deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> int:
-    """Deliver and confirm a batch; never ACK before Hermes visibility."""
+    """Deliver and confirm a batch; never ACK before target visibility."""
     if poll_notifications is None or ack_notifications is None:
         default_poll, default_ack, _default_watch = _cards_api()
         poll_notifications = poll_notifications or default_poll
@@ -160,8 +167,8 @@ async def drain_once(
             _log_check(
                 logging.WARNING,
                 Check.unknown(
-                    "hermes_transcript_visible",
-                    "the bridge did not establish Hermes transcript visibility "
+                    "harness_delivery_visible",
+                    "the dispatcher did not establish target-harness visibility "
                     f"({type(exc).__name__})",
                     "leave the Cards notification unconfirmed; inspect "
                     f"`sac agents logs {name}` before the durable retry",
@@ -285,7 +292,7 @@ async def consume(
                     logging.INFO,
                     Check.ok(
                         "cards_notification_watch",
-                        "the Cards doorbell accepted a complete watch cycle",
+                "the Cards doorbell accepted a complete watch cycle",
                         hint="continue the bounded durable reconcile sweep",
                     ),
                     agent=name,

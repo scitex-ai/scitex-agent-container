@@ -175,6 +175,8 @@ class TuiSessionRuntime(
         command_builder: Any | None = None,
         turn_bridge_start: Any | None = None,
         turn_bridge_stop: Any | None = None,
+        inbox_dispatcher_start: Any | None = None,
+        inbox_dispatcher_stop: Any | None = None,
     ) -> None:
         # Injection seams (tests pass in-memory fakes — real Protocol impls,
         # no mocks): ``multiplexer`` (MultiplexerProtocol; default TmuxManager),
@@ -186,6 +188,28 @@ class TuiSessionRuntime(
         self._command_builder = command_builder or self._default_argv
         self._turn_bridge_start = turn_bridge_start
         self._turn_bridge_stop = turn_bridge_stop
+        self._inbox_dispatcher_start = inbox_dispatcher_start
+        self._inbox_dispatcher_stop = inbox_dispatcher_stop
+
+    def _start_inbox(self, config: AgentConfig) -> None:
+        """Start the harness-neutral durable inbox dispatcher."""
+        start = self._inbox_dispatcher_start
+        if start is None:
+            from ._channel_inbox_dispatcher_lifecycle import (
+                start_inbox_dispatcher as start,
+            )
+
+        start(config)
+
+    def _stop_inbox(self, config: AgentConfig) -> None:
+        """Stop the exact dispatcher owned by this agent incarnation."""
+        stop = self._inbox_dispatcher_stop
+        if stop is None:
+            from ._channel_inbox_dispatcher_lifecycle import (
+                stop_inbox_dispatcher as stop,
+            )
+
+        stop(config)
 
     def send_key(self, config: AgentConfig, key: str) -> bool:
         """Deliver one bounded, explicit control key to the owned TUI pane."""
@@ -407,6 +431,13 @@ class TuiSessionRuntime(
             # endpoint the SDK runner serves. Best-effort — a failed bridge
             # must not fail the start.
             self._maybe_start_turn_bridge(config)
+            # One host daemon owns the durable SAC/Cards subscriptions for
+            # every TUI harness.  It hands neutral envelopes to /v1/turn;
+            # that endpoint's runtime adapter decides Claude Code, Hermes, or
+            # Codex delivery.  Starting it after the turn bridge prevents an
+            # inbox consumer from acknowledging work before a sink exists.
+            if str(getattr(config, "harness", "") or "").lower() != "hermes":
+                self._start_inbox(config)
         # BUG 3 (false success — constitution §2 "no surprises / fail loud"):
         # up to here ``started`` only proves ``tmux new-session`` succeeded, NOT
         # that the inner claude survived boot and reached its input-ready state.
@@ -453,6 +484,8 @@ class TuiSessionRuntime(
         """
         # Tear down the A2A turn bridge first so it stops accepting wake POSTs
         # before the tmux session it injects into goes away.
+        if str(getattr(config, "harness", "") or "").lower() != "hermes":
+            self._stop_inbox(config)
         self._maybe_stop_turn_bridge(config)
         name = session_name_for(config)
         if not self._mux.exists(name):

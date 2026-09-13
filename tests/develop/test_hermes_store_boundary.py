@@ -4,9 +4,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "src" / "scitex_agent_container" / "runtimes"
-HERMES_SHARED_STATE_MODULES = (
-    "_hermes_cards_ingress.py",
-    "_hermes_inbox_bridge_lifecycle.py",
+SHARED_STATE_MODULES = (
+    "_cards_ingress.py",
+    "_channel_inbox_dispatcher_lifecycle.py",
     "_hermes_profile.py",
     "_tui_turn_bridge_lifecycle.py",
 )
@@ -16,14 +16,14 @@ def test_hermes_shared_state_never_reads_cards_specific_store_alias():
     # Arrange
     outcomes = []
     # Act
-    for filename in HERMES_SHARED_STATE_MODULES:
+    for filename in SHARED_STATE_MODULES:
         source = (RUNTIME / filename).read_text(encoding="utf-8")
         outcomes.append(
             ('get("SCITEX_CARDS_DB")' not in source)
             and ('["SCITEX_CARDS_DB"]' not in source)
         )
     # Assert
-    assert outcomes == [True] * len(HERMES_SHARED_STATE_MODULES)
+    assert outcomes == [True] * len(SHARED_STATE_MODULES)
 
 
 def test_hermes_lifecycle_does_not_propagate_cards_specific_store_alias():
@@ -31,7 +31,7 @@ def test_hermes_lifecycle_does_not_propagate_cards_specific_store_alias():
     outcomes = []
     # Act
     for filename in (
-        "_hermes_inbox_bridge_lifecycle.py",
+        "_channel_inbox_dispatcher_lifecycle.py",
         "_tui_turn_bridge_lifecycle.py",
     ):
         source = (RUNTIME / filename).read_text(encoding="utf-8")
