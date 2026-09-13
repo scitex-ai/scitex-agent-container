@@ -55,6 +55,10 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
 %post
     set -e
     export DEBIAN_FRONTEND=noninteractive
+    export TMPDIR=/opt/.sac-build-tmp
+    mkdir -p "$TMPDIR"
+    chmod 1777 "$TMPDIR"
+    trap 'rm -rf /opt/.sac-build-tmp' EXIT
 
     # ---- 1. apt: system packages ---------------------------------------
     # Dev-CLIs ship from apt where Ubuntu 24.04 carries them — faster
