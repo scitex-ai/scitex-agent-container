@@ -218,7 +218,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_state/snapshot/_io.py:411",
         "scitex_agent_container/a2a/executors/_base.py:97",
         "scitex_agent_container/cli_pkg/_account_refresh_push.py:99",
-        "scitex_agent_container/cli_pkg/_agents_cct_audit.py:101",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:157",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:186",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",

@@ -136,7 +136,7 @@ def _rows(include_unrequested: bool, agents_dir: str | None = None) -> list[dict
     rows: list[dict] = []
     for path in _spec_paths(agents_dir):
         name = path.parent.name
-        # stx-allow: fallback (reason: one unloadable spec must not abort a fleet-wide audit; it is reported as its OWN unknown row rather than dropped, because a spec sac cannot read is exactly the kind of thing this sweep exists to surface)
+        # stx-allow: fallback (reason: one unloadable spec must not abort a fleet-wide audit; it is reported as its OWN unknown row in cct-audit stdout rather than dropped, because a spec sac cannot read is exactly the kind of thing this sweep exists to surface)
         try:
             config = load_config(str(path))
         except Exception as exc:  # stx-allow: fallback (reason: see inline comment)
