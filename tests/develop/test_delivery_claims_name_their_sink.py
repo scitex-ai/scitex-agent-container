@@ -199,7 +199,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # agent is a survey nobody has done, so naming it here would be a
         # guess wearing a receipt.
         "scitex_agent_container/_mcp/_channel_reaction_ack.py:115",
-        "scitex_agent_container/_mcp/channel.py:331",
         "scitex_agent_container/_network/_peer_dispatch.py:62",
         "scitex_agent_container/_network/_peer_dispatch.py:79",
         "scitex_agent_container/_network/probe.py:457",
@@ -281,7 +280,9 @@ def test_the_scanner_still_detects_the_incident_that_motivated_it():
     assert on a line we KNOW is a delivery claim with no sink.
     """
     # Arrange
-    known_bad = 'except Exception:  # stx-allow: fallback (reason: x; logged for the operator)'
+    known_bad = (
+        "except Exception:  # stx-allow: fallback (reason: x; logged for the operator)"
+    )
     # Act
     claims = bool(_CLAIMS_DELIVERY.search(known_bad))
     names = bool(_NAMES_A_SINK.search(known_bad))
@@ -296,7 +297,7 @@ def test_a_named_sink_satisfies_the_gate():
     unshrinkable, and the failure would look like diligence.
     """
     # Arrange
-    good = 'except Exception:  # stx-allow: fallback (reason: x; logged to runtime/logs/turn-bridge.log)'
+    good = "except Exception:  # stx-allow: fallback (reason: x; logged to runtime/logs/turn-bridge.log)"
     # Act
     claims = bool(_CLAIMS_DELIVERY.search(good))
     names = bool(_NAMES_A_SINK.search(good))

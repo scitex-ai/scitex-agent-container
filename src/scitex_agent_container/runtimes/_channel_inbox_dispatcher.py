@@ -35,6 +35,7 @@ async def consume(
     consume_sse: Callable[..., Awaitable[None]] = _consume_sse,
     consume_cards_notifications: Callable[..., Awaitable[None]] = consume_cards,
     push_event: Callable[..., Awaitable[None]] = _push_channel_event,
+    dispatch_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> None:
     """Consume declared durable rails and ACK only proven target admission.
 
@@ -48,7 +49,7 @@ async def consume(
         raise RuntimeError("SAC listen bearer is required for channel inbox delivery")
     sink = _NotificationSink()
 
-    async def on_event(event: dict[str, Any]) -> None:
+    async def default_dispatch(event: dict[str, Any]) -> None:
         event = dict(event)
         event["_require_terminal_visibility"] = True
         await push_event(
@@ -59,6 +60,16 @@ async def consume(
             bearer=bearer,
             turn_url=turn_url,
         )
+
+    target_dispatch = dispatch_event or default_dispatch
+
+    async def on_event(event: dict[str, Any]) -> None:
+        event = dict(event)
+        event["_require_terminal_visibility"] = True
+        await target_dispatch(event)
+
+    async def deliver_cards(event: dict[str, Any], **_transport: Any) -> None:
+        await on_event(event)
 
     consumers: list[Awaitable[None]] = []
     if "server:sac" in channels:
@@ -73,7 +84,12 @@ async def consume(
         )
     if "server:scitex-cards" in channels:
         consumers.append(
-            consume_cards_notifications(name=name, turn_url=turn_url, bearer=bearer)
+            consume_cards_notifications(
+                name=name,
+                turn_url=turn_url,
+                bearer=bearer,
+                deliver=deliver_cards,
+            )
         )
     if not consumers:
         raise RuntimeError("channel inbox dispatcher has no durable rail to consume")

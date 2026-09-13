@@ -20,10 +20,8 @@ from ..config import AgentConfig, load_config
 from ._explain_engine import engine_lines
 
 
-def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]:
+def _channel_lines(config: AgentConfig, channels: list[str]) -> list[str]:
     """Show declarations, resolved ingress and tool exposure as distinct facts."""
-    if getattr(config, "harness", "") != "hermes":
-        return []
     from scitex_dev.status import Check, StatusCode
 
     declared = set(channels)
@@ -72,7 +70,7 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
     checks.append(
         Check.ok(
             "cards_tools",
-            "the scitex-cards MCP server is declared and Hermes compiles it in "
+            "the scitex-cards MCP server is declared as a tools-only surface; "
             "tools-only mode; this is tool exposure, not proof of inbound delivery",
         )
         if card_tools
@@ -88,7 +86,10 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
             ),
         )
     )
-    if "server:claude-code-telegrammer" in declared:
+    if (
+        "server:claude-code-telegrammer" in declared
+        and getattr(config, "harness", "") == "hermes"
+    ):
         from ..runtimes._cct_rail_verdict import RAIL_UP, assess_cct_rail
 
         rail = assess_cct_rail(config)
@@ -108,7 +109,7 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
                 "server:claude-code-telegrammer is omitted by declaration; CCT is optional",
             )
         )
-    lines = ["Hermes channel resolution:"]
+    lines = ["Channel resolution:"]
     for check in checks:
         wire = check.to_dict()
         state = {True: "resolved", False: "unavailable", None: "unknown"}[wire["ok"]]
@@ -421,7 +422,7 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
         lines.append(f"Flags: {' '.join(flags)}")
     if channels:
         lines.append(f"Channels: {', '.join(channels)}")
-    channel_resolution = _hermes_channel_lines(config, channels)
+    channel_resolution = _channel_lines(config, channels)
     if channel_resolution:
         lines += channel_resolution
 

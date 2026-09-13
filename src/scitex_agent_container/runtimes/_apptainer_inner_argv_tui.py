@@ -12,7 +12,6 @@ parent module re-imports them for back-compat with existing callers.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -399,12 +398,25 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
         for channel in plan.channels
         if channel not in {"server:sac", "server:scitex-cards"}
     )
+    channel_mcp: str | None = None
+    if plan.sac_sidecar_args is not None:
+        import json
+
+        channel_mcp = json.dumps(
+            {
+                "mcpServers": {
+                    "sac": _sac_channel_mcp_server(
+                        [*plan.sac_sidecar_args, "--send-only"]
+                    )
+                }
+            }
+        )
     if not harness_owned:
-        return None, None
+        return None, channel_mcp
     # One --dangerously-load flag per channel (the emission loop in
     # _tui_runner_argv splits this comma-joined value) — the SAME set the SDK
     # comma-joins into extra_args, so the two runtimes never disagree.
-    return ",".join(harness_owned), None
+    return ",".join(harness_owned), channel_mcp
 
 
 __all__ = [

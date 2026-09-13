@@ -273,9 +273,11 @@ def start_inbox_dispatcher(
         raise RuntimeError("channel inbox delivery requires config.config_path")
     bearer = bearer or _read_listen_bearer()
     if not bearer:
-        raise RuntimeError("SAC listen bearer is absent; refusing a deaf Hermes launch")
-    # The bridge is host-side, while the matching Cards MCP server is inside
-    # Apptainer.  Give both the SAME effective store identity; inheriting only
+        raise RuntimeError(
+            "SAC listen bearer is absent; refusing a deaf channel dispatcher launch"
+        )
+    # The dispatcher is host-side, while the matching Cards MCP tools are inside
+    # Apptainer. Give both the SAME effective store identity; inheriting only
     # the operator shell made Cards delivery depend on which shell launched
     # SAC and could poll a different/absent store.
     cards_env: dict[str, str] = {}

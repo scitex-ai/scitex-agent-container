@@ -87,7 +87,8 @@ def event_from_notification(record: dict[str, Any]) -> dict[str, Any]:
     exchange_id = record.get("exchange_id")
     if isinstance(exchange_id, str) and exchange_id:
         # Newer Cards producers mint this at the persistence boundary. Carry
-        # the responder-issued handle unchanged through SAC and Hermes; never
+        # the responder-issued handle unchanged through SAC and the selected
+        # harness adapter; never
         # substitute a local success id for a sender-visible exchange.
         event["exchange_id"] = exchange_id
     event["_persisted"] = True
@@ -128,8 +129,8 @@ async def drain_once(
 
     payload = await asyncio.to_thread(
         # Read the full view and select ``unconfirmed`` below.  Cards' legacy
-        # Claude-channel transport can mark a record seen after writing JSON
-        # that Hermes ignores; unseen-only would hide that durable, invisible
+        # A legacy harness channel can mark a record seen after writing a
+        # notification that the target ignores; unseen-only would hide that durable, invisible
         # notification forever.
         partial(
             poll_notifications,
@@ -176,7 +177,7 @@ async def drain_once(
                         kind="http",
                         code=502,
                         message=(
-                            "Hermes transcript visibility could not be established; inspect "
+                            "target-harness visibility could not be established; inspect "
                             f"`sac agents logs {name}`"
                         ),
                     ),
@@ -220,6 +221,7 @@ async def _watch_cycle(
     timeout_s: float,
     watch_notifications: Callable[..., Any],
     drain: Callable[..., Awaitable[int]] = drain_once,
+    deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> int:
     """Drain serially after doorbells; stale hints cannot synthesize turns."""
     manager = await asyncio.to_thread(
@@ -240,6 +242,7 @@ async def _watch_cycle(
                 turn_url=turn_url,
                 bearer=bearer,
                 store=store,
+                deliver=deliver,
             )
     finally:
         await asyncio.to_thread(manager.__exit__, None, None, None)
@@ -252,6 +255,7 @@ async def consume(
     bearer: str | None,
     reconcile_interval_s: float = DEFAULT_RECONCILE_INTERVAL_S,
     watch_notifications: Callable[..., Any] | None = None,
+    deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> None:
     """Drain durably on a bounded cadence; use LISTEN only as an accelerator."""
     if watch_notifications is None:
@@ -265,6 +269,7 @@ async def consume(
                 turn_url=turn_url,
                 bearer=bearer,
                 store=store,
+                deliver=deliver,
             )
         except Exception as exc:
             _log_check(
@@ -286,13 +291,14 @@ async def consume(
                 store=store,
                 timeout_s=timeout_s,
                 watch_notifications=watch_notifications,
+                deliver=deliver,
             )
             if watch_impaired:
                 _log_check(
                     logging.INFO,
                     Check.ok(
                         "cards_notification_watch",
-                "the Cards doorbell accepted a complete watch cycle",
+                        "the Cards doorbell accepted a complete watch cycle",
                         hint="continue the bounded durable reconcile sweep",
                     ),
                     agent=name,

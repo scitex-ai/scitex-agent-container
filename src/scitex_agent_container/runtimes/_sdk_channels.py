@@ -3,16 +3,15 @@
 Extracted from ``_sdk_common.build_sdk_options`` so the channel wiring has
 one focused home (and its own test surface).
 
-claude renders ``<channel ...>`` tags — the ONLY way a channel notification
-ADVANCES a turn in an SDK session — solely when the bundled ``claude`` binary
-is started with ``--dangerously-load-development-channels`` listing the
-channel set. ``apply_channels`` sets that flag and, for ``server:sac``,
-auto-registers sac's own bus-adapter MCP.
+Harness-owned channels such as the Lead CCT edge still use the selected
+harness's native channel facility. Durable SAC and Cards ingress is different:
+the resident daemon is its single subscriber, so ``apply_channels`` must expose
+outbound tools without creating a competing inbound consumer.
 
 Two separate concerns, gated independently:
 
-  (a) dev-channels flag — fire for ANY ``spec.comms.channels`` entry, value
-      = comma-joined set of every requested channel. This is what lets a
+  (a) dev-channels flag — fire for harness-owned channel entries, excluding
+      daemon-owned ``server:sac`` / ``server:scitex-cards``. This lets a
       per-agent channel work, e.g. an agent running its OWN telegrammer bot
       via ``server:claude-code-telegrammer`` (whose backing stdio MCP the
       spec author supplies through ``to_home/.mcp.json``). The gate was
@@ -21,10 +20,9 @@ Two separate concerns, gated independently:
       claude never turned on rendering and the notifications were silently
       ignored (the "store fills, no turn appears" silent-failure class).
 
-  (b) ``sac mcp channel`` MCP auto-registration — ``server:sac`` ONLY. That
-      sidecar is sac's own bus adapter; it must never be auto-wired for a
-      foreign channel. Backing MCPs for non-sac channels come from the
-      spec's ``to_home/.mcp.json`` (already merged into ``mcp_servers``).
+  (b) ``sac mcp channel --send-only`` MCP auto-registration — ``server:sac``
+      ONLY. It exposes the outbound A2A tools but deliberately does not consume
+      the inbox already owned by the daemon.
 
 Wake-on-push diagnostics (bug #41 hardening, 2026-06-07):
   ``_wire_telegrammer_wake`` (concern (c)) used to silently no-op on every
@@ -262,10 +260,10 @@ def apply_channels(
 
     Mutates ``kwargs`` in place:
 
-      * sets ``extra_args["dangerously-load-development-channels"]`` to the
-        comma-joined channel set when ANY channel is requested (concern (a));
-      * registers the ``sac mcp channel`` stdio MCP under ``mcp_servers["sac"]``
-        when ``server:sac`` is among the channels (concern (b)).
+      * sets ``extra_args["dangerously-load-development-channels"]`` only for
+        harness-owned channels (concern (a));
+      * registers ``sac mcp channel --send-only`` under
+        ``mcp_servers["sac"]`` when ``server:sac`` is declared (concern (b)).
 
     No-op when ``channels`` is empty/None.
     """
@@ -273,12 +271,17 @@ def apply_channels(
         return
 
     plan = compute_channel_plan(channels, a2a_port, agent_name)
-    if plan.channels:
+    harness_owned = tuple(
+        channel
+        for channel in plan.channels
+        if channel not in {"server:sac", "server:scitex-cards"}
+    )
+    if harness_owned:
         extra_args = kwargs.setdefault("extra_args", {})
         if isinstance(extra_args, dict):
             extra_args.setdefault(
                 "dangerously-load-development-channels",
-                ",".join(plan.channels),
+                ",".join(harness_owned),
             )
 
     if plan.sac_sidecar_args is not None:
@@ -294,7 +297,7 @@ def apply_channels(
             mcps["sac"] = {
                 "type": "stdio",
                 "command": _resolve_sac_binary(),
-                "args": list(plan.sac_sidecar_args),
+                "args": [*plan.sac_sidecar_args, "--send-only"],
             }
 
     _wire_telegrammer_wake(kwargs, channels, a2a_port)

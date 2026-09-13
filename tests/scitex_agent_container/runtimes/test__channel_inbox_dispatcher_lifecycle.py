@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._acl_types import CommsSpec
 from scitex_agent_container.config._types import A2ASpec
@@ -53,6 +55,33 @@ def test_pid_identity_requires_module_agent_and_exact_spec(tmp_path):
     assert ownership == (True, False)
 
 
+@pytest.mark.parametrize("harness", ["claude-code", "hermes", "codex"])
+def test_durable_channel_selection_is_harness_independent(tmp_path, harness):
+    # Arrange
+    config = _config(tmp_path)
+    config.harness = harness
+    # Act
+    selected = lifecycle.declared_durable_channels(config)
+    # Assert
+    assert selected == (
+        "server:sac",
+        "server:scitex-cards",
+    )
+
+
+def test_no_durable_channels_starts_no_dispatcher(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    config.comms.channels = ["server:claude-code-telegrammer"]
+    spawned = []
+    # Act
+    started = lifecycle.start_inbox_dispatcher(
+        config, spawn=lambda *a, **k: spawned.append((a, k))
+    )
+    # Assert
+    assert (started, spawned) == (0, [])
+
+
 def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
     # Arrange
     config = _config(tmp_path)
@@ -76,9 +105,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
     config.env["SCITEX_STORE_DSN"] = "postgresql://cards-primary:55432/cards"
-    config.env["SCITEX_CARDS_NOTIFY_DSN"] = (
-        "postgresql://cards-primary:55433/cards"
-    )
+    config.env["SCITEX_CARDS_NOTIFY_DSN"] = "postgresql://cards-primary:55433/cards"
     state_dir = tmp_path / "state"
     seen = {}
 

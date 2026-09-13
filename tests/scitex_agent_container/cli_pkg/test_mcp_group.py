@@ -367,9 +367,16 @@ class _FakeChannelMain:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, *, name=None, listen_url=None, turn_url=None) -> None:
+    def __call__(
+        self, *, name=None, listen_url=None, turn_url=None, send_only=False
+    ) -> None:
         self.calls.append(
-            {"name": name, "listen_url": listen_url, "turn_url": turn_url}
+            {
+                "name": name,
+                "listen_url": listen_url,
+                "turn_url": turn_url,
+                "send_only": send_only,
+            }
         )
 
 
@@ -411,6 +418,16 @@ def test_channel_turn_url_defaults_to_none():
     assert result.exit_code == 0 and fake.calls[0]["turn_url"] is None
 
 
+def test_channel_send_only_is_forwarded_to_main():
+    # Arrange
+    fake = _FakeChannelMain()
+    # Act
+    with _use_channel_main(fake):
+        result = CliRunner().invoke(mcp, ["channel", "--name", "lead", "--send-only"])
+    # Assert
+    assert result.exit_code == 0 and fake.calls[0]["send_only"] is True
+
+
 # ---------------------------------------------------------------------------
 # channel — cwd-walk self-peer discovery fallback (TG 12706, #356 follow-up)
 # ---------------------------------------------------------------------------
@@ -427,9 +444,16 @@ class _RecordingChannelMain:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, name=None, listen_url=None, turn_url=None) -> None:
+    def __call__(
+        self, name=None, listen_url=None, turn_url=None, send_only=False
+    ) -> None:
         self.calls.append(
-            {"name": name, "listen_url": listen_url, "turn_url": turn_url}
+            {
+                "name": name,
+                "listen_url": listen_url,
+                "turn_url": turn_url,
+                "send_only": send_only,
+            }
         )
 
 
