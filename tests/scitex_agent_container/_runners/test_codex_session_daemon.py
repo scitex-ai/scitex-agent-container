@@ -49,6 +49,7 @@ from scitex_agent_container._runners._incarnation import (
 from scitex_agent_container._runners._session_inbox import (
     ShutdownEnvelope,
     TurnEnvelope,
+    make_inbox,
 )
 from scitex_agent_container._runners.codex_session import (
     CodexSession,
@@ -100,6 +101,95 @@ class _SendRaisesCodexSession(_ScriptedCodexSession):
     async def send(self, message: Any):
         raise RuntimeError("codex app-server fell over mid-turn")
         yield  # pragma: no cover — makes this an async generator
+
+
+class _NativeTurnHandle:
+    """Measured SDK-shaped handle: run, steer and interrupt share one id."""
+
+    def __init__(self, turn_id: str = "turn_native_1") -> None:
+        self.id = turn_id
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.steered: list[str] = []
+        self.interrupted = False
+
+    async def run(self) -> Any:
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(
+            items=(SimpleNamespace(type="agent_message", text="native ack"),),
+            error=None,
+            final_response="native ack",
+            usage=SimpleNamespace(input_tokens=5, output_tokens=2),
+            status="completed",
+        )
+
+    async def steer(self, text: str) -> Any:
+        self.steered.append(text)
+        return SimpleNamespace(turn_id=self.id)
+
+    async def interrupt(self) -> Any:
+        self.interrupted = True
+        self.release.set()
+        return SimpleNamespace()
+
+
+class _NativeThread:
+    def __init__(self, handle: _NativeTurnHandle) -> None:
+        self.id = "thr_native"
+        self.handle = handle
+
+    async def turn(self, text: str) -> _NativeTurnHandle:
+        return self.handle
+
+
+class _NativeSteerSession(_ScriptedCodexSession):
+    """Driver-level stand-in exposing Codex's native control methods."""
+
+    latest: "_NativeSteerSession | None" = None
+
+    def __init__(self, agent_name: str, **kwargs: Any) -> None:
+        super().__init__(agent_name, **kwargs)
+        self.handle = _NativeTurnHandle()
+        type(self).latest = self
+
+    @property
+    def active_turn_id(self) -> str | None:
+        return self.handle.id if self.handle.started.is_set() else None
+
+    async def send(self, message: Any):
+        self.handle.started.set()
+        await self.handle.release.wait()
+        yield NormalizedEvent(kind="text_delta", text="steered ack")
+        yield NormalizedEvent(
+            kind="result",
+            result=RunResult(text="steered ack", session_id="thr_native"),
+        )
+
+    async def steer(self, message: Any, *, expected_turn_id: str) -> str:
+        if expected_turn_id != self.handle.id:
+            raise RuntimeError("stale turn")
+        self.handle.steered.append(message.content)
+        return self.handle.id
+
+    async def interrupt(self, *, expected_turn_id: str) -> str:
+        if expected_turn_id != self.handle.id:
+            raise RuntimeError("stale turn")
+        await self.handle.interrupt()
+        return self.handle.id
+
+
+class _RejectingNativeSteerSession(_NativeSteerSession):
+    async def steer(self, message: Any, *, expected_turn_id: str) -> str:
+        raise RuntimeError("turn/steer rejected")
+
+
+class _CrashingNativeSteerSession(_NativeSteerSession):
+    async def send(self, message: Any):
+        self.handle.started.set()
+        await self.handle.release.wait()
+        raise RuntimeError("native turn crashed")
+        yield  # pragma: no cover - keeps the HarnessSession generator shape
 
 
 def _refusing_factory(agent_name: str, **kwargs: Any) -> Any:
@@ -409,6 +499,255 @@ def test_send_before_start_refuses_rather_than_returning_empty():
     # Assert
     with pytest.raises(CodexSessionError):
         drive()
+
+
+def test_codex_session_exposes_the_native_active_turn_and_steers_it():
+    # Arrange: use the exact run/steer/id surface exposed by
+    # openai-codex 0.154's AsyncTurnHandle.
+    async def _scenario() -> tuple[str | None, list[str], list[NormalizedEvent]]:
+        handle = _NativeTurnHandle()
+        session = CodexSession("ag-cx-native")
+        session._started = True
+        session._thread = _NativeThread(handle)
+
+        async def _drain() -> list[NormalizedEvent]:
+            return [
+                event
+                async for event in session.send(
+                    SimpleNamespace(role="user", content="first")
+                )
+            ]
+
+        task = asyncio.create_task(_drain())
+        await handle.started.wait()
+        observed = session.active_turn_id
+        await session.steer(
+            SimpleNamespace(role="user", content="change course"),
+            expected_turn_id=observed,
+        )
+        handle.release.set()
+        events = await task
+        return observed, handle.steered, events
+
+    # Act
+    turn_id, steered, events = asyncio.run(_scenario())
+    # Assert
+    assert (turn_id, steered, events[-1].result.session_id) == (
+        "turn_native_1",
+        ["change course"],
+        "thr_native",
+    )
+
+
+def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():
+    # Arrange
+    async def _scenario() -> tuple[str | None, list[str]]:
+        handle = _NativeTurnHandle()
+        session = CodexSession("ag-cx-stale")
+        session._started = True
+        session._active_turn = handle
+        try:
+            await session.steer(
+                SimpleNamespace(role="user", content="must not send"),
+                expected_turn_id="turn_old",
+            )
+        except CodexSessionError as exc:
+            detail = str(exc)
+        else:
+            detail = None
+        return detail, handle.steered
+
+    # Act
+    detail, steered = asyncio.run(_scenario())
+    # Assert: local compare prevents an ambiguous RPC against a newer turn.
+    assert (detail, steered) == (
+        "active Codex turn changed: expected 'turn_old', "
+        "observed 'turn_native_1'.",
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [["server:sac"], ["server:scitex-cards"], None],
+    ids=["sac", "cards", "a2a"],
+)
+def test_driver_routes_neutral_mid_turn_input_through_native_codex_steer(
+    tmp_path, channels
+):
+    # Arrange: WakeableInbox is the production inbox shape. The second
+    # envelope arrives while the first model turn is still active.
+    async def _scenario() -> tuple[list[str], str, str, str | None]:
+        inbox = make_inbox()
+        stop = asyncio.Event()
+        _NativeSteerSession.latest = None
+        first = TurnEnvelope(
+            text="first",
+            response=asyncio.get_running_loop().create_future(),
+            dispatch_id="msg-first",
+        )
+        second = TurnEnvelope(
+            text="urgent correction",
+            response=asyncio.get_running_loop().create_future(),
+            dispatch_id="msg-second",
+        )
+        await inbox.put(first)
+        driver = asyncio.create_task(
+            run_codex_conversation(
+                "ag-cx-inbound",
+                tmp_path,
+                pid=1,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=stop,
+                channels=channels,
+                session_factory=_NativeSteerSession,
+            )
+        )
+        while _NativeSteerSession.latest is None:
+            await asyncio.sleep(0)
+        session = _NativeSteerSession.latest
+        await session.handle.started.wait()
+        await inbox.put(second)
+        while not session.handle.steered:
+            await asyncio.sleep(0)
+        session.handle.release.set()
+        first_reply, second_reply = await asyncio.gather(
+            first.response, second.response
+        )
+        await inbox.put(ShutdownEnvelope())
+        await driver
+        return (
+            session.handle.steered,
+            first_reply,
+            second_reply,
+            second.session_id,
+        )
+
+    # Act
+    result = asyncio.run(asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S))
+    # Assert: the inbound message was applied to the active turn, and both
+    # synchronous callers observe the one terminal response + resume id.
+    assert result == (
+        ["urgent correction"],
+        "steered ack",
+        "steered ack",
+        "thr_native",
+    )
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [["server:sac"], ["server:scitex-cards"], None],
+    ids=["sac", "cards", "a2a"],
+)
+def test_driver_reports_neutral_steer_failure_without_replaying_as_a_turn(
+    tmp_path, channels
+):
+    # Arrange
+    async def _scenario() -> tuple[str | None, str, int]:
+        inbox = make_inbox()
+        stop = asyncio.Event()
+        first = TurnEnvelope(
+            text="first", response=asyncio.get_running_loop().create_future()
+        )
+        rejected = TurnEnvelope(
+            text="do not replay",
+            response=asyncio.get_running_loop().create_future(),
+            dispatch_id="msg-rejected",
+        )
+        _RejectingNativeSteerSession.latest = None
+        await inbox.put(first)
+        driver = asyncio.create_task(
+            run_codex_conversation(
+                "ag-cx-reject",
+                tmp_path,
+                pid=1,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=stop,
+                channels=channels,
+                session_factory=_RejectingNativeSteerSession,
+            )
+        )
+        while _RejectingNativeSteerSession.latest is None:
+            await asyncio.sleep(0)
+        session = _RejectingNativeSteerSession.latest
+        await session.handle.started.wait()
+        await inbox.put(rejected)
+        try:
+            await rejected.response
+        except RuntimeError as exc:
+            detail = str(exc)
+        else:
+            detail = None
+        session.handle.release.set()
+        await first.response
+        await inbox.put(ShutdownEnvelope())
+        await driver
+        return detail, rejected.text, len(session.handle.steered)
+
+    # Act
+    detail, text, replay_count = asyncio.run(
+        asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S)
+    )
+    # Assert: an ambiguous failed acknowledgement is surfaced, never resent.
+    assert (detail, text, replay_count) == (
+        "turn/steer rejected",
+        "do not replay",
+        0,
+    )
+
+
+def test_driver_resolves_accepted_steer_with_the_active_turn_crash(tmp_path):
+    # Arrange
+    async def _scenario() -> tuple[str | None, str | None]:
+        inbox = make_inbox()
+        first = TurnEnvelope(
+            text="first", response=asyncio.get_running_loop().create_future()
+        )
+        steered = TurnEnvelope(
+            text="steer", response=asyncio.get_running_loop().create_future()
+        )
+        _CrashingNativeSteerSession.latest = None
+        await inbox.put(first)
+        driver = asyncio.create_task(
+            run_codex_conversation(
+                "ag-cx-crash-after-steer",
+                tmp_path,
+                pid=1,
+                inbox=inbox,
+                resume_session_id=None,
+                stop=asyncio.Event(),
+                session_factory=_CrashingNativeSteerSession,
+            )
+        )
+        while _CrashingNativeSteerSession.latest is None:
+            await asyncio.sleep(0)
+        session = _CrashingNativeSteerSession.latest
+        await session.handle.started.wait()
+        await inbox.put(steered)
+        while not session.handle.steered:
+            await asyncio.sleep(0)
+        session.handle.release.set()
+        try:
+            await driver
+        except RuntimeError as exc:
+            driver_detail = str(exc)
+        else:
+            driver_detail = None
+        try:
+            await steered.response
+        except RuntimeError as exc:
+            steer_detail = str(exc)
+        else:
+            steer_detail = None
+        return driver_detail, steer_detail
+
+    # Act
+    details = asyncio.run(asyncio.wait_for(_scenario(), timeout=_EXIT_DEADLINE_S))
+    # Assert
+    assert details == ("native turn crashed", "native turn crashed")
 
 
 # ---------------------------------------------------------------------------
