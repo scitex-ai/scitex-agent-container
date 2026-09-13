@@ -254,8 +254,9 @@ async def _push_channel_event(
 
     # Post-delivery receipts: contentless auto-ack (legacy noise-filtered
     # path) + structural reaction-ack (the comm-miss-detectable signal,
-    # lead a2a 1781e82a). Both are best-effort and share the per-sender
-    # rate cap; see ``_channel_post_deliver.run_post_deliver_receipts``.
+    # lead a2a 1781e82a). Both are best-effort; only a receipt that can
+    # reach the wire consumes the per-sender rate budget. See
+    # ``_channel_post_deliver.run_post_deliver_receipts``.
     await run_post_deliver_receipts(
         event,
         agent_name=agent_name,

@@ -183,8 +183,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:193",
         "scitex_agent_container/_maintenance/_install_integrity_pointers.py:226",
         "scitex_agent_container/_maintenance/_venv_dist_assertion.py:120",
-        "scitex_agent_container/_mcp/_channel_post_deliver.py:120",
-        "scitex_agent_container/_mcp/_channel_post_deliver.py:99",
         # THESE FOUR MOVED, they did not change. The dispatch-ledger port to
         # PostgreSQL (2026-08-28) added prose above each of them, so the
         # coordinates shifted 107->115, 329->331, 46->62 and 59->79. The

@@ -345,6 +345,13 @@ async def _publish_channel_event(
     for src in (params.get("metadata"), message.get("metadata")):
         if isinstance(src, dict):
             sac_meta.update(src)
+    kind_meta = sac_meta.get("kind")
+    if kind_meta is not None and not isinstance(kind_meta, str):
+        kind_meta = None
+    extra_meta = sac_meta.get("extra")
+    if not isinstance(extra_meta, dict) or not extra_meta:
+        extra_meta = None
+
     event = mint_event(
         name,
         content=text,
@@ -360,6 +367,9 @@ async def _publish_channel_event(
         # two auto-ack adapters ping-ponged forever. Mirrors the host
         # control-plane path in ``_listen/server.py``.
         ack=bool(sac_meta.get("ack", False)),
+        dispatch_id=sac_meta.get("dispatch_id"),
+        kind=kind_meta,
+        extra=extra_meta,
     )
 
     # WI-1 durability: persist BEFORE publishing. If the store is
