@@ -500,8 +500,8 @@ all = [
 ]
 
 [project.scripts]
-scitex-agent-container = "scitex_agent_container.cli:cli_entry_point"
-sac = "scitex_agent_container.cli:cli_entry_point"
+scitex-agent-container = "_scitex_agent_container_bootstrap:cli_entry_point"
+sac = "_scitex_agent_container_bootstrap:cli_entry_point"
 sac-statusline = "scitex_agent_container.statusline:main"
 
 [project.entry-points."scitex_dev.docs"]
@@ -714,7 +714,7 @@ mcp_parity_exempt = true
 env_allowlist = ["SAC_", "CODEX_HOME"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scitex_agent_container"]
+packages = ["src/scitex_agent_container", "src/_scitex_agent_container_bootstrap"]
 
 [tool.scitex-agent-container.harnesses.hermes]
 package = "hermes-agent"

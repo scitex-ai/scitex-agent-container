@@ -31,6 +31,18 @@ sac image build scitex    # :scitex SIF (FROM :base + scitex[all], ~10-20 min)
 sac image build --sandbox # writable sandbox dir instead of frozen SIF
 ```
 
+Image builds have a stricter source-authority check than read-only commands.
+When SAC is editable-installed from one checkout but ``PYTHONPATH`` would load
+another, the console entry point stops before importing the build command or
+creating its artifact directory. The error prints both observed roots. Unset
+the stale override, or deliberately select the canonical editable checkout:
+
+```bash
+unset PYTHONPATH
+# or, when an explicit source path is required:
+PYTHONPATH=/path/to/canonical/checkout/src uv run sac image build base -y
+```
+
 ## Sandbox / freeze workflow
 
 Sandbox once, refresh when you want, freeze when stable:

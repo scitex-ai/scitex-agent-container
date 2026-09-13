@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,6 +27,10 @@ from typing import Any, Iterator
 import pytest
 from click.testing import CliRunner
 
+from _scitex_agent_container_bootstrap import (
+    ImageBuildSourceMismatch,
+    assert_image_build_source_authority,
+)
 from scitex_agent_container.cli_pkg import image_group as ig
 from scitex_agent_container.cli_pkg.image_group import image_group
 
@@ -358,6 +364,109 @@ def test_reproducible_build_refuses_mixed_source_provenance_before_builder(home_
         and "loaded build-helper root:" in result.output
         and f"active-environment package root: {selected_root}" in result.output
     )
+
+
+def test_mixed_source_refusal_precedes_artifact_directory_creation(home_tmp):
+    # Arrange
+    selected_root = home_tmp / "selected-worktree" / "src" / "scitex_agent_container"
+    selected_root.mkdir(parents=True)
+    artifact_root = home_tmp / "must-not-be-created"
+    saved_containers = ig._CONTAINERS_DIR
+    ig._CONTAINERS_DIR = artifact_root
+    try:
+        # Act
+        with _use_environment_package_root(selected_root):
+            result = CliRunner().invoke(image_group, ["build", "base", "--yes"])
+    finally:
+        ig._CONTAINERS_DIR = saved_containers
+    # Assert
+    assert (result.exit_code, artifact_root.exists()) == (1, False)
+
+
+def test_bootstrap_mismatch_names_both_roots_and_recovery_hint(home_tmp):
+    # Arrange
+    canonical = home_tmp / "canonical"
+    expected = canonical / "src" / "scitex_agent_container"
+    expected.mkdir(parents=True)
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    purelib = home_tmp / "venv" / "site-packages"
+    dist_info = purelib / "scitex_agent_container-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+    )
+    (dist_info / "direct_url.json").write_text(
+        '{"url":"' + canonical.as_uri() + '","dir_info":{"editable":true}}'
+    )
+    # Act
+    try:
+        assert_image_build_source_authority(
+            ["image", "build", "base", "-y"],
+            metadata_paths=(purelib,),
+            runtime_root=stale,
+        )
+    except ImageBuildSourceMismatch as exc:
+        message = str(exc)
+    else:
+        message = ""
+    # Assert
+    assert (
+        "before filesystem or image mutation" in message,
+        f"runtime-loaded package root: {stale}" in message,
+        f"editable direct_url authority: {expected}" in message,
+        "unset PYTHONPATH" in message,
+    ) == (True, True, True, True)
+
+
+def test_bootstrap_shadow_process_stops_before_stale_cli_import(home_tmp):
+    # Arrange
+    canonical = home_tmp / "canonical"
+    (canonical / "src" / "scitex_agent_container").mkdir(parents=True)
+    purelib = home_tmp / "venv" / "site-packages"
+    dist_info = purelib / "scitex_agent_container-0.0.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: scitex-agent-container\nVersion: 0.0.0\n"
+    )
+    (dist_info / "direct_url.json").write_text(
+        '{"url":"' + canonical.as_uri() + '","dir_info":{"editable":true}}'
+    )
+    stale_src = home_tmp / "stale" / "src"
+    stale_package = stale_src / "scitex_agent_container"
+    stale_package.mkdir(parents=True)
+    (stale_package / "__init__.py").write_text("")
+    marker = home_tmp / "stale-cli-imported"
+    (stale_package / "cli.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path(os.environ['SAC_BOOTSTRAP_TEST_MARKER']).write_text('mutated')\n"
+    )
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    script = (
+        "import sys\nfrom pathlib import Path\n"
+        "from _scitex_agent_container_bootstrap import "
+        "assert_image_build_source_authority\n"
+        "assert_image_build_source_authority("
+        "['image','build','base','-y'], metadata_paths=(Path(sys.argv[1]),))\n"
+        "import scitex_agent_container.cli\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join((str(stale_src), str(repo_src)))
+    env["SAC_BOOTSTRAP_TEST_MARKER"] = str(marker)
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(purelib)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    # Assert
+    assert (
+        result.returncode,
+        marker.exists(),
+        "unset PYTHONPATH" in result.stderr,
+    ) == (1, False, True)
 
 
 def test_build_success_invokes_source_builder_and_prints_built_message(home_tmp):
