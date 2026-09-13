@@ -248,6 +248,22 @@ def image_build(
     if flag_error:
         click.echo(f"error: {flag_error}", err=True)
         sys.exit(2)
+
+    def_path = _RECIPES_DIR / _LAYERS[layer]
+    if not def_path.is_file():
+        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
+        sys.exit(1)
+
+    # Programmatic callers can invoke the Click command without traversing
+    # the installed console bootstrap. Keep the same guard here, before even
+    # ``_ensure_containers_dir`` creates the artifact root.
+    pkg_root = _RECIPES_DIR.parent
+    try:
+        _image_source_build.assert_source_provenance(pkg_root)
+    except _image_source_build.SourceProvenanceMismatch as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
     out_dir = _ensure_containers_dir()
     # Existing-artefact notice. A SIF rebuild is now ATOMIC (delegated to
     # scitex-container's ``build``): it lands a fresh timestamped SIF and
@@ -285,11 +301,6 @@ def image_build(
             err=True,
         )
         sys.exit(2)
-    def_path = _RECIPES_DIR / _LAYERS[layer]
-    if not def_path.is_file():
-        click.echo(f"error: recipe not found in wheel: {def_path}", err=True)
-        sys.exit(1)
-
     # Source-bundled build: the shipped .def files install sac from
     # /opt/scitex-agent-container-src, which gets there via a %files
     # copy of a sibling directory next to the .def at build time. The
@@ -302,17 +313,6 @@ def image_build(
     # build leaves the prior image intact (atomic, rollback-safe). The
     # non-build verbs (sandbox, update, freeze, list, status, snapshot)
     # also delegate to the scitex-container backend.
-    pkg_root = _RECIPES_DIR.parent
-
-    # A stale PYTHONPATH can splice the CLI, staging helper and recipes from
-    # different checkouts. Refuse before staging resets build-context or any
-    # heavy process starts; this one gate protects both build branches below.
-    try:
-        _image_source_build.assert_source_provenance(pkg_root)
-    except _image_source_build.SourceProvenanceMismatch as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(1)
-
     # Layered .defs (currently: ``scitex``) bootstrap off a prior layer's
     # SIF (``From: ./sac-base.sif``). Resolve the prerequisite here — the
     # helper FAILS LOUD when it is missing so apptainer never FATAL's on a
