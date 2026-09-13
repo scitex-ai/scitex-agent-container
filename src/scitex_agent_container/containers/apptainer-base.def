@@ -628,14 +628,12 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     # is the NORM and ``-U`` is the whole mechanism. ``-U`` does not
     # weaken ``--reinstall-package``: that stays the stronger lever for
     # sac's own rebuild-from-staged-source.
-    # CURRENT DELIVERY EXCEPTION (Cards #1003): the history above describes
-    # the normal published-release policy. v0.52.0 was published before the
-    # required fix merged, so this build takes the exact, verified merge commit
-    # exported by the build frontend. This is not a moving branch ref and the
-    # local path is explicit in the resolver transaction. Filesystem
+    # Cards 0.52.1 is pinned to its exact, verified release commit and exported
+    # by the build frontend. This is not a moving branch ref and the local path
+    # is explicit in the resolver transaction. Filesystem
     # requirements cannot carry a PEP 440 comparator; SAC's project metadata
-    # honestly declares the supported floor (scitex-cards>=0.52.0), while the
-    # local candidate reports 0.52.0 and the commit marker proves its content.
+    # honestly declares the supported floor (scitex-cards>=0.52.1), while the
+    # local candidate reports 0.52.1 and the commit marker proves its content.
     # Keep both runtime extras explicit even though that source currently
     # promotes their dependencies to core: the aliases are the install-time
     # contract that fastmcp and psycopg must remain resolvable.
@@ -668,7 +666,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
     npm cache clean --force
 
     test "$(cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT")" = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "ce192fe043babe9f476f6d48490b35f933fe4b90"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "9733e1d5f2c29a6a9376392d0f7246e7eabddff6"
     test -x "$HERMES_ROOT/.venv/bin/hermes"
     "$HERMES_ROOT/.venv/bin/python" -c 'import hermes_cli; assert hermes_cli.__version__ == "0.21.1"'
     test -s "$HERMES_ROOT/ui-tui/dist/entry.js"
@@ -832,7 +830,7 @@ failures = []
 # the database for a missing driver, and sending three agents to the wrong
 # layer. An import-only check would have passed on that image.
 #
-# THE CURRENT PIN IS BARE: ``scitex-cards>=0.49.1``. As of 0.32.0 psycopg,
+# THE CURRENT PIN IS BARE: ``scitex-cards>=0.52.1``. As of 0.32.0 psycopg,
 # django and fastmcp are CORE dependencies — verified against the published
 # metadata, not the changelog:
 #
@@ -1041,7 +1039,7 @@ EOF
     org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.1
     org.scitex.hermes.commit a74e76632cce62ad6948cf7e4e6b27629d66d147
-    org.scitex.cards.commit ce192fe043babe9f476f6d48490b35f933fe4b90
+    org.scitex.cards.commit 9733e1d5f2c29a6a9376392d0f7246e7eabddff6
 
 %help
     scitex-agent-container :base layer.

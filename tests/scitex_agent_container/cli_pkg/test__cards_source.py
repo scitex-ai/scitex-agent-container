@@ -8,7 +8,7 @@ import pytest
 
 from scitex_agent_container.cli_pkg import _cards_source as source
 
-EXPECTED_CARDS_COMMIT = "ce192fe043babe9f476f6d48490b35f933fe4b90"
+EXPECTED_CARDS_COMMIT = "9733e1d5f2c29a6a9376392d0f7246e7eabddff6"
 
 
 def test_canonical_cards_source_pin_is_the_merged_commit():

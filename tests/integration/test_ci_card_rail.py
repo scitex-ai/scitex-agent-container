@@ -667,27 +667,47 @@ def test_verdict_job_waits_for_the_gate(verdict_job) -> None:
 
 
 def test_verdict_job_passes_the_card_store_explicitly(verdict_env) -> None:
-    """An unset DSN does not fail -- it silently picks a local file.
+    """A noninteractive runner must name the shared-store authority itself.
 
     A ``run:`` step gets a non-interactive shell sourcing no profile, so
-    the DSN must come from the workflow. Writing the verdict into a store
-    no board reads is the same silent-nobody failure as a deaf recipient.
+    the DSN must come from the workflow. Cards-specific SQLite-era variables
+    are intentionally no longer part of ambient store resolution.
     """
     # Arrange
     keys = set(verdict_env)
     # Act
-    declares_store = "SCITEX_CARDS_DB" in keys
+    declares_store = "SCITEX_STORE_DSN" in keys
     # Assert
     assert declares_store
 
 
 def test_verdict_job_points_at_a_postgres_store(verdict_env) -> None:
     # Arrange
-    dsn = verdict_env["SCITEX_CARDS_DB"]
+    dsn = verdict_env["SCITEX_STORE_DSN"]
     # Act
     is_postgres = "postgres" in dsn
     # Assert
     assert is_postgres
+
+
+def test_verdict_job_uses_project_scoped_canonical_store_role(
+    verdict_env, rail_cards
+) -> None:
+    # Arrange
+    dsn = verdict_env["SCITEX_STORE_DSN"]
+    # Act
+    authority_is_exact = dsn == rail_cards.CANONICAL_CI_STORE_DSN
+    # Assert
+    assert authority_is_exact
+
+
+def test_verdict_job_does_not_export_sqlite_era_cards_variable(verdict_env) -> None:
+    # Arrange
+    keys = set(verdict_env)
+    # Act
+    exports_old_name = "SCITEX_CARDS_DB" in keys
+    # Assert
+    assert not exports_old_name
 
 
 def test_verdict_job_can_read_failed_job_logs(gate_workflow) -> None:
