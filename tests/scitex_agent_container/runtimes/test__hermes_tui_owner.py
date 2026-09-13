@@ -59,8 +59,10 @@ def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
     owner._remove_owned_gateway_state(tmp_path, generation="current-generation")
 
     # Assert
-    assert not (tmp_path / owner.GATEWAY_FILE).exists()
-    assert not (tmp_path / owner.READY_FILE).exists()
+    assert (
+        (tmp_path / owner.GATEWAY_FILE).exists(),
+        (tmp_path / owner.READY_FILE).exists(),
+    ) == (False, False)
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():
