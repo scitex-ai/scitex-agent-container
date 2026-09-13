@@ -10,8 +10,8 @@ from contextlib import contextmanager
 
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
+    _channel_lines,
     _delegation_line,
-    _hermes_channel_lines,
     _pwd_is_backed,
     _redact,
     explain,
@@ -110,15 +110,13 @@ def test_engine_explain_exposes_the_effective_timeout_contract() -> None:
     )
 
 
-def test_hermes_channel_explain_separates_cards_ingress_from_tools() -> None:
+def test_channel_explain_separates_cards_ingress_from_tools() -> None:
     # Arrange: Cards delivery is a declared rail, but no Cards MCP tool is
     # exposed to the model. These are intentionally independent facts.
     config = AgentConfig(name="worker", harness="hermes", runtime="tui")
 
     # Act
-    rendered = "\n".join(
-        _hermes_channel_lines(config, ["server:sac", "server:scitex-cards"])
-    )
+    rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
 
     # Assert
     assert (
@@ -128,15 +126,13 @@ def test_hermes_channel_explain_separates_cards_ingress_from_tools() -> None:
     ) == (True, True, True)
 
 
-def test_hermes_channel_explain_reports_cards_tools_independently() -> None:
+def test_channel_explain_reports_cards_tools_independently() -> None:
     # Arrange
     config = AgentConfig(name="worker", harness="hermes", runtime="tui")
     config.mcp_servers["scitex-cards"] = {"command": "scitex-cards-mcp"}
 
     # Act
-    rendered = "\n".join(
-        _hermes_channel_lines(config, ["server:sac", "server:scitex-cards"])
-    )
+    rendered = "\n".join(_channel_lines(config, ["server:sac", "server:scitex-cards"]))
 
     # Assert
     assert (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from scitex_agent_container.runtimes import _hermes_inbox_bridge as bridge
+from scitex_agent_container.runtimes import _channel_inbox_dispatcher as bridge
 
 
 def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
@@ -54,6 +54,7 @@ def test_consumer_uses_authenticated_explicit_ack_after_turn_delivery():
             "name": "scholar",
             "turn_url": "http://127.0.0.1:19001/v1/turn",
             "bearer": "secret",
+            "deliver": seen["cards"]["deliver"],
         },
     }
 
@@ -77,5 +78,40 @@ def test_consumer_refuses_to_subscribe_without_bearer():
     # Assert
     assert (type(error), str(error)) == (
         RuntimeError,
-        "SAC listen bearer is required for Hermes inbox delivery",
+        "SAC listen bearer is required for channel inbox delivery",
     )
+
+
+def test_daemon_dispatches_sac_and_cards_through_one_target_adapter():
+    # Arrange
+    seen = []
+
+    async def dispatch(event):
+        seen.append((event["msg_id"], event["_require_terminal_visibility"]))
+
+    async def consume_sse(_url, _bearer, on_event, **_kwargs):
+        await on_event({"msg_id": "sac-1", "content": "from sac"})
+
+    async def consume_cards(*, deliver, **_kwargs):
+        await deliver({"msg_id": "cards-1", "content": "from cards"})
+
+    async def forbidden_push(*_args, **_kwargs):
+        raise AssertionError("transport-specific push must not bypass adapter")
+
+    # Act
+    asyncio.run(
+        bridge.consume(
+            name="scholar",
+            listen_url="http://127.0.0.1:7878",
+            turn_url="direct://resident-session",
+            bearer="secret",
+            channels=("server:sac", "server:scitex-cards"),
+            consume_sse=consume_sse,
+            consume_cards_notifications=consume_cards,
+            push_event=forbidden_push,
+            dispatch_event=dispatch,
+        )
+    )
+
+    # Assert
+    assert set(seen) == {("sac-1", True), ("cards-1", True)}

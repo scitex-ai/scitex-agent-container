@@ -65,8 +65,8 @@ KNOWN_IMPORTERS: dict[str, str] = {
         "image for OTHER agents to use. sac distributing a package is not sac "
         "depending on one — this file is never imported by sac at runtime."
     ),
-    "scitex_agent_container/runtimes/_hermes_cards_ingress.py": (
-        "The Hermes ingress adapter consumes scitex-cards' public durable "
+    "scitex_agent_container/runtimes/_cards_ingress.py": (
+        "The neutral ingress adapter consumes scitex-cards' public durable "
         "notification and acknowledgement API. This is the explicit package "
         "boundary introduced with the required scitex-cards dependency."
     ),

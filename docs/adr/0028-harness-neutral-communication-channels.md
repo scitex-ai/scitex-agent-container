@@ -45,6 +45,21 @@ the shared exchange ledger for accepted, final, and failed states. `steer` is
 the interactive delivery behavior; queueing and interruption are not inferred
 from the transport name.
 
+One daemon-owned dispatcher consumes the durable `server:sac` and
+`server:scitex-cards` rails. Both are normalized to the same channel envelope
+before the selected harness sees them. For resident SDK harnesses the target is
+the shared `WakeableInbox` / `TurnEnvelope.response` boundary; for TUI
+harnesses it is the colocated `/v1/turn` adapter. Cards is acknowledged only
+after that response proves harness admission or completion. A target failure
+leaves the source row unconfirmed for retry, and an unexpected dispatcher exit
+terminates the resident runner rather than leaving a green-but-deaf process.
+
+Claude Code may still receive an MCP server named `sac` for outbound A2A
+tools, but that process is started with `--send-only`. It is not a second
+inbound subscriber and cannot race the daemon for acknowledgement. CCT remains
+the single Lead-owned Telegram edge; this decision does not create per-agent
+bots.
+
 ## Migration boundary
 
 Direct legacy `spec.claude.channels` remains readable until deployed specs are
@@ -59,6 +74,5 @@ reader and `ClaudeSpec.channels` carrier can be removed together.
 - AgentCard synthesis and A2A executor construction prefer the neutral block.
 - Twin derivation removes a Telegram channel from the neutral list, preserving
   the one-token/one-poller rule.
-- This schema move does not by itself prove every adapter's live delivery.
-  Harness-specific integration tests and live exchange receipts remain the
-  deployment gate.
+- Harness-specific integration tests and live exchange receipts remain the
+  deployment gate; this change is not deployed merely because unit tests pass.

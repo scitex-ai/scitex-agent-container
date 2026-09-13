@@ -135,25 +135,16 @@ def test_real_canonical_codex_spec_reaches_the_sac_channel_adapter(
     # Act
     config = load_config(spec_path)
     dev_channels, channel_mcp = tui_channel_config(config)
-    mcp = json.loads(channel_mcp or "{}")
-    sidecar = mcp.get("mcpServers", {}).get("sac", {})
 
     # Assert
+    mcp = json.loads(channel_mcp or "{}")
+    sidecar = mcp["mcpServers"]["sac"]
     assert (
-        config.comms.channels == ["server:sac"]
-        and config.claude.channels == ["server:sac"]
-        and dev_channels == "server:sac"
-        and sidecar.get("command") == "/bin/sh"
-        and sidecar.get("args", [])[-6:]
-        == [
-            "mcp",
-            "channel",
-            "--name",
-            "codex-worker",
-            "--turn-url",
-            "http://127.0.0.1:4321/v1/turn",
-        ]
-    )
+        config.comms.channels,
+        config.claude.channels,
+        dev_channels,
+        sidecar["args"][-1],
+    ) == (["server:sac"], ["server:sac"], None, "--send-only")
 
 
 def test_real_canonical_spec_reaches_hermes_profile_and_argv(
@@ -248,9 +239,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     )
     doc = _canonical_hermes_spec()
     doc["spec"]["to_home"] = str(to_home)
-    doc["spec"]["comms"]["channels"] = [
-        "server:claude-code-telegrammer"
-    ]
+    doc["spec"]["comms"]["channels"] = ["server:claude-code-telegrammer"]
     doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"
     spec_path = tmp_path / "business" / "spec.yaml"
     spec_path.parent.mkdir()

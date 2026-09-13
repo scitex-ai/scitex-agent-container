@@ -551,24 +551,31 @@ def test_tui_channel_config_none_when_no_channels(tui_config) -> None:
     assert (dev_channels, channel_mcp) == (None, None)
 
 
-def test_tui_channel_config_sets_dev_channels(tmp_path) -> None:
+def test_tui_channel_config_keeps_daemon_owned_sac_out_of_dev_channels(
+    tmp_path,
+) -> None:
     # Arrange
     spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
     config = load_config(str(spec))
     # Act
     dev_channels, _ = tui_channel_config(config)
     # Assert
-    assert dev_channels == "server:sac"
+    assert dev_channels is None
 
 
-def test_tui_channel_config_registers_sac_channel_subscriber(tmp_path) -> None:
+def test_tui_channel_config_registers_sac_tools_without_subscriber(tmp_path) -> None:
     # Arrange
     spec = _write_spec(tmp_path, _SPEC_WITH_CHANNEL)
     config = load_config(str(spec))
     # Act
     _, channel_mcp = tui_channel_config(config)
-    # Assert — inline MCP JSON registers the absolute-path sac channel sub.
-    assert channel_mcp is not None and "mcp" in channel_mcp and "channel" in channel_mcp
+    # Assert — outbound tools remain, but the daemon is the only subscriber.
+    assert (
+        channel_mcp is not None
+        and "mcp" in channel_mcp
+        and "channel" in channel_mcp
+        and "--send-only" in channel_mcp
+    )
 
 
 def test_tui_channel_config_sac_subscriber_resolves_across_venvs(tmp_path) -> None:
@@ -589,7 +596,7 @@ def test_tui_channel_config_sac_subscriber_resolves_across_venvs(tmp_path) -> No
     )
 
 
-def test_build_run_argv_tui_adds_dev_channels_flag(
+def test_build_run_argv_tui_omits_daemon_owned_dev_channel_flag(
     tmp_path, listen_bearer_token
 ) -> None:
     # Arrange — ``listen_bearer_token`` materialises a real bearer at the
@@ -604,8 +611,13 @@ def test_build_run_argv_tui_adds_dev_channels_flag(
     argv = build_run_argv(
         config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
     )
-    # Assert — flag rides in the inner cmd (preflight-wrapped on non-relaxed).
-    assert "--dangerously-load-development-channels server:sac" in " ".join(argv)
+    # Assert — the host dispatcher owns SAC inbound; no second native
+    # subscriber is armed in the harness.
+    rendered = " ".join(argv)
+    assert (
+        "--dangerously-load-development-channels server:sac" in rendered,
+        "--send-only" in rendered,
+    ) == (False, True)
 
 
 def test_build_run_argv_tui_wires_telegrammer_wake_env(
@@ -1304,7 +1316,9 @@ def test_build_run_argv_raises_harness_mismatch_for_openai_harness(
             sif_path=tmp_path / "img.sif",
             runner_argv=["--flag"],
         )
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert isinstance(raised, HarnessRuntimeMismatchError)
@@ -1345,7 +1359,9 @@ def test_build_run_argv_openai_harness_refusal_names_the_v4_card(
             sif_path=tmp_path / "img.sif",
             runner_argv=["--flag"],
         )
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)
@@ -1397,9 +1413,7 @@ def test_the_runtime_dir_env_carries_a_usable_path(tui_config, tmp_path):
         tui_config, state_dir=tmp_path / "state", sif_path=tmp_path / "img.sif"
     )
     # Act
-    flag = next(
-        a for a in argv if a.startswith("SCITEX_AGENT_CONTAINER_RUNTIME_DIR=")
-    )
+    flag = next(a for a in argv if a.startswith("SCITEX_AGENT_CONTAINER_RUNTIME_DIR="))
     # Assert
     assert flag.split("=", 1)[1].startswith("/")
 

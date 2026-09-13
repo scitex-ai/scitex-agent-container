@@ -101,18 +101,6 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         return super().stop(config)
 
     @staticmethod
-    def _start_inbox(config: AgentConfig) -> None:
-        from ._hermes_inbox_bridge_lifecycle import start_inbox_bridge
-
-        start_inbox_bridge(config)
-
-    @staticmethod
-    def _stop_inbox(config: AgentConfig) -> None:
-        from ._hermes_inbox_bridge_lifecycle import stop_inbox_bridge
-
-        stop_inbox_bridge(config)
-
-    @staticmethod
     def _start_recovery(config: AgentConfig) -> None:
         from ._hermes_stale_recovery import start_recovery_monitor
 

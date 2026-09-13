@@ -3,9 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config._acl_types import CommsSpec
 from scitex_agent_container.config._types import A2ASpec
-from scitex_agent_container.runtimes import _hermes_inbox_bridge_lifecycle as lifecycle
+from scitex_agent_container.runtimes import (
+    _channel_inbox_dispatcher_lifecycle as lifecycle,
+)
 
 
 def _config(tmp_path: Path) -> AgentConfig:
@@ -14,6 +19,7 @@ def _config(tmp_path: Path) -> AgentConfig:
         harness="hermes",
         runtime="tui",
         a2a=A2ASpec(port=19001),
+        comms=CommsSpec(channels=["server:sac", "server:scitex-cards"]),
         config_path=str(tmp_path / "scholar" / "spec.yaml"),
     )
     return config
@@ -32,13 +38,13 @@ def test_pid_identity_requires_module_agent_and_exact_spec(tmp_path):
 
     # Act
     ownership = (
-        lifecycle._owns_bridge_process(
+        lifecycle._owns_dispatcher_process(
             42,
             name="scholar",
             config_path="/spec/scholar.yaml",
             proc_root=proc_root,
         ),
-        lifecycle._owns_bridge_process(
+        lifecycle._owns_dispatcher_process(
             42,
             name="writer",
             config_path="/spec/scholar.yaml",
@@ -47,6 +53,33 @@ def test_pid_identity_requires_module_agent_and_exact_spec(tmp_path):
     )
     # Assert
     assert ownership == (True, False)
+
+
+@pytest.mark.parametrize("harness", ["claude-code", "hermes", "codex"])
+def test_durable_channel_selection_is_harness_independent(tmp_path, harness):
+    # Arrange
+    config = _config(tmp_path)
+    config.harness = harness
+    # Act
+    selected = lifecycle.declared_durable_channels(config)
+    # Assert
+    assert selected == (
+        "server:sac",
+        "server:scitex-cards",
+    )
+
+
+def test_no_durable_channels_starts_no_dispatcher(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    config.comms.channels = ["server:claude-code-telegrammer"]
+    spawned = []
+    # Act
+    started = lifecycle.start_inbox_dispatcher(
+        config, spawn=lambda *a, **k: spawned.append((a, k))
+    )
+    # Assert
+    assert (started, spawned) == (0, [])
 
 
 def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
@@ -58,7 +91,7 @@ def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
     pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
     signals = []
     # Act
-    stopped = lifecycle.stop_inbox_bridge(
+    stopped = lifecycle.stop_inbox_dispatcher(
         config,
         kill=lambda pid, sig: signals.append((pid, sig)),
         state_dir=state_dir,
@@ -72,9 +105,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
     config.env["SCITEX_STORE_DSN"] = "postgresql://cards-primary:55432/cards"
-    config.env["SCITEX_CARDS_NOTIFY_DSN"] = (
-        "postgresql://cards-primary:55433/cards"
-    )
+    config.env["SCITEX_CARDS_NOTIFY_DSN"] = "postgresql://cards-primary:55433/cards"
     state_dir = tmp_path / "state"
     seen = {}
 
@@ -93,7 +124,7 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["cards_preflight"] = (name, store, env)
 
     # Act
-    pid = lifecycle.start_inbox_bridge(
+    pid = lifecycle.start_inbox_dispatcher(
         config,
         spawn=spawn,
         preflight=preflight,
@@ -152,7 +183,7 @@ def test_start_drops_inherited_cards_store_alias(tmp_path, env_save_restore):
         return Process()
 
     # Act
-    lifecycle.start_inbox_bridge(
+    lifecycle.start_inbox_dispatcher(
         config,
         spawn=spawn,
         preflight=lambda *_args: None,
@@ -186,7 +217,7 @@ def test_start_fails_loud_when_subscriber_exits_immediately(tmp_path):
     error = None
     # Act
     try:
-        lifecycle.start_inbox_bridge(
+        lifecycle.start_inbox_dispatcher(
             config,
             spawn=lambda *_args, **_kwargs: Process(),
             preflight=lambda *_args: None,
@@ -221,7 +252,7 @@ def test_start_refuses_when_cards_store_preflight_fails(tmp_path):
 
     # Act
     try:
-        lifecycle.start_inbox_bridge(
+        lifecycle.start_inbox_dispatcher(
             config,
             spawn=lambda *args, **kwargs: spawned.append((args, kwargs)),
             preflight=lambda *_args: None,

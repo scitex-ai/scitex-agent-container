@@ -241,19 +241,21 @@ class TestTelegrammerWakeWiring:
 
 
 class TestSacChannelStillWorks:
-    """``server:sac`` keeps both the dev flag and the sidecar registration.
+    """``server:sac`` keeps outbound tools without a second subscriber.
 
     All tests here depend on ``fake_sac_bin`` so the binary resolver returns
     a deterministic absolute path instead of raising SacBinaryNotFoundError.
     """
 
-    def test_sac_channel_sets_dev_flag(self, fake_sac_bin):
+    def test_sac_channel_is_not_loaded_as_a_second_native_subscriber(
+        self, fake_sac_bin
+    ):
         # Arrange
         kwargs: dict = {}
         # Act
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
-        assert _devflag(kwargs) == "server:sac"
+        assert _devflag(kwargs) is None
 
     def test_sac_channel_registers_sac_mcp(self, fake_sac_bin):
         # Arrange — SAC_BIN points at a real executable so the resolver
@@ -271,7 +273,10 @@ class TestSacChannelStillWorks:
         apply_channels(kwargs, ["server:sac"], 9999, "lead")
         # Assert
         args = kwargs["mcp_servers"]["sac"]["args"]
-        assert args[args.index("--turn-url") + 1] == "http://127.0.0.1:9999/v1/turn"
+        assert (args[args.index("--turn-url") + 1], args[-1]) == (
+            "http://127.0.0.1:9999/v1/turn",
+            "--send-only",
+        )
 
     def test_sac_sidecar_omits_turn_url_when_no_a2a_port(self, fake_sac_bin):
         # Arrange
@@ -388,8 +393,9 @@ class TestBothChannelsCoexist:
         apply_channels(
             kwargs, ["server:sac", "server:claude-code-telegrammer"], None, "clew"
         )
-        # Assert: claude needs the full set to render both channels' tags.
-        assert _devflag(kwargs) == "server:sac,server:claude-code-telegrammer"
+        # Assert: only the Lead edge remains harness-owned. SAC is consumed by
+        # the resident daemon and must not race it as a second subscriber.
+        assert _devflag(kwargs) == "server:claude-code-telegrammer"
 
     def test_sac_mcp_registered_when_sac_present_among_many(self, fake_sac_bin):
         # Arrange
@@ -411,7 +417,7 @@ class TestDedupeAndNormalization:
         # Act — ``fake_sac_bin`` so the sac sidecar resolver does not raise.
         apply_channels(kwargs, ["server:sac", " server:sac "], None, "lead")
         # Assert
-        assert _devflag(kwargs) == "server:sac"
+        assert _devflag(kwargs) is None
 
 
 class TestNoChannels:

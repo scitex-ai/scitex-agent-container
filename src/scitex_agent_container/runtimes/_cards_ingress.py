@@ -1,4 +1,11 @@
-"""Durably deliver SciTeX Cards notifications into a Hermes TUI."""
+"""Translate and durably deliver SciTeX Cards notifications.
+
+This module owns the Cards source adapter only.  It knows how to poll and
+confirm Cards notifications, but it deliberately knows nothing about the
+selected agent harness.  The channel inbox dispatcher supplies the delivery
+callable and confirms a Cards row only after that target adapter returns a
+positive receipt.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +32,7 @@ def canonical_store_dsn(environ: Mapping[str, str]) -> str:
     store = environ.get("SCITEX_STORE_DSN")
     if not store:
         raise RuntimeError(
-            "Hermes Cards ingress requires SCITEX_STORE_DSN; configure the "
+            "Cards ingress requires SCITEX_STORE_DSN; configure the "
             "canonical shared PostgreSQL store on port 55432 and restart the agent"
         )
     try:
@@ -80,7 +87,8 @@ def event_from_notification(record: dict[str, Any]) -> dict[str, Any]:
     exchange_id = record.get("exchange_id")
     if isinstance(exchange_id, str) and exchange_id:
         # Newer Cards producers mint this at the persistence boundary. Carry
-        # the responder-issued handle unchanged through SAC and Hermes; never
+        # the responder-issued handle unchanged through SAC and the selected
+        # harness adapter; never
         # substitute a local success id for a sender-visible exchange.
         event["exchange_id"] = exchange_id
     event["_persisted"] = True
@@ -113,7 +121,7 @@ async def drain_once(
     ack_notifications: Callable[..., dict] | None = None,
     deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> int:
-    """Deliver and confirm a batch; never ACK before Hermes visibility."""
+    """Deliver and confirm a batch; never ACK before target visibility."""
     if poll_notifications is None or ack_notifications is None:
         default_poll, default_ack, _default_watch = _cards_api()
         poll_notifications = poll_notifications or default_poll
@@ -121,8 +129,8 @@ async def drain_once(
 
     payload = await asyncio.to_thread(
         # Read the full view and select ``unconfirmed`` below.  Cards' legacy
-        # Claude-channel transport can mark a record seen after writing JSON
-        # that Hermes ignores; unseen-only would hide that durable, invisible
+        # A legacy harness channel can mark a record seen after writing a
+        # notification that the target ignores; unseen-only would hide that durable, invisible
         # notification forever.
         partial(
             poll_notifications,
@@ -160,8 +168,8 @@ async def drain_once(
             _log_check(
                 logging.WARNING,
                 Check.unknown(
-                    "hermes_transcript_visible",
-                    "the bridge did not establish Hermes transcript visibility "
+                    "harness_delivery_visible",
+                    "the dispatcher did not establish target-harness visibility "
                     f"({type(exc).__name__})",
                     "leave the Cards notification unconfirmed; inspect "
                     f"`sac agents logs {name}` before the durable retry",
@@ -169,7 +177,7 @@ async def drain_once(
                         kind="http",
                         code=502,
                         message=(
-                            "Hermes transcript visibility could not be established; inspect "
+                            "target-harness visibility could not be established; inspect "
                             f"`sac agents logs {name}`"
                         ),
                     ),
@@ -213,6 +221,7 @@ async def _watch_cycle(
     timeout_s: float,
     watch_notifications: Callable[..., Any],
     drain: Callable[..., Awaitable[int]] = drain_once,
+    deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> int:
     """Drain serially after doorbells; stale hints cannot synthesize turns."""
     manager = await asyncio.to_thread(
@@ -233,6 +242,7 @@ async def _watch_cycle(
                 turn_url=turn_url,
                 bearer=bearer,
                 store=store,
+                deliver=deliver,
             )
     finally:
         await asyncio.to_thread(manager.__exit__, None, None, None)
@@ -245,6 +255,7 @@ async def consume(
     bearer: str | None,
     reconcile_interval_s: float = DEFAULT_RECONCILE_INTERVAL_S,
     watch_notifications: Callable[..., Any] | None = None,
+    deliver: Callable[..., Awaitable[None]] = _wake_turn,
 ) -> None:
     """Drain durably on a bounded cadence; use LISTEN only as an accelerator."""
     if watch_notifications is None:
@@ -258,6 +269,7 @@ async def consume(
                 turn_url=turn_url,
                 bearer=bearer,
                 store=store,
+                deliver=deliver,
             )
         except Exception as exc:
             _log_check(
@@ -279,6 +291,7 @@ async def consume(
                 store=store,
                 timeout_s=timeout_s,
                 watch_notifications=watch_notifications,
+                deliver=deliver,
             )
             if watch_impaired:
                 _log_check(

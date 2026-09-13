@@ -272,6 +272,7 @@ async def _serve(
     listen_url: str,
     bearer: str | None,
     turn_url: str | None = None,
+    subscribe: bool = True,
 ) -> None:
     """Drive the MCP session **and** the SSE consumer over the given
     streams, keeping a handle to the session so the consumer can push.
@@ -328,12 +329,12 @@ async def _serve(
                     bearer=bearer,
                     turn_url=turn_url,
                 )
-            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged loudly, never silent)
+            except Exception as exc:  # stx-allow: fallback (reason: one failed push/wake must not kill the long-lived SSE consumer; logged to stderr by the MCP process logger)
                 log.warning("sac channel: delivering inbox event failed: %s", exc)
 
-        sse_task: asyncio.Task[None] = asyncio.create_task(
-            _consume_sse(sse_url, bearer, on_event)
-        )
+        sse_task: asyncio.Task[None] | None = None
+        if subscribe:
+            sse_task = asyncio.create_task(_consume_sse(sse_url, bearer, on_event))
 
         # ADR-0014 + lead-row-port-zero bug fix (2026-06-03):
         # Self-register THIS channel into ``comms_nodes`` so the federated
@@ -358,12 +359,18 @@ async def _serve(
                         False,
                     )
         finally:
-            sse_task.cancel()
+            if sse_task is not None:
+                sse_task.cancel()
             reg_task.cancel()
 
 
 async def _run(
-    name: str, listen_url: str, bearer: str | None, turn_url: str | None = None
+    name: str,
+    listen_url: str,
+    bearer: str | None,
+    turn_url: str | None = None,
+    *,
+    subscribe: bool = True,
 ) -> None:
     from mcp.server.stdio import stdio_server
 
@@ -375,6 +382,7 @@ async def _run(
             listen_url=listen_url,
             bearer=bearer,
             turn_url=turn_url,
+            subscribe=subscribe,
         )
 
 
@@ -398,6 +406,7 @@ def main(
     name: str | None = None,
     listen_url: str | None = None,
     turn_url: str | None = None,
+    send_only: bool = False,
 ) -> None:
     """CLI entry point. Bearer comes from ``SAC_LISTEN_BEARER`` env.
 
@@ -416,6 +425,10 @@ def main(
     ``turn_url`` (WI-1) is the agent's own ``/v1/turn`` endpoint; when set,
     each received bus event WAKES the session by driving a turn there so a
     push to an idle agent is processed immediately (push ≡ Telegram).
+
+    ``send_only`` keeps outbound A2A tools and node registration but starts
+    no inbox subscriber. Managed agents use it because their daemon owns the
+    durable SAC and Cards subscriptions.
     """
     discovered_listen_url: str | None = None
     if name is None:
@@ -441,7 +454,7 @@ def main(
         or os.environ.get("SAC_LISTEN_BASE_URL", "http://127.0.0.1:7878")
     )
     bearer = os.environ.get("SAC_LISTEN_BEARER")
-    asyncio.run(_run(name, listen, bearer, turn_url))
+    asyncio.run(_run(name, listen, bearer, turn_url, subscribe=not send_only))
 
 
 __all__ = ["main"]

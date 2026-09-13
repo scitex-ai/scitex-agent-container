@@ -12,7 +12,6 @@ parent module re-imports them for back-compat with existing callers.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -386,33 +385,38 @@ def tui_channel_config(config: "AgentConfig") -> tuple[str | None, str | None]:
     Returns ``(dev_channels, channel_mcp_json)`` — SDK parity with
     :func:`runtimes._sdk_channels.apply_channels`:
 
-      * ``dev_channels`` — comma-joined channel set for
-        ``--dangerously-load-development-channels`` (fires for ANY
-        channel entry), or ``None`` when no channels are declared.
-      * ``channel_mcp_json`` — inline ``--mcp-config`` JSON registering
-        the ``sac mcp channel --name <agent>`` stdio subscriber under
-        ``mcpServers.sac`` (``server:sac`` ONLY), or ``None``. The
-        subscriber's ``--listen-url`` defaults to ``$SAC_LISTEN_BASE_URL``
-        (already forwarded by ``listen_env_flags``); when the a2a port is
-        resolved it also gets ``--turn-url`` for the WAKE path.
+      * ``dev_channels`` — only channels still owned by the harness itself
+        (for example the Lead-only CCT edge).
+      * ``channel_mcp_json`` — always ``None``.  The host-side channel inbox
+        dispatcher is the single consumer for durable ``server:sac`` and
+        ``server:scitex-cards`` rails, preventing two subscribers from racing
+        to acknowledge the same envelope.
     """
     plan = tui_channel_plan(config)
-    if not plan.channels:
-        return None, None
-    # One --dangerously-load flag per channel (the emission loop in
-    # _tui_runner_argv splits this comma-joined value) — the SAME set the SDK
-    # comma-joins into extra_args, so the two runtimes never disagree.
-    dev_channels = ",".join(plan.channels)
+    harness_owned = tuple(
+        channel
+        for channel in plan.channels
+        if channel not in {"server:sac", "server:scitex-cards"}
+    )
     channel_mcp: str | None = None
     if plan.sac_sidecar_args is not None:
+        import json
+
         channel_mcp = json.dumps(
             {
                 "mcpServers": {
-                    "sac": _sac_channel_mcp_server(list(plan.sac_sidecar_args))
+                    "sac": _sac_channel_mcp_server(
+                        [*plan.sac_sidecar_args, "--send-only"]
+                    )
                 }
             }
         )
-    return dev_channels, channel_mcp
+    if not harness_owned:
+        return None, channel_mcp
+    # One --dangerously-load flag per channel (the emission loop in
+    # _tui_runner_argv splits this comma-joined value) — the SAME set the SDK
+    # comma-joins into extra_args, so the two runtimes never disagree.
+    return ",".join(harness_owned), channel_mcp
 
 
 __all__ = [
