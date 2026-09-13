@@ -85,6 +85,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "scratch-migrate",
                 "link-specs",
                 "provision-cards-notify",
+                "reconcile-turn-bridge",
             ],
         ),
     ]
@@ -189,6 +190,11 @@ _register_auth_audit(agent_group)
 from ._agents_cct_audit import register as _register_cct_audit  # noqa: E402
 
 _register_cct_audit(agent_group)
+from ._agents_reconcile_turn_bridge import (  # noqa: E402
+    register as _register_reconcile_turn_bridge,
+)
+
+_register_reconcile_turn_bridge(agent_group)
 # `state` — the ONE state shape, returned for every agent, always. Each signal
 # is True / False / None (COULD NOT DETERMINE), folded by a single pure rule
 # instead of by whatever subset each call site happened to hold. It exists
