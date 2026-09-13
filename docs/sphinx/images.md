@@ -59,6 +59,26 @@ sac image snapshot -o env.json         # full reproducibility capsule
 The build / sandbox / version / rollback verbs all delegate to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
 
+## Distributing one verified artifact to a fleet
+
+The cross-host publication command requires an exact local SIF, a logical
+layer, and an explicit list of peers from SAC's ``config.yaml``:
+
+```bash
+sac image distribute ./sac-base-2026-0914-120000.sif \
+  --layer base --host compute-01 --host compute-02 \
+  --receipt ./base-distribution.json
+```
+
+There is no ``--all``. ``--dry-run --json`` hashes the resolved source and
+prints the complete plan without opening SSH connections. On a real run, each
+host receives a content-addressed ``sac-base-sha256-<sha>.sif`` through an
+explicit temporary path. Size and SHA-256 are checked before atomic rename and
+again at the final path on every host. Only then are the live links switched.
+If a link switch fails part-way through, already-switched hosts are restored to
+their preflight link states. Old artifacts are never pruned, and the structured
+``sac.image.distribution-receipt/v1`` output records every host's evidence.
+
 ## Pinning a custom image
 
 Set `spec.apptainer.image` in your `spec.yaml`:

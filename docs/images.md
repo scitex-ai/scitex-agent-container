@@ -92,6 +92,46 @@ sac image snapshot -o env.json         # full reproducibility capsule
 The build / sandbox / version / rollback verbs all delegate to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
 
+## Distributing one verified artifact to a fleet
+
+`sac image distribute` is the explicit cross-host publication primitive. It
+does not build an image, discover hosts, restart agents, or promote an authority
+snapshot. Name the exact local SIF, its logical layer, and every target peer:
+
+```bash
+sac image distribute ./sac-base-2026-0914-120000.sif \
+  --layer base \
+  --host compute-01 \
+  --host compute-02 \
+  --receipt ./base-distribution.json
+```
+
+Each `--host` must resolve through the `peers:` block in SAC's `config.yaml`.
+There is deliberately no `--all`: the target set must be reviewable in the
+invocation. Use `--dry-run --json` to resolve the source, calculate its SHA-256
+and byte count, validate the peers, and print the complete plan without opening
+an SSH connection or changing a file.
+
+The destination name is content-addressed with the complete digest, for
+example `sac-base-sha256-<64 hex characters>.sif`. Distribution proceeds as a
+fleet transaction:
+
+1. Inspect and remember both live-link states on every host.
+2. Stream to one explicit `.incoming-distribute-<transaction>.sif` per host;
+   verify its size and SHA-256 there.
+3. Atomically rename every verified temporary file, then verify every final
+   artifact again.
+4. Only after all hosts pass, atomically switch the inner and top-level live
+   links on each host and verify the published links.
+5. If activation fails part-way through, restore already-switched links to the
+   states captured in step 1.
+
+No old artifact is pruned. A mismatch therefore fails closed with current
+links and rollback material preserved. The JSON output and optional atomically
+written `--receipt` use schema `sac.image.distribution-receipt/v1` and include
+status, phases, expected digest/size, verification result, prior/current links,
+remote path, and any error for each host.
+
 ## Selecting an image
 
 SAC-owned images use a portable logical name. Each host resolves the name

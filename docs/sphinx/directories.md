@@ -38,6 +38,7 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │   ├── sac-scitex.sif  -> sac-scitex/sac-scitex.sif    (top-level symlink)
 │   ├── sac-{base,scitex}/                              (dir-per-image)
 │   │   ├── sac-{base,scitex}.sif                       (the image; gitignored)
+│   │   ├── sac-{base,scitex}-sha256-<digest>.sif        (distributed immutable image)
 │   │   ├── sac-{base,scitex}.def                       (recipe snapshot)
 │   │   ├── sac-{base,scitex}.build-YYYY-MMDD-HHMMSS.log (full build log; gitignored)
 │   │   └── .def-hash                                   (skip-rebuild cache)
