@@ -211,16 +211,18 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         return read_control_state(state_dir_for_config(config))
 
     def recover_turn_admission(self, config: AgentConfig) -> bool:
-        """Use Hermes' supported same-session model switch, then resume wakeups."""
+        """Use Hermes' supported same-session model switch."""
         from ._hermes_stale_recovery import recovery_command
 
-        rebound = self.send_turn(config, recovery_command(config), wait_ready=False)
-        if not rebound:
-            return False
-        return self.send_turn(config, "/heartbeat resume", wait_ready=False)
+        return self.send_turn(config, recovery_command(config), wait_ready=False)
 
     def suspend_autonomous_turns(self, config: AgentConfig) -> bool:
-        """Pause Hermes' native scheduler while its provider is stale-latched."""
+        """Keep Hermes' model-calling heartbeat paused.
+
+        Process health and durable inbox reconciliation are owned by SAC
+        sidecars. A live but idle TUI therefore consumes no inference slot;
+        only an actual human, A2A, or Cards event starts a model turn.
+        """
         return self.send_turn(config, "/heartbeat pause", wait_ready=False)
 
 

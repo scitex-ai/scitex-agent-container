@@ -212,11 +212,10 @@ def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
     )
 
 
-def test_monitor_retries_without_pasting_until_hermes_is_idle(tmp_path):
-    # Arrange: two busy ticks, then one positively idle tick.  The monitor's
-    # lifecycle is finite because the fake mux reports the pane gone next.
+def test_monitor_pauses_periodic_model_wakeup_once_and_only_observes(tmp_path):
+    # Arrange: the monitor's lifecycle is finite because the fake mux reports
+    # the pane gone. Cheap pane observation must not synthesize model turns.
     config = _config(tmp_path)
-    observations = iter((False, False, True))
     calls = []
 
     class Runtime:
@@ -225,19 +224,9 @@ def test_monitor_retries_without_pasting_until_hermes_is_idle(tmp_path):
             return "tui-scholar"
 
         @staticmethod
-        def autonomous_control_is_idle(_config):
-            idle = next(observations)
-            calls.append(("idle", idle))
-            return idle
-
-        @staticmethod
-        def send_turn(_config, text, *, wait_ready):
-            calls.append(("send", text, wait_ready))
-            return True
-
-        @staticmethod
         def suspend_autonomous_turns(_config):
-            raise AssertionError("no stale provider latch")
+            calls.append(("control", "/heartbeat pause"))
+            return True
 
         @staticmethod
         def recover_turn_admission(_config):
@@ -257,18 +246,7 @@ def test_monitor_retries_without_pasting_until_hermes_is_idle(tmp_path):
         state_dir=tmp_path,
     )
     # Assert
-    sends = [call for call in calls if call[0] == "send"]
-    assert (
-        [call for call in calls if call[0] == "idle"],
-        len(sends),
-        sends[0][1].startswith("/heartbeat every "),
-        sends[0][2],
-    ) == (
-        [("idle", False), ("idle", False), ("idle", True)],
-        1,
-        True,
-        False,
-    )
+    assert calls == [("control", "/heartbeat pause")]
 
 
 def test_unrelated_live_pid_is_not_owned_by_recovery_adapter(tmp_path):
