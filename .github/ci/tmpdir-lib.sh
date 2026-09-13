@@ -105,6 +105,9 @@ ci_tmpdir_prefix_for_inner() {
     build-in-sif.sh) printf 'build' ;;
     publish-in-sif.sh) printf 'publish' ;;
     docs) printf 'docs' ;;
+    import-smoke) printf 'import' ;;
+    lint) printf 'lint' ;;
+    runner-guard) printf 'guard' ;;
     *) printf '' ;; # creates no per-run scratch
     esac
 }
@@ -138,7 +141,7 @@ _ci_tmpdir_is_managed() {
     '' | */* | *..*) return 1 ;;
     esac
     case "$base" in
-    ci-scitex_agent_container-?* | build-scitex_agent_container-?* | publish-scitex_agent_container-?* | docs-scitex_agent_container-?*)
+    ci-scitex_agent_container-?* | build-scitex_agent_container-?* | publish-scitex_agent_container-?* | docs-scitex_agent_container-?* | import-scitex_agent_container-?* | lint-scitex_agent_container-?* | guard-scitex_agent_container-?*)
         return 0
         ;;
     esac
@@ -237,7 +240,10 @@ ci_tmpdir_prune() {
             \( -name 'ci-scitex_agent_container-*' \
             -o -name 'build-scitex_agent_container-*' \
             -o -name 'publish-scitex_agent_container-*' \
-            -o -name 'docs-scitex_agent_container-*' \) \
+            -o -name 'docs-scitex_agent_container-*' \
+            -o -name 'import-scitex_agent_container-*' \
+            -o -name 'lint-scitex_agent_container-*' \
+            -o -name 'guard-scitex_agent_container-*' \) \
             ! -name "*-${run_id}-${attempt}-*" \
             -mmin "+${age_min}" \
             -print 2>/dev/null || true

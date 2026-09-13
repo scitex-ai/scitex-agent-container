@@ -78,19 +78,7 @@ jobs:
           cache-dependency-glob: pyproject.toml
 
       - name: Prepare job-scoped docs scratch
-        run: |
-          set -euo pipefail
-          . .github/ci/tmpdir-lib.sh
-          scratch="$(ci_tmpdir_path docs 3.12)"
-          ci_tmpdir_cleanup "$scratch"
-          ci_tmpdir_prune
-          mkdir -p "$scratch/tmp" "$scratch/uv-cache"
-          chmod 700 "$scratch" "$scratch/tmp" "$scratch/uv-cache"
-          {
-            echo "TMPDIR=$scratch/tmp"
-            echo "UV_CACHE_DIR=$scratch/uv-cache"
-            echo "DOCS_VENV=$scratch/venv"
-          } >> "$GITHUB_ENV"
+        run: bash .github/ci/prepare-bare-scratch.sh docs 3.12 DOCS_VENV
 
       - name: Install package + docs deps
         run: |

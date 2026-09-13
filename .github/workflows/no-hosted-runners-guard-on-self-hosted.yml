@@ -128,6 +128,9 @@ jobs:
           version: "0.11.29"
           cache-dependency-glob: pyproject.toml
 
+      - name: Prepare job-scoped runner-guard scratch
+        run: bash .github/ci/prepare-bare-scratch.sh runner-guard 3.12 GUARD_VENV
+
       # Split out of the guard step so BOTH guards below can run even when the
       # first of them fails: an `if: always()` step that also owned the venv
       # creation would be reporting a missing interpreter instead of a
@@ -136,8 +139,8 @@ jobs:
         id: prepare
         run: |
           set -euo pipefail
-          uv venv --python 3.12 .venv
-          uv pip install --python .venv/bin/python pyyaml
+          uv venv --python 3.12 "$GUARD_VENV"
+          uv pip install --python "$GUARD_VENV/bin/python" pyyaml
 
       - name: Guard — no GitHub-hosted runners
         run: |
@@ -145,7 +148,7 @@ jobs:
           # 2>&1 on purpose: the guard prints its FAILURE report to stderr.
           # Without the merge, the one thing a reader needs would be missing
           # from the step summary. pipefail keeps the non-zero exit intact.
-          PYTHONPATH=src .venv/bin/python \
+          PYTHONPATH=src "$GUARD_VENV/bin/python" \
             -m scitex_agent_container._hosted_runner_guard . 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -164,6 +167,10 @@ jobs:
         if: always() && steps.prepare.outcome == 'success'
         run: |
           set -euo pipefail
-          PYTHONPATH=src .venv/bin/python \
+          PYTHONPATH=src "$GUARD_VENV/bin/python" \
             -m scitex_agent_container._runner_pool_guard . 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove this job's runner-guard scratch
+        if: always()
+        run: bash .github/ci/clean-tmpdir.sh runner-guard 3.12
