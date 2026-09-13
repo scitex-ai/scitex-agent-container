@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,11 +13,69 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
     active_sessions,
+    gateway_detailed_health,
     observe_turn_activity,
     pause_heartbeat,
     submit_turn,
     submit_visible_turn,
 )
+
+
+def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text(
+        json.dumps({"port": 43123}), encoding="utf-8"
+    )
+    (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
+    seen = []
+
+    def open_(request, timeout):
+        seen.append((request, timeout))
+        return nullcontext(
+            SimpleNamespace(status=200, read=lambda: b'{"status":"ok","readiness":{"checks":[]}}')
+        )
+
+    # Act
+    payload = gateway_detailed_health(tmp_path, urlopen_fn=open_)
+
+    # Assert
+    assert (
+        payload["status"],
+        seen[0][0].full_url,
+        seen[0][0].get_header("Authorization"),
+    ) == (
+        "ok",
+        "http://127.0.0.1:43123/health/detailed",
+        "Bearer secret-token-1234",
+    )
+
+
+def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text(
+        json.dumps({"port": 43123}), encoding="utf-8"
+    )
+    (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
+
+    def open_(_request, timeout):
+        del timeout
+        return nullcontext(
+            SimpleNamespace(
+                status=200,
+                read=lambda: b'{"status":"degraded","readiness":{"disk":"full"}}',
+            )
+        )
+
+    # Act
+    try:
+        gateway_detailed_health(tmp_path, urlopen_fn=open_)
+    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        observed = str(exc)
+    else:
+        observed = ""
+
+    # Assert
+    assert "readiness is degraded" in observed
 
 
 class _Socket:

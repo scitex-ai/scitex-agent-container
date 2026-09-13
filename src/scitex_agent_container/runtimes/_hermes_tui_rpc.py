@@ -42,6 +42,61 @@ class HermesVisibleTurnReceipt:
 _SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
 
 
+def _detailed_health(
+    port: int,
+    token: str,
+    *,
+    timeout_s: float = 2.0,
+    urlopen_fn: Any = urlopen,
+) -> dict[str, Any]:
+    """Return Hermes' authenticated readiness document or fail closed."""
+    request = Request(
+        f"http://127.0.0.1:{port}/health/detailed",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlopen_fn(request, timeout=timeout_s) as response:
+            payload = json.loads(response.read())
+            status = int(response.status)
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes authenticated readiness is unavailable: {exc}"
+        ) from exc
+    if status != 200 or not isinstance(payload, dict):
+        raise HermesTuiRpcError(
+            "Hermes authenticated readiness returned a malformed response"
+        )
+    if payload.get("status") != "ok":
+        raise HermesTuiRpcError(
+            "Hermes authenticated readiness is degraded: "
+            f"{payload.get('readiness', payload)!r}"
+        )
+    return payload
+
+
+def gateway_detailed_health(
+    state_dir: Path,
+    *,
+    timeout_s: float = 2.0,
+    urlopen_fn: Any = urlopen,
+) -> dict[str, Any]:
+    """Read authenticated readiness for the exact published gateway owner."""
+    _url, token = _gateway_connection(state_dir)
+    try:
+        descriptor = json.loads((state_dir / GATEWAY_FILE).read_text(encoding="utf-8"))
+        port = int(descriptor["port"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway state is unavailable: {exc}"
+        ) from exc
+    return _detailed_health(
+        port,
+        token,
+        timeout_s=timeout_s,
+        urlopen_fn=urlopen_fn,
+    )
+
+
 def _gateway_connection(state_dir: Path) -> tuple[str, str]:
     """Resolve the private websocket endpoint without exposing its bearer."""
     try:
@@ -464,6 +519,7 @@ __all__ = [
     "HermesVisibleTurnReceipt",
     "_stored_delivery_visibility",
     "active_sessions",
+    "gateway_detailed_health",
     "observe_turn_activity",
     "pause_heartbeat",
     "submit_turn",

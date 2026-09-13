@@ -5,7 +5,10 @@ from __future__ import annotations
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
-from scitex_agent_container.runtimes._hermes_tui_rpc import HermesVisibleTurnReceipt
+from scitex_agent_container.runtimes._hermes_tui_rpc import (
+    HermesTuiRpcError,
+    HermesVisibleTurnReceipt,
+)
 from scitex_agent_container.runtimes.hermes_tui import (
     HermesTuiSessionRuntime,
     _dismiss_heartbeat_confirmation,
@@ -211,6 +214,44 @@ def test_send_key_refuses_when_tmux_session_is_absent():
     delivered = runtime.send_key(_config(), "Enter")
     # Assert
     assert delivered is False
+
+
+def test_deliverability_requires_authenticated_gateway_readiness():
+    # Arrange
+    def degraded(_state):
+        raise HermesTuiRpcError("Hermes authenticated readiness is degraded")
+
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(), gateway_health=degraded
+    )
+
+    # Act
+    reason = runtime.why_not_deliverable(_config())
+
+    # Assert
+    assert reason == "Hermes authenticated readiness is degraded"
+
+
+def test_control_state_surfaces_authenticated_readiness_json():
+    # Arrange
+    readiness = {
+        "status": "ok",
+        "readiness": {"checks": [{"name": "disk", "ok": True}]},
+    }
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(),
+        control_state_reader=lambda _state: {"turn_admission": "ready"},
+        gateway_health=lambda _state: readiness,
+    )
+
+    # Act
+    state = runtime.control_state(_config())
+
+    # Assert
+    assert state == {
+        "turn_admission": "ready",
+        "gateway_readiness": readiness,
+    }
 
 
 def test_visible_incoming_turn_uses_only_native_hermes_rpc():

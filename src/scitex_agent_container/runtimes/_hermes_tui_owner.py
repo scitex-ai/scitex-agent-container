@@ -45,6 +45,41 @@ def _wait_for_port(
     raise RuntimeError(f"Hermes gateway did not publish {path} within {timeout_s:g}s")
 
 
+def _wait_for_readiness(
+    port: int,
+    token: str,
+    process: subprocess.Popen,
+    *,
+    timeout_s: float = 30.0,
+    detailed_health: Callable[..., dict] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> dict:
+    """Wait for authenticated readiness, not the public liveness route."""
+    from ._hermes_tui_rpc import HermesTuiRpcError
+
+    if detailed_health is None:
+        from ._hermes_tui_rpc import _detailed_health
+
+        detailed_health = _detailed_health
+
+    deadline = monotonic() + timeout_s
+    last_error = "no readiness observation"
+    while monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"Hermes gateway exited before ready (rc={process.returncode})"
+            )
+        try:
+            return detailed_health(port, token, timeout_s=1.0)
+        except HermesTuiRpcError as exc:
+            last_error = str(exc)
+            sleep(0.1)
+    raise RuntimeError(
+        f"Hermes gateway did not become ready within {timeout_s:g}s: {last_error}"
+    )
+
+
 def _atomic_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -364,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, forward)
     try:
         port = _wait_for_port(gateway_ready_path, gateway)
+        _wait_for_readiness(port, token, gateway)
         _publish_gateway_state(
             state_dir,
             generation=generation,
