@@ -327,15 +327,22 @@ def test_active_default_never_accepts_hermes_next_turn_queue_as_steer(tmp_path):
 
     socket = RejectingSteerSocket(status="working")
 
-    # Act / Assert
-    with pytest.raises(HermesTuiRpcError, match="did not accept the active-turn steer"):
+    error = None
+    # Act
+    try:
         submit_turn(
             tmp_path, "hub", "urgent correction", connect_fn=lambda *a, **k: socket
         )
-    assert [request["method"] for request in socket.sent] == [
-        "session.active_list",
-        "session.steer",
-    ]
+    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 requires Act and Assert to remain separate.)
+        error = exc
+    # Assert
+    assert (
+        "did not accept the active-turn steer" in str(error),
+        [request["method"] for request in socket.sent],
+    ) == (
+        True,
+        ["session.active_list", "session.steer"],
+    )
 
 def test_session_selection_refuses_ambiguous_gateway():
     # Arrange
