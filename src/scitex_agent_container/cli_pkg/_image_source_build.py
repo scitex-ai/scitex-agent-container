@@ -60,6 +60,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
+import tomllib
+
 from .._provenance._git import repo_root_for_package
 from .._provenance._stamp import compute_stamp, render_module, stamp_path
 from ._image_build_lock import image_build_lock
@@ -368,6 +370,64 @@ def _write_staged_provenance(
     target.write_text(render_module(staged_stamp), encoding="utf-8")
 
 
+def _declared_package_sources(
+    *, pyproject_path: Path, package_root: Path
+) -> tuple[tuple[Path, Path], ...]:
+    """Resolve every wheel package declared by the staged pyproject.
+
+    Hatchling's explicit ``packages`` list is part of the build input just
+    like its custom-hook path.  The installed packages are siblings beneath
+    one import root, while their staged destinations retain the declared
+    ``src/...`` layout.
+    """
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    declared = (
+        data.get("tool", {})
+        .get("hatch", {})
+        .get("build", {})
+        .get("targets", {})
+        .get("wheel", {})
+        .get("packages")
+    )
+    if not isinstance(declared, list) or not declared:
+        raise ValueError(
+            "image-build pyproject must explicitly declare a non-empty "
+            "[tool.hatch.build.targets.wheel].packages list"
+        )
+
+    import_root = package_root.parent
+    resolved: list[tuple[Path, Path]] = []
+    for value in declared:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"unsupported wheel package path in image-build pyproject: {value!r}"
+            )
+        relative = Path(value)
+        if (
+            relative.is_absolute()
+            or len(relative.parts) < 2
+            or relative.parts[0] != "src"
+            or ".." in relative.parts
+        ):
+            raise ValueError(
+                f"unsupported wheel package path in image-build pyproject: {value!r}"
+            )
+        source = import_root.joinpath(*relative.parts[1:])
+        if not source.is_dir():
+            raise FileNotFoundError(
+                "declared wheel package is absent from the SAC installation: "
+                f"{value} -> {source}"
+            )
+        resolved.append((relative, source))
+    expected_main = Path("src") / package_root.name
+    if expected_main not in {relative for relative, _source in resolved}:
+        raise ValueError(
+            "image-build pyproject does not declare the SAC package itself: "
+            f"missing {expected_main}"
+        )
+    return tuple(resolved)
+
+
 def stage_build_context(
     pkg_root: Path,
     def_path: Path,
@@ -387,12 +447,12 @@ def stage_build_context(
                 src/
                     hatch_build.py             # pyproject's hooks.custom path
                     scitex_agent_container/    # copy of pkg_root contents
+                    <other declared packages>/ # e.g. console bootstrap
 
-    The ``src/scitex_agent_container/`` layout matches what
-    pyproject.toml's ``[tool.hatch.build.targets.wheel].packages``
-    declares, so ``pip install <X>`` resolves the same package that
-    the wheel ships — but pinned to the source tree that shipped this
-    .def.
+    Every entry in pyproject.toml's
+    ``[tool.hatch.build.targets.wheel].packages`` is copied, so ``pip
+    install <X>`` resolves the same complete package set that the wheel
+    ships — but pinned to the source tree that shipped this .def.
 
     The staging dir is reset (rm -rf'd) before each call so a stale
     half-built tree from a previous failed build can't silently mix
@@ -442,12 +502,17 @@ def stage_build_context(
     if not pkg_root.is_dir():
         raise NotADirectoryError(f"package source is not a directory: {pkg_root}")
 
-    # Resolve pyproject.toml + README.md + hatch_build.py + (when set)
-    # bootstrap_sif BEFORE wiping dest_dir so a missing-file failure
-    # doesn't strand the operator with a half-staged tree.
+    # Resolve pyproject.toml + README.md + hatch_build.py + every declared
+    # wheel package + (when set) bootstrap_sif BEFORE wiping dest_dir so a
+    # missing-file failure doesn't strand the operator with a half-staged
+    # tree.
     pyproject_src = locate_bundled_pyproject(pkg_root)
     readme_src = locate_bundled_readme(pkg_root)
     hatch_build_src = locate_bundled_hatch_build(pkg_root)
+    package_sources = _declared_package_sources(
+        pyproject_path=pyproject_src,
+        package_root=pkg_root,
+    )
     if bootstrap_sif is not None and not bootstrap_sif.is_file():
         raise FileNotFoundError(
             f"bootstrap SIF not found: {bootstrap_sif} — build the prerequisite "
@@ -489,10 +554,13 @@ def stage_build_context(
     staged_src.mkdir()
     shutil.copy2(pyproject_src, staged_src / "pyproject.toml")
     shutil.copy2(readme_src, staged_src / "README.md")
-    pkg_dest = staged_src / "src" / "scitex_agent_container"
-    pkg_dest.parent.mkdir(parents=True)
+    (staged_src / "src").mkdir()
     shutil.copy2(hatch_build_src, staged_src / "src" / "hatch_build.py")
-    shutil.copytree(pkg_root, pkg_dest, ignore=_COPY_IGNORE)
+    for relative, source in package_sources:
+        destination = staged_src / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, destination, ignore=_COPY_IGNORE)
+    pkg_dest = staged_src / "src" / "scitex_agent_container"
     _write_staged_provenance(
         source_package=pkg_root,
         staged_package=pkg_dest,

@@ -83,6 +83,8 @@ def fake_pkg_root(tmp_path: Path) -> Path:
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
         '\n[tool.hatch.build.targets.wheel.hooks.custom]\npath = "src/hatch_build.py"\n'
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
@@ -289,6 +291,8 @@ def test_stage_build_context_replaces_stale_generated_provenance_from_checkout(
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '9.8.7'\n"
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
     )
     (bundled / "README.md").write_text("# test\n")
     (bundled / "hatch_build.py").write_text("# hook\n")
@@ -1154,6 +1158,16 @@ def test_def_does_not_install_sac_via_git_ref(def_text: str):
     )
 
 
+def test_base_def_tests_installed_sac_console_before_publish():
+    # Arrange
+    recipe = (_RECIPES_DIR / "apptainer-base.def").read_text()
+    test_section = recipe.partition("%test")[2].partition("%labels")[0]
+    # Act
+    command_present = "/opt/venv-sac/bin/sac --version" in test_section
+    # Assert
+    assert command_present is True
+
+
 def test_recipes_dir_holds_all_three_shipped_defs():
     # Arrange — declared expected set
     expected = set(_ALL_DEF_NAMES)
@@ -1294,6 +1308,12 @@ def _declared_hook_paths(pyproject_path: Path) -> list[str]:
     return paths
 
 
+def _declared_wheel_packages(pyproject_path: Path) -> list[str]:
+    """Return every source package the staged wheel configuration names."""
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    return data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+
+
 @pytest.fixture(scope="module")
 def real_staged_src(tmp_path_factory) -> Path:
     """Stage the REAL package root + a REAL shipped .def, once.
@@ -1345,7 +1365,21 @@ def test_staged_tree_contains_every_path_the_real_pyproject_declares(
     )
 
 
-def _build_wheel(out_dir: Path) -> Path:
+@_skip_no_repo
+def test_staged_tree_contains_every_declared_wheel_package(real_staged_src: Path):
+    # Arrange
+    declared = _declared_wheel_packages(real_staged_src / "pyproject.toml")
+    # Act
+    missing = [path for path in declared if not (real_staged_src / path).is_dir()]
+    # Assert
+    assert missing == [], (
+        f"the staged source tree is missing declared wheel packages {missing}; "
+        "the SIF's source install would create console entry points whose target "
+        "modules do not exist"
+    )
+
+
+def _build_wheel(out_dir: Path, source: Path = _REPO_ROOT) -> Path:
     """Build the wheel + return the .whl path. ``pip wheel --no-deps``.
 
     ``pip wheel --no-deps`` drives the PEP 517 backend (hatchling) to
@@ -1361,7 +1395,7 @@ def _build_wheel(out_dir: Path) -> Path:
             "--no-deps",
             "--wheel-dir",
             str(out_dir),
-            str(_REPO_ROOT),
+            str(source),
         ],
         capture_output=True,
         text=True,
@@ -1380,6 +1414,33 @@ def _build_wheel(out_dir: Path) -> Path:
 def built_wheel(tmp_path_factory) -> Path:
     out_dir = tmp_path_factory.mktemp("wheel-out")
     return _build_wheel(out_dir)
+
+
+@pytest.fixture(scope="module")
+def staged_wheel(tmp_path_factory, real_staged_src: Path) -> Path:
+    """Build the same source tree copied into the SIF's ``/opt`` path."""
+    out_dir = tmp_path_factory.mktemp("staged-wheel-out")
+    return _build_wheel(out_dir, real_staged_src)
+
+
+@_skip_no_repo
+@_skip_no_pip
+def test_sif_staged_wheel_contains_importable_console_bootstrap(staged_wheel: Path):
+    # Arrange
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, {str(staged_wheel)!r}); "
+        "import _scitex_agent_container_bootstrap as bootstrap; "
+        "assert bootstrap.__file__"
+    )
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+    )
+    # Assert
+    assert result.returncode == 0, result.stderr
 
 
 @_skip_no_repo
