@@ -283,7 +283,7 @@ def test_conflict_message_names_the_existing_target(pg_schema: str) -> None:
     assert raised is not None and "8642" in str(raised)
 
 
-def test_conflict_message_mentions_the_prefer_flag_hint(pg_schema: str) -> None:
+def test_conflict_message_names_the_exposed_spec_restart_repair(pg_schema: str) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
     raised: BaseException | None = None
@@ -295,7 +295,8 @@ def test_conflict_message_mentions_the_prefer_flag_hint(pg_schema: str) -> None:
     ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
         raised = exc
     # Assert
-    assert raised is not None and "--prefer" in str(raised)
+    assert raised is not None and "starting/restarting" in str(raised)
+    assert "--prefer" not in str(raised)
 
 
 def test_a_refused_write_leaves_the_record_unchanged(pg_schema: str) -> None:

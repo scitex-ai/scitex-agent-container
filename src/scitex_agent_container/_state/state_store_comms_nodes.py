@@ -348,8 +348,8 @@ def _guard_conflict(
         f"source={source_host!r}, source_path={source_path!r}). "
         f"Two registrations for the same name disagree on the "
         f"(host, a2a_port) target. Resolve by either:\n"
-        f"  - rerunning the canonical writer with "
-        f"`--prefer {kind}` to declare intent (overwrites), or\n"
+        f"  - starting/restarting the canonical spec incarnation, which "
+        f"explicitly owns its same-origin route, or\n"
         f"  - removing/renaming the conflicting {other_kind} "
         f"so a single source owns this name."
     )
