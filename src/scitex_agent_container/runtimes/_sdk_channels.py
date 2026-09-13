@@ -213,7 +213,7 @@ class ChannelPlan:
 
 def compute_channel_plan(
     channels: list[str] | None,
-    a2a_port: int | None,
+    a2a_port: int | str | None,
     agent_name: str,
 ) -> ChannelPlan:
     """Resolve ``spec.comms.channels`` into the shared channel-wiring plan.
@@ -232,17 +232,21 @@ def compute_channel_plan(
         telegrammer channel is requested AND an a2a port is resolved.
     """
     chset = _dedupe_channels(channels or [])
+    # A read-only consumer can load the declarative ``auto`` sentinel before
+    # agent_start has replaced it with the claimed integer. Wiring requires
+    # the resolved value; absence here means no URL, never ``int("auto")``.
+    resolved_port = a2a_port if isinstance(a2a_port, int) and a2a_port > 0 else None
     sac_sidecar_args: tuple[str, ...] | None = None
     if any(c.strip() == "server:sac" for c in (channels or [])):
         args = ["mcp", "channel", "--name", agent_name]
-        if a2a_port is not None:
-            args += ["--turn-url", f"http://127.0.0.1:{int(a2a_port)}/v1/turn"]
+        if resolved_port is not None:
+            args += ["--turn-url", f"http://127.0.0.1:{resolved_port}/v1/turn"]
         sac_sidecar_args = tuple(args)
     telegrammer_turn_url: str | None = None
-    if a2a_port is not None and any(
+    if resolved_port is not None and any(
         c.strip() == _TELEGRAMMER_CHANNEL for c in (channels or [])
     ):
-        telegrammer_turn_url = f"http://127.0.0.1:{int(a2a_port)}/v1/turn"
+        telegrammer_turn_url = f"http://127.0.0.1:{resolved_port}/v1/turn"
     return ChannelPlan(
         channels=tuple(chset),
         sac_sidecar_args=sac_sidecar_args,

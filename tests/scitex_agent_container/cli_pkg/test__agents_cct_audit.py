@@ -332,3 +332,40 @@ def test_hermes_audit_downgrades_a_broken_generated_profile(tmp_path: Path) -> N
         override,
         "canonical MCP entry" in detail,
     ) == ("broken", "down", True)
+
+
+def test_hermes_audit_accepts_materialized_port_for_auto_spec(tmp_path: Path) -> None:
+    # Arrange: authority remains declarative while the generated profile
+    # records the concrete claim chosen at start.
+    config = AgentConfig(name="business", harness="hermes", runtime="tui")
+    config.a2a.port = "auto"
+    config.claude.channels = [_CHANNEL]
+    profile = tmp_path / ".hermes" / "config.yaml"
+    profile.parent.mkdir()
+    profile.write_text(
+        _yaml.safe_dump(
+            {
+                "mcp_servers": {
+                    "claude-code-telegrammer": {
+                        "env": {
+                            "CLAUDE_CODE_TELEGRAMMER_TURN_URL": (
+                                "http://127.0.0.1:19007/v1/turn"
+                            )
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Act
+    observed, override, detail = _materialized_hermes_rail(config, home=tmp_path)
+
+    # Assert
+    assert (
+        observed["state"],
+        override,
+        detail,
+        observed["expected_turn_url"],
+    ) == ("ready", None, "", "auto (resolved at start)")

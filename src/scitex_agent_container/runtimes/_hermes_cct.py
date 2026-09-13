@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +111,19 @@ def inspect_materialized_hermes_cct(config: AgentConfig, home: Path) -> dict[str
     env = entry.get("env") if isinstance(entry, dict) else None
     actual = env.get(_TELEGRAMMER_TURN_URL_ENV) if isinstance(env, dict) else None
     result["turn_url_present"] = bool(actual)
-    result["turn_url_matches"] = bool(expected and actual == expected)
+    declared_port = getattr(config.a2a, "port", None)
+    if declared_port == "auto":
+        # The generated profile contains the integer claimed at start, while a
+        # freshly loaded authority spec still says ``auto``.
+        match = re.fullmatch(
+            r"http://127\.0\.0\.1:(\d{1,5})/v1/turn", str(actual or "")
+        )
+        result["turn_url_matches"] = bool(
+            match and 0 < int(match.group(1)) < 65536
+        )
+        result["expected_turn_url"] = "auto (resolved at start)"
+    else:
+        result["turn_url_matches"] = bool(expected and actual == expected)
     return result
 
 

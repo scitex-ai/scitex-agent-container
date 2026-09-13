@@ -100,7 +100,7 @@ def _write_spec(
     name: str,
     *,
     host: str = "127.0.0.1",
-    port: int | None,
+    port: int | str | None,
     include_port: bool = True,
 ) -> Path:
     """Write ``<tmp_path>/<name>/spec.yaml`` with the given a2a block."""
@@ -202,6 +202,20 @@ def test_doctor_missing_port_json_carries_error(tmp_path: Path) -> None:
     res = CliRunner().invoke(a2a, ["doctor", str(spec), "--json"])
     # Assert
     assert "spec.a2a.port" in json.loads(res.output)["error"]
+
+
+def test_doctor_auto_port_is_actionable_instead_of_crashing(tmp_path: Path) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path, "ag-auto", port="auto")
+    # Act
+    res = CliRunner().invoke(a2a, ["doctor", str(spec), "--json"])
+    # Assert
+    payload = json.loads(res.output)
+    assert (res.exit_code, payload["ok"], "--port" in payload["error"]) == (
+        2,
+        False,
+        True,
+    )
 
 
 def test_doctor_name_mismatch_returns_one(tmp_path: Path, card_server: Any) -> None:

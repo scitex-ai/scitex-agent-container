@@ -127,6 +127,17 @@ class TestComputeChannelPlan:
         # Assert
         assert plan.telegrammer_turn_url is None
 
+    def test_declarative_auto_port_yields_no_wake_until_start_resolves_it(self):
+        # Arrange
+        channels = ["server:sac", "server:claude-code-telegrammer"]
+        # Act
+        plan = compute_channel_plan(channels, "auto", "clew")
+        # Assert
+        assert (plan.telegrammer_turn_url, plan.sac_sidecar_args) == (
+            None,
+            ("mcp", "channel", "--name", "clew"),
+        )
+
     def test_sac_channel_yields_sidecar_args_with_turn_url(self):
         # Arrange
         channels = ["server:sac"]

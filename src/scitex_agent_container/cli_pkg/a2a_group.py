@@ -170,11 +170,17 @@ def a2a_doctor(
 
     eff_host = host or str(a2a_block.get("host", "127.0.0.1"))
     eff_port = port or a2a_block.get("port")
-    if eff_port is None:
+    if eff_port is None or eff_port == "auto":
+        detail = (
+            "spec.a2a.port is 'auto' and has no stable value in YAML; "
+            "pass the live allocated port with --port"
+            if eff_port == "auto"
+            else "spec.a2a.port not set in YAML and --port not given"
+        )
         result = {
             "ok": False,
             "agent": name,
-            "error": "spec.a2a.port not set in YAML and --port not given",
+            "error": detail,
         }
         _emit(result, as_json)
         sys.exit(2)
