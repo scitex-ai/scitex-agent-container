@@ -355,7 +355,7 @@ def ensure_api_key(state_dir: Path) -> str:
 def _bind_session_affinity(
     rendered: dict[str, Any], *, config: AgentConfig, plan: LaunchPlan
 ) -> None:
-    """Give every request from this SAC conversation one stable gateway key."""
+    """Give every request from this SAC agent one stable gateway affinity key."""
     provider = rendered["providers"][f"sac-{plan.engine.key}"]
     provider.setdefault("extra_headers", {})[SESSION_AFFINITY_HEADER] = (
         f"sac:{config.name}"
