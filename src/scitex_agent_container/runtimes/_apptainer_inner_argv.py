@@ -350,7 +350,7 @@ def _agent_runner_argv(config: "AgentConfig", *, one_shot: bool) -> list[str]:
             runner_argv.append("--print-stream")
     # spec.a2a.{port,host} → --a2a-port / --a2a-host (the sidecar bind).
     runner_argv += _a2a_argv(config)
-    # spec.claude.channels → one --channels arg per entry. When the set
+    # spec.comms.channels → one internal --channels arg per entry. When the set
     # contains 'server:sac', the daemon runner threads it into
     # build_sdk_options, which auto-registers the 'sac mcp channel' stdio
     # MCP so the long-lived SDK session subscribes to its inbox SSE and

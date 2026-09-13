@@ -1,4 +1,4 @@
-"""``spec.claude.channels`` → claude dev-channels flag + sac MCP sidecar.
+"""Resolved ``spec.comms.channels`` → harness channel adapters.
 
 Extracted from ``_sdk_common.build_sdk_options`` so the channel wiring has
 one focused home (and its own test surface).
@@ -11,7 +11,7 @@ auto-registers sac's own bus-adapter MCP.
 
 Two separate concerns, gated independently:
 
-  (a) dev-channels flag — fire for ANY ``spec.claude.channels`` entry, value
+  (a) dev-channels flag — fire for ANY ``spec.comms.channels`` entry, value
       = comma-joined set of every requested channel. This is what lets a
       per-agent channel work, e.g. an agent running its OWN telegrammer bot
       via ``server:claude-code-telegrammer`` (whose backing stdio MCP the
@@ -218,7 +218,7 @@ def compute_channel_plan(
     a2a_port: int | None,
     agent_name: str,
 ) -> ChannelPlan:
-    """Resolve ``spec.claude.channels`` into the shared channel-wiring plan.
+    """Resolve ``spec.comms.channels`` into the shared channel-wiring plan.
 
     Pure — no I/O, no kwargs/argv mutation. Both runtimes wire the SAME
     ``channels`` set (the SDK comma-joins them into the single
@@ -258,7 +258,7 @@ def apply_channels(
     a2a_port: int | None,
     agent_name: str,
 ) -> None:
-    """Wire ``spec.claude.channels`` into the ``ClaudeAgentOptions`` kwargs.
+    """Adapt resolved ``spec.comms.channels`` to ``ClaudeAgentOptions``.
 
     Mutates ``kwargs`` in place:
 
@@ -474,7 +474,7 @@ def validate_telegrammer_wake_wiring(
     if a2a_port is None:
         agent_clause = f" for agent {agent_name!r}" if agent_name else ""
         raise TelegrammerWakeWiringError(
-            f"spec.claude.channels{agent_clause} requests "
+            f"spec.comms.channels{agent_clause} requests "
             f"{_TELEGRAMMER_CHANNEL!r} but spec.a2a.port is unset/null. "
             f"Without an /v1/turn endpoint the standalone telegrammer "
             f"poller has no URL to POST inbound Telegram messages to, so "
@@ -483,5 +483,5 @@ def validate_telegrammer_wake_wiring(
             f"retry the start. To run without the wake (legacy "
             f"notifications/claude/channel-only behaviour, only renders for "
             f"already-active turns), remove "
-            f"{_TELEGRAMMER_CHANNEL!r} from spec.claude.channels."
+            f"{_TELEGRAMMER_CHANNEL!r} from spec.comms.channels."
         )

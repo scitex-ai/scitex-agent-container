@@ -19,7 +19,6 @@ LEGACY_CONTAINER_KEY = "container"
 _COMMON_HARNESS_ENTRY_KEYS = frozenset(
     {
         "session",
-        "channels",
     }
 )
 _SESSION_KEYS = frozenset({"mode", "max_age_minutes"})
@@ -83,13 +82,13 @@ def _selected_entry(spec: Mapping) -> tuple[str, Mapping] | None:
     return None
 
 
-def _claude_compat(entry: Mapping) -> dict:
+def _claude_compat(entry: Mapping, channels: object = None) -> dict:
     session = entry.get("session")
     session = session if isinstance(session, Mapping) else {}
     approval = entry.get("approval_policy")
     return {
         "model": "",
-        "channels": list(entry.get("channels") or []),
+        "channels": list(channels or []),
         "flags": [],
         "raw_options": {},
         "session": session.get("mode"),
@@ -129,6 +128,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
             "spec.available_engines and legacy spec.engines disagree; declare "
             "one surface, or make the two mappings identical"
         )
+
+    comms = spec.get("comms")
 
     if AVAILABLE_HARNESSES_KEY not in spec:
         return errors
@@ -179,11 +180,17 @@ def canonical_surface_errors(raw: object) -> list[str]:
         elif family == "hermes":
             allowed.update({"background_review", "compression", "run_budget_seconds"})
         missing = sorted(required - entry_keys)
-        unknown = sorted(entry_keys - allowed)
+        unknown = sorted(entry_keys - allowed - {"channels"})
         if missing:
             errors.append(f"{path} is missing required fields: {missing}")
         if unknown:
             errors.append(f"{path} has unknown fields: {unknown}")
+        if "channels" in raw_entry:
+            errors.append(
+                f"{path}.channels is harness-specific placement; move it to "
+                "spec.comms.channels so the same declaration drives Claude Code, "
+                "Hermes, and Codex"
+            )
 
         if "compression" in raw_entry:
             if family != "hermes":
@@ -244,11 +251,6 @@ def canonical_surface_errors(raw: object) -> list[str]:
                     "Hermes TUI runtime does not implement age-gated continuation"
                 )
 
-        channels = raw_entry.get("channels")
-        if not isinstance(channels, list) or not all(
-            isinstance(item, str) and item.strip() for item in channels
-        ):
-            errors.append(f"{path}.channels must be a list of non-empty strings")
         if (
             "approval_policy" in required
             and raw_entry.get("approval_policy") != "never"
@@ -312,11 +314,19 @@ def canonical_surface_errors(raw: object) -> list[str]:
         )
 
     selected_entry = _selected_entry(spec)
+    communication_channels = (
+        comms.get("channels") if isinstance(comms, Mapping) else None
+    )
+    if communication_channels is None:
+        errors.append(
+            "spec.comms.channels is required with spec.available_harnesses; "
+            "declare the shared channel set once outside harness entries"
+        )
     legacy = spec.get(LEGACY_HARNESS_OPTIONS_KEY)
     if selected_entry is not None and LEGACY_HARNESS_OPTIONS_KEY in spec:
         _, entry = selected_entry
         if not isinstance(legacy, Mapping) or _claude_values(legacy) != _claude_values(
-            _claude_compat(entry)
+            _claude_compat(entry, communication_channels)
         ):
             errors.append(
                 "spec.available_harnesses selected entry and legacy spec.claude "
@@ -345,7 +355,9 @@ def normalize_document(raw: object) -> object:
     selected = _selected_entry(spec)
     if selected is not None:
         _, entry = selected
-        spec[LEGACY_HARNESS_OPTIONS_KEY] = _claude_compat(entry)
+        comms = spec.get("comms")
+        channels = comms.get("channels") if isinstance(comms, Mapping) else []
+        spec[LEGACY_HARNESS_OPTIONS_KEY] = _claude_compat(entry, channels)
         watchdog = entry.get("watchdog")
         if isinstance(watchdog, Mapping):
             spec["watchdog"] = copy.deepcopy(dict(watchdog))

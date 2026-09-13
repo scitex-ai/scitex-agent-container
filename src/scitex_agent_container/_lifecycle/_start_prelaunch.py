@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._a2a_port import resolve_a2a_port
 from ._engine_select import select_engine_at_start
 from ._identity_drift import check_board_identity_at_launch
 from ._layers_preflight import check_to_home_layers_at_launch
@@ -35,7 +36,6 @@ from ._start_preflight import (
     _check_spec_source_drift_at_launch,
     _rotate_to_healthy_account,
 )
-from ._a2a_port import resolve_a2a_port
 
 __all__ = ["run_prelaunch"]
 
@@ -160,7 +160,7 @@ def run_prelaunch(
     # the spec.yaml.
     resolve_a2a_port(config)
 
-    # Bug #41 preflight — refuse to start when spec.claude.channels
+    # Bug #41 preflight — refuse to start when spec.comms.channels
     # requests ``server:claude-code-telegrammer`` but spec.a2a.port is
     # unset/null. Without the /v1/turn endpoint the standalone
     # telegrammer poller has no URL to POST inbound Telegram to and an
@@ -178,4 +178,3 @@ def run_prelaunch(
         getattr(config.a2a, "port", None),
         agent_name=config.name,
     )
-

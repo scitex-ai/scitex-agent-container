@@ -24,7 +24,7 @@ A2A v1.0 reserves the AgentCard top level for spec-defined fields and funnels ve
 | `spec.host` / `spec.hosts` | `x-scitex-agent-container.scheduling` |
 | `spec.runtime` / `claude.model` / `multiplexer` | `x-scitex-agent-container.runtime` / `.model` / `.multiplexer` |
 | `spec.apptainer.*` | `x-scitex-agent-container.isolation.*` (D3 attestation block) |
-| `spec.claude.channels: [server:sac]` | `capabilities.extensions[]` (sac-push-channel/v1) |
+| `spec.comms.channels: [server:sac]` | `capabilities.extensions[]` (sac-push-channel/v1) |
 
 ## Per-agent card fields
 
@@ -47,7 +47,7 @@ The A2A v1 spec-defined `capabilities.extensions[]` array advertises sac extensi
 
 | URI | Emitted when | Purpose |
 | --- | --- | --- |
-| `https://scitex.ai/a2a/extensions/sac-push-channel/v1` | `spec.claude.channels` contains `server:sac` | In-session MCP push: `sac mcp channel` SSE-subscribes to `/agents/<name>/inbox/stream` and forwards events as `notifications/claude/channel` to the agent's Claude session. `params.sse_path` + `params.mcp_tools` enumerate wire details. |
+| `https://scitex.ai/a2a/extensions/sac-push-channel/v1` | `spec.comms.channels` contains `server:sac` | In-session MCP push: `sac mcp channel` SSE-subscribes to `/agents/<name>/inbox/stream` and forwards events through the selected harness adapter. `params.sse_path` + `params.mcp_tools` enumerate wire details. |
 
 ## Fleet card fields
 

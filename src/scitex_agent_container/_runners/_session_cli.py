@@ -92,7 +92,7 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="CHANNEL",
         help=(
-            "spec.claude.channels passthrough. Repeatable. When the set "
+            "spec.comms.channels passthrough. Repeatable. When the set "
             "contains 'server:sac', build_sdk_options auto-registers the "
             "'sac mcp channel' stdio MCP so the long-lived SDK session "
             "subscribes to its inbox SSE and a2a_send pushes are "

@@ -39,7 +39,7 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
         else Check.not_ok(
             "sac_inbound_delivery",
             "server:sac is not declared",
-            "add server:sac to spec.available_harnesses.hermes.channels",
+            "add server:sac to spec.comms.channels",
             cause=StatusCode(
                 kind="scitex",
                 code="NOT_RESOLVABLE",
@@ -57,7 +57,7 @@ def _hermes_channel_lines(config: AgentConfig, channels: list[str]) -> list[str]
         else Check.not_ok(
             "cards_inbound_delivery",
             "server:scitex-cards is not declared",
-            "add server:scitex-cards to spec.available_harnesses.hermes.channels",
+            "add server:scitex-cards to spec.comms.channels",
         )
     )
     if "server:scitex-cards" in declared:
@@ -413,7 +413,7 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
 
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     flags = getattr(claude, "flags", []) or []
-    channels = getattr(claude, "channels", []) or []
+    channels = getattr(getattr(config, "comms", None), "channels", []) or []
     lines.append("")
     lines.append(f"Model: {model}")
     lines.append(_delegation_line(config))

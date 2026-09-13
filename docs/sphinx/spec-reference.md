@@ -72,7 +72,6 @@ spec:
   available_harnesses:
     hermes:
       session: { mode: continue, max_age_minutes: null }
-      channels: []
       background_review: false
       run_budget_seconds: 120
       compression:
@@ -80,6 +79,11 @@ spec:
         target_ratio: 0.20
         tail_mode: lean
         in_place: true
+  comms:
+    channels: [server:sac, server:scitex-cards]
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
   telegram:     { bot_token_env: ..., allowed_users: [...], auto_connect: true, greeting: ... }
   hooks:        { pre_start: [...], post_start: [...], pre_stop: [...], post_stop: [...] }
   extensions:   { ... }                  # opaque per-deployment dict
@@ -233,9 +237,31 @@ without an operator watching or attaching to the TUI.
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
 | `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
-| `channels[]`                | `server:<name>` / `plugin:<id>@<v>`   | MCP push channels (passed as `claude --channels`)                 |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
+
+### `spec.comms` — harness-neutral communication
+
+`spec.comms.channels` declares inbound communication adapters once for the
+agent. The selected harness does not own this list. SAC adapts the same
+declaration to Claude Code, Hermes, or Codex while preserving the same durable
+SAC/Cards identity and exchange ledger.
+
+```yaml
+spec:
+  comms:
+    channels:
+      - server:sac
+      - server:scitex-cards
+    outbound: { siblings: allow, parent: allow }
+    inbound: { siblings: allow, parent: allow }
+    a2a: { listen: true }
+```
+
+With `available_harnesses`, a `channels` key inside a harness entry is rejected
+with a relocation hint. Older direct `spec.claude.channels` specs remain
+readable only for the fleet migration window; new specs must use
+`spec.comms.channels`.
 
 #### Available models (`spec.claude.model`)
 

@@ -199,7 +199,7 @@ def resolve_cct_token(
             outcome=TOKEN_NO_CHANNEL,
             declared_slot=declared,
             detail=(
-                f"spec.claude.channels does not request {_TELEGRAMMER_CHANNEL!r}; "
+                f"spec.comms.channels does not request {_TELEGRAMMER_CHANNEL!r}; "
                 "this agent is bot-less by declaration"
             ),
         )
@@ -265,7 +265,7 @@ def resolve_cct_token(
         candidates=candidates,
         pool_trusted=read.trusted,
         detail=(
-            f"spec.claude.channels requests {_TELEGRAMMER_CHANNEL!r} but no bot "
+            f"spec.comms.channels requests {_TELEGRAMMER_CHANNEL!r} but no bot "
             f"token resolves: tried {tried} against the pool "
             f"({_pool_source_label()}), and no {_TOKEN_VAR} was folded into the "
             "agent's .env. This agent holds no token, so it cannot collide — "

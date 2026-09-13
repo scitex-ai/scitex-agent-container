@@ -4,14 +4,26 @@ from __future__ import annotations
 
 import pytest
 
-from scitex_agent_container.config._schema_compat import canonical_surface_errors
+from scitex_agent_container.config._schema_compat import (
+    canonical_surface_errors,
+    normalize_document,
+)
 from scitex_agent_container.config._validation import validate_raw
 
 
 def _hermes_entry() -> dict:
     return {
         "session": {"mode": "continue", "max_age_minutes": None},
-        "channels": ["server:sac", "server:scitex-cards"],
+    }
+
+
+def _comms(channels: list[str] | None = None) -> dict:
+    return {
+        "channels": (
+            ["server:sac", "server:scitex-cards"]
+            if channels is None
+            else channels
+        )
     }
 
 
@@ -21,6 +33,7 @@ def test_canonical_hermes_harness_entry_is_accepted():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": _hermes_entry()},
         }
     }
@@ -43,6 +56,7 @@ def test_canonical_hermes_compression_is_accepted():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -60,6 +74,7 @@ def test_canonical_hermes_background_review_is_accepted():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -77,6 +92,7 @@ def test_canonical_hermes_run_budget_is_accepted():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -95,6 +111,7 @@ def test_hermes_run_budget_requires_a_positive_integer(value):
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -115,6 +132,7 @@ def test_hermes_background_review_requires_a_boolean(value):
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -132,10 +150,10 @@ def test_background_review_is_rejected_on_non_hermes_harness():
         "spec": {
             "harness": "codex",
             "runtime": "tui",
+            "comms": _comms([]),
             "available_harnesses": {
                 "codex": {
                     "session": {"mode": "continue", "max_age_minutes": None},
-                    "channels": [],
                     "approval_policy": "never",
                     "sandbox_mode": "danger-full-access",
                     "background_review": False,
@@ -170,6 +188,7 @@ def test_hermes_compression_rejects_invalid_values(field, value, message):
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -187,6 +206,7 @@ def test_hermes_compression_target_must_be_below_trigger():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -202,10 +222,10 @@ def test_compression_is_rejected_on_non_hermes_harness():
         "spec": {
             "harness": "codex",
             "runtime": "tui",
+            "comms": _comms([]),
             "available_harnesses": {
                 "codex": {
                     "session": {"mode": "continue", "max_age_minutes": None},
-                    "channels": [],
                     "approval_policy": "never",
                     "sandbox_mode": "danger-full-access",
                     "compression": {"threshold": 0.80},
@@ -230,6 +250,7 @@ def test_canonical_harness_unknown_fields_reach_validation():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }
@@ -247,6 +268,7 @@ def test_hermes_headless_is_rejected_during_v3_validation():
         "spec": {
             "harness": "hermes",
             "runtime": "headless",
+            "comms": _comms(),
             "available_harnesses": {"hermes": _hermes_entry()},
         },
     }
@@ -259,21 +281,88 @@ def test_hermes_headless_is_rejected_during_v3_validation():
     )
 
 
-def test_hermes_channels_are_accepted_by_native_gateway_inbox_bridge():
+def test_channels_are_declared_once_outside_the_harness():
     # Arrange
     entry = _hermes_entry()
-    entry["channels"] = ["cct", "cards", "sac"]
     raw = {
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(["cct", "cards", "sac"]),
             "available_harnesses": {"hermes": entry},
         }
     }
     # Act
     errors = validate_raw(raw, "/tmp/hermes/spec.yaml")
     # Assert
-    assert not any("available_harnesses.hermes.channels" in error for error in errors)
+    assert not any("channels" in error for error in errors)
+
+
+def test_harness_specific_channels_are_rejected_with_migration_hint():
+    # Arrange
+    entry = _hermes_entry()
+    entry["channels"] = ["server:sac"]
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.hermes.channels is harness-specific placement; "
+        "move it to spec.comms.channels so the same declaration drives Claude Code, "
+        "Hermes, and Codex"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("harness", "entry"),
+    [
+        (
+            "claude-code",
+            {
+                "session": {"mode": "continue", "max_age_minutes": None},
+                "approval_policy": "never",
+                "watchdog": {
+                    "enabled": False,
+                    "interval": 1.5,
+                    "responses": {"y_n": "1", "y_y_n": "2", "waiting": "wait"},
+                },
+            },
+        ),
+        ("hermes", _hermes_entry()),
+        (
+            "codex",
+            {
+                "session": {"mode": "continue", "max_age_minutes": None},
+                "approval_policy": "never",
+                "sandbox_mode": "danger-full-access",
+            },
+        ),
+    ],
+)
+def test_neutral_channels_project_identically_for_each_harness(
+    harness: str, entry: dict
+) -> None:
+    # Arrange
+    channels = ["server:sac", "server:scitex-cards"]
+    raw = {
+        "spec": {
+            "harness": harness,
+            "runtime": "tui",
+            "comms": _comms(channels),
+            "available_harnesses": {harness: entry},
+        }
+    }
+    # Act
+    normalized = normalize_document(raw)
+    # Assert
+    assert normalized["spec"]["claude"]["channels"] == channels
 
 
 def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
@@ -284,6 +373,7 @@ def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
         "spec": {
             "harness": "hermes",
             "runtime": "tui",
+            "comms": _comms(),
             "available_harnesses": {"hermes": entry},
         }
     }

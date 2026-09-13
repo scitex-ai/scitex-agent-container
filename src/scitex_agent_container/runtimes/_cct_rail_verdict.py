@@ -164,7 +164,7 @@ class CctRailVerdict:
             f"file in the pool, then restart `sac listen` if it is what "
             f"provides the env.\n"
             f"  (3) if this agent needs no Telegram rail at all, drop "
-            f"{_TELEGRAMMER_CHANNEL!r} from spec.claude.channels — then it is "
+            f"{_TELEGRAMMER_CHANNEL!r} from spec.comms.channels — then it is "
             f"bot-less BY DECLARATION and stops being reported here."
             f"{hint}"
         )
@@ -272,7 +272,7 @@ def assess_cct_rail(
             agent=name,
             state=RAIL_NOT_REQUESTED,
             detail=(
-                f"spec.claude.channels does not request {_TELEGRAMMER_CHANNEL!r}; "
+                f"spec.comms.channels does not request {_TELEGRAMMER_CHANNEL!r}; "
                 "this agent is bot-less by declaration"
             ),
         )
@@ -385,7 +385,7 @@ def assess_cct_rail(
         pool_source=_pool_source_label(),
         pool_trusted=True,
         detail=(
-            f"spec.claude.channels requests {_TELEGRAMMER_CHANNEL!r} but NO bot "
+            f"spec.comms.channels requests {_TELEGRAMMER_CHANNEL!r} but NO bot "
             f"token resolves: tried {tried} against the pool "
             f"({_pool_source_label()}), and no {_TOKEN_VAR} was folded into the "
             "agent's .env. The telegrammer MCP entry is REMOVED from the "

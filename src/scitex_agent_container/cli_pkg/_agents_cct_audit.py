@@ -312,7 +312,7 @@ def cct_audit(
                 "Fix each DOWN agent with ONE line in its spec under "
                 "[bold]spec.apptainer.env[/bold]:  "
                 "[bold]CCT_BOT_TOKEN_SLOT: <SLOT>[/bold]  — or drop "
-                "'server:claude-code-telegrammer' from spec.claude.channels "
+                "'server:claude-code-telegrammer' from spec.comms.channels "
                 "if it needs no Telegram rail."
             )
 
