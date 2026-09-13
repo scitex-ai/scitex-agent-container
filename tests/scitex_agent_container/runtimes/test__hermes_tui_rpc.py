@@ -66,9 +66,16 @@ def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
             )
         )
 
-    # Act / Assert
-    with pytest.raises(HermesTuiRpcError, match="readiness is degraded"):
+    # Act
+    try:
         gateway_detailed_health(tmp_path, urlopen_fn=open_)
+    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        observed = str(exc)
+    else:
+        observed = ""
+
+    # Assert
+    assert "readiness is degraded" in observed
 
 
 class _Socket:
