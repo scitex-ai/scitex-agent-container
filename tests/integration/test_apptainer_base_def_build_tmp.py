@@ -13,13 +13,20 @@ RECIPE = (
 
 
 def test_post_uses_image_backed_temporary_directory_before_package_installs():
+    # Arrange
     text = RECIPE.read_text(encoding="utf-8")
     post = text.split("%post", 1)[1].split("%environment", 1)[0]
 
+    # Act
     export = 'export TMPDIR=/opt/.sac-build-tmp'
     install = "uv pip install --no-cache"
-    assert export in post
-    assert post.index(export) < post.index(install)
-    assert 'mkdir -p "$TMPDIR"' in post
-    assert 'chmod 1777 "$TMPDIR"' in post
-    assert "trap 'rm -rf /opt/.sac-build-tmp' EXIT" in post
+    contract = (
+        export in post,
+        post.index(export) < post.index(install),
+        'mkdir -p "$TMPDIR"' in post,
+        'chmod 1777 "$TMPDIR"' in post,
+        "trap 'rm -rf /opt/.sac-build-tmp' EXIT" in post,
+    )
+
+    # Assert
+    assert contract == (True, True, True, True, True)
