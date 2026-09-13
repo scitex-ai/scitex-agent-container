@@ -18,10 +18,16 @@ from scitex_agent_container.runtimes import (
     _pg_identity_env,
 )
 from scitex_agent_container.runtimes import _hermes_profile as profile
+from scitex_agent_container.runtimes._hermes_cct import HermesCctRailError
 
 
 @contextmanager
 def _replace_attributes(replacements):
+    # Load consumers that bind these functions at import time before a
+    # temporary replacement can be captured as their permanent module global.
+    from scitex_agent_container.runtimes import _pg_identity_credentials
+
+    _effective_env_import_guard = _pg_identity_credentials.effective_env
     originals = [
         (target, name, getattr(target, name)) for target, name, _ in replacements
     ]
@@ -146,6 +152,36 @@ def test_mcp_translation_does_not_duplicate_cards_tools_only_flag(tmp_path):
         "start",
         "--tools-only",
     ]
+
+
+def test_selected_hermes_channel_loads_only_its_non_global_mcp(tmp_path):
+    # Arrange
+    source = {
+        "mcpServers": {
+            "claude-code-telegrammer": {
+                "command": "bun",
+                "args": ["run", "telegram-server.ts"],
+            },
+            "optional-browser": {"command": "browser-mcp"},
+        }
+    }
+    (tmp_path / ".mcp.json").write_text(json.dumps(source), encoding="utf-8")
+
+    # Act
+    translated, eager_toolsets = profile._mcp_servers(
+        tmp_path, channels=["server:claude-code-telegrammer"]
+    )
+
+    # Assert
+    assert (translated, eager_toolsets) == (
+        {
+            "claude-code-telegrammer": {
+                "command": "bun",
+                "args": ["run", "telegram-server.ts"],
+            }
+        },
+        ["mcp-claude-code-telegrammer"],
+    )
 
 
 def test_api_key_is_stable_and_owner_only(tmp_path: Path):
@@ -659,6 +695,121 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         and len((tmp_path / profile.API_KEY_FILE).read_text().strip()) >= 16
         and (tmp_path / profile.API_KEY_FILE).stat().st_mode & 0o777 == 0o600
     )
+
+
+def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
+    # Arrange
+    config = AgentConfig(
+        name="business", harness="hermes", runtime="tui", workdir="/work"
+    )
+    config.engine_key = "qwen"
+    config.model = "qwen-model"
+    config.a2a.port = 19007
+    config.claude.channels = ["server:claude-code-telegrammer"]
+    config.claude.provider = ProviderSpec(
+        base_url="http://qwen.example:8000/v1",
+        auth_token_env="QWEN_KEY",
+    )
+
+    def deploy(_config, target):
+        home = Path(target)
+        (home / ".env").write_text(
+            "CCT_BOT_TOKEN=token-materialized-by-existing-resolver\n",
+            encoding="utf-8",
+        )
+        (home / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "claude-code-telegrammer": {
+                            "command": "bun",
+                            "args": ["run", "telegram-server.ts"],
+                            "env": {"CCT_BOT_TOKEN": "${CCT_BOT_TOKEN}"},
+                        },
+                        "optional-browser": {"command": "browser-mcp"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    replacements = [
+        (profile, "resolve_provider_api_key", lambda value: "engine-secret"),
+        (profile, "deploy_to_home", deploy),
+        (profile, "deploy_to_home_overlay", lambda value: None),
+        (profile, "resolve_overlay_upper_home", lambda value: None),
+    ]
+
+    # Act
+    with _replace_attributes(replacements):
+        targets = profile.materialize_hermes_tui_profile(config, state_dir=tmp_path)
+    rendered = yaml.safe_load(
+        (targets[0] / ".hermes" / "config.yaml").read_text(encoding="utf-8")
+    )
+    profile_env = (targets[0] / ".hermes" / ".env").read_text(encoding="utf-8")
+
+    # Assert
+    assert (
+        set(rendered["mcp_servers"]),
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
+            "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
+        ],
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
+            "CCT_BOT_TOKEN"
+        ],
+        "mcp-claude-code-telegrammer" in rendered["toolsets"],
+        "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
+        in profile_env,
+    ) == (
+        {"claude-code-telegrammer"},
+        "http://127.0.0.1:19007/v1/turn",
+        "${env:CCT_BOT_TOKEN}",
+        True,
+        True,
+    )
+
+
+def test_tui_profile_refuses_selected_cct_rail_without_token(tmp_path):
+    # Arrange
+    config = AgentConfig(
+        name="business", harness="hermes", runtime="tui", workdir="/work"
+    )
+    config.engine_key = "qwen"
+    config.model = "qwen-model"
+    config.a2a.port = 19007
+    config.claude.channels = ["server:claude-code-telegrammer"]
+    config.env["CCT_BOT_TOKEN"] = ""
+    config.claude.provider = ProviderSpec(
+        base_url="http://qwen.example:8000/v1",
+        auth_token_env="QWEN_KEY",
+    )
+
+    def deploy(_config, target):
+        home = Path(target)
+        (home / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "claude-code-telegrammer": {"command": "bun"}
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    replacements = [
+        (profile, "resolve_provider_api_key", lambda value: "engine-secret"),
+        (profile, "deploy_to_home", deploy),
+        (profile, "deploy_to_home_overlay", lambda value: None),
+        (profile, "resolve_overlay_upper_home", lambda value: None),
+    ]
+
+    # Act
+    ctx = pytest.raises(HermesCctRailError, match="no Telegram bot token")
+
+    # Assert
+    with _replace_attributes(replacements), ctx:
+        profile.materialize_hermes_tui_profile(config, state_dir=tmp_path)
 
 
 def test_tui_deepseek_profile_contains_only_neutral_gateway_credential(tmp_path):
