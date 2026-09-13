@@ -352,6 +352,9 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     runtime = HermesTuiSessionRuntime(
         multiplexer=mux,
         rpc_submit=lambda state, name, text: calls.append(text) or "steered",
+        rpc_pause_heartbeat=lambda state, name: (
+            calls.append("heartbeat.pause") or "paused"
+        ),
     )
     # Act
     paused = runtime.suspend_autonomous_turns(config)
@@ -365,7 +368,7 @@ def test_recovery_uses_supported_same_session_controls_in_order():
         True,
         True,
         [
-            "/heartbeat pause",
+            "heartbeat.pause",
             "/model qwen38-27b --provider sac-qwen38-27b --session",
         ],
     )
