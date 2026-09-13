@@ -42,6 +42,61 @@ class HermesVisibleTurnReceipt:
 _SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
 
 
+def _detailed_health(
+    port: int,
+    token: str,
+    *,
+    timeout_s: float = 2.0,
+    urlopen_fn: Any = urlopen,
+) -> dict[str, Any]:
+    """Return Hermes' authenticated readiness document or fail closed."""
+    request = Request(
+        f"http://127.0.0.1:{port}/health/detailed",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlopen_fn(request, timeout=timeout_s) as response:
+            payload = json.loads(response.read())
+            status = int(response.status)
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes authenticated readiness is unavailable: {exc}"
+        ) from exc
+    if status != 200 or not isinstance(payload, dict):
+        raise HermesTuiRpcError(
+            "Hermes authenticated readiness returned a malformed response"
+        )
+    if payload.get("status") != "ok":
+        raise HermesTuiRpcError(
+            "Hermes authenticated readiness is degraded: "
+            f"{payload.get('readiness', payload)!r}"
+        )
+    return payload
+
+
+def gateway_detailed_health(
+    state_dir: Path,
+    *,
+    timeout_s: float = 2.0,
+    urlopen_fn: Any = urlopen,
+) -> dict[str, Any]:
+    """Read authenticated readiness for the exact published gateway owner."""
+    _url, token = _gateway_connection(state_dir)
+    try:
+        descriptor = json.loads((state_dir / GATEWAY_FILE).read_text(encoding="utf-8"))
+        port = int(descriptor["port"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway state is unavailable: {exc}"
+        ) from exc
+    return _detailed_health(
+        port,
+        token,
+        timeout_s=timeout_s,
+        urlopen_fn=urlopen_fn,
+    )
+
+
 def _gateway_connection(state_dir: Path) -> tuple[str, str]:
     """Resolve the private websocket endpoint without exposing its bearer."""
     try:
@@ -209,6 +264,52 @@ def submit_turn(
     if status not in {"streaming", "steered", "queued", "redirected"}:
         raise HermesTuiRpcError(f"Hermes prompt.submit was not accepted: {result!r}")
     return status
+
+
+def pause_heartbeat(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> str:
+    """Pause Hermes' session heartbeat without creating a model turn.
+
+    ``prompt.submit('/heartbeat pause')`` does *not* execute a slash command.
+    It appends an ordinary user message and therefore wakes the model with the
+    complete conversation.  Hermes exposes heartbeat state through its
+    intent-level ``session.control`` RPC; use that control-plane operation so
+    SAC's deterministic inbox sidecar can remain active while an idle session
+    consumes no inference slot.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
+            result = _rpc(
+                socket,
+                2,
+                "session.control",
+                {"session_id": session_id, "action": "heartbeat.pause"},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    control = result.get("control")
+    if not isinstance(control, dict):
+        raise HermesTuiRpcError(
+            f"Hermes session.control returned malformed result: {result!r}"
+        )
+    heartbeat = control.get("heartbeat")
+    if heartbeat is None:
+        return "absent"
+    if not isinstance(heartbeat, dict) or heartbeat.get("status") != "paused":
+        raise HermesTuiRpcError(f"Hermes heartbeat did not pause: {heartbeat!r}")
+    return "paused"
 
 
 def _delivery_visibility(payload: object, delivery_id: str) -> str | None:
@@ -418,7 +519,9 @@ __all__ = [
     "HermesVisibleTurnReceipt",
     "_stored_delivery_visibility",
     "active_sessions",
+    "gateway_detailed_health",
     "observe_turn_activity",
+    "pause_heartbeat",
     "submit_turn",
     "submit_visible_turn",
 ]

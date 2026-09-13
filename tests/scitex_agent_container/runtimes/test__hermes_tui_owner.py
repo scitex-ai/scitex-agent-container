@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
+from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
 
 class _Process:
@@ -63,6 +64,37 @@ def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
         (tmp_path / owner.GATEWAY_FILE).exists(),
         (tmp_path / owner.READY_FILE).exists(),
     ) == (False, False)
+
+
+def test_gateway_owner_waits_for_authenticated_readiness():
+    # Arrange
+    process = _Process()
+    observations = []
+    responses = iter((None, {"status": "ok", "readiness": {"checks": []}}))
+
+    def detailed(port, token, *, timeout_s):
+        observations.append((port, token, timeout_s))
+        response = next(responses)
+        if response is None:
+            raise HermesTuiRpcError("degraded")
+        return response
+
+    # Act
+    ticks = iter((0.0, 0.0, 0.1, 0.2))
+    payload = owner._wait_for_readiness(
+        43123,
+        "secret-token-1234",
+        process,
+        detailed_health=detailed,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(ticks),
+    )
+
+    # Assert
+    assert (payload["status"], observations) == (
+        "ok",
+        [(43123, "secret-token-1234", 1.0)] * 2,
+    )
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():

@@ -7,6 +7,12 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Inline agent spawn cannot mutate a linked authority spec.** The host now
+  returns the existing `409 already_exists` contract when an inline
+  `agent_spawn(overwrite=true)` targets a per-agent directory or `spec.yaml`
+  installed as a symlink. Regular host-owned inline specs retain their explicit
+  overwrite behavior; git-backed specs must be changed at their source and
+  redeployed with `sac agents link-specs`.
 - **Legacy TUI ownership fails closed through the SciTeX status protocol.**
   Existing central instance stores gain the five nullable ownership columns
   through scitex-dev's public declared-field evolution before a TUI launch. Pre-field incarnation rows

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,10 +13,69 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
     active_sessions,
+    gateway_detailed_health,
     observe_turn_activity,
+    pause_heartbeat,
     submit_turn,
     submit_visible_turn,
 )
+
+
+def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text(
+        json.dumps({"port": 43123}), encoding="utf-8"
+    )
+    (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
+    seen = []
+
+    def open_(request, timeout):
+        seen.append((request, timeout))
+        return nullcontext(
+            SimpleNamespace(status=200, read=lambda: b'{"status":"ok","readiness":{"checks":[]}}')
+        )
+
+    # Act
+    payload = gateway_detailed_health(tmp_path, urlopen_fn=open_)
+
+    # Assert
+    assert (
+        payload["status"],
+        seen[0][0].full_url,
+        seen[0][0].get_header("Authorization"),
+    ) == (
+        "ok",
+        "http://127.0.0.1:43123/health/detailed",
+        "Bearer secret-token-1234",
+    )
+
+
+def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
+    # Arrange
+    (tmp_path / GATEWAY_FILE).write_text(
+        json.dumps({"port": 43123}), encoding="utf-8"
+    )
+    (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
+
+    def open_(_request, timeout):
+        del timeout
+        return nullcontext(
+            SimpleNamespace(
+                status=200,
+                read=lambda: b'{"status":"degraded","readiness":{"disk":"full"}}',
+            )
+        )
+
+    # Act
+    try:
+        gateway_detailed_health(tmp_path, urlopen_fn=open_)
+    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+        observed = str(exc)
+    else:
+        observed = ""
+
+    # Assert
+    assert "readiness is degraded" in observed
 
 
 class _Socket:
@@ -105,6 +166,62 @@ def _search(payload=None):
         return response
 
     return response, open_search
+
+
+class _ControlSocket(_Socket):
+    def __init__(self, heartbeat):
+        super().__init__()
+        self.heartbeat = heartbeat
+
+    def recv(self):
+        request = self.sent[-1]
+        if request["method"] == "session.active_list":
+            result = {"sessions": [{"id": "live-1", "title": "sac:hub"}]}
+        elif request["method"] == "session.control":
+            result = {"control": {"heartbeat": self.heartbeat}}
+        else:  # pragma: no cover - a new RPC is itself a test failure
+            raise AssertionError(request["method"])
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+@pytest.mark.parametrize(
+    ("heartbeat", "expected"),
+    [({"status": "paused"}, "paused"), (None, "absent")],
+)
+def test_pause_heartbeat_uses_control_plane_without_model_turn(
+    tmp_path, heartbeat, expected
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ControlSocket(heartbeat)
+
+    # Act
+    status = pause_heartbeat(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
+
+    # Assert
+    assert (
+        status,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"],
+    ) == (
+        expected,
+        ["session.active_list", "session.control"],
+        {"session_id": "live-1", "action": "heartbeat.pause"},
+    )
+
+
+def test_pause_heartbeat_refuses_unpaused_state(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ControlSocket({"status": "active"})
+
+    # Act
+    def action():
+        pause_heartbeat(tmp_path, "hub", connect_fn=lambda *a, **k: socket)
+
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match="did not pause"):
+        action()
 
 
 def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
