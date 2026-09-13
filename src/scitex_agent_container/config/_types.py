@@ -21,6 +21,7 @@ from ._delegation_types import DelegationSpec  # noqa: E402,F401
 from ._engine_types import EngineSpec  # noqa: E402,F401
 from ._harness_types import DEFAULT_AGENT_HARNESS, AgentHarness
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 
 # ProviderSpec moved out with ClaudeSpec (below) but stays re-exported:
 # ``from ...config._types import ProviderSpec`` is an existing import path.
@@ -332,6 +333,7 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hermes_background_review: bool = False
+    hermes_run_budget_seconds: int = DEFAULT_HERMES_RUN_BUDGET_SECONDS
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )

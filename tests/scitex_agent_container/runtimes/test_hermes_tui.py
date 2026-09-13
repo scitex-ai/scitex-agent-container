@@ -258,6 +258,90 @@ def test_visible_incoming_turn_uses_only_native_hermes_rpc():
     )
 
 
+class _CctLifecycleRuntime(HermesTuiSessionRuntime):
+    def __init__(self, *, fail_at: str = ""):
+        super().__init__(multiplexer=_Mux())
+        self.events: list[str] = []
+        self.fail_at = fail_at
+
+    def _event(self, value: str):
+        self.events.append(value)
+        if self.fail_at == value:
+            raise RuntimeError(value)
+
+    def _start_session(self, config, **kwargs):
+        self._event("session:start")
+        return True
+
+    def _stop_session(self, config):
+        self._event("session:stop")
+        return True
+
+    def _start_cct(self, config):
+        self._event("cct:start")
+
+    def _stop_cct(self, config):
+        self._event("cct:stop")
+
+    def _start_inbox(self, config):
+        self._event("inbox:start")
+
+    def _stop_inbox(self, config):
+        self._event("inbox:stop")
+
+    def _start_recovery(self, config):
+        self._event("recovery:start")
+
+    def _stop_recovery(self, config):
+        self._event("recovery:stop")
+
+
+def test_hermes_starts_poller_after_turn_bridge_session_and_stops_it_first():
+    # Arrange
+    runtime = _CctLifecycleRuntime()
+    # Act
+    started = runtime.start(_config())
+    stopped = runtime.stop(_config())
+    # Assert
+    assert (started, stopped, runtime.events) == (
+        True,
+        True,
+        [
+            "session:start",
+            "cct:start",
+            "inbox:start",
+            "recovery:start",
+            "cct:stop",
+            "inbox:stop",
+            "recovery:stop",
+            "session:stop",
+        ],
+    )
+
+
+def test_hermes_auxiliary_failure_cleans_poller_before_session():
+    # Arrange
+    runtime = _CctLifecycleRuntime(fail_at="inbox:start")
+    # Act
+    try:
+        runtime.start(_config())
+    except RuntimeError as exc:
+        error = str(exc)
+    # Assert
+    assert (error, runtime.events) == (
+        "inbox:start",
+        [
+            "session:start",
+            "cct:start",
+            "inbox:start",
+            "cct:stop",
+            "inbox:stop",
+            "recovery:stop",
+            "session:stop",
+        ],
+    )
+
+
 def test_recovery_uses_supported_same_session_controls_in_order():
     # Arrange
     config = _config()
@@ -301,6 +385,12 @@ class _LifecycleRuntime(HermesTuiSessionRuntime):
         self.lifecycle_events.append("tmux-stop")
         return True
 
+    def _start_cct(self, _config):
+        self.lifecycle_events.append("cct-start")
+
+    def _stop_cct(self, _config):
+        self.lifecycle_events.append("cct-stop")
+
     def _start_inbox(self, _config):
         self.lifecycle_events.append("inbox-start")
 
@@ -322,7 +412,7 @@ def test_start_attaches_authenticated_inbox_bridge_before_recovery():
     # Assert
     assert (started, runtime.lifecycle_events) == (
         True,
-        ["tmux-start", "inbox-start", "recovery-start"],
+        ["tmux-start", "cct-start", "inbox-start", "recovery-start"],
     )
 
 
@@ -334,5 +424,5 @@ def test_stop_detaches_inbox_before_tmux_session():
     # Assert
     assert (stopped, runtime.lifecycle_events) == (
         True,
-        ["inbox-stop", "recovery-stop", "tmux-stop"],
+        ["cct-stop", "inbox-stop", "recovery-stop", "tmux-stop"],
     )

@@ -168,6 +168,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.add("compression")
         if "background_review" in raw_entry:
             allowed.add("background_review")
+        if "run_budget_seconds" in raw_entry:
+            allowed.add("run_budget_seconds")
         if family == "claude-code":
             allowed.update({"approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
@@ -175,7 +177,7 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
-            allowed.update({"background_review", "compression"})
+            allowed.update({"background_review", "compression", "run_budget_seconds"})
         missing = sorted(required - entry_keys)
         unknown = sorted(entry_keys - allowed)
         if missing:
@@ -202,6 +204,18 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 )
             elif type(raw_entry.get("background_review")) is not bool:
                 errors.append(f"{path}.background_review must be a boolean")
+
+        if "run_budget_seconds" in raw_entry:
+            if family != "hermes":
+                errors.append(
+                    f"{path}.run_budget_seconds is only valid for the Hermes harness"
+                )
+            else:
+                budget = raw_entry.get("run_budget_seconds")
+                if type(budget) is not int or budget <= 0:
+                    errors.append(
+                        f"{path}.run_budget_seconds must be a positive integer"
+                    )
 
         session = raw_entry.get("session")
         if not isinstance(session, Mapping):

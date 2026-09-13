@@ -74,6 +74,7 @@ spec:
       session: { mode: continue, max_age_minutes: null }
       channels: []
       background_review: false
+      run_budget_seconds: 120
       compression:
         threshold: 0.80
         target_ratio: 0.20
@@ -197,6 +198,29 @@ review replaying about 691,000 tokens while the next foreground turn began on
 the same conversation. After the gateway restarted and cancelled the review,
 the foreground turn performed a cold prefill and took about 276 seconds. This
 field makes that high-cost behavior declared and testable rather than implicit.
+
+### `spec.available_harnesses.hermes.run_budget_seconds`
+
+This positive integer caps one continuous Hermes agent run. It defaults to
+`120` seconds. Telegram and other priority inputs are steered into Hermes'
+native session immediately, but Hermes applies queued steering at safe run
+boundaries; the former hard-coded `1200`-second budget could therefore leave an
+already-delivered operator message waiting for twenty minutes. Keep this bound
+shorter than the maximum acceptable operator-response latency. It is compiled
+to Hermes' internal `agent.run_budget_seconds` setting.
+
+Telegram is an edge transport, not a per-agent dependency. Select the CCT
+Telegram channel only on the human-facing gateway agent (normally
+`scitex-lead`); application agents communicate through Cards, SAC, or A2A.
+For each spec that explicitly selects CCT, SAC owns one poller using that
+spec's declared token. SAC neither creates nor requires a separate BotFather
+token for every agent. Selecting the same Telegram bot in several agent specs
+would create competing pollers and is not a supported topology.
+
+A CCT turn is acknowledged only after Hermes proves the exact delivery marker
+visible in its native session. The receipt identifies `agent`, `delivery_id`,
+and `exchange_id`, so a gateway or web client can report and retry the turn
+without an operator watching or attaching to the TUI.
 
 ### `spec.claude` — SDK knobs
 
