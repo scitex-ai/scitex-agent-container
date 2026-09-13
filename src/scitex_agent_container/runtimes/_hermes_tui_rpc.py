@@ -49,9 +49,17 @@ def _detailed_health(
     timeout_s: float = 2.0,
     urlopen_fn: Any = urlopen,
 ) -> dict[str, Any]:
-    """Return Hermes' authenticated readiness document or fail closed."""
+    """Exercise Hermes' authenticated, storage-backed readiness route.
+
+    ``hermes serve`` is the TUI/dashboard backend.  Its public liveness route
+    is ``/api/health``; ``/health/detailed`` belongs to the separate platform
+    API gateway and is hidden by the headless backend's catch-all.  Hermes'
+    own dashboard self-test uses ``/api/sessions?limit=1`` because it verifies
+    both session-token authentication and a cheap state-database read.  Use
+    that same contract here and normalize its response for SAC callers.
+    """
     request = Request(
-        f"http://127.0.0.1:{port}/health/detailed",
+        f"http://127.0.0.1:{port}/api/sessions?limit=1",
         headers={"Authorization": f"Bearer {token}"},
     )
     try:
@@ -62,16 +70,18 @@ def _detailed_health(
         raise HermesTuiRpcError(
             f"Hermes authenticated readiness is unavailable: {exc}"
         ) from exc
-    if status != 200 or not isinstance(payload, dict):
+    if (
+        status != 200
+        or not isinstance(payload, dict)
+        or not isinstance(payload.get("sessions"), list)
+    ):
         raise HermesTuiRpcError(
             "Hermes authenticated readiness returned a malformed response"
         )
-    if payload.get("status") != "ok":
-        raise HermesTuiRpcError(
-            "Hermes authenticated readiness is degraded: "
-            f"{payload.get('readiness', payload)!r}"
-        )
-    return payload
+    return {
+        "status": "ok",
+        "readiness": {"authenticated_session_store": "ok"},
+    }
 
 
 def gateway_detailed_health(

@@ -32,7 +32,7 @@ def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
     def open_(request, timeout):
         seen.append((request, timeout))
         return nullcontext(
-            SimpleNamespace(status=200, read=lambda: b'{"status":"ok","readiness":{"checks":[]}}')
+            SimpleNamespace(status=200, read=lambda: b'{"sessions":[],"total":0}')
         )
 
     # Act
@@ -45,12 +45,12 @@ def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
         seen[0][0].get_header("Authorization"),
     ) == (
         "ok",
-        "http://127.0.0.1:43123/health/detailed",
+        "http://127.0.0.1:43123/api/sessions?limit=1",
         "Bearer secret-token-1234",
     )
 
 
-def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
+def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
     # Arrange
     (tmp_path / GATEWAY_FILE).write_text(
         json.dumps({"port": 43123}), encoding="utf-8"
@@ -62,7 +62,7 @@ def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
         return nullcontext(
             SimpleNamespace(
                 status=200,
-                read=lambda: b'{"status":"degraded","readiness":{"disk":"full"}}',
+                read=lambda: b'{"detail":"storage unavailable"}',
             )
         )
 
@@ -75,7 +75,7 @@ def test_detailed_health_rejects_http_200_with_degraded_readiness(tmp_path):
         observed = ""
 
     # Assert
-    assert "readiness is degraded" in observed
+    assert "malformed response" in observed
 
 
 class _Socket:
