@@ -291,6 +291,7 @@ def test_visible_incoming_turn_uses_only_native_hermes_rpc():
             text,
             {
                 "delivery_id": "n_native",
+                "delivery_mode": "steer",
                 "max_observations": 7,
                 "poll_s": 0.25,
             },

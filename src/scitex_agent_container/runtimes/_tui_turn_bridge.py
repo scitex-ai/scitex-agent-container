@@ -255,6 +255,22 @@ def is_control_route(path: str, agent_name: str) -> bool:
     )
 
 
+def _exchange_receipt(row: dict[str, Any]) -> dict[str, Any]:
+    """Project the canonical status row into an explicit delivery receipt."""
+    code = row.get("code")
+    final = bool(row.get("final"))
+    if not final:
+        state = "retryable" if code == 102 else "pending"
+    elif row.get("kind") == "http" and code == 200:
+        state = "delivered"
+    else:
+        state = "failed"
+    receipt: dict[str, Any] = {"state": state, "final": final}
+    if state in {"retryable", "failed"}:
+        receipt["error"] = str(row.get("message") or "delivery failed")
+    return receipt
+
+
 # ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
@@ -337,6 +353,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "exchange_id": exchange_id,
+                    "receipt": _exchange_receipt(row),
                     "status_code": {
                         "kind": row["kind"],
                         "code": row["code"],
@@ -403,6 +420,16 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         # the root; the flat form still wins when both are present.
         raw_from = raw_from or envelope_meta.get("from_agent")
         raw_did = raw_did or envelope_meta.get("dispatch_id")
+        raw_mode = (
+            body.get("delivery_mode") if isinstance(body, dict) else None
+        ) or envelope_meta.get("delivery_mode")
+        delivery_mode = str(raw_mode or "steer").strip().lower()
+        if delivery_mode not in {"steer", "queue"}:
+            self._respond(
+                400,
+                {"error": "delivery_mode must be 'steer' or 'queue'"},
+            )
+            return
         from_agent = raw_from if isinstance(raw_from, str) and raw_from else None
         dispatch_id = raw_did if isinstance(raw_did, str) and raw_did else None
         visible_delivery_id = body.get("visible_delivery_id")
@@ -577,6 +604,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     "from_agent": from_agent,
                     "dispatch_id": dispatch_id,
                     "visible_delivery_id": effective_visible_id,
+                    "delivery_mode": delivery_mode,
                 }
                 with srv.delivery_lock:
                     delivery = srv.on_turn(text, **delivery_kwargs)
@@ -587,6 +615,9 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 if effective_visible_id and not delivery:
                     raise RuntimeError("Hermes transcript visibility was not confirmed")
                 native_status = str(getattr(delivery, "status", "") or "")
+                native_mode = str(
+                    getattr(delivery, "delivery_mode", "") or delivery_mode
+                )
                 visibility = str(getattr(delivery, "visibility", "") or "")
                 if native_status == "already_visible" and visibility:
                     visible_message = (
@@ -598,6 +629,11 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     visible_message = (
                         "Hermes prompt.submit accepted the visible turn "
                         f"(status={native_status}, proof={visibility})"
+                    )
+                elif native_status:
+                    visible_message = (
+                        "Hermes accepted the interactive inbound "
+                        f"(mode={native_mode}, status={native_status})"
                     )
                 else:
                     visible_message = (
@@ -619,7 +655,8 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     kind="http",
                     code=502,
                     message=(
-                        "this Hermes visibility attempt failed; no Cards "
+                        "Hermes delivery failed "
+                        f"({type(exc).__name__}: {detail}); no downstream "
                         "acknowledgement was issued"
                     ),
                 )
@@ -693,6 +730,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                         "agent": srv.agent_name,
                         "exchange_id": exchange_id,
                         "delivery_id": effective_visible_id,
+                        "receipt": {"state": "delivered", "final": True},
                         "status_code": final_status.to_dict(),
                     },
                 )
@@ -716,6 +754,11 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                         "exchange_id": exchange_id,
                         "delivery_id": effective_visible_id,
                         "error": final_status.message,
+                        "receipt": {
+                            "state": "retryable",
+                            "final": False,
+                            "error": final_status.message,
+                        },
                         "check": admission_check.to_dict(),
                         "status_code": StatusCode(
                             kind="http",
@@ -734,6 +777,11 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
             202,
             {
                 "exchange_id": exchange_id,
+                "receipt": {
+                    "state": "pending",
+                    "final": False,
+                    "delivery_mode": delivery_mode,
+                },
                 "status_code": StatusCode(
                     kind="http",
                     code=202,
@@ -908,7 +956,8 @@ def _build_on_turn(
         from_agent: str | None = None,
         dispatch_id: str | None = None,
         visible_delivery_id: str | None = None,
-    ) -> bool | None:
+        delivery_mode: str = "steer",
+    ) -> object | None:
         if from_agent:
             try:
                 from ._tui_outbound import record_dispatch
@@ -953,9 +1002,20 @@ def _build_on_turn(
                 config,
                 visible_text,
                 visible_delivery_id=visible_delivery_id,
+                delivery_mode=delivery_mode,
             )
         else:
-            delivered = runtime.send_turn(config, text, wait_ready=False)
+            interactive_send = getattr(runtime, "send_interactive_turn", None)
+            if callable(interactive_send):
+                delivered = interactive_send(
+                    config, text, delivery_mode=delivery_mode
+                )
+            elif delivery_mode == "queue":
+                raise RuntimeError(
+                    "this runtime does not expose explicit queue delivery"
+                )
+            else:
+                delivered = runtime.send_turn(config, text, wait_ready=False)
         if not delivered:
             # Name the ACTUAL cause. This used to assert the session did not
             # exist, which was true when absence was the only cause and became
@@ -998,7 +1058,10 @@ def _build_on_turn(
                 f"with `sac agents start {config.name}` and check "
                 f"`sac agents list {config.name}` first."
             )
-        return delivered if visible_delivery_id else None
+        # Preserve the historical callback contract for bool-returning TUI
+        # adapters while carrying Hermes' structured native receipt through
+        # to the exchange worker.
+        return None if isinstance(delivered, bool) else delivered
 
     return on_turn
 
