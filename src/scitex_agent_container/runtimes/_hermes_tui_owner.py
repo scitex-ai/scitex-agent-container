@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import signal
 import subprocess
 import time
+import uuid
 from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
 GATEWAY_FILE = "hermes-tui-gateway.json"
 READY_FILE = "hermes-tui-gateway.ready.json"
+GATEWAY_LOCK_FILE = "hermes-tui-gateway.lock"
 SUPERVISION_FILE = "hermes-tui-supervision.json"
 POLL_SECONDS = 3.0
 STARTUP_GRACE_SECONDS = 30.0
@@ -51,6 +55,56 @@ def _atomic_json(path: Path, value: dict) -> None:
         os.close(fd)
     os.replace(temporary, path)
     os.chmod(path, 0o600)
+
+
+@contextmanager
+def _gateway_state_lock(state_dir: Path):
+    """Serialize replacement and cleanup of the shared gateway projection."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / GATEWAY_LOCK_FILE
+    with open(lock_path, "a+b") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _publish_gateway_state(
+    state_dir: Path, *, generation: str, port: int, gateway_pid: int
+) -> None:
+    """Atomically make one ready owner the canonical gateway generation."""
+    value = {
+        "generation": generation,
+        "owner_pid": os.getpid(),
+        "pid": gateway_pid,
+        "port": port,
+    }
+    with _gateway_state_lock(state_dir):
+        # Readers use the descriptor. Publishing it last means every visible
+        # descriptor has a matching readiness projection.
+        _atomic_json(state_dir / READY_FILE, value)
+        _atomic_json(state_dir / GATEWAY_FILE, value)
+
+
+def _unlink_if_generation(path: Path, generation: str) -> bool:
+    """Unlink ``path`` only when it still names this exact owner generation."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(value, dict) or value.get("generation") != generation:
+        return False
+    path.unlink(missing_ok=True)
+    return True
+
+
+def _remove_owned_gateway_state(state_dir: Path, *, generation: str) -> None:
+    """Remove canonical state without deleting a replacement owner's files."""
+    with _gateway_state_lock(state_dir):
+        _unlink_if_generation(state_dir / GATEWAY_FILE, generation)
+        _unlink_if_generation(state_dir / READY_FILE, generation)
 
 
 def _continue_title(command: list[str]) -> str:
@@ -281,18 +335,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("a Hermes TUI command is required after --")
 
     state_dir = Path(args.state_dir)
-    ready_path = state_dir / READY_FILE
-    descriptor_path = state_dir / GATEWAY_FILE
+    generation = uuid.uuid4().hex
+    gateway_ready_path = state_dir / f".{READY_FILE}.{generation}"
     token_path = state_dir / "hermes-api.key"
     token = token_path.read_text(encoding="utf-8").strip()
     if len(token) < 16:
         raise RuntimeError(f"missing or invalid Hermes gateway key: {token_path}")
-    ready_path.unlink(missing_ok=True)
-    descriptor_path.unlink(missing_ok=True)
+    gateway_ready_path.unlink(missing_ok=True)
 
     env = os.environ.copy()
     env["HERMES_DASHBOARD_SESSION_TOKEN"] = token
-    env["HERMES_DESKTOP_READY_FILE"] = str(ready_path)
+    env["HERMES_DESKTOP_READY_FILE"] = str(gateway_ready_path)
     gateway = subprocess.Popen(
         ["hermes", "serve", "--host", "127.0.0.1", "--port", "0", "--isolated"],
         env=env,
@@ -310,8 +363,13 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
     try:
-        port = _wait_for_port(ready_path, gateway)
-        _atomic_json(descriptor_path, {"port": port, "pid": gateway.pid})
+        port = _wait_for_port(gateway_ready_path, gateway)
+        _publish_gateway_state(
+            state_dir,
+            generation=generation,
+            port=port,
+            gateway_pid=gateway.pid,
+        )
         tui_env = os.environ.copy()
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
@@ -325,8 +383,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return result
     finally:
-        descriptor_path.unlink(missing_ok=True)
-        ready_path.unlink(missing_ok=True)
+        _remove_owned_gateway_state(state_dir, generation=generation)
+        gateway_ready_path.unlink(missing_ok=True)
         _write_supervision(state_dir, state="stopped")
         if tui is not None and tui.poll() is None:
             tui.terminate()

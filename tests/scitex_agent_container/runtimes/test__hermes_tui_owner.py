@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 
 
@@ -21,6 +23,44 @@ class _Process:
     def wait(self, timeout=None):
         del timeout
         return self.returncode
+
+
+def test_old_owner_cleanup_cannot_remove_new_gateway_projection(tmp_path):
+    # Arrange: model two rapid owners that both reached readiness.  The newer
+    # publication replaces the older generation before the older finally runs.
+    owner._publish_gateway_state(
+        tmp_path, generation="old-generation", port=40781, gateway_pid=101
+    )
+    owner._publish_gateway_state(
+        tmp_path, generation="new-generation", port=40789, gateway_pid=202
+    )
+
+    # Act
+    owner._remove_owned_gateway_state(tmp_path, generation="old-generation")
+
+    # Assert: descriptor and ready marker still agree on the live new owner.
+    descriptor = json.loads((tmp_path / owner.GATEWAY_FILE).read_text())
+    ready = json.loads((tmp_path / owner.READY_FILE).read_text())
+    assert descriptor == ready == {
+        "generation": "new-generation",
+        "owner_pid": descriptor["owner_pid"],
+        "pid": 202,
+        "port": 40789,
+    }
+
+
+def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
+    # Arrange
+    owner._publish_gateway_state(
+        tmp_path, generation="current-generation", port=40789, gateway_pid=202
+    )
+
+    # Act
+    owner._remove_owned_gateway_state(tmp_path, generation="current-generation")
+
+    # Assert
+    assert not (tmp_path / owner.GATEWAY_FILE).exists()
+    assert not (tmp_path / owner.READY_FILE).exists()
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():
