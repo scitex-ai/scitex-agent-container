@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config._harness_registry import CODEX_SDK, HARNESS_DESCRIPTORS
+from ._harness_session import Message
 from ._harness_turn_pump import drive_harness_turn
 from ._session_state import append_session_message, report_sdk_error
 from ._session_supervisor_helpers import _drain_failed_inbox
@@ -96,8 +97,9 @@ async def run_codex_conversation(
     turn-driver contract but unused: the app-server subprocess is owned
     by the SDK, and a mid-session crash surfaces as a turn-ending error
     event rather than something this driver can respawn around.
-    ``channels`` names Claude-SDK channel adapters this harness does not
-    implement; a spec that asks for them gets a LOUD warning.
+    ``channels`` still names legacy Claude-SDK adapters at this layer. The
+    harness-neutral SAC/Cards/CCT ingress must normalize those transports
+    into this daemon's inbox; native Codex delivery begins at that boundary.
     """
     from ._session_inbox import ShutdownEnvelope, TurnEnvelope
 
@@ -140,24 +142,128 @@ async def run_codex_conversation(
         _drain_failed_inbox(inbox, exc)
         return
 
+    pending_env: Any | None = None
     try:
         while True:
-            env = await inbox.get()
+            env = pending_env if pending_env is not None else await inbox.get()
+            pending_env = None
             if isinstance(env, ShutdownEnvelope):
                 return
             if not isinstance(env, TurnEnvelope):
                 continue
-            await drive_harness_turn(
-                session,
-                env,
-                state_dir=state_dir,
-                pid=pid,
-                stop=stop,
-                print_stream=print_stream,
-                name=name,
-                host=host,
-                harness=CODEX_SDK,
+            turn_task = asyncio.create_task(
+                drive_harness_turn(
+                    session,
+                    env,
+                    state_dir=state_dir,
+                    pid=pid,
+                    stop=stop,
+                    print_stream=print_stream,
+                    name=name,
+                    host=host,
+                    harness=CODEX_SDK,
+                )
             )
+            steered_envs: list[Any] = []
+
+            # The old SDK runner waited for ``thread.run`` to finish before
+            # looking at the inbox again.  When both surfaces are available,
+            # race the native Codex turn against the non-destructive inbox
+            # event and route arriving messages through app-server's
+            # ``turn/steer`` method.  Plain asyncio.Queue fixtures and older
+            # session implementations retain the serial behavior.
+            can_wake = callable(getattr(inbox, "wait_for_item", None))
+            can_steer = callable(getattr(session, "steer", None))
+            while can_wake and can_steer and not turn_task.done():
+                wake_task = asyncio.create_task(inbox.wait_for_item())
+                done, _ = await asyncio.wait(
+                    {turn_task, wake_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if turn_task in done:
+                    wake_task.cancel()
+                    await asyncio.gather(wake_task, return_exceptions=True)
+                    break
+
+                incoming = await inbox.get()
+                if isinstance(incoming, ShutdownEnvelope):
+                    interrupt = getattr(session, "interrupt", None)
+                    active_id = getattr(session, "active_turn_id", None)
+                    if callable(interrupt) and active_id:
+                        await interrupt(expected_turn_id=active_id)
+                    await turn_task
+                    return
+                if not isinstance(incoming, TurnEnvelope):
+                    continue
+
+                active_id = getattr(session, "active_turn_id", None)
+                if not active_id:
+                    # The turn completed between the wake and the precondition
+                    # read. Preserve FIFO by making this the next normal turn.
+                    pending_env = incoming
+                    break
+                try:
+                    acknowledged_id = await session.steer(
+                        Message(role="user", content=incoming.text),
+                        expected_turn_id=active_id,
+                    )
+                except Exception as exc:
+                    # Once the RPC was attempted, its outcome is authoritative:
+                    # fail this delivery loudly. Retrying it as a fresh turn
+                    # would change steer semantics and could duplicate input if
+                    # the acknowledgement alone was lost.
+                    append_session_message(
+                        state_dir,
+                        {
+                            "type": "error",
+                            "kind": "native-steer",
+                            "detail": str(exc),
+                            "message_id": incoming.dispatch_id,
+                        },
+                    )
+                    if not incoming.response.done():
+                        incoming.response.set_exception(exc)
+                    continue
+                append_session_message(
+                    state_dir,
+                    {
+                        "type": "user",
+                        "text": incoming.text,
+                        "delivery": "native-steer",
+                        "codex_turn_id": acknowledged_id,
+                        "message_id": incoming.dispatch_id,
+                    },
+                )
+                steered_envs.append(incoming)
+
+            try:
+                await turn_task
+            except BaseException as exc:
+                # Every accepted native steer is attached to this turn. If
+                # the turn itself crashes, resolve those callers with the
+                # same failure instead of leaving their HTTP futures parked.
+                for steered in steered_envs:
+                    if not steered.response.done():
+                        if isinstance(exc, asyncio.CancelledError):
+                            steered.response.cancel()
+                        else:
+                            steered.response.set_exception(exc)
+                raise
+            # Codex produces one terminal assistant result for the active turn,
+            # including all accepted steering input. Every synchronous caller
+            # attached to that turn receives the same terminal result and
+            # resume id; the transcript above preserves which input was
+            # delivered through native steer.
+            for steered in steered_envs:
+                steered.session_id = env.session_id
+                if not steered.response.done():
+                    if env.response.cancelled():
+                        steered.response.cancel()
+                    else:
+                        failure = env.response.exception()
+                        if failure is not None:
+                            steered.response.set_exception(failure)
+                        else:
+                            steered.response.set_result(env.response.result())
             if env.exit_after:
                 stop.set()
                 return
