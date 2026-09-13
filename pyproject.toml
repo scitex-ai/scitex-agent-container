@@ -376,7 +376,13 @@ dev = [
     # central instances store can add the nullable exact-ownership fields
     # before any new incarnation starts. Earlier releases do not expose that
     # schema-evolution contract and therefore cannot make launch safe.
-    "scitex-dev>=0.60.0",
+    # RAISED TO 0.60.1 on 2026-09-13. Managed PostgreSQL deployments now make
+    # application Store() construction refuse missing DDL with the public
+    # StoreProvisionError instead of creating shared tables under the first
+    # agent login. The turn exchange bridge maps that refusal to the authorized
+    # provision_store_acl migration path; admitting 0.60.0 would bypass the
+    # launch gate and recreate the ownership race this floor is meant to close.
+    "scitex-dev>=0.60.1",
     # PS210: tests import scitex_hpc unguarded, so [dev] must include it
     # (otherwise `pip install -e .[dev]` can't run the full suite).
     "scitex-hpc>=0.6.2",

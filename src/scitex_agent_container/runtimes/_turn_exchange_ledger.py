@@ -39,11 +39,32 @@ def _access_error(exc: BaseException) -> TurnExchangeStoreUnavailable:
     )
 
 
-def _store():
-    from scitex_dev.store import Store, WriterPolicy, host_store
+def _provision_error(exc: BaseException) -> TurnExchangeStoreUnavailable:
+    """Translate scitex-dev's managed-DDL refusal into an operator action."""
+    role = os.environ.get("PGUSER", "<libpq default>")
+    return TurnExchangeStoreUnavailable(
+        "the SciTeX protocol status_exchanges store requires privileged "
+        f"provisioning before PGUSER={role!r} may open it: {exc} "
+        "Use scitex_dev.store.host_store(pkg='dev', "
+        "name='status_exchanges') with ledger_schema(), then run "
+        "provision_store_acl(target, schema) through the authorized migration "
+        "identity. Verify the result with inspect_store_acl(target, schema). "
+        "SAC will not create, re-own, or grant shared Store tables from an "
+        "agent process."
+    )
+
+
+def _store(*, _store_type: Callable[..., Any] | None = None):
+    from scitex_dev.store import (
+        Store,
+        StoreProvisionError,
+        WriterPolicy,
+        host_store,
+    )
 
     try:
-        return Store(
+        store_type = Store if _store_type is None else _store_type
+        return store_type(
             host_store(pkg="dev", name="status_exchanges"),
             ledger_schema(),
             node=socket.gethostname(),
@@ -51,6 +72,8 @@ def _store():
             actor="scitex-agent-container",
         )
     except Exception as exc:
+        if isinstance(exc, StoreProvisionError):
+            raise _provision_error(exc) from exc
         if _privilege_failure(exc):
             raise _access_error(exc) from exc
         raise

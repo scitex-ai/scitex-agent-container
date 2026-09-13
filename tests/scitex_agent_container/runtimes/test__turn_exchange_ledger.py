@@ -8,8 +8,10 @@ import pytest
 from scitex_dev.status import StatusCode, ledger_record, new_exchange_id
 
 from scitex_agent_container.runtimes._turn_exchange_ledger import (
+    TurnExchangeStoreUnavailable,
     _access_error,
     _privilege_failure,
+    _provision_error,
     _store,
     finish_turn_exchange,
     open_turn_exchange,
@@ -75,6 +77,38 @@ def test_store_acl_failure_names_owner_grant_and_refuses_self_heal() -> None:
         "scitex_rw" in message,
         "SAC will not change shared-database ownership" in message,
     ) == (True, True, True, True)
+
+
+def test_managed_store_provisioning_refusal_names_the_privileged_api() -> None:
+    # Arrange
+    from scitex_dev.store import StoreProvisionError
+
+    refused = StoreProvisionError("Store 'status_exchanges' needs PostgreSQL DDL")
+    # Act
+    message = str(_provision_error(refused))
+    # Assert
+    assert (
+        "provision_store_acl" in message,
+        "inspect_store_acl" in message,
+        "authorized migration identity" in message,
+        "SAC will not create, re-own, or grant" in message,
+    ) == (True, True, True, True)
+
+
+def test_store_constructor_maps_managed_ddl_refusal_to_actionable_bridge_error() -> (
+    None
+):
+    # Arrange
+    from scitex_dev.store import StoreProvisionError
+
+    def refusing_store(*_args, **_kwargs):
+        raise StoreProvisionError("managed store needs PostgreSQL DDL")
+
+    # Act
+    caught = pytest.raises(TurnExchangeStoreUnavailable, match="provision_store_acl")
+    # Assert
+    with caught:
+        _store(_store_type=refusing_store)
 
 
 def test_turn_exchange_moves_from_http_202_to_final_http_200(pg_schema: str) -> None:
