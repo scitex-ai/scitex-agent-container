@@ -37,6 +37,7 @@ _LIB = _CI / "tmpdir-lib.sh"
 _CLEAN = _CI / "clean-tmpdir.sh"
 _EXEC = _CI / "exec-in-sif.sh"
 _WORKFLOWS = _REPO / ".github" / "workflows"
+_DOCS_WORKFLOW = _WORKFLOWS / "rtd-sphinx-build-on-ubuntu-latest.yml"
 
 # The run identity the sandbox pretends to be running under.
 _RUN_ID = "77770001"
@@ -214,6 +215,7 @@ def test_library_has_no_tmp_or_home_fallback():
         ("run-in-sif.sh", "ci"),
         ("build-in-sif.sh", "build"),
         ("publish-in-sif.sh", "publish"),
+        ("docs", "docs"),
         ("autobump-in-sif.sh", ""),
         ("not-a-script.sh", ""),
     ],
@@ -466,7 +468,7 @@ def test_prune_tolerates_a_missing_root(tmp_path: Path):
     assert "rc=0" in res.stdout, res.stderr
 
 
-@pytest.mark.parametrize("prefix", ["ci", "build", "publish"])
+@pytest.mark.parametrize("prefix", ["ci", "build", "publish", "docs"])
 def test_prune_covers_every_leaking_prefix(root: Path, prefix: str):
     """One fix, all three leaking scripts — build and publish leak once per
     release, which is slower to notice, not less of a leak."""
@@ -838,6 +840,56 @@ def test_every_cleanup_step_is_guarded_by_always(wiring):
             unguarded.append(f"{where} ({inner} {args})")
     # Assert
     assert not unguarded, f"cleanup steps not guarded by `if: always()`: {unguarded}"
+
+
+def _docs_steps() -> list[dict]:
+    doc = yaml.safe_load(_DOCS_WORKFLOW.read_text(encoding="utf-8"))
+    return doc["jobs"]["sphinx"]["steps"]
+
+
+def test_docs_job_places_cache_temp_and_venv_in_managed_scratch():
+    # Arrange
+    prepare = next(
+        step for step in _docs_steps() if step.get("name") == "Prepare job-scoped docs scratch"
+    )
+    run = prepare.get("run", "")
+    # Act
+    required = (
+        ". .github/ci/tmpdir-lib.sh",
+        "ci_tmpdir_path docs 3.12",
+        "TMPDIR=$scratch/tmp",
+        "UV_CACHE_DIR=$scratch/uv-cache",
+        "DOCS_VENV=$scratch/venv",
+    )
+    # Assert
+    assert all(item in run for item in required), run
+
+
+def test_docs_job_removes_its_exact_scratch_scope_even_after_failure():
+    # Arrange
+    cleanup = next(
+        step for step in _docs_steps() if step.get("name") == "Remove this job's docs scratch"
+    )
+    # Act
+    condition = str(cleanup.get("if", ""))
+    command = str(cleanup.get("run", "")).strip()
+    # Assert
+    assert "always()" in condition
+    assert command == "bash .github/ci/clean-tmpdir.sh docs 3.12"
+
+
+def test_docs_cleanup_removes_only_its_managed_run_directory(root: Path):
+    # Arrange
+    docs = _mkdir(
+        root, f"docs-scitex_agent_container-{_RUN_ID}-{_ATTEMPT}-3.12"
+    )
+    sibling = _mkdir(root, f"docs-scitex_agent_container-{_RUN_ID}-2-3.12")
+    # Act
+    result = _run_clean(root, "docs", "3.12")
+    # Assert
+    assert result.returncode == 0, result.stderr
+    assert not docs.exists()
+    assert sibling.is_dir()
 
 
 def test_exec_wrapper_sources_the_lifecycle_library():
