@@ -38,12 +38,13 @@ from .state_store_comms_nodes_store import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from scitex_dev.store import Row
+    from scitex_dev.store import Row, Store
 
 __all__ = [
     "COMMS_NODES_STORE",
     "CommsNodeConflictError",
     "RegisterCommsNodeKind",
+    "RegisterCommsNodeResult",
     "comms_nodes_schema",
     "list_comms_nodes",
     "lookup_comms_node",
@@ -76,6 +77,9 @@ persisted (it is not a field of the declared schema) — it flows into
 tried to overwrite WHICH.
 """
 
+RegisterCommsNodeResult = Literal["inserted", "refreshed", "revived", "replaced"]
+"""Observable result of a successful comms-node registration."""
+
 
 class CommsNodeConflictError(RuntimeError):
     """Two registrations disagree on a ``name``'s ``(host, a2a_port)``.
@@ -94,9 +98,10 @@ class CommsNodeConflictError(RuntimeError):
        registrations) but the caller's ``(host, a2a_port)`` differs from what
        is stored. Before PR L1 this silently last-writer-wins; that is the
        exact silent-shadow the operator's directive locks out. The caller
-       must pass ``replace=True`` to opt into the overwrite (only reached
-       deliberately through the ``--prefer`` flag, which is the
-       explicit-client-option half of the directive).
+       must pass ``replace=True`` to opt into the overwrite. The lifecycle
+       writer does so because a successfully launched spec incarnation is
+       authoritative for its own same-origin route; manual and discovery
+       writers remain fail-loud by default.
 
     ADR-0014 conflict policy: fail-loud (α) over last-writer-wins (β). The
     exception carries enough context (kind, source_path, existing host/port +
@@ -126,7 +131,7 @@ def register_comms_node(
     kind: RegisterCommsNodeKind = "manual",
     source_path: str | None = None,
     replace: bool = False,
-) -> None:
+) -> RegisterCommsNodeResult:
     """Idempotent upsert of ``name`` → ``(host, a2a_port)``.
 
     Behaviour (unchanged from the previous implementation — the storage moved, the
@@ -151,10 +156,10 @@ def register_comms_node(
       NOT covered by this: that check runs first and still raises, because
       name ownership is not a question a tombstone answers.
     * Existing LIVE record with a different ``(host, a2a_port)`` from the
-      SAME origin → raise unless ``replace=True``. Default callers — the
-      spec-driven paired write, the channel self-register, the Q4 self-peer
-      persistence — do NOT set it; they catch and log, so a real collision
-      surfaces in the operator's logs and no record is silently shadowed.
+      SAME origin → raise unless ``replace=True``. The spec-driven lifecycle
+      writer opts in after a launch succeeds because that new incarnation is
+      the canonical live route. Channel self-registration and self-peer
+      discovery do not opt in, so they cannot shadow a running spec route.
 
     Parameters
     ----------
@@ -183,8 +188,9 @@ def register_comms_node(
         path.
     replace:
         Opt-in to overwrite an existing same-origin record with a different
-        ``(host, a2a_port)``. Wired by the ``--prefer`` flag. Has no effect
-        on the cross-origin conflict — that one ALWAYS raises.
+        ``(host, a2a_port)``. Used by the canonical spec lifecycle writer
+        and explicit operator repair. Has no effect on the cross-origin
+        conflict — that one ALWAYS raises.
     """
     if not name:
         raise ValueError("register_comms_node: name must be non-empty")
@@ -195,8 +201,8 @@ def register_comms_node(
             f"register_comms_node: a2a_port must be a positive int, got {a2a_port!r}"
         )
 
-    def _write(store: "Store") -> None:
-        _register_on(
+    def _write(store: "Store") -> RegisterCommsNodeResult:
+        return _register_on(
             store,
             name=name,
             host=host,
@@ -209,7 +215,7 @@ def register_comms_node(
 
     # The SHARED handle — never closed here, and reopened once if the
     # connection died under it. See ``state_store_comms_nodes_store`` for both.
-    run_with_reconnect(_write)
+    return run_with_reconnect(_write)
 
 
 def _register_on(
@@ -222,7 +228,7 @@ def _register_on(
     kind: RegisterCommsNodeKind,
     source_path: str | None,
     replace: bool,
-) -> None:
+) -> RegisterCommsNodeResult:
     """The upsert itself, against an already-open ``store``.
 
     Split out so :func:`run_with_reconnect` can re-run the WHOLE operation
@@ -246,7 +252,13 @@ def _register_on(
             },
             expected_revision=NEW_RECORD,
         )
-        return
+        return "inserted"
+
+    target_changed = (
+        str(existing.values["host"]) != host
+        or int(existing.values["a2a_port"]) != a2a_port
+    )
+    was_hidden = bool(existing.hidden)
 
     _guard_conflict(
         existing,
@@ -275,6 +287,11 @@ def _register_on(
         },
         expected_revision=ANY_REVISION,
     )
+    if was_hidden:
+        return "revived"
+    if target_changed:
+        return "replaced"
+    return "refreshed"
 
 
 def _guard_conflict(
@@ -318,7 +335,7 @@ def _guard_conflict(
         return
 
     if replace:
-        # Explicit replace — operator-confirmed via --prefer.
+        # Explicit authority: canonical live spec incarnation or operator.
         return
 
     other_kind = "spec" if kind == "self-peer" else "self-peer pointer"

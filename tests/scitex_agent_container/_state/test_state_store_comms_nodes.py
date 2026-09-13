@@ -195,6 +195,44 @@ def test_same_source_different_target_overwrites_with_replace(pg_schema: str) ->
     assert info["a2a_port"] == 9000
 
 
+def test_spec_claim_replaces_same_origin_self_peer_pointer(pg_schema: str) -> None:
+    # Arrange — listener discovery wrote its host-level port first.
+    register_comms_node(
+        name="lead-spec-owner",
+        host=THIS_NODE,
+        a2a_port=7878,
+        kind="self-peer",
+    )
+    # Act — a live spec incarnation owns its per-agent A2A endpoint.
+    result = register_comms_node(
+        name="lead-spec-owner",
+        host=THIS_NODE,
+        a2a_port=19003,
+        kind="spec",
+        source_path="/agents/scitex-lead/spec.yaml",
+        replace=True,
+    )
+    info = lookup_comms_node(name="lead-spec-owner")
+    # Assert
+    assert result == "replaced"
+    assert info is not None and info["a2a_port"] == 19003
+
+
+def test_spec_replace_still_refuses_cross_origin_claim(pg_schema: str) -> None:
+    # Arrange — this node owns the existing global name.
+    register_comms_node(name="foreign-spec-owner", host=THIS_NODE, a2a_port=7878)
+    # Act / Assert — ``replace`` is not authority over another origin.
+    with pytest.raises(CommsNodeConflictError):
+        register_comms_node(
+            name="foreign-spec-owner",
+            host=FOREIGN_HOST,
+            a2a_port=19003,
+            source_host=FOREIGN_HOST,
+            kind="spec",
+            replace=True,
+        )
+
+
 def test_conflict_message_names_the_incoming_kind(pg_schema: str) -> None:
     # Arrange
     register_comms_node(name="lead", host="mba", a2a_port=8642)
