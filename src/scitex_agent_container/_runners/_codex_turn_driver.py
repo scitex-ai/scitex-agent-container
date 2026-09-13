@@ -97,13 +97,16 @@ async def run_codex_conversation(
     turn-driver contract but unused: the app-server subprocess is owned
     by the SDK, and a mid-session crash surfaces as a turn-ending error
     event rather than something this driver can respawn around.
-    ``channels`` still names legacy Claude-SDK adapters at this layer. The
-    harness-neutral SAC/Cards/CCT ingress must normalize those transports
-    into this daemon's inbox; native Codex delivery begins at that boundary.
+    ``channels`` is the agent-level ``spec.comms.channels`` declaration.  Its
+    source-specific adapters run upstream of the harness and normalize every
+    admitted message into this daemon's shared inbox.  The Codex driver must
+    therefore neither reinterpret nor reject the declaration: native Codex
+    delivery begins at the inbox boundary (``turn/start`` while idle,
+    ``turn/steer`` while a turn is active).
     """
     from ._session_inbox import ShutdownEnvelope, TurnEnvelope
 
-    del max_restarts, restart_backoff_s, a2a_port  # contract params; see docstring
+    del max_restarts, restart_backoff_s, a2a_port, channels  # see docstring
 
     descriptor = HARNESS_DESCRIPTORS[CODEX_SDK]
     if resume_session_id and not descriptor.can_resume:
@@ -119,14 +122,6 @@ async def run_codex_conversation(
         logger.error("%s", detail)
         _drain_failed_inbox(inbox, RuntimeError(detail))
         return
-
-    if channels:
-        logger.warning(
-            "codex harness has no channel adapters; --channels %r ignored "
-            "for agent %s (channel wiring is Claude-SDK-specific)",
-            channels,
-            name,
-        )
 
     factory = session_factory if session_factory is not None else _default_session_factory()
     try:

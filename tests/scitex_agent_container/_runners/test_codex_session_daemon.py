@@ -503,7 +503,7 @@ def test_send_before_start_refuses_rather_than_returning_empty():
 
 def test_codex_session_exposes_the_native_active_turn_and_steers_it():
     # Arrange: use the exact run/steer/id surface exposed by
-    # openai-codex 0.147's AsyncTurnHandle.
+    # openai-codex 0.154's AsyncTurnHandle.
     async def _scenario() -> tuple[str | None, list[str], list[NormalizedEvent]]:
         handle = _NativeTurnHandle()
         session = CodexSession("ag-cx-native")
@@ -559,7 +559,14 @@ def test_codex_session_refuses_a_stale_expected_turn_id_before_rpc():
     assert steered == []
 
 
-def test_driver_routes_mid_turn_inbox_input_through_native_codex_steer(tmp_path):
+@pytest.mark.parametrize(
+    "channels",
+    [["server:sac"], ["server:scitex-cards"], None],
+    ids=["sac", "cards", "a2a"],
+)
+def test_driver_routes_neutral_mid_turn_input_through_native_codex_steer(
+    tmp_path, channels
+):
     # Arrange: WakeableInbox is the production inbox shape. The second
     # envelope arrives while the first model turn is still active.
     async def _scenario() -> tuple[list[str], str, str, str | None]:
@@ -585,6 +592,7 @@ def test_driver_routes_mid_turn_inbox_input_through_native_codex_steer(tmp_path)
                 inbox=inbox,
                 resume_session_id=None,
                 stop=stop,
+                channels=channels,
                 session_factory=_NativeSteerSession,
             )
         )
@@ -620,7 +628,14 @@ def test_driver_routes_mid_turn_inbox_input_through_native_codex_steer(tmp_path)
     )
 
 
-def test_driver_reports_native_steer_rejection_without_replaying_as_a_turn(tmp_path):
+@pytest.mark.parametrize(
+    "channels",
+    [["server:sac"], ["server:scitex-cards"], None],
+    ids=["sac", "cards", "a2a"],
+)
+def test_driver_reports_neutral_steer_failure_without_replaying_as_a_turn(
+    tmp_path, channels
+):
     # Arrange
     async def _scenario() -> tuple[str, int]:
         inbox = make_inbox()
@@ -643,6 +658,7 @@ def test_driver_reports_native_steer_rejection_without_replaying_as_a_turn(tmp_p
                 inbox=inbox,
                 resume_session_id=None,
                 stop=stop,
+                channels=channels,
                 session_factory=_RejectingNativeSteerSession,
             )
         )
