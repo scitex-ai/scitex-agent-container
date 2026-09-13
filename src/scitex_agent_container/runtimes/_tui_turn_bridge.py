@@ -59,6 +59,7 @@ on loopback while ``a2a_sidecar`` alone honoured the declaration.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import logging
@@ -103,6 +104,32 @@ log = logging.getLogger(__name__)
 
 _CHANNEL_OPEN_RE = re.compile(r"^<channel\s+(?P<attrs>[^>]+)>")
 _CHANNEL_ATTR_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
+
+
+def _native_cause(exc: BaseException) -> StatusCode | None:
+    """Preserve the first native errno through the turn HTTP boundary."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        number = getattr(current, "errno", None)
+        name = errno.errorcode.get(number) if isinstance(number, int) else None
+        if name:
+            return StatusCode(kind="errno", code=name, message=str(current))
+        nested = getattr(current, "__cause__", None)
+        current = nested if isinstance(nested, BaseException) else None
+    return None
+
+
+def _admission_failure(exc: BaseException, *, agent: str) -> Check:
+    """Describe a failed Hermes admission with its machine-readable cause."""
+    return Check.not_ok(
+        "hermes_turn_admitted",
+        f"Hermes did not admit the turn for {agent!r}: {exc}",
+        "Restore the resource named by `cause`, then retry the same durable "
+        "delivery; its exchange identity makes admission idempotent.",
+        cause=_native_cause(exc),
+    )
 
 
 def _cct_delivery_id(agent_name: str, text: str) -> str | None:
@@ -541,7 +568,10 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 return
             srv.active_delivery = (delivery_key or exchange_id, exchange_id)
 
+        failure_check: Check | None = None
+
         def deliver() -> StatusCode:
+            nonlocal failure_check
             try:
                 delivery_kwargs = {
                     "from_agent": from_agent,
@@ -584,7 +614,8 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 )
             except Exception as exc:  # stx-allow: fallback (reason: visibility failure must remain explicitly retryable on the accepted durable operation, never be acknowledged or rewritten from a terminal failure)
                 detail = str(exc).strip() or "no native error detail"
-                cause = StatusCode(
+                native_cause = _native_cause(exc)
+                cause = native_cause or StatusCode(
                     kind="http",
                     code=502,
                     message=(
@@ -598,13 +629,18 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     "notification; observe the same delivery operation at "
                     f"`/v1/exchanges/{exchange_id}`"
                 )
-                check = Check.unknown(
-                    "hermes_transcript_visible",
-                    "Hermes transcript visibility was not confirmed "
-                    f"({type(exc).__name__}: {detail})",
-                    hint,
-                    cause=cause,
+                check = (
+                    _admission_failure(exc, agent=srv.agent_name)
+                    if native_cause is not None
+                    else Check.unknown(
+                        "hermes_transcript_visible",
+                        "Hermes transcript visibility was not confirmed "
+                        f"({type(exc).__name__}: {detail})",
+                        hint,
+                        cause=cause,
+                    )
                 )
+                failure_check = check
                 log.warning(
                     "turn exchange remains retryable exchange_id=%s check=%s",
                     exchange_id,
@@ -661,16 +697,29 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     },
                 )
             else:
+                admission_check = failure_check or Check.unknown(
+                    "hermes_transcript_visible",
+                    final_status.message,
+                    "Inspect the Hermes gateway readiness and retry the same delivery.",
+                )
+                native_cause = admission_check.cause
+                response_code = (
+                    507
+                    if native_cause is not None
+                    and native_cause.code in {"ENOSPC", "EDQUOT"}
+                    else 502
+                )
                 self._respond(
-                    502,
+                    response_code,
                     {
                         "agent": srv.agent_name,
                         "exchange_id": exchange_id,
                         "delivery_id": effective_visible_id,
                         "error": final_status.message,
+                        "check": admission_check.to_dict(),
                         "status_code": StatusCode(
                             kind="http",
-                            code=502,
+                            code=response_code,
                             message=(
                                 "Hermes did not prove the Telegram turn visible; "
                                 f"exchange {exchange_id} remains retryable"

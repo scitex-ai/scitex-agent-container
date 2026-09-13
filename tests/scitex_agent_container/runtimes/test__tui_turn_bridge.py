@@ -555,6 +555,33 @@ def test_post_inject_failure_concludes_ordinary_exchange_with_502(
     assert (status, final["status_code"]["code"]) == (202, 502)
 
 
+@pytest.mark.parametrize("number,name", [(errno.ENOSPC, "ENOSPC"), (errno.EDQUOT, "EDQUOT")])
+def test_bare_telegram_storage_failure_returns_structured_507(
+    bridge_factory, number, name
+) -> None:
+    # Arrange
+    def refuse_storage(_text: str, **_kw: object) -> None:
+        raise OSError(number, "storage unavailable")
+
+    port = bridge_factory(refuse_storage, agent_name="scitex-lead")
+    telegram = (
+        '<channel source="cct" chat_id="8379" message_id="19" row_id="9">\n'
+        "hello\n</channel>"
+    )
+
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": telegram})
+
+    # Assert
+    assert (
+        status,
+        body["status_code"]["code"],
+        body["check"]["ok"],
+        body["check"]["cause"]["kind"],
+        body["check"]["cause"]["code"],
+    ) == (507, 507, False, "errno", name)
+
+
 def test_bare_telegram_wake_returns_200_only_after_native_visibility(
     bridge_factory,
 ) -> None:

@@ -214,14 +214,24 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         )
 
     def why_not_deliverable(self, config: AgentConfig) -> str | None:
-        from ._hermes_tui_owner import GATEWAY_FILE
+        from ._hermes_tui_rpc import HermesTuiRpcError, gateway_detailed_health
 
-        if (state_dir_for_config(config) / GATEWAY_FILE).is_file():
+        try:
+            gateway_detailed_health(state_dir_for_config(config))
             return None
-        return "the Hermes native TUI gateway is absent"
+        except HermesTuiRpcError as exc:
+            return str(exc)
 
     def control_state(self, config: AgentConfig) -> dict | None:
-        return read_control_state(state_dir_for_config(config))
+        from ._hermes_tui_rpc import HermesTuiRpcError, gateway_detailed_health
+
+        state = dict(read_control_state(state_dir_for_config(config)) or {})
+        try:
+            readiness = gateway_detailed_health(state_dir_for_config(config))
+        except HermesTuiRpcError as exc:
+            readiness = {"status": "unavailable", "detail": str(exc)}
+        state["gateway_readiness"] = readiness
+        return state
 
     def recover_turn_admission(self, config: AgentConfig) -> bool:
         """Use Hermes' supported same-session model switch."""
