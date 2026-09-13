@@ -211,6 +211,52 @@ def submit_turn(
     return status
 
 
+def pause_heartbeat(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> str:
+    """Pause Hermes' session heartbeat without creating a model turn.
+
+    ``prompt.submit('/heartbeat pause')`` does *not* execute a slash command.
+    It appends an ordinary user message and therefore wakes the model with the
+    complete conversation.  Hermes exposes heartbeat state through its
+    intent-level ``session.control`` RPC; use that control-plane operation so
+    SAC's deterministic inbox sidecar can remain active while an idle session
+    consumes no inference slot.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
+            result = _rpc(
+                socket,
+                2,
+                "session.control",
+                {"session_id": session_id, "action": "heartbeat.pause"},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    control = result.get("control")
+    if not isinstance(control, dict):
+        raise HermesTuiRpcError(
+            f"Hermes session.control returned malformed result: {result!r}"
+        )
+    heartbeat = control.get("heartbeat")
+    if heartbeat is None:
+        return "absent"
+    if not isinstance(heartbeat, dict) or heartbeat.get("status") != "paused":
+        raise HermesTuiRpcError(f"Hermes heartbeat did not pause: {heartbeat!r}")
+    return "paused"
+
+
 def _delivery_visibility(payload: object, delivery_id: str) -> str | None:
     """Name the Hermes projection containing one durable delivery marker.
 
@@ -419,6 +465,7 @@ __all__ = [
     "_stored_delivery_visibility",
     "active_sessions",
     "observe_turn_activity",
+    "pause_heartbeat",
     "submit_turn",
     "submit_visible_turn",
 ]
