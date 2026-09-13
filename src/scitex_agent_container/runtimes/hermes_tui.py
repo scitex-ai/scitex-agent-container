@@ -78,7 +78,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
     def __init__(
         self,
         *args,
-        rpc_submit: Callable[..., str] | None = None,
+        rpc_submit: Callable[..., object] | None = None,
         rpc_submit_visible: Callable[..., object] | None = None,
         rpc_pause_heartbeat: Callable[..., str] | None = None,
         gateway_health: Callable[[Path], dict] | None = None,
@@ -185,6 +185,21 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         self._rpc_submit(state_dir_for_config(config), config.name, text)
         return True
 
+    def send_interactive_turn(
+        self,
+        config: AgentConfig,
+        text: str,
+        *,
+        delivery_mode: str = "steer",
+    ) -> object:
+        """Return Hermes' native receipt for an explicitly routed inbound."""
+        return self._rpc_submit(
+            state_dir_for_config(config),
+            config.name,
+            text,
+            delivery_mode=delivery_mode,
+        )
+
     def send_key(self, config: AgentConfig, key: str) -> bool:
         """Send an explicit UI-control key; prompts never use this path."""
         return super().send_key(config, key)
@@ -204,6 +219,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         text: str,
         *,
         visible_delivery_id: str,
+        delivery_mode: str = "steer",
         max_observations: int = 20,
         poll_s: float = 0.1,
     ) -> object:
@@ -220,6 +236,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
             config.name,
             text,
             delivery_id=visible_delivery_id,
+            delivery_mode=delivery_mode,
             max_observations=max_observations,
             poll_s=poll_s,
         )

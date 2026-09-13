@@ -321,6 +321,7 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
                 "kind": "http",
                 "code": 202,
                 "message": f"accepted; poll `{probe_url}/{exchange_id}`",
+                "final": False,
                 "delivery_id": delivery_id,
                 "initiator": initiator,
             },
@@ -334,6 +335,7 @@ def bridge_factory() -> Iterator[Callable[..., int]]:
             "kind": status.kind,
             "code": status.code,
             "message": status.message,
+            "final": status.final,
         }
 
     def exchange_read(exchange_id: str) -> dict | None:
@@ -508,11 +510,17 @@ def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
     seen: dict = {}
 
     def rec(
-        text: str, *, from_agent=None, dispatch_id=None, visible_delivery_id=None
+        text: str,
+        *,
+        from_agent=None,
+        dispatch_id=None,
+        visible_delivery_id=None,
+        delivery_mode=None,
     ) -> object:
         seen["from_agent"] = from_agent
         seen["dispatch_id"] = dispatch_id
         seen["visible_delivery_id"] = visible_delivery_id
+        seen["delivery_mode"] = delivery_mode
         return SimpleNamespace(status="steered", visibility="session.queue[0]")
 
     port = bridge_factory(rec)
@@ -524,10 +532,81 @@ def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
     )
     _wait_exchange(port, body["exchange_id"])
     # Assert
-    assert (seen["from_agent"], seen["dispatch_id"], seen["visible_delivery_id"]) == (
+    assert (
+        seen["from_agent"],
+        seen["dispatch_id"],
+        seen["visible_delivery_id"],
+        seen["delivery_mode"],
+    ) == (
         "lead",
         "d1",
         None,
+        "steer",
+    )
+
+
+def test_a2a_envelope_defaults_to_steer_and_allows_explicit_queue(
+    bridge_factory,
+) -> None:
+    # Arrange
+    modes = []
+    port = bridge_factory(
+        lambda _text, **kwargs: modes.append(kwargs["delivery_mode"])
+    )
+
+    def envelope(dispatch_id: str, metadata: dict | None = None) -> dict:
+        return {
+            "jsonrpc": "2.0",
+            "method": "SendMessage",
+            "params": {
+                "message": {"parts": [{"text": dispatch_id}]},
+                "metadata": {"dispatch_id": dispatch_id, **(metadata or {})},
+            },
+        }
+
+    # Act
+    first_status, first = _post(port, "/v1/turn", envelope("default-steer"))
+    _wait_exchange(port, first["exchange_id"])
+    second_status, second = _post(
+        port,
+        "/v1/turn",
+        envelope("explicit-queue", {"delivery_mode": "queue"}),
+    )
+    final = _wait_exchange(port, second["exchange_id"])
+
+    # Assert
+    assert (
+        first_status,
+        first["receipt"],
+        second_status,
+        second["receipt"],
+        final["receipt"],
+        modes,
+    ) == (
+        202,
+        {"state": "pending", "final": False, "delivery_mode": "steer"},
+        202,
+        {"state": "pending", "final": False, "delivery_mode": "queue"},
+        {"state": "delivered", "final": True},
+        ["steer", "queue"],
+    )
+
+
+def test_turn_rejects_unknown_delivery_mode_before_opening_exchange(
+    bridge_factory,
+) -> None:
+    # Arrange
+    calls = []
+    port = bridge_factory(lambda *_args, **_kwargs: calls.append(True))
+    # Act
+    status, body = _post(
+        port, "/v1/turn", {"text": "hello", "delivery_mode": "maybe"}
+    )
+    # Assert
+    assert (status, body, calls) == (
+        400,
+        {"error": "delivery_mode must be 'steer' or 'queue'"},
+        [],
     )
 
 
@@ -552,7 +631,13 @@ def test_post_inject_failure_concludes_ordinary_exchange_with_502(
     status, body = _post(port, "/v1/turn", {"text": "wake up"})
     final = _wait_exchange(port, body["exchange_id"])
     # Assert
-    assert (status, final["status_code"]["code"]) == (202, 502)
+    assert (
+        status,
+        final["status_code"]["code"],
+        final["receipt"]["state"],
+        final["receipt"]["final"],
+        "session gone" in final["receipt"]["error"],
+    ) == (202, 502, "failed", True, True)
 
 
 @pytest.mark.parametrize("number,name", [(errno.ENOSPC, "ENOSPC"), (errno.EDQUOT, "EDQUOT")])
@@ -807,6 +892,7 @@ def test_visible_delivery_http_contract_reports_native_acceptance_and_proof(
             "text": message,
             "from_agent": "operator",
             "visible_delivery_id": "m_visible",
+            "delivery_mode": "steer",
         },
     )
     probe = _wait_exchange(port, body["exchange_id"])
@@ -828,6 +914,7 @@ def test_visible_delivery_http_contract_reports_native_acceptance_and_proof(
             "from_agent": "operator",
             "dispatch_id": None,
             "visible_delivery_id": "m_visible",
+            "delivery_mode": "steer",
         },
     )
 
@@ -1137,7 +1224,10 @@ def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
         [
             (
                 "wake up\n<!-- delivery:n_visible -->",
-                {"visible_delivery_id": "n_visible"},
+                {
+                    "visible_delivery_id": "n_visible",
+                    "delivery_mode": "steer",
+                },
             )
         ],
     )

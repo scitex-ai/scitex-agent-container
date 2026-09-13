@@ -199,10 +199,15 @@ The neutral PostgreSQL inbox and TUI bridge are transport adapters. The Hermes a
 requests `ack=explicit` and acknowledges a row only after Hermes accepts the
 turn through the neutral TUI endpoint. SAC starts one loopback-only Hermes
 WebSocket/JSON-RPC gateway as the session owner and attaches the official Ink
-TUI to it. The adapter calls `session.activate` and `prompt.submit` against
-that same live session; Hermes fans events out to the visible TUI, and its
-generated profile maps busy input to native `steer`. It never types messages
-into tmux. A bridge failure before acceptance therefore leaves the row
+TUI to it. The adapter observes `session.active_list`: active sessions receive
+the message through the intent-level `session.steer` RPC, while idle sessions
+receive an ordinary `prompt.submit`. This is an explicit transport contract,
+not an inference from the TUI's `busy_input_mode` preference. An A2A caller may
+request `delivery_mode: queue`, which maps to `prompt.submit` with Hermes'
+explicit `queued: true`; every omitted mode defaults to `steer`. A rejected
+steer and any semantic downgrade to the next-turn queue fail the exchange
+loudly. It never types messages into tmux. A bridge failure before acceptance
+therefore leaves the row
 replayable. The host-side adapter receives the listener bearer only through
 its environment, and its stop path signals a recorded PID only after Linux
 process identity proves the exact module, agent name, and authored spec path.

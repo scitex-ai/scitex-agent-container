@@ -107,15 +107,23 @@ class _Socket:
             },
             "session.activate": {"id": "live-1"},
             "prompt.submit": {"status": "steered"},
+            "session.steer": {"status": "queued", "text": "act now"},
         }[method]
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
 
 
 class _VisibleSocket:
-    def __init__(self, *, submit_status: str, projections: list[dict]):
+    def __init__(
+        self,
+        *,
+        submit_status: str,
+        projections: list[dict],
+        session_status: str = "idle",
+    ):
         self.sent = []
         self.submit_status = submit_status
         self.projections = iter(projections)
+        self.session_status = session_status
 
     def __enter__(self):
         return self
@@ -130,12 +138,22 @@ class _VisibleSocket:
         request = self.sent[-1]
         method = request["method"]
         if method == "session.active_list":
-            result = {"sessions": [{"id": "live-1", "title": "sac:hub"}]}
+            result = {
+                "sessions": [
+                    {
+                        "id": "live-1",
+                        "title": "sac:hub",
+                        "status": self.session_status,
+                    }
+                ]
+            }
         elif method == "session.activate":
             result = next(self.projections)
             result.setdefault("session_key", "stored-1")
         elif method == "prompt.submit":
             result = {"status": self.submit_status}
+        elif method == "session.steer":
+            result = {"status": "queued", "text": request["params"]["text"]}
         else:  # pragma: no cover - a new RPC is itself a test failure
             raise AssertionError(method)
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
@@ -228,22 +246,96 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
     # Arrange
     (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
     (tmp_path / "hermes-api.key").write_text("a-secure-test-token\n", encoding="utf-8")
-    socket = _Socket()
+    socket = _Socket(status="working")
 
     # Act
-    status = submit_turn(tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket)
+    receipt = submit_turn(
+        tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket
+    )
 
     # Assert
     assert (
-        status,
+        receipt.status,
+        receipt.delivery_mode,
         [row["method"] for row in socket.sent],
         socket.sent[-1]["params"],
     ) == (
         "steered",
-        ["session.active_list", "session.activate", "prompt.submit"],
+        "steer",
+        ["session.active_list", "session.steer"],
         {"session_id": "live-1", "text": "act now"},
     )
 
+
+def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class QueueSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "prompt.submit":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"status": "queued"},
+                    }
+                )
+            return super().recv()
+
+    socket = QueueSocket(status="working")
+
+    # Act
+    receipt = submit_turn(
+        tmp_path,
+        "hub",
+        "run this afterward",
+        delivery_mode="queue",
+        connect_fn=lambda *a, **k: socket,
+    )
+
+    # Assert
+    assert (
+        receipt.delivery_mode,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"],
+    ) == (
+        "queue",
+        ["session.active_list", "prompt.submit"],
+        {
+            "session_id": "live-1",
+            "text": "run this afterward",
+            "queued": True,
+        },
+    )
+
+
+def test_active_default_never_accepts_hermes_next_turn_queue_as_steer(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class RejectingSteerSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "session.steer":
+                result = {"status": "rejected", "text": request["params"]["text"]}
+                return json.dumps(
+                    {"jsonrpc": "2.0", "id": request["id"], "result": result}
+                )
+            return super().recv()
+
+    socket = RejectingSteerSocket(status="working")
+
+    # Act / Assert
+    with pytest.raises(HermesTuiRpcError, match="did not accept the active-turn steer"):
+        submit_turn(
+            tmp_path, "hub", "urgent correction", connect_fn=lambda *a, **k: socket
+        )
+    assert [request["method"] for request in socket.sent] == [
+        "session.active_list",
+        "session.steer",
+    ]
 
 def test_session_selection_refuses_ambiguous_gateway():
     # Arrange
@@ -368,6 +460,7 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
     text = "busy delivery <!-- delivery:n_busy -->"
     socket = _VisibleSocket(
         submit_status="steered",
+        session_status="working",
         projections=[
             {"inflight": {"user": "original", "corrections": []}},
             {"inflight": {"user": "original", "corrections": [text]}},
@@ -398,6 +491,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
     text = "queued delivery <!-- delivery:n_queued -->"
     socket = _VisibleSocket(
         submit_status="queued",
+        session_status="working",
         projections=[{}, {"queued": {"user": text}}],
     )
     _response, search = _search()
@@ -408,6 +502,7 @@ def test_visible_busy_fallback_is_proven_in_native_queue(tmp_path):
         "hub",
         text,
         delivery_id="n_queued",
+        delivery_mode="queue",
         connect_fn=lambda *a, **k: socket,
         urlopen_fn=search,
     )

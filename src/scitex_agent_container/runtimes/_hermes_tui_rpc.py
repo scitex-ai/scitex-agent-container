@@ -37,6 +37,16 @@ class HermesVisibleTurnReceipt:
     status: str
     visibility: str
     session_id: str
+    delivery_mode: str = "steer"
+
+
+@dataclass(frozen=True)
+class HermesTurnReceipt:
+    """Hermes-owned admission result for one interactive inbound message."""
+
+    status: str
+    delivery_mode: str
+    session_id: str
 
 
 _SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
@@ -203,6 +213,65 @@ def _select_session(rows: object, expected_title: str) -> str:
     return str(_select_session_row(rows, expected_title)["id"])
 
 
+def _session_activity(row: dict) -> str:
+    """Normalize the gateway's authoritative activity without guessing."""
+    status = str(row.get("status") or "").strip().lower()
+    if status == "idle":
+        return "idle"
+    if status in {"working", "waiting", "starting"}:
+        return "active"
+    raise HermesTuiRpcError(
+        f"Hermes session {row.get('id')!r} returned unknown activity status "
+        f"{status!r}"
+    )
+
+
+def _submit_interactive(
+    socket: Any,
+    *,
+    session: dict,
+    text: str,
+    delivery_mode: str,
+    request_id: int,
+) -> tuple[HermesTurnReceipt, int]:
+    """Use Hermes' intent-level steer or queue operation for this activity state."""
+    if delivery_mode not in {"steer", "queue"}:
+        raise ValueError("delivery_mode must be 'steer' or 'queue'")
+    session_id = str(session["id"])
+    activity = _session_activity(session)
+    if delivery_mode == "steer" and activity == "active":
+        result = _rpc(
+            socket,
+            request_id,
+            "session.steer",
+            {"session_id": session_id, "text": text},
+        )
+        # Hermes 0.21.1 calls its accepted pending-steer slot ``queued``.
+        # This is distinct from its next-turn prompt queue: the method name is
+        # the semantic contract and the echoed text binds the receipt.
+        if result.get("status") != "queued" or result.get("text") != text:
+            raise HermesTuiRpcError(
+                f"Hermes session.steer did not accept the active-turn steer: {result!r}"
+            )
+        return HermesTurnReceipt("steered", "steer", session_id), request_id + 1
+
+    params: dict[str, Any] = {"session_id": session_id, "text": text}
+    if delivery_mode == "queue":
+        params["queued"] = True
+    result = _rpc(socket, request_id, "prompt.submit", params)
+    status = str(result.get("status") or "").strip()
+    allowed = {"streaming", "queued"} if delivery_mode == "queue" else {
+        "streaming",
+        "steered",
+    }
+    if status not in allowed:
+        raise HermesTuiRpcError(
+            f"Hermes {delivery_mode} delivery returned {result!r}; "
+            "refusing to treat a different delivery semantic as success"
+        )
+    return HermesTurnReceipt(status, delivery_mode, session_id), request_id + 1
+
+
 def observe_turn_activity(
     state_dir: Path,
     agent_name: str,
@@ -218,16 +287,9 @@ def observe_turn_activity(
     """
     rows = active_sessions(state_dir, timeout_s=timeout_s, connect_fn=connect_fn)
     row = _select_session_row(rows, f"sac:{agent_name}")
-    status = str(row.get("status") or "").strip().lower()
     session_id = str(row.get("id") or "").strip()
-    if status == "idle":
-        state = "idle"
-    elif status in {"working", "waiting", "starting"}:
-        state = "active"
-    else:
-        raise HermesTuiRpcError(
-            f"Hermes session {session_id!r} returned unknown activity status {status!r}"
-        )
+    status = str(row.get("status") or "").strip().lower()
+    state = _session_activity(row)
     return HermesTurnActivity(state=state, session_status=status, session_id=session_id)
 
 
@@ -237,22 +299,23 @@ def submit_turn(
     text: str,
     *,
     timeout_s: float = 10.0,
+    delivery_mode: str = "steer",
     connect_fn: Any | None = None,
-) -> str:
-    """Submit through Hermes' native busy-input policy and return its status."""
+) -> HermesTurnReceipt:
+    """Steer active work by default; queue only when explicitly requested."""
     url, _token = _gateway_connection(state_dir)
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
-            _rpc(
-                socket,
-                2,
-                "session.activate",
-                {"session_id": session_id, "omit_messages": True},
+            session = _select_session_row(
+                listing.get("sessions"), f"sac:{agent_name}"
             )
-            result = _rpc(
-                socket, 3, "prompt.submit", {"session_id": session_id, "text": text}
+            receipt, _next_id = _submit_interactive(
+                socket,
+                session=session,
+                text=text,
+                delivery_mode=delivery_mode,
+                request_id=2,
             )
     except HermesTuiRpcError:
         raise
@@ -260,10 +323,7 @@ def submit_turn(
         raise HermesTuiRpcError(
             f"Hermes TUI gateway at {url} is unreachable: {exc}"
         ) from exc
-    status = str(result.get("status") or "").strip()
-    if status not in {"streaming", "steered", "queued", "redirected"}:
-        raise HermesTuiRpcError(f"Hermes prompt.submit was not accepted: {result!r}")
-    return status
+    return receipt
 
 
 def pause_heartbeat(
@@ -418,6 +478,7 @@ def submit_visible_turn(
     text: str,
     *,
     delivery_id: str,
+    delivery_mode: str = "steer",
     timeout_s: float = 10.0,
     max_observations: int = 20,
     poll_s: float = 0.1,
@@ -443,7 +504,10 @@ def submit_visible_turn(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
+            session = _select_session_row(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+            session_id = str(session["id"])
             before = _rpc(
                 socket,
                 2,
@@ -455,6 +519,7 @@ def submit_visible_turn(
                     status="already_visible",
                     visibility=visibility,
                     session_id=session_id,
+                    delivery_mode=delivery_mode,
                 )
             session_key = str(before.get("session_key") or "").strip()
             if not session_key:
@@ -473,30 +538,28 @@ def submit_visible_turn(
                     status="already_visible",
                     visibility=visibility,
                     session_id=session_id,
+                    delivery_mode=delivery_mode,
                 )
-            result = _rpc(
+            receipt, next_request_id = _submit_interactive(
                 socket,
-                3,
-                "prompt.submit",
-                {"session_id": session_id, "text": text},
+                session=session,
+                text=text,
+                delivery_mode=delivery_mode,
+                request_id=3,
             )
-            status = str(result.get("status") or "").strip()
-            if status not in {"streaming", "steered", "queued", "redirected"}:
-                raise HermesTuiRpcError(
-                    f"Hermes prompt.submit was not accepted: {result!r}"
-                )
             for attempt in range(max_observations):
                 observed = _rpc(
                     socket,
-                    4 + attempt,
+                    next_request_id + attempt,
                     "session.activate",
                     {"session_id": session_id, "omit_messages": True},
                 )
                 if visibility := _delivery_visibility(observed, delivery_id):
                     return HermesVisibleTurnReceipt(
-                        status=status,
+                        status=receipt.status,
                         visibility=visibility,
                         session_id=session_id,
+                        delivery_mode=delivery_mode,
                     )
                 if poll_s > 0 and attempt + 1 < max_observations:
                     sleep_fn(poll_s)
@@ -508,7 +571,7 @@ def submit_visible_turn(
         ) from exc
     raise HermesTuiRpcError(
         "Hermes prompt.submit was accepted "
-        f"(status={status}) but delivery {delivery_id!r} was not visible in "
+        f"(status={receipt.status}) but delivery {delivery_id!r} was not visible in "
         "session messages, inflight input, or the native queue"
     )
 
@@ -516,6 +579,7 @@ def submit_visible_turn(
 __all__ = [
     "HermesTuiRpcError",
     "HermesTurnActivity",
+    "HermesTurnReceipt",
     "HermesVisibleTurnReceipt",
     "_stored_delivery_visibility",
     "active_sessions",
