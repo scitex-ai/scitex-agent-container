@@ -69,6 +69,43 @@ def test_canonical_hermes_background_review_is_accepted():
     assert errors == []
 
 
+def test_canonical_hermes_run_budget_is_accepted():
+    # Arrange
+    entry = _hermes_entry()
+    entry["run_budget_seconds"] = 90
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == []
+
+
+@pytest.mark.parametrize("value", [None, True, 0, -1, 1.5, "90"])
+def test_hermes_run_budget_requires_a_positive_integer(value):
+    # Arrange
+    entry = _hermes_entry()
+    entry["run_budget_seconds"] = value
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.hermes.run_budget_seconds must be a positive integer"
+    ]
+
+
 @pytest.mark.parametrize("value", [None, 0, 1, "false", {}])
 def test_hermes_background_review_requires_a_boolean(value):
     # Arrange

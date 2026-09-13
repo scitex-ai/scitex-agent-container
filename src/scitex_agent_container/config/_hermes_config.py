@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 from ._launch_plan import LaunchPlan
 
 
@@ -25,7 +26,7 @@ def compile_hermes_config(
     *,
     workdir: str,
     max_turns: int = 50,
-    run_budget_seconds: int = 1200,
+    run_budget_seconds: int = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
     background_review: bool = False,
@@ -70,9 +71,7 @@ def compile_hermes_config(
         model_config["context_length"] = plan.engine.context_window_tokens
     if plan.engine.client_abandonment_seconds is not None:
         model_config["timeout_seconds"] = plan.engine.client_abandonment_seconds
-        model_config["stale_timeout_seconds"] = (
-            plan.engine.client_abandonment_seconds
-        )
+        model_config["stale_timeout_seconds"] = plan.engine.client_abandonment_seconds
     provider: dict[str, Any] = {
         "name": f"SAC {plan.engine.key}",
         "base_url": _api_root(plan.endpoint.url, plan.endpoint.protocol),

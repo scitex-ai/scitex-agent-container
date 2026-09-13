@@ -17,6 +17,8 @@ _HEARTBEAT_SET_CONFIRMATION = "heartbeat set (every "
 _HEARTBEAT_CONFIRMATION_CLOSE = "esc/q close"
 _HERMES_STATUS_RE = re.compile(r"(?m)^[ \t]*─+\s+([^\u2502\n]+?)\s*\u2502")
 _HERMES_COMPOSER_RE = re.compile(r"(?m)^[ \t]*❯(?P<body>[^\n]*)$")
+
+
 def _hermes_pane_is_idle(pane: str) -> bool:
     """True only for Hermes' live ``ready`` footer and empty composer.
 
@@ -122,6 +124,18 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
         stop_recovery_monitor(config)
 
+    @staticmethod
+    def _start_cct(config: AgentConfig) -> None:
+        from ._hermes_cct_poller import start_cct_poller
+
+        start_cct_poller(config)
+
+    @staticmethod
+    def _stop_cct(config: AgentConfig) -> None:
+        from ._hermes_cct_poller import stop_cct_poller
+
+        stop_cct_poller(config)
+
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         targets = materialize_hermes_tui_profile(
             config, state_dir=state_dir_for_config(config)
@@ -136,14 +150,19 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         started = self._start_session(config, **kwargs)
         if started and not kwargs.get("dry_run", False):
             try:
+                self._start_cct(config)
                 self._start_inbox(config)
+                self._start_recovery(config)
             except Exception:
+                self._stop_cct(config)
+                self._stop_inbox(config)
+                self._stop_recovery(config)
                 self._stop_session(config)
                 raise
-            self._start_recovery(config)
         return started
 
     def stop(self, config: AgentConfig) -> bool:
+        self._stop_cct(config)
         self._stop_inbox(config)
         self._stop_recovery(config)
         return self._stop_session(config)

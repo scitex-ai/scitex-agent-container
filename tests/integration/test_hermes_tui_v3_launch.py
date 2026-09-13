@@ -53,6 +53,7 @@ def _canonical_hermes_spec() -> dict:
                     "session": {"mode": "continue", "max_age_minutes": None},
                     "channels": [],
                     "background_review": True,
+                    "run_budget_seconds": 90,
                     "compression": {
                         "threshold": 0.85,
                         "target_ratio": 0.25,
@@ -112,7 +113,9 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and config.claude.channels == ["server:sac"]
         and config.hermes_compression.threshold == 0.85
         and config.hermes_background_review is True
+        and config.hermes_run_budget_seconds == 90
         and profile["auxiliary"]["background_review"] == {"enabled": True}
+        and profile["agent"]["run_budget_seconds"] == 90
         and profile["compression"]
         == {
             "enabled": True,
@@ -187,8 +190,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CLAUDE_CODE_TELEGRAMMER_TURN_URL"
         ],
-        "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:4321/v1/turn"
-        in joined,
+        "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:4321/v1/turn" in joined,
         "test-cct-secret" not in joined,
     ) == (
         {"claude-code-telegrammer"},
@@ -196,6 +198,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         True,
         True,
     )
+
 
 def test_real_hermes_launch_provisions_exact_project_pg_identity(
     tmp_path, env_save_restore
@@ -267,8 +270,7 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
         isinstance(runtime, HermesTuiSessionRuntime)
         and cards_env["PGUSER"] == "operator__scitex-hub"
         and cards_env["PGPASSFILE"] == "/home/agent/.sac-pgpass"
-        and cards_env["SCITEX_STORE_DSN"]
-        == "postgresql://scitex-primary:55432/scitex"
+        and cards_env["SCITEX_STORE_DSN"] == "postgresql://scitex-primary:55432/scitex"
         and generated_passfile.read_text(encoding="utf-8")
         == "scitex-primary:55432:scitex:operator__scitex-hub:correct\n"
         and stat.S_IMODE(generated_passfile.stat().st_mode) == 0o600

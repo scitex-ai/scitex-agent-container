@@ -10,8 +10,11 @@ subscriber POSTs to ``127.0.0.1:<port>`` — apptainer shares the host net
 namespace): on ``POST /v1/turn`` it first persists a durable exchange, then
 asks the selected runtime to deliver ``text``. Hermes uses its native
 shared-session JSON-RPC; legacy TUI adapters retain their runtime-specific
-path. The bridge immediately returns ``202`` plus the exchange id; the caller
-polls the canonical ``scitex_dev.status`` ledger for the worker's final ``200``.
+path. Identified durable callers receive ``202`` plus the exchange id and poll
+the canonical ``scitex_dev.status`` ledger for the worker's final ``200``.
+CCT's legacy bare ``{text}`` wake has no polling identity and treats every 2xx
+as final, so the bridge returns ``200`` only after native Hermes visibility is
+proven (or a non-2xx response that keeps the Telegram item retryable).
 A failed durable visibility attempt remains non-final ``102`` so the same
 exchange can advance on retry; ordinary, non-durable turn failures are final
 ``502``.
@@ -25,7 +28,7 @@ unchanged:
     Content-Type: application/json
     {"text": "...", "from_agent": "<peer>"?, "dispatch_id": "<id>"?}
 
-    202 {"exchange_id": "xch_...", "status_code": {"kind": "http", "code": 202, ...}}
+    200/202 {"exchange_id": "xch_...", "status_code": {...}}
     400 {"error": "missing or empty 'text' field"}        # schema mismatch, loud
     404 {"error": "..."}                                  # unknown route / wrong agent
     503 {"error": "...", "status_code": {...}}            # ledger rejected persistence
@@ -56,9 +59,11 @@ on loopback while ``a2a_sidecar`` alone honoured the declaration.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -95,6 +100,34 @@ from ._turn_exchange_ledger import (
 )
 
 log = logging.getLogger(__name__)
+
+_CHANNEL_OPEN_RE = re.compile(r"^<channel\s+(?P<attrs>[^>]+)>")
+_CHANNEL_ATTR_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
+
+
+def _cct_delivery_id(agent_name: str, text: str) -> str | None:
+    """Derive one retry-stable identity from CCT's Telegram envelope.
+
+    CCT v0.6.x posts only ``{"text": "<channel ...>..."}``, but its envelope
+    includes Telegram's immutable ``chat_id`` + ``message_id`` pair. Use that
+    pair rather than the message body: two separate, identical "hello"
+    messages must remain two deliveries while a transport retry of one message
+    must reopen the same exchange.
+    """
+    opening = _CHANNEL_OPEN_RE.match(text)
+    if opening is None:
+        return None
+    attrs = dict(_CHANNEL_ATTR_RE.findall(opening.group("attrs")))
+    if attrs.get("source") != "cct":
+        return None
+    chat_id = attrs.get("chat_id", "").strip()
+    message_id = attrs.get("message_id", "").strip()
+    if not chat_id or not message_id:
+        return None
+    digest = hashlib.sha256(
+        f"{agent_name}\0cct\0{chat_id}\0{message_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"cct_{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -364,12 +397,46 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
         requested_exchange_id = body.get("exchange_id")
         if not isinstance(requested_exchange_id, str) or not requested_exchange_id:
             requested_exchange_id = None
-        delivery_key = requested_exchange_id or visible_delivery_id or ""
+        # CCT v0.6.x supplies neither root identifier and treats any 2xx as a
+        # final acknowledgement. Its channel envelope does carry Telegram's
+        # immutable chat/message identity, so derive a stable opaque id from
+        # that pair. Ordinary bare and A2A turns keep their asynchronous 202
+        # contract; only a positively identified CCT wake uses the synchronous
+        # native-visibility compatibility path below.
+        cct_delivery_id = (
+            _cct_delivery_id(srv.agent_name, text)
+            if requested_exchange_id is None and visible_delivery_id is None
+            else None
+        )
+        implicit_delivery = cct_delivery_id is not None
+        effective_visible_id = visible_delivery_id
+        if implicit_delivery:
+            effective_visible_id = cct_delivery_id
+        delivery_key = requested_exchange_id or effective_visible_id or ""
         with srv.admission_lock:
             active = srv.active_delivery
             if active is not None:
                 active_key, active_exchange_id = active
                 if delivery_key and delivery_key == active_key:
+                    if implicit_delivery:
+                        self._respond(
+                            409,
+                            {
+                                "error": "this Telegram delivery is still in progress",
+                                "agent": srv.agent_name,
+                                "exchange_id": active_exchange_id,
+                                "delivery_id": effective_visible_id,
+                                "status_code": StatusCode(
+                                    kind="http",
+                                    code=409,
+                                    message=(
+                                        "native Hermes visibility is not final; leave "
+                                        "the Telegram item unacknowledged and retry"
+                                    ),
+                                ).to_dict(),
+                            },
+                        )
+                        return
                     self._respond(
                         202,
                         {
@@ -406,7 +473,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     "agent": srv.agent_name,
                     "probe_url": "/v1/exchanges",
                     "exchange_id": requested_exchange_id,
-                    "delivery_id": visible_delivery_id,
+                    "delivery_id": effective_visible_id,
                 }
                 # Identity binding applies when adopting a Cards-owned
                 # exchange. Keep the ordinary turn seam compatible with
@@ -448,17 +515,25 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 # remaining work can be the caller's downstream Cards ACK.
                 # Never depend on a terminal viewport and never submit the
                 # same durable message twice.
+                response_code = 200 if implicit_delivery else 202
                 self._respond(
-                    202,
+                    response_code,
                     {
+                        "agent": srv.agent_name,
                         "exchange_id": exchange_id,
+                        "delivery_id": effective_visible_id,
                         "status_code": StatusCode(
                             kind="http",
-                            code=202,
+                            code=response_code,
                             message=(
-                                "Hermes transcript visibility is already final; poll "
-                                f"`/v1/exchanges/{exchange_id}` and retry only "
-                                "the downstream acknowledgement"
+                                "Hermes transcript visibility is already final; "
+                                + (
+                                    "the Telegram wake is acknowledged without a "
+                                    "duplicate prompt"
+                                    if implicit_delivery
+                                    else f"poll `/v1/exchanges/{exchange_id}` and retry "
+                                    "only the downstream acknowledgement"
+                                )
                             ),
                         ).to_dict(),
                     },
@@ -466,17 +541,20 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 return
             srv.active_delivery = (delivery_key or exchange_id, exchange_id)
 
-        def deliver() -> None:
+        def deliver() -> StatusCode:
             try:
                 delivery_kwargs = {
                     "from_agent": from_agent,
                     "dispatch_id": dispatch_id,
+                    "visible_delivery_id": effective_visible_id,
                 }
-                if visible_delivery_id is not None:
-                    delivery_kwargs["visible_delivery_id"] = visible_delivery_id
                 with srv.delivery_lock:
                     delivery = srv.on_turn(text, **delivery_kwargs)
-                if visible_delivery_id and not delivery:
+                # Legacy/ordinary callbacks intentionally return ``None``
+                # after a successful injection. Only visibility-gated
+                # deliveries promise a native receipt object whose falsiness
+                # means that the transcript proof failed.
+                if effective_visible_id and not delivery:
                     raise RuntimeError("Hermes transcript visibility was not confirmed")
                 native_status = str(getattr(delivery, "status", "") or "")
                 visibility = str(getattr(delivery, "visibility", "") or "")
@@ -500,7 +578,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     code=200,
                     message=(
                         visible_message
-                        if visible_delivery_id
+                        if effective_visible_id
                         else "the TUI accepted the turn"
                     ),
                 )
@@ -542,7 +620,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                             f"{check.hint}"
                         ),
                     )
-                    if visible_delivery_id
+                    if effective_visible_id
                     else cause
                 )
             try:
@@ -561,6 +639,46 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                         exchange_id,
                     ):
                         srv.active_delivery = None
+            return status
+
+        # A bare CCT wake has no exchange id it knows how to poll. Its current
+        # client considers 202 final, which produced the observed false ACK:
+        # Telegram showed delivered while Hermes never projected the turn.
+        # Complete this one compatibility-shaped request synchronously and
+        # return 200 ONLY after native visibility proof; return non-2xx on a
+        # retryable miss so CCT leaves the message unacknowledged. Durable
+        # callers that supply either id retain the asynchronous 202 contract.
+        if implicit_delivery:
+            final_status = deliver()
+            if final_status.code == 200:
+                self._respond(
+                    200,
+                    {
+                        "agent": srv.agent_name,
+                        "exchange_id": exchange_id,
+                        "delivery_id": effective_visible_id,
+                        "status_code": final_status.to_dict(),
+                    },
+                )
+            else:
+                self._respond(
+                    502,
+                    {
+                        "agent": srv.agent_name,
+                        "exchange_id": exchange_id,
+                        "delivery_id": effective_visible_id,
+                        "error": final_status.message,
+                        "status_code": StatusCode(
+                            kind="http",
+                            code=502,
+                            message=(
+                                "Hermes did not prove the Telegram turn visible; "
+                                f"exchange {exchange_id} remains retryable"
+                            ),
+                        ).to_dict(),
+                    },
+                )
+            return
 
         threading.Thread(target=deliver, daemon=True).start()
         self._respond(
@@ -780,9 +898,11 @@ def _build_on_turn(
         # Claude does queue them; the queue does not reliably drain.
         visible_send = getattr(runtime, "send_visible_turn", None)
         if visible_delivery_id and callable(visible_send):
+            marker = f"<!-- delivery:{visible_delivery_id} -->"
+            visible_text = text if marker in text else f"{text}\n{marker}"
             delivered = visible_send(
                 config,
-                text,
+                visible_text,
                 visible_delivery_id=visible_delivery_id,
             )
         else:

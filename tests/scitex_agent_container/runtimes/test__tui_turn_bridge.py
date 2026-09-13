@@ -417,9 +417,12 @@ def test_post_v1_turn_delivers_text_to_on_turn(bridge_factory) -> None:
     assert received == ["hello fleet"]
 
 
-def test_post_v1_turn_returns_immediate_accepted_exchange(bridge_factory) -> None:
+def test_post_ordinary_bare_turn_keeps_asynchronous_accepted_contract(
+    bridge_factory,
+) -> None:
     # Arrange
-    port = bridge_factory(lambda text, **_kw: None)
+    receipt = SimpleNamespace(status="steered", visibility="session.queue[0]")
+    port = bridge_factory(lambda text, **_kw: receipt)
     # Act
     status, body = _post(port, "/v1/turn", {"text": "hi there"})
     # Assert
@@ -428,6 +431,18 @@ def test_post_v1_turn_returns_immediate_accepted_exchange(bridge_factory) -> Non
         "http",
         202,
     )
+
+
+def test_post_ordinary_callback_none_concludes_exchange_successfully(
+    bridge_factory,
+) -> None:
+    # Arrange — the real legacy callback returns None after successful inject.
+    port = bridge_factory(lambda _text, **_kw: None)
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": "hi there"})
+    final = _wait_exchange(port, body["exchange_id"])
+    # Assert
+    assert (status, final["status_code"]["code"]) == (202, 200)
 
 
 def test_post_refuses_acceptance_when_canonical_ledger_is_unavailable(
@@ -492,9 +507,13 @@ def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
     # Arrange — capture the requester kwargs the handler forwards.
     seen: dict = {}
 
-    def rec(text: str, *, from_agent=None, dispatch_id=None) -> None:
+    def rec(
+        text: str, *, from_agent=None, dispatch_id=None, visible_delivery_id=None
+    ) -> object:
         seen["from_agent"] = from_agent
         seen["dispatch_id"] = dispatch_id
+        seen["visible_delivery_id"] = visible_delivery_id
+        return SimpleNamespace(status="steered", visibility="session.queue[0]")
 
     port = bridge_factory(rec)
     # Act
@@ -505,7 +524,11 @@ def test_post_threads_requester_identity_to_on_turn(bridge_factory) -> None:
     )
     _wait_exchange(port, body["exchange_id"])
     # Assert
-    assert seen == {"from_agent": "lead", "dispatch_id": "d1"}
+    assert (seen["from_agent"], seen["dispatch_id"], seen["visible_delivery_id"]) == (
+        "lead",
+        "d1",
+        None,
+    )
 
 
 def test_post_missing_text_field_returns_400(bridge_factory) -> None:
@@ -530,6 +553,116 @@ def test_post_inject_failure_concludes_ordinary_exchange_with_502(
     final = _wait_exchange(port, body["exchange_id"])
     # Assert
     assert (status, final["status_code"]["code"]) == (202, 502)
+
+
+def test_bare_telegram_wake_returns_200_only_after_native_visibility(
+    bridge_factory,
+) -> None:
+    # Arrange — CCT sends only text and treats any 2xx as final. The bridge
+    # must generate a stable marker and wait for Hermes' native receipt.
+    observed = {}
+
+    def visible(text: str, **kwargs: object) -> object:
+        observed["text"] = text
+        observed.update(kwargs)
+        return SimpleNamespace(status="steered", visibility="session.queue[0]")
+
+    port = bridge_factory(visible, agent_name="scitex-lead")
+    # Act
+    telegram = (
+        '<channel source="cct" chat_id="8379" message_id="9" row_id="3" '
+        'user="ywatanabe">\ntelegram priority steer\n</channel>'
+    )
+    status, body = _post(port, "/v1/turn", {"text": telegram})
+    # Assert
+    generated_id = observed["visible_delivery_id"]
+    assert (
+        status,
+        body["status_code"]["code"],
+        body["agent"],
+        body["exchange_id"].startswith("xch_"),
+        body["delivery_id"],
+        generated_id.startswith("cct_"),
+        observed["text"],
+    ) == (
+        200,
+        200,
+        "scitex-lead",
+        True,
+        generated_id,
+        True,
+        telegram,
+    )
+
+
+def test_retried_bare_telegram_wake_does_not_submit_a_duplicate(
+    bridge_factory,
+) -> None:
+    # Arrange — emulate CCT retrying the exact message after losing the first
+    # HTTP response. The derived delivery identity must reopen the final row.
+    submitted: list[str] = []
+
+    def visible(text: str, **_kwargs: object) -> object:
+        submitted.append(text)
+        return SimpleNamespace(status="steered", visibility="session.queue[0]")
+
+    port = bridge_factory(visible, agent_name="scitex-lead")
+    # Act
+    telegram = (
+        '<channel source="cct" chat_id="8379" message_id="10" row_id="4">\n'
+        "same telegram\n</channel>"
+    )
+    first_status, first = _post(port, "/v1/turn", {"text": telegram})
+    retry_status, retry = _post(port, "/v1/turn", {"text": telegram})
+    # Assert
+    assert (
+        first_status,
+        retry_status,
+        first["exchange_id"],
+        retry["exchange_id"],
+        retry["agent"],
+        retry["delivery_id"],
+        submitted,
+    ) == (
+        200,
+        200,
+        first["exchange_id"],
+        first["exchange_id"],
+        "scitex-lead",
+        first["delivery_id"],
+        [telegram],
+    )
+
+
+def test_identical_telegram_text_with_distinct_message_ids_is_not_deduplicated(
+    bridge_factory,
+) -> None:
+    # Arrange
+    submitted: list[str] = []
+
+    def visible(text: str, **_kwargs: object) -> object:
+        submitted.append(text)
+        return SimpleNamespace(status="steered", visibility="session.queue[0]")
+
+    port = bridge_factory(visible, agent_name="scitex-lead")
+    first_text = (
+        '<channel source="cct" chat_id="8379" message_id="10" row_id="4">\n'
+        "hello\n</channel>"
+    )
+    second_text = (
+        '<channel source="cct" chat_id="8379" message_id="11" row_id="5">\n'
+        "hello\n</channel>"
+    )
+    # Act
+    first_status, first = _post(port, "/v1/turn", {"text": first_text})
+    second_status, second = _post(port, "/v1/turn", {"text": second_text})
+    # Assert
+    assert (
+        first_status,
+        second_status,
+        first["exchange_id"] != second["exchange_id"],
+        submitted,
+    ) == (200, 200, True, [first_text, second_text])
 
 
 def test_visible_delivery_failure_returns_actionable_durable_state(
@@ -960,14 +1093,27 @@ def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
     receipt = SimpleNamespace(
         status="steered", visibility="session.inflight.corrections"
     )
-    runtime = SimpleNamespace(send_visible_turn=lambda config, text, **kwargs: receipt)
+    seen = []
+    runtime = SimpleNamespace(
+        send_visible_turn=lambda config, text, **kwargs: (
+            seen.append((text, kwargs)) or receipt
+        )
+    )
     on_turn = bridge._build_on_turn(SimpleNamespace(name="a"), runtime=runtime)
 
     # Act
     result = on_turn("wake up", visible_delivery_id="n_visible")
 
     # Assert
-    assert result is receipt
+    assert (result, seen) == (
+        receipt,
+        [
+            (
+                "wake up\n<!-- delivery:n_visible -->",
+                {"visible_delivery_id": "n_visible"},
+            )
+        ],
+    )
 
 
 def test_build_on_turn_raises_when_session_absent() -> None:
