@@ -42,6 +42,8 @@ def fake_pkg_root(tmp_path: Path) -> Path:
     bundled.mkdir()
     (bundled / "pyproject.toml").write_text(
         "[project]\nname = 'scitex-agent-container'\nversion = '0.0.0-test'\n"
+        "\n[tool.hatch.build.targets.wheel]\n"
+        "packages = ['src/scitex_agent_container']\n"
     )
     (bundled / "README.md").write_text("# fake readme for tests\n")
     (bundled / "hatch_build.py").write_text("# fake build hook\n")

@@ -1029,6 +1029,12 @@ EOF
     export RUSTUP_HOME=/opt/rust
     export CARGO_HOME=/opt/cargo
 
+%test
+    # The image must not be published with a console entry point whose
+    # packaged target is absent. Apptainer runs this after %post and fails
+    # the build before scitex-container atomically promotes the SIF.
+    /opt/venv-sac/bin/sac --version
+
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
