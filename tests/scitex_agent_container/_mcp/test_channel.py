@@ -60,18 +60,69 @@ class _FakeListenServer:
         self.posts: list[tuple[str, dict[str, Any]]] = []
         self.peers_payload: dict[str, Any] = {"agents": []}
         self._server: asyncio.base_events.Server | None = None
+        self._client_tasks: set[asyncio.Task[Any]] = set()
+        self._client_writers: set[asyncio.StreamWriter] = set()
         self.host: str = "127.0.0.1"
         self.port: int = 0
 
     async def start(self) -> None:
-        self._server = await asyncio.start_server(self._handle, host=self.host, port=0)
+        self._server = await asyncio.start_server(
+            self._run_client,
+            host=self.host,
+            port=0,
+        )
         self.port = self._server.sockets[0].getsockname()[1]
+
+    async def _run_client(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Own every accepted client, including subclass handler overrides."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._client_tasks.add(task)
+        self._client_writers.add(writer)
+        try:
+            await self._handle(reader, writer)
+        finally:
+            try:
+                writer.close()
+                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+            except (TimeoutError, ConnectionError):
+                pass
+            finally:
+                self._client_writers.discard(writer)
+                if task is not None:
+                    self._client_tasks.discard(task)
 
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()
-            await self._server.wait_closed()
+            for writer in tuple(self._client_writers):
+                writer.close()
+            for task in tuple(self._client_tasks):
+                task.cancel()
+            tasks = tuple(self._client_tasks)
+            if tasks:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=2.0,
+                )
+            # Python 3.13 correctly waits for active connections here.  Keep
+            # fixture teardown bounded so a future ownership regression fails
+            # at its source instead of hanging the entire matrix job.
+            await asyncio.wait_for(self._server.wait_closed(), timeout=2.0)
             self._server = None
+
+    async def wait_for_clients_closed(self) -> None:
+        """Wait boundedly until every accepted client has fully unwound."""
+
+        async def _wait() -> None:
+            while self._client_tasks or self._client_writers:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(_wait(), timeout=2.0)
 
     @property
     def base_url(self) -> str:
@@ -103,7 +154,7 @@ class _FakeListenServer:
                 body = await reader.readexactly(content_length)
 
             if method == "GET" and path.endswith("/inbox/stream"):
-                await self._serve_sse(writer)
+                await self._serve_sse(reader, writer)
             elif method == "GET" and path.rstrip("/") == "/agents":
                 # a2a_peers hits `/agents` (no trailing slash) to dodge the
                 # 307 redirect httpx won't follow; accept both shapes so the
@@ -121,11 +172,15 @@ class _FakeListenServer:
         finally:
             try:
                 writer.close()
-                await writer.wait_closed()
-            except Exception:
+                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+            except (TimeoutError, ConnectionError):
                 pass
 
-    async def _serve_sse(self, writer: asyncio.StreamWriter) -> None:
+    async def _serve_sse(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
         writer.write(
             b"HTTP/1.1 200 OK\r\n"
             b"Content-Type: text/event-stream\r\n"
@@ -138,11 +193,13 @@ class _FakeListenServer:
         for ev in self.sse_events:
             writer.write(f"data: {json.dumps(ev)}\n\n".encode())
             await writer.drain()
-        # Hold the connection open briefly so the client has time to
-        # read the buffered frames before EOF.
+        # Hold the connection open until the client closes it, with a short
+        # ceiling so event-delivery tests also exercise reconnect.  Reading
+        # EOF makes teardown prompt instead of manufacturing CLOSE_WAIT
+        # sockets by sleeping after the peer has gone away.
         try:
-            await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
+            await asyncio.wait_for(reader.read(1), timeout=0.5)
+        except (TimeoutError, asyncio.CancelledError):
             pass
 
     async def _serve_json(
@@ -683,7 +740,11 @@ class _SSEBadJSONServer(_FakeListenServer):
     """Emits a malformed JSON SSE frame followed by a valid one — only
     the valid event must reach the callback."""
 
-    async def _serve_sse(self, writer: asyncio.StreamWriter) -> None:
+    async def _serve_sse(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
         writer.write(
             b"HTTP/1.1 200 OK\r\n"
             b"Content-Type: text/event-stream\r\n"
@@ -693,8 +754,8 @@ class _SSEBadJSONServer(_FakeListenServer):
         )
         await writer.drain()
         try:
-            await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
+            await asyncio.wait_for(reader.read(1), timeout=0.5)
+        except (TimeoutError, asyncio.CancelledError):
             pass
 
 
@@ -876,6 +937,7 @@ async def test_serve_initialize_declares_claude_channel_capability(
                     name="alice",
                     listen_url=fake_listen.base_url,
                     bearer=None,
+                    subscribe=False,
                 )
 
             tg.start_soon(_run_serve)
@@ -891,6 +953,97 @@ async def test_serve_initialize_declares_claude_channel_capability(
     # Assert — the `claude/channel` capability is advertised, so Claude
     # Code will accept the pushed notifications instead of dropping them.
     assert caps["experimental"] == {"claude/channel": {}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/fd"),
+    reason="FD growth assertion requires Linux procfs",
+)
+async def test_serve_repeated_cancellation_does_not_leak_sse_fds_python313(
+    fake_listen,
+):
+    """Regression for the Python 3.13 CI hang in run 34797589702.
+
+    Repeatedly initialize a real MCP session with a live SSE subscription,
+    then cancel its server while the stream is connected.  Every owned task
+    and accepted socket must be gone before the next iteration.
+    """
+    # Arrange
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.shared.memory import create_client_server_memory_streams
+
+    from scitex_agent_container._mcp.channel import _serve
+
+    initial_fds = len(os.listdir("/proc/self/fd"))
+    max_fds = initial_fds
+    all_iterations_clean = True
+    preexisting_sse_tasks = {
+        task
+        for task in asyncio.all_tasks()
+        if task.get_coro().__qualname__.endswith("_consume_sse")
+    }
+
+    # Act
+    for _ in range(20):
+        async with create_client_server_memory_streams() as (
+            client_streams,
+            server_streams,
+        ):
+            client_read, client_write = client_streams
+            server_read, server_write = server_streams
+            async with anyio.create_task_group() as tg:
+
+                async def _run_serve() -> None:
+                    await _serve(
+                        server_read,
+                        server_write,
+                        name="alice",
+                        listen_url=fake_listen.base_url,
+                        bearer=None,
+                        register_node=False,
+                    )
+
+                tg.start_soon(_run_serve)
+                async with ClientSession(client_read, client_write) as client:
+                    await asyncio.wait_for(client.initialize(), timeout=2.0)
+                    for _attempt in range(100):
+                        if fake_listen._client_writers:
+                            break
+                        await asyncio.sleep(0.01)
+                    iteration_sse_tasks = {
+                        task
+                        for task in asyncio.all_tasks()
+                        if task not in preexisting_sse_tasks
+                        and task.get_coro().__qualname__.endswith("_consume_sse")
+                    }
+                tg.cancel_scope.cancel()
+
+        await fake_listen.wait_for_clients_closed()
+        max_fds = max(max_fds, len(os.listdir("/proc/self/fd")))
+        all_iterations_clean = (
+            all_iterations_clean
+            and len(iteration_sse_tasks) == 1
+            and all(task.done() for task in iteration_sse_tasks)
+        )
+
+    await asyncio.sleep(0)
+    final_fds = len(os.listdir("/proc/self/fd"))
+    failures = []
+    if not all_iterations_clean:
+        failures.append("an owned _consume_sse task survived _serve")
+    if fake_listen._client_writers:
+        failures.append(f"{len(fake_listen._client_writers)} client writers remain")
+    if fake_listen._client_tasks:
+        failures.append(f"{len(fake_listen._client_tasks)} client handlers remain")
+    if max_fds > initial_fds + 3:
+        failures.append(f"peak FD growth was {max_fds - initial_fds}")
+    if final_fds > initial_fds + 3:
+        failures.append(f"final FD growth was {final_fds - initial_fds}")
+
+    # Assert
+    assert failures == []
 
 
 # ---------------------------------------------------------------------------
