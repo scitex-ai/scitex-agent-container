@@ -735,6 +735,28 @@ def submit_visible_turn(
                     )
                 if poll_s > 0 and attempt + 1 < max_observations:
                     sleep_fn(poll_s)
+            # ``prompt.submit`` can win the race with Hermes' lightweight
+            # live projection: the input is committed just after the final
+            # ``session.activate`` snapshot.  A caller that interprets that
+            # visibility miss as non-delivery may then activate an independent
+            # fallback rail and submit the same durable message twice.  Close
+            # the observation window with the indexed persisted projection,
+            # using the same upstream delivery identity checked before submit.
+            # This is an observation only; never resubmit here.
+            if visibility := _stored_delivery_visibility(
+                url,
+                _token,
+                session_key=session_key,
+                delivery_id=delivery_id,
+                timeout_s=timeout_s,
+                urlopen_fn=urlopen_fn,
+            ):
+                return HermesVisibleTurnReceipt(
+                    status=receipt.status,
+                    visibility=visibility,
+                    session_id=session_id,
+                    delivery_mode=delivery_mode,
+                )
     except HermesTuiRpcError:
         raise
     except Exception as exc:

@@ -13,9 +13,9 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
     active_sessions,
-    compress_session,
     clear_heartbeat,
     clear_heartbeat_for_session,
+    compress_session,
     gateway_detailed_health,
     observe_turn_activity,
     submit_turn,
@@ -779,3 +779,52 @@ def test_accepted_submit_without_native_visibility_fails_closed(tmp_path):
     # Assert
     with pytest.raises(HermesTuiRpcError, match="accepted.*not visible"):
         action()
+
+
+def test_accepted_submit_closes_with_post_submit_persisted_identity(tmp_path):
+    # Arrange — both lightweight projections miss a just-accepted input, but
+    # Hermes' final indexed view has committed its durable delivery marker.
+    # Returning failure here would make CCT activate its native fallback rail.
+    _gateway_files(tmp_path)
+    text = "late delivery <!-- delivery:n_late -->"
+    socket = _VisibleSocket(
+        submit_status="steered",
+        projections=[{"messages": []}, {"messages": []}, {"messages": []}],
+    )
+    searches = iter(
+        [
+            {"results": []},
+            {
+                "results": [
+                    {
+                        "role": "user",
+                        "session_id": "stored-1",
+                        "lineage_root": "stored-1",
+                        "snippet": "late delivery <!-- >>>delivery:n_late<<< -->",
+                    }
+                ]
+            },
+        ]
+    )
+
+    def search(_request, **_kwargs):
+        return _SearchResponse(next(searches))
+
+    # Act
+    receipt = submit_visible_turn(
+        tmp_path,
+        "hub",
+        text,
+        delivery_id="n_late",
+        max_observations=2,
+        poll_s=0,
+        connect_fn=lambda *a, **k: socket,
+        urlopen_fn=search,
+    )
+
+    # Assert
+    assert (
+        receipt.status,
+        receipt.visibility,
+        [request["method"] for request in socket.sent].count("prompt.submit"),
+    ) == ("steered", "session.search", 1)

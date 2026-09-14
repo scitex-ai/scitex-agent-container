@@ -801,6 +801,39 @@ def test_retried_bare_telegram_wake_does_not_submit_a_duplicate(
     )
 
 
+def test_same_telegram_identity_across_cct_source_aliases_is_deduplicated(
+    bridge_factory,
+) -> None:
+    # Arrange — the wake rail authors source=cct while Claude Code labels the
+    # CCT MCP notification with its server name. Telegram identity, not that
+    # transport label or the body, is the stable cross-rail key.
+    submitted: list[str] = []
+
+    def visible(text: str, **_kwargs: object) -> object:
+        submitted.append(text)
+        return SimpleNamespace(status="steered", visibility="session.queue[0]")
+
+    port = bridge_factory(visible, agent_name="scitex-hub")
+    wake = (
+        '<channel source="cct" chat_id="8379" message_id="10" row_id="4">\n'
+        "same telegram\n</channel>"
+    )
+    native = wake.replace('source="cct"', 'source="claude-code-telegrammer"')
+
+    # Act
+    wake_status, wake_body = _post(port, "/v1/turn", {"text": wake})
+    native_status, native_body = _post(port, "/v1/turn", {"text": native})
+
+    # Assert
+    assert (
+        wake_status,
+        native_status,
+        wake_body["exchange_id"],
+        native_body["exchange_id"],
+        submitted,
+    ) == (200, 200, wake_body["exchange_id"], wake_body["exchange_id"], [wake])
+
+
 def test_identical_telegram_text_with_distinct_message_ids_is_not_deduplicated(
     bridge_factory,
 ) -> None:
