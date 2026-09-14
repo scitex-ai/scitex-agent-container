@@ -34,7 +34,6 @@ from starlette.routing import Route
 
 from .._runners._session_state import read_session_id, state_dir_for
 from .._state.registry import Registry
-from ..config import load_config
 from ..config._resolve import AmbiguousRegistryScope, resolve_config
 from ._nodes import Broker, NodeRegistry
 from .auth import BearerAuthMiddleware
@@ -104,8 +103,9 @@ async def agent_status(request: Request) -> JSONResponse:
     """
     name = request.path_params["name"]
     try:
-        spec_path = resolve_config(name)
-        cfg = load_config(spec_path)
+        from ._agent_status_spec import StatusSpecUnreadable, load_status_config
+
+        spec_path, cfg = load_status_config(name)
     except AmbiguousRegistryScope as exc:
         # Two registries claim this name. The agent may well exist; we cannot
         # say WHICH spec is meant, so this is UNKNOWN, never "no such agent".
@@ -119,7 +119,7 @@ async def agent_status(request: Request) -> JSONResponse:
             {"error": str(exc), "kind": "unknown_agent", "name": name},
             status_code=404,
         )
-    except OSError as exc:
+    except (OSError, StatusSpecUnreadable) as exc:
         # The spec was found but could not be read (permissions, I/O). The
         # agent exists as far as we know — reporting 404 would be a lie.
         return JSONResponse(
@@ -176,7 +176,7 @@ async def agent_status(request: Request) -> JSONResponse:
     # same endpoint shape ``GET /agents`` does.
     from ._registry_endpoints import enrich_row
 
-    body = enrich_row(body)
+    body = enrich_row(body, identity_spec_path=spec_path)
     # …and the same inbox-subscriber OBSERVATION ``GET /agents`` carries, so
     # a single-agent status poll can also tell REGISTERED from REACHABLE. A
     # running session_id + a live pid say nothing about whether this agent's
