@@ -426,10 +426,12 @@ def cli_entry_point() -> None:
     # already is, not in a document.
     #
     # It is safe on the hot path because it reads ONE small cached JSON file
-    # written by `sac freshness refresh` — no network, no subprocess — and
-    # because every failure path inside it ends in silence. It warns only on
-    # a positively-STALE cached finding: a missing, expired or corrupt cache
-    # is UNKNOWN, and UNKNOWN says nothing at all.
+    # written by `sac freshness refresh` — no network. Only an already-stale
+    # daemon finding pays for one local `systemctl show`, so the restart
+    # prescribed by the warning can disprove it immediately; a failed live
+    # revalidation preserves the last positive cached warning. It warns only
+    # on a positively-STALE cached finding: a missing, expired or corrupt
+    # cache is UNKNOWN, and UNKNOWN says nothing at all.
     from .._freshness import warn_once
 
     warn_once()
