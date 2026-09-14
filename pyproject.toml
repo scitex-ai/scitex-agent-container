@@ -971,6 +971,11 @@ ignore = ["E501"]
 # one print is the reap summary the SDK surfaces to the operator.
 "src/scitex_agent_container/_baseline_assets/claude_worktree_hooks/session_start_reap_stale.py" = ["T201"]
 
+# Standalone Claude Code PreToolUse hook copied into the agent's HOME. Stderr
+# is the SDK's refusal channel and the deployment cannot assume that the sac
+# package or scitex_logging remains importable beside the copied script.
+"src/scitex_agent_container/_baseline_assets/process_wait_hooks/self_matching_pgrep_wait.py" = ["T201"]
+
 # `sac never-stop-when-task-remains` is a Claude Code Stop hook whose STDOUT IS
 # A JSON DECISION FRAME (tests/.../test_never_stop_when_task_remains_cmds.py
 # asserts `json.loads(stdout)` still parses). Routing its stderr diagnostics to

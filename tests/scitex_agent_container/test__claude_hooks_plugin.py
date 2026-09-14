@@ -13,10 +13,10 @@ real file, and the provider stays importable without scitex-dev present
 from __future__ import annotations
 
 import importlib.util
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from scitex_agent_container import _claude_hooks_plugin as plugin
 
@@ -41,11 +41,29 @@ def test_declared_script_resolves_to_a_real_file():
     assert script.is_file()
 
 
+def test_declared_process_wait_script_resolves_to_a_real_file():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SELF_MATCHING_PGREP_WAIT
+    # Assert
+    assert script.is_file()
+
+
 def test_declared_script_is_executable():
     # Arrange
     package_root = Path(plugin.__file__).resolve().parent
     # Act
     script = package_root / plugin.DENY_RAW_APPTAINER_BUILD
+    # Assert
+    assert script.stat().st_mode & 0o111
+
+
+def test_declared_process_wait_script_is_executable():
+    # Arrange
+    package_root = Path(plugin.__file__).resolve().parent
+    # Act
+    script = package_root / plugin.DENY_SELF_MATCHING_PGREP_WAIT
     # Assert
     assert script.stat().st_mode & 0o111
 
@@ -107,6 +125,20 @@ def test_raw_build_rule_denies_on_bash_pre_tool_use():
     # Arrange
     (rule,) = [
         r for r in plugin.provide_hooks() if r.id == "sac.no-raw-apptainer-build"
+    ]
+    # Act
+    shape = (rule.event, rule.severity, rule.matches)
+    # Assert
+    assert shape == ("pre-tool-use", "deny", ("Bash",))
+
+
+@_needs_contract
+def test_process_wait_rule_denies_on_bash_pre_tool_use():
+    # Arrange
+    (rule,) = [
+        r
+        for r in plugin.provide_hooks()
+        if r.id == "sac.no-self-matching-pgrep-wait"
     ]
     # Act
     shape = (rule.event, rule.severity, rule.matches)
