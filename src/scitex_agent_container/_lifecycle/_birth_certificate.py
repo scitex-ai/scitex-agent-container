@@ -79,7 +79,9 @@ def _redact(obj: Any) -> Any:
         for key, value in obj.items():
             k = str(key)
             if _SECRET_KEY_RE.search(k) and not _SOURCE_REF_KEY_RE.search(k):
-                out[key] = f"<redacted:{k}>" if value not in (None, "", [], {}) else value
+                out[key] = (
+                    f"<redacted:{k}>" if value not in (None, "", [], {}) else value
+                )
             else:
                 out[key] = _redact(value)
         return out
@@ -106,11 +108,17 @@ def compiled_launch_snapshot(
     config: Any,
     *,
     image_identity: dict[str, str] | None = None,
+    storage_identity: dict[str, str] | None = None,
 ) -> dict:
     """Compiled declaration plus immutable artifacts selected at launch."""
     snapshot = compiled_spec_snapshot(config)
+    artifacts: dict[str, dict[str, str]] = {}
     if image_identity is not None:
-        snapshot["launch_artifacts"] = {"apptainer_image": dict(image_identity)}
+        artifacts["apptainer_image"] = dict(image_identity)
+    if storage_identity is not None:
+        artifacts["storage"] = dict(storage_identity)
+    if artifacts:
+        snapshot["launch_artifacts"] = artifacts
     return snapshot
 
 
@@ -147,6 +155,7 @@ def write_birth_certificate(
     incarnation_id: str,
     *,
     image_identity: dict[str, str] | None = None,
+    storage_identity: dict[str, str] | None = None,
 ) -> bool:
     """Record the birth certificate for ``incarnation_id``. Best-effort.
 
@@ -169,7 +178,11 @@ def write_birth_certificate(
             or getattr(config, "spec_path", None)
             or None
         )
-        snapshot = compiled_launch_snapshot(config, image_identity=image_identity)
+        snapshot = compiled_launch_snapshot(
+            config,
+            image_identity=image_identity,
+            storage_identity=storage_identity,
+        )
         payload = json.dumps(snapshot, ensure_ascii=False, default=str)
         from .._state.state_store_incarnations import record_incarnation_birth
 

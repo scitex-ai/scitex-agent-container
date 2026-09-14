@@ -28,6 +28,10 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container._state.host_scratch import (
+    resolve_scratch_root,
+    scratch_agent_dir,
+)
 from scitex_agent_container.config import AgentConfig, ProxySpec
 from scitex_agent_container.config._types import (
     A2ASpec,
@@ -3148,7 +3152,7 @@ def test_fakeroot_not_doubled_when_operator_also_sets(tmp_path: Path) -> None:
 #
 # A --containall apptainer container otherwise gets a 64 MB session tmpfs
 # at /tmp, which fills mid-run during the full test suite. sac emits
-# --workdir <state_dir>/tmp-scratch to relocate /tmp onto the host
+# --workdir <scratch_root>/sac/agents/<agent>/apptainer-workdir to relocate /tmp
 # filesystem. See runtimes/_apptainer_tmpfs.py.
 
 
@@ -3164,7 +3168,7 @@ def test_tmpfs_default_emits_workdir_flag(tmp_path: Path) -> None:
     assert "--workdir" in argv
 
 
-def test_tmpfs_default_workdir_points_at_state_scratch(tmp_path: Path) -> None:
+def test_tmpfs_default_workdir_points_at_host_scratch(tmp_path: Path) -> None:
     # Arrange
     rt = ApptainerContainerRuntime()
     state_dir = tmp_path / "state"
@@ -3172,7 +3176,10 @@ def test_tmpfs_default_workdir_points_at_state_scratch(tmp_path: Path) -> None:
     # Act
     argv = rt.build_run_argv(cfg, state_dir=state_dir, sif_path=tmp_path / "x.sif")
     # Assert
-    assert _flag_value(argv, "--workdir") == str(state_dir / "tmp-scratch")
+    scratch = resolve_scratch_root()
+    assert _flag_value(argv, "--workdir") == str(
+        scratch_agent_dir(Path(scratch.root), cfg.name) / "apptainer-workdir"
+    )
 
 
 def test_tmpfs_default_applies_without_apptainer_block(tmp_path: Path) -> None:
@@ -3196,7 +3203,10 @@ def test_tmpfs_override_size_still_emits_workdir(tmp_path: Path) -> None:
         cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
     )
     # Assert
-    assert _flag_value(argv, "--workdir") == str(tmp_path / "state" / "tmp-scratch")
+    scratch = resolve_scratch_root()
+    assert _flag_value(argv, "--workdir") == str(
+        scratch_agent_dir(Path(scratch.root), cfg.name) / "apptainer-workdir"
+    )
 
 
 def test_tmpfs_empty_opts_out_of_workdir(tmp_path: Path) -> None:

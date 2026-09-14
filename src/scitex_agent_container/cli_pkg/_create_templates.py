@@ -77,7 +77,7 @@ spec:
     def_file: ""
     nv: false
     rocm: false
-    overlay: ""
+    overlay: {overlay}
     overlay_size: ""
     overlay_create_if_missing: true
     tmpfs_size: 2G
@@ -268,7 +268,7 @@ spec:
     # $HOME state survive restarts while the base SIF stays immutable. sac
     # auto-creates the overlay dir and materialises to_home/ into its upper
     # home on first start.
-    overlay: ~/.scitex/agent-container/containers/overlays/{name}/
+    overlay: {overlay}
     overlay_size: ""
     overlay_create_if_missing: true
 

@@ -258,6 +258,11 @@ class TuiSessionRuntime(
 
         return image_artifact_identity(path)
 
+    def resolved_storage_identity(self) -> dict[str, str] | None:
+        """Exact write-heavy paths selected for this runtime's last launch."""
+        value = getattr(self, "_resolved_launch_storage", None)
+        return dict(value) if value is not None else None
+
     def materialize_workspace(self, config: AgentConfig) -> Path | None:
         """Materialise per-agent ``to_home/`` + CLAUDE.md into the container
         ``$HOME`` and return the host-side ``<state>/home/`` path.
@@ -373,6 +378,9 @@ class TuiSessionRuntime(
         from ._tui_launch_gate import run_launch_gate
 
         run_launch_gate(config, argv, state_dir=state_dir_for_config(config))
+        from ._launch_storage import launch_storage_identity
+
+        self._resolved_launch_storage = launch_storage_identity(argv)
 
         # The host workdir is only the tmux launch cwd — the agent's real cwd is
         # ``--pwd`` inside the SIF; no session HOME/env (the container sets its own).

@@ -35,6 +35,7 @@ caller passes it.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,11 @@ from .host_config import load as _load_host_config
 
 #: The path probed when ``config.yaml`` declares no ``scratch_root:``.
 DEFAULT_SCRATCH_ROOT = Path("/scratch")
+
+# One host-local namespace for every per-agent, write-heavy artifact.  Keep
+# this derivation beside ``resolve_scratch_root`` so spec creation, launch argv
+# construction, and provenance cannot invent subtly different paths.
+SCRATCH_AGENTS_SUBDIR = ("sac", "agents")
 
 #: The closed set of ways a root can be reached.
 SCRATCH_SOURCES = ("config", "default", "none")
@@ -58,6 +64,15 @@ class ScratchRootError(RuntimeError):
     both fixes, so the operator's next action is a mount or a one-line edit,
     never a guess.
     """
+
+
+def scratch_agent_dir(root: Path, agent: str) -> Path:
+    """Return ``<root>/sac/agents/<agent>`` without touching the filesystem."""
+    if not agent or agent in (".", "..") or "/" in agent or os.sep in agent:
+        raise ValueError(
+            f"agent name {agent!r} cannot be a scratch path component under {root}"
+        )
+    return root.joinpath(*SCRATCH_AGENTS_SUBDIR, agent)
 
 
 @dataclass(frozen=True)
@@ -144,5 +159,7 @@ __all__ = [
     "SCRATCH_SOURCES",
     "ScratchRoot",
     "ScratchRootError",
+    "SCRATCH_AGENTS_SUBDIR",
+    "scratch_agent_dir",
     "resolve_scratch_root",
 ]
