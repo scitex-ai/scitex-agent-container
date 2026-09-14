@@ -508,7 +508,9 @@ def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
     }
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
 
-    def pending_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def pending_post(
+        url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True
+    ):
         raise PeerTimeoutPending(
             "accepted exchange remains pending",
             status="exchange_pending",
