@@ -191,6 +191,32 @@ the other, in one line — and the fleet-wide default engine lives in one line o
 one file. **Full reference, the three worked YAML cases, the precedence, and the
 harness × engine refusal table: [harness-and-engine.md](harness-and-engine.md).**
 
+### `spec.available_harnesses.claude-code.account`
+
+`account` pins a Claude Code harness to one saved Anthropic OAuth account by
+its `sac account list` slug. It belongs to the harness that consumes the
+credential, not to the legacy `spec.claude` compatibility block:
+
+```yaml
+spec:
+  harness: claude-code
+  available_harnesses:
+    claude-code:
+      account: scitex-01-scitex-ai
+      session: {mode: continue, max_age_minutes: null}
+      approval_policy: never
+      watchdog:
+        enabled: false
+        interval: 1.5
+        responses: {y_n: "1", y_y_n: "2", waiting: /speak-and-call}
+```
+
+The slug must be a non-empty string with no surrounding whitespace. At the
+parser boundary SAC folds it into the typed Claude runtime configuration, so
+the existing start preflight checks that exact stored-account preference and
+the auth bind resolves its snapshot. `account` is rejected on other harness
+entries because Codex and Hermes do not consume Claude Code OAuth snapshots.
+
 ### `spec.available_harnesses.<key>.compression` — Hermes only
 
 Hermes context compaction is configured beside the Hermes harness that owns

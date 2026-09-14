@@ -95,7 +95,10 @@ def _claude_compat(entry: Mapping, channels: object = None) -> dict:
         "continue_max_age_minutes": session.get("max_age_minutes"),
         "resume_id": "",
         "auto_accept": approval == "never",
-        "account": "",
+        # ``ClaudeSpec`` remains the typed runtime boundary. Carry the
+        # canonical product-owned account pin into that boundary so every
+        # existing auth/preflight consumer sees the authored value.
+        "account": entry.get("account", ""),
         "credentials_file": "",
         "credentials_files": [],
         "provider": None,
@@ -172,7 +175,7 @@ def canonical_surface_errors(raw: object) -> list[str]:
         if "run_budget_seconds" in raw_entry:
             allowed.add("run_budget_seconds")
         if family == "claude-code":
-            allowed.update({"approval_policy", "watchdog"})
+            allowed.update({"account", "approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
         elif family == "codex":
             allowed.update({"approval_policy", "sandbox_mode"})
@@ -256,6 +259,14 @@ def canonical_surface_errors(raw: object) -> list[str]:
             and raw_entry.get("approval_policy") != "never"
         ):
             errors.append(f"{path}.approval_policy must be 'never'")
+        if family == "claude-code" and "account" in raw_entry:
+            account = raw_entry.get("account")
+            if not isinstance(account, str) or not account.strip():
+                errors.append(f"{path}.account must be a non-empty string")
+            elif account != account.strip():
+                errors.append(
+                    f"{path}.account must not have leading or trailing whitespace"
+                )
         if (
             "sandbox_mode" in required
             and raw_entry.get("sandbox_mode") != "danger-full-access"
