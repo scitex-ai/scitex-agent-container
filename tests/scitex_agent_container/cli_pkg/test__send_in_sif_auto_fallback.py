@@ -132,7 +132,7 @@ def test_in_sif_send_outcome_json_carries_ok_true(fake_host_listen):
     assert parsed["ok"] is True
 
 
-def test_in_sif_send_polls_nonfinal_102_until_final(fake_host_listen):
+def test_in_sif_send_returns_validated_202_without_polling(fake_host_listen):
     # Arrange
     exchange_id = "xch_20260913T000000Z_host_abcdef"
     receipt = {
@@ -143,28 +143,17 @@ def test_in_sif_send_polls_nonfinal_102_until_final(fake_host_listen):
             "message": f"accepted; poll `/v1/exchanges/{exchange_id}`",
         },
     }
-    pending = {
-        "exchange_id": exchange_id,
-        "status_code": {
-            "kind": "http",
-            "code": 102,
-            "message": f"pending; poll `/v1/exchanges/{exchange_id}`",
-        },
-    }
-    final = {
-        "exchange_id": exchange_id,
-        "status_code": {"kind": "http", "code": 200, "message": "visible"},
-    }
     fake_host_listen.enqueue(202, json.dumps(receipt).encode())
-    fake_host_listen.enqueue(200, json.dumps(pending).encode())
-    fake_host_listen.enqueue(200, json.dumps(final).encode())
     # Act
     result = CliRunner().invoke(send, ["alice", "hello"])
     # Assert
+    payload = json.loads(result.stdout)
     assert (
         result.exit_code,
+        payload["http_status"],
+        payload["details"]["exchange_id"],
         [row["method"] for row in fake_host_listen.captured],
-    ) == (0, ["POST", "GET", "GET"])
+    ) == (0, 202, exchange_id, ["POST"])
 
 
 # ---------------------------------------------------------------------------

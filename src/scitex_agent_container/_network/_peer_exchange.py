@@ -26,9 +26,22 @@ def resolve_turn_response(
     *,
     http_status: int | None,
     timeout_s: float,
+    wait_for_final: bool = True,
 ) -> str:
-    """Return a synchronous reply or resolve a canonical 202 exchange."""
+    """Return a canonical receipt promptly or resolve it to final delivery.
+
+    ``wait_for_final=False`` is the interactive-send contract: validate the
+    responder's HTTP 202 receipt, return its exchange identity and poll hint,
+    and leave delivery finality to the exchange resource. ``True`` retains
+    the explicitly synchronous peer-call contract.
+    """
     exchange_id = _receipt_exchange_id(payload, http_status=http_status)
+    if not wait_for_final:
+        status_url = _exchange_url(url, exchange_id)
+        return (
+            f"Turn accepted (exchange {exchange_id}); delivery is pending and "
+            f"non-final. Do not resend it. Poll with `{_poll_hint(status_url)}`."
+        )
     return _poll_exchange(
         url,
         exchange_id,

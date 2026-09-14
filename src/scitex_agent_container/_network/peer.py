@@ -10,8 +10,9 @@ Two surfaces:
 
 * ``post_turn_to_url(url, text, *, exit_after=False, timeout_s=600.0)``
   — low-level. Posts the JSON envelope to a known URL. Returns the response
-  ``text`` for synchronous runners; for an asynchronous HTTP 202 receipt it
-  polls the named exchange and returns a delivery-acceptance description.
+  ``text`` for synchronous runners. For an asynchronous HTTP 202 receipt it
+  either polls the named exchange or returns the validated non-final receipt,
+  according to ``wait_for_final``.
 
 * ``post_turn(agent_name, text, *, exit_after=False, timeout_s=600.0)``
   — high-level. Resolves the target agent's YAML via the project +
@@ -165,21 +166,25 @@ def post_turn_to_url(
     from_agent: str | None = None,
     to_agent: str | None = None,
     conversation_id: str | None = None,
+    wait_for_final: bool = True,
 ) -> str:
     """POST a turn; return its reply or confirmed delivery acceptance.
 
     Synchronous runners return a body containing ``text``. Asynchronous
     adapters return HTTP 202 plus a canonical ``exchange_id`` and
-    ``status_code``; this client polls that exchange to a terminal result and
-    explicitly reports that delivery acceptance is not agent completion.
+    ``status_code``. With ``wait_for_final=True`` (the compatibility default),
+    this client polls that exchange to a terminal result. With
+    ``wait_for_final=False``, it validates and returns the non-final receipt
+    immediately so an interactive sender never waits behind a busy agent.
     Raises ``PeerError`` on transport failure, a malformed contract, or a
     terminal non-200 exchange result.
 
     Mints a dispatch-ledger ``dispatch_id`` and records a row with
     ``status="sent"`` before the POST, stamping the same id into the
-    request body so the receiver can correlate. Once the round-trip
-    resolves the status is moved to ``delivered`` (clean reply or confirmed
-    adapter acceptance),
+    request body so the receiver can correlate. Once an explicitly synchronous
+    round-trip resolves the status is moved to ``delivered``. A nonblocking
+    submission remains ``sent`` because HTTP 202 is admission, not delivery;
+    the exchange resource owns the later final state. Failures move it to
     ``timeout`` (deadline tripped), or ``failed`` (any other transport /
     HTTP error). ``from_agent`` defaults to this container's ``SAC_NAME``.
     """
@@ -223,6 +228,7 @@ def post_turn_to_url(
                 dispatch_id=dispatch_id,
                 from_agent=requester,
                 started_at=started_at,
+                wait_for_final=wait_for_final,
             )
         except PeerError as exc:
             from ._peer_timeout import PeerTimeoutPending
@@ -234,7 +240,8 @@ def post_turn_to_url(
             )
             update_dispatch_safe(dispatch_id, terminal)
             raise
-        update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
+        if wait_for_final:
+            update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
         return reply
 
     visible_text, visible_delivery_id = _bind_visible_delivery(text, dispatch_id)
@@ -291,6 +298,7 @@ def post_turn_to_url(
             payload,
             http_status=http_status,
             timeout_s=max(0.0, timeout_s - (time.monotonic() - started_at)),
+            wait_for_final=wait_for_final,
         )
     except PeerError as exc:
         from ._peer_timeout import PeerTimeoutPending
@@ -303,7 +311,8 @@ def post_turn_to_url(
     except (TypeError, ValueError) as exc:
         update_dispatch_safe(dispatch_id, STATUS_FAILED)
         raise PeerError(f"peer returned malformed body: {payload!r}") from exc
-    update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
+    if wait_for_final:
+        update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
     return reply
 
 
@@ -381,6 +390,7 @@ def _post_turn_via_ssh(
     dispatch_id: str | None = None,
     from_agent: str | None = None,
     started_at: float | None = None,
+    wait_for_final: bool = True,
 ) -> str:
     """Dispatch a turn via ``ssh <host> curl ...`` and parse the response.
 
@@ -457,6 +467,7 @@ def _post_turn_via_ssh(
         payload,
         http_status=None,
         timeout_s=max(0.0, timeout_s - elapsed),
+        wait_for_final=wait_for_final,
     )
 
 

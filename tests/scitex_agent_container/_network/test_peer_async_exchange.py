@@ -152,6 +152,28 @@ def test_async_receipt_is_polled_to_confirmed_delivery() -> None:
     ) == (True, True, ["/v1/turn", f"/v1/exchanges/{EXCHANGE_ID}"])
 
 
+def test_nonblocking_submit_returns_202_receipt_without_polling() -> None:
+    # Arrange — the target may remain busy indefinitely after admission.
+    with _exchange_server(results=[_result(102, "still delivering")]) as (
+        url,
+        paths,
+    ):
+        # Act
+        response = post_turn_to_url(
+            url,
+            "hello",
+            timeout_s=2,
+            wait_for_final=False,
+        )
+    # Assert
+    assert (
+        EXCHANGE_ID in response,
+        "pending and non-final" in response,
+        "Do not resend" in response,
+        paths,
+    ) == (True, True, True, ["/v1/turn"])
+
+
 def test_nonfinal_exchange_is_polled_until_final() -> None:
     # Arrange
     results = [

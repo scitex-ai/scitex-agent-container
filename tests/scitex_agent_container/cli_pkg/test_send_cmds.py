@@ -301,9 +301,10 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     record_instance_start(name="zeta", host="peer-x", a2a_port=18888)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["url"] = url
         captured["text"] = text
+        captured["wait_for_final"] = wait_for_final
         return "REMOTE-REPLY"
 
     import scitex_agent_container._network.peer as _peer_mod
@@ -317,7 +318,10 @@ def test_remote_send_with_a2a_port_dispatches_to_post_turn_to_url(remote_send_en
     finally:
         _peer_mod.post_turn_to_url = saved  # type: ignore[assignment]
     # Assert
-    assert captured.get("url") == "ssh://peer-x:18888/v1/turn"
+    assert (
+        captured.get("url"),
+        captured.get("wait_for_final"),
+    ) == ("ssh://peer-x:18888/v1/turn", False)
 
 
 def test_remote_send_prints_reply_from_peer(remote_send_env):
@@ -371,15 +375,19 @@ def test_local_send_with_a2a_port_dispatches_to_loopback_v1turn(remote_send_env)
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["url"] = url
+        captured["wait_for_final"] = wait_for_final
         return "LOCAL-REPLY"
 
     # Act
     with _swap_peer_post_turn_to_url(fake_post):
         CliRunner().invoke(send, ["local-a", "hi"])
     # Assert
-    assert captured.get("url") == "http://127.0.0.1:19005/v1/turn"
+    assert (
+        captured.get("url"),
+        captured.get("wait_for_final"),
+    ) == ("http://127.0.0.1:19005/v1/turn", False)
 
 
 def test_local_send_forwards_the_prompt_text(remote_send_env):
@@ -389,7 +397,7 @@ def test_local_send_forwards_the_prompt_text(remote_send_env):
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
     captured: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         captured["text"] = text
         return "LOCAL-REPLY"
 
@@ -431,7 +439,7 @@ def test_local_send_without_a2a_port_does_not_take_the_http_path(remote_send_env
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
     posted: dict = {}
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         posted["url"] = url
         return "SHOULD-NOT-HAPPEN"
 
@@ -449,7 +457,7 @@ def test_local_send_without_a2a_port_refuses_instead_of_going_bare(remote_send_e
 
     record_instance_start(name="local-b", host="lead-host", a2a_port=None)
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         return "SHOULD-NOT-HAPPEN"
 
     # Act
@@ -466,7 +474,7 @@ def test_local_send_failure_wraps_peer_error(remote_send_env):
 
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
 
-    def fake_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def fake_post(url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True):
         raise PeerError("connection refused")
 
     # Act
@@ -484,9 +492,7 @@ def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
     from scitex_agent_container._state.state_store import record_instance_start
 
     exchange_id = "xch_20260914T071511Z_scitex-compute-03_208629"
-    poll_hint = (
-        "curl -sS http://127.0.0.1:19005/v1/exchanges/" f"{exchange_id}"
-    )
+    poll_hint = f"curl -sS http://127.0.0.1:19005/v1/exchanges/{exchange_id}"
     receipt = {
         "exchange_id": exchange_id,
         "receipt": {
@@ -502,7 +508,9 @@ def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
     }
     record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
 
-    def pending_post(url, text, *, exit_after=False, timeout_s=600.0):
+    def pending_post(
+        url, text, *, exit_after=False, timeout_s=600.0, wait_for_final=True
+    ):
         raise PeerTimeoutPending(
             "accepted exchange remains pending",
             status="exchange_pending",
