@@ -447,6 +447,61 @@ def test_post_ordinary_callback_none_concludes_exchange_successfully(
     assert (status, final["status_code"]["code"]) == (202, 200)
 
 
+def test_production_callback_requires_visibility_for_ordinary_sac_turn(
+    bridge_factory,
+) -> None:
+    # Arrange — no caller-supplied delivery id, matching `sac agents send`.
+    observed: dict[str, object] = {}
+
+    def production_visible(text: str, **kwargs: object) -> object:
+        observed["text"] = text
+        observed.update(kwargs)
+        return SimpleNamespace(
+            status="steered",
+            visibility="session.inflight.corrections",
+            delivery_mode="steer",
+        )
+
+    production_visible._sac_requires_visible_delivery = True  # type: ignore[attr-defined]
+    port = bridge_factory(production_visible, agent_name="scitex-cards")
+
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": "inspect the inbox"})
+    final = _wait_exchange(port, body["exchange_id"])
+
+    # Assert
+    exchange_id = body["exchange_id"]
+    assert (
+        status,
+        final["status_code"]["code"],
+        observed["visible_delivery_id"],
+        "proof=session.inflight.corrections" in final["status_code"]["message"],
+    ) == (202, 200, exchange_id, True)
+
+
+def test_production_callback_never_finalizes_without_visibility_proof(
+    bridge_factory,
+) -> None:
+    # Arrange — Hermes accepted an RPC but returned no transcript proof.
+    def accepted_without_visibility(_text: str, **_kwargs: object) -> None:
+        return None
+
+    accepted_without_visibility._sac_requires_visible_delivery = True  # type: ignore[attr-defined]
+    port = bridge_factory(accepted_without_visibility, agent_name="scitex-cards")
+
+    # Act
+    status, body = _post(port, "/v1/turn", {"text": "inspect the inbox"})
+    final = _wait_exchange(port, body["exchange_id"])
+
+    # Assert
+    assert (
+        status,
+        final["status_code"]["code"],
+        final["receipt"]["state"],
+        final["receipt"]["final"],
+    ) == (202, 102, "retryable", False)
+
+
 def test_post_refuses_acceptance_when_canonical_ledger_is_unavailable(
     bridge_factory,
 ) -> None:

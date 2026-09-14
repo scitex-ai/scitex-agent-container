@@ -237,10 +237,12 @@ def post_turn_to_url(
         update_dispatch_safe(dispatch_id, STATUS_DELIVERED)
         return reply
 
+    visible_text, visible_delivery_id = _bind_visible_delivery(text, dispatch_id)
     turn_body: dict[str, Any] = {
-        "text": text,
+        "text": visible_text,
         "exit_after": bool(exit_after),
         "dispatch_id": dispatch_id,
+        "visible_delivery_id": visible_delivery_id,
     }
     if requester is not None:
         turn_body["from_agent"] = requester
@@ -364,6 +366,12 @@ def _interpret_504(err_body: str, *, fallback_label: str) -> PeerError:
     return interpret_timeout_body(body, fallback_label=fallback_label)
 
 
+def _bind_visible_delivery(text: str, delivery_id: str) -> tuple[str, str]:
+    """Bind one SAC dispatch identity to transcript-visible prompt text."""
+    marker = f"<!-- delivery:{delivery_id} -->"
+    return (text if marker in text else f"{text}\n{marker}", delivery_id)
+
+
 def _post_turn_via_ssh(
     url: str,
     text: str,
@@ -401,7 +409,10 @@ def _post_turn_via_ssh(
 
     turn_body: dict[str, Any] = {"text": text, "exit_after": bool(exit_after)}
     if dispatch_id is not None:
+        visible_text, visible_delivery_id = _bind_visible_delivery(text, dispatch_id)
+        turn_body["text"] = visible_text
         turn_body["dispatch_id"] = dispatch_id
+        turn_body["visible_delivery_id"] = visible_delivery_id
     if from_agent is not None:
         turn_body["from_agent"] = from_agent
     body = json.dumps(turn_body).encode("utf-8")
