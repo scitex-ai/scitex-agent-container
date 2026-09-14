@@ -98,7 +98,7 @@
 .c-name { font-weight: 600; }
 .c-name a { color: var(--agents-text); text-decoration: none; }
 .c-name a:hover { text-decoration: underline; color: var(--agents-cross); }
-.c-em, .c-host, .c-port { color: var(--agents-dim); font-size: 13px; }
+.c-em, .c-activity, .c-host, .c-port { color: var(--agents-dim); font-size: 13px; }
 .c-port { font-variant-numeric: tabular-nums; }
 .dim { color: var(--agents-dim); }
 .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12.5px; }
@@ -139,6 +139,10 @@
   border-radius: 12px; padding: 16px 18px;
 }
 .detail-card h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--agents-dim); }
+.detail-card-wide { grid-column: 1 / -1; }
+.activity-kv { grid-template-columns: 110px minmax(120px, 1fr) 110px minmax(120px, 1fr); }
+.activity-kv .unknown { color: var(--agents-faint); }
+.activity-note { margin: 12px 0 0; font-size: 12px; }
 .detail-state { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .detail-state-label { font-size: 17px; font-weight: 650; }
 .detail-state-label.good { color: var(--agents-good); }
@@ -171,12 +175,16 @@
     scrollbar-width: thin;
   }
   /* Keep the essentials (Agent, State, Actions); hide the rest at narrow width.
-     Columns: 1 agent, 2 state, 3 runtime, 4 harness, 5 engine, 6 host, 7 a2a, 8 actions. */
+     Columns: 1 agent, 2 state, 3 runtime, 4 harness, 5 engine, 6 activity,
+     7 host, 8 a2a, 9 actions. */
   .agents-table thead th:nth-child(3), .agents-table tbody td:nth-child(3) { display: none; }
   .agents-table thead th:nth-child(4), .agents-table tbody td:nth-child(4) { display: none; }
   .agents-table thead th:nth-child(5), .agents-table tbody td:nth-child(5) { display: none; }
   .agents-table thead th:nth-child(6), .agents-table tbody td:nth-child(6) { display: none; }
   .agents-table thead th:nth-child(7), .agents-table tbody td:nth-child(7) { display: none; }
+  .agents-table thead th:nth-child(8), .agents-table tbody td:nth-child(8) { display: none; }
   .agents-table thead th, .agents-table tbody td { padding: 9px 10px; }
   .detail-grid { grid-template-columns: 1fr; }
+  .detail-card-wide { grid-column: auto; }
+  .activity-kv { grid-template-columns: 100px 1fr; }
 }

@@ -138,6 +138,54 @@ def _node(row: dict[str, Any], turn_url: Any) -> str:
     return str(host) if host not in (None, "") else ""
 
 
+_ACTIVITY_SIGNALS = (
+    "phase",
+    "operation",
+    "turn_elapsed",
+    "last_progress",
+    "queue",
+    "inference",
+    "tool",
+    "wait",
+)
+
+
+def _activity(status: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = status.get("activity")
+    if not isinstance(raw, dict):
+        raw = {}
+    projected = {}
+    for name in _ACTIVITY_SIGNALS:
+        signal = raw.get(name)
+        if not isinstance(signal, dict) or signal.get("state") != "observed":
+            reason = signal.get("reason") if isinstance(signal, dict) else ""
+            projected[name] = {
+                "state": "unknown",
+                "value": None,
+                "source": "",
+                "reason": _text(
+                    reason, "No authoritative runtime evidence is published."
+                )[:160],
+            }
+            continue
+        value = signal.get("value")
+        if not isinstance(value, (str, int, float, bool)):
+            projected[name] = {
+                "state": "unknown",
+                "value": None,
+                "source": "",
+                "reason": "The runtime observation had an unsupported value.",
+            }
+            continue
+        projected[name] = {
+            "state": "observed",
+            "value": value,
+            "source": _text(signal.get("source"))[:80],
+            "reason": "",
+        }
+    return projected
+
+
 def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
     """Combine a list row with its status observation into one dashboard row."""
     err = _error_state(status)
@@ -181,6 +229,7 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         "a2a_port": a2a_port,
         "turn_url": turn_url,
         "pid": pid,
+        "activity": _activity(status),
     }
 
 

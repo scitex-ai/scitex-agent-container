@@ -144,6 +144,33 @@ def test_row_carries_runtime_harness_model():
     assert (projected["runtime"], projected["harness"], projected["model"]) == ("apptainer", "anthropic", "sonnet")
 
 
+def test_row_projects_activity_and_keeps_unknown_explicit():
+    # Arrange
+    status = {
+        **ALIVE,
+        "activity": {
+            "operation": {
+                "state": "observed",
+                "value": "busy",
+                "source": "heartbeat.state",
+            },
+            "tool": {
+                "state": "unknown",
+                "reason": "No authoritative runtime evidence is published.",
+            },
+            "private": {"state": "observed", "value": "secret"},
+        },
+    }
+    # Act
+    activity = project_row({"name": "alpha"}, status)["activity"]
+    # Assert
+    assert (
+        activity["operation"]["value"],
+        activity["tool"]["state"],
+        "private" in activity,
+    ) == ("busy", "unknown", False)
+
+
 def test_row_host_from_turn_url():
     # Arrange
     row = {"name": "alpha", "turn_url": f"http://{LOCAL}:19000/v1/turn"}

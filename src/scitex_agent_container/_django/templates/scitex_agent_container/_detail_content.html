@@ -50,6 +50,21 @@ back link and the lifecycle form action are correct in both modes.
       </dl>
     </div>
 
+    <div class="detail-card detail-card-wide">
+      <h2>Runtime activity</h2>
+      <dl class="kv activity-kv">
+        <dt>Phase</dt><dd>{% if agent.activity.phase.state == "observed" %}{{ agent.activity.phase.value }}{% else %}<span class="unknown" title="{{ agent.activity.phase.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Operation</dt><dd>{% if agent.activity.operation.state == "observed" %}{{ agent.activity.operation.value }}{% else %}<span class="unknown" title="{{ agent.activity.operation.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Turn elapsed</dt><dd>{% if agent.activity.turn_elapsed.state == "observed" %}{{ agent.activity.turn_elapsed.value }} s{% else %}<span class="unknown" title="{{ agent.activity.turn_elapsed.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Last progress</dt><dd>{% if agent.activity.last_progress.state == "observed" %}{{ agent.activity.last_progress.value }}{% else %}<span class="unknown" title="{{ agent.activity.last_progress.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Queue</dt><dd>{% if agent.activity.queue.state == "observed" %}{{ agent.activity.queue.value }}{% else %}<span class="unknown" title="{{ agent.activity.queue.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Inference</dt><dd>{% if agent.activity.inference.state == "observed" %}{{ agent.activity.inference.value }}{% else %}<span class="unknown" title="{{ agent.activity.inference.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Tool</dt><dd>{% if agent.activity.tool.state == "observed" %}{{ agent.activity.tool.value }}{% else %}<span class="unknown" title="{{ agent.activity.tool.reason }}">Unknown</span>{% endif %}</dd>
+        <dt>Wait</dt><dd>{% if agent.activity.wait.state == "observed" %}{{ agent.activity.wait.value }}{% else %}<span class="unknown" title="{{ agent.activity.wait.reason }}">Unknown</span>{% endif %}</dd>
+      </dl>
+      <p class="dim activity-note">Only runner-published state is shown. Unknown means SAC has no authoritative signal; session logs are not guessed into activity.</p>
+    </div>
+
     <div class="detail-card">
       <h2>Control</h2>
       {% if agent.state_detail %}
