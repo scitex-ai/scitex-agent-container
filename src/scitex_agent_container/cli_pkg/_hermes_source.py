@@ -9,8 +9,11 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-HERMES_COMMIT = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
-HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
+# Immutable source for the cache-lineage fix proposed upstream in
+# https://github.com/NousResearch/hermes-agent/pull/110480.  Keep the fork URL
+# paired with its commit until the change is available from the upstream repo.
+HERMES_COMMIT = "b635448768d6ba49bc1f75bd381f32336dde7ac8"
+HERMES_REPOSITORY = "https://github.com/ywatanabe1989/hermes-agent.git"
 HERMES_SOURCE_ENV = "SAC_HERMES_SOURCE_DIR"
 STAGED_HERMES_SOURCE = "hermes-agent-src"
 
@@ -119,6 +122,9 @@ def stage_hermes_source(dest_dir: Path) -> Path:
         archive_path.unlink(missing_ok=True)
     (destination / "SAC_UPSTREAM_COMMIT").write_text(
         f"{HERMES_COMMIT}\n", encoding="utf-8"
+    )
+    (destination / "SAC_UPSTREAM_REPOSITORY").write_text(
+        f"{HERMES_REPOSITORY}\n", encoding="utf-8"
     )
     return destination
 

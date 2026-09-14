@@ -719,8 +719,8 @@ packages = ["src/scitex_agent_container", "src/_scitex_agent_container_bootstrap
 [tool.scitex-agent-container.harnesses.hermes]
 package = "hermes-agent"
 version = "0.21.1"
-repository = "https://github.com/NousResearch/hermes-agent.git"
-commit = "a74e76632cce62ad6948cf7e4e6b27629d66d147"
+repository = "https://github.com/ywatanabe1989/hermes-agent.git"
+commit = "b635448768d6ba49bc1f75bd381f32336dde7ac8"
 installation = "local-staged-source"
 environment = "/opt/hermes-agent/.venv"
 

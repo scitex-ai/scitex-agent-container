@@ -69,8 +69,8 @@ WORKDIR="/data/gpfs/projects/punim2354/ywatanabe/sac-sif-bake"
 LEASE_NAME="spartan-cpu-32-cores-64-ram"
 REPO_URL="https://github.com/ywatanabe1989/scitex-agent-container.git"
 BRANCH="develop"
-HERMES_REPO_URL="https://github.com/NousResearch/hermes-agent.git"
-HERMES_COMMIT="a74e76632cce62ad6948cf7e4e6b27629d66d147"
+HERMES_REPO_URL="https://github.com/ywatanabe1989/hermes-agent.git"
+HERMES_COMMIT="b635448768d6ba49bc1f75bd381f32336dde7ac8"
 CARDS_REPO_URL="https://github.com/scitex-ai/scitex-cards.git"
 CARDS_COMMIT="6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
 RETAIN=3
@@ -296,6 +296,8 @@ if [ "$LAYER" = "base" ]; then
         || fail "stage-hermes-export" "$HERMES_COMMIT"
     printf '%s\n' "$HERMES_COMMIT" > "$CTX/hermes-agent-src/SAC_UPSTREAM_COMMIT" \
         || fail "stage-hermes-marker"
+    printf '%s\n' "$HERMES_REPO_URL" > "$CTX/hermes-agent-src/SAC_UPSTREAM_REPOSITORY" \
+        || fail "stage-hermes-repository-marker"
 fi
 if [ "$LAYER" = "scitex" ]; then
     ln -s "$BASE_LIVE" "$CTX/sac-base.sif" || fail "stage-base-sif"
