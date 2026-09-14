@@ -81,26 +81,38 @@ def test_reconcile_preserves_authoritative_incarnation_and_retires_duplicates(tm
 
     # Assert
     by_pid = {receipt.pid: receipt for receipt in receipts}
-    assert set(by_pid) == {10, 11, 12, 13, 16}
-    assert by_pid[10].disposition == "preserved"
-    assert by_pid[11].reason == "stale-or-duplicate-current-role"
-    assert by_pid[12].reason == "stale-or-duplicate-current-role"
-    assert by_pid[13].reason == "retired-legacy-role"
-    assert by_pid[16].reason == "stale-or-duplicate-current-role"
-    assert signals == [
-        (11, signal.SIGTERM),
-        (12, signal.SIGTERM),
-        (13, signal.SIGTERM),
-        (16, signal.SIGTERM),
-        (11, signal.SIGKILL),
-        (12, signal.SIGKILL),
-        (13, signal.SIGKILL),
-        (16, signal.SIGKILL),
-    ]
-    assert not legacy_pidfile.exists()
+    outcome = (
+        set(by_pid),
+        by_pid[10].disposition,
+        tuple(by_pid[pid].reason for pid in (11, 12, 13, 16)),
+        signals,
+        legacy_pidfile.exists(),
+    )
+    assert outcome == (
+        {10, 11, 12, 13, 16},
+        "preserved",
+        (
+            "stale-or-duplicate-current-role",
+            "stale-or-duplicate-current-role",
+            "retired-legacy-role",
+            "stale-or-duplicate-current-role",
+        ),
+        [
+            (11, signal.SIGTERM),
+            (12, signal.SIGTERM),
+            (13, signal.SIGTERM),
+            (16, signal.SIGTERM),
+            (11, signal.SIGKILL),
+            (12, signal.SIGKILL),
+            (13, signal.SIGKILL),
+            (16, signal.SIGKILL),
+        ],
+        False,
+    )
 
 
 def test_prelaunch_shape_retires_even_matching_incarnation_when_no_owner():
+    # Arrange
     # An agent start runs after singleton teardown: no pid is authoritative.
     process = _Process(
         21, CURRENT_MODULE, incarnation="inc-now", role=CURRENT_ROLE
@@ -114,6 +126,7 @@ def test_prelaunch_shape_retires_even_matching_incarnation_when_no_owner():
         nonlocal alive
         alive = False
 
+    # Act
     receipts = reconcile_inbox_sidecars(
         name="scholar",
         config_path="/spec/scholar.yaml",
@@ -123,13 +136,19 @@ def test_prelaunch_shape_retires_even_matching_incarnation_when_no_owner():
         sleep_fn=lambda _seconds: None,
     )
 
-    assert receipts[0].disposition == "retired"
-    assert receipts[0].signals == (signal.SIGTERM,)
+    # Assert
+    assert (receipts[0].disposition, receipts[0].signals) == (
+        "retired",
+        (signal.SIGTERM,),
+    )
 
 
 def test_reconcile_fails_loud_if_exact_stale_identity_survives_sigkill():
+    # Arrange
     process = _Process(31, LEGACY_MODULE)
 
+    # Act
+    # Assert
     with pytest.raises(RuntimeError, match="31"):
         reconcile_inbox_sidecars(
             name="scholar",

@@ -124,7 +124,7 @@ def reconcile_inbox_sidecars(
     *,
     name: str,
     config_path: str,
-    incarnation_id: str,
+    incarnation_id: str | None,
     authoritative_pid: int | None = None,
     state_dir: Path | None = None,
     process_iter: Callable[[], Iterable[Any]] | None = None,
@@ -136,8 +136,10 @@ def reconcile_inbox_sidecars(
 
     A process is eligible only when module, agent name, and canonical authored
     config all match.  The current module additionally needs the current
-    incarnation and authoritative pid to be preserved.  The retired legacy
-    role is never a valid owner after upgrade.
+    incarnation and authoritative pid to be preserved.  An injected launch
+    harness may provide no incarnation; because prelaunch has no authoritative
+    pid, that cannot preserve a process.  The retired legacy role is never a
+    valid owner after upgrade.
     """
     iterator = process_iter or _default_process_iter
     initial = sorted(
