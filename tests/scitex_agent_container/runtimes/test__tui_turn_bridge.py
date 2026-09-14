@@ -502,6 +502,47 @@ def test_production_callback_never_finalizes_without_visibility_proof(
     ) == (202, 102, "retryable", False)
 
 
+def test_claude_tui_marked_turn_concludes_without_hermes_receipt(
+    bridge_factory,
+) -> None:
+    # Arrange — Claude Code's pane adapter returns bool, which _build_on_turn
+    # normalizes to None. A durable A2A marker does not change its harness.
+    submitted: list[tuple[str, bool]] = []
+
+    def send_turn(_config, text: str, *, wait_ready: bool) -> bool:
+        submitted.append((text, wait_ready))
+        return True
+
+    callback = bridge._build_on_turn(
+        SimpleNamespace(name="scitex-hub"),
+        runtime=SimpleNamespace(send_turn=send_turn),
+    )
+    port = bridge_factory(callback, agent_name="scitex-hub")
+    marker = "fb16eec5dc784aa38b4287869daf5bf9"
+    text = f"A2A bridge verification only.\n<!-- delivery:{marker} -->"
+
+    # Act
+    status, body = _post(
+        port,
+        "/v1/turn",
+        {"text": text, "visible_delivery_id": marker},
+    )
+    final = _wait_exchange(port, body["exchange_id"])
+
+    # Assert
+    assert (
+        status,
+        final["status_code"]["code"],
+        final["status_code"]["message"],
+        submitted,
+    ) == (
+        202,
+        200,
+        "the target TUI accepted the identified turn",
+        [(text, False)],
+    )
+
+
 def test_post_refuses_acceptance_when_canonical_ledger_is_unavailable(
     bridge_factory,
 ) -> None:

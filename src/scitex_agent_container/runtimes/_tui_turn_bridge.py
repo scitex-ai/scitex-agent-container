@@ -13,8 +13,8 @@ shared-session JSON-RPC; legacy TUI adapters retain their runtime-specific
 path. Identified durable callers receive ``202`` plus the exchange id and poll
 the canonical ``scitex_dev.status`` ledger for the worker's final ``200``.
 CCT's legacy bare ``{text}`` wake has no polling identity and treats every 2xx
-as final, so the bridge returns ``200`` only after native Hermes visibility is
-proven (or a non-2xx response that keeps the Telegram item retryable).
+as final, so the bridge returns ``200`` only after the selected TUI adapter's
+admission proof (or a non-2xx response that keeps the Telegram item retryable).
 A failed durable visibility attempt remains non-final ``102`` so the same
 exchange can advance on retry; ordinary, non-durable turn failures are final
 ``502``.
@@ -123,10 +123,10 @@ def _native_cause(exc: BaseException) -> StatusCode | None:
 
 
 def _admission_failure(exc: BaseException, *, agent: str) -> Check:
-    """Describe a failed Hermes admission with its machine-readable cause."""
+    """Describe a failed TUI-harness admission with its native cause."""
     return Check.not_ok(
-        "hermes_turn_admitted",
-        f"Hermes did not admit the turn for {agent!r}: {exc}",
+        "tui_turn_admitted",
+        f"the target TUI did not admit the turn for {agent!r}: {exc}",
         "Restore the resource named by `cause`, then retry the same durable "
         "delivery; its exchange identity makes admission idempotent.",
         cause=_native_cause(exc),
@@ -492,7 +492,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                                     kind="http",
                                     code=409,
                                     message=(
-                                        "native Hermes visibility is not final; leave "
+                                        "target-harness admission is not final; leave "
                                         "the Telegram item unacknowledged and retry"
                                     ),
                                 ).to_dict(),
@@ -588,7 +588,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                             kind="http",
                             code=response_code,
                             message=(
-                                "Hermes transcript visibility is already final; "
+                                "target-harness delivery is already final; "
                                 + (
                                     "the Telegram wake is acknowledged without a "
                                     "duplicate prompt"
@@ -620,6 +620,9 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
             srv.active_delivery = (delivery_key or exchange_id, exchange_id)
 
         failure_check: Check | None = None
+        native_visibility_required = bool(
+            getattr(srv.on_turn, "_sac_requires_visible_delivery", False)
+        )
 
         def deliver() -> StatusCode:
             nonlocal failure_check
@@ -636,7 +639,11 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 # after a successful injection. Only visibility-gated
                 # deliveries promise a native receipt object whose falsiness
                 # means that the transcript proof failed.
-                if effective_visible_id and not delivery:
+                if (
+                    native_visibility_required
+                    and effective_visible_id
+                    and not delivery
+                ):
                     raise RuntimeError("Hermes transcript visibility was not confirmed")
                 native_status = str(getattr(delivery, "status", "") or "")
                 native_mode = str(
@@ -659,10 +666,20 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                         "Hermes accepted the interactive inbound "
                         f"(mode={native_mode}, status={native_status})"
                     )
-                else:
+                elif native_visibility_required:
                     visible_message = (
                         "the incoming turn is visible in the Hermes transcript"
                     )
+                else:
+                    # Claude Code and Codex TUI adapters expose the established
+                    # bool-returning pane-injection contract, not Hermes'
+                    # structured transcript projection. `_build_on_turn`
+                    # normalizes their successful True to None for backwards
+                    # compatibility. A caller-supplied delivery marker must not
+                    # silently opt those harnesses into Hermes-only proof and
+                    # strand an exchange at retryable/102 after the prompt was
+                    # visibly accepted and answered.
+                    visible_message = "the target TUI accepted the identified turn"
                 status = StatusCode(
                     kind="http",
                     code=200,
@@ -675,11 +692,14 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # stx-allow: fallback (reason: visibility failure must remain explicitly retryable on the accepted durable operation, never be acknowledged or rewritten from a terminal failure)
                 detail = str(exc).strip() or "no native error detail"
                 native_cause = _native_cause(exc)
+                harness_name = (
+                    "Hermes" if native_visibility_required else "TUI harness"
+                )
                 cause = native_cause or StatusCode(
                     kind="http",
                     code=502,
                     message=(
-                        "Hermes delivery failed "
+                        f"{harness_name} delivery failed "
                         f"({type(exc).__name__}: {detail}); no downstream "
                         "acknowledgement was issued"
                     ),
@@ -690,17 +710,24 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     "notification; observe the same delivery operation at "
                     f"`/v1/exchanges/{exchange_id}`"
                 )
-                check = (
-                    _admission_failure(exc, agent=srv.agent_name)
-                    if native_cause is not None
-                    else Check.unknown(
+                if native_cause is not None:
+                    check = _admission_failure(exc, agent=srv.agent_name)
+                elif native_visibility_required:
+                    check = Check.unknown(
                         "hermes_transcript_visible",
                         "Hermes transcript visibility was not confirmed "
                         f"({type(exc).__name__}: {detail})",
                         hint,
                         cause=cause,
                     )
-                )
+                else:
+                    check = Check.unknown(
+                        "tui_turn_admitted",
+                        "the target TUI did not confirm turn admission "
+                        f"({type(exc).__name__}: {detail})",
+                        hint,
+                        cause=cause,
+                    )
                 failure_check = check
                 log.warning(
                     "turn exchange remains retryable exchange_id=%s check=%s",
@@ -740,9 +767,9 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
 
         # A bare CCT wake has no exchange id it knows how to poll. Its current
         # client considers 202 final, which produced the observed false ACK:
-        # Telegram showed delivered while Hermes never projected the turn.
-        # Complete this one compatibility-shaped request synchronously and
-        # return 200 ONLY after native visibility proof; return non-2xx on a
+        # Telegram showed delivered while the target harness had not proven
+        # admission. Complete this compatibility-shaped request synchronously
+        # and return 200 only after the adapter's proof; return non-2xx on a
         # retryable miss so CCT leaves the message unacknowledged. Durable
         # callers that supply either id retain the asynchronous 202 contract.
         if implicit_delivery:
@@ -762,7 +789,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                 admission_check = failure_check or Check.unknown(
                     "hermes_transcript_visible",
                     final_status.message,
-                    "Inspect the Hermes gateway readiness and retry the same delivery.",
+                    "Inspect the target TUI readiness and retry the same delivery.",
                 )
                 native_cause = admission_check.cause
                 response_code = (
@@ -788,7 +815,7 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                             kind="http",
                             code=response_code,
                             message=(
-                                "Hermes did not prove the Telegram turn visible; "
+                                "the target TUI did not prove Telegram admission; "
                                 f"exchange {exchange_id} remains retryable"
                             ),
                         ).to_dict(),
