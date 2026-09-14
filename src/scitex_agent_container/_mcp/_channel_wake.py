@@ -180,8 +180,9 @@ async def _wake_turn(
     if isinstance(visible_delivery_id, str) and visible_delivery_id:
         # The TUI bridge must not answer 200 merely because tmux accepted
         # keystrokes.  This opaque marker lets a harness-aware runtime prove
-        # the exact incoming turn left the composer and became visible in the
-        # transcript before the durable inbox cursor is acknowledged.
+        # the exact incoming turn is bound to the exchange. Harnesses with
+        # a native projection (Hermes) prove transcript visibility; pane-
+        # backed harnesses conclude from their checked submit contract.
         payload["visible_delivery_id"] = visible_delivery_id
     requester = event.get("from_agent")
     if isinstance(requester, str) and requester and requester != "unknown":
@@ -212,8 +213,8 @@ async def _wake_turn(
             )
         if resp.status_code != 202 and not require_terminal_visibility:
             # SDK runners retain their established synchronous 2xx contract.
-            # Only the Hermes adapter asks for separately proven terminal
-            # visibility and therefore requires the asynchronous exchange.
+            # A durable dispatcher asks every TUI harness for the asynchronous
+            # exchange; the target adapter decides which proof it can supply.
             return
         body = resp.json()
         status = body.get("status_code") if isinstance(body, dict) else None
