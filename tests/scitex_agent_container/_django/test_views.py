@@ -133,6 +133,24 @@ def test_detail_own_agent_shows_state(client, loopback, env_save_restore):
     assert "Alive" in html and "alpha" in html
 
 
+def test_detail_names_unpublished_activity_as_unknown(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/beta/").content.decode()
+    # Assert
+    assert "Runtime activity" in html and html.count(">Unknown</span>") >= 1
+
+
+def test_fleet_shows_published_operation_and_phase(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/").content.decode()
+    # Assert
+    assert "busy" in html and "reviewing" in html
+
+
 def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")

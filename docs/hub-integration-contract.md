@@ -89,6 +89,11 @@ sees the fleet, audited. No app-local login, no added project switcher.
 - `GET /apps/agents/api/fleet` returns the scoped JSON projection.
 - `GET /apps/agents/<name>/` renders the detail card; lifecycle controls show
   only for an authorized identity and delegate to the listener.
+- Fleet rows show the latest published runner operation and phase. The detail
+  card also reports turn elapsed, last transcript progress, queue, inference,
+  tool, and wait observations. A field is explicitly `Unknown` when the
+  listener has no authoritative runtime signal; the app does not infer current
+  activity from log text.
 - Cross-host rows are hidden from a non-cross-host identity and flagged for one.
 - Static (`/static/scitex_agent_container/agents.css`) and the scitex-ui shell
   assets resolve (no 404s) — the Hub's staticfiles gather must include the

@@ -150,6 +150,9 @@ async def agent_status(request: Request) -> JSONResponse:
         control = None
     if control is not None:
         body["runtime_control"] = control
+    from ._activity_projection import activity_projection
+
+    body["activity"] = activity_projection(sd, runtime_control=control)
     # PR-1 — stillborn surface. If the runtime dir has a
     # ``STARTUP_FAILED`` marker (= the spawn never produced an SDK
     # session), echo it so callers don't have to also poll a separate

@@ -62,7 +62,11 @@ STATUS: dict[str, Any] = {
               "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
               "model": "sonnet", "pid": 4294967291, "session_id": "a" * 32,
               "a2a_port": 19000, "turn_url": f"http://{LOCAL_NAME}:19000/v1/turn",
-              "inbox_reachable": "true"},
+              "inbox_reachable": "true",
+              "activity": {
+                  "operation": {"state": "observed", "value": "busy", "source": "heartbeat.state"},
+                  "phase": {"state": "observed", "value": "reviewing", "source": "heartbeat.current_phase"},
+              }},
     "beta": {"name": "beta", "liveness": {"verdict": "DEAD"}, "status": "stopped",
              "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
              "model": "haiku", "pid": 222, "session_id": "b" * 32,
