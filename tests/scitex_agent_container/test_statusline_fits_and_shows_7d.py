@@ -101,7 +101,12 @@ def test_the_budget_fits_the_narrowest_pane_in_the_fleet():
 
 def test_hpc_fqdn_keeps_only_the_unique_node_label():
     """A DNS suffix must not evict useful fields from the fixed-width line."""
-    assert _short_host("spartan-bm148.hpc.unimelb.edu.au") == "spartan-bm148"
+    # Arrange
+    fqdn = "spartan-bm148.hpc.unimelb.edu.au"
+    # Act
+    rendered = _short_host(fqdn)
+    # Assert
+    assert rendered == "spartan-bm148"
 
 
 def test_the_live_payload_renders_within_the_width_budget(named_agent):
