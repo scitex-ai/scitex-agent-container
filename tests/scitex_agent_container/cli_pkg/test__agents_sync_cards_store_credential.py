@@ -26,8 +26,10 @@ def _private(path: Path, text: str) -> Path:
 
 
 def test_install_preserves_unrelated_rows_and_is_idempotent(tmp_path: Path) -> None:
+    # Arrange
     path = _private(tmp_path / ".pgpass", "other:5432:db:somebody:keep-me\n")
 
+    # Act
     first = install_exact_row(
         path, endpoint=ENDPOINT, role=ROLE, raw_password="s\\:ecret", apply_changes=True
     )
@@ -36,22 +38,26 @@ def test_install_preserves_unrelated_rows_and_is_idempotent(tmp_path: Path) -> N
         path, endpoint=ENDPOINT, role=ROLE, raw_password="s\\:ecret", apply_changes=True
     )
 
+    # Assert
     assert (
         first,
         second,
         path.read_text(encoding="utf-8"),
         path.stat().st_mode & 0o777,
+        "other:5432:db:somebody:keep-me\n" in after,
+        after.count(f"scitex-primary:55432:scitex:{ROLE}:"),
     ) == (
         "provisioned",
         "ready",
         after,
         0o600,
+        True,
+        1,
     )
-    assert "other:5432:db:somebody:keep-me\n" in after
-    assert after.count(f"scitex-primary:55432:scitex:{ROLE}:") == 1
 
 
 def test_install_replaces_only_conflicting_exact_rows(tmp_path: Path) -> None:
+    # Arrange
     path = _private(
         tmp_path / ".pgpass",
         f"scitex-primary:55432:scitex:{ROLE}:old-a\n"
@@ -59,10 +65,12 @@ def test_install_replaces_only_conflicting_exact_rows(tmp_path: Path) -> None:
         f"*:55432:*:{ROLE}:wildcard-stays\n",
     )
 
+    # Act
     status = install_exact_row(
         path, endpoint=ENDPOINT, role=ROLE, raw_password="new", apply_changes=True
     )
 
+    # Assert
     text = path.read_text(encoding="utf-8")
     assert (status, "old-a" in text, "old-b" in text, "wildcard-stays" in text) == (
         "updated",
@@ -73,19 +81,23 @@ def test_install_replaces_only_conflicting_exact_rows(tmp_path: Path) -> None:
 
 
 def test_dry_run_does_not_change_passfile(tmp_path: Path) -> None:
+    # Arrange
     path = _private(tmp_path / ".pgpass", "unrelated:1:x:y:z\n")
     before = path.read_bytes()
 
+    # Act
     status = install_exact_row(
         path, endpoint=ENDPOINT, role=ROLE, raw_password="secret", apply_changes=False
     )
 
+    # Assert
     assert (status, path.read_bytes()) == ("planned", before)
 
 
 def test_sync_uses_stdin_not_argv_and_preflights_all_before_apply(
     tmp_path: Path,
 ) -> None:
+    # Arrange
     source = _private(tmp_path / ".pgpass", f"*:55432:*:{ROLE}:never-print-this\n")
     calls: list[tuple[list[str], str]] = []
 
@@ -94,6 +106,7 @@ def test_sync_uses_stdin_not_argv_and_preflights_all_before_apply(
         status = "provisioned" if "--apply" in argv else "planned"
         return subprocess.CompletedProcess(argv, 0, json.dumps({"status": status}), "")
 
+    # Act
     result = sync_to_peers(
         ("compute-01", "compute-03"),
         role=ROLE,
@@ -102,15 +115,22 @@ def test_sync_uses_stdin_not_argv_and_preflights_all_before_apply(
         runner=runner,
     )
 
-    assert [item.status for item in result] == ["provisioned", "provisioned"]
-    assert ["--apply" in argv for argv, _ in calls] == [False, False, True, True]
-    assert all("never-print-this" not in " ".join(argv) for argv, _ in calls)
-    assert all(
-        json.loads(stdin)["password"] == "never-print-this" for _, stdin in calls
+    # Assert
+    assert (
+        [item.status for item in result],
+        ["--apply" in argv for argv, _ in calls],
+        all("never-print-this" not in " ".join(argv) for argv, _ in calls),
+        all(json.loads(stdin)["password"] == "never-print-this" for _, stdin in calls),
+    ) == (
+        ["provisioned", "provisioned"],
+        [False, False, True, True],
+        True,
+        True,
     )
 
 
 def test_failed_preflight_prevents_every_apply(tmp_path: Path) -> None:
+    # Arrange
     source = _private(tmp_path / ".pgpass", f"*:55432:*:{ROLE}:secret\n")
     calls: list[list[str]] = []
 
@@ -122,7 +142,9 @@ def test_failed_preflight_prevents_every_apply(tmp_path: Path) -> None:
             argv, 0, json.dumps({"status": "planned"}), ""
         )
 
-    with pytest.raises(NotifyCredentialError, match="compute-03"):
+    # Act
+    caught: NotifyCredentialError | None = None
+    try:
         sync_to_peers(
             ("compute-01", "compute-03"),
             role=ROLE,
@@ -130,16 +152,26 @@ def test_failed_preflight_prevents_every_apply(tmp_path: Path) -> None:
             apply_changes=True,
             runner=runner,
         )
+    except NotifyCredentialError as exc:
+        caught = exc
 
-    assert not any("--apply" in argv for argv in calls)
+    # Assert
+    assert (
+        isinstance(caught, NotifyCredentialError),
+        "compute-03" in str(caught),
+        any("--apply" in argv for argv in calls),
+    ) == (True, True, False)
 
 
 def test_ambiguous_source_credentials_are_refused(tmp_path: Path) -> None:
+    # Arrange
     source = _private(
         tmp_path / ".pgpass",
         f"*:55432:*:{ROLE}:one\nscitex-primary:55432:scitex:{ROLE}:two\n",
     )
 
+    # Act
+    # Assert
     with pytest.raises(NotifyCredentialError, match="ambiguous"):
         sync_to_peers(
             ("compute-01",),
