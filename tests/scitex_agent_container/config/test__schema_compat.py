@@ -17,14 +17,106 @@ def _hermes_entry() -> dict:
     }
 
 
+def _claude_code_entry(*, account: str | None = None) -> dict:
+    entry = {
+        "session": {"mode": "continue", "max_age_minutes": None},
+        "approval_policy": "never",
+        "watchdog": {
+            "enabled": False,
+            "interval": 1.5,
+            "responses": {"y_n": "1", "y_y_n": "2", "waiting": "wait"},
+        },
+    }
+    if account is not None:
+        entry["account"] = account
+    return entry
+
+
 def _comms(channels: list[str] | None = None) -> dict:
     return {
         "channels": (
-            ["server:sac", "server:scitex-cards"]
-            if channels is None
-            else channels
+            ["server:sac", "server:scitex-cards"] if channels is None else channels
         )
     }
+
+
+def test_claude_code_account_is_accepted_and_folded_to_the_runtime_boundary():
+    # Arrange -- the Hub-style canonical spec has no legacy spec.claude block.
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {
+                "claude-code": _claude_code_entry(account="scitex-01-scitex-ai")
+            },
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    normalized = normalize_document(raw)
+    # Assert
+    assert errors == []
+    assert normalized["spec"]["claude"]["account"] == "scitex-01-scitex-ai"
+
+
+@pytest.mark.parametrize("account", [None, "", "   ", 1, [], {}])
+def test_claude_code_account_must_be_a_non_empty_string(account):
+    # Arrange
+    entry = _claude_code_entry()
+    entry["account"] = account
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"claude-code": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.claude-code.account must be a non-empty string"
+    ]
+
+
+def test_claude_code_account_rejects_ambiguous_surrounding_whitespace():
+    # Arrange
+    entry = _claude_code_entry(account=" scitex-01-scitex-ai ")
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"claude-code": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == [
+        "spec.available_harnesses.claude-code.account must not have leading or "
+        "trailing whitespace"
+    ]
+
+
+def test_account_is_rejected_on_a_harness_that_does_not_own_claude_oauth():
+    # Arrange
+    entry = _hermes_entry()
+    entry["account"] = "scitex-01-scitex-ai"
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = canonical_surface_errors(raw)
+    # Assert
+    assert errors == ["spec.available_harnesses.hermes has unknown fields: ['account']"]
 
 
 def test_canonical_hermes_harness_entry_is_accepted():
