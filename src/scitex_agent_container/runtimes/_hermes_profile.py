@@ -24,7 +24,6 @@ from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 
 API_KEY_FILE = "hermes-api.key"
 API_PORT_FILE = "hermes-api.port"
-SESSION_AFFINITY_HEADER = "X-SciTeX-Session-ID"
 _MCP_NON_SECRET_ENV = {
     "PGPASSFILE",
     "PGUSER",
@@ -184,6 +183,7 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
             max_concurrent_children=config.delegation.max_concurrent_children,
             worktree_isolation=config.delegation.worktree_isolation,
         ),
+        agent_name=config.name,
     )
 
 
@@ -352,16 +352,6 @@ def ensure_api_key(state_dir: Path) -> str:
     return value
 
 
-def _bind_session_affinity(
-    rendered: dict[str, Any], *, config: AgentConfig, plan: LaunchPlan
-) -> None:
-    """Give every request from this SAC conversation one stable gateway key."""
-    provider = rendered["providers"][f"sac-{plan.engine.key}"]
-    provider.setdefault("extra_headers", {})[SESSION_AFFINITY_HEADER] = (
-        f"sac:{config.name}"
-    )
-
-
 def materialize_hermes_profile(
     config: AgentConfig, *, state_dir: Path, api_port: int
 ) -> tuple[str, list[Path]]:
@@ -384,7 +374,6 @@ def materialize_hermes_profile(
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
     )
-    _bind_session_affinity(rendered, config=config, plan=plan)
     rendered["gateway"] = {
         "api_server": {
             "enabled": True,
@@ -459,7 +448,6 @@ def materialize_hermes_tui_profile(
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
     )
-    _bind_session_affinity(rendered, config=config, plan=plan)
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
     )

@@ -15,8 +15,12 @@ run_agent = pytest.importorskip(
     reason="runs against the pinned Hermes environment during image verification",
 )
 
-from scitex_agent_container.config._hermes_config import compile_hermes_config
-from scitex_agent_container.config._launch_plan import compile_launch_plan
+from scitex_agent_container.config._hermes_config import (  # noqa: E402
+    compile_hermes_config,
+)
+from scitex_agent_container.config._launch_plan import (  # noqa: E402
+    compile_launch_plan,
+)
 
 
 def _spec(endpoint_url: str) -> dict:
@@ -128,7 +132,8 @@ def _provider(*, live: bool):
 @contextmanager
 def _profile(tmp_path, endpoint_url: str):
     rendered = compile_hermes_config(
-        compile_launch_plan(_spec(endpoint_url)), workdir=str(tmp_path)
+        compile_launch_plan(_spec(endpoint_url), agent_name="timeout-probe"),
+        workdir=str(tmp_path),
     )
     profile = tmp_path / ".hermes"
     profile.mkdir()

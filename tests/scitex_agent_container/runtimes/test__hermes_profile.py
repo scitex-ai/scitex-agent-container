@@ -670,7 +670,10 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
     ]
-    expected_headers = {"X-SciTeX-Session-ID": "sac:scholar"}
+    expected_headers = {
+        "X-SciTeX-Agent-ID": "scholar",
+        "X-SciTeX-Session-ID": "sac:scholar",
+    }
     # Act
     with _replace_attributes(replacements):
         targets = profile.materialize_hermes_tui_profile(config, state_dir=tmp_path)
