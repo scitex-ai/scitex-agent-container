@@ -85,6 +85,7 @@ class _AgentsGroup(HelpRecursiveGroup):
                 "scratch-migrate",
                 "link-specs",
                 "provision-cards-notify",
+                "sync-cards-store-credential",
                 "reconcile-turn-bridge",
             ],
         ),
@@ -330,6 +331,12 @@ from ._agents_provision_cards_notify import (  # noqa: E402
 )
 
 _register_provision_cards_notify(agent_group)
+
+from ._agents_sync_cards_store_credential import (  # noqa: E402
+    register as _register_sync_cards_store_credential,
+)
+
+_register_sync_cards_store_credential(agent_group)
 
 # `declare-a2a-host` — one-shot fleet sweep making every spec state its own
 # a2a bind address instead of inheriting one from a code default. Sits beside
