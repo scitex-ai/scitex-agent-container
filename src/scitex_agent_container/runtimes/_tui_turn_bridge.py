@@ -104,6 +104,7 @@ log = logging.getLogger(__name__)
 
 _CHANNEL_OPEN_RE = re.compile(r"^<channel\s+(?P<attrs>[^>]+)>")
 _CHANNEL_ATTR_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
+_CCT_SOURCE_ALIASES = frozenset({"cct", "claude-code-telegrammer"})
 
 
 def _native_cause(exc: BaseException) -> StatusCode | None:
@@ -145,13 +146,20 @@ def _cct_delivery_id(agent_name: str, text: str) -> str | None:
     if opening is None:
         return None
     attrs = dict(_CHANNEL_ATTR_RE.findall(opening.group("attrs")))
-    if attrs.get("source") != "cct":
+    # CCT authors ``source=cct`` on its wake rail. Claude Code renders the
+    # same MCP notification under the server name ``claude-code-telegrammer``.
+    # The transport label is not identity: normalize both spellings before
+    # deriving the key so a rail change cannot turn one Telegram update into
+    # two SAC operations.
+    if attrs.get("source") not in _CCT_SOURCE_ALIASES:
         return None
     chat_id = attrs.get("chat_id", "").strip()
     message_id = attrs.get("message_id", "").strip()
     if not chat_id or not message_id:
         return None
     digest = hashlib.sha256(
+        # Keep the historical namespace so identities authored before this
+        # source-alias normalization remain stable across deployment.
         f"{agent_name}\0cct\0{chat_id}\0{message_id}".encode("utf-8")
     ).hexdigest()[:24]
     return f"cct_{digest}"
