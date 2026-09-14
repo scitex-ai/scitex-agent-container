@@ -332,7 +332,10 @@ def test_compute_shape_runs_to_the_exec(compute):
 
 def test_compute_shape_reports_the_gpfs_absent_profile(compute):
     # Arrange
-    expected = f"exec-in-sif: {_GPFS} absent (scratch under /scratch/$USER, no GPFS bind)"
+    expected = (
+        f"exec-in-sif: {_GPFS} absent "
+        "(no GPFS bind; test scratch resolved independently)"
+    )
     # Act
     stdout = compute.result.stdout
     # Assert

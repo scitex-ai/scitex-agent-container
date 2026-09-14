@@ -353,7 +353,7 @@ if [ -d "$GPFS_PROJECT" ]; then
     GPFS_STATE="present (punim0264 bound; test scratch resolved independently)"
 else
     APPTAINER_ARGV+=(--bind "$SAC_CI_TMPDIR_ROOT")
-    GPFS_STATE="absent (scratch under /scratch/\$USER, no GPFS bind)"
+    GPFS_STATE="absent (no GPFS bind; test scratch resolved independently)"
 fi
 
 # Echo the resolved plan: when a run fails on an unfamiliar node, the FIRST
