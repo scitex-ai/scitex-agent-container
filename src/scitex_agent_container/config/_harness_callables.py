@@ -192,12 +192,22 @@ def _hermes_tui_inner_argv(
         str(config.workdir),
         "--pass-session-id",
     ]
-    if config.claude.session == "continue":
+    session_mode = str(config.claude.session or "").strip().lower()
+    if session_mode == "continue":
         argv += [
             "--continue",
             f"sac:{config.name}",
             "--create-if-missing",
         ]
+    elif session_mode == "resume":
+        resume_id = str(config.claude.resume_id or "").strip()
+        if not resume_id:
+            raise ValueError(
+                "Hermes session mode 'resume' requires spec.claude.resume_id "
+                "or the CLI --resume <session-id>; refusing to degrade to a "
+                "fresh session"
+            )
+        argv += ["--resume", resume_id]
     prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
     if prompts:
         argv += ["--query", "\n\n".join(prompts)]

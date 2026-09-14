@@ -123,6 +123,26 @@ def test_resume_command_keeps_context_but_never_replays_startup_query():
     ]
 
 
+def test_fresh_owner_adopts_its_only_isolated_gateway_session():
+    # Arrange
+    sessions = [{"id": "fresh-1", "title": "generated"}]
+    # Act
+    selected = owner._select_owned_session(
+        sessions, expected_identity="", previous="", adopt_single=True
+    )
+    # Assert
+    assert selected == sessions[0]
+
+
+def test_resume_request_uses_the_explicit_session_as_owner_identity():
+    # Arrange
+    command = ["hermes", "chat", "--tui", "--resume", "session-42"]
+    # Act
+    request = owner._requested_session(command)
+    # Assert
+    assert request == ("resume", "session-42")
+
+
 def test_supervisor_reconnects_official_tui_to_exact_persisted_session(tmp_path):
     # Arrange
     # The session is first observed live, then disappears after the

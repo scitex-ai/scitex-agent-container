@@ -78,7 +78,10 @@ def _recorder():
         dry_run: bool,
         force: bool,
         engine: str | None = None,
+        session_mode: str | None = None,
+        resume_id: str | None = None,
     ) -> int:
+        del session_mode, resume_id
         seen.append(peer)
         engines.append(engine)
         return 0

@@ -35,6 +35,11 @@ from ._dispatch import try_dispatch
 from ._resume_preflight import ResumePreflightError
 
 
+def should_preflight_claude_resume(config, resume_id: str | None) -> bool:
+    """Use the Claude transcript preflight only for Claude-family IDs."""
+    return bool(resume_id) and str(getattr(config, "harness", "")).lower() != "hermes"
+
+
 def should_preview_and_require_yes(
     *,
     yes: bool,
@@ -199,6 +204,8 @@ def run_single_targets(
                         dry_run=dry_run,
                         force=force,
                         engine=engine,
+                        session_mode=session_mode,
+                        resume_id=resume_id,
                     ):
                         continue
                 if skip:
@@ -295,7 +302,11 @@ def run_single_targets(
                 # + informative (lists resumable conversations) so the choice is
                 # explicit — never a silent fresh start. Skipped on --no-preflight
                 # and dry-run.
-                if resume_id and not no_preflight and not dry_run:
+                if (
+                    should_preflight_claude_resume(config, resume_id)
+                    and not no_preflight
+                    and not dry_run
+                ):
                     from ._resume_preflight import preflight_resume_id
 
                     try:

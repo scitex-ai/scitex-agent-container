@@ -19,6 +19,19 @@ _HERMES_STATUS_RE = re.compile(r"(?m)^[ \t]*─+\s+([^\u2502\n]+?)\s*\u2502")
 _HERMES_COMPOSER_RE = re.compile(r"(?m)^[ \t]*❯(?P<body>[^\n]*)$")
 
 
+def _hermes_pane_boot_ready(pane: str) -> bool | None:
+    """Classify a bound Hermes composer, rejecting its setup wall."""
+    statuses = list(_HERMES_STATUS_RE.finditer(pane or ""))
+    composers = list(_HERMES_COMPOSER_RE.finditer(pane or ""))
+    if not statuses or not composers:
+        return None
+    status = statuses[-1]
+    composer = composers[-1]
+    if composer.start() <= status.end():
+        return None
+    return "setup required" not in status.group(1).strip().lower()
+
+
 def _hermes_pane_is_idle(pane: str) -> bool:
     """True only for Hermes' live ``ready`` footer and empty composer.
 
@@ -111,6 +124,33 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
     def _stop_session(self, config: AgentConfig) -> bool:
         return super().stop(config)
 
+    def _drain_at_boot(
+        self,
+        config: AgentConfig,
+        *,
+        timeout_s: float,
+        poll_s: float = 0.5,
+    ) -> bool:
+        """Observe Hermes' own footer until its session composer is bound."""
+        import logging
+
+        name = self.session_name(config)
+        deadline = time.monotonic() + timeout_s
+        while name and self._mux.exists(name) and time.monotonic() < deadline:
+            pane = self._mux.capture_content(name)
+            ready = _hermes_pane_boot_ready(pane)
+            if ready is not None:
+                if not ready:
+                    logging.getLogger(__name__).error(
+                        "Hermes TUI start refused for %s: pane is at Setup Required "
+                        "and has no active model session",
+                        config.name,
+                    )
+                return ready
+            if poll_s > 0:
+                time.sleep(poll_s)
+        return False
+
     @staticmethod
     def _start_recovery(config: AgentConfig) -> None:
         from ._hermes_stale_recovery import start_recovery_monitor
@@ -142,9 +182,9 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         return targets[0] if targets else None
 
     def start(self, config: AgentConfig, **kwargs) -> bool:
-        # Claude's modal drainer does not understand Hermes' screen, and the
-        # Hermes argv already carries the startup prompts as its first query.
-        kwargs["drain_pickers_at_boot"] = False
+        # Use Hermes' observation-only boot drain above. It sends no Claude
+        # picker keys and rejects the live-but-sessionless Setup Required wall.
+        kwargs["drain_pickers_at_boot"] = True
         kwargs["inject_startup_prompts"] = False
         started = self._start_session(config, **kwargs)
         if started and not kwargs.get("dry_run", False):
