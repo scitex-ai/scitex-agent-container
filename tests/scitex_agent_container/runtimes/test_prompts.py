@@ -170,7 +170,7 @@ _FILE_TRUST_DEFAULT_NO = (
 
 
 def test_file_trust_default_no_match():
-    """Claude Code 2.1.197's unnumbered, default-No trust picker."""
+    """Claude Code 2.1.197/2.1.270's unnumbered default-No trust picker."""
     # Arrange / Act
     result = _detect_file_trust_default_no(_FILE_TRUST_DEFAULT_NO)
     # Assert

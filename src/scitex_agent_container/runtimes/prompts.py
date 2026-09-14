@@ -182,8 +182,8 @@ def _detect_file_trust_radio(content: str) -> bool:
 def _detect_file_trust_default_no(content: str) -> bool:
     """Unnumbered file-trust picker whose initial selection is ``No, exit``.
 
-    Claude Code 2.1.197 renders this layout with the cursor on the unsafe
-    default::
+    Claude Code 2.1.197 and 2.1.270 render this layout with the cursor on the
+    unsafe default::
 
         Quick safety check: Is this a project you created or one you trust?
         ❯ No, exit
