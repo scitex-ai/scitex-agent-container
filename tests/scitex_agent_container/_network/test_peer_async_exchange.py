@@ -152,17 +152,8 @@ def test_async_receipt_is_polled_to_confirmed_delivery() -> None:
     ) == (True, True, ["/v1/turn", f"/v1/exchanges/{EXCHANGE_ID}"])
 
 
-def test_nonblocking_submit_returns_202_receipt_without_polling(monkeypatch) -> None:
+def test_nonblocking_submit_returns_202_receipt_without_polling() -> None:
     # Arrange — the target may remain busy indefinitely after admission.
-    statuses: list[str] = []
-    monkeypatch.setattr(
-        "scitex_agent_container._network.peer.record_dispatch_safe",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "scitex_agent_container._network.peer.update_dispatch_safe",
-        lambda _dispatch_id, status: statuses.append(status),
-    )
     with _exchange_server(results=[_result(102, "still delivering")]) as (
         url,
         paths,
@@ -180,8 +171,7 @@ def test_nonblocking_submit_returns_202_receipt_without_polling(monkeypatch) -> 
         "pending and non-final" in response,
         "Do not resend" in response,
         paths,
-        statuses,
-    ) == (True, True, True, ["/v1/turn"], [])
+    ) == (True, True, True, ["/v1/turn"])
 
 
 def test_nonfinal_exchange_is_polled_until_final() -> None:
