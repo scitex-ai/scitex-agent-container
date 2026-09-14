@@ -10,6 +10,9 @@ from ._hermes_compression import HermesCompressionSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 from ._launch_plan import LaunchPlan
 
+AGENT_ID_HEADER = "X-SciTeX-Agent-ID"
+SESSION_ID_HEADER = "X-SciTeX-Session-ID"
+
 
 def _api_root(endpoint_url: str, protocol: str) -> str:
     suffix = {
@@ -34,6 +37,8 @@ def compile_hermes_config(
     """Return a credential-free Hermes configuration derived from ``plan``."""
     if plan.harness != "hermes":
         raise ValueError(f"Hermes compiler received harness {plan.harness!r}")
+    if plan.agent_name is None:
+        raise ValueError("Hermes compiler requires an agent-bound launch plan")
     if plan.launch_mode not in {"headless", "tui"}:
         raise ValueError("Hermes requires launch_mode 'headless' or 'tui'")
     if plan.endpoint.protocol not in {
@@ -80,6 +85,10 @@ def compile_hermes_config(
         "model": model,
         "default_model": model,
         "models": {model: model_config},
+        "extra_headers": {
+            AGENT_ID_HEADER: plan.agent_name,
+            SESSION_ID_HEADER: f"sac:{plan.agent_name}",
+        },
     }
     agent: dict[str, Any] = {
         "max_turns": max_turns,
@@ -135,4 +144,4 @@ def compile_hermes_config(
     }
 
 
-__all__ = ["compile_hermes_config"]
+__all__ = ["AGENT_ID_HEADER", "SESSION_ID_HEADER", "compile_hermes_config"]

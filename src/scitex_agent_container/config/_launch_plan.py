@@ -50,6 +50,7 @@ class LaunchPlan:
     endpoint: Endpoint
     may_spawn: bool = True
     delegation: DelegationPolicy = DelegationPolicy()
+    agent_name: str | None = None
 
 
 _ALIASES = {"anthropic": "claude-code", "claude": "claude-code"}
@@ -155,7 +156,11 @@ def _endpoint(protocol: str, value: object, path: str) -> Endpoint:
 
 
 def compile_launch_plan(
-    spec: Mapping, *, engine: str | None = None, harness: str | None = None
+    spec: Mapping,
+    *,
+    engine: str | None = None,
+    harness: str | None = None,
+    agent_name: str | None = None,
 ) -> LaunchPlan:
     """Compile the selection section of a self-contained spec, without I/O.
 
@@ -165,6 +170,15 @@ def compile_launch_plan(
     contract; it never substitutes a different model or inference engine.
     """
     spec = _mapping(spec, "spec")
+    if agent_name is not None:
+        agent_name = _text(agent_name, "agent_name")
+        if not all(
+            character in "abcdefghijklmnopqrstuvwxyz0123456789-_"
+            for character in agent_name
+        ):
+            raise ValueError(
+                "agent_name must use lowercase letters, digits, '-' and '_' only"
+            )
     may_spawn, delegation = _delegation_policy(spec)
     family = _text(
         harness if harness is not None else spec.get("harness"), "spec.harness"
@@ -267,6 +281,7 @@ def compile_launch_plan(
                 endpoint,
                 may_spawn=may_spawn,
                 delegation=delegation,
+                agent_name=agent_name,
             )
     raise ValueError(
         f"harness {family!r} cannot use engine {key!r}: requires one of {_PROTOCOLS[family]}"

@@ -63,6 +63,24 @@ def test_launch_plan_is_immutable():
         plan.engine.model_id = "another-model"
 
 
+def test_agent_identity_is_explicit_and_immutable_in_launch_plan():
+    # Arrange / Act
+    plan = compile_launch_plan(spec(), harness="hermes", agent_name="scitex-hub")
+    # Assert
+    assert plan.agent_name == "scitex-hub"
+
+
+@pytest.mark.parametrize(
+    "value", ["", "SCITEX-HUB", "scitex/hub", "scitex hub", "scitex\nhub"]
+)
+def test_invalid_agent_identity_is_rejected(value):
+    # Arrange / Act
+    ctx = pytest.raises(ValueError, match="agent_name")
+    # Assert
+    with ctx:
+        compile_launch_plan(spec(), harness="hermes", agent_name=value)
+
+
 def test_no_fleet_or_implicit_engine_fallback():
     # Arrange
     raw = spec()
