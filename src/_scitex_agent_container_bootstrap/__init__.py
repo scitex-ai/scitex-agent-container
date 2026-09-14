@@ -82,40 +82,104 @@ def _editable_authorities(paths: tuple[Path, ...]) -> set[Path]:
     return roots
 
 
+def _checkout_package_root(working_dir: Path) -> Path | None:
+    """Return the SAC package root when CWD is inside a SAC source checkout.
+
+    The console bootstrap cannot import SAC to answer this question: the
+    import is precisely what a stale ``PYTHONPATH`` can redirect. Identify a
+    checkout from its own project declaration and both source-package roots,
+    using only stdlib file reads before any SAC module is imported.
+    """
+    current = working_dir.resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        project = candidate / "pyproject.toml"
+        package = candidate / "src" / "scitex_agent_container"
+        bootstrap = candidate / "src" / "_scitex_agent_container_bootstrap"
+        if not (
+            project.is_file()
+            and (package / "__init__.py").is_file()
+            and (bootstrap / "__init__.py").is_file()
+        ):
+            continue
+        try:
+            lines = project.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        section = ""
+        for raw in lines:
+            line = raw.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line
+                continue
+            if section != "[project]" or not line.startswith("name"):
+                continue
+            key, separator, value = line.partition("=")
+            if (
+                separator
+                and key.strip() == "name"
+                and value.strip().strip("'\"") == _DIST_NAME
+            ):
+                return package.resolve()
+    return None
+
+
+def _runtime_package_root(runtime_root: Path | None) -> Path:
+    """Resolve the package Python would import, without importing it."""
+    if runtime_root is not None:
+        return runtime_root.resolve()
+    spec = importlib.util.find_spec("scitex_agent_container")
+    origin = None if spec is None else spec.origin
+    if not origin:
+        raise ImageBuildSourceMismatch(
+            "refusing `sac image build`: scitex_agent_container has no "
+            "filesystem import origin"
+        )
+    return Path(origin).resolve().parent
+
+
 def assert_image_build_source_authority(
     argv: list[str] | None = None,
     *,
     metadata_paths: tuple[Path, ...] | None = None,
     runtime_root: Path | None = None,
+    working_dir: Path | None = None,
 ) -> None:
-    """Fail before importing SAC when an editable authority is shadowed."""
+    """Fail before importing SAC when a checkout authority is shadowed."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not _is_image_build(args):
         return
 
     paths = _environment_metadata_paths() if metadata_paths is None else metadata_paths
     authorities = _editable_authorities(paths)
-    if not authorities:
-        return
-    if len(authorities) != 1:
+    if len(authorities) > 1:
         rendered = "\n".join(f"  - {root}" for root in sorted(authorities))
         raise ImageBuildSourceMismatch(
             "refusing `sac image build`: the active interpreter contains "
             f"multiple editable SAC authorities:\n{rendered}"
         )
 
+    observed = _runtime_package_root(runtime_root)
+    cwd = Path.cwd() if working_dir is None else working_dir
+    cwd_authority = _checkout_package_root(cwd)
+    if cwd_authority is not None and observed != cwd_authority:
+        raise ImageBuildSourceMismatch(
+            "refusing `sac image build` before filesystem or image mutation: "
+            "the command is running inside one SAC checkout, but Python would "
+            "import another.\n"
+            f"  command-working-directory package root: {cwd_authority}\n"
+            f"  runtime-loaded package root: {observed}\n"
+            "Unset the stale PYTHONPATH entry or explicitly select the checkout "
+            "you intend to build, for example:\n"
+            "  unset PYTHONPATH\n"
+            f"  PYTHONPATH={cwd_authority.parent} uv run sac image build ..."
+        )
+
+    if not authorities:
+        return
+
     expected = next(iter(authorities))
-    if runtime_root is None:
-        spec = importlib.util.find_spec("scitex_agent_container")
-        origin = None if spec is None else spec.origin
-        if not origin:
-            raise ImageBuildSourceMismatch(
-                "refusing `sac image build`: scitex_agent_container has no "
-                "filesystem import origin"
-            )
-        observed = Path(origin).resolve().parent
-    else:
-        observed = runtime_root.resolve()
     if observed == expected:
         return
 
