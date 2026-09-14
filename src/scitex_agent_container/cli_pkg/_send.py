@@ -69,6 +69,18 @@ def _pending_exchange_payload(name: str, pending: Any) -> dict[str, Any]:
     """Keep an accepted exchange pending instead of recasting it as failure."""
     from scitex_dev.status import StatusCode
 
+    raw_body = pending.raw_body if isinstance(pending.raw_body, dict) else {}
+    raw_receipt = raw_body.get("receipt")
+    receipt = (
+        dict(raw_receipt)
+        if isinstance(raw_receipt, dict)
+        else {"state": "pending", "final": False}
+    )
+    # The typed exception is only raised for a non-final accepted exchange.
+    # Keep that canonical truth even if the most recent GET omitted the
+    # optional human-facing receipt projection.
+    receipt["state"] = "pending"
+    receipt["final"] = False
     message = (
         f"turn accepted as {pending.exchange_id} and still pending; do not resend; "
         f"poll with `{pending.poll_hint}`"
@@ -77,7 +89,9 @@ def _pending_exchange_payload(name: str, pending: Any) -> dict[str, Any]:
         "status": "pending",
         "agent": name,
         "exchange_id": pending.exchange_id,
-        "error": str(pending),
+        "receipt": receipt,
+        "poll_hint": pending.poll_hint,
+        "detail": str(pending),
         "status_code": StatusCode(kind="http", code=202, message=message).to_dict(),
     }
 

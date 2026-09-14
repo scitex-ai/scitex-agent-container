@@ -20,6 +20,39 @@ from ._state import DeliveryState
 __all__ = ["default_sdk_send", "deliver_via_sdk"]
 
 
+def _pending_exchange_detail(result: dict) -> str | None:
+    """Describe a canonical non-final receipt, including its poll surface."""
+    from scitex_dev.status import StatusCode, is_exchange_id
+
+    try:
+        status = StatusCode.from_dict(result.get("status_code", {}))
+    except (KeyError, TypeError, ValueError):
+        return None
+    exchange_id = result.get("exchange_id")
+    receipt = result.get("receipt")
+    if not (
+        status.kind == "http"
+        and status.code == 202
+        and not status.final
+        and is_exchange_id(exchange_id)
+        and isinstance(receipt, dict)
+        and receipt.get("state") == "pending"
+        and receipt.get("final") is False
+    ):
+        return None
+    poll_hint = result.get("poll_hint")
+    guidance = (
+        f"poll with `{poll_hint}`"
+        if poll_hint
+        else f"peer guidance: {status.message}"
+    )
+    return (
+        f"send_to_agent accepted exchange {exchange_id}, which remains pending. "
+        "Acceptance is non-final: it proves neither delivery nor submission. "
+        f"Do not resend; {guidance}"
+    )
+
+
 def default_sdk_send(agent: str, payload: str) -> tuple[Optional[bool], str]:
     """Deliver through the ``sac agents send`` library sibling.
 
@@ -55,6 +88,9 @@ def default_sdk_send(agent: str, payload: str) -> tuple[Optional[bool], str]:
             "RUNNING — a timeout is a statement about OUR PATIENCE, not about "
             "delivery, and must never be recorded as a failed send"
         )
+    pending_detail = _pending_exchange_detail(result)
+    if pending_detail is not None:
+        return None, pending_detail
     if status == "dispatched":
         return None, (
             "send_to_agent returned status='dispatched', which validates "
@@ -83,13 +119,22 @@ def deliver_via_sdk(
     question.
     """
     ok, detail = sdk_send_fn(agent, payload)
+    if ok is True:
+        submission_detail = (
+            f"{detail} (on the SDK path a completed turn proves submission — there "
+            "is no composer for text to sit unsent in)"
+        )
+    else:
+        submission_detail = (
+            f"{detail} (the SDK result is non-final or refused, so it does not "
+            "prove submission)"
+        )
     return state.with_signal(
         "is_payload_delivered", ok, detail, send_detail=detail
     ).with_signal(
         "is_payload_submitted",
         ok,
-        f"{detail} (on the SDK path a completed turn proves submission — there "
-        f"is no composer for text to sit unsent in)",
+        submission_detail,
     )
 
 

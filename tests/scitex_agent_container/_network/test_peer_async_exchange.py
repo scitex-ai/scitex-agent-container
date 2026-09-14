@@ -293,6 +293,50 @@ def test_nonfinal_timeout_preserves_exchange_and_says_not_to_resend() -> None:
     )
 
 
+def test_zero_poll_budget_preserves_initial_pending_receipt() -> None:
+    # Arrange — no GET can run, so only the exact HTTP 202 body is available.
+    from scitex_agent_container._network._peer_exchange import resolve_turn_response
+
+    accepted = {
+        "exchange_id": EXCHANGE_ID,
+        "receipt": {
+            "state": "pending",
+            "final": False,
+            "delivery_mode": "steer",
+        },
+        "status_code": {
+            "kind": "http",
+            "code": 202,
+            "message": f"accepted; poll `/v1/exchanges/{EXCHANGE_ID}`",
+        },
+    }
+    # Act
+    try:
+        resolve_turn_response(
+            "http://127.0.0.1:19000/v1/turn",
+            accepted,
+            http_status=202,
+            timeout_s=0,
+        )
+    except PeerError as exc:
+        error = exc
+    else:
+        raise AssertionError("zero-budget exchange did not remain pending")
+    body = getattr(error, "raw_body", None)
+    # Assert
+    assert (
+        isinstance(error, PeerTimeoutPending),
+        body["exchange_id"],
+        body["receipt"],
+        body["status_code"]["code"],
+    ) == (
+        True,
+        EXCHANGE_ID,
+        {"state": "pending", "final": False, "delivery_mode": "steer"},
+        202,
+    )
+
+
 def test_receipt_projection_cannot_contradict_status_primitive() -> None:
     # Arrange
     contradictory = _result(200, "delivered")
