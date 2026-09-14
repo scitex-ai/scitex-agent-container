@@ -246,8 +246,9 @@ def _submission_signal(
         )
     if submitted:
         return True, (
-            "the live compose box was observed to CLEAR after an idle-gated "
-            "Enter — the turn was submitted"
+            "after an idle-gated submit, the pane showed a new transcript/turn "
+            "signal or the compose box remained durably clear — the turn was "
+            "submitted"
         )
     if blind_during:
         return None, (
@@ -311,6 +312,8 @@ def deliver_via_tui(
         max_resends=max_resends,
         poll_s=poll_s,
         idle_wait_s=idle_wait_s,
+        escape_before_enter=True,
+        require_submission_proof=True,
         sleep_fn=sleep_fn,
         time_fn=time_fn,
     )
