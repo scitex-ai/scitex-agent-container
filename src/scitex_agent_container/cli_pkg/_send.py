@@ -65,6 +65,23 @@ from ._send_track import (  # noqa: F401  (re-export: long-standing import path)
 __all__ = ["send_to_agent", "build_track_command"]
 
 
+def _pending_exchange_payload(name: str, pending: Any) -> dict[str, Any]:
+    """Keep an accepted exchange pending instead of recasting it as failure."""
+    from scitex_dev.status import StatusCode
+
+    message = (
+        f"turn accepted as {pending.exchange_id} and still pending; do not resend; "
+        f"poll with `{pending.poll_hint}`"
+    )
+    return {
+        "status": "pending",
+        "agent": name,
+        "exchange_id": pending.exchange_id,
+        "error": str(pending),
+        "status_code": StatusCode(kind="http", code=202, message=message).to_dict(),
+    }
+
+
 def _post_turn(url: str, text: str, *, timeout_s: float) -> tuple[str, dict[str, Any]]:
     """Reach the runner's /v1/turn and return ``(reply, body)``.
 
@@ -354,6 +371,10 @@ def send_to_agent(
     try:
         reply, body = _post_turn(url, text, timeout_s=float(timeout_seconds))
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            return _pending_exchange_payload(name, exc)
         msg = str(exc)
         # peer.py wraps timeouts as "peer timeout at <url> after Ns" and
         # ssh+curl timeouts as "ssh+curl timeout to ...". Sniff either

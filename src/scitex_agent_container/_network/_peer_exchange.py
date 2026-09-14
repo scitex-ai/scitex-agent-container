@@ -38,23 +38,36 @@ def _receipt_exchange_id(payload: Any, *, http_status: int | None) -> str:
 
     if not isinstance(payload, dict):
         raise PeerError(f"peer returned malformed body: {payload!r}")
-    status = payload.get("status_code")
     exchange_id = payload.get("exchange_id")
-    valid_status = (
-        isinstance(status, dict)
-        and status.get("kind") == "http"
-        and type(status.get("code")) is int
-        and status.get("code") == 202
-    )
     # The ssh transport cannot currently recover the POST's HTTP status, so
     # ``None`` means "validate the canonical body" rather than inventing one.
     valid_http_status = http_status in (None, 202)
-    if not (valid_http_status and valid_status and is_exchange_id(exchange_id)):
+    if not valid_http_status:
         raise PeerError(
             "peer returned malformed body (asynchronous receipt): expected HTTP 202 "
             "with canonical xch_ exchange_id and status_code=http/202; "
             f"got HTTP {http_status!r}, body={payload!r}"
         )
+    if not is_exchange_id(exchange_id):
+        raise PeerError(
+            "peer returned malformed body (asynchronous receipt): expected HTTP 202 "
+            "with canonical xch_ exchange_id and status_code=http/202; "
+            f"got HTTP {http_status!r}, body={payload!r}"
+        )
+    status = _status_code(payload, exchange_id=str(exchange_id or "receipt"))
+    if not (
+        valid_http_status
+        and status.kind == "http"
+        and status.code == 202
+        and not status.final
+        and is_exchange_id(exchange_id)
+    ):
+        raise PeerError(
+            "peer returned malformed body (asynchronous receipt): expected HTTP 202 "
+            "with canonical xch_ exchange_id and status_code=http/202; "
+            f"got HTTP {http_status!r}, body={payload!r}"
+        )
+    _validate_receipt_projection(payload, status=status, exchange_id=exchange_id)
     return exchange_id
 
 
@@ -81,6 +94,8 @@ def _poll_exchange(url: str, exchange_id: str, *, timeout_s: float) -> str:
                 timeout_s=timeout_s,
                 possibilities=["accepted turn is still being delivered"],
                 raw_body=last_body,
+                exchange_id=exchange_id,
+                poll_hint=hint,
             )
 
         status_code, body = _get_exchange(status_url, timeout_s=remaining)
@@ -185,10 +200,24 @@ def _exchange_status(payload: dict[str, Any], *, exchange_id: str) -> StatusCode
     """Validate the canonical exchange result envelope."""
     from .peer import PeerError
 
-    wire = payload.get("status_code")
-    if payload.get("exchange_id") != exchange_id or not isinstance(wire, dict):
+    if payload.get("exchange_id") != exchange_id:
         raise PeerError(
             f"peer exchange {exchange_id} returned malformed result: {payload!r}"
+        )
+    status = _status_code(payload, exchange_id=exchange_id)
+    _validate_receipt_projection(payload, status=status, exchange_id=exchange_id)
+    return status
+
+
+def _status_code(payload: dict[str, Any], *, exchange_id: str) -> StatusCode:
+    """Parse the one authoritative status primitive from an exchange body."""
+    from .peer import PeerError
+
+    wire = payload.get("status_code")
+    if not isinstance(wire, dict):
+        raise PeerError(
+            f"peer returned malformed body: exchange {exchange_id} has no canonical "
+            f"status_code: {payload!r}"
         )
     try:
         return StatusCode.from_dict(wire)
@@ -198,6 +227,51 @@ def _exchange_status(payload: dict[str, Any], *, exchange_id: str) -> StatusCode
             "do not resend an accepted turn; repeat the same exchange GET and "
             "inspect the peer turn-bridge logs"
         ) from exc
+
+
+def _validate_receipt_projection(
+    payload: dict[str, Any], *, status: StatusCode, exchange_id: str
+) -> None:
+    """Reject a receipt projection that disagrees with ``StatusCode``.
+
+    ``status_code`` is the protocol primitive and therefore authoritative.
+    Hermes also includes a convenient ``receipt`` projection for humans.  It
+    is optional at protocol boundaries, but when present it must describe the
+    same finality/state; otherwise the client would have two incompatible
+    answers and no principled way to choose one.
+    """
+    from .peer import PeerError
+
+    receipt = payload.get("receipt")
+    if receipt is None:
+        return
+    if not isinstance(receipt, dict) or type(receipt.get("final")) is not bool:
+        raise PeerError(
+            f"peer exchange {exchange_id} returned malformed receipt projection: "
+            f"{receipt!r}; do not resend the accepted turn"
+        )
+    expected_state = _receipt_state(status)
+    if (
+        receipt.get("final") is not status.final
+        or receipt.get("state") != expected_state
+    ):
+        raise PeerError(
+            f"peer exchange {exchange_id} returned contradictory receipt: "
+            f"status_code={status.kind}/{status.code} derives "
+            f"state={expected_state!r}, final={status.final}, but receipt={receipt!r}; "
+            "do not resend the accepted turn"
+        )
+
+
+def _receipt_state(status: StatusCode) -> str:
+    """Derive Hermes' display projection from the canonical status."""
+    if not status.final:
+        return (
+            "retryable" if status.kind == "http" and status.code == 102 else "pending"
+        )
+    if status.kind == "http" and status.code == 200:
+        return "delivered"
+    return "failed"
 
 
 __all__ = ["resolve_turn_response"]

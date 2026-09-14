@@ -28,6 +28,7 @@ def _exchange_server(
     bodies = list(results or [])
     receipt = receipt_body or {
         "exchange_id": EXCHANGE_ID,
+        "receipt": {"state": "pending", "final": False, "delivery_mode": "steer"},
         "status_code": {
             "kind": "http",
             "code": 202,
@@ -70,8 +71,19 @@ def _exchange_server(
 
 
 def _result(code: int, message: str) -> dict:
+    final = code not in {102, 202}
+    state = (
+        "retryable"
+        if code == 102
+        else "pending"
+        if code == 202
+        else "delivered"
+        if code == 200
+        else "failed"
+    )
     return {
         "exchange_id": EXCHANGE_ID,
+        "receipt": {"state": state, "final": final},
         "status_code": {"kind": "http", "code": code, "message": message},
     }
 
@@ -228,4 +240,25 @@ def test_nonfinal_timeout_preserves_exchange_and_says_not_to_resend() -> None:
         EXCHANGE_ID in str(error),
         "do not resend" in str(error),
         "curl -sS" in str(error),
-    ) == (True, "exchange_pending", True, True, True)
+        getattr(error, "exchange_id", None),
+        "v1/exchanges" in str(getattr(error, "poll_hint", "")),
+    ) == (
+        True,
+        "exchange_pending",
+        True,
+        True,
+        True,
+        EXCHANGE_ID,
+        True,
+    )
+
+
+def test_receipt_projection_cannot_contradict_status_primitive() -> None:
+    # Arrange
+    contradictory = _result(200, "delivered")
+    contradictory["receipt"] = {"state": "pending", "final": False}
+    with _exchange_server(results=[contradictory]) as (url, _paths):
+        # Act
+        error = _capture_error(url)
+    # Assert
+    assert "contradictory receipt" in str(error)
