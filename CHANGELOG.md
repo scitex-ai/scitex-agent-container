@@ -7,6 +7,11 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **The base-image Hermes version gate matches its immutable source pin.**
+  Hermes commit `b635448768d6ba49bc1f75bd381f32336dde7ac8` declares version
+  0.21.2, so the recipe, artifact label, package manifest, and integration
+  contract now verify 0.21.2 instead of rejecting the correctly pinned source
+  as 0.21.1.
 - **HPC CI test scratch stays node-local.** The managed scratch resolver now
   honors an existing writable runner-provisioned child of `/tmp` or `/var/tmp`
   before considering shared storage. Test paths therefore no longer inherit
