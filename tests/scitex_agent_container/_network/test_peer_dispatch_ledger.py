@@ -2,7 +2,9 @@
 
 ``post_turn_to_url`` mints a dispatch_id, records a ``sent`` row before
 the POST, stamps the id into the request body, and transitions the row
-to ``delivered`` / ``timeout`` / ``failed`` once the round-trip resolves.
+to ``delivered`` / ``timeout`` / ``failed`` once a synchronous round-trip
+resolves. A validated non-final 202 remains ``sent`` until exchange finality is
+reconciled elsewhere.
 
 No mocks: a real ``http.server`` on loopback mimics ``/v1/turn`` and the ledger
 lives in a real, throwaway PostgreSQL schema (the ``pg_schema`` fixture). The
@@ -146,6 +148,28 @@ def test_post_turn_marks_clean_roundtrip_delivered(pg_schema: str):
         thread.join(timeout=2.0)
     # Assert
     assert rows[0]["status"] == "delivered"
+
+
+def test_nonblocking_post_keeps_ledger_sent_not_delivered(pg_schema: str):
+    # Arrange
+    from scitex_agent_container._state.dispatch_ledger import list_dispatches
+
+    server, thread, port = _start_server(_echo_handler([]))
+    try:
+        # Act
+        post_turn_to_url(
+            f"http://127.0.0.1:{port}/v1/turn",
+            "hi",
+            timeout_s=5.0,
+            wait_for_final=False,
+        )
+        rows = list_dispatches()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+    # Assert — responder admission is not final delivery evidence.
+    assert rows[0]["status"] == "sent"
 
 
 def test_post_turn_stamps_dispatch_id_into_request_body(pg_schema: str):

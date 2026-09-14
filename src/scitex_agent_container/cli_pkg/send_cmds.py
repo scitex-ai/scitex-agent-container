@@ -6,10 +6,10 @@ agent's active row lives on another host, else the agent's loopback
 ``/v1/turn``. There is no fourth path.
 
 An asynchronous adapter returns the SciTeX status protocol's responder-issued
-``http/202`` receipt and exchange id. The shared HTTP client reconciles that
-exchange through ``GET /v1/exchanges/<id>`` before reporting delivery. Hermes'
-receiver implements the endpoint with its native ``prompt.submit`` RPC; the
-CLI never pastes prompts or Enter into tmux.
+``http/202`` receipt and exchange id. Interactive send validates and returns
+that non-final receipt immediately; final delivery is observable through
+``GET /v1/exchanges/<id>``. Hermes' receiver implements the endpoint with its
+native ``prompt.submit`` RPC; the CLI never pastes prompts or Enter into tmux.
 
 In particular there is no host-side ``claude --resume`` shellout. That
 fallback existed for a "non-A2A, host-side runtime" which no longer
@@ -79,7 +79,6 @@ def _send_via_host_listen(
     standard outcome table.
     """
     import sys as _sys
-    import time as _time
 
     from scitex_dev.status import StatusCode, is_exchange_id
 
@@ -122,35 +121,9 @@ def _send_via_host_listen(
                     "inspect the host listen and turn-bridge logs",
                     url=f"/agents/{name}/send",
                 )
-            deadline = _time.monotonic() + 600.0
-            while True:
-                if _time.monotonic() >= deadline:
-                    raise HostListenTransportError(
-                        f"turn {exchange_id} remains non-final after 600s; it was "
-                        "accepted, so do not resend it; retry GET "
-                        f"/agents/{name}/exchanges/{exchange_id}",
-                        url=f"/agents/{name}/exchanges/{exchange_id}",
-                    )
-                status, resp = host_listen_call(
-                    "GET", f"/agents/{name}/exchanges/{exchange_id}"
-                )
-                try:
-                    final = StatusCode.from_dict(resp.get("status_code", {}))
-                except Exception as exc:
-                    raise HostListenTransportError(
-                        f"exchange {exchange_id} returned invalid status_code: {exc}",
-                        url=f"/agents/{name}/exchanges/{exchange_id}",
-                    ) from exc
-                if resp.get("exchange_id") != exchange_id:
-                    raise HostListenTransportError(
-                        f"exchange endpoint did not echo {exchange_id}; do not resend; "
-                        "inspect the host listen and turn-bridge logs",
-                        url=f"/agents/{name}/exchanges/{exchange_id}",
-                    )
-                if final.final:
-                    status = final.code if final.kind == "http" else 502
-                    break
-                _time.sleep(0.1)
+            # Submission owns the responder-issued receipt, not the target's
+            # wall-clock turn. Return this validated 202 immediately; callers
+            # that need finality can poll the named exchange explicitly.
         outcome = build_outcome(http_status=status, body=resp)
     except HostListenTransportError as exc:
         outcome = transport_outcome(str(exc), url=exc.url)
@@ -201,7 +174,7 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     url = f"ssh://{peer}:{a2a_port}/v1/turn"
     click.echo(f"# send {name}: POST {url}", err=True)
     try:
-        reply = post_turn_to_url(url, prompt)
+        reply = post_turn_to_url(url, prompt, wait_for_final=False)
     except PeerError as exc:
         from .._network.peer import PeerTimeoutPending
 
@@ -260,7 +233,7 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
     url = f"http://127.0.0.1:{a2a_port}/v1/turn"
     click.echo(f"# send {name}: POST {url}", err=True)
     try:
-        reply = post_turn_to_url(url, prompt)
+        reply = post_turn_to_url(url, prompt, wait_for_final=False)
     except PeerError as exc:
         from .._network.peer import PeerTimeoutPending
 
@@ -442,9 +415,9 @@ def send(
 
     Delivery is always HTTP to the running (containerized) agent. Async
     adapters return a SciTeX http/202 exchange receipt which this command
-    reconciles to a final result. If no A2A port is recorded the command
-    refuses — it will not inject a prompt into tmux or run the turn on the
-    bare host.
+    reports immediately. Poll its named exchange when final delivery evidence
+    is required. If no A2A port is recorded the command refuses — it will not
+    inject a prompt into tmux or run the turn on the bare host.
     """
     if not prompt:
         raise click.UsageError("PROMPT is required.")

@@ -3,7 +3,8 @@
 There is one prompt transport regardless of harness: ``sac agents send`` posts
 to ``/v1/turn``. Asynchronous adapters answer with a responder-issued
 ``scitex_dev.status.StatusCode(kind="http", code=202, ...)`` plus an exchange
-id; the HTTP client reconciles ``/v1/exchanges/<id>`` before it claims delivery.
+id; the command returns that non-final receipt immediately. Callers can poll
+``/v1/exchanges/<id>`` when they require final delivery evidence.
 Hermes implements the receiving edge with its native ``prompt.submit`` RPC.
 
 The retired implementation inspected tmux state and switched TUI agents to
