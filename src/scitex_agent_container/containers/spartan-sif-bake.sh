@@ -249,6 +249,9 @@ cp -f "$REPO/src/hatch_build.py" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-hatch-build"
 cp -rf "$REPO/src/scitex_agent_container" "$CTX/scitex-agent-container-src/src/" \
     || fail "stage-package"
+cp -rf "$REPO/src/_scitex_agent_container_bootstrap" \
+    "$CTX/scitex-agent-container-src/src/" \
+    || fail "stage-console-bootstrap"
 # The staged tree is intentionally gitless. Stamp it with the checkout HEAD
 # explicitly before PEP-517 sees it; otherwise hatch can inherit a stale
 # generated _build_info.py, or truthfully-but-uselessly report commit=unknown.
