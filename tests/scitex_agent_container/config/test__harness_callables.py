@@ -29,6 +29,13 @@ def _config(*, session: str, resume_id: str = "") -> AgentConfig:
     return config
 
 
+def _session_tail(argv: list[str]) -> list[str]:
+    for flag in ("--continue", "--resume"):
+        if flag in argv:
+            return argv[argv.index(flag) :]
+    return []
+
+
 @pytest.mark.parametrize(
     ("session", "resume_id", "expected_tail"),
     [
@@ -51,11 +58,10 @@ def test_resolved_backend_reaches_every_hermes_session_mode(
         "--provider",
         "custom:sac-qwen38-27b",
     ]
-    assert argv[argv.index("--model") : argv.index("--model") + 4] == selection
-    if expected_tail:
-        assert argv[-len(expected_tail) :] == expected_tail
-    else:
-        assert "--continue" not in argv and "--resume" not in argv
+    assert (
+        argv[argv.index("--model") : argv.index("--model") + 4],
+        _session_tail(argv),
+    ) == (selection, expected_tail)
 
 
 def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():
@@ -92,9 +98,7 @@ def test_hermes_resume_id_bypasses_claude_transcript_preflight():
     # Arrange
     config = _config(session="resume", resume_id="20260910_072303_526792")
     # Act
-    should_preflight = should_preflight_claude_resume(
-        config, config.claude.resume_id
-    )
+    should_preflight = should_preflight_claude_resume(config, config.claude.resume_id)
     # Assert
     assert should_preflight is False
 

@@ -6,21 +6,27 @@ from scitex_agent_container.cli_pkg.lifecycle._dispatch_start_argv import (
 
 
 def test_fresh_override_reaches_remote_cli_argv():
-    # Arrange / Act
-    argv = remote_start_argv("cards", session_mode="fresh")
+    # Arrange
+    session_mode = "fresh"
+    # Act
+    argv = remote_start_argv("cards", session_mode=session_mode)
     # Assert
     assert argv[-2:] == ["--session", "fresh"]
 
 
 def test_continue_override_reaches_remote_cli_argv():
-    # Arrange / Act
-    argv = remote_start_argv("cards", session_mode="continue")
+    # Arrange
+    session_mode = "continue"
+    # Act
+    argv = remote_start_argv("cards", session_mode=session_mode)
     # Assert
     assert argv[-2:] == ["--session", "continue"]
 
 
 def test_explicit_resume_reaches_remote_cli_argv_without_mode_conflict():
-    # Arrange / Act
-    argv = remote_start_argv("cards", session_mode="resume", resume_id="session-42")
+    # Arrange
+    session_mode = "resume"
+    # Act
+    argv = remote_start_argv("cards", session_mode=session_mode, resume_id="session-42")
     # Assert
     assert argv[-2:] == ["--resume", "session-42"]
