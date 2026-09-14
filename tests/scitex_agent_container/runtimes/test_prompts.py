@@ -171,16 +171,20 @@ _FILE_TRUST_DEFAULT_NO = (
 
 def test_file_trust_default_no_match():
     """Claude Code 2.1.197/2.1.270's unnumbered default-No trust picker."""
-    # Arrange / Act
-    result = _detect_file_trust_default_no(_FILE_TRUST_DEFAULT_NO)
+    # Arrange
+    content = _FILE_TRUST_DEFAULT_NO
+    # Act
+    result = _detect_file_trust_default_no(content)
     # Assert
     assert result is True
 
 
 def test_file_trust_default_no_wins_over_compose_pending():
-    # Arrange / Act — the selected ``❯ No, exit`` row also resembles an
+    # Arrange — the selected ``❯ No, exit`` row also resembles an
     # unsent compose buffer, so trust detection must win the priority race.
-    name = detect(_FILE_TRUST_DEFAULT_NO)
+    content = _FILE_TRUST_DEFAULT_NO
+    # Act
+    name = detect(content)
     # Assert
     assert name == "file-trust-default-no"
 
