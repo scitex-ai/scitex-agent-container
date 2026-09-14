@@ -38,12 +38,16 @@ _PROVIDER = "scitex-agent-container"
 #: paths in the rows below are resolved against the package directory --
 #: i.e. ``importlib.resources.files("scitex_agent_container") / <script>``.
 _BUNDLE = "_baseline_assets/image_build_hooks"
+_PROCESS_WAIT_BUNDLE = "_baseline_assets/process_wait_hooks"
 
 #: Absolute on-disk path to the same bundle, for callers that already have
 #: the package imported and do not want to go through importlib.resources.
 BUNDLE_DIR = Path(__file__).resolve().parent / "_baseline_assets" / "image_build_hooks"
 
 DENY_RAW_APPTAINER_BUILD = f"{_BUNDLE}/deny_raw_apptainer_build.sh"
+DENY_SELF_MATCHING_PGREP_WAIT = (
+    f"{_PROCESS_WAIT_BUNDLE}/deny_self_matching_pgrep_wait.sh"
+)
 
 
 def provide_hooks() -> "tuple[HookRule, ...]":
@@ -85,9 +89,38 @@ def provide_hooks() -> "tuple[HookRule, ...]":
             provider=_PROVIDER,
             script=DENY_RAW_APPTAINER_BUILD,
         ),
+        HookRule(
+            id="sac.no-self-matching-pgrep-wait",
+            rule=(
+                "Refuse looping Bash waiters whose `pgrep -f` pattern matches "
+                "the waiter's own submitted command text; use a PID plus "
+                "`wait`, or a self-excluding process pattern, instead."
+            ),
+            reason=(
+                "A shell launched as `bash -c <command>` exposes <command> in "
+                "its own full process command line. In a while/until loop, a "
+                "`pgrep -f` regex that matches that text continues finding the "
+                "waiter after the intended process exits. Claude therefore "
+                "keeps the background Bash tool alive indefinitely, which "
+                "prevents the Hub turn from draining and delays Cards delivery. "
+                "The guard is deliberately narrower than a pgrep ban: it only "
+                "denies looped full-command-line probes when the supplied regex "
+                "provably matches the submitted waiter text."
+            ),
+            event="pre-tool-use",
+            severity="deny",
+            matches=("Bash",),
+            provider=_PROVIDER,
+            script=DENY_SELF_MATCHING_PGREP_WAIT,
+        ),
     )
 
 
-__all__ = ["provide_hooks", "BUNDLE_DIR", "DENY_RAW_APPTAINER_BUILD"]
+__all__ = [
+    "provide_hooks",
+    "BUNDLE_DIR",
+    "DENY_RAW_APPTAINER_BUILD",
+    "DENY_SELF_MATCHING_PGREP_WAIT",
+]
 
 # EOF
