@@ -204,7 +204,7 @@ def _hermes_tui_inner_argv(
             "Hermes TUI requires a resolved engine model and key; refusing "
             "to launch without explicit --model/--provider selection"
         )
-    argv += ["--model", model, "--provider", f"sac-{engine_key}"]
+    argv += ["--model", model, "--provider", f"custom:sac-{engine_key}"]
     session_mode = str(config.claude.session or "").strip().lower()
     if session_mode == "continue":
         argv += [

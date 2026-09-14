@@ -94,7 +94,10 @@ def compile_hermes_config(
     return {
         "model": {
             "default": model,
-            "provider": provider_key,
+            # Hermes' provider resolver reserves bare names for its bundled
+            # registry.  SAC-generated entries live in ``providers:`` and
+            # therefore must be selected through the named-custom identity.
+            "provider": f"custom:{provider_key}",
             "api_mode": api_mode,
         },
         "providers": {provider_key: provider},

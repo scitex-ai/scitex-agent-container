@@ -127,7 +127,7 @@ def test_stale_latch_recovers_and_http_turn_keeps_all_identities(tmp_path):
         False,
         [
             "/heartbeat pause",
-            "/model qwen38-27b --provider sac-qwen38-27b --session",
+            "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
             "/heartbeat resume",
         ],
         "resumed",

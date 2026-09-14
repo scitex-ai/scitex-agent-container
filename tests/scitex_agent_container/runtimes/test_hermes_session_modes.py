@@ -45,7 +45,12 @@ def test_resolved_backend_reaches_every_hermes_session_mode(
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
-    selection = ["--model", "qwen38-27b", "--provider", "sac-qwen38-27b"]
+    selection = [
+        "--model",
+        "qwen38-27b",
+        "--provider",
+        "custom:sac-qwen38-27b",
+    ]
     assert argv[argv.index("--model") : argv.index("--model") + 4] == selection
     if expected_tail:
         assert argv[-len(expected_tail) :] == expected_tail
