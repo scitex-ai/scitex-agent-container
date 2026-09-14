@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -44,6 +45,157 @@ _STALE_RE = re.compile(
 _STOP_EVENT = threading.Event()
 
 
+@dataclass(frozen=True)
+class _MonitorCandidate:
+    pid: int
+    create_time: float | None
+
+
+def _is_recovery_module_argv(argv: list[str]) -> bool:
+    return any(
+        value == MODULE_PATH and index > 0 and argv[index - 1] == "-m"
+        for index, value in enumerate(argv)
+    )
+
+
+def _process_value(argv: list[str], flag: str) -> str | None:
+    try:
+        return argv[argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return None
+
+
+def _monitor_candidate(
+    proc: Any,
+    *,
+    name: str,
+    config_loader: Callable[[str], Any] = load_config,
+) -> _MonitorCandidate | None:
+    """Identify one exact recovery observer for ``name`` across spec revisions."""
+    try:
+        info = proc.info
+        argv = [str(value) for value in (info.get("cmdline") or ())]
+        if not _is_recovery_module_argv(argv):
+            return None
+        declared_name = _process_value(argv, "--name")
+        if declared_name is None:
+            # Compatibility with observers launched before --name existed.  The
+            # authored spec is the only durable identity available to them.
+            authored_path = _process_value(argv, "--config-path")
+            if not authored_path or config_loader(authored_path).name != name:
+                return None
+        elif declared_name != name:
+            return None
+        return _MonitorCandidate(
+            pid=int(info["pid"]),
+            create_time=(
+                float(info["create_time"])
+                if info.get("create_time") is not None
+                else None
+            ),
+        )
+    except Exception:  # stx-allow: fallback (reason: normal process-exit/access/spec-removal races are skipped)
+        return None
+
+
+def reconcile_recovery_monitors(
+    *,
+    name: str,
+    process_iter: Callable[[], Any] | None = None,
+    signal_fn: Callable[[int, int], None] = os.kill,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    config_loader: Callable[[str], Any] = load_config,
+    grace_s: float = 0.5,
+) -> tuple[int, ...]:
+    """Retire every identity-proven observer for an agent before its next launch.
+
+    The scan is deliberately keyed by agent name, not config path: authority
+    snapshots give each incarnation a different authored spec path, while the
+    observer must remain a singleton across those incarnations.
+    """
+    if process_iter is None:
+        import psutil
+
+        process_iter = lambda: psutil.process_iter(  # noqa: E731
+            ["pid", "cmdline", "create_time"]
+        )
+    initial = sorted(
+        (
+            candidate
+            for proc in process_iter()
+            if (
+                (
+                    candidate := _monitor_candidate(
+                        proc, name=name, config_loader=config_loader
+                    )
+                )
+                is not None
+            )
+        ),
+        key=lambda item: item.pid,
+    )
+    signaled: set[int] = set()
+    for candidate in initial:
+        try:
+            signal_fn(candidate.pid, signal.SIGTERM)
+            signaled.add(candidate.pid)
+        except ProcessLookupError:
+            pass
+    if signaled:
+        sleep_fn(grace_s)
+    remaining = {
+        (candidate.pid, candidate.create_time)
+        for proc in process_iter()
+        if (
+            (
+                candidate := _monitor_candidate(
+                    proc, name=name, config_loader=config_loader
+                )
+            )
+            is not None
+        )
+    }
+    killed = False
+    for candidate in initial:
+        if (candidate.pid, candidate.create_time) in remaining:
+            try:
+                signal_fn(candidate.pid, signal.SIGKILL)
+                killed = True
+            except ProcessLookupError:
+                pass
+    if killed:
+        sleep_fn(0.05)
+        survivors = {
+            (candidate.pid, candidate.create_time)
+            for proc in process_iter()
+            if (
+                (
+                    candidate := _monitor_candidate(
+                        proc, name=name, config_loader=config_loader
+                    )
+                )
+                is not None
+            )
+        }
+        failed = [
+            candidate.pid
+            for candidate in initial
+            if (candidate.pid, candidate.create_time) in survivors
+        ]
+        if failed:
+            raise RuntimeError(
+                "identity-proven recovery observers survived SIGKILL: "
+                + ", ".join(str(pid) for pid in failed)
+            )
+    for candidate in initial:
+        log.info(
+            "recovery observer reconcile: retired agent=%s pid=%d",
+            name,
+            candidate.pid,
+        )
+    return tuple(candidate.pid for candidate in initial)
+
+
 def _state_dir(config: AgentConfig) -> Path:
     from .tui_session import state_dir_for_config
 
@@ -61,7 +213,7 @@ def _owns_monitor_process(pid: int, config_path: str) -> bool:
     except OSError:
         return False
     decoded = [part.decode(errors="replace") for part in argv if part]
-    return MODULE_PATH in decoded and config_path in decoded
+    return _is_recovery_module_argv(decoded) and config_path in decoded
 
 
 def recovery_command(config: AgentConfig) -> str:
@@ -205,17 +357,12 @@ def _run_monitor_loop(
     if wait(_stable_initial_delay(config.name)):
         return
     recovered_fingerprint = ""
-    periodic_wakeup_suspended = False
     while mux.exists(session):
         try:
-            if not periodic_wakeup_suspended:
-                periodic_wakeup_suspended = bool(
-                    runtime.suspend_autonomous_turns(config)
-                )
             recovered_fingerprint = recovery_tick(
                 config,
                 capture=lambda: mux.capture_content(session),
-                pause=lambda: bool(runtime.suspend_autonomous_turns(config)),
+                pause=lambda: bool(runtime.disable_periodic_turns(config)),
                 recover=lambda: bool(runtime.recover_turn_admission(config)),
                 previous_fingerprint=recovered_fingerprint,
                 state_dir=state_dir,
@@ -254,6 +401,7 @@ def start_recovery_monitor(
     if not getattr(autonomous, "enabled", False):
         return None
     stop_recovery_monitor(config)
+    reconcile_recovery_monitors(name=config.name)
     config_path = str(getattr(config, "config_path", "") or "")
     if not config_path:
         log.warning("Hermes recovery monitor: no config_path for %r", config.name)
@@ -271,7 +419,7 @@ def start_recovery_monitor(
     stream = open(state_dir / LOG_FILENAME, "ab")
     try:
         process = spawn(
-            [sys.executable, "-m", MODULE_PATH, "--config-path", config_path],
+            recovery_monitor_argv(config),
             stdout=stream,
             stderr=stream,
             stdin=subprocess.DEVNULL,
@@ -287,6 +435,19 @@ def start_recovery_monitor(
         _pid_path(config).write_text(f"{pid}\n", encoding="utf-8")
         return pid
     return None
+
+
+def recovery_monitor_argv(config: AgentConfig) -> list[str]:
+    """Build the detached observer command with explicit agent identity."""
+    return [
+        sys.executable,
+        "-m",
+        MODULE_PATH,
+        "--name",
+        config.name,
+        "--config-path",
+        str(getattr(config, "config_path", "") or ""),
+    ]
 
 
 def stop_recovery_monitor(config: AgentConfig) -> bool:
@@ -351,9 +512,12 @@ def stop_recovery_monitor(config: AgentConfig) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--name", required=True)
     parser.add_argument("--config-path", required=True)
     args = parser.parse_args(argv)
     config = load_config(args.config_path)
+    if args.name != config.name:
+        parser.error("--name must match the authored agent spec")
     signal.signal(signal.SIGTERM, lambda *_args: _STOP_EVENT.set())
     signal.signal(signal.SIGINT, lambda *_args: _STOP_EVENT.set())
     try:
@@ -380,7 +544,9 @@ __all__ = [
     "health_url",
     "provider_has_capacity",
     "recovery_command",
+    "recovery_monitor_argv",
     "recovery_tick",
+    "reconcile_recovery_monitors",
     "stale_latch",
     "start_recovery_monitor",
     "stop_recovery_monitor",

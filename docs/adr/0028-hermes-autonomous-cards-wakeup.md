@@ -1,6 +1,6 @@
 # ADR-0028 — Hermes autonomous Cards wakeup
 
-Status: accepted (2026-09-11)
+Status: superseded by ADR-0030 (2026-09-14)
 
 ## Context
 

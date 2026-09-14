@@ -326,6 +326,55 @@ def test_live_owned_session_is_left_untouched(tmp_path):
     assert (result, len(spawned), spawned[0].terminated) == (0, 1, False)
 
 
+def test_owner_clears_periodic_turn_before_declaring_session_attached(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+    clear_attempts = []
+
+    def spawn(command, *, env):
+        del command, env
+        process = _Process()
+        spawned.append(process)
+        return process
+
+    def clear(session):
+        clear_attempts.append(session["id"])
+        if len(clear_attempts) == 1:
+            raise RuntimeError("gateway control temporarily unavailable")
+        spawned[0].returncode = 0
+
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=lambda _state_dir: [
+            {"id": "live-1", "title": "sac:ui", "session_key": "stored-1"}
+        ],
+        on_session_attached=clear,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    supervision = json.loads(
+        (tmp_path / owner.SUPERVISION_FILE).read_text(encoding="utf-8")
+    )
+    assert (
+        result,
+        len(spawned),
+        spawned[0].terminated,
+        clear_attempts,
+        supervision["state"],
+        supervision["periodic_turns"],
+    ) == (0, 1, False, ["live-1", "live-1"], "attached", "disabled")
+
+
 def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):
     # Arrange
     gateway = _Process()

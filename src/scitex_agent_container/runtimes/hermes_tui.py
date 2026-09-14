@@ -80,7 +80,6 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         *args,
         rpc_submit: Callable[..., object] | None = None,
         rpc_submit_visible: Callable[..., object] | None = None,
-        rpc_pause_heartbeat: Callable[..., str] | None = None,
         gateway_health: Callable[[Path], dict] | None = None,
         control_state_reader: Callable[[Path], dict | None] = read_control_state,
         **kwargs,
@@ -94,13 +93,8 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
             from ._hermes_tui_rpc import submit_visible_turn
 
             rpc_submit_visible = submit_visible_turn
-        if rpc_pause_heartbeat is None:
-            from ._hermes_tui_rpc import pause_heartbeat
-
-            rpc_pause_heartbeat = pause_heartbeat
         self._rpc_submit = rpc_submit
         self._rpc_submit_visible = rpc_submit_visible
-        self._rpc_pause_heartbeat = rpc_pause_heartbeat
         self._gateway_health = gateway_health
         self._control_state_reader = control_state_reader
 
@@ -268,15 +262,12 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
         return self.send_turn(config, recovery_command(config), wait_ready=False)
 
-    def suspend_autonomous_turns(self, config: AgentConfig) -> bool:
-        """Keep Hermes' model-calling heartbeat paused.
+    def disable_periodic_turns(self, config: AgentConfig) -> bool:
+        """Remove model-calling heartbeat state through Hermes' control plane."""
+        from ._hermes_tui_rpc import clear_heartbeat
 
-        Process health and durable inbox reconciliation are owned by SAC
-        sidecars. A live but idle TUI therefore consumes no inference slot;
-        only an actual human, A2A, or Cards event starts a model turn.
-        """
-        status = self._rpc_pause_heartbeat(state_dir_for_config(config), config.name)
-        return status in {"paused", "absent"}
-
+        return clear_heartbeat(
+            state_dir_for_config(config), config.name
+        ) == "absent"
 
 __all__ = ["HermesTuiSessionRuntime"]

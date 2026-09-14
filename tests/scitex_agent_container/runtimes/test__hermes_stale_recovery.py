@@ -212,7 +212,7 @@ def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
     )
 
 
-def test_monitor_pauses_periodic_model_wakeup_once_and_only_observes(tmp_path):
+def test_monitor_only_observes_when_no_stale_latch(tmp_path):
     # Arrange: the monitor's lifecycle is finite because the fake mux reports
     # the pane gone. Cheap pane observation must not synthesize model turns.
     config = _config(tmp_path)
@@ -224,8 +224,8 @@ def test_monitor_pauses_periodic_model_wakeup_once_and_only_observes(tmp_path):
             return "tui-scholar"
 
         @staticmethod
-        def suspend_autonomous_turns(_config):
-            calls.append(("control", "/heartbeat pause"))
+        def disable_periodic_turns(_config):
+            calls.append(("control", "/heartbeat clear"))
             return True
 
         @staticmethod
@@ -246,7 +246,7 @@ def test_monitor_pauses_periodic_model_wakeup_once_and_only_observes(tmp_path):
         state_dir=tmp_path,
     )
     # Assert
-    assert calls == [("control", "/heartbeat pause")]
+    assert calls == []
 
 
 def test_unrelated_live_pid_is_not_owned_by_recovery_adapter(tmp_path):
@@ -258,3 +258,99 @@ def test_unrelated_live_pid_is_not_owned_by_recovery_adapter(tmp_path):
     owned = recovery._owns_monitor_process(os.getpid(), config.config_path)
     # Assert
     assert owned is False
+
+
+def test_reconcile_retires_same_agent_across_spec_incarnations_only():
+    # Arrange: pid 11 is the new explicit identity, pid 12 is a legacy
+    # observer whose identity must be resolved from its old authored spec.
+    processes = {
+        11: {
+            "pid": 11,
+            "cmdline": [
+                "python",
+                "-m",
+                recovery.MODULE_PATH,
+                "--name",
+                "scholar",
+                "--config-path",
+                "/authority/run-2/spec.yaml",
+            ],
+            "create_time": 11.0,
+        },
+        12: {
+            "pid": 12,
+            "cmdline": [
+                "python",
+                "-m",
+                recovery.MODULE_PATH,
+                "--config-path",
+                "/dotfiles/agents/scholar/spec.yaml",
+            ],
+            "create_time": 12.0,
+        },
+        13: {
+            "pid": 13,
+            "cmdline": [
+                "python",
+                "-m",
+                recovery.MODULE_PATH,
+                "--name",
+                "scholar-helper",
+                "--config-path",
+                "/authority/run-3/spec.yaml",
+            ],
+            "create_time": 13.0,
+        },
+        14: {
+            "pid": 14,
+            "cmdline": [
+                "diagnostic-printer",
+                recovery.MODULE_PATH,
+                "--name",
+                "scholar",
+            ],
+            "create_time": 14.0,
+        },
+    }
+    signals = []
+
+    def process_iter():
+        return [SimpleNamespace(info=value) for value in processes.values()]
+
+    def signal_fn(pid, sig):
+        signals.append((pid, sig))
+        processes.pop(pid, None)
+
+    # Act
+    retired = recovery.reconcile_recovery_monitors(
+        name="scholar",
+        process_iter=process_iter,
+        signal_fn=signal_fn,
+        sleep_fn=lambda _seconds: None,
+        config_loader=lambda path: SimpleNamespace(
+            name="scholar" if "scholar/spec.yaml" in path else "other"
+        ),
+    )
+    # Assert
+    assert (retired, signals, set(processes)) == (
+        (11, 12),
+        [(11, recovery.signal.SIGTERM), (12, recovery.signal.SIGTERM)],
+        {13, 14},
+    )
+
+
+def test_monitor_command_authors_explicit_agent_identity(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    # Act
+    argv = recovery.recovery_monitor_argv(config)
+    # Assert
+    assert argv == [
+        recovery.sys.executable,
+        "-m",
+        recovery.MODULE_PATH,
+        "--name",
+        "scholar",
+        "--config-path",
+        config.config_path,
+    ]

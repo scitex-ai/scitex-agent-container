@@ -14,9 +14,10 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     _select_session,
     active_sessions,
     compress_session,
+    clear_heartbeat,
+    clear_heartbeat_for_session,
     gateway_detailed_health,
     observe_turn_activity,
-    pause_heartbeat,
     submit_turn,
     submit_visible_turn,
 )
@@ -355,19 +356,15 @@ def test_compress_session_fails_closed_on_missing_usage_telemetry(tmp_path):
         action()
 
 
-@pytest.mark.parametrize(
-    ("heartbeat", "expected"),
-    [({"status": "paused"}, "paused"), (None, "absent")],
-)
-def test_pause_heartbeat_uses_control_plane_without_model_turn(
-    tmp_path, heartbeat, expected
-):
+def test_clear_heartbeat_uses_control_plane_without_model_turn(tmp_path):
     # Arrange
     _gateway_files(tmp_path)
-    socket = _ControlSocket(heartbeat)
+    socket = _ControlSocket(None)
 
     # Act
-    status = pause_heartbeat(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
+    status = clear_heartbeat_for_session(
+        tmp_path, "live-1", connect_fn=lambda *args, **kwargs: socket
+    )
 
     # Assert
     assert (
@@ -375,24 +372,48 @@ def test_pause_heartbeat_uses_control_plane_without_model_turn(
         [request["method"] for request in socket.sent],
         socket.sent[-1]["params"],
     ) == (
-        expected,
-        ["session.active_list", "session.control"],
-        {"session_id": "live-1", "action": "heartbeat.pause"},
+        "absent",
+        ["session.control"],
+        {"session_id": "live-1", "action": "heartbeat.clear"},
     )
 
 
-def test_pause_heartbeat_refuses_unpaused_state(tmp_path):
+def test_clear_heartbeat_refuses_persisted_state(tmp_path):
     # Arrange
     _gateway_files(tmp_path)
     socket = _ControlSocket({"status": "active"})
 
     # Act
     def action():
-        pause_heartbeat(tmp_path, "hub", connect_fn=lambda *a, **k: socket)
+        clear_heartbeat_for_session(
+            tmp_path, "live-1", connect_fn=lambda *a, **k: socket
+        )
 
     # Assert
-    with pytest.raises(HermesTuiRpcError, match="did not pause"):
+    with pytest.raises(HermesTuiRpcError, match="did not clear"):
         action()
+
+
+def test_clear_heartbeat_resolves_named_session_without_model_turn(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ControlSocket(None)
+
+    # Act
+    status = clear_heartbeat(
+        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+    )
+
+    # Assert
+    assert (
+        status,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"],
+    ) == (
+        "absent",
+        ["session.active_list", "session.control"],
+        {"session_id": "live-1", "action": "heartbeat.clear"},
+    )
 
 
 def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
