@@ -6,6 +6,9 @@ fallbacks to any external orchestrator's paths.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -285,14 +288,28 @@ def test_resolve_with_prefix_returns_spec_for_exact_match(agent_root: Path):
 
 
 @pytest.fixture
-def unique_prefix_resolution(agent_root, capsys):
+def unique_prefix_resolution(agent_root):
     """Resolve ``polish-`` against a single ``polish-clew`` agent."""
     # Arrange
     _mkagent(agent_root, "polish-clew")
-    # Act
-    path = resolve_with_prefix("polish-")
-    err = capsys.readouterr().err
-    return path, err
+    # Act in a clean process.  ``scitex_logging`` configures root handlers on
+    # first import, so in-process pytest capture makes the first case differ
+    # from later cases.  A subprocess observes the real CLI stream contract.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scitex_agent_container.config._resolve import "
+                "resolve_with_prefix; print(resolve_with_prefix('polish-'))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SCITEX_LOGGING_LEVEL": "INFO"},
+    )
+    return result.stdout.strip(), result.stderr
 
 
 def test_resolve_with_prefix_unique_match_returns_spec_path(
