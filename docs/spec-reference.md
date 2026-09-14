@@ -212,6 +212,10 @@ their six triggers total 1,572,864 tokens and leave 607,232 tokens of reserve.
 A missing or stale capacity observation is an error. A 524,288-token trigger
 is suitable only for a controlled single-agent canary; six such triggers total
 3,145,728 and are not a safe fleet steady state.
+The derivation helper is intentionally pure and does not rewrite running
+agents. An operator or deployment planner must put its `threshold_tokens`
+result in each selected Hermes harness block; normal spec loading then carries
+that value into the compiled Hermes profile on the next authorized restart.
 The same block under Claude Code, Codex, or another harness is rejected rather
 than silently ignored. The former top-level `spec.context_management` example
 was removed because that tolerated legacy key has no runtime consumer.

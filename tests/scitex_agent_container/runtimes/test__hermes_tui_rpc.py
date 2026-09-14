@@ -307,6 +307,55 @@ def test_compress_session_fails_closed_without_proven_reduction(tmp_path, result
 
 
 @pytest.mark.parametrize(
+    ("usage_update", "message"),
+    [
+        ({"context_used": 1_000_001}, "incomplete context telemetry"),
+        ({"context_max": 0}, "incomplete context telemetry"),
+        ({"compressions": 0}, "incomplete context telemetry"),
+        ({"context_source": ""}, "incomplete context telemetry"),
+        ({"context_used": None}, "invalid context_used"),
+        ({"compressions": None}, "invalid compressions"),
+    ],
+)
+def test_compress_session_fails_closed_on_invalid_usage_telemetry(
+    tmp_path, usage_update, message
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _CompressionSocket()
+    socket.result["info"]["usage"].update(usage_update)
+
+    # Act
+    def action():
+        compress_session(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
+
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match=message):
+        action()
+
+
+def test_compress_session_fails_closed_on_missing_usage_telemetry(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    result = {
+        "status": "compressed",
+        "before_tokens": 100,
+        "after_tokens": 50,
+        "before_messages": 10,
+        "after_messages": 5,
+    }
+    socket = _CompressionSocket(result=result)
+
+    # Act
+    def action():
+        compress_session(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
+
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match="no post-compression usage"):
+        action()
+
+
+@pytest.mark.parametrize(
     ("heartbeat", "expected"),
     [({"status": "paused"}, "paused"), (None, "absent")],
 )

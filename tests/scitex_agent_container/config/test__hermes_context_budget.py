@@ -31,6 +31,12 @@ def test_six_agents_on_observed_qwen_capacity_derive_256k_threshold():
         {"engine_capacity_tokens": None},
         {"capacity_age_seconds": None},
         {"capacity_age_seconds": 31},
+        {"capacity_age_seconds": float("nan")},
+        {"capacity_age_seconds": float("inf")},
+        {"capacity_age_seconds": float("-inf")},
+        {"max_capacity_age_seconds": float("nan")},
+        {"max_capacity_age_seconds": float("inf")},
+        {"max_capacity_age_seconds": float("-inf")},
         {"agent_count": 0},
     ],
 )

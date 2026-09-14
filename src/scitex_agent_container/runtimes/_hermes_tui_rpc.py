@@ -481,7 +481,16 @@ def compress_session(
         usage, "compressions", source="session.compress info.usage"
     )
     context_source = str(usage.get("context_source") or "").strip()
-    if context_max <= 0 or not context_source:
+    # Pinned Hermes increments ContextCompressor.compression_count while
+    # finalizing the compressed message list, before session.compress builds
+    # this post-commit info projection. A committed response therefore cannot
+    # truthfully report zero compressions, even for the first manual pass.
+    if (
+        context_max <= 0
+        or context_used > context_max
+        or compressions <= 0
+        or not context_source
+    ):
         raise HermesTuiRpcError(
             "Hermes session.compress returned incomplete context telemetry"
         )

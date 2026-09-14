@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 class HermesFleetBudgetError(ValueError):
@@ -42,11 +43,13 @@ def derive_hermes_fleet_context_budget(
         raise HermesFleetBudgetError("agent_count must be a positive integer")
     if (
         type(max_capacity_age_seconds) not in {int, float}
+        or not isfinite(max_capacity_age_seconds)
         or max_capacity_age_seconds <= 0
     ):
         raise HermesFleetBudgetError("max_capacity_age_seconds must be positive")
     if (
         type(capacity_age_seconds) not in {int, float}
+        or not isfinite(capacity_age_seconds)
         or capacity_age_seconds < 0
         or capacity_age_seconds > max_capacity_age_seconds
     ):
