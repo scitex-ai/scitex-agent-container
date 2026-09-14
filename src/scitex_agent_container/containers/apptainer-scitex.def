@@ -698,7 +698,7 @@ if failures:
 
 print("OK: scitex-cards WIP-gate + sac overlay + staged-source content present and correct.")
 EOF
-    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "9733e1d5f2c29a6a9376392d0f7246e7eabddff6"
+    test "$(cat /opt/scitex-cards-src/SAC_UPSTREAM_COMMIT)" = "6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d"
     /opt/venv-sac/bin/python /tmp/sac-assert-image-fresh.py \
         || { echo "FATAL: stale or wrong-tree package baked into this image (see above). Raise the floor / fix the staging; do NOT weaken this gate." >&2; exit 1; }
 
@@ -805,7 +805,7 @@ EOF
     org.scitex.layer scitex
     org.scitex.runtime apptainer
     org.scitex.from scitex-agent-container:base
-    org.scitex.cards.commit 9733e1d5f2c29a6a9376392d0f7246e7eabddff6
+    org.scitex.cards.commit 6e7fd467ba1c4bc77ed08e8a3ad45c17f8f46c5d
     org.scitex.contains "scitex[all] claude-agent-sdk scitex-agent-container ffmpeg portaudio black flake8 ipython pytest build hatchling latex latexmk biber"
 
 %help
