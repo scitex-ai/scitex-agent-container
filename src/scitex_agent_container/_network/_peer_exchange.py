@@ -29,7 +29,12 @@ def resolve_turn_response(
 ) -> str:
     """Return a synchronous reply or resolve a canonical 202 exchange."""
     exchange_id = _receipt_exchange_id(payload, http_status=http_status)
-    return _poll_exchange(url, exchange_id, timeout_s=timeout_s)
+    return _poll_exchange(
+        url,
+        exchange_id,
+        timeout_s=timeout_s,
+        accepted_body=payload if isinstance(payload, dict) else None,
+    )
 
 
 def _receipt_exchange_id(payload: Any, *, http_status: int | None) -> str:
@@ -71,7 +76,13 @@ def _receipt_exchange_id(payload: Any, *, http_status: int | None) -> str:
     return exchange_id
 
 
-def _poll_exchange(url: str, exchange_id: str, *, timeout_s: float) -> str:
+def _poll_exchange(
+    url: str,
+    exchange_id: str,
+    *,
+    timeout_s: float,
+    accepted_body: dict[str, Any] | None = None,
+) -> str:
     """Poll one accepted exchange to a terminal status within one deadline."""
     from ._peer_timeout import PeerTimeoutPending
     from .peer import PeerError
@@ -79,7 +90,10 @@ def _poll_exchange(url: str, exchange_id: str, *, timeout_s: float) -> str:
     status_url = _exchange_url(url, exchange_id)
     hint = _poll_hint(status_url)
     deadline = time.monotonic() + max(0.0, timeout_s)
-    last_body: dict[str, Any] | None = None
+    # Preserve the accepted receipt even if the deadline expires before the
+    # first GET. Consumers can then surface optional fields such as Hermes'
+    # delivery_mode instead of replacing a valid receipt with an empty guess.
+    last_body: dict[str, Any] | None = accepted_body
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:

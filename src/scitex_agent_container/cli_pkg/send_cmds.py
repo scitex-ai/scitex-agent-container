@@ -51,6 +51,15 @@ class _RemoteA2APortMissingError(click.ClickException):
     """
 
 
+def _emit_pending_exchange(name: str, pending: object) -> None:
+    """Print one accepted, pollable exchange without claiming final delivery."""
+    import json
+
+    from ._send import _pending_exchange_payload
+
+    click.echo(json.dumps(_pending_exchange_payload(name, pending), sort_keys=True))
+
+
 def _send_via_host_listen(
     *,
     name: str,
@@ -194,6 +203,11 @@ def _try_dispatch_remote_send(name: str, prompt: str) -> bool:
     try:
         reply = post_turn_to_url(url, prompt)
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            _emit_pending_exchange(name, exc)
+            return True
         raise click.ClickException(f"remote send failed: {exc}") from exc
     click.echo(reply)
     return True
@@ -248,6 +262,11 @@ def _try_dispatch_local_send(name: str, prompt: str) -> bool:
     try:
         reply = post_turn_to_url(url, prompt)
     except PeerError as exc:
+        from .._network.peer import PeerTimeoutPending
+
+        if isinstance(exc, PeerTimeoutPending) and exc.exchange_id:
+            _emit_pending_exchange(name, exc)
+            return True
         raise click.ClickException(f"local send failed: {exc}") from exc
     click.echo(reply)
     return True

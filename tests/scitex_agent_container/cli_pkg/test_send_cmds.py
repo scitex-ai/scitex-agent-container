@@ -474,3 +474,54 @@ def test_local_send_failure_wraps_peer_error(remote_send_env):
         result = CliRunner().invoke(send, ["local-a", "hi"])
     # Assert
     assert "local send failed" in result.output
+
+
+def test_local_send_pending_exchange_exits_zero_and_surfaces_poll_state(
+    remote_send_env,
+):
+    # Arrange — exact non-final receipt shape returned by Hermes in production.
+    from scitex_agent_container._network.peer import PeerTimeoutPending
+    from scitex_agent_container._state.state_store import record_instance_start
+
+    exchange_id = "xch_20260914T071511Z_scitex-compute-03_208629"
+    poll_hint = (
+        "curl -sS http://127.0.0.1:19005/v1/exchanges/" f"{exchange_id}"
+    )
+    receipt = {
+        "exchange_id": exchange_id,
+        "receipt": {
+            "state": "pending",
+            "final": False,
+            "delivery_mode": "steer",
+        },
+        "status_code": {
+            "kind": "http",
+            "code": 202,
+            "message": f"accepted; poll `/v1/exchanges/{exchange_id}`",
+        },
+    }
+    record_instance_start(name="local-a", host="lead-host", a2a_port=_LOCAL_PORT)
+
+    def pending_post(url, text, *, exit_after=False, timeout_s=600.0):
+        raise PeerTimeoutPending(
+            "accepted exchange remains pending",
+            status="exchange_pending",
+            timeout_s=timeout_s,
+            raw_body=receipt,
+            exchange_id=exchange_id,
+            poll_hint=poll_hint,
+        )
+
+    # Act
+    with _swap_peer_post_turn_to_url(pending_post):
+        result = CliRunner().invoke(send, ["local-a", "hi"])
+    output = result.output
+    # Assert
+    assert (
+        result.exit_code,
+        exchange_id in output,
+        poll_hint in output,
+        '"state": "pending"' in output,
+        '"final": false' in output,
+        "DELIVERED and SUBMITTED" not in output,
+    ) == (0, True, True, True, True, True)
