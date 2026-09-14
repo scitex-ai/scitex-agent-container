@@ -179,6 +179,30 @@ def _detect_file_trust_radio(content: str) -> bool:
     )
 
 
+def _detect_file_trust_default_no(content: str) -> bool:
+    """Unnumbered file-trust picker whose initial selection is ``No, exit``.
+
+    Claude Code 2.1.197 renders this layout with the cursor on the unsafe
+    default::
+
+        Quick safety check: Is this a project you created or one you trust?
+        ❯ No, exit
+          Yes, I trust this folder
+        Enter to confirm · Esc to cancel
+
+    This needs its own handler because the numbered layout selects ``Yes`` by
+    digit, while this layout must move the cursor before confirming.  It must
+    also outrank ``compose-pending-unsent``: that generic detector sees the
+    selected ``❯ No, exit`` row as text in Claude's compose box.
+    """
+    return (
+        "Is this a project you created or one you trust?" in content
+        and "❯ No, exit" in content
+        and "Yes, I trust this folder" in content
+        and "Enter to confirm" in content
+    )
+
+
 def _detect_external_imports(content: str) -> bool:
     """External CLAUDE.md file imports prompt.
 
@@ -350,6 +374,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         detect=_detect_file_trust_radio,
         keys=["1", "Enter"],  # "1. Yes, I trust this folder"
         priority=8,
+    ),
+    PromptHandler(
+        name="file-trust-default-no",
+        detect=_detect_file_trust_default_no,
+        keys=["Down", "Enter"],  # move from "No, exit" to "Yes", then confirm
+        priority=8,  # before compose-pending-unsent: "❯ No, exit" matches it
     ),
     PromptHandler(
         name="theme-selection",

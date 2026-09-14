@@ -55,6 +55,12 @@ _DEVCHAN = (
     "  2. Exit\n"
     "Enter to confirm · Esc to cancel"
 )
+_FILE_TRUST_DEFAULT_NO = (
+    "Quick safety check: Is this a project you created or one you trust?\n"
+    "❯ No, exit\n"
+    "  Yes, I trust this folder\n"
+    "Enter to confirm · Esc to cancel"
+)
 _READY = "some output\nbypass permissions"
 
 
@@ -129,6 +135,29 @@ def test_drain_confirms_dev_channels_with_enter() -> None:
     )
     # Assert — dev-channels registered keys are ["1", "Enter"].
     assert pane.sent == ["1", "Enter"]
+
+
+def test_drain_selects_yes_for_default_no_file_trust_modal() -> None:
+    # Arrange — Claude Code 2.1.197 starts on "No, exit"; a bare Enter kills
+    # the pane. Hold the modal stable through settle, then become ready.
+    pane = _ScriptedPane(
+        [_FILE_TRUST_DEFAULT_NO, _FILE_TRUST_DEFAULT_NO, _READY]
+    )
+    # Act
+    drain_modals_until_ready(
+        "s",
+        capture_fn=pane.capture,
+        send_keys_fn=pane.send,
+        exists_fn=pane.exists,
+        timeout_s=100.0,
+        poll_s=0.0,
+        settle_quiet_s=0.0,
+        settle_max_s=0.0,
+        sleep_fn=_noop_sleep,
+        time_fn=iter([float(i) for i in range(200)]).__next__,
+    )
+    # Assert
+    assert pane.sent == ["Down", "Enter"]
 
 
 # ---------------------------------------------------------------------------
