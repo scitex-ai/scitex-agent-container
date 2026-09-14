@@ -274,6 +274,7 @@ async def _serve(
     bearer: str | None,
     turn_url: str | None = None,
     subscribe: bool = True,
+    register_node: bool = True,
 ) -> None:
     """Drive the MCP session **and** the SSE consumer over the given
     streams, keeping a handle to the session so the consumer can push.
@@ -345,9 +346,11 @@ async def _serve(
         # and periodic ``updated_at`` refresh. Best-effort: a failed write
         # logs a warning but never kills the SSE consumer or the MCP
         # handshake. Cancelled in ``finally`` alongside the SSE task.
-        reg_task: asyncio.Task[None] = asyncio.create_task(
-            _refresh_comms_node(name=name, listen_url=listen_url)
-        )
+        reg_task: asyncio.Task[None] | None = None
+        if register_node:
+            reg_task = asyncio.create_task(
+                _refresh_comms_node(name=name, listen_url=listen_url)
+            )
 
         try:
             async with anyio.create_task_group() as tg:
@@ -360,9 +363,21 @@ async def _serve(
                         False,
                     )
         finally:
-            if sse_task is not None:
-                sse_task.cancel()
-            reg_task.cancel()
+            # These are our tasks, not fire-and-forget work.  Cancelling
+            # without joining them lets their open HTTP transports outlive
+            # the MCP session (and made Python 3.13 wait forever for the
+            # corresponding test server connections to drain).
+            owned_tasks = tuple(
+                task for task in (sse_task, reg_task) if task is not None
+            )
+            for task in owned_tasks:
+                task.cancel()
+            # An anyio task-group cancellation remains active throughout its
+            # cancelled scope.  Shield only this bounded cleanup so every
+            # owned task observes cancellation and closes its transports
+            # before _serve returns; the outer cancellation still propagates.
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 async def _run(
