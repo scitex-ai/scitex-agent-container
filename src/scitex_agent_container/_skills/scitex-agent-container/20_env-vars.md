@@ -84,11 +84,11 @@ Auth precedence (highest → lowest) in `runtimes/_sdk_common.py::provision_anth
 
 | Variable | Purpose | Default | Type |
 |---|---|---|---|
-| `SAC_COMPACT_ENABLED` | Enable auto-compaction of context window. | `true` | bool |
-| `SAC_COMPACT_THRESHOLD_PCT` | Trigger compaction at this context % used. | `80` | int |
-| `SAC_COMPACT_MIN_DROP_PCT` | Minimum % that must drop per pass. | `20` | int |
-| `SAC_COMPACT_MIN_INTERVAL_S` | Minimum seconds between compactions. | `300` | int |
-| `SAC_COMPACT_TIMEOUT_S` | Timeout per compaction attempt. | `60` | int |
+| `SAC_AUTO_COMPACT_TOKENS` | Absolute pre-turn trigger for the Claude SDK conversation runner only. Unset or `0` disables this compatibility shim. Hermes TUI agents instead use `available_harnesses.hermes.compression` and native `session.compress`. | `0` | int |
+
+The formerly documented `SAC_COMPACT_*` variables never had runtime consumers
+and have been removed from this reference. They do not control Hermes or the
+Claude SDK runner.
 
 ## Action / probe / heartbeat timing
 
@@ -155,8 +155,8 @@ broker" / "try local apptainer anyway".
 
 ## Feature flags
 
-- **opt-out:** `SAC_COMPACT_ENABLED=false` disables context compaction.
-- No opt-in flags in this package.
+- No package-wide context-compaction feature flag exists. Use the harness-native
+  settings described above.
 
 ## Audit
 

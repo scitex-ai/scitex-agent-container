@@ -76,6 +76,7 @@ spec:
       run_budget_seconds: 120
       compression:
         threshold: 0.80
+        threshold_tokens: null           # optional absolute trigger cap
         target_ratio: 0.20
         tail_mode: lean
         in_place: true
@@ -194,10 +195,27 @@ harness × engine refusal table: [harness-and-engine.md](harness-and-engine.md).
 
 Hermes context compaction is configured beside the Hermes harness that owns
 the behavior. The block is optional; omitting it preserves SAC's current
-Hermes defaults: `threshold: 0.80`, `target_ratio: 0.20`, `tail_mode: lean`,
-and `in_place: true`. The ratios must satisfy
+Hermes defaults: `threshold: 0.80`, `threshold_tokens: null`,
+`target_ratio: 0.20`, `tail_mode: lean`, and `in_place: true`.
+`threshold_tokens`, when set, is a positive integer absolute cap: Hermes
+compacts at the lower of the ratio-derived trigger and this value while the
+model's truthful `context_length` remains unchanged. The ratios must satisfy
 `0 < target_ratio < threshold < 1`; `tail_mode` is `lean` or `legacy`, and
 `in_place` is a boolean.
+
+For agents sharing one engine, derive the absolute trigger from fresh engine
+KV capacity rather than adding their independent model windows. SAC's
+fail-closed helper reserves 25%, divides the remainder by the sharing agents,
+and rounds down to a binary token boundary. Six agents sharing an observed
+`max_total_num_tokens: 2180096` therefore use `threshold_tokens: 262144`:
+their six triggers total 1,572,864 tokens and leave 607,232 tokens of reserve.
+A missing or stale capacity observation is an error. A 524,288-token trigger
+is suitable only for a controlled single-agent canary; six such triggers total
+3,145,728 and are not a safe fleet steady state.
+The derivation helper is intentionally pure and does not rewrite running
+agents. An operator or deployment planner must put its `threshold_tokens`
+result in each selected Hermes harness block; normal spec loading then carries
+that value into the compiled Hermes profile on the next authorized restart.
 The same block under Claude Code, Codex, or another harness is rejected rather
 than silently ignored. The former top-level `spec.context_management` example
 was removed because that tolerated legacy key has no runtime consumer.

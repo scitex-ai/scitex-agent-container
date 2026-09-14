@@ -4,7 +4,10 @@ from copy import deepcopy
 
 import pytest
 
-from scitex_agent_container.config._hermes_compression import HermesCompressionSpec
+from scitex_agent_container.config._hermes_compression import (
+    HermesCompressionSpec,
+    parse_selected_hermes_compression,
+)
 from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._launch_plan import compile_launch_plan
 
@@ -104,6 +107,7 @@ def test_compiles_explicit_hermes_compression_controls():
     # Arrange
     compression = HermesCompressionSpec(
         threshold=0.85,
+        threshold_tokens=524_288,
         target_ratio=0.30,
         tail_mode="legacy",
         in_place=False,
@@ -116,10 +120,36 @@ def test_compiles_explicit_hermes_compression_controls():
     assert result["compression"] == {
         "enabled": True,
         "threshold": 0.85,
+        "threshold_tokens": 524_288,
         "target_ratio": 0.30,
         "tail_mode": "legacy",
         "in_place": False,
     }
+
+
+def test_parses_absolute_hermes_compression_threshold():
+    # Arrange
+    raw = _spec()
+    raw["available_harnesses"] = {
+        "hermes": {"compression": {"threshold_tokens": 262_144}}
+    }
+    # Act
+    result = parse_selected_hermes_compression(raw)
+    # Assert
+    assert result.threshold_tokens == 262_144
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, True])
+def test_refuses_invalid_absolute_hermes_compression_threshold(value):
+    # Arrange
+    def action():
+        HermesCompressionSpec(threshold_tokens=value)
+
+    # Act
+    run = action
+    # Assert
+    with pytest.raises(ValueError, match="positive integer"):
+        run()
 
 
 def test_refuses_relative_workdir():
