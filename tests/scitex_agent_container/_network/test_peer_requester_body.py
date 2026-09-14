@@ -83,9 +83,18 @@ class TestPeerRequesterBody:
         # Assert
         assert isinstance(body.get("dispatch_id"), str)
 
-    def test_post_body_carries_the_turn_text(self) -> None:
+    def test_post_body_binds_turn_text_to_visible_delivery_id(self) -> None:
         # Arrange
         # Act
         body = _capture_post_body(from_agent="lead")
         # Assert
-        assert body["text"] == "hello"
+        delivery_id = body["visible_delivery_id"]
+        assert (
+            delivery_id,
+            body["dispatch_id"],
+            body["text"],
+        ) == (
+            body["dispatch_id"],
+            body["dispatch_id"],
+            f"hello\n<!-- delivery:{delivery_id} -->",
+        )
