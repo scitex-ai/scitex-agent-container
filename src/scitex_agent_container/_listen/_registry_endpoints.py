@@ -232,14 +232,14 @@ def enrich_row_with_endpoint(row: dict, *, ports: dict[str, int] | None = None) 
 _SPEC_CACHE: dict[tuple[str, int, int], dict | None] = {}
 
 
-def _load_spec_dict(agent_name: str) -> dict | None:
+def _load_spec_dict(agent_name: str, *, spec_path: str | None = None) -> dict | None:
     """Return the raw v3 spec dict for ``agent_name``, or ``None``.
 
-    Best-effort: resolves the agent's ``spec.yaml`` via the same
-    :func:`config._resolve.resolve_config` the status route uses, then
-    parses it. Every failure (unknown name, unreadable / malformed YAML,
-    ambiguous registry) degrades to ``None`` so a peers row is NEVER
-    blocked — the registry list is a discovery surface, not a gate.
+    When ``spec_path`` is provided it is authoritative; otherwise this
+    resolves the agent's ``spec.yaml`` by name. Every failure (unknown name,
+    unreadable / malformed YAML, ambiguous registry) degrades to ``None`` so
+    a peers row is NEVER blocked — the registry list is a discovery surface,
+    not a gate.
     """
     try:
         import os
@@ -248,7 +248,7 @@ def _load_spec_dict(agent_name: str) -> dict | None:
 
         from ..config._resolve import resolve_config
 
-        path = resolve_config(agent_name)
+        path = spec_path if spec_path is not None else resolve_config(agent_name)
         # Cache on the file's IDENTITY, not the agent name — an edited spec
         # must be picked up, and two names resolving to one file share an entry.
         try:
@@ -275,7 +275,7 @@ def _load_spec_dict(agent_name: str) -> dict | None:
         return None
 
 
-def resolve_agent_identity(agent_name: str) -> dict:
+def resolve_agent_identity(agent_name: str, *, spec_path: str | None = None) -> dict:
     """Return the spec-authored identity for ``agent_name``, best-effort.
 
     Operator directive 2026-07-06: an agent's ROLE (headline) +
@@ -289,7 +289,7 @@ def resolve_agent_identity(agent_name: str) -> dict:
     never drift. Returns only the keys the spec declares
     (omit-if-missing); ``{}`` on any failure.
     """
-    v3 = _load_spec_dict(agent_name)
+    v3 = _load_spec_dict(agent_name, spec_path=spec_path)
     if v3 is None:
         return {}
     try:
@@ -339,7 +339,12 @@ def enrich_row_with_role_owner(row: dict, *, resolver=resolve_agent_identity) ->
     return out
 
 
-def enrich_row(row: dict, *, ports: dict[str, int] | None = None) -> dict:
+def enrich_row(
+    row: dict,
+    *,
+    ports: dict[str, int] | None = None,
+    identity_spec_path: str | None = None,
+) -> dict:
     """Apply BOTH registry enrichments to ``row`` — the composed shape every
     registry surface ships.
 
@@ -352,9 +357,17 @@ def enrich_row(row: dict, *, ports: dict[str, int] | None = None) -> dict:
 
     ``ports`` is forwarded to :func:`enrich_row_with_endpoint` — pass
     :func:`port_claims_map` once when enriching many rows. Omitted, behaviour is
-    unchanged from before the batch existed.
+    unchanged from before the batch existed. ``identity_spec_path`` pins the
+    identity projection to an already-selected registry incarnation instead of
+    resolving the name through the search tree again.
     """
-    return enrich_row_with_role_owner(enrich_row_with_endpoint(row, ports=ports))
+
+    def identity_resolver(agent_name: str) -> dict:
+        return resolve_agent_identity(agent_name, spec_path=identity_spec_path)
+
+    return enrich_row_with_role_owner(
+        enrich_row_with_endpoint(row, ports=ports), resolver=identity_resolver
+    )
 
 
 __all__ = [
