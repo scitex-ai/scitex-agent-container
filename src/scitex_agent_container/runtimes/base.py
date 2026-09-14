@@ -134,7 +134,7 @@ class RuntimeBase(ABC):
         del config
         return None
 
-    def suspend_autonomous_turns(self, config: AgentConfig) -> bool | None:
-        """Pause adapter-owned autonomous admission; ``None`` if unsupported."""
+    def disable_periodic_turns(self, config: AgentConfig) -> bool | None:
+        """Remove adapter-owned periodic admission; ``None`` if unsupported."""
         del config
         return None

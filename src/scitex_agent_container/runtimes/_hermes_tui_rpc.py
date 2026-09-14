@@ -351,32 +351,33 @@ def submit_turn(
     return receipt
 
 
-def pause_heartbeat(
+def clear_heartbeat_for_session(
     state_dir: Path,
-    agent_name: str,
+    session_id: str,
     *,
     timeout_s: float = 10.0,
     connect_fn: Any | None = None,
 ) -> str:
-    """Pause Hermes' session heartbeat without creating a model turn.
+    """Remove one exact session's heartbeat without creating a model turn.
 
-    ``prompt.submit('/heartbeat pause')`` does *not* execute a slash command.
+    ``prompt.submit('/heartbeat clear')`` does *not* execute a slash command.
     It appends an ordinary user message and therefore wakes the model with the
     complete conversation.  Hermes exposes heartbeat state through its
-    intent-level ``session.control`` RPC; use that control-plane operation so
-    SAC's deterministic inbox sidecar can remain active while an idle session
-    consumes no inference slot.
+    intent-level ``session.control`` RPC.  Clearing, rather than merely
+    pausing, also prevents a persisted legacy heartbeat from being resumed by
+    a later client or provider recovery.
     """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        raise HermesTuiRpcError("Hermes heartbeat clear requires a session id")
     url, _token = _gateway_connection(state_dir)
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
-            listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
             result = _rpc(
                 socket,
-                2,
+                1,
                 "session.control",
-                {"session_id": session_id, "action": "heartbeat.pause"},
+                {"session_id": session_id, "action": "heartbeat.clear"},
             )
     except HermesTuiRpcError:
         raise
@@ -392,9 +393,45 @@ def pause_heartbeat(
     heartbeat = control.get("heartbeat")
     if heartbeat is None:
         return "absent"
-    if not isinstance(heartbeat, dict) or heartbeat.get("status") != "paused":
-        raise HermesTuiRpcError(f"Hermes heartbeat did not pause: {heartbeat!r}")
-    return "paused"
+    raise HermesTuiRpcError(f"Hermes heartbeat did not clear: {heartbeat!r}")
+
+
+def clear_heartbeat(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> str:
+    """Resolve SAC's exact live session and remove its periodic wakeup."""
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+            result = _rpc(
+                socket,
+                2,
+                "session.control",
+                {"session_id": session_id, "action": "heartbeat.clear"},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    control = result.get("control")
+    if not isinstance(control, dict):
+        raise HermesTuiRpcError(
+            f"Hermes session.control returned malformed result: {result!r}"
+        )
+    heartbeat = control.get("heartbeat")
+    if heartbeat is not None:
+        raise HermesTuiRpcError(f"Hermes heartbeat did not clear: {heartbeat!r}")
+    return "absent"
 
 
 def _required_nonnegative_int(payload: dict, key: str, *, source: str) -> int:
@@ -722,7 +759,8 @@ __all__ = [
     "compress_session",
     "gateway_detailed_health",
     "observe_turn_activity",
-    "pause_heartbeat",
+    "clear_heartbeat_for_session",
+    "clear_heartbeat",
     "submit_turn",
     "submit_visible_turn",
 ]

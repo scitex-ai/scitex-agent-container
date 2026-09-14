@@ -394,23 +394,23 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     runtime = HermesTuiSessionRuntime(
         multiplexer=mux,
         rpc_submit=lambda state, name, text: calls.append(text) or "steered",
-        rpc_pause_heartbeat=lambda state, name: (
-            calls.append("heartbeat.pause") or "paused"
-        ),
+    )
+    runtime.disable_periodic_turns = lambda _config: (
+        calls.append("heartbeat.clear") or True
     )
     # Act
-    paused = runtime.suspend_autonomous_turns(config)
+    disabled = runtime.disable_periodic_turns(config)
     recovered = runtime.recover_turn_admission(config)
     # Assert
     assert (
-        paused,
+        disabled,
         recovered,
         calls,
     ) == (
         True,
         True,
         [
-            "heartbeat.pause",
+            "heartbeat.clear",
             "/model qwen38-27b --provider sac-qwen38-27b --session",
         ],
     )

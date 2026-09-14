@@ -230,6 +230,21 @@ def _write_supervision(state_dir: Path, **fields: object) -> None:
     )
 
 
+def _clear_session_heartbeat(state_dir: Path, session: dict) -> None:
+    """Remove persisted periodic model wakeup for one proven live session.
+
+    SAC's durable Cards/CCT/SAC ingress owns wakeup.  A Hermes heartbeat does
+    a full-context model turn merely to discover whether work exists, so the
+    owner removes legacy heartbeat state before it declares the TUI attached.
+    """
+    session_id = str(session.get("id") or "").strip()
+    if not session_id:
+        raise RuntimeError("owned Hermes session has no id")
+    from ._hermes_tui_rpc import clear_heartbeat_for_session
+
+    clear_heartbeat_for_session(state_dir, session_id)
+
+
 def _supervise_tui(
     command: list[str],
     *,
@@ -243,6 +258,7 @@ def _supervise_tui(
     poll_s: float = POLL_SECONDS,
     startup_grace_s: float = STARTUP_GRACE_SECONDS,
     on_spawn: Callable[[Any], None] | None = None,
+    on_session_attached: Callable[[dict], None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
@@ -266,6 +282,7 @@ def _supervise_tui(
     absent_polls = 0
     resume_key = ""
     recoveries: deque[float] = deque()
+    attached_session_prepared = False
     _write_supervision(state_dir, state="starting", recoveries=0)
 
     while gateway.poll() is None and tui.poll() is None:
@@ -299,11 +316,30 @@ def _supervise_tui(
         if owned_session is not None:
             absent_polls = 0
             resume_key = str(owned_session.get("session_key") or resume_key).strip()
+            if not attached_session_prepared and on_session_attached is not None:
+                try:
+                    on_session_attached(owned_session)
+                except Exception as exc:
+                    # The session stays live, but it is not declared attached
+                    # until its model-calling periodic wakeup is proven absent.
+                    # Retry on the next bounded observer tick.
+                    _write_supervision(
+                        state_dir,
+                        state="periodic_turn_disable_unavailable",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        stored_session_id=resume_key,
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+                attached_session_prepared = True
             _write_supervision(
                 state_dir,
                 state="attached",
                 active_sessions=len(sessions),
                 stored_session_id=resume_key,
+                periodic_turns="disabled",
                 recoveries=len(recoveries),
             )
             sleep(poll_s)
@@ -354,6 +390,7 @@ def _supervise_tui(
             on_spawn(tui)
         generation_started = monotonic()
         absent_polls = 0
+        attached_session_prepared = False
 
     return tui, int(tui.poll() or 0)
 
@@ -416,6 +453,9 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=state_dir,
             gateway=gateway,
             on_spawn=remember_tui,
+            on_session_attached=lambda session: _clear_session_heartbeat(
+                state_dir, session
+            ),
         )
         return result
     finally:
