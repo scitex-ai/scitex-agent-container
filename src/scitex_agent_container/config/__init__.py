@@ -25,8 +25,13 @@ from ._engine_types import (
     apply_engine,
     select_engine,
 )
-from ._host import resolve_hostname, substitute_hostnames
 from ._hermes_compression import HermesCompressionSpec
+from ._hermes_context_budget import (
+    HermesFleetBudgetError,
+    HermesFleetContextBudget,
+    derive_hermes_fleet_context_budget,
+)
+from ._host import resolve_hostname, substitute_hostnames
 from ._loaders import compose_effective_name, load_v3
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
@@ -58,6 +63,8 @@ __all__ = [
     "HealthSpec",
     "HookSpec",
     "HermesCompressionSpec",
+    "HermesFleetBudgetError",
+    "HermesFleetContextBudget",
     "HostsSpec",
     "ListenPort",
     "ProviderSpec",
@@ -70,6 +77,7 @@ __all__ = [
     "WatchdogSpec",
     "apply_engine",
     "compose_effective_name",
+    "derive_hermes_fleet_context_budget",
     "load_config",
     "resolve_config",
     "resolve_hostname",

@@ -14,6 +14,7 @@ class HermesCompressionSpec:
     """Hermes compression controls emitted into its materialized profile."""
 
     threshold: float = 0.80
+    threshold_tokens: int | None = None
     target_ratio: float = 0.20
     tail_mode: str = "lean"
     in_place: bool = True
@@ -21,6 +22,12 @@ class HermesCompressionSpec:
     def __post_init__(self) -> None:
         if type(self.threshold) not in {int, float} or not 0 < self.threshold < 1:
             raise ValueError("Hermes compression threshold must be between 0 and 1")
+        if self.threshold_tokens is not None and (
+            type(self.threshold_tokens) is not int or self.threshold_tokens <= 0
+        ):
+            raise ValueError(
+                "Hermes compression threshold_tokens must be a positive integer or null"
+            )
         if (
             type(self.target_ratio) not in {int, float}
             or not 0 < self.target_ratio < self.threshold
@@ -53,6 +60,7 @@ def parse_selected_hermes_compression(spec: Mapping) -> HermesCompressionSpec:
     defaults = HermesCompressionSpec()
     return HermesCompressionSpec(
         threshold=float(raw.get("threshold", defaults.threshold)),
+        threshold_tokens=raw.get("threshold_tokens", defaults.threshold_tokens),
         target_ratio=float(raw.get("target_ratio", defaults.target_ratio)),
         tail_mode=str(raw.get("tail_mode", defaults.tail_mode)),
         in_place=raw.get("in_place", defaults.in_place),

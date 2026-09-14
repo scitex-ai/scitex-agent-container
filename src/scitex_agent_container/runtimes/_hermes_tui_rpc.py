@@ -49,6 +49,21 @@ class HermesTurnReceipt:
     session_id: str
 
 
+@dataclass(frozen=True)
+class HermesCompressionReceipt:
+    """Verified before/after telemetry from native Hermes compression."""
+
+    session_id: str
+    before_tokens: int
+    after_tokens: int
+    before_messages: int
+    after_messages: int
+    context_used: int
+    context_max: int
+    context_source: str
+    compressions: int
+
+
 _SEARCH_RESPONSE_MAX_BYTES = 256 * 1024
 
 
@@ -382,6 +397,107 @@ def pause_heartbeat(
     return "paused"
 
 
+def _required_nonnegative_int(payload: dict, key: str, *, source: str) -> int:
+    value = payload.get(key)
+    if type(value) is not int or value < 0:
+        raise HermesTuiRpcError(
+            f"Hermes {source} returned invalid {key}: {value!r}"
+        )
+    return value
+
+
+def compress_session(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 120.0,
+    connect_fn: Any | None = None,
+) -> HermesCompressionReceipt:
+    """Compact one idle live session through Hermes' native control plane.
+
+    This deliberately calls ``session.compress`` rather than submitting the
+    text ``/compress`` as a model prompt. The native result supplies the
+    before/after counts, while its post-commit ``info.usage`` projection proves
+    the resulting provider-derived context state.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session = _select_session_row(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+            if _session_activity(session) != "idle":
+                raise HermesTuiRpcError(
+                    f"Hermes session {session['id']!r} is busy; refusing compression"
+                )
+            session_id = str(session["id"])
+            result = _rpc(
+                socket,
+                2,
+                "session.compress",
+                {"session_id": session_id},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+
+    if result.get("status") != "compressed":
+        raise HermesTuiRpcError(
+            f"Hermes session.compress did not commit compression: {result!r}"
+        )
+    before_tokens = _required_nonnegative_int(
+        result, "before_tokens", source="session.compress"
+    )
+    after_tokens = _required_nonnegative_int(
+        result, "after_tokens", source="session.compress"
+    )
+    before_messages = _required_nonnegative_int(
+        result, "before_messages", source="session.compress"
+    )
+    after_messages = _required_nonnegative_int(
+        result, "after_messages", source="session.compress"
+    )
+    if after_tokens >= before_tokens or after_messages >= before_messages:
+        raise HermesTuiRpcError(
+            "Hermes session.compress reported no strict context reduction"
+        )
+    info = result.get("info")
+    usage = info.get("usage") if isinstance(info, dict) else None
+    if not isinstance(usage, dict):
+        raise HermesTuiRpcError(
+            "Hermes session.compress returned no post-compression usage telemetry"
+        )
+    context_used = _required_nonnegative_int(
+        usage, "context_used", source="session.compress info.usage"
+    )
+    context_max = _required_nonnegative_int(
+        usage, "context_max", source="session.compress info.usage"
+    )
+    compressions = _required_nonnegative_int(
+        usage, "compressions", source="session.compress info.usage"
+    )
+    context_source = str(usage.get("context_source") or "").strip()
+    if context_max <= 0 or not context_source:
+        raise HermesTuiRpcError(
+            "Hermes session.compress returned incomplete context telemetry"
+        )
+    return HermesCompressionReceipt(
+        session_id=session_id,
+        before_tokens=before_tokens,
+        after_tokens=after_tokens,
+        before_messages=before_messages,
+        after_messages=after_messages,
+        context_used=context_used,
+        context_max=context_max,
+        context_source=context_source,
+        compressions=compressions,
+    )
+
+
 def _delivery_visibility(payload: object, delivery_id: str) -> str | None:
     """Name the Hermes projection containing one durable delivery marker.
 
@@ -588,11 +704,13 @@ def submit_visible_turn(
 
 __all__ = [
     "HermesTuiRpcError",
+    "HermesCompressionReceipt",
     "HermesTurnActivity",
     "HermesTurnReceipt",
     "HermesVisibleTurnReceipt",
     "_stored_delivery_visibility",
     "active_sessions",
+    "compress_session",
     "gateway_detailed_health",
     "observe_turn_activity",
     "pause_heartbeat",

@@ -113,6 +113,11 @@ def compile_hermes_config(
         "compression": {
             "enabled": True,
             "threshold": compression.threshold,
+            **(
+                {"threshold_tokens": compression.threshold_tokens}
+                if compression.threshold_tokens is not None
+                else {}
+            ),
             "target_ratio": compression.target_ratio,
             "tail_mode": compression.tail_mode,
             "in_place": compression.in_place,

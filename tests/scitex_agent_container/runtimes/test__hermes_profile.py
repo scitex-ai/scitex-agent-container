@@ -655,6 +655,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     config.autonomous.enabled = True
     config.hermes_compression = HermesCompressionSpec(
         threshold=0.85,
+        threshold_tokens=524_288,
         target_ratio=0.30,
         tail_mode="legacy",
         in_place=False,
@@ -687,6 +688,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         == {
             "enabled": True,
             "threshold": 0.85,
+            "threshold_tokens": 524_288,
             "target_ratio": 0.30,
             "tail_mode": "legacy",
             "in_place": False,
