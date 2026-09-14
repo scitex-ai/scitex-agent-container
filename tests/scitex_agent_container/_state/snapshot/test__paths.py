@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import threading
 import time
 from pathlib import Path
 
 import pytest
-from scitex_config._ecosystem import local_state as _local_state
 
 from scitex_agent_container._state.snapshot import _paths
 from scitex_agent_container._state.snapshot._io import take_snapshot
@@ -16,13 +16,21 @@ from scitex_agent_container._state.snapshot._lock import _snapshot_lock
 
 
 @pytest.fixture
-def default_cache_path(tmp_path: Path, monkeypatch, env_save_restore) -> Path:
-    """Route the non-override local-state resolver to a missing temp path."""
+def default_cache_path(tmp_path: Path, env_save_restore) -> Path:
+    """Resolve the real user-scope default beneath a temporary SciTeX root."""
     env_save_restore.delete("SAC_CACHE_DIR")
     env_save_restore.delete("SCITEX_AGENT_CONTAINER_CACHE_DIR")
-    cache = tmp_path / "runtime" / "cache"
-    monkeypatch.setattr(_local_state, "runtime_path", lambda *_parts: cache)
-    return cache
+    scitex_root = tmp_path / "scitex"
+    env_save_restore.set("SCITEX_DIR", str(scitex_root))
+
+    # Outside the repository there is no project-local .scitex scope, so the
+    # production local-state resolver follows its real SCITEX_DIR fallback.
+    original_cwd = Path.cwd()
+    os.chdir(tmp_path)
+    try:
+        yield scitex_root / "agent-container" / "runtime" / "cache"
+    finally:
+        os.chdir(original_cwd)
 
 
 @pytest.fixture
