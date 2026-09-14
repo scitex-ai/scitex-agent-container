@@ -458,6 +458,21 @@ def test_remote_stage_stamps_gitless_source_with_checkout_head() -> None:
     assert all(item in text for item in expected)
 
 
+def test_remote_stage_includes_every_declared_console_package() -> None:
+    # Arrange
+    expected = (
+        'cp -rf "$REPO/src/scitex_agent_container"',
+        'cp -rf "$REPO/src/_scitex_agent_container_bootstrap"',
+        '|| fail "stage-console-bootstrap"',
+    )
+
+    # Act
+    text = core.BAKE_SCRIPT.read_text(encoding="utf-8")
+
+    # Assert
+    assert all(item in text for item in expected)
+
+
 def test_bake_script_probe_matches_the_wheel_probe_verbatim() -> None:
     # Arrange — the remote gate is a heredoc copy of sif_symbol_probe.py
     # (the remote host has no wheel). If the two drift, the master could

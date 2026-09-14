@@ -7,6 +7,10 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Remote image staging includes SAC's console bootstrap package.** The HPC
+  bake context now copies `_scitex_agent_container_bootstrap` alongside the
+  main package, matching the wheel manifest and preventing the image `%test`
+  from installing a `sac` entrypoint whose import target is absent.
 - **The base-image Hermes version gate matches its immutable source pin.**
   Hermes commit `b635448768d6ba49bc1f75bd381f32336dde7ac8` declares version
   0.21.2, so the recipe, artifact label, package manifest, and integration
