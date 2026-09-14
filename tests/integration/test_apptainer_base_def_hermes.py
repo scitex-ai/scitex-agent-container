@@ -23,7 +23,7 @@ def test_base_image_installs_pinned_local_hermes_source():
         f"org.scitex.hermes.repository {HERMES_REPOSITORY}",
         'cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT"',
         'cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY"',
-        'assert hermes_cli.__version__ == "0.21.1"',
+        'assert hermes_cli.__version__ == "0.21.2"',
     )
     # Act
     text = RECIPE.read_text()
@@ -68,7 +68,7 @@ def test_pyproject_declares_external_hermes_harness_package():
     # Arrange
     expected = {
         "package": "hermes-agent",
-        "version": "0.21.1",
+        "version": "0.21.2",
         "repository": HERMES_REPOSITORY,
         "commit": HERMES_COMMIT,
         "installation": "local-staged-source",
