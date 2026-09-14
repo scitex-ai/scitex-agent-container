@@ -399,6 +399,7 @@ def test_bake_script_stages_the_pinned_hermes_source_for_base() -> None:
             f'HERMES_COMMIT="{HERMES_COMMIT}"',
             'if [ "$LAYER" = "base" ]; then',
             '"$CTX/hermes-agent-src/SAC_UPSTREAM_COMMIT"',
+            '"$CTX/hermes-agent-src/SAC_UPSTREAM_REPOSITORY"',
             '"$GIT" -C "$HERMES_CACHE" archive "$HERMES_COMMIT"',
         )
     )

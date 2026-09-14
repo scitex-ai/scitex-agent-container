@@ -2,7 +2,10 @@ from pathlib import Path
 
 import tomllib
 
-from scitex_agent_container.cli_pkg._hermes_source import HERMES_COMMIT
+from scitex_agent_container.cli_pkg._hermes_source import (
+    HERMES_COMMIT,
+    HERMES_REPOSITORY,
+)
 from scitex_agent_container.cli_pkg.image_group import _LAYERS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +20,9 @@ def test_base_image_installs_pinned_local_hermes_source():
         'uv sync --project "$HERMES_ROOT" --frozen --no-dev',
         'ln -sf "$HERMES_ROOT/.venv/bin/hermes"',
         f"org.scitex.hermes.commit {HERMES_COMMIT}",
+        f"org.scitex.hermes.repository {HERMES_REPOSITORY}",
         'cat "$HERMES_ROOT/SAC_UPSTREAM_COMMIT"',
+        'cat "$HERMES_ROOT/SAC_UPSTREAM_REPOSITORY"',
         'assert hermes_cli.__version__ == "0.21.1"',
     )
     # Act
@@ -64,7 +69,7 @@ def test_pyproject_declares_external_hermes_harness_package():
     expected = {
         "package": "hermes-agent",
         "version": "0.21.1",
-        "repository": "https://github.com/NousResearch/hermes-agent.git",
+        "repository": HERMES_REPOSITORY,
         "commit": HERMES_COMMIT,
         "installation": "local-staged-source",
         "environment": "/opt/hermes-agent/.venv",
