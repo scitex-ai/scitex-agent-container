@@ -102,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--listen-url", required=True)
     parser.add_argument("--turn-url", required=True)
     parser.add_argument("--config-path", required=True, type=Path)
+    parser.add_argument("--process-role", required=True)
+    parser.add_argument("--incarnation-id", required=True)
     parser.add_argument("--channel", action="append", dest="channels", default=[])
     args = parser.parse_args(argv)
     asyncio.run(

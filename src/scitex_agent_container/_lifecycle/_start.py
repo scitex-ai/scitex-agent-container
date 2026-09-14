@@ -402,6 +402,20 @@ def agent_start(
 
     kill_orphan_mcp_children(config.name)
 
+    # Reap detached durable-inbox consumers left by an older launch or by the
+    # pre-rename Hermes bridge lifecycle.  Exact agent/spec/module matching is
+    # required; no command-substring pkill is used.  At this point singleton
+    # teardown is complete, so this launch has no authoritative sidecar yet.
+    from ..runtimes._inbox_sidecar_reconcile import reconcile_inbox_sidecars
+    from ..runtimes.tui_session import state_dir_for_config
+
+    reconcile_inbox_sidecars(
+        name=config.name,
+        config_path=str(getattr(config, "config_path", "") or config_path),
+        incarnation_id=str(config.env["SAC_INSTANCE_UUID"]),
+        state_dir=state_dir_for_config(config),
+    )
+
     # Spec-pinned session resume (``spec.claude.session: resume`` +
     # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
     # marker from the pinned uuid — but ONLY when no marker exists yet

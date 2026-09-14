@@ -10,19 +10,22 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .._listen._config import listen_base_url
 from ..config import AgentConfig
 from ._apptainer_build import _read_listen_bearer
+from ._inbox_sidecar_reconcile import CURRENT_MODULE, CURRENT_ROLE
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
 log = logging.getLogger(__name__)
-MODULE_PATH = "scitex_agent_container.runtimes._channel_inbox_dispatcher"
+MODULE_PATH = CURRENT_MODULE
 PID_FILENAME = "channel-inbox-dispatcher.pid"
 LOG_FILENAME = "channel-inbox-dispatcher.log"
+PROCESS_ROLE = CURRENT_ROLE
 _STOP_GRACE_S = 5.0
 _CARDS_HEALTH_PROGRAM = """
 import json
@@ -291,6 +294,8 @@ def start_inbox_dispatcher(
     preflight(stream_url, bearer)
     state_dir = state_dir or state_dir_for_config(config)
     state_dir.mkdir(parents=True, exist_ok=True)
+    incarnation_id = str(config.env.get("SAC_INSTANCE_UUID") or uuid.uuid4())
+    config.env["SAC_INSTANCE_UUID"] = incarnation_id
     argv = [
         sys.executable,
         "-m",
@@ -303,12 +308,18 @@ def start_inbox_dispatcher(
         f"http://127.0.0.1:{port}/v1/turn",
         "--config-path",
         config_path,
+        "--process-role",
+        PROCESS_ROLE,
+        "--incarnation-id",
+        incarnation_id,
     ]
     for channel in channels:
         argv += ["--channel", channel]
     env = os.environ.copy()
     env.pop("SCITEX_CARDS_DB", None)
     env["SAC_LISTEN_BEARER"] = bearer
+    env["SAC_INSTANCE_UUID"] = incarnation_id
+    env["SAC_PROCESS_ROLE"] = PROCESS_ROLE
     # scitex-cards keeps notification-backend selection explicit: the task
     # store argument passed to poll_notifications identifies the data store,
     # but the inbox transport itself is selected from SCITEX_CARDS_INBOX_DSN.
