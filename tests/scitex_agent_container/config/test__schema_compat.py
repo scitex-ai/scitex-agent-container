@@ -56,8 +56,10 @@ def test_claude_code_account_is_accepted_and_folded_to_the_runtime_boundary():
     errors = canonical_surface_errors(raw)
     normalized = normalize_document(raw)
     # Assert
-    assert errors == []
-    assert normalized["spec"]["claude"]["account"] == "scitex-01-scitex-ai"
+    assert (errors, normalized["spec"]["claude"]["account"]) == (
+        [],
+        "scitex-01-scitex-ai",
+    )
 
 
 @pytest.mark.parametrize("account", [None, "", "   ", 1, [], {}])
