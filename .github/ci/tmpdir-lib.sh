@@ -64,10 +64,12 @@
 # writable 0700 directory. exec-in-sif.sh resolves this root on the HOST and
 # binds it into the SIF; inner scripts never guess what the host exposes.
 #
-# HPC uses its already-provisioned GPFS project instead. There is deliberately
-# no /tmp or $HOME fallback: silently returning to the full filesystem would
-# reproduce the incident. A runner without either provisioned scratch root
-# fails before tests with an actionable error.
+# HPC runner supervisors provision a node-local TMPDIR below /tmp. Prefer that
+# explicit runner allocation over GPFS: pytest tmp_path is semantically local,
+# jailed-path tests reject shared filesystems, and GPFS inherits setgid modes.
+# This is not a raw /tmp fallback; only an existing writable child exported by
+# the runner is accepted. GPFS remains the last provisioned fallback for hosts
+# without node-local runner temp. A runner with none fails before tests.
 
 # --- knobs ---------------------------------------------------------------
 # SAC_CI_TMPDIR_ROOT       explicit provisioned scratch root
@@ -79,14 +81,23 @@ _ci_tmpdir_root() {
         return 0
     fi
 
-    local user_name="${USER:-}"
+    local runner_tmp="${TMPDIR:-}" user_name="${USER:-}"
+    case "$runner_tmp" in
+    /tmp/?* | /var/tmp/?*)
+        if [ -d "$runner_tmp" ] && [ -w "$runner_tmp" ]; then
+            printf '%s' "$runner_tmp"
+            return 0
+        fi
+        ;;
+    esac
+
     [ -n "$user_name" ] || user_name="$(id -un 2>/dev/null)" || return 1
-    if [ -d "/data/gpfs/projects/punim0264" ] && [ -w "/data/gpfs/projects/punim0264" ]; then
-        printf '%s' "/data/gpfs/projects/punim0264/$user_name/ci/job-scratch"
-        return 0
-    fi
     if [ -d "/scratch/$user_name" ] && [ -w "/scratch/$user_name" ]; then
         printf '%s' "/scratch/$user_name/sac-ci/github-actions"
+        return 0
+    fi
+    if [ -d "/data/gpfs/projects/punim0264" ] && [ -w "/data/gpfs/projects/punim0264" ]; then
+        printf '%s' "/data/gpfs/projects/punim0264/$user_name/ci/job-scratch"
         return 0
     fi
     return 1

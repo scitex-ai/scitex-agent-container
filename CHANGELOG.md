@@ -7,6 +7,13 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **HPC CI test scratch stays node-local.** The managed scratch resolver now
+  honors an existing writable runner-provisioned child of `/tmp` or `/var/tmp`
+  before considering shared storage. Test paths therefore no longer inherit
+  GPFS setgid modes or violate jailed-path invariants; per-run naming, cleanup,
+  and the GPFS source/image bind remain unchanged. Host-shape checks now test
+  the actual private-directory invariant under node-local `/tmp`, and the
+  fixed-width statusline normalizes HPC FQDNs to their unique node label.
 - **Inline agent spawn cannot mutate a linked authority spec.** The host now
   returns the existing `409 already_exists` contract when an inline
   `agent_spawn(overwrite=true)` targets a per-agent directory or `spec.yaml`

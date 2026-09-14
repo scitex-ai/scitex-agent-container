@@ -298,8 +298,8 @@ def resolve_with_prefix(name: str) -> str:
     Behaviour (F-CS10):
       1. Exact match wins (delegates to resolve_config).
       2. If no exact hit, look for agent names starting with ``name``.
-         - 1 match → use it. Emit a single stderr line so the user
-           knows we expanded the input.
+         - 1 match → use it. Emit a single INFO diagnostic so the user
+           knows we expanded the input and the event remains in the log.
          - 2+ matches → raise :class:`AmbiguousAgent` with the list.
          - 0 matches → re-raise the original FileNotFoundError so
            the existing 'Agent not found. Searched: ...' help fires.

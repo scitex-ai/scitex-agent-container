@@ -36,14 +36,20 @@ from scitex_agent_container._runners._tmux._env_snapshot import (
 )
 
 
-def test_snapshot_is_not_written_under_world_writable_tmp() -> None:
-    """The plantable-name half: the path must leave ``/tmp`` entirely."""
+def test_snapshot_is_written_under_a_private_directory() -> None:
+    """The plantable-name half: the direct directory must be owner-only.
+
+    A runner may deliberately keep its whole private workspace under
+    node-local ``/tmp``.  The security invariant is the ``0700`` directory
+    SAC creates around the predictable filename, not the spelling of an
+    arbitrary ancestor path.
+    """
     # Arrange
     session = "sac-test-session"
     # Act
-    path = str(tui_env_snapshot_path(session))
+    path = tui_env_snapshot_path(session)
     # Assert
-    assert not path.startswith("/tmp/")
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
 def test_snapshot_directory_is_owner_only() -> None:
