@@ -208,6 +208,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and "sac mcp channel" not in rendered_argv
         and "CLAUDE_CODE_TELEGRAMMER_TURN_URL" not in rendered_argv
         and "hermes chat --tui" in rendered_argv
+        and "--model qwen38-27b --provider sac-qwen" in rendered_argv
         and "--continue sac:scholar" in rendered_argv
     )
 

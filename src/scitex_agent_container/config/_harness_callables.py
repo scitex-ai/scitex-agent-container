@@ -173,7 +173,12 @@ def _codex_tui_inner_argv(
 def _hermes_tui_inner_argv(
     config: "AgentConfig", options: "Mapping[str, object] | None" = None
 ) -> list[str]:
-    """Inner argv for Hermes' official Ink TUI as the session owner."""
+    """Inner argv for Hermes' official Ink TUI as the session owner.
+
+    Hermes does not reliably select the profile's default backend before a
+    session exists.  Pin the same resolved model/provider pair materialized in
+    ``~/.hermes/config.yaml`` so fresh sessions do not fall into Setup Required.
+    """
     del options
     argv = [
         "/usr/bin/tini",
@@ -192,6 +197,14 @@ def _hermes_tui_inner_argv(
         str(config.workdir),
         "--pass-session-id",
     ]
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or model).strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes TUI requires a resolved engine model and key; refusing "
+            "to launch without explicit --model/--provider selection"
+        )
+    argv += ["--model", model, "--provider", f"sac-{engine_key}"]
     session_mode = str(config.claude.session or "").strip().lower()
     if session_mode == "continue":
         argv += [

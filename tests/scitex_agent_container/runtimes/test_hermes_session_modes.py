@@ -18,12 +18,50 @@ from scitex_agent_container.runtimes.hermes_tui import (
 
 
 def _config(*, session: str, resume_id: str = "") -> AgentConfig:
-    return AgentConfig(
+    config = AgentConfig(
         name="cards",
         harness="hermes",
         runtime="tui",
         claude=ClaudeSpec(session=session, resume_id=resume_id),
     )
+    config.engine_key = "qwen38-27b"
+    config.model = "qwen38-27b"
+    return config
+
+
+@pytest.mark.parametrize(
+    ("session", "resume_id", "expected_tail"),
+    [
+        ("fresh", "", []),
+        ("continue", "", ["--continue", "sac:cards", "--create-if-missing"]),
+        ("resume", "session-20260910", ["--resume", "session-20260910"]),
+    ],
+)
+def test_resolved_backend_reaches_every_hermes_session_mode(
+    session, resume_id, expected_tail
+):
+    # Arrange
+    config = _config(session=session, resume_id=resume_id)
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    selection = ["--model", "qwen38-27b", "--provider", "sac-qwen38-27b"]
+    assert argv[argv.index("--model") : argv.index("--model") + 4] == selection
+    if expected_tail:
+        assert argv[-len(expected_tail) :] == expected_tail
+    else:
+        assert "--continue" not in argv and "--resume" not in argv
+
+
+def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():
+    # Arrange
+    config = AgentConfig(name="cards", harness="hermes", runtime="tui")
+    config.model = ""
+    # Act
+    call = lambda: _hermes_tui_inner_argv(config)  # noqa: E731
+    # Assert
+    with pytest.raises(ValueError, match="resolved engine model and key"):
+        call()
 
 
 def test_explicit_resume_reaches_native_hermes_argv():
