@@ -104,6 +104,7 @@ def test_stop_never_signals_a_foreign_reused_pid(tmp_path):
 def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
     # Arrange
     config = _config(tmp_path)
+    config.env["SAC_INSTANCE_UUID"] = "inc-4242"
     config.env["SCITEX_STORE_DSN"] = "postgresql://cards-primary:55432/cards"
     config.env["SCITEX_CARDS_NOTIFY_DSN"] = "postgresql://cards-primary:55433/cards"
     state_dir = tmp_path / "state"
@@ -142,6 +143,10 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["cards_preflight"][2]["PGUSER"],
         "secret" in seen["argv"],
         seen["env"]["SAC_LISTEN_BEARER"],
+        seen["env"]["SAC_INSTANCE_UUID"],
+        seen["env"]["SAC_PROCESS_ROLE"],
+        seen["argv"][seen["argv"].index("--incarnation-id") + 1],
+        seen["argv"][seen["argv"].index("--process-role") + 1],
         seen["env"]["SCITEX_CARDS_AGENT_ID"],
         seen["env"]["SCITEX_STORE_DSN"],
         seen["env"]["SCITEX_CARDS_INBOX_DSN"],
@@ -159,6 +164,10 @@ def test_start_preflights_auth_and_keeps_bearer_out_of_argv(tmp_path):
         seen["env"]["PGUSER"],
         False,
         "secret",
+        "inc-4242",
+        lifecycle.PROCESS_ROLE,
+        "inc-4242",
+        lifecycle.PROCESS_ROLE,
         "scholar",
         "postgresql://cards-primary:55432/cards",
         "postgresql://cards-primary:55432/cards",

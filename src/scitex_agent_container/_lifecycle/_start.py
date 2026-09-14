@@ -375,7 +375,7 @@ def agent_start(
     # skill can pick up the snapshot before claude actually launches.
     _h = handover_mod if handover_mod is not None else _load_handover_module()
 
-    _h.ensure_instance_uuid(config)
+    launch_incarnation = _h.ensure_instance_uuid(config)
     try:
         _h.hydrate_from_hub(config)
     except Exception:
@@ -401,6 +401,23 @@ def agent_start(
     from ._orphan_mcp_cleanup import kill_orphan_mcp_children
 
     kill_orphan_mcp_children(config.name)
+
+    # Reap detached durable-inbox consumers left by an older launch or by the
+    # pre-rename Hermes bridge lifecycle.  Exact agent/spec/module matching is
+    # required; no command-substring pkill is used.  At this point singleton
+    # teardown is complete, so this launch has no authoritative sidecar yet.
+    from ..runtimes._inbox_sidecar_reconcile import reconcile_inbox_sidecars
+    from ..runtimes.tui_session import state_dir_for_config
+
+    reconcile_inbox_sidecars(
+        name=config.name,
+        config_path=str(getattr(config, "config_path", "") or config_path),
+        incarnation_id=(
+            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "")
+            or None
+        ),
+        state_dir=state_dir_for_config(config),
+    )
 
     # Spec-pinned session resume (``spec.claude.session: resume`` +
     # ``spec.claude.resume_id``). Seed the SDK runner's on-disk resume
