@@ -593,6 +593,22 @@ class _TurnBridgeHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            # The production Hermes callback can prove an input in its native
+            # transcript/inflight/queue projections.  Require that proof even
+            # for an ordinary ``sac agents send`` whose caller did not supply
+            # a Cards/CCT delivery id: the responder-issued exchange id is a
+            # stable marker for this accepted operation.  Without this gate,
+            # ``prompt.submit`` could acknowledge the RPC while the input
+            # never appeared in the live session, and this bridge would forge
+            # a final delivered/200 result.
+            #
+            # Generic callbacks retain their historical contract.  The
+            # capability flag is attached only by ``_build_on_turn`` below,
+            # whose runtime path actually implements ``send_visible_turn``.
+            if effective_visible_id is None and getattr(
+                srv.on_turn, "_sac_requires_visible_delivery", False
+            ):
+                effective_visible_id = exchange_id
             srv.active_delivery = (delivery_key or exchange_id, exchange_id)
 
         failure_check: Check | None = None
@@ -1063,6 +1079,12 @@ def _build_on_turn(
         # to the exchange worker.
         return None if isinstance(delivered, bool) else delivered
 
+    # Read by the bridge handler to require responder-issued visibility IDs
+    # for ordinary SAC turns.  A named capability is preferable to guessing
+    # from a callback's return value after it may already have lost the input.
+    on_turn._sac_requires_visible_delivery = callable(  # type: ignore[attr-defined]
+        getattr(runtime, "send_visible_turn", None)
+    )
     return on_turn
 
 

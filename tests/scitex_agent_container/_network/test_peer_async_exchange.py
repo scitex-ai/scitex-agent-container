@@ -8,9 +8,11 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterator
 
+from scitex_agent_container._network._peer_exchange import _receipt_exchange_id
 from scitex_agent_container._network.peer import (
     PeerError,
     PeerTimeoutPending,
+    _bind_visible_delivery,
     post_turn_to_url,
 )
 
@@ -94,6 +96,44 @@ def _capture_error(url: str, *, timeout_s: float = 2) -> PeerError:
     except PeerError as exc:
         return exc
     raise AssertionError("post_turn_to_url did not raise PeerError")
+
+
+def test_live_hermes_structured_202_receipt_is_canonical() -> None:
+    # Arrange — exact response shape observed on the cross-host SAC rail.
+    exchange_id = "xch_20260914T071511Z_scitex-compute-03_208629"
+    payload = {
+        "exchange_id": exchange_id,
+        "receipt": {
+            "state": "pending",
+            "final": False,
+            "delivery_mode": "steer",
+        },
+        "status_code": {
+            "kind": "http",
+            "code": 202,
+            "message": f"accepted; poll `/v1/exchanges/{exchange_id}`",
+        },
+    }
+
+    # Act
+    parsed = _receipt_exchange_id(payload, http_status=None)
+
+    # Assert
+    assert parsed == exchange_id
+
+
+def test_sac_dispatch_id_is_bound_to_transcript_visible_text() -> None:
+    # Arrange
+    dispatch_id = "dsp_20260914T071511Z_compute-04_abcdef"
+
+    # Act
+    text, visible_delivery_id = _bind_visible_delivery("inspect inbox", dispatch_id)
+
+    # Assert
+    assert (visible_delivery_id, text) == (
+        dispatch_id,
+        f"inspect inbox\n<!-- delivery:{dispatch_id} -->",
+    )
 
 
 def test_async_receipt_is_polled_to_confirmed_delivery() -> None:
