@@ -405,6 +405,7 @@ def test_bootstrap_mismatch_names_both_roots_and_recovery_hint(home_tmp):
             ["image", "build", "base", "-y"],
             metadata_paths=(purelib,),
             runtime_root=stale,
+            working_dir=home_tmp,
         )
     except ImageBuildSourceMismatch as exc:
         message = str(exc)
@@ -417,6 +418,97 @@ def test_bootstrap_mismatch_names_both_roots_and_recovery_hint(home_tmp):
         f"editable direct_url authority: {expected}" in message,
         "unset PYTHONPATH" in message,
     ) == (True, True, True, True)
+
+
+def _sac_checkout(root: Path) -> Path:
+    """Create the minimum real filesystem shape the bootstrap recognizes."""
+    package = root / "src" / "scitex_agent_container"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    bootstrap = root / "src" / "_scitex_agent_container_bootstrap"
+    bootstrap.mkdir()
+    (bootstrap / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "scitex-agent-container"\n', encoding="utf-8"
+    )
+    return package
+
+
+def test_bootstrap_refuses_runtime_source_different_from_cwd_checkout(home_tmp):
+    # Arrange — no editable dist-info is available. CWD is still an explicit
+    # source selection when it is inside a recognizable SAC checkout.
+    intended = _sac_checkout(home_tmp / "intended")
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    nested_cwd = intended.parents[1] / "tests" / "unit"
+    nested_cwd.mkdir(parents=True)
+    # Act
+    try:
+        assert_image_build_source_authority(
+            ["image", "build", "base", "-y"],
+            metadata_paths=(),
+            runtime_root=stale,
+            working_dir=nested_cwd,
+        )
+    except ImageBuildSourceMismatch as exc:
+        message = str(exc)
+    else:
+        message = ""
+    # Assert
+    assert (
+        "before filesystem or image mutation" in message,
+        f"command-working-directory package root: {intended}" in message,
+        f"runtime-loaded package root: {stale}" in message,
+        "unset PYTHONPATH" in message,
+    ) == (True, True, True, True)
+
+
+def test_bootstrap_accepts_runtime_source_matching_cwd_checkout(home_tmp):
+    # Arrange
+    package = _sac_checkout(home_tmp / "selected")
+    # Act
+    result = assert_image_build_source_authority(
+        ["image", "build", "base", "-y"],
+        metadata_paths=(),
+        runtime_root=package,
+        working_dir=package.parents[1],
+    )
+    # Assert
+    assert result is None
+
+
+def test_bootstrap_does_not_treat_an_arbitrary_cwd_as_source_authority(home_tmp):
+    # Arrange — image builds remain CWD-independent outside a SAC checkout.
+    runtime = home_tmp / "installed" / "scitex_agent_container"
+    runtime.mkdir(parents=True)
+    elsewhere = home_tmp / "unrelated-project"
+    elsewhere.mkdir()
+    # Act
+    result = assert_image_build_source_authority(
+        ["image", "build", "base", "-y"],
+        metadata_paths=(),
+        runtime_root=runtime,
+        working_dir=elsewhere,
+    )
+    # Assert
+    assert result is None
+
+
+def test_bootstrap_cwd_authority_does_not_mask_version_warning(home_tmp):
+    # Arrange — the same mismatch must remain observable to `sac --version`;
+    # the destructive-build guard has no authority to silence that command.
+    intended = _sac_checkout(home_tmp / "intended")
+    stale = home_tmp / "stale" / "src" / "scitex_agent_container"
+    stale.mkdir(parents=True)
+    # Act
+    result = assert_image_build_source_authority(
+        ["--version"],
+        metadata_paths=(),
+        runtime_root=stale,
+        working_dir=intended.parents[1],
+    )
+    # Assert
+    assert result is None
 
 
 def test_bootstrap_shadow_process_stops_before_stale_cli_import(home_tmp):
