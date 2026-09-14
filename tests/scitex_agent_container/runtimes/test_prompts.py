@@ -9,6 +9,7 @@ from scitex_agent_container.runtimes.prompts import (
     _detect_compose_pending_unsent,
     _detect_dev_channels,
     _detect_file_trust,
+    _detect_file_trust_default_no,
     _detect_file_trust_radio,
     _detect_login_method,
     _detect_mcp_json_edit,
@@ -149,6 +150,52 @@ def test_file_trust_radio_no_match_without_both_options():
     result = _detect_file_trust_radio(content)
     # Assert
     assert result is False
+
+
+def test_file_trust_numbered_radio_selects_yes_directly():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    respond_modal("file-trust-radio", sent.append)
+    # Assert
+    assert sent == ["1", "Enter"]
+
+
+_FILE_TRUST_DEFAULT_NO = (
+    "Quick safety check: Is this a project you created or one you trust?\n"
+    "❯ No, exit\n"
+    "  Yes, I trust this folder\n"
+    "Enter to confirm · Esc to cancel"
+)
+
+
+def test_file_trust_default_no_match():
+    """Claude Code 2.1.197/2.1.270's unnumbered default-No trust picker."""
+    # Arrange
+    content = _FILE_TRUST_DEFAULT_NO
+    # Act
+    result = _detect_file_trust_default_no(content)
+    # Assert
+    assert result is True
+
+
+def test_file_trust_default_no_wins_over_compose_pending():
+    # Arrange — the selected ``❯ No, exit`` row also resembles an
+    # unsent compose buffer, so trust detection must win the priority race.
+    content = _FILE_TRUST_DEFAULT_NO
+    # Act
+    name = detect(content)
+    # Assert
+    assert name == "file-trust-default-no"
+
+
+def test_file_trust_default_no_moves_to_yes_before_confirming():
+    # Arrange
+    sent: list[str] = []
+    # Act
+    respond_modal("file-trust-default-no", sent.append)
+    # Assert — bare Enter would confirm "No, exit" and kill the pane.
+    assert sent == ["Down", "Enter"]
 
 
 def test_theme_selection_match():
