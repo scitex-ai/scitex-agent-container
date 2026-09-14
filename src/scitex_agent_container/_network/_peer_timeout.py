@@ -82,6 +82,10 @@ class PeerTimeoutPending(PeerError):
         The peer's neutral list of what the timeout might mean.
     raw_body : dict | None
         The full parsed JSON body, for callers that want everything.
+    exchange_id : str | None
+        Stable exchange identity when the timeout came from exchange polling.
+    poll_hint : str | None
+        Runnable read-only probe for that exchange. Never a resend command.
     """
 
     def __init__(
@@ -94,6 +98,8 @@ class PeerTimeoutPending(PeerError):
         heartbeat: dict | None = None,
         possibilities: list[str] | None = None,
         raw_body: dict | None = None,
+        exchange_id: str | None = None,
+        poll_hint: str | None = None,
     ) -> None:
         super().__init__(interpretation)
         self.interpretation = interpretation
@@ -103,6 +109,8 @@ class PeerTimeoutPending(PeerError):
         self.heartbeat = heartbeat
         self.possibilities = possibilities or []
         self.raw_body = raw_body
+        self.exchange_id = exchange_id
+        self.poll_hint = poll_hint
 
 
 def interpret_timeout_body(
