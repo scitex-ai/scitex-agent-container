@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -86,9 +87,10 @@ def _bash(script: str, root: Path, lib: Path | None = None):
     )
 
 
-def _bash_without_configured_root(script: str):
+def _bash_without_configured_root(script: str, **over: str):
     env = dict(os.environ)
     env.pop("SAC_CI_TMPDIR_ROOT", None)
+    env.update(over)
     return subprocess.run(
         ["bash", "-c", f'set -uo pipefail; . "{_LIB}"\n{script}'],
         capture_output=True,
@@ -170,7 +172,15 @@ def default_root_result():
     user = os.environ.get("USER")
     local = Path("/scratch") / user if user else None
     gpfs = Path("/data/gpfs/projects/punim0264")
-    if not ((local and local.is_dir() and os.access(local, os.W_OK)) or gpfs.is_dir()):
+    inherited = os.environ.get("TMPDIR", "")
+    runner_tmp = inherited.startswith(("/tmp/", "/var/tmp/")) and os.access(
+        inherited, os.W_OK
+    )
+    if not (
+        runner_tmp
+        or (local and local.is_dir() and os.access(local, os.W_OK))
+        or gpfs.is_dir()
+    ):
         pytest.skip("this host has no provisioned compute/HPC scratch root")
     return _bash_without_configured_root("_ci_tmpdir_root")
 
@@ -190,16 +200,32 @@ def test_default_root_is_provisioned_scratch(default_root_result):
     # Act
     root = result.stdout
     # Assert
-    assert root.startswith(("/scratch/", "/data/gpfs/projects/"))
+    assert root.startswith(("/tmp/", "/var/tmp/", "/scratch/", "/data/gpfs/projects/"))
 
 
-def test_default_root_is_not_tmp(default_root_result):
+def test_default_root_is_not_unscoped_tmp(default_root_result):
     # Arrange
     result = default_root_result
     # Act
     root = result.stdout
     # Assert
     assert root != "/tmp"
+
+
+@pytest.fixture
+def runner_local_root_result():
+    with tempfile.TemporaryDirectory(prefix="sac-ci-runner-", dir="/tmp") as root:
+        result = _bash_without_configured_root("_ci_tmpdir_root", TMPDIR=root)
+        yield Path(root), result
+
+
+def test_runner_provisioned_node_local_tmp_wins_over_gpfs(runner_local_root_result):
+    # Arrange
+    root, result = runner_local_root_result
+    # Act
+    selected = result.stdout
+    # Assert
+    assert result.returncode == 0 and selected == str(root), result.stderr
 
 
 def test_library_has_no_tmp_or_home_fallback():

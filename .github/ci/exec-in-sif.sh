@@ -13,9 +13,9 @@
 #
 #   * Spartan HPC — the GPFS project dir /data/gpfs/projects/punim0264 EXISTS:
 #     apptainer comes from the ~/.env-3.11 shim named by SCITEX_CI_APPTAINER,
-#     apptainer scratch lives on the GPFS project, and punim0264 is bound into
-#     the container ($HOME/.scitex there is a symlink into it, so without the
-#     bind the symlink dangles inside the SIF).
+#     test scratch uses the runner-provisioned node-local TMPDIR, and punim0264
+#     remains bound into the container ($HOME/.scitex there is a symlink into
+#     it, so without the bind the symlink dangles inside the SIF).
 #
 #   * Local compute nodes (scitex-compute-01..04) — NO /data/gpfs at all:
 #     apptainer is the distro package on PATH (/usr/bin/apptainer), scratch is
@@ -350,7 +350,7 @@ if [ -d "$GPFS_PROJECT" ]; then
     "$GPFS_PROJECT" | "$GPFS_PROJECT"/*) ;;
     *) APPTAINER_ARGV+=(--bind "$SAC_CI_TMPDIR_ROOT") ;;
     esac
-    GPFS_STATE="present (scratch on GPFS, punim0264 bound)"
+    GPFS_STATE="present (punim0264 bound; test scratch resolved independently)"
 else
     APPTAINER_ARGV+=(--bind "$SAC_CI_TMPDIR_ROOT")
     GPFS_STATE="absent (scratch under /scratch/\$USER, no GPFS bind)"

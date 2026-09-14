@@ -380,7 +380,7 @@ def test_compute_shape_still_execs_the_sif(compute):
 
 
 # --------------------------------------------------------------------------
-# Spartan shape: GPFS made present. Unchanged behaviour is the requirement.
+# Spartan shape: GPFS is bound while scratch remains independently provisioned.
 # --------------------------------------------------------------------------
 
 
@@ -395,14 +395,17 @@ def test_spartan_shape_runs_to_the_exec(spartan):
 
 def test_spartan_shape_reports_the_gpfs_present_profile(spartan):
     # Arrange
-    expected = f"exec-in-sif: {_GPFS} present (scratch on GPFS, punim0264 bound)"
+    expected = (
+        f"exec-in-sif: {_GPFS} present "
+        "(punim0264 bound; test scratch resolved independently)"
+    )
     # Act
     stdout = spartan.result.stdout
     # Assert
     assert expected in stdout, f"the taken profile was not reported:\n{stdout}"
 
 
-def test_spartan_shape_keeps_scratch_on_gpfs(spartan):
+def test_spartan_shape_uses_the_explicit_provisioned_scratch(spartan):
     # Arrange
     expected = f"exec-in-sif: APPTAINER_TMPDIR={spartan.sandbox.tmproot}/apptainer-tmp"
     # Act
