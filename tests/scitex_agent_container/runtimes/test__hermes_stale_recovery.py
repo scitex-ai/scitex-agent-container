@@ -94,7 +94,9 @@ def test_recovery_rebinds_same_model_and_provider_without_global_write(tmp_path)
     # Act
     command = recovery.recovery_command(config)
     # Assert
-    assert command == "/model qwen38-27b --provider sac-qwen38-27b --session"
+    assert command == (
+        "/model qwen38-27b --provider custom:sac-qwen38-27b --session"
+    )
 
 
 def test_recovery_tick_preserves_session_context_and_incarnation(tmp_path):

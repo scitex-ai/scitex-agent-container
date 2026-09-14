@@ -173,7 +173,12 @@ def _codex_tui_inner_argv(
 def _hermes_tui_inner_argv(
     config: "AgentConfig", options: "Mapping[str, object] | None" = None
 ) -> list[str]:
-    """Inner argv for Hermes' official Ink TUI as the session owner."""
+    """Inner argv for Hermes' official Ink TUI as the session owner.
+
+    Hermes does not reliably select the profile's default backend before a
+    session exists.  Pin the same resolved model/provider pair materialized in
+    ``~/.hermes/config.yaml`` so fresh sessions do not fall into Setup Required.
+    """
     del options
     argv = [
         "/usr/bin/tini",
@@ -192,12 +197,30 @@ def _hermes_tui_inner_argv(
         str(config.workdir),
         "--pass-session-id",
     ]
-    if config.claude.session == "continue":
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or model).strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes TUI requires a resolved engine model and key; refusing "
+            "to launch without explicit --model/--provider selection"
+        )
+    argv += ["--model", model, "--provider", f"custom:sac-{engine_key}"]
+    session_mode = str(config.claude.session or "").strip().lower()
+    if session_mode == "continue":
         argv += [
             "--continue",
             f"sac:{config.name}",
             "--create-if-missing",
         ]
+    elif session_mode == "resume":
+        resume_id = str(config.claude.resume_id or "").strip()
+        if not resume_id:
+            raise ValueError(
+                "Hermes session mode 'resume' requires spec.claude.resume_id "
+                "or the CLI --resume <session-id>; refusing to degrade to a "
+                "fresh session"
+            )
+        argv += ["--resume", resume_id]
     prompts = [str(value) for value in config.startup_prompts if str(value).strip()]
     if prompts:
         argv += ["--query", "\n\n".join(prompts)]

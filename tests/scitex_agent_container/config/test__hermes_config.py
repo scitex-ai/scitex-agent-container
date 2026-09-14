@@ -71,7 +71,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
         "raw": original,
         "model": {
             "default": "qwen38-27b",
-            "provider": "sac-qwen",
+            "provider": "custom:sac-qwen",
             "api_mode": "chat_completions",
         },
         "provider": {

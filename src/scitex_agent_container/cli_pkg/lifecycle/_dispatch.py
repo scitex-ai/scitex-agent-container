@@ -49,19 +49,6 @@ if TYPE_CHECKING:
     from ._host_chain import ReachabilityOracle
 
 
-def _spawned_by() -> str:
-    """Launching identity for the lineage edge (Rule B/D).
-
-    The host that runs ``sac agents start`` and dispatches cross-host is
-    the spawn parent. A parent AGENT shelling out carries ``SAC_NAME``
-    in its env (recorded as ``spawned_by=<parent>``); a bare lead /
-    operator dispatch has none and records ``"cli"``.
-    """
-    from ..._env import getenv
-
-    return getenv("NAME") or "cli"
-
-
 def _dispatch_remote_start(
     name: str,
     peer: str,
@@ -69,6 +56,8 @@ def _dispatch_remote_start(
     dry_run: bool = False,
     force: bool = False,
     engine: str | None = None,
+    session_mode: str | None = None,
+    resume_id: str | None = None,
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
@@ -183,9 +172,14 @@ def _dispatch_remote_start(
     # here and started the agent on its DEFAULT, with NO message at all. The
     # restart path at least printed something; this one was silent, which is
     # worse: the agent comes up, looks healthy, and runs the wrong backend.
-    remote_argv = ["sac", "agents", "start", name, "--no-redispatch", "--json"]
-    if engine:
-        remote_argv += ["--engine", engine]
+    from ._dispatch_start_argv import remote_start_argv, spawned_by
+
+    remote_argv = remote_start_argv(
+        name,
+        engine=engine,
+        session_mode=session_mode,
+        resume_id=resume_id,
+    )
     # login=True for the same reason as the restart dispatch: an agent start
     # on the peer needs the secrets only its login profile carries.
     ssh_argv = build_ssh_argv(peer, remote_argv, peers_map, login=True)
@@ -236,7 +230,7 @@ def _dispatch_remote_start(
         a2a_port=bound,
         bound_port=bound,
         remote=True,
-        spawned_by=_spawned_by(),
+        spawned_by=spawned_by(),
     )
     # ADR-0014 — paired comms_nodes entry for the cross-host agent so peers
     # resolving via the federated graph (not just the local instances table)
@@ -273,6 +267,8 @@ def try_dispatch(
     dry_run: bool,
     force: bool,
     engine: str | None = None,
+    session_mode: str | None = None,
+    resume_id: str | None = None,
     local_names: "Collection[str] | None" = None,
     reachability: "ReachabilityOracle | None" = None,
     dispatcher: "Callable[..., int] | None" = None,
@@ -353,6 +349,8 @@ def try_dispatch(
             dry_run=dry_run,
             force=force,
             engine=engine,
+            session_mode=session_mode,
+            resume_id=resume_id,
         )
     except Exception:
         # The failure is re-raised UNCHANGED — this only adds the sentence the

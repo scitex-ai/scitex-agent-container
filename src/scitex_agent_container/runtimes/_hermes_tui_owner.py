@@ -142,12 +142,14 @@ def _remove_owned_gateway_state(state_dir: Path, *, generation: str) -> None:
         _unlink_if_generation(state_dir / READY_FILE, generation)
 
 
-def _continue_title(command: list[str]) -> str:
-    """Return the stable title from SAC's ``--continue <title>`` contract."""
+def _requested_session(command: list[str]) -> tuple[str, str]:
+    """Return SAC's requested Hermes session mode and stable identity."""
     for index, value in enumerate(command[:-1]):
         if value in {"--continue", "-c"}:
-            return str(command[index + 1]).strip()
-    return ""
+            return "continue", str(command[index + 1]).strip()
+        if value in {"--resume", "-r"}:
+            return "resume", str(command[index + 1]).strip()
+    return "fresh", ""
 
 
 def _resume_command(command: list[str], stored_session_id: str) -> list[str]:
@@ -184,20 +186,26 @@ def _reconcile_command(command: list[str]) -> list[str]:
 
 
 def _select_owned_session(
-    sessions: list[dict], *, expected_title: str, previous: str
+    sessions: list[dict],
+    *,
+    expected_identity: str,
+    previous: str,
+    adopt_single: bool = False,
 ) -> dict | None:
     """Select only the one session proven to belong to this owner."""
-    identities = {expected_title}
+    if adopt_single and not previous and len(sessions) == 1:
+        return sessions[0]
+    identities = {expected_identity}
     if previous:
         identities.add(previous)
     matches = [
         row
         for row in sessions
-        if row.get("title") in identities or row.get("session_key") in identities
+        if any(row.get(field) in identities for field in ("id", "title", "session_key"))
     ]
     if len(matches) > 1 or (sessions and len(matches) != 1):
         raise RuntimeError(
-            f"Hermes gateway identity mismatch for {expected_title!r}: "
+            f"Hermes gateway identity mismatch for {expected_identity!r}: "
             f"{len(matches)} owned matches among {len(sessions)} live sessions"
         )
     return matches[0] if matches else None
@@ -221,7 +229,9 @@ def _write_supervision(state_dir: Path, **fields: object) -> None:
     except (OSError, ValueError, TypeError):
         previous = {}
     if isinstance(previous, dict):
-        comparable = {key: value for key, value in previous.items() if key != "observed_at"}
+        comparable = {
+            key: value for key, value in previous.items() if key != "observed_at"
+        }
         if comparable == fields:
             return
     _atomic_json(
@@ -274,7 +284,7 @@ def _supervise_tui(
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
 
-    expected_title = _continue_title(command)
+    session_mode, expected_identity = _requested_session(command)
     tui = spawn(command, env=env)
     if on_spawn is not None:
         on_spawn(tui)
@@ -301,7 +311,10 @@ def _supervise_tui(
 
         try:
             owned_session = _select_owned_session(
-                sessions, expected_title=expected_title, previous=resume_key
+                sessions,
+                expected_identity=expected_identity,
+                previous=resume_key,
+                adopt_single=session_mode == "fresh",
             )
         except RuntimeError as exc:
             _write_supervision(
@@ -315,7 +328,11 @@ def _supervise_tui(
 
         if owned_session is not None:
             absent_polls = 0
-            resume_key = str(owned_session.get("session_key") or resume_key).strip()
+            resume_key = str(
+                owned_session.get("session_key")
+                or owned_session.get("id")
+                or resume_key
+            ).strip()
             if not attached_session_prepared and on_session_attached is not None:
                 try:
                     on_session_attached(owned_session)
@@ -355,13 +372,16 @@ def _supervise_tui(
         now = monotonic()
         while recoveries and now - recoveries[0] > RECOVERY_WINDOW_SECONDS:
             recoveries.popleft()
-        if not expected_title or len(recoveries) >= MAX_RECOVERIES_PER_WINDOW:
+        if (not expected_identity and not resume_key) or len(
+            recoveries
+        ) >= MAX_RECOVERIES_PER_WINDOW:
             _write_supervision(
                 state_dir,
                 state="recovery_refused",
                 detail=(
-                    "the TUI command has no stable --continue session identity"
-                    if not expected_title
+                    "a fresh TUI created no session, so recovery cannot replay "
+                    "its startup turn safely"
+                    if not expected_identity and not resume_key
                     else "TUI transport recovery budget exhausted"
                 ),
                 recoveries=len(recoveries),

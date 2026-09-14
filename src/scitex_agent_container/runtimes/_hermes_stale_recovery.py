@@ -218,7 +218,7 @@ def _owns_monitor_process(pid: int, config_path: str) -> bool:
 
 def recovery_command(config: AgentConfig) -> str:
     """The documented Hermes same-session provider rebind."""
-    provider = f"sac-{config.engine_key or config.model}"
+    provider = f"custom:sac-{config.engine_key or config.model}"
     return f"/model {config.model} --provider {provider} --session"
 
 

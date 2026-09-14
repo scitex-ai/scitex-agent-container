@@ -411,7 +411,7 @@ def test_recovery_uses_supported_same_session_controls_in_order():
         True,
         [
             "heartbeat.clear",
-            "/model qwen38-27b --provider sac-qwen38-27b --session",
+            "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
         ],
     )
 
