@@ -160,6 +160,34 @@ class _BusyThenIdleThenCleared:
         return _IDLE_WITH_PENDING
 
 
+class _ClaudeNeedsEscapeThenEnter:
+    """Claude 2.1.197: bare Enter sticks; Escape, settle, Enter submits."""
+
+    def __init__(self, sender: _RecordingSend) -> None:
+        self._sender = sender
+
+    def __call__(self, _name: str) -> str:
+        if self._sender.keys[-2:] == ["Escape", "Enter"]:
+            return _CLEARED_WITH_SCROLLBACK_PROMPT
+        return _IDLE_WITH_PENDING
+
+
+class _TransientClearThenPending:
+    """Each Enter produces one clear render frame, then the text returns."""
+
+    def __init__(self, sender: _RecordingSend) -> None:
+        self._sender = sender
+        self._seen_enters = 0
+        self._served_clear_for = 0
+
+    def __call__(self, _name: str) -> str:
+        self._seen_enters = self._sender.keys.count("Enter")
+        if self._served_clear_for < self._seen_enters:
+            self._served_clear_for = self._seen_enters
+            return _CLEARED
+        return _IDLE_WITH_PENDING
+
+
 def _no_sleep(_s: float) -> None:
     return None
 
@@ -228,6 +256,72 @@ def test_sends_enter_once_pane_is_idle_with_pending_buffer() -> None:
     )
     # Assert — exactly one Enter was sent (once idle), and it submitted.
     assert (ok, sender.keys) == (True, ["Enter"])
+
+
+def test_claude_2197_uses_guarded_escape_settle_enter() -> None:
+    # Arrange
+    sender = _RecordingSend()
+    capture = _ClaudeNeedsEscapeThenEnter(sender)
+    sleeps: list[float] = []
+    # Act
+    submitted = verify_submit_by_advancement(
+        "tui-x",
+        capture_fn=capture,
+        send_keys_fn=sender,
+        pending_fragment="go work",
+        max_resends=1,
+        poll_s=0.1,
+        escape_before_enter=True,
+        escape_settle_s=1.0,
+        proof_stable_s=0.2,
+        require_submission_proof=True,
+        sleep_fn=sleeps.append,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert
+    assert (submitted, sender.keys, sleeps[0]) == (True, ["Escape", "Enter"], 1.0)
+
+
+def test_transient_clear_frame_is_not_submission_proof() -> None:
+    # Arrange
+    sender = _RecordingSend()
+    capture = _TransientClearThenPending(sender)
+    # Act
+    submitted = verify_submit_by_advancement(
+        "tui-x",
+        capture_fn=capture,
+        send_keys_fn=sender,
+        pending_fragment="go work",
+        max_resends=2,
+        poll_s=0.0,
+        proof_stable_s=0.2,
+        require_submission_proof=True,
+        sleep_fn=_no_sleep,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert
+    assert submitted is False
+
+
+def test_busy_claude_refuses_escape_and_enter() -> None:
+    # Arrange
+    sender = _RecordingSend()
+    # Act
+    submitted = verify_submit_by_advancement(
+        "tui-x",
+        capture_fn=lambda _name: _BUSY_WITH_PENDING,
+        send_keys_fn=sender,
+        pending_fragment="go work",
+        max_resends=1,
+        poll_s=0.0,
+        idle_wait_s=0.3,
+        escape_before_enter=True,
+        require_submission_proof=True,
+        sleep_fn=_no_sleep,
+        time_fn=_FakeClock(step=0.1),
+    )
+    # Assert
+    assert (submitted, sender.keys) == (False, [])
 
 
 # ── (c) detects buffer advancement = submitted = stop ────────────────────────
