@@ -83,7 +83,9 @@ Sandbox once, refresh when you want, freeze when stable:
 ```bash
 sac image build scitex --sandbox        # one-time: writable sandbox
 sac image update sandbox/               # any time: pip install --upgrade scitex[all]
-sac image freeze sandbox/ scitex-2.28.15.sif   # bake to immutable SIF
+sac image freeze sandbox/ candidate.sif # bake an explicit immutable SIF
+
+# Managed timestamped artifacts already under the SAC layer store:
 sac image switch 2026-0914-152140 --layer base  # atomic dual-link flip
 sac image rollback --layer base                  # restore previous version
 sac image snapshot -o env.json         # full reproducibility capsule

@@ -286,7 +286,7 @@ sac a2a doctor <agent>                    # probe AgentCard endpoint
 sac a2a grant / revoke / block / unblock / grants
 
 # Image lifecycle
-sac image build [base|scitex] [--sandbox]
+sac image build [base|scitex|proxy] [--sandbox]
 sac image sandbox SOURCE                  # SIF → writable sandbox
 sac image update  SANDBOX [-p PKG]        # pip install --upgrade
 sac image freeze  SANDBOX OUT.sif         # sandbox → SIF

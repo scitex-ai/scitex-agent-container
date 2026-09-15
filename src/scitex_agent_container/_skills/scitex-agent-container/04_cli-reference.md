@@ -56,10 +56,10 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 Typical "scitex updates often" cycle:
 
 ```
-sac image build scitex --sandbox       # one-time
-sac image update sandbox/              # any time
-sac image freeze sandbox/ scitex-X.sif # when stable
+sac image build base -y                # create a managed timestamped artifact
+sac image status                       # read its active version
 sac image switch 2026-0914-152140 --layer base
+sac image rollback --layer base
 ```
 
 ## Account / quota (`sac accounts`)
