@@ -19,6 +19,7 @@ def assert_explicit_engine_noop_safe(
     *,
     force: bool,
     dry_run: bool,
+    proc_root: Any = None,
 ) -> None:
     """Allow an idempotent no-op only when it proves the requested engine is live.
 
@@ -34,7 +35,9 @@ def assert_explicit_engine_noop_safe(
         return
 
     resolved = str(getattr(config, "engine_key", "") or "").strip()
-    running, scan, reason = _read_running_engine(str(config.name))
+    running, scan, reason = _read_running_engine(
+        str(config.name), proc_root=proc_root
+    )
     if running == resolved:
         return
 
