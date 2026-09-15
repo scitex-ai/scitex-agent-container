@@ -21,6 +21,7 @@ from ..config._launch_plan import (
 from ._apptainer_provider import resolve_provider_api_key
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
+from .mcp_config import setup_mcp_config
 
 API_KEY_FILE = "hermes-api.key"
 API_PORT_FILE = "hermes-api.port"
@@ -360,6 +361,7 @@ def materialize_hermes_profile(
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
     deploy_to_home(config, str(home))
+    setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
     api_key = ensure_api_key(state_dir)
     provider_key = resolve_provider_api_key(config)
@@ -398,6 +400,7 @@ def materialize_hermes_profile(
     targets = [home]
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 
@@ -436,6 +439,7 @@ def materialize_hermes_tui_profile(
         overlay_home = deploy_to_home_overlay(config)
     else:
         overlay_home = resolve_overlay_upper_home(config)
+    setup_mcp_config(config, str(home))
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config, launch_mode="tui")
     max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
@@ -463,6 +467,7 @@ def materialize_hermes_tui_profile(
     targets = [home]
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 
