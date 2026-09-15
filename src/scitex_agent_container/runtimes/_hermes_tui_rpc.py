@@ -269,7 +269,11 @@ def _submit_interactive(
             socket,
             request_id,
             "session.steer",
-            {"session_id": session_id, "text": text},
+            {
+                "render_user_message": True,
+                "session_id": session_id,
+                "text": text,
+            },
         )
         # Hermes 0.21.1 calls its accepted pending-steer slot ``queued``.
         # This is distinct from its next-turn prompt queue: the method name is
@@ -280,7 +284,11 @@ def _submit_interactive(
             )
         return HermesTurnReceipt("steered", "steer", session_id), request_id + 1
 
-    params: dict[str, Any] = {"session_id": session_id, "text": text}
+    params: dict[str, Any] = {
+        "render_user_message": True,
+        "session_id": session_id,
+        "text": text,
+    }
     if delivery_mode == "queue":
         params["queued"] = True
     result = _rpc(socket, request_id, "prompt.submit", params)

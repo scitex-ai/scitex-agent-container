@@ -8,11 +8,11 @@ import pytest
 from scitex_agent_container.cli_pkg import _hermes_source as source
 
 
-def test_pin_names_the_validated_cache_lineage_source() -> None:
+def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
         "https://github.com/ywatanabe1989/hermes-agent.git",
-        "b635448768d6ba49bc1f75bd381f32336dde7ac8",
+        "9ca9b7e5b9092465d37e4af0c2132aed188af5dd",
     )
 
     # Act

@@ -9,10 +9,13 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Immutable source for the cache-lineage fix proposed upstream in
-# https://github.com/NousResearch/hermes-agent/pull/110480.  Keep the fork URL
-# paired with its commit until the change is available from the upstream repo.
-HERMES_COMMIT = "b635448768d6ba49bc1f75bd381f32336dde7ac8"
+# Immutable SAC-lineage source for the cache fix proposed upstream in
+# https://github.com/NousResearch/hermes-agent/pull/110480 plus the external
+# inbound renderer proposed for current Hermes main in
+# https://github.com/ywatanabe1989/hermes-agent/pull/1. The current-main
+# history is unrelated to SAC's b635448 pin, so use this validated one-commit
+# descendant instead of importing that unrelated lineage into the base image.
+HERMES_COMMIT = "9ca9b7e5b9092465d37e4af0c2132aed188af5dd"
 HERMES_REPOSITORY = "https://github.com/ywatanabe1989/hermes-agent.git"
 HERMES_SOURCE_ENV = "SAC_HERMES_SOURCE_DIR"
 STAGED_HERMES_SOURCE = "hermes-agent-src"

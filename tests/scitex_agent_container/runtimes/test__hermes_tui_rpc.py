@@ -437,7 +437,11 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
         "steered",
         "steer",
         ["session.active_list", "session.steer"],
-        {"session_id": "live-1", "text": "act now"},
+        {
+            "render_user_message": True,
+            "session_id": "live-1",
+            "text": "act now",
+        },
     )
 
 
@@ -478,6 +482,7 @@ def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
         "queue",
         ["session.active_list", "prompt.submit"],
         {
+            "render_user_message": True,
             "session_id": "live-1",
             "text": "run this afterward",
             "queued": True,
@@ -623,6 +628,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
         receipt.status,
         receipt.visibility,
         [request["method"] for request in socket.sent],
+        socket.sent[2]["params"]["render_user_message"],
     ) == (
         "streaming",
         "session.inflight.user",
@@ -632,6 +638,7 @@ def test_visible_idle_turn_is_proven_in_native_inflight_projection(tmp_path):
             "prompt.submit",
             "session.activate",
         ],
+        True,
     )
 
 
@@ -660,9 +667,10 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
     )
 
     # Assert
-    assert (receipt.status, receipt.visibility) == (
+    assert (receipt.status, receipt.visibility, socket.sent[2]["params"]["render_user_message"]) == (
         "steered",
         "session.inflight.corrections",
+        True,
     )
 
 
