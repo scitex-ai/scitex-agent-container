@@ -162,7 +162,6 @@ def _run_brokered_start(broker_env, tmp_path: Path, capsys) -> dict:
             as_json=True,
             foreground=False,
             one_shot=False,
-            strict_drift=False,
             no_redispatch=True,
             multi_foreground=False,
             preflight_runner=lambda: None,

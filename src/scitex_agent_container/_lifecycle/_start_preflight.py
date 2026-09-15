@@ -1,5 +1,5 @@
 """Pre-flight helpers for ``agent_start`` — liveness, account rotation,
-strict-drift resolution, and launch-time spec-source drift.
+and launch-time spec-source drift.
 
 Extracted from ``_start.py`` (split for the 512-line module limit).
 ``_start.agent_start`` imports these; behaviour is unchanged.
@@ -7,8 +7,6 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-import logging
-import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -70,42 +68,6 @@ def _verify_real_liveness(
         if row.get("name") == config.name:
             return True
     return False
-
-
-def _resolve_strict_drift(strict_drift: bool | None) -> bool:
-    """Resolve effective strict-drift mode. STRICT IS NOW THE DEFAULT.
-
-    Operator ruling 2026-08-10: a spec that is wrong refuses to start, and the
-    way past it is an explicitly NAMED override rather than a blanket force.
-    So the precedence is:
-
-      1. ``strict_drift=True/False`` — the caller said so outright
-         (``--strict-drift`` forces strict; ``--allow-stale-spec`` passes
-         ``False``). An explicit argument always wins.
-      2. ``SAC_ALLOW_STALE_SPEC`` truthy → lenient. The named env override.
-      3. ``SAC_STRICT_DRIFT`` — the legacy opt-in knob, still honoured in
-         BOTH directions so an existing ``SAC_STRICT_DRIFT=0`` in someone's
-         environment keeps meaning "do not block me" rather than silently
-         becoming a no-op the day the default flipped.
-      4. otherwise STRICT.
-
-    Read through the sac env helper so either env prefix works. Note that
-    "strict" only ever refuses a STALE spec (BEHIND / DIVERGED) — AHEAD,
-    NOT_A_REPO and UNREACHABLE still start. See ``_drift._local``.
-    """
-    if strict_drift is not None:
-        return strict_drift
-    from .._drift._local import ALLOW_STALE_ENV
-    from .._env import getenv as _sac_env
-
-    truthy = ("1", "true", "yes", "on")
-    allow = (_sac_env(ALLOW_STALE_ENV.removeprefix("SAC_"), "") or "").strip().lower()
-    if allow in truthy:
-        return False
-    legacy = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
-    if legacy:
-        return legacy in truthy
-    return True
 
 
 def _slug_of_credentials_file(path: Path) -> str:
@@ -456,41 +418,8 @@ def _rotate_to_healthy_account(
     system_msg(notice, style="info")
 
 
-def _check_spec_source_drift_at_launch(
-    config_path: str, agent_name: str, strict_drift: bool | None
-) -> None:
-    """Run the launch-time drift check; REFUSE on a stale spec by default.
+def _check_spec_source_drift_at_launch(config_path: str, agent_name: str) -> None:
+    """Require positive evidence that the spec source is current."""
+    from .._drift import warn_if_spec_source_drifted
 
-    Fully guarded: the underlying check never raises except the
-    deliberate strict-mode :class:`SpecSourceDriftError`. We let that
-    propagate (the CLI / caller turns it into a non-zero exit); any
-    other unexpected failure here is swallowed so a launch is never
-    crashed by the drift guard.
-
-    When the refusal was OVERRIDDEN and the spec really is stale, that fact is
-    logged at ERROR naming the condition and the agent. A silent override is
-    just a slower version of the warning nobody read.
-    """
-    from .._drift import SpecSourceDriftError, warn_if_spec_source_drifted
-    from .._drift._local import ALLOW_STALE_ENV, ALLOW_STALE_FLAG
-
-    strict = _resolve_strict_drift(strict_drift)
-    try:
-        status = warn_if_spec_source_drifted(
-            config_path, agent=agent_name, strict=strict
-        )
-        if not strict and status.is_stale:
-            logging.getLogger(__name__).error(
-                "sac-drift BYPASSED for agent %r: the spec source is STALE (%s) "
-                "and the start was allowed anyway by %s / %s.",
-                agent_name,
-                status.summary(),
-                ALLOW_STALE_FLAG,
-                ALLOW_STALE_ENV,
-            )
-    except SpecSourceDriftError:
-        # Deliberate strict-mode block — propagate so the caller exits
-        # non-zero. This is the ONE thing this guard is allowed to raise.
-        raise
-    except Exception:  # stx-allow: fallback (reason: the drift guard must NEVER crash a launch; any unexpected error degrades to "no check ran" and the agent proceeds)
-        traceback.print_exc()
+    warn_if_spec_source_drifted(config_path, agent=agent_name)

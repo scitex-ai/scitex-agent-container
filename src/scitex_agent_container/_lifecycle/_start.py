@@ -38,10 +38,9 @@ from ._start_outcome import NOOP_ALREADY_RUNNING
 # pre-flight helpers from _start. ``_verify_real_liveness`` is no longer the
 # no-op GATE (see :mod:`._start_verdict` — it is now one signal among several,
 # and its ``False`` no longer means "dead"), but it remains a supported helper
-# with its own tests. _resolve_strict_drift is used only transitively.
+# with its own tests.
 from ._start_preflight import (  # noqa: F401
     _check_spec_source_drift_at_launch,
-    _resolve_strict_drift,
     _rotate_to_healthy_account,
     _verify_real_liveness,
 )
@@ -70,7 +69,6 @@ def agent_start(
     foreground: bool = False,
     one_shot: bool = False,
     assume_yes: bool = False,
-    strict_drift: bool | None = None,
     runtime_factory: Optional[Callable[[AgentConfig], Any]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     thread_factory: Callable[..., Any] = threading.Thread,
@@ -121,11 +119,6 @@ def agent_start(
             though ``-y`` was explicitly passed at the CLI. Ignored on
             the non-SIF (direct) path — it has no interactive gate of
             its own to satisfy.
-        strict_drift: Whether a STALE spec source blocks the launch.
-            ``None`` (default) resolves to STRICT unless
-            ``SAC_ALLOW_STALE_SPEC`` / ``SAC_STRICT_DRIFT=0`` says
-            otherwise; ``True`` forces strict, ``False`` forces lenient
-            (what ``--allow-stale-spec`` passes).
         runtime_factory: Injectable real callable that builds an SDK
             runtime from an :class:`AgentConfig`. Default is the real
             :func:`_get_runtime`.
@@ -202,7 +195,6 @@ def agent_start(
     run_prelaunch(
         config,
         config_path,
-        strict_drift=strict_drift,
         session_override=session_override,
         resume_id_override=resume_id_override,
         engine_override=engine_override,

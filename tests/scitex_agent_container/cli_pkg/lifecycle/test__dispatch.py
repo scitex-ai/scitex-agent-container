@@ -301,8 +301,8 @@ _SK_OK = _peer_that_delivers(stdout=_OK_JSON, exit=0)
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchDriftBlocksWithoutForce:
-    def test_drift_without_force_raises_runtime_error(
+class TestDispatchIdentityGate:
+    def test_drift_raises_runtime_error(
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
         # Arrange — the peer holds a DIFFERENT spec.yaml.
@@ -320,7 +320,7 @@ class TestDispatchDriftBlocksWithoutForce:
         # Act
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         # Assert
-        assert "Spec drift" in scen.message
+        assert "Spec identity mismatch" in scen.message
 
     def test_drift_message_names_the_differing_file(
         self, spec_dir, shim_bin, registered_peer, capsys
@@ -340,20 +340,21 @@ class TestDispatchDriftBlocksWithoutForce:
         # Assert
         assert scen.shipped_count == 0
 
-    def test_a_peer_only_file_alone_does_not_block_a_start(
-        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
+    def test_force_does_not_bypass_drift(
+        self, spec_dir, shim_bin, registered_peer, capsys
     ):
-        """The handoff no longer deletes, so a file only the peer has is news
-        rather than a conflict — losing scitex-nas-03's sidecar launcher to a
-        mirroring delete is what that rule prevents."""
-        # Arrange
-        _write_peer_config(fake_home, env_save_restore)
+        sk = dict(peer_manifest=_PEER_DRIFTED)
+        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, force=True)
+        assert isinstance(scen.raised, RuntimeError)
+
+    def test_peer_only_file_blocks_start(
+        self, spec_dir, shim_bin, registered_peer, capsys
+    ):
         peer_only = _DELIVERED + f"{'1' * 32}  ./start-telegram-sidecar.sh\n"
-        sk = dict(peer_manifest=peer_only, landed_manifest=peer_only, stdout=_OK_JSON)
-        # Act
-        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
-        # Assert
-        assert scen.raised is None
+        scen = _act_dispatch(
+            shim_bin, capsys, ssh_kwargs=dict(peer_manifest=peer_only)
+        )
+        assert isinstance(scen.raised, RuntimeError)
 
 
 class TestDispatchDryRunMode:
@@ -361,7 +362,7 @@ class TestDispatchDryRunMode:
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
         # Arrange
-        sk = dict(peer_manifest="")
+        sk = dict(peer_manifest=_DELIVERED)
         # Act
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
@@ -371,7 +372,7 @@ class TestDispatchDryRunMode:
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
         # Arrange
-        sk = dict(peer_manifest="")
+        sk = dict(peer_manifest=_DELIVERED)
         # Act
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
@@ -381,7 +382,7 @@ class TestDispatchDryRunMode:
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
         # Arrange
-        sk = dict(peer_manifest="")
+        sk = dict(peer_manifest=_DELIVERED)
         # Act
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
@@ -391,7 +392,7 @@ class TestDispatchDryRunMode:
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
         # Arrange
-        sk = dict(peer_manifest="")
+        sk = dict(peer_manifest=_DELIVERED)
         # Act
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk, dry_run=True)
         # Assert
@@ -419,39 +420,18 @@ class TestDispatchHandoffFailures:
         # Assert
         assert "Could not read the spec manifest" in scen.message
 
-    def test_a_failed_transfer_message_identifies_the_extract_phase(
+    def test_missing_target_recipe_raises(
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
-        # Arrange — the peer is readable, then refuses the write.
-        sk = dict(peer_manifest="", extract_stderr="broken pipe\n", extract_exit=12)
-        # Act
+        sk = dict(peer_manifest="")
         scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
-        # Assert
-        assert "failed while extracting" in scen.message
+        assert "missing on target: spec.yaml" in scen.message
 
-    def test_a_transfer_that_exits_zero_but_delivers_nothing_raises(
+    def test_missing_target_recipe_never_reaches_remote_start(
         self, spec_dir, shim_bin, registered_peer, capsys
     ):
-        """THE regression. scitex-nas-03's patched rsync exited 0 and wrote the
-        spec one directory away; the old code then booted the agent from the
-        stale spec and called the dispatch a success."""
-        # Arrange — extraction "succeeds", peer still reports an empty dir.
-        sk = dict(peer_manifest="", landed_manifest="", extract_exit=0)
-        # Act
-        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
-        # Assert
-        assert "stale spec" in scen.message
-
-    def test_a_silent_mis_delivery_never_reaches_the_remote_start(
-        self, spec_dir, shim_bin, registered_peer, capsys
-    ):
-        """The consequence that made this urgent: a mis-delivered spec must
-        not be followed by a start that reads whatever is at that path."""
-        # Arrange
-        sk = dict(peer_manifest="", landed_manifest="", extract_exit=0)
-        # Act
-        scen = _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
-        # Assert
+        sk = dict(peer_manifest="")
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=sk)
         assert _phase_count(shim_bin, "sac agents start") == 0
 
 
@@ -478,6 +458,15 @@ class TestDispatchMissingSpecDir:
 
 
 class TestDispatchSshSuccessPath:
+    def test_dispatch_does_not_lead_register_peer_comms_node(
+        self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
+    ):
+        _write_peer_config(fake_home, env_save_restore)
+        _act_dispatch(shim_bin, capsys, ssh_kwargs=_SK_OK)
+        from scitex_agent_container._state.state_store_nodes import lookup_comms_node
+
+        assert lookup_comms_node(name="alpha") is None
+
     def test_dispatch_ssh_success_writes_instances_row(
         self, spec_dir, shim_bin, state_store, fake_home, env_save_restore, capsys
     ):

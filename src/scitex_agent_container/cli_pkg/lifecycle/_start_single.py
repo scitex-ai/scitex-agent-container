@@ -78,7 +78,6 @@ def run_single_targets(
     as_json: bool,
     foreground: bool,
     one_shot: bool,
-    strict_drift: bool | None,
     no_redispatch: bool,
     multi_foreground: bool,
     preflight_runner: Callable[[], None],
@@ -91,8 +90,7 @@ def run_single_targets(
 
     Exits non-zero (``sys.exit(1)``) when any target fails. Honours the
     cross-host dispatch branch, the singleton-skip guard, the JSON
-    report shape, and the launch-time ``strict_drift`` escalation —
-    behaviour is byte-identical to the inline loop it replaced.
+    report shape and launch-time source-currency gate.
 
     ``broker_self`` (sac-from-sac L2, lead dispatch eb953ce0): when
     True AND not ``dry_run``, wraps the per-target loop in a
@@ -342,7 +340,6 @@ def run_single_targets(
                     foreground=foreground,
                     one_shot=one_shot,
                     assume_yes=effective_yes,
-                    strict_drift=strict_drift,
                 )
                 _noop = outcome_kind(_outcome) == KIND_ALREADY_RUNNING
                 # v4 step 1 — the launch VERDICT: the launch only counts

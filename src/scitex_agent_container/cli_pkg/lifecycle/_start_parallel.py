@@ -62,7 +62,6 @@ def build_child_argv(
     no_preflight: bool,
     force: bool,
     session_mode: str | None,
-    strict_drift: bool | None,
     broker_self: bool,
 ) -> list[str]:
     """Build the child ``sac agents start <target> ...`` argv.
@@ -81,8 +80,6 @@ def build_child_argv(
         argv.append("--force")
     if session_mode:
         argv += ["--session", session_mode]
-    if strict_drift:
-        argv.append("--strict-drift")
     if broker_self:
         argv.append("--broker-self")
     return argv
@@ -96,7 +93,6 @@ def run_parallel_targets(
     no_preflight: bool,
     force: bool,
     session_mode: str | None,
-    strict_drift: bool | None,
     broker_self: bool,
 ) -> None:
     """Launch ``targets`` as bounded-parallel child subprocesses.
@@ -127,7 +123,6 @@ def run_parallel_targets(
                 no_preflight=no_preflight,
                 force=force,
                 session_mode=session_mode,
-                strict_drift=strict_drift,
                 broker_self=broker_self,
             ),
             capture_output=True,
@@ -178,7 +173,6 @@ def maybe_run_parallel(
     no_preflight: bool,
     force: bool,
     session_mode: str | None,
-    strict_drift: bool | None,
     broker_self: bool,
     foreground: bool,
     multi_foreground: bool,
@@ -219,7 +213,6 @@ def maybe_run_parallel(
         no_preflight=no_preflight,
         force=force,
         session_mode=session_mode,
-        strict_drift=strict_drift,
         broker_self=broker_self,
     )
     return True

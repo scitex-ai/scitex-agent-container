@@ -122,7 +122,6 @@ def _run_interactive(yaml_path: Path, *, verbose: bool, capsys, caplog) -> _Prev
                 as_json=False,
                 foreground=False,
                 one_shot=False,
-                strict_drift=False,
                 no_redispatch=True,
                 multi_foreground=False,
                 preflight_runner=lambda: None,

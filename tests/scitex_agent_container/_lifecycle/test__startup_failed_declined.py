@@ -222,7 +222,6 @@ def _refuse(tmp_path: Path, env_save_restore, capsys, caplog) -> _Refusal:
                 as_json=False,
                 foreground=False,
                 one_shot=False,
-                strict_drift=False,
                 no_redispatch=True,
                 multi_foreground=False,
                 preflight_runner=lambda: None,

@@ -5,6 +5,11 @@ from scitex_agent_container.cli_pkg.lifecycle._dispatch_start_argv import (
 )
 
 
+def test_force_controls_runtime_replacement() -> None:
+    argv = remote_start_argv("cards", force=True)
+    assert "--force" in argv
+
+
 def test_fresh_override_reaches_remote_cli_argv():
     # Arrange
     session_mode = "fresh"

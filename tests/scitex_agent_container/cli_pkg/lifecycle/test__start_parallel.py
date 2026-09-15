@@ -81,7 +81,6 @@ def _kwargs(**over):
         no_preflight=False,
         force=False,
         session_mode=None,
-        strict_drift=False,
         broker_self=False,
     )
     base.update(over)
@@ -100,7 +99,6 @@ def _argv(**over):
         no_preflight=False,
         force=False,
         session_mode=None,
-        strict_drift=False,
         broker_self=False,
     )
     base.update(over)
@@ -245,7 +243,6 @@ def _route_kwargs(**over):
         no_preflight=False,
         force=False,
         session_mode=None,
-        strict_drift=False,
         broker_self=False,
         foreground=False,
         multi_foreground=False,

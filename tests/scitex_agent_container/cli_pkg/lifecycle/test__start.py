@@ -877,13 +877,9 @@ class TestStartNoRedispatchJsonA2aPort:
             importlib.reload(_pa)
 
 
-def test_start_command_exposes_strict_drift_flag():
-    # Arrange
+def test_start_command_exposes_no_source_currency_bypass():
     flag_names = {opt for p in start.params for opt in p.opts}
-    # Act
-    has_flag = "--strict-drift" in flag_names
-    # Assert
-    assert has_flag is True
+    assert "--allow-stale-spec" not in flag_names
 
 
 # ---------------------------------------------------------------------------
