@@ -232,7 +232,9 @@ def test_none_verdict_renders_cannot_verify(capsys) -> None:
     # Act
     _print_local_outcome("ag-r", True, None, verdict)
     # Assert: an abstention is named as one — never the binary label.
-    assert "CANNOT VERIFY" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "CANNOT VERIFY" in captured.err
 
 
 def test_none_verdict_never_renders_not_verified(capsys) -> None:
@@ -241,7 +243,9 @@ def test_none_verdict_never_renders_not_verified(capsys) -> None:
     # Act
     _print_local_outcome("ag-r2", True, None, verdict)
     # Assert
-    assert "NOT verified" not in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "NOT verified" not in captured.err
 
 
 def test_true_verdict_still_renders_verified(capsys) -> None:
@@ -250,7 +254,9 @@ def test_true_verdict_still_renders_verified(capsys) -> None:
     # Act
     _print_local_outcome("ag-r3", True, None, verdict)
     # Assert
-    assert "verified" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "verified" in captured.err
 
 
 def test_refuted_cycle_renders_the_verdict_reason(capsys) -> None:
@@ -259,4 +265,6 @@ def test_refuted_cycle_renders_the_verdict_reason(capsys) -> None:
     # Act
     _print_local_outcome("ag-r4", False, _NOT_CYCLED, verdict)
     # Assert
-    assert "still the same run" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "still the same run" in captured.err

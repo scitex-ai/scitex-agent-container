@@ -9,7 +9,6 @@ beside the host-side Hermes turn bridge and tears it down with the TUI.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import shutil
@@ -19,13 +18,17 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .._logging import get_logger
 from ..config import AgentConfig
 from ._hermes_cct import cct_requested
 from ._sdk_channels import _TELEGRAMMER_MCP_KEY
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
-log = logging.getLogger(__name__)
+
+def _logger():
+    return get_logger(__name__)
+
 
 PID_FILENAME = "hermes-cct-poller.pid"
 LOG_FILENAME = "hermes-cct-poller.log"
@@ -259,7 +262,7 @@ def stop_cct_poller(
     if recorded > 0 and owns(recorded, name=config.name):
         candidates.add(recorded)
     elif recorded > 0:
-        log.warning(
+        _logger().warning(
             "Hermes CCT PID %s is not owned by %s; not signalling",
             recorded,
             config.name,
@@ -340,7 +343,7 @@ def start_cct_poller(
             f"CCT poller exited during startup; inspect {state / LOG_FILENAME}"
         )
     log_handle.close()
-    log.info("Hermes CCT poller started for %s (pid=%s)", config.name, pid)
+    _logger().info("Hermes CCT poller started for %s (pid=%s)", config.name, pid)
     return pid
 
 
