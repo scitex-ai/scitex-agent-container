@@ -226,6 +226,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
             "in_place": False,
         }
         and "HERMES_HOME=/home/agent/.hermes" in argv
+        and str(home / ".hermes" / ".env") in argv
         and "ANTHROPIC_BASE_URL=http://engine.example:8000/v1" not in argv
         and "SAC_LISTEN_BASE_URL" not in rendered_argv
         and "SAC_LISTEN_BEARER" not in rendered_argv
