@@ -16,11 +16,35 @@ name: docs
 # quality: the step never worked, it was carried by the hosted image.
 #
 # NOTE this job does NOT call the org reusable
-# (scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml). That reusable
-# probes for conf.py at docs/, docs/source/ and docs/src/ ONLY — sac's lives at
-# docs/sphinx/conf.py, so the reusable would have found nothing, printed
-# "no sphinx conf.py — skipping" and exited 0. It would have converted this
-# gate into a GREEN NO-OP. Consolidate only after teaching it that path.
+# (scitex-ai/.github/.github/workflows/rtd-sphinx-build.yml).
+#
+# THE REASON STATED HERE UNTIL 2026-08-18 WAS FALSE, AND THE WAY IT WAS FALSE
+# MATTERS MORE THAN THE FIX. It read: "That reusable probes for conf.py at
+# docs/, docs/source/ and docs/src/ ONLY ... it would have converted this gate
+# into a GREEN NO-OP." That was true when written and was fixed UPSTREAM on
+# 2026-07-22 — the reusable now takes `docs_dir` as an input DEFAULTING to
+# docs/sphinx (exactly sac's layout), keeps the three legacy paths as
+# fallbacks, and treats a missing conf.py as a HARD FAILURE by default.
+#
+# A comment cannot notice when the repository it describes moves. This one
+# went on asserting a measurement of ANOTHER REPO's code for four weeks after
+# that code changed, and it carried the authority of something someone had
+# checked. It was then read as evidence and re-emitted as a conclusion: the
+# PS-231 exemption filed on 2026-08-17 to keep this workflow local inherited
+# the staleness without re-measuring. So the only thing standing between sac
+# and a correct shared gate was a sentence about a file in a different repo.
+#
+# THE REAL REASON THIS JOB IS STILL LOCAL, verified 2026-08-18 by reading the
+# org copy rather than by recalling it: the org reusable HAS NO COMMIT-BACK
+# STEP. This job does not only build the docs, it refreshes the bundled
+# src/scitex_agent_container/_sphinx_html/ snapshot and pushes it to the
+# default branch (see the step below). A reusable's workspace dies with its
+# job, and the org copy has no commit step and no outputs, so calling it would
+# silently stop the bundled snapshot from ever being refreshed.
+#
+# CONSOLIDATE BY TEACHING THE ORG COPY TO COMMIT, NOT BY FORKING IT HERE. And
+# when this comment is next relied upon, RE-READ THE ORG FILE — that is the
+# only thing that would have caught the error above.
 #
 # `sphinx-build` is invoked as the CONSOLE SCRIPT (not `python -m sphinx`) so
 # the scitex-dev auditor's PS-122 still detects that this workflow runs it.
