@@ -223,9 +223,6 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     env_save_restore.set("HOME", str(tokenless_home))
     env_save_restore.set("LOGNAME", "operator")
     env_save_restore.set("USER", "operator")
-    env_save_restore.set(
-        "SCITEX_STORE_DSN", "postgresql://scitex-primary:55432/scitex"
-    )
     env_save_restore.delete("PGPASSFILE")
     source_passfile = tokenless_home / ".pgpass"
     source_passfile.write_text(
@@ -254,6 +251,9 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     doc["spec"]["to_home"] = str(to_home)
     doc["spec"]["comms"]["channels"] = ["server:claude-code-telegrammer"]
     doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"
+    doc["spec"]["apptainer"]["env"][
+        "SCITEX_STORE_DSN"
+    ] = "postgresql://scitex-primary:55432/scitex"
     spec_path = tmp_path / "business" / "spec.yaml"
     spec_path.parent.mkdir()
     spec_path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
