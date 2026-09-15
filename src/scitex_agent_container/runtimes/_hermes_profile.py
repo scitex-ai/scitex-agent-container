@@ -19,6 +19,7 @@ from ..config._launch_plan import (
     LaunchPlan,
     ResolvedEngine,
 )
+from ..config._provider_registry import resolve_provider
 from ._apptainer_provider import resolve_provider_api_key
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
@@ -153,12 +154,25 @@ def validate_hermes_tui_profile(
             _validate_mcp_pg_credentials(servers, launch_argv=launch_argv)
 
 
+def _uses_codex_subscription_gateway(config: AgentConfig) -> bool:
+    registered = resolve_provider("codex")
+    if registered is None:
+        return False
+    registered_url = str(registered.get("base_url") or "").rstrip("/")
+    active_url = str(config.claude.provider.base_url or "").rstrip("/")
+    return bool(registered_url and active_url == registered_url)
+
+
 def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> LaunchPlan:
     provider = config.claude.provider
     base_url = str(provider.base_url or "").rstrip("/")
     if not base_url:
         raise RuntimeError("Hermes requires the selected engine provider.base_url")
-    if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
+    if _uses_codex_subscription_gateway(config):
+        protocol = "openai-responses"
+        api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+        endpoint_url = f"{api_root}/responses"
+    elif urlsplit(base_url).path.rstrip("/").endswith("/responses"):
         protocol = "openai-responses"
         endpoint_url = base_url
     else:
