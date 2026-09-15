@@ -26,6 +26,7 @@ import click
 
 from .. import _build_priority
 from . import (
+    _image_activation_cmds,
     _image_distribute_cmd,
     _image_inventory_cmds,
     _image_remote_bake,
@@ -164,6 +165,8 @@ def image_group() -> None:
 image_group.add_command(_image_inventory_cmds.image_list)
 image_group.add_command(_image_inventory_cmds.image_status)
 image_group.add_command(_image_inventory_cmds.image_snapshot)
+image_group.add_command(_image_activation_cmds.image_switch)
+image_group.add_command(_image_activation_cmds.image_rollback)
 
 # Periodic remote bake (Spartan lease) + pull/verify/atomic-swap —
 # extracted to _image_remote_bake / _remote_bake_core (512-line budget).
@@ -453,41 +456,6 @@ def image_freeze(sandbox_dir: Path, output_sif: Path) -> None:
 
     result = sandbox_to_sif(sandbox_dir=sandbox_dir, output_sif=output_sif)
     console.print(f"[green]frozen[/green] {result}")
-
-
-# ---------------------------------------------------------------------------
-# switch
-# ---------------------------------------------------------------------------
-@image_group.command("switch")
-@click.argument("version", type=str)
-def image_switch(version: str) -> None:
-    """Atomically switch to a different SIF version.
-
-    \b
-    Example:
-      $ sac image switch 2.28.15
-    """
-    switch_version = _load_apptainer().switch_version
-
-    switch_version(version=version, containers_dir=_CONTAINERS_DIR)
-    console.print(f"[green]switched[/green] -> {version}")
-
-
-# ---------------------------------------------------------------------------
-# rollback
-# ---------------------------------------------------------------------------
-@image_group.command("rollback")
-def image_rollback() -> None:
-    """Restore the previous SIF version.
-
-    \b
-    Example:
-      $ sac image rollback
-    """
-    rollback = _load_apptainer().rollback
-
-    prev = rollback(containers_dir=_CONTAINERS_DIR)
-    console.print(f"[green]rolled back[/green] -> {prev}")
 
 
 # ---------------------------------------------------------------------------

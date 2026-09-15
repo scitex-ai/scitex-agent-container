@@ -83,14 +83,18 @@ Sandbox once, refresh when you want, freeze when stable:
 ```bash
 sac image build scitex --sandbox        # one-time: writable sandbox
 sac image update sandbox/               # any time: pip install --upgrade scitex[all]
-sac image freeze sandbox/ scitex-2.28.15.sif   # bake to immutable SIF
-sac image switch 2.28.15               # atomic flip (previous remembered)
-sac image rollback                     # restore previous version
+sac image freeze sandbox/ candidate.sif # bake an explicit immutable SIF
+
+# Managed timestamped artifacts already under the SAC layer store:
+sac image switch 2026-0914-152140 --layer base  # atomic dual-link flip
+sac image rollback --layer base                  # restore previous version
 sac image snapshot -o env.json         # full reproducibility capsule
 ```
 
-The build / sandbox / version / rollback verbs all delegate to
+Build, sandbox, and freeze delegate their container operations to
 [`scitex-container`](https://github.com/ywatanabe1989/scitex-container).
+Switch and rollback operate on SAC's layered `sac-<layer>-<version>.sif`
+store and update both stable links together.
 
 ## Distributing one verified artifact to a fleet
 
