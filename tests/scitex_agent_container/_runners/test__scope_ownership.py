@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from types import SimpleNamespace
 
+from scitex_agent_container._runners import _scope_ownership
 from scitex_agent_container._runners._scope_ownership import (
     capture_scope_ownership,
     ensure_owned_scope_down,
@@ -112,3 +114,55 @@ def test_nonempty_scope_cannot_report_stopped() -> None:
     )
     # Assert
     assert stopped is False
+
+
+def test_scope_stop_request_does_not_block_behind_systemd() -> None:
+    # Arrange
+    calls: list[tuple[list[str], dict]] = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    # Act
+    stopped = _scope_ownership._stop_scope(_UNIT, run_fn=run)
+    # Assert
+    assert (stopped, calls) == (
+        True,
+        [
+            (
+                ["systemctl", "--user", "stop", "--no-block", _UNIT],
+                {"capture_output": True, "text": True, "timeout": 5},
+            )
+        ],
+    )
+
+
+def test_default_wait_covers_systemd_scope_drain() -> None:
+    # Arrange — the real Hermes canary needed about 35 seconds for its scope
+    # to transition from stop-sigterm to dead.  systemd's default stop window
+    # is 90 seconds, so five seconds is not a terminal observation.
+    clock = [0.0]
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    def identity(pid: int) -> ProcessIdentity | None:
+        return _identity(pid) if clock[0] < 35.0 else None
+
+    def pids(_group: str) -> tuple[int, ...]:
+        return (41,) if clock[0] < 35.0 else ()
+
+    shown = {"ControlGroup": _CGROUP, "InvocationID": _INVOCATION}
+    # Act
+    stopped = ensure_owned_scope_down(
+        _record(),
+        identity_fn=identity,
+        show_scope_fn=lambda _unit: shown,
+        cgroup_pids_fn=pids,
+        stop_scope_fn=lambda _unit: True,
+        sleep_fn=sleep,
+        monotonic_fn=lambda: clock[0],
+    )
+    # Assert
+    assert (stopped, clock[0] >= 35.0) == (True, True)
