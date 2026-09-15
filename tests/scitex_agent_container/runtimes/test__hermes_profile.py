@@ -281,6 +281,34 @@ def test_cards_mcp_receives_postgres_identity_without_template_placeholders():
     }
 
 
+def test_cct_mcp_receives_store_identity_without_template_placeholders():
+    # Arrange
+    config = AgentConfig(name="hub", harness="hermes", runtime="tui")
+    servers = {
+        "claude-code-telegrammer": {
+            "command": "bun",
+            "args": ["run", "telegram-server.ts"],
+        }
+    }
+
+    def replacement(value):
+        return {
+            "PGUSER": "ywatanabe__hub",
+            "PGPASSFILE": "/home/agent/.sac-pgpass",
+            "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
+        }
+
+    # Act
+    with _replace_attributes([(_fleet_env, "effective_env", replacement)]):
+        profile._bind_mcp_runtime_env(config, servers)
+    # Assert
+    assert servers["claude-code-telegrammer"]["env"] == {
+        "PGUSER": "ywatanabe__hub",
+        "PGPASSFILE": "/home/agent/.sac-pgpass",
+        "SCITEX_STORE_DSN": "postgresql://scitex-primary:55432/scitex",
+    }
+
+
 def test_mcp_pg_binding_derives_and_validates_provisioned_project_role(tmp_path):
     # Arrange
     profile_home = tmp_path / "runtime-home"

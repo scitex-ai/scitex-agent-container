@@ -271,6 +271,7 @@ def _bind_mcp_runtime_env(
         command = Path(str(server.get("command", ""))).name
         is_cards = name in {"cards", "scitex-cards"} or command == "scitex-cards"
         is_sac = name in {"sac", "scitex-agent-container"} or command == "sac"
+        is_cct = name == "claude-code-telegrammer"
         if is_cards or is_sac:
             # This was the deprecated Cards-specific store alias.  Retaining
             # it permits a generated profile to disagree with the one shared
@@ -281,6 +282,8 @@ def _bind_mcp_runtime_env(
         keys = (
             _MCP_NON_SECRET_ENV
             if is_cards or is_sac
+            else {"PGPASSFILE", "PGUSER", "SCITEX_STORE_DSN"}
+            if is_cct
             else _MCP_NON_SECRET_ENV.intersection(declared)
         )
         for key in keys:
