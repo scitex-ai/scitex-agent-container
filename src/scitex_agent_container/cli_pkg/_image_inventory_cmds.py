@@ -63,7 +63,21 @@ def image_list(as_json: bool) -> None:
     versions = []
     for p in entries:
         is_sandbox = p.is_dir()
-        size_bytes = _dir_size_bytes(p) if is_sandbox else p.stat().st_size
+        target_state = "available"
+        try:
+            artifact_stat = p.stat()
+        except OSError:  # stx-allow: fallback (reason: stale inventory entries must be reported instead of crashing the entire read-only listing)
+            try:
+                artifact_stat = p.lstat()
+            except OSError:  # stx-allow: fallback (reason: an entry deleted during the scan no longer has stable metadata to report)
+                continue
+            target_state = "dangling" if p.is_symlink() else "unreadable"
+        if is_sandbox:
+            size_bytes = _dir_size_bytes(p)
+        elif target_state == "dangling":
+            size_bytes = 0
+        else:
+            size_bytes = artifact_stat.st_size
         # RESOLVE THE SYMLINK. `sac-base.sif` is a symlink onto a DATED file
         # (`sac-base/sac-base-2026-0816-110731.sif`), and the listing printed
         # only the link name — so two hosts four days apart rendered
@@ -82,9 +96,10 @@ def image_list(as_json: bool) -> None:
                 "path": str(p),
                 "kind": "sandbox" if is_sandbox else "sif",
                 "size_bytes": size_bytes,
-                "mtime": p.stat().st_mtime,
+                "mtime": artifact_stat.st_mtime,
                 # The link target, "" when the entry is not a symlink.
                 "resolves_to": target,
+                "target_state": target_state,
             }
         )
     if as_json:
@@ -122,6 +137,8 @@ def image_list(as_json: bool) -> None:
         # clean. The date is what makes that comparable at a glance.
         built = _dt.datetime.fromtimestamp(v["mtime"]).strftime("%Y-%m-%d %H:%M")
         suffix = f"  -> {v['resolves_to']}" if v.get("resolves_to") else ""
+        if v["target_state"] != "available":
+            suffix += f"  [red]{v['target_state'].upper()}[/red]"
         console.print(
             f"  {tag:<7s}  {label:50s} {size_mb:>8.1f} MB  built {built}{suffix}"
         )
