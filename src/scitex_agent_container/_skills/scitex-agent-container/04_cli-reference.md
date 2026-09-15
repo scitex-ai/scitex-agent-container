@@ -48,8 +48,8 @@ Delegates the heavy lifting to [`scitex-container`](https://github.com/ywatanabe
 | `sac image update SANDBOX [-p PKG]` | Refresh packages inside a sandbox via `pip install --upgrade`. Default: `scitex[all]`. |
 | `sac image freeze SANDBOX OUT.sif` | Bake a sandbox back into an immutable SIF. |
 | `sac image list` | Installed SIF versions on disk. |
-| `sac image switch <version>` | Atomically switch the active SIF symlink to a different version. |
-| `sac image rollback` | Restore the previous active version. |
+| `sac image switch <version> [--layer base]` | Atomically switch both stable links for one SAC layer. |
+| `sac image rollback [--layer base]` | Restore the immediately older image for one SAC layer. |
 | `sac image status` | Unified container dashboard (active version, sandboxes, sizes). |
 | `sac image snapshot [-o env.json]` | Reproducibility capsule: pip + apt + conda + git + active SIF hash. |
 
@@ -59,7 +59,7 @@ Typical "scitex updates often" cycle:
 sac image build scitex --sandbox       # one-time
 sac image update sandbox/              # any time
 sac image freeze sandbox/ scitex-X.sif # when stable
-sac image switch X
+sac image switch 2026-0914-152140 --layer base
 ```
 
 ## Account / quota (`sac accounts`)

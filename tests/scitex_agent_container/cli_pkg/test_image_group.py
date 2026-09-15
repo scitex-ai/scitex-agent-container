@@ -1020,30 +1020,85 @@ def test_list_json_stdout_holds_nothing_but_the_document(home_tmp):
 # ---------------------------------------------------------------------------
 
 
-def test_switch_delegates_to_backend_and_reports_target_version(home_tmp):
-    # Arrange
-    backend = _FakeApptainerBackend()
-    runner = CliRunner()
-    # Act
-    with _use_backend(backend):
-        result = runner.invoke(image_group, ["switch", "2.0.0"])
-    # Assert
-    assert (
-        result.exit_code == 0
-        and "switched" in result.output
-        and backend.calls["switch_version"][0][1]["version"] == "2.0.0"
+def _install_layer_versions(
+    containers: Path, layer: str, versions: tuple[str, ...]
+) -> list[Path]:
+    image_name = f"sac-{layer}"
+    layer_dir = containers / image_name
+    layer_dir.mkdir(parents=True)
+    artifacts = []
+    for index, version in enumerate(versions, start=1):
+        artifact = layer_dir / f"{image_name}-{version}.sif"
+        artifact.write_bytes(version.encode())
+        os.utime(artifact, ns=(index, index))
+        artifacts.append(artifact)
+    current = artifacts[-1]
+    (layer_dir / f"{image_name}.sif").symlink_to(current.name)
+    (containers / f"{image_name}.sif").symlink_to(
+        Path(image_name) / current.name
     )
+    return artifacts
 
 
-def test_rollback_prints_previous_version_returned_by_backend(home_tmp):
-    # Arrange
-    backend = _FakeApptainerBackend(rollback_result="1.0.0")
+def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
+    # Arrange — the production SAC layout, not scitex-container's legacy
+    # current.sif / scitex-v<version>.sif convention.
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "scitex", ("2026-0914-010000", "2026-0914-020000")
+    )
     runner = CliRunner()
     # Act
-    with _use_backend(backend):
-        result = runner.invoke(image_group, ["rollback"])
+    result = runner.invoke(
+        image_group,
+        ["switch", "2026-0914-010000", "--layer", "scitex"],
+    )
     # Assert
-    assert result.exit_code == 0 and "1.0.0" in result.output
+    inner = ig._CONTAINERS_DIR / "sac-scitex" / "sac-scitex.sif"
+    top = ig._CONTAINERS_DIR / "sac-scitex.sif"
+    assert result.exit_code == 0 and "switched scitex" in result.output
+    assert inner.resolve() == artifacts[0]
+    assert top.resolve() == artifacts[0]
+
+
+def test_rollback_activates_immediately_older_base_image(home_tmp):
+    # Arrange
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    runner = CliRunner()
+    # Act
+    result = runner.invoke(image_group, ["rollback"])
+    # Assert
+    inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    assert result.exit_code == 0 and "2026-0914-010000" in result.output
+    assert inner.resolve() == artifacts[0]
+    assert top.resolve() == artifacts[0]
+
+
+def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    top.unlink()
+    top.symlink_to(Path("sac-base") / artifacts[0].name)
+
+    result = CliRunner().invoke(image_group, ["rollback", "--layer", "base"])
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+    assert "links disagree" in str(result.exception)
+    assert (ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif").resolve() == artifacts[1]
+    assert top.resolve() == artifacts[0]
+
+
+def test_switch_rejects_path_traversal_version(home_tmp):
+    result = CliRunner().invoke(image_group, ["switch", "../outside"])
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert "invalid SAC image version" in str(result.exception)
 
 
 def test_status_with_no_active_build_reports_no_active_images(home_tmp):

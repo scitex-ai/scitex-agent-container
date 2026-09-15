@@ -285,14 +285,14 @@ sac a2a serve <yamls...>                  # inbound HTTP for non-SDK runtimes
 sac a2a doctor <agent>                    # probe AgentCard endpoint
 sac a2a grant / revoke / block / unblock / grants
 
-# Image lifecycle (delegates to scitex-container)
+# Image lifecycle
 sac image build [base|scitex] [--sandbox]
 sac image sandbox SOURCE                  # SIF → writable sandbox
 sac image update  SANDBOX [-p PKG]        # pip install --upgrade
 sac image freeze  SANDBOX OUT.sif         # sandbox → SIF
 sac image list                            # installed versions
-sac image switch  VERSION                 # atomic flip
-sac image rollback                        # restore previous
+sac image switch VERSION [--layer base]   # atomic dual-link flip
+sac image rollback [--layer base]         # restore previous layer image
 sac image status                          # unified dashboard
 sac image snapshot [-o env.json]          # reproducibility capsule
 
