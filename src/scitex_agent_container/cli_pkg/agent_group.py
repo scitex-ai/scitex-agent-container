@@ -69,7 +69,7 @@ class _AgentsGroup(HelpRecursiveGroup):
         ),
         ("Interact", ["send", "attach"]),
         ("Inspect", ["list", "status", "health", "auth-status", "tail", "recall"]),
-        ("Preflight", ["check"]),
+        ("Preflight", ["check", "engine-check"]),
         ("Discovery", ["find", "roles"]),
         ("Account", ["accounts"]),
         (
@@ -258,6 +258,11 @@ agent_group.add_command(_rebind(_find_impl, "find"))
 agent_group.add_command(_rebind(_roles_impl, "roles"))
 agent_group.add_command(_rebind(_recall_impl, "recall"))
 agent_group.add_command(_rebind(_check_impl, "check"))
+# `engine-check` sends bounded forced tool calls to the selected inference
+# endpoint without starting an agent, container, or harness session.
+from ._agents_engine_check import register as _register_engine_check  # noqa: E402
+
+_register_engine_check(agent_group)
 agent_group.add_command(_rebind(_send_impl, "send"))
 # `attach` — hand the terminal to a running agent's TUI (tmux) session.
 agent_group.add_command(_rebind(_attach_impl, "attach"))
