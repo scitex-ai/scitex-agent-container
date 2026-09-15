@@ -10,6 +10,7 @@ for the rationale.
 
 from __future__ import annotations
 
+import json
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version_lookup
 
@@ -33,29 +34,43 @@ def _pkg_version(lookup=_pkg_version_lookup) -> str:
         return "dev"
 
 
-def _print_version(ctx: click.Context, param, value) -> None:
-    """``--version``: report the identity of the LOADED code, then exit.
+def _version_payload(info: dict) -> dict:
+    from .._provenance import DIST_NAME
 
-    This replaces ``click.version_option``, which prints only the declared
-    version string — a number that reads IDENTICALLY on a machine where a
-    fix shipped and one where it did not, because a fix that does not bump
-    the version does not move it. It therefore cannot answer the one
-    question it is ever asked: is my fix actually deployed?
+    return {"package": DIST_NAME, **info}
 
-    The line keeps click's ``<prog>, version <X.Y.Z>`` prefix, so anything
-    parsing the third whitespace field still works, and appends the commit
-    and the path the module was really imported from.
 
-    Cost: ~0.5 ms over the ``importlib.metadata`` lookup click already did
-    — no subprocess (``git rev-parse`` forks cost ~89 ms) and no tree walk
-    (hashing the tree costs ~35 ms). Those live in ``sac provenance``.
-    """
-    if not value or ctx.resilient_parsing:
-        return
-    from .._provenance import format_terse, identity
+def _format_version(info: dict) -> str:
+    from .._provenance import short_id
 
-    click.echo(format_terse(identity()))
-    ctx.exit()
+    marker = short_id(info)
+    source = info.get("install") or "unknown"
+    return f"sac version {info['version']} ({marker}, {source}) from {info['origin']}"
+
+
+def _log_version_diagnostics(info: dict) -> None:
+    from ._helpers._console import logger
+
+    declared = info.get("declared")
+    if declared and declared != info.get("version"):
+        logger.warning(
+            "sac version metadata mismatch: running %s; metadata claims %s",
+            info.get("version"),
+            declared,
+        )
+    if info.get("version_source") == "metadata":
+        logger.warning("sac version is unverified: metadata only")
+
+
+def _print_version(*, as_json: bool) -> None:
+    from .._provenance import identity
+
+    info = identity()
+    _log_version_diagnostics(info)
+    if as_json:
+        click.echo(json.dumps(_version_payload(info), sort_keys=True))
+    else:
+        click.echo(_format_version(info))
 
 
 # ---------------------------------------------------------------------------
@@ -358,9 +373,7 @@ class _MainGroup(LazyGroup):
     "-V",
     "--version",
     is_flag=True,
-    expose_value=False,
     is_eager=True,
-    callback=_print_version,
     help="Show the version, the commit it was built from, and where it loaded from.",
 )
 @click.option(
@@ -377,7 +390,9 @@ class _MainGroup(LazyGroup):
     help="Output as structured JSON (propagates to subcommands).",
 )
 @click.pass_context
-def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
+def main(
+    ctx: click.Context, version: bool, help_recursive: bool, as_json: bool
+) -> None:
     """SciTeX Agent Container -- Declarative agent management.
 
     \b
@@ -399,6 +414,9 @@ def main(ctx: click.Context, help_recursive: bool, as_json: bool) -> None:
     ctx.ensure_object(dict)
     if as_json:
         ctx.obj["json"] = True
+    if version:
+        _print_version(as_json=as_json)
+        ctx.exit(0)
     if help_recursive:
         click.echo(ctx.command.get_help_recursive(ctx))  # type: ignore[attr-defined]
         ctx.exit(0)
