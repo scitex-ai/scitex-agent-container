@@ -98,6 +98,7 @@ def test_start_derives_standalone_poller_and_exact_hermes_turn_url(tmp_path):
     # Assert
     argv, options = spawner.calls[0]
     env = options["env"]
+    assert env["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] == "1"
     assert (
         pid,
         argv,
