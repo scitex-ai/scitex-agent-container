@@ -84,7 +84,7 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
             "models": {"qwen38-27b": {"context_length": 1_000_000}},
             "extra_headers": {
                 "X-SciTeX-Agent-ID": "scitex-scholar",
-                "X-SciTeX-Session-ID": "sac:scitex-scholar",
+                "X-SciTeX-Session-ID": "sac:scitex-scholar:qwen",
             },
         },
         "fallback_providers": [],
@@ -199,7 +199,7 @@ def test_gateway_identity_is_stable_across_launch_modes_for_resume():
     # Assert
     assert headless_headers == tui_headers == {
         "X-SciTeX-Agent-ID": "scitex-scholar",
-        "X-SciTeX-Session-ID": "sac:scitex-scholar",
+        "X-SciTeX-Session-ID": "sac:scitex-scholar:qwen",
     }
 
 
