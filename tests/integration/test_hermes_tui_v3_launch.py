@@ -221,6 +221,18 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     tokenless_home = tmp_path / "tokenless-home"
     tokenless_home.mkdir()
     env_save_restore.set("HOME", str(tokenless_home))
+    env_save_restore.set("LOGNAME", "operator")
+    env_save_restore.set("USER", "operator")
+    env_save_restore.set(
+        "SCITEX_STORE_DSN", "postgresql://scitex-primary:55432/scitex"
+    )
+    env_save_restore.delete("PGPASSFILE")
+    source_passfile = tokenless_home / ".pgpass"
+    source_passfile.write_text(
+        "scitex-primary:55432:scitex:operator__business:test-password\n",
+        encoding="utf-8",
+    )
+    source_passfile.chmod(0o600)
     to_home = tmp_path / "to_home"
     to_home.mkdir()
     (to_home / ".mcp.json").write_text(
@@ -258,6 +270,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         tui=True,
     )
     rendered = yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
+    cct_env = rendered["mcp_servers"]["claude-code-telegrammer"]["env"]
     joined = " ".join(argv)
 
     # Assert
@@ -268,11 +281,17 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         ],
         "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:4321/v1/turn" in joined,
         "test-cct-secret" not in joined,
+        cct_env["SCITEX_STORE_DSN"],
+        cct_env["PGUSER"],
+        cct_env["PGPASSFILE"],
     ) == (
         {"claude-code-telegrammer"},
         "http://127.0.0.1:4321/v1/turn",
         True,
         True,
+        "postgresql://scitex-primary:55432/scitex",
+        "operator__business",
+        "/home/agent/.sac-pgpass",
     )
 
 
