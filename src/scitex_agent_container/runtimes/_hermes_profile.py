@@ -7,6 +7,7 @@ import os
 import secrets
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -156,10 +157,16 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
     base_url = str(provider.base_url or "").rstrip("/")
     if not base_url:
         raise RuntimeError("Hermes requires the selected engine provider.base_url")
-    api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+    if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
+        protocol = "openai-responses"
+        endpoint_url = base_url
+    else:
+        protocol = "openai-chat-completions"
+        api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+        endpoint_url = f"{api_root}/chat/completions"
     endpoint = Endpoint(
-        protocol="openai-chat-completions",
-        url=f"{api_root}/chat/completions",
+        protocol=protocol,
+        url=endpoint_url,
         auth_kind="bearer",
         auth_env=str(provider.auth_token_env or ""),
     )

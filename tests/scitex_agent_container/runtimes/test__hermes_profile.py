@@ -72,6 +72,26 @@ def test_launch_plan_normalizes_openai_api_root():
     )
 
 
+def test_launch_plan_preserves_openai_responses_endpoint():
+    # Arrange
+    config = AgentConfig(name="hub", harness="hermes", runtime="tui")
+    config.engine_key = "codex-subscription"
+    config.model = "gpt-5.6-sol"
+    config.claude.provider = ProviderSpec(
+        base_url="http://127.0.0.1:18765/v1/responses",
+        auth_token_env="GATEWAY_KEY",
+    )
+
+    # Act
+    endpoint = profile._launch_plan(config, launch_mode="tui").endpoint
+
+    # Assert
+    assert (endpoint.protocol, endpoint.url) == (
+        "openai-responses",
+        "http://127.0.0.1:18765/v1/responses",
+    )
+
+
 def test_launch_plan_carries_live_spawn_and_parallelism_policy():
     # Arrange
     config = AgentConfig(name="cards", harness="hermes", runtime="headless")
