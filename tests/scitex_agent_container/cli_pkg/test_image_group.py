@@ -1001,6 +1001,32 @@ def test_list_json_emits_kind_sif_for_sif_files(home_tmp):
     assert result.exit_code == 0 and data[0]["kind"] == "sif"
 
 
+def test_list_json_reports_a_dangling_sif_symlink(home_tmp):
+    # Arrange
+    ig._CONTAINERS_DIR.mkdir(parents=True, exist_ok=True)
+    link = ig._CONTAINERS_DIR / "retired.sif"
+    link.symlink_to(ig._CONTAINERS_DIR / "missing.sif")
+    runner = CliRunner()
+
+    # Act
+    result = runner.invoke(image_group, ["list", "--json"])
+    data = json.loads(result.stdout)
+
+    # Assert
+    assert result.exit_code == 0 and data == [
+        {
+            "package": "agent-container",
+            "name": "retired.sif",
+            "path": str(link),
+            "kind": "sif",
+            "size_bytes": 0,
+            "mtime": link.lstat().st_mtime,
+            "resolves_to": "missing.sif",
+            "target_state": "dangling",
+        }
+    ]
+
+
 def test_list_json_stdout_holds_nothing_but_the_document(home_tmp):
     # Arrange — `sac image list --json` used to print a human
     # "scan root: .../*/containers/" banner to STDOUT before the payload,
