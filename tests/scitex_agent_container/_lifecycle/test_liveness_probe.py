@@ -454,6 +454,24 @@ def test_default_busy_markers_contains_known_indicator(marker):
     assert present is True
 
 
+def test_standalone_interrupt_composer_is_busy() -> None:
+    # Arrange
+    pane = "prior output\n❯ Ctrl+C to interrupt…\n"
+    # Act
+    busy = pane_is_busy(pane)
+    # Assert
+    assert busy is True
+
+
+def test_interrupt_phrase_inside_idle_payload_is_not_busy() -> None:
+    # Arrange
+    pane = "❯ [sac-deliver:abc123def456] explain Ctrl+C to interrupt\n─ ready\n"
+    # Act
+    busy = pane_is_busy(pane)
+    # Assert
+    assert busy is False
+
+
 class _NoneCapture:
     """Capture callable that always returns ``None`` — exercises the
     'capture returned nothing' branch of the polling loop."""

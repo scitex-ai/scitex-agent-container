@@ -117,6 +117,12 @@ _WS_RUN_RE = re.compile(r"[\s\xa0]+")
 #: scroll its TOP away, so the TAIL is the part reliably on screen.
 FRAGMENT_TAIL_CHARS = 60
 
+# A very short fragment can occur coincidentally in stable status chrome
+# (``mission`` is contained in ``permissions``).  Delivery tokens are 12 hex
+# characters, so requiring that much evidence preserves their collision
+# resistance without changing legacy short startup-prompt handling.
+FRAGMENT_LOCATION_MIN_CHARS = 12
+
 
 def _squeeze(text: str) -> str:
     """Drop every whitespace character (NBSP included).
@@ -533,12 +539,20 @@ def verify_submit_by_advancement(
     def _pending(pane: str) -> bool:
         """Is the pasted turn still sitting in the live compose box?
 
-        Claude's own box decides whenever it is on screen at all, so this
-        is byte-for-byte the old behaviour for every Claude pane. The
-        fragment is consulted ONLY where the marker test is structurally
-        blind -- a pane that draws no Claude marker anywhere, which is
-        exactly the Codex case that read as "nothing to submit".
+        When our unique fragment is visible, its LOCATION decides: text in
+        the bottom-most compose box is pending; the same text in an earlier
+        transcript row has advanced.  This order matters for TUIs that render
+        submitted user messages with the same prompt glyph as the live box.
+        Their busy composer may itself contain status text (for example an
+        interrupt hint), so a generic "non-empty prompt" test would otherwise
+        misclassify an actively running turn as unsent.
+
+        The generic live-box detector remains the fallback when the fragment
+        is not rendered.  Some TUIs replace a large paste with a placeholder,
+        so absence of the literal fragment cannot by itself prove advancement.
         """
+        if len(tail) >= FRAGMENT_LOCATION_MIN_CHARS and tail in _squeeze(pane):
+            return composer_holds_fragment(pane, tail)
         if _compose_pending_live(pane):
             return True
         if _CLAUDE_COMPOSE_MARKER in (pane or ""):

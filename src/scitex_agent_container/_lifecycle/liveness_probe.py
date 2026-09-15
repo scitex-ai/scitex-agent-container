@@ -42,6 +42,7 @@ Design rules
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import time
 from enum import Enum
@@ -59,6 +60,14 @@ DEFAULT_BUSY_MARKERS: tuple[str, ...] = (
     "Pondering",
     "esc to interrupt",  # the "esc to interrupt" line accompanies active generation
     "Ctrl+C to interrupt",  # Hermes' active-turn control line
+)
+
+# Some TUIs put their active-generation signal in the compose row itself.
+# Match the whole row: treating the phrase as a global substring makes an idle
+# user prompt that merely discusses the shortcut look busy forever.
+_BUSY_COMPOSER_RE = re.compile(
+    r"^[ \t]*[❯›][ \t\xa0]+Ctrl\+C to interrupt(?:…|\.{3})?[ \t]*$",
+    re.MULTILINE,
 )
 
 # Tail window for busy-marker classification. Matches the window used
@@ -127,7 +136,9 @@ def pane_is_busy(
     if not pane_text:
         return False
     tail = pane_text[-tail_chars:]
-    return any(marker in tail for marker in markers)
+    if any(marker in tail for marker in markers):
+        return True
+    return markers == DEFAULT_BUSY_MARKERS and bool(_BUSY_COMPOSER_RE.search(tail))
 
 
 def classify_probe(
