@@ -263,6 +263,10 @@ def agent_start(
         )
     )
     really_running = verdict.is_alive
+    if really_running:
+        from ._start_engine_noop import assert_explicit_engine_noop_safe
+
+        assert_explicit_engine_noop_safe(config, engine_override, force=force, dry_run=dry_run)
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
     if really_running:
