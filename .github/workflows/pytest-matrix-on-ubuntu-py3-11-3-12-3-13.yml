@@ -101,6 +101,14 @@ on:
     # are idle, so it competes with nobody.
     - cron: "0 17 * * *"
   workflow_dispatch:
+    inputs:
+      selftest_force_red:
+        description: >-
+          Fail the test job IMMEDIATELY to exercise the `notify` job end to end.
+          The alarm below had never fired once; this is how it is proven to fire
+          without waiting for a real red night. Costs seconds, not a suite run.
+        type: boolean
+        default: false
 
 # STOP RE-TESTING COMMITS THAT A NEWER PUSH HAS ALREADY REPLACED.
 #
@@ -219,6 +227,22 @@ jobs:
                        && '["3.11","3.13"]'
                        || '["3.11","3.12","3.13"]') }}
     steps:
+      # SELF-TEST HOOK, and the reason it is FIRST. `notify` below had never run
+      # in this workflow's life, and a notification step that has never fired is
+      # indistinguishable from one that cannot. Dispatching with
+      # `selftest_force_red=true` produces a REAL failed `test` job — real
+      # `needs` propagation, real `if:` evaluation, real alarm — in seconds,
+      # because it short-circuits ahead of checkout and the suite.
+      #
+      # It cannot fire by accident: `inputs` is null for push/pull_request/
+      # schedule, so this is false on every path except an explicit manual
+      # dispatch that asks for it.
+      - name: Self-test — fail deliberately to prove the alarm fires
+        if: ${{ inputs.selftest_force_red }}
+        run: |
+          echo "::error::selftest_force_red=true — failing on purpose to exercise the notify job."
+          exit 1
+
       - uses: actions/checkout@v7
 
       # THE SAME SCRIPT THE RELEASE GATE RUNS. exec-in-sif.sh apptainer-execs
@@ -275,6 +299,136 @@ jobs:
         if: always()
         run: bash .github/ci/clean-tmpdir.sh run-in-sif.sh ${{ matrix.python-version }}
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE NIGHTLY HAD NO ALARM, AND THAT IS WHY IT WAS RED FOR SEVEN NIGHTS.
+  #
+  # MEASURED 2026-08-12. `main` @5532e6b failed this workflow on the nightly
+  # cron on Aug 5, 6, 7, 8, 9, 10 and 11 — every leg, zero tests executed, each
+  # time dying at `mkdir: cannot create directory '/data': Permission denied`
+  # in the Spartan-only exec-in-sif.sh. Nobody was told, because this workflow
+  # had exactly three steps (run, upload coverage, clean scratch) and not one
+  # line of failure reporting anywhere in it. A drift detector whose alarm does
+  # not exist is not a weak detector; it is a dead one, and its silence is
+  # evidence about the detector rather than about the code.
+  #
+  # A fleet survey the same night put that in proportion: of 22 repos carrying
+  # this SIF shim, 20 have at least one nightly whose latest run failed. Fixing
+  # causes into a system where red reaches nobody just buys another seven days
+  # of silence at the next regression, so the alarm goes in first.
+  #
+  # THIS IS THE SIBLING OF `report-a-red-night` IN
+  # nightly-python-matrix-on-github-hosted.yml, ON PURPOSE — same job name,
+  # same issue-per-fault-not-per-night discipline, same hosted runner. That
+  # workflow is this repo's existing answer to "a nightly nobody reads is not a
+  # test"; this one is the half that was missing. Do not introduce a third
+  # notification dialect here.
+  #
+  # TWO DIFFERENCES FROM THAT SIBLING, BOTH DELIBERATE:
+  #
+  #   1. `always()`, not `failure()`. On a GREEN night this job still runs and
+  #      makes a read-only call against the same API the alarm needs. "No alarm
+  #      fired" must mean "nothing was wrong", not "the alarm is dead" — a
+  #      revoked token, disabled issues or a dropped scope turns this job red on
+  #      a quiet night, instead of being discovered by the first regression that
+  #      goes unreported.
+  #
+  #   2. `set -euo pipefail`, and the reporting call is the LAST thing in its
+  #      branch. The sibling runs `gh issue comment` and then `echo`, under
+  #      `set -uo pipefail` with no `-e` — so a comment that fails is masked by
+  #      the echo's exit 0 and the step goes green having reported nothing.
+  #      That is the original defect wearing a fix. Fixed here; the sibling
+  #      should be brought into line in its own change.
+  # ───────────────────────────────────────────────────────────────────────────
+  notify:
+    name: report-a-red-night
+    needs: test
+    # `always()` so the alarm is exercised on green nights too (see 1 above).
+    # Restricted to unattended runs: a push/PR failure already has a human
+    # reading it, and must not open issues.
+    if: >-
+      always()
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    # GitHub-HOSTED, and this is the strongest argument in the allowlist: an
+    # alarm must not share fate with the thing it reports on. Every failure this
+    # job exists to announce is a failure OF the self-hosted pool — a wedged
+    # runner, a saturated queue, a broken SIF. Put the alarm on that pool and the
+    # outages it most needs to report are exactly the ones that silence it.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 10
+    steps:
+      - name: Prove the alarm path is alive, then fire it if the night was red
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          set -euo pipefail
+          title="[nightly] the SIF matrix failed on the self-hosted pool"
+
+          # ── LIVENESS, ON EVERY RUN INCLUDING GREEN ONES ────────────────────
+          # Same token, same API, same repo as the alarm itself needs. If this
+          # cannot list issues, the alarm could not have filed one either, and
+          # this job goes RED on a night when nothing else is wrong. That is the
+          # whole of "silence must mean green": it is checked, not assumed.
+          if ! gh issue list --repo "$REPO" --state all --limit 1 >/dev/null; then
+            echo "::error::ALARM PATH IS DEAD — cannot reach the issues API for $REPO." \
+                 "A nightly failure would NOT have been reported. Check the token" \
+                 "scope and that Issues are enabled on this repository."
+            exit 1
+          fi
+
+          if [ "$TEST_RESULT" = "success" ]; then
+            echo "night green; alarm path verified reachable (no issue filed)."
+            exit 0
+          fi
+
+          echo "::error::nightly result='$TEST_RESULT' — filing/updating $title"
+
+          body="The nightly SIF matrix finished with result \`${TEST_RESULT}\` on ${GITHUB_SHA:-develop}.
+
+          Run: $RUN_URL
+
+          This workflow is the only daily run that watches the ENVIRONMENT — the
+          shared ci-cpu.sif, its baked interpreters, and the self-hosted pool —
+          rather than the code. A red night here usually means infrastructure
+          drifted, and the release gate runs the same script on the same runner
+          expression, so a tag cut in this state fails the same way, later and
+          more expensively.
+
+          This issue is REOPENED and COMMENTED rather than duplicated: one issue
+          per fault, not one per night."
+
+          # ONE issue, reopened and commented — a nightly that files 30 identical
+          # issues a month teaches everyone to filter it, which is not reporting.
+          num="$(gh issue list --repo "$REPO" --state all --limit 20 \
+                   --search "in:title \"$title\"" --json number,title \
+                   --jq "[.[] | select(.title == \"$title\") | .number] | first // empty")"
+
+          if [ -n "$num" ]; then
+            # An already-open issue makes `reopen` exit non-zero; that is not a
+            # reporting failure, so it is the ONLY tolerated error here.
+            gh issue reopen "$num" --repo "$REPO" >/dev/null 2>&1 || true
+            gh issue comment "$num" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
+
+          # POST-CONDITION. `set -e` already fails the step on a non-zero gh
+          # exit, but "the command returned 0" and "an open issue now exists"
+          # are different claims, and only the second one is the alarm working.
+          open_num="$(gh issue list --repo "$REPO" --state open --limit 20 \
+                        --search "in:title \"$title\"" --json number,title \
+                        --jq "[.[] | select(.title == \"$title\") | .number] | first // empty")"
+          if [ -z "$open_num" ]; then
+            echo "::error::ALARM FAILED SILENTLY — reporting commands succeeded but" \
+                 "no OPEN issue titled '$title' exists in $REPO afterwards."
+            exit 1
+          fi
+          echo "alarm delivered: $REPO#$open_num"
   # THE CI FEEDBACK RAIL (ADR-0024). The operator asked for this mechanism by
   # name on 2026-08-12: 「GitHub から信号が帰ってきたときに、フックでカードに
   # 書き込む、それがエージェントに通知が行く」— when GitHub's signal comes
