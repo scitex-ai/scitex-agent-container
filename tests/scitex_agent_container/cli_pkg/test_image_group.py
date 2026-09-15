@@ -1035,14 +1035,13 @@ def _install_layer_versions(
         artifacts.append(artifact)
     current = artifacts[-1]
     (layer_dir / f"{image_name}.sif").symlink_to(current.name)
-    (containers / f"{image_name}.sif").symlink_to(
-        Path(image_name) / current.name
-    )
+    (containers / f"{image_name}.sif").symlink_to(Path(image_name) / current.name)
     return artifacts
 
 
 def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
-    # Arrange — the production SAC layout, not scitex-container's legacy
+    # Arrange
+    # The production SAC layout, not scitex-container's legacy
     # current.sif / scitex-v<version>.sif convention.
     artifacts = _install_layer_versions(
         ig._CONTAINERS_DIR, "scitex", ("2026-0914-010000", "2026-0914-020000")
@@ -1056,9 +1055,14 @@ def test_switch_repoints_both_live_links_and_reports_layer(home_tmp):
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-scitex" / "sac-scitex.sif"
     top = ig._CONTAINERS_DIR / "sac-scitex.sif"
-    assert result.exit_code == 0 and "switched scitex" in result.output
-    assert inner.resolve() == artifacts[0]
-    assert top.resolve() == artifacts[0]
+    actual = (
+        result.exit_code,
+        "switched scitex" in result.output,
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (0, True, artifacts[0], artifacts[0])
+    assert actual == expected
 
 
 def test_rollback_activates_immediately_older_base_image(home_tmp):
@@ -1072,12 +1076,18 @@ def test_rollback_activates_immediately_older_base_image(home_tmp):
     # Assert
     inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
     top = ig._CONTAINERS_DIR / "sac-base.sif"
-    assert result.exit_code == 0 and "2026-0914-010000" in result.output
-    assert inner.resolve() == artifacts[0]
-    assert top.resolve() == artifacts[0]
+    actual = (
+        result.exit_code,
+        "2026-0914-010000" in result.output,
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (0, True, artifacts[0], artifacts[0])
+    assert actual == expected
 
 
 def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
+    # Arrange
     artifacts = _install_layer_versions(
         ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
     )
@@ -1085,24 +1095,39 @@ def test_rollback_fails_loudly_when_live_links_disagree(home_tmp):
     top.unlink()
     top.symlink_to(Path("sac-base") / artifacts[0].name)
 
+    # Act
     result = CliRunner().invoke(image_group, ["rollback", "--layer", "base"])
 
-    assert result.exit_code != 0
-    assert isinstance(result.exception, RuntimeError)
-    assert "links disagree" in str(result.exception)
-    assert (ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif").resolve() == artifacts[1]
-    assert top.resolve() == artifacts[0]
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, RuntimeError),
+        "links disagree" in str(result.exception),
+        (ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif").resolve(),
+        top.resolve(),
+    )
+    expected = (True, True, True, artifacts[1], artifacts[0])
+    assert actual == expected
 
 
 def test_switch_rejects_path_traversal_version(home_tmp):
-    result = CliRunner().invoke(image_group, ["switch", "../outside"])
+    # Arrange
+    runner = CliRunner()
 
-    assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
-    assert "invalid SAC image version" in str(result.exception)
+    # Act
+    result = runner.invoke(image_group, ["switch", "../outside"])
+
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, ValueError),
+        "invalid SAC image version" in str(result.exception),
+    )
+    assert actual == (True, True, True)
 
 
 def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
+    # Arrange
     artifacts = _install_layer_versions(
         ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
     )
@@ -1116,6 +1141,7 @@ def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
         saved_atomic_symlink(link, target)
 
     _image_activation._atomic_symlink = _fail_new_top_once
+    # Act
     try:
         result = CliRunner().invoke(
             image_group, ["switch", "2026-0914-010000", "--layer", "base"]
@@ -1123,10 +1149,15 @@ def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
     finally:
         _image_activation._atomic_symlink = saved_atomic_symlink
 
-    assert result.exit_code != 0
-    assert isinstance(result.exception, OSError)
-    assert inner.resolve() == artifacts[1]
-    assert top.resolve() == artifacts[1]
+    # Assert
+    actual = (
+        result.exit_code != 0,
+        isinstance(result.exception, OSError),
+        inner.resolve(),
+        top.resolve(),
+    )
+    expected = (True, True, artifacts[1], artifacts[1])
+    assert actual == expected
 
 
 def test_status_with_no_active_build_reports_no_active_images(home_tmp):
