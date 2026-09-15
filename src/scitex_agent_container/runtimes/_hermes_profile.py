@@ -158,7 +158,15 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
     base_url = str(provider.base_url or "").rstrip("/")
     if not base_url:
         raise RuntimeError("Hermes requires the selected engine provider.base_url")
-    if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
+    from ..config._provider_registry import resolve_provider
+
+    codex_provider = resolve_provider("codex") or {}
+    codex_base_url = str(codex_provider.get("base_url") or "").rstrip("/")
+    is_codex_subscription = bool(codex_base_url and base_url == codex_base_url)
+    if is_codex_subscription:
+        protocol = "openai-responses"
+        endpoint_url = f"{base_url}/v1/responses"
+    elif urlsplit(base_url).path.rstrip("/").endswith("/responses"):
         protocol = "openai-responses"
         endpoint_url = base_url
     else:

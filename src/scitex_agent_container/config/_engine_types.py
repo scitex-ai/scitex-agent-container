@@ -332,7 +332,9 @@ def select_engine(
         raise UnknownEngineError(
             f"--engine {key!r} resolves to no engine. Resolvable engines "
             f"(this spec's own `{ENGINES_KEY}:` block UNION the fleet "
-            f"engine library): {declared}. Declare it in whichever of the "
+            f"engine library): {declared}. Retry with `--engine <name>` "
+            f"using one of those names, or change only `spec.{ENGINE_PIN_KEY}` "
+            f"to one of those names. Declare it in whichever of the "
             "two the key belongs to — `sac agents explain <agent>` prints "
             "the library path and which entries came from where. sac will "
             "NOT fall back to the default engine when an explicit --engine "

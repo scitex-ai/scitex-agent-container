@@ -69,7 +69,7 @@ def compile_hermes_config(
     model = plan.engine.model_id
     api_mode = {
         "openai-chat-completions": "chat_completions",
-        "openai-responses": "responses",
+        "openai-responses": "codex_responses",
     }[plan.endpoint.protocol]
     model_config: dict[str, Any] = {}
     if plan.engine.context_window_tokens is not None:

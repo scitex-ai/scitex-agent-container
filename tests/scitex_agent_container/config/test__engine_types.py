@@ -283,6 +283,26 @@ def test_unknown_engine_error_lists_the_declared_keys(tmp_path):
     assert "'claude'" in message and "'qwen38-27b'" in message
 
 
+def test_unknown_engine_error_says_one_spec_field_is_the_remedy(tmp_path):
+    # Arrange
+    name = "eng-unknown-one-field-remedy"
+    # Act
+    message = _unknown_engine_message(tmp_path, name)
+    # Assert
+    assert "change only `spec.engine`" in message
+
+
+def test_invalid_spec_engine_pin_lists_one_field_remedy():
+    # Arrange
+    doc = _doc({"engine": "gpt-9", "engines": _two_engines()})
+    # Act
+    errors = [error for error in validate_raw(doc, "spec.yaml") if "gpt-9" in error]
+    # Assert
+    assert len(errors) == 1
+    assert "change only `spec.engine`" in errors[0]
+    assert "claude" in errors[0] and "qwen38-27b" in errors[0]
+
+
 # ---------------------------------------------------------------------------
 # Default-marker arithmetic
 # ---------------------------------------------------------------------------

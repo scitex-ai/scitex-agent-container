@@ -114,6 +114,46 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
     assert observed == expected
 
 
+def test_compiles_codex_subscription_responses_transport():
+    # Arrange
+    raw = _spec()
+    raw["engine"] = "gpt-sol"
+    raw["available_engines"] = {
+        "gpt-sol": {
+            "model": "gpt-5.6-sol",
+            "endpoints": {
+                "openai-responses": {
+                    "url": "http://127.0.0.1:18765/v1/responses",
+                    "auth": {"kind": "bearer", "env": "CODEX_GATEWAY_KEY"},
+                }
+            },
+        }
+    }
+
+    # Act
+    result = compile_hermes_config(_plan(raw), workdir="/work")
+
+    # Assert
+    assert result["model"] == {
+        "default": "gpt-5.6-sol",
+        "provider": "custom:sac-gpt-sol",
+        "api_mode": "codex_responses",
+    }
+    assert result["providers"]["sac-gpt-sol"] == {
+        "name": "SAC gpt-sol",
+        "base_url": "http://127.0.0.1:18765/v1",
+        "key_env": "CODEX_GATEWAY_KEY",
+        "transport": "codex_responses",
+        "model": "gpt-5.6-sol",
+        "default_model": "gpt-5.6-sol",
+        "models": {"gpt-5.6-sol": {}},
+        "extra_headers": {
+            "X-SciTeX-Agent-ID": "scitex-scholar",
+            "X-SciTeX-Session-ID": "sac:scitex-scholar",
+        },
+    }
+
+
 def test_compiles_explicit_hermes_compression_controls():
     # Arrange
     compression = HermesCompressionSpec(

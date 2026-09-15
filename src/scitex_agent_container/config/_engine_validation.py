@@ -131,11 +131,14 @@ def validate_engine_pin(spec: dict, kind: object = "Agent") -> list[str]:
 
     local = sorted(parse_engines(spec))
     fleet = sorted(library.engines)
+    available = sorted(namespace)
     return errors + [
         f"spec.{ENGINE_PIN_KEY}={key!r} names an engine nothing declares. "
         f"This spec's own `{ENGINES_KEY}:` block declares: "
         f"{local or '(none)'}. The fleet engine library "
-        f"({library.path}) declares: {fleet or '(none)'}. Add the engine to "
+        f"({library.path}) declares: {fleet or '(none)'}. To use an existing "
+        f"engine, change only `spec.{ENGINE_PIN_KEY}` to one of: "
+        f"{available or '(none)'}. Otherwise, add the engine to "
         "whichever of the two it belongs in — sac will not guess which "
         "backend was meant, and will not fall back to another one."
     ]
