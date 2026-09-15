@@ -222,25 +222,10 @@ def _dispatch_remote_start(
         remote=True,
         spawned_by=spawned_by(),
     )
-    # ADR-0014 — paired comms_nodes entry for the cross-host agent so peers
-    # resolving via the federated graph (not just the local instances table)
-    # see the new placement. Since 2026-08-28 they see it IMMEDIATELY: the
-    # directory is the shared PostgreSQL store, so there is no sync to wait
-    # for and no window in which a just-placed agent is unaddressable.
-    if bound is not None:
-        try:
-            from ..._state.state_store_nodes import register_comms_node
-
-            register_comms_node(
-                name=name,
-                host=peer,
-                a2a_port=int(bound),
-                source_host=None,
-            )
-        except (
-            Exception
-        ):  # stx-allow: fallback (reason: never block dispatch on registry write)
-            pass
+    # The peer-side start owns comms_nodes registration with its stable public
+    # listener port. The caller records only the remote instance observation;
+    # registering the peer's private per-incarnation bound port here creates a
+    # second, wrongly-originated route and must never be attempted.
     click.echo(
         f"[dispatch] {name!r} started on {peer!r} "
         f"(a2a_port={peer_state.get('a2a_port')!s}, "
