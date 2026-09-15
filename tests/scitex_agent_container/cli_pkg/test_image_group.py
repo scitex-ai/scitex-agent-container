@@ -31,6 +31,7 @@ from _scitex_agent_container_bootstrap import (
     ImageBuildSourceMismatch,
     assert_image_build_source_authority,
 )
+from scitex_agent_container.cli_pkg import _image_activation
 from scitex_agent_container.cli_pkg import image_group as ig
 from scitex_agent_container.cli_pkg.image_group import image_group
 
@@ -1099,6 +1100,33 @@ def test_switch_rejects_path_traversal_version(home_tmp):
     assert result.exit_code != 0
     assert isinstance(result.exception, ValueError)
     assert "invalid SAC image version" in str(result.exception)
+
+
+def test_switch_restores_both_links_when_second_flip_fails(home_tmp):
+    artifacts = _install_layer_versions(
+        ig._CONTAINERS_DIR, "base", ("2026-0914-010000", "2026-0914-020000")
+    )
+    inner = ig._CONTAINERS_DIR / "sac-base" / "sac-base.sif"
+    top = ig._CONTAINERS_DIR / "sac-base.sif"
+    saved_atomic_symlink = _image_activation._atomic_symlink
+
+    def _fail_new_top_once(link: Path, target: str) -> None:
+        if link == top and target.endswith("2026-0914-010000.sif"):
+            raise OSError("injected second-link failure")
+        saved_atomic_symlink(link, target)
+
+    _image_activation._atomic_symlink = _fail_new_top_once
+    try:
+        result = CliRunner().invoke(
+            image_group, ["switch", "2026-0914-010000", "--layer", "base"]
+        )
+    finally:
+        _image_activation._atomic_symlink = saved_atomic_symlink
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, OSError)
+    assert inner.resolve() == artifacts[1]
+    assert top.resolve() == artifacts[1]
 
 
 def test_status_with_no_active_build_reports_no_active_images(home_tmp):
