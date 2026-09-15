@@ -92,6 +92,25 @@ def test_launch_plan_preserves_openai_responses_endpoint():
     )
 
 
+def test_launch_plan_uses_responses_for_registered_codex_gateway():
+    config = AgentConfig(name="hub", harness="hermes", runtime="tui")
+    config.engine_key = "gpt-sol"
+    config.model = "gpt-5.6-sol"
+    registered = resolve_provider("codex")
+    assert registered is not None
+    config.claude.provider = ProviderSpec(
+        base_url=str(registered["base_url"]),
+        auth_token_env=str(registered["auth_token_env"]),
+    )
+
+    endpoint = profile._launch_plan(config, launch_mode="tui").endpoint
+
+    assert (endpoint.protocol, endpoint.url) == (
+        "openai-responses",
+        "http://127.0.0.1:18765/v1/responses",
+    )
+
+
 def test_launch_plan_carries_live_spawn_and_parallelism_policy():
     # Arrange
     config = AgentConfig(name="cards", harness="hermes", runtime="headless")
@@ -720,7 +739,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     ]
     expected_headers = {
         "X-SciTeX-Agent-ID": "scholar",
-        "X-SciTeX-Session-ID": "sac:scholar",
+        "X-SciTeX-Session-ID": "sac:scholar:qwen",
     }
     # Act
     with _replace_attributes(replacements):

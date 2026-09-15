@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from ._hermes_compression import HermesCompressionSpec
 from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
+from ._hermes_session import hermes_session_key
 from ._launch_plan import LaunchPlan
 
 AGENT_ID_HEADER = "X-SciTeX-Agent-ID"
@@ -87,7 +88,7 @@ def compile_hermes_config(
         "models": {model: model_config},
         "extra_headers": {
             AGENT_ID_HEADER: plan.agent_name,
-            SESSION_ID_HEADER: f"sac:{plan.agent_name}",
+            SESSION_ID_HEADER: hermes_session_key(plan.agent_name, plan.engine.key),
         },
     }
     agent: dict[str, Any] = {

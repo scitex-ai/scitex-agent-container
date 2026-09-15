@@ -82,7 +82,7 @@ def test_tui_launches_through_single_gateway_owner():
     ]
 
 
-def test_continue_session_resumes_the_stable_agent_session_name():
+def test_continue_session_is_stable_per_agent_and_engine():
     # Arrange
     config = AgentConfig(
         name="scholar",
@@ -95,7 +95,7 @@ def test_continue_session_resumes_the_stable_agent_session_name():
     # Assert
     assert argv[argv.index("--continue") :] == [
         "--continue",
-        "sac:scholar",
+        "sac:scholar:sonnet",
         "--create-if-missing",
     ]
 
