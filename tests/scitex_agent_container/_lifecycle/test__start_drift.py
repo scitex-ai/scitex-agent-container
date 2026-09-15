@@ -5,14 +5,7 @@ in tmp_path); a real hand-rolled fake runtime/handover capture whether
 ``start`` was reached. HOME + SCITEX_DIR are redirected into tmp_path so
 the drift fetch-cache and Path.home() never touch the developer's home.
 
-Covers:
-  * DEFAULT (2026-08-10 operator ruling) → a STALE source REFUSES to start,
-    raising SpecSourceDriftError BEFORE the runtime is touched.
-  * --allow-stale-spec / SAC_ALLOW_STALE_SPEC → starts anyway, loudly.
-  * AHEAD (unpushed local commits) is NOT staleness → still starts by default.
-  * env SAC_ALLOW_STALE_SPEC / legacy SAC_STRICT_DRIFT honoured by
-    ``_resolve_strict_drift`` (an explicit arg wins over both).
-  * a clean (current) source launches normally.
+Covers the single invariant: only a source verified CURRENT may launch.
 
 Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name.
 """
@@ -27,7 +20,7 @@ from typing import Any, Iterator
 import pytest
 
 from scitex_agent_container._drift import SpecSourceDriftError
-from scitex_agent_container._lifecycle._start import _resolve_strict_drift, agent_start
+from scitex_agent_container._lifecycle._start import agent_start
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
@@ -200,65 +193,42 @@ def test_stale_source_banner_says_error_not_warning(tmp_path, registry, capsys):
     assert "sac-drift ERROR" in capsys.readouterr().err
 
 
-def test_refusal_names_the_named_override(tmp_path, registry, capsys):
-    # Arrange — one flag per condition; never a blanket --force.
+def test_refusal_names_the_required_fix(tmp_path, registry, capsys):
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
-    # Act
     try:
         _start(spec, registry, runtime)
     except SpecSourceDriftError:
         pass
-    # Assert
-    assert "--allow-stale-spec" in capsys.readouterr().err
+    assert "synchronize the spec source and retry" in capsys.readouterr().err
 
 
-def test_allow_stale_spec_starts_the_agent(pg_schema: str, tmp_path, registry):
-    # Arrange — the escape hatch, passed the way --allow-stale-spec passes it.
+def test_false_strict_compatibility_argument_is_rejected(tmp_path, registry):
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
-    # Act
-    _start(spec, registry, runtime, strict_drift=False)
-    # Assert
-    assert len(runtime.started) == 1
+    with pytest.raises(TypeError):
+        _start(spec, registry, runtime, strict_drift=False)
 
 
-def test_allow_stale_spec_env_starts_the_agent(pg_schema: str, tmp_path, registry, env_save_restore):
-    # Arrange — same override, env transport (what the parallel path inherits).
-    env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
-    spec = _make_spec_repo(tmp_path, drifted=True)
-    runtime = _FakeRuntime()
-    # Act
-    _start(spec, registry, runtime)
-    # Assert
-    assert len(runtime.started) == 1
-
-
-def test_unpushed_local_commits_still_start(pg_schema: str, tmp_path, registry):
-    # Arrange — AHEAD is not staleness: the spec here IS the newest that
-    # exists. Hosts like spartan legitimately carry local commits.
+def test_unpushed_local_commits_refuse(tmp_path, registry):
     spec = _make_spec_repo(tmp_path, drifted=False)
     (spec.parent / "local.txt").write_text("local only")
     _git(spec.parent.parent.parent, "add", "-A")
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
-    # Act
-    _start(spec, registry, runtime)
-    # Assert
-    assert len(runtime.started) == 1
+    with pytest.raises(SpecSourceDriftError):
+        _start(spec, registry, runtime)
 
 
-def test_unpushed_local_commits_still_warn(pg_schema: str, tmp_path, registry, capsys):
-    # Arrange — not refusing is not the same as staying quiet.
+def test_unpushed_local_commits_report_error(tmp_path, registry, capsys):
     spec = _make_spec_repo(tmp_path, drifted=False)
     (spec.parent / "local.txt").write_text("local only")
     _git(spec.parent.parent.parent, "add", "-A")
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
-    # Act
-    _start(spec, registry, runtime)
-    # Assert
-    assert "sac-drift WARNING" in capsys.readouterr().err
+    with pytest.raises(SpecSourceDriftError):
+        _start(spec, registry, runtime)
+    assert "sac-drift ERROR" in capsys.readouterr().err
 
 
 def test_clean_source_starts_normally(pg_schema: str, tmp_path, registry):
@@ -266,61 +236,6 @@ def test_clean_source_starts_normally(pg_schema: str, tmp_path, registry):
     spec = _make_spec_repo(tmp_path, drifted=False)
     runtime = _FakeRuntime()
     # Act
-    _start(spec, registry, runtime, strict_drift=True)
+    _start(spec, registry, runtime)
     # Assert
     assert len(runtime.started) == 1
-
-
-# ---------------------------------------------------------------------------
-# _resolve_strict_drift — arg-wins / env-fallback
-# ---------------------------------------------------------------------------
-
-
-def test_explicit_true_arg_wins_over_env(env_save_restore):
-    # Arrange
-    env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
-    # Act
-    resolved = _resolve_strict_drift(True)
-    # Assert
-    assert resolved is True
-
-
-def test_explicit_false_arg_wins_over_env(env_save_restore):
-    # Arrange — what --allow-stale-spec passes; a stale export must not undo it.
-    env_save_restore.set("SAC_STRICT_DRIFT", "1")
-    # Act
-    resolved = _resolve_strict_drift(False)
-    # Assert
-    assert resolved is False
-
-
-def test_allow_stale_env_disables_strict(env_save_restore):
-    # Arrange
-    env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
-    # Act
-    resolved = _resolve_strict_drift(None)
-    # Assert
-    assert resolved is False
-
-
-def test_legacy_strict_drift_zero_still_disables_strict(env_save_restore):
-    # Arrange — an existing SAC_STRICT_DRIFT=0 meant "do not block me"; the
-    # flipped default must not silently turn that export into a no-op.
-    env_save_restore.delete("SAC_ALLOW_STALE_SPEC")
-    env_save_restore.set("SAC_STRICT_DRIFT", "0")
-    # Act
-    resolved = _resolve_strict_drift(None)
-    # Assert
-    assert resolved is False
-
-
-def test_env_unset_now_defaults_to_strict(env_save_restore):
-    # Arrange — the operator ruling, pinned.
-    env_save_restore.delete("SAC_STRICT_DRIFT")
-    env_save_restore.delete("SCITEX_AGENT_CONTAINER_STRICT_DRIFT")
-    env_save_restore.delete("SAC_ALLOW_STALE_SPEC")
-    env_save_restore.delete("SCITEX_AGENT_CONTAINER_ALLOW_STALE_SPEC")
-    # Act
-    resolved = _resolve_strict_drift(None)
-    # Assert
-    assert resolved is True

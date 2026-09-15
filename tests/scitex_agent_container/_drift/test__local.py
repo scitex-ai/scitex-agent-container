@@ -12,8 +12,6 @@ Each test: AAA markers (TQ002), one assertion (TQ007), 3+-word name
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import subprocess
 from pathlib import Path
 
@@ -27,6 +25,7 @@ from scitex_agent_container._drift import (
     spec_source_repo,
     warn_if_spec_source_drifted,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -279,62 +278,54 @@ def test_ahead_warning_names_the_push_fix(spec_repo, isolated_scitex_dir):
 
 
 # ---------------------------------------------------------------------------
-# warn_if_spec_source_drifted — default warn vs strict block
+# warn_if_spec_source_drifted — unconditional fail-closed gate
 # ---------------------------------------------------------------------------
 
 
-def test_default_warn_does_not_raise_on_drift(
+def test_drift_always_raises(spec_repo, isolated_scitex_dir, tmp_path, capsys):
+    # Arrange
+    spec, work, remote = spec_repo
+    _advance_remote(remote, work, tmp_path)
+    # Act
+    with pytest.raises(SpecSourceDriftError):
+        warn_if_spec_source_drifted(spec, agent="foo")
+
+
+def test_drift_emits_loud_error_banner(
     spec_repo, isolated_scitex_dir, tmp_path, capsys
 ):
     # Arrange
     spec, work, remote = spec_repo
     _advance_remote(remote, work, tmp_path)
     # Act
-    status = warn_if_spec_source_drifted(spec, agent="foo", strict=False)
-    # Assert — returns the drifted status, never raises (default = warn)
-    assert status.state is DriftState.BEHIND
+    with pytest.raises(SpecSourceDriftError):
+        warn_if_spec_source_drifted(spec, agent="foo")
+    assert "sac-drift ERROR" in capsys.readouterr().err
 
 
-def test_default_warn_emits_loud_stderr_banner(
-    spec_repo, isolated_scitex_dir, tmp_path, capsys
-):
+def test_no_bypass_parameter_exists(spec_repo, isolated_scitex_dir, tmp_path):
     # Arrange
     spec, work, remote = spec_repo
     _advance_remote(remote, work, tmp_path)
     # Act
-    warn_if_spec_source_drifted(spec, agent="foo", strict=False)
-    # Assert
-    assert "sac-drift WARNING" in capsys.readouterr().err
+    with pytest.raises(TypeError):
+        warn_if_spec_source_drifted(spec, agent="foo", strict=False)
 
 
-def test_strict_mode_raises_on_drift(spec_repo, isolated_scitex_dir, tmp_path):
-    # Arrange
-    spec, work, remote = spec_repo
-    _advance_remote(remote, work, tmp_path)
-    # Act
-    ctx = pytest.raises(SpecSourceDriftError)
-    # Assert
-    with ctx:
-        warn_if_spec_source_drifted(spec, agent="foo", strict=True)
-
-
-def test_strict_mode_does_not_raise_on_not_a_repo(tmp_path, isolated_scitex_dir):
-    # Arrange — strict only blocks genuine drift, not unknown drift.
+def test_not_a_repo_refuses(tmp_path, isolated_scitex_dir):
     plain = tmp_path / "plain"
     plain.mkdir()
     (plain / "spec.yaml").write_text("x")
     # Act
-    status = warn_if_spec_source_drifted(
-        plain / "spec.yaml", strict=True, do_fetch=False
-    )
-    # Assert
-    assert status.state is DriftState.NOT_A_REPO
+    with pytest.raises(SpecSourceDriftError) as caught:
+        warn_if_spec_source_drifted(plain / "spec.yaml", do_fetch=False)
+    assert caught.value.status.state is DriftState.NOT_A_REPO
 
 
-def test_strict_mode_does_not_raise_when_current(spec_repo, isolated_scitex_dir):
+def test_current_source_returns(spec_repo, isolated_scitex_dir):
     # Arrange
     spec, _work, _remote = spec_repo
     # Act
-    status = warn_if_spec_source_drifted(spec, strict=True)
+    status = warn_if_spec_source_drifted(spec)
     # Assert
     assert status.state is DriftState.CURRENT

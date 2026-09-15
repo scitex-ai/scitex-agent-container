@@ -23,9 +23,9 @@ class DriftState(enum.Enum):
     * ``DIVERGED`` — both ahead AND behind. The most dangerous case:
       stale *and* unpushed.
     * ``NOT_A_REPO`` — the spec source isn't inside a git working tree
-      (or git is unavailable). Drift is undefined; warn-and-continue.
+      (or git is unavailable). Currency cannot be verified.
     * ``UNREACHABLE`` — the remote could not be contacted (offline,
-      auth, no upstream configured). Drift is unknown; warn-and-continue.
+      auth, no upstream configured). Currency cannot be verified.
     """
 
     CURRENT = "current"

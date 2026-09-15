@@ -44,7 +44,6 @@ def run_prelaunch(
     config: Any,
     config_path: str,
     *,
-    strict_drift: bool | None,
     session_override: str | None,
     resume_id_override: str | None,
     engine_override: str | None,
@@ -62,13 +61,12 @@ def run_prelaunch(
     """
     # TWO SPEC-SANITY GATES, refuse-by-default, each with its OWN named
     # override (operator ruling 2026-08-10 — never a blanket --force).
-    # (1) spec source BEHIND/DIVERGED = a possibly STALE spec; escape hatch
-    # ``--allow-stale-spec``. AHEAD / non-git / unreachable still start.
+    # (1) spec source BEHIND/DIVERGED = a STALE spec and always refuses.
     # (2) undeclared ``to_home_layers``; escape hatch
     # ``--allow-undeclared-layers``, and the refusal itself is still gated
     # on the fleet migration (``_layers_preflight.ENFORCE_BY_DEFAULT``).
     # (2) is called HERE, once, not in the resolver a start invokes twice.
-    _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
+    _check_spec_source_drift_at_launch(config_path, config.name)
     check_to_home_layers_at_launch(config)
 
     # Launch-time BOARD IDENTITY check, same contract as the drift check

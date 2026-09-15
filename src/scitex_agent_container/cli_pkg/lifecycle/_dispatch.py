@@ -35,9 +35,9 @@ from ...config import AgentConfig
 from ._common import _local_host_names
 from ._dispatch_paths import local_spec_dir, remote_spec_dir
 from ._spec_handoff import (
+    HandoffPlan,
     local_manifest,
     plan_handoff,
-    push_spec_dir,
     read_remote_manifest,
     ssh_runner,
 )
@@ -47,6 +47,25 @@ if TYPE_CHECKING:
 
     from ..._state.host_config import PeerSpec
     from ._host_chain import ReachabilityOracle
+
+
+def _require_spec_identity(plan: HandoffPlan, *, name: str, peer: str) -> None:
+    """Refuse unless caller and target hold exactly the same recipe files."""
+    if not (plan.new or plan.changed or plan.extra):
+        return
+    details = [
+        *(f"  missing on target: {rel}" for rel in plan.new),
+        *(f"  different content: {rel}" for rel in plan.changed),
+        *(f"  target-only: {rel}" for rel in plan.extra),
+    ]
+    raise RuntimeError(
+        f"Spec identity mismatch for agent {name!r}: caller and target "
+        f"{peer!r} do not have the same recipe ({plan.summary()}).\n"
+        + "\n".join(details)
+        + f"\n\nSynchronize the authoritative spec on both hosts, then run "
+        f"`sac fleet sync --only {name}` and retry. `--force` cannot "
+        "bypass recipe identity."
+    )
 
 
 def _dispatch_remote_start(
@@ -61,9 +80,8 @@ def _dispatch_remote_start(
 ) -> int:
     """Dispatch ``sac agents start <name>`` to a remote ``peer``.
 
-    Step 4 implementation: locate the local spec dir, drift-check by
-    comparing per-file digests with the peer, ship the spec when the
-    drift gate allows it and verify it actually landed, then invoke
+    Step 4 implementation: locate the local spec dir, require its complete
+    manifest to match the peer byte-for-byte, then invoke
     ``sac agents start <name> --no-redispatch --json`` on the peer
     over ssh (env_preamble-aware via :func:`build_ssh_argv`), parse
     the resulting JSON, and write a lead-side ``state.db.instances``
@@ -77,15 +95,13 @@ def _dispatch_remote_start(
             is the source of this alias.
         dry_run: When True, print the planned change count and return
             0 without shipping anything.
-        force: When True, override the drift gate and ship anyway.
+        force: Runtime replacement control. It never bypasses spec identity.
 
     Raises:
         FileNotFoundError: When the local spec dir for ``name`` does
             not exist under ``~/.scitex/agent-container/agents/``.
         RuntimeError: When the peer's manifest cannot be read, when
-            drift is detected without ``--force``, when the transfer
-            fails OR SILENTLY MIS-DELIVERS (post-transfer digests do
-            not match), when the remote ``sac agents start`` returns
+            spec identity differs, when the remote ``sac agents start`` returns
             non-zero, or when its stdout is not valid JSON.
     """
     # 1. Locate the local spec dir ($SCITEX_DIR-aware — see _dispatch_paths).
@@ -110,46 +126,19 @@ def _dispatch_remote_start(
         read_remote_manifest(remote_dir, peer_shell),
     )
 
-    # 3. Drift gate — error unless --force was passed. Only a file the peer
-    # holds with DIFFERENT content is drift; peer-only files are reported at
-    # step 5 and kept (see :mod:`._spec_handoff` on dropping ``--delete``).
-    if plan.drift and not force:
-        raise RuntimeError(
-            f"Spec drift between lead and {peer!r} for agent {name!r} — the "
-            f"peer's copy of these files differs from the lead's:\n"
-            + "\n".join(f"  {rel}" for rel in plan.changed)
-            + "\n\nResolve manually then re-run, "
-            + "or pass --force to overwrite peer-side from lead. "
-            + "See ~/proj/scitex-lead/GITIGNORED/WORKING/remote-agent-pipeline.md."
-        )
+    # 3. Identity gate. Remote launch NEVER mutates or repairs specifications.
+    # Missing, changed, and peer-only files all mean the two hosts would not
+    # launch the same recipe. ``--force`` controls runtime replacement only
+    # and deliberately cannot bypass this gate.
+    _require_spec_identity(plan, name=name, peer=peer)
 
     # 4. Dry-run mode: report the plan and return without shipping anything.
     if dry_run:
-        if not plan.new and not plan.changed:
-            status = "no drift"
-        elif plan.first_launch:
-            status = "first launch"
-        elif plan.changed:
-            status = "drift overridden by --force"
-        else:
-            status = "new files only"
         click.echo(
             f"[dispatch] dry-run for {name!r} -> {peer!r} at {remote_dir}: "
-            f"{status}; {plan.summary()}."
+            f"spec identity verified; {plan.summary()}."
         )
         return 0
-
-    # 5. Deliver — and PROVE delivery by re-reading the peer's own digests.
-    # An exit code is not evidence: a vendor-patched transport can exit 0
-    # having written the spec somewhere nobody reads, after which the remote
-    # `sac agents start` below would boot the agent from the STALE spec and
-    # this dispatch would report success. push_spec_dir raises instead.
-    push_spec_dir(src_dir, remote_dir, peer_shell, peer=peer)
-    if plan.extra:
-        click.echo(
-            f"[dispatch] {len(plan.extra)} peer-only file(s) on {peer!r} kept "
-            f"(the handoff never deletes): {', '.join(plan.extra)}"
-        )
 
     # 7. Step 4: invoke remote-side `sac agents start --no-redispatch --json`
     # over ssh, parse the JSON, write the lead-side instances row.
@@ -176,6 +165,7 @@ def _dispatch_remote_start(
 
     remote_argv = remote_start_argv(
         name,
+        force=force,
         engine=engine,
         session_mode=session_mode,
         resume_id=resume_id,
@@ -500,6 +490,7 @@ def try_dispatch_remote(
 
 __all__ = [
     "_dispatch_remote_start",
+    "_require_spec_identity",
     "lookup_remote_peer",
     "try_dispatch",
     "try_dispatch_remote",

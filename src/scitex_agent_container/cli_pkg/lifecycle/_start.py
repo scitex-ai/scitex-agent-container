@@ -18,9 +18,9 @@ from .._helpers import agent_name_complete, console
 from ._common import _iter_agent_yamls
 from ._start_engine_options import engine_options
 from ._start_gate_options import spec_gate_options, verify_window_option
-from ._start_session_options import session_options
 from ._start_group_filter import apply_group_targets, group_option
 from ._start_preflight_gate import make_preflight_runner
+from ._start_session_options import session_options
 
 
 @click.command()
@@ -208,7 +208,6 @@ def start(
     params_file: Path | None,
     params_out: Path | None,
     params_overwrite: bool,
-    strict_drift: bool | None,
     no_redispatch: bool,
     broker_self: bool,
     concurrency: int,
@@ -429,7 +428,6 @@ def start(
         no_preflight=no_preflight,
         force=force,
         session_mode=session_mode,
-        strict_drift=strict_drift,
         broker_self=broker_self,
         foreground=foreground,
         multi_foreground=multi_foreground,
@@ -482,7 +480,6 @@ def start(
         as_json=as_json,
         foreground=foreground,
         one_shot=one_shot,
-        strict_drift=strict_drift,
         no_redispatch=no_redispatch,
         multi_foreground=multi_foreground,
         preflight_runner=_run_preflight_once,

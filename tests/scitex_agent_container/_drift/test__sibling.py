@@ -25,7 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from scitex_agent_container._drift import DriftState, warn_if_spec_source_drifted
+from scitex_agent_container._drift import (
+    DriftState,
+    SpecSourceDriftError,
+    warn_if_spec_source_drifted,
+)
 from scitex_agent_container._drift._sibling import (
     SIBLING_ROOTS_ENV,
     candidate_sibling_paths,
@@ -455,7 +459,8 @@ def test_strict_funnel_warns_on_newer_sibling(
     _touch(sibling, _NEW)
     env_save_restore.set(SIBLING_ROOTS_ENV, str(tmp_path / "B"))
     # Act
-    warn_if_spec_source_drifted(loaded, agent="foo", strict=True, do_fetch=False)
+    with pytest.raises(SpecSourceDriftError):
+        warn_if_spec_source_drifted(loaded, agent="foo", do_fetch=False)
     # Assert
     assert "sac-drift WARNING for agent 'foo'" in capsys.readouterr().err
 
@@ -470,12 +475,13 @@ def test_strict_funnel_names_the_inert_sibling(
     _touch(sibling, _NEW)
     env_save_restore.set(SIBLING_ROOTS_ENV, str(tmp_path / "B"))
     # Act
-    warn_if_spec_source_drifted(loaded, agent="foo", strict=True, do_fetch=False)
+    with pytest.raises(SpecSourceDriftError):
+        warn_if_spec_source_drifted(loaded, agent="foo", do_fetch=False)
     # Assert
     assert str(sibling) in capsys.readouterr().err
 
 
-def test_strict_funnel_sibling_warning_stays_a_warning(
+def test_funnel_not_a_repo_refuses_after_sibling_diagnostic(
     tmp_path: Path, isolated_scitex_dir, env_save_restore, capsys
 ):
     # Arrange
@@ -484,11 +490,9 @@ def test_strict_funnel_sibling_warning_stays_a_warning(
     _touch(loaded, _OLD)
     _touch(sibling, _NEW)
     env_save_restore.set(SIBLING_ROOTS_ENV, str(tmp_path / "B"))
-    # Act — must RETURN (not raise) even under strict; the sibling is a
-    # warning, never a refusal.
-    status = warn_if_spec_source_drifted(loaded, agent="foo", strict=True, do_fetch=False)
-    # Assert
-    assert status.state is DriftState.NOT_A_REPO
+    with pytest.raises(SpecSourceDriftError) as caught:
+        warn_if_spec_source_drifted(loaded, agent="foo", do_fetch=False)
+    assert caught.value.status.state is DriftState.NOT_A_REPO
 
 
 def test_strict_funnel_silent_on_older_sibling(
@@ -501,6 +505,7 @@ def test_strict_funnel_silent_on_older_sibling(
     _touch(sibling, _OLD)
     env_save_restore.set(SIBLING_ROOTS_ENV, str(tmp_path / "B"))
     # Act
-    warn_if_spec_source_drifted(loaded, agent="foo", strict=True, do_fetch=False)
+    with pytest.raises(SpecSourceDriftError):
+        warn_if_spec_source_drifted(loaded, agent="foo", do_fetch=False)
     # Assert
     assert "sac-drift WARNING" not in capsys.readouterr().err
