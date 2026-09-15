@@ -66,10 +66,10 @@ def image_list(as_json: bool) -> None:
         target_state = "available"
         try:
             artifact_stat = p.stat()
-        except OSError:  # stx-allow: fallback (reason: stale inventory entries must be reported instead of crashing the entire read-only listing)
+        except OSError:  # stx-allow: fallback (reason: stale entries stay visible in the returned JSON or human stdout row instead of crashing the read-only listing)
             try:
                 artifact_stat = p.lstat()
-            except OSError:  # stx-allow: fallback (reason: an entry deleted during the scan no longer has stable metadata to report)
+            except OSError:  # stx-allow: fallback (reason: an entry deleted during the scan cannot supply stable metadata for the returned JSON or human stdout row)
                 continue
             target_state = "dangling" if p.is_symlink() else "unreadable"
         if is_sandbox:
