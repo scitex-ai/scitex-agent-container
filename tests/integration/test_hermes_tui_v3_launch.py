@@ -10,6 +10,7 @@ import yaml
 
 from scitex_agent_container._lifecycle._engine_select import select_engine_at_start
 from scitex_agent_container._lifecycle._runtime_select import _get_runtime
+from scitex_agent_container._listen.tokens import default_token_path
 from scitex_agent_container.config import load_config
 from scitex_agent_container.runtimes._apptainer_build_argv import build_run_argv
 from scitex_agent_container.runtimes._apptainer_inner_argv_tui import (
@@ -155,6 +156,19 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
     tokenless_home = tmp_path / "tokenless-home"
     tokenless_home.mkdir()
     env_save_restore.set("HOME", str(tokenless_home))
+    env_save_restore.set("LOGNAME", "operator")
+    env_save_restore.set("USER", "operator")
+    env_save_restore.delete("PGPASSFILE")
+    source_passfile = tokenless_home / ".pgpass"
+    source_passfile.write_text(
+        "scitex-primary:55432:scitex:operator__scholar:test-password\n",
+        encoding="utf-8",
+    )
+    source_passfile.chmod(0o600)
+    listen_token = default_token_path()
+    listen_token.parent.mkdir(parents=True)
+    listen_token.write_text("test-listen-bearer\n", encoding="utf-8")
+    listen_token.chmod(0o600)
     (tmp_path / ".scitex" / "agent-container").mkdir(parents=True)
     spec_path = tmp_path / "scholar" / "spec.yaml"
     spec_path.parent.mkdir()
@@ -175,7 +189,10 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         tui=True,
     )
     profile = yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
-    profile_env = (home / ".hermes" / ".env").read_text()
+    profile_env = dict(
+        line.split("=", 1)
+        for line in (home / ".hermes" / ".env").read_text().splitlines()
+    )
     rendered_argv = " ".join(argv)
 
     # Assert
@@ -185,7 +202,14 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and config.model == profile["model"]["default"] == "qwen38-27b"
         and profile["providers"]["sac-qwen"]["base_url"]
         == "http://engine.example:8000/v1"
-        and profile_env == "SAC_TEST_HERMES_ENGINE_KEY=not-a-real-secret\n"
+        and profile_env
+        == {
+            "SAC_TEST_HERMES_ENGINE_KEY": "not-a-real-secret",
+            "SAC_LISTEN_BASE_URL": "http://127.0.0.1:7878",
+            "SAC_LISTEN_BEARER": "test-listen-bearer",
+            "SAC_NAME": "scholar",
+        }
+        and set(profile["mcp_servers"]) == {"scitex-agent-container"}
         and config.claude.channels == ["server:sac"]
         and config.comms.channels == ["server:sac"]
         and config.hermes_compression.threshold == 0.85
@@ -202,6 +226,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
             "in_place": False,
         }
         and "HERMES_HOME=/home/agent/.hermes" in argv
+        and str(home / ".hermes" / ".env") in argv
         and "ANTHROPIC_BASE_URL=http://engine.example:8000/v1" not in argv
         and "SAC_LISTEN_BASE_URL" not in rendered_argv
         and "SAC_LISTEN_BEARER" not in rendered_argv
@@ -248,6 +273,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
         encoding="utf-8",
     )
     doc = _canonical_hermes_spec()
+    doc["metadata"] = {"labels": {"sac-builtin": "off"}}
     doc["spec"]["to_home"] = str(to_home)
     doc["spec"]["comms"]["channels"] = ["server:claude-code-telegrammer"]
     doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"
@@ -336,7 +362,9 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
         encoding="utf-8",
     )
     spec = _canonical_hermes_spec()
-    spec["metadata"] = {"labels": {"project": "scitex-hub"}}
+    spec["metadata"] = {
+        "labels": {"project": "scitex-hub", "sac-builtin": "off"}
+    }
     spec["spec"]["to_home"] = str(to_home)
     spec_path = tmp_path / "scitex-hub-signup" / "spec.yaml"
     spec_path.parent.mkdir()

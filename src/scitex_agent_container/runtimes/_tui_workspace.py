@@ -17,6 +17,7 @@ from ._stale_poller_pidfiles import clear_stale_poller_pidfiles
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from .claude_md import setup_claude_md
+from .mcp_config import setup_mcp_config
 from .onboarding import ensure_project_onboarding
 from .settings_json import ensure_global_settings_json, setup_settings_json
 
@@ -46,6 +47,11 @@ def materialize_workspace(
         settings.json}) into ``<state>/home/`` (the host dir bound at
         ``/home/agent``). The baseline ships its hook suite as
         ``.claude/settings.json`` so the TUI reads it at USER scope.
+      * ``setup_mcp_config`` merges explicit ``spec.mcp_servers`` into that
+        deployed ``$HOME/.mcp.json``. TUI harnesses read MCP configuration
+        from the isolated container home, not the project workdir used by the
+        legacy Claude tmux runner, so omitting this step silently discarded
+        every per-agent MCP declaration on the TUI path.
       * ``setup_settings_json`` deep-merges sac's managed keys into
         ``$HOME/.claude/settings.json`` (``filename="settings.json"``):
         ``skipDangerousModePermissionPrompt`` + the SAC channel/event-ring hooks
@@ -83,6 +89,7 @@ def materialize_workspace(
     clear_stale_poller_pidfiles(home_dir)
     setup_claude_md(config, str(home_dir))
     deploy_to_home(config, str(home_dir))
+    setup_mcp_config(config, str(home_dir))
     log_effective_skills(config, home_dir)
     ensure_global_settings_json()
     setup_settings_json(config, str(home_dir), filename="settings.json")
@@ -96,6 +103,7 @@ def materialize_workspace(
     upper_home = resolve_overlay_upper_home(config)
     if upper_home is not None and upper_home.is_dir():
         clear_stale_poller_pidfiles(upper_home)
+        setup_mcp_config(config, str(upper_home))
         ensure_project_onboarding(workdir, home=upper_home)
         setup_settings_json(config, str(upper_home), filename="settings.json")
     return home_dir
