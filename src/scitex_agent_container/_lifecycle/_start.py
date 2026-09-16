@@ -122,11 +122,10 @@ def agent_start(
             though ``-y`` was explicitly passed at the CLI. Ignored on
             the non-SIF (direct) path — it has no interactive gate of
             its own to satisfy.
-        strict_drift: Whether a STALE spec source blocks the launch.
-            ``None`` (default) resolves to STRICT unless
-            ``SAC_ALLOW_STALE_SPEC`` / ``SAC_STRICT_DRIFT=0`` says
-            otherwise; ``True`` forces strict, ``False`` forces lenient
-            (what ``--allow-stale-spec`` passes).
+        strict_drift: Compatibility-only input. Spec authority validation is
+            always strict; ``False`` and legacy environment variables cannot
+            bypass it. Intentional detached snapshots are accepted only by
+            exact immutable source/commit/spec-digest policy.
         runtime_factory: Injectable real callable that builds an SDK
             runtime from an :class:`AgentConfig`. Default is the real
             :func:`_get_runtime`.

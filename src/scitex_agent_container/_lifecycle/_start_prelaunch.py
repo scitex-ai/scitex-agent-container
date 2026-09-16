@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """The PRE-LAUNCH gauntlet — everything that must hold before the runtime.
 
@@ -60,11 +59,11 @@ def run_prelaunch(
     ``RuntimeError``, or the telegrammer wake-wiring error. Returns
     ``None`` when every gate passed.
     """
-    # TWO SPEC-SANITY GATES, refuse-by-default, each with its OWN named
-    # override (operator ruling 2026-08-10 — never a blanket --force).
-    # (1) spec source BEHIND/DIVERGED = a possibly STALE spec; escape hatch
-    # ``--allow-stale-spec``. AHEAD / non-git / unreachable still start.
-    # (2) undeclared ``to_home_layers``; escape hatch
+    # TWO SPEC-SANITY GATES. (1) Spec authority is fail-closed with no
+    # launch bypass: only the clean/current develop main checkout or an exact
+    # immutable sac-authority snapshot may launch. Unknown, unreachable,
+    # dirty, wrong-branch, linked-worktree and drifted sources all refuse.
+    # (2) undeclared ``to_home_layers``; its narrow migration escape hatch is
     # ``--allow-undeclared-layers``, and the refusal itself is still gated
     # on the fleet migration (``_layers_preflight.ENFORCE_BY_DEFAULT``).
     # (2) is called HERE, once, not in the resolver a start invokes twice.

@@ -1,4 +1,4 @@
-"""Launch-time LOCAL spec-source drift check.
+"""Read-only LOCAL spec-source drift diagnostics.
 
 When ``sac agents start`` (or any lifecycle path that loads a spec)
 runs, the agent's spec.yaml may have come from a git-tracked source
@@ -8,31 +8,23 @@ stale (behind its remote) or has unpushed local commits (ahead /
 diverged), the agent might run an old spec or have a spec that never
 propagates to other hosts.
 
-This module compares the spec source's git working tree against its
-upstream tracking branch and returns a :class:`DriftStatus`.
+This module compares the spec source's git working tree against its upstream
+tracking branch and returns a :class:`DriftStatus` for ``sac doctor`` and
+other diagnostics. Lifecycle launch authority is deliberately stricter and
+lives in :mod:`._authority`; diagnostic uncertainty must never be mistaken
+for launch permission.
 
 Design constraints (per the work item):
 
 * **FAST** — a single ``git fetch`` per repo, cached for
   ``_FETCH_TTL_S`` seconds so repeated launches don't pay the network
   cost. The rev-list compare itself is local + instant.
-* **RESILIENT** — never raises. A missing git binary, a
+* **RESILIENT FOR DIAGNOSTICS** — never raises. A missing git binary, a
   non-repo source dir, an unreachable remote, or any subprocess error
   degrades to ``NOT_A_REPO`` / ``UNREACHABLE`` and the launch proceeds.
-* **DEFAULT = REFUSE on a STALE spec** (operator ruling 2026-08-10:
-  「スペックがおかしかったら起動不可っていうのをデフォルトに」). A spec source
-  that is BEHIND / DIVERGED may launch an old spec, so the start is
-  refused and the named override ``--allow-stale-spec`` /
-  ``SAC_ALLOW_STALE_SPEC=1`` is the way past it.
-
-  AHEAD is deliberately NOT a refusal — see :attr:`DriftStatus.is_stale`.
-  Unpushed local commits mean the spec will not PROPAGATE; the spec about
-  to launch is still the newest one that exists, and hosts like spartan
-  legitimately carry local commits. AHEAD stays a loud warning.
-
-  NOT_A_REPO / UNREACHABLE never refuse: drift is *unknown* there, not
-  present, and refusing on "I could not check" would ground every agent
-  the moment the network hiccups.
+* **NO AUTHORITY DECISION** — callers may render these states, but lifecycle
+  launch uses :func:`._authority.validate_spec_authority`, which refuses every
+  unknown or non-current live source and has no bypass.
 """
 
 from __future__ import annotations
@@ -54,13 +46,6 @@ _FETCH_TTL_S = 60
 # unreachable remote must not hang a launch; we bound it and treat a
 # timeout as UNREACHABLE.
 _GIT_TIMEOUT_S = 15
-
-# The NAMED override for the stale-spec refusal. One flag per condition —
-# never a blanket ``--force`` / ``--ignore-warnings``, which skips every check
-# at once and leaves no record of WHICH one was bypassed.
-ALLOW_STALE_FLAG = "--allow-stale-spec"
-ALLOW_STALE_ENV = "SAC_ALLOW_STALE_SPEC"
-
 
 def _run_git(repo: Path, *args: str, timeout: int = _GIT_TIMEOUT_S):
     """Run ``git -C <repo> <args>``; return the CompletedProcess.
@@ -349,8 +334,7 @@ def drift_warning_lines(
         f"  fix:      {fix}",
     ]
     if refusing:
-        lines.append("  refusing to start — resolve the drift, or start anyway with:")
-        lines.append(f"  override: {ALLOW_STALE_FLAG}   /   {ALLOW_STALE_ENV}=1")
+        lines.append("  refusing to start — synchronize the authority source")
     lines.append(bar)
     return lines
 
@@ -463,15 +447,12 @@ class SpecSourceDriftError(RuntimeError):
         who = f" for agent '{agent}'" if agent else ""
         super().__init__(
             f"sac-drift: spec source{who} is STALE ({status.summary()}); "
-            f"refusing to launch a spec that may be out of date. Pull the "
-            f"repo, or start anyway with {ALLOW_STALE_FLAG} / "
-            f"{ALLOW_STALE_ENV}=1."
+            f"refusing to launch a spec that may be out of date. Synchronize "
+            "the authority source before launching."
         )
 
 
 __all__ = [
-    "ALLOW_STALE_ENV",
-    "ALLOW_STALE_FLAG",
     "SpecSourceDriftError",
     "check_spec_source_drift",
     "drift_warning_lines",

@@ -32,6 +32,9 @@ import pytest
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._lifecycle._restart_preflight import RestartPreflightAbort
 from scitex_agent_container._state.registry import Registry
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +146,7 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
     spec = agent_dir / "spec.yaml"
     # Red-start ruling 2026-07-21: every field explicit (body wins).
     spec.write_text(explicitize_yaml(body))
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _raise_unusable(_arg: Any) -> None:
@@ -224,8 +227,7 @@ def test_agent_restart_launches_no_successor_on_abort(
 
 
 def test_agent_restart_healthy_successor_still_stops_then_starts(
-    pg_schema: str,
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — the pre-flight passes (returns None): normal restart proceeds.
     spec = _write_spec(tmp_path)
@@ -245,8 +247,7 @@ def test_agent_restart_healthy_successor_still_stops_then_starts(
 
 
 def test_agent_restart_runs_preflight_before_the_stop(
-    pg_schema: str,
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — record ordering: the check must fire BEFORE the stop.
     spec = _write_spec(tmp_path)
@@ -278,8 +279,7 @@ def test_agent_restart_runs_preflight_before_the_stop(
 
 
 def test_agent_start_force_raises_abort_on_unusable_successor(
-    pg_schema: str,
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — a live agent, force-restart, pre-flight will REJECT.
     spec = _write_spec(tmp_path)
@@ -302,8 +302,7 @@ def test_agent_start_force_raises_abort_on_unusable_successor(
 
 
 def test_agent_start_force_leaves_running_container_up_on_abort(
-    pg_schema: str,
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange
     spec = _write_spec(tmp_path)
@@ -328,8 +327,7 @@ def test_agent_start_force_leaves_running_container_up_on_abort(
 
 
 def test_agent_start_force_healthy_successor_still_restarts(
-    pg_schema: str,
-    tmp_path: Path, registry: Registry
+    pg_schema: str, tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange — pre-flight passes: a normal force-restart must still work.
     spec = _write_spec(tmp_path)

@@ -52,6 +52,9 @@ from scitex_agent_container._lifecycle._verdict import (
 )
 from scitex_agent_container._state.registry import Registry
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -157,7 +160,7 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
             "    max_retries: 3\n"
         )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _no_sleep(_seconds: float) -> None:
