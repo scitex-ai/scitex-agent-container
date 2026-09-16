@@ -308,9 +308,7 @@ def recovery_tick(
     streak, fingerprint = observed
     recovered_token = f"recovered:{fingerprint}"
     latched_token = f"latched:{fingerprint}"
-    if previous_fingerprint.startswith(f"ready:{fingerprint}:"):
-        return previous_fingerprint
-    if previous_fingerprint.startswith(f"recovered:{fingerprint}:"):
+    if previous_fingerprint.startswith("recovered:"):
         if observe_progress is None:
             return previous_fingerprint
         _, _, baseline_count, baseline_active = previous_fingerprint.split(":", 3)
@@ -332,6 +330,21 @@ def recovery_tick(
                 f"ready:{fingerprint}:{progress.message_count}:{progress.last_active}"
             )
         return previous_fingerprint
+    if previous_fingerprint.startswith("ready:"):
+        if observe_progress is None:
+            return previous_fingerprint
+        _, _, baseline_count, _baseline_active = previous_fingerprint.split(":", 3)
+        progress = observe_progress()
+        baseline_count_int = int(baseline_count)
+        if progress.status != "idle" or progress.message_count == baseline_count_int:
+            return previous_fingerprint
+        if (
+            progress.message_count >= baseline_count_int + 2
+            or progress.message_count < baseline_count_int
+        ):
+            return (
+                f"ready:{fingerprint}:{progress.message_count}:{progress.last_active}"
+            )
     if previous_fingerprint == recovered_token:
         return previous_fingerprint
     stamp = now()

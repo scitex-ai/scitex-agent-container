@@ -264,13 +264,30 @@ def test_ready_proof_is_not_relatched_by_the_historical_same_error(tmp_path):
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused")),
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
-        observe_progress=lambda: (_ for _ in ()).throw(
-            AssertionError("same proven occurrence needs no observation")
-        ),
+        observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
     assert observed == token
+
+
+def test_recovering_proof_survives_terminal_window_shift(tmp_path):
+    config = _config(tmp_path)
+    old_pane = "Provider has been unresponsive for 5 consecutive stale attempts"
+    new_pane = "shifted\n" + old_pane
+    old_fingerprint = recovery.stale_latch(old_pane)[1]
+    token = f"recovered:{old_fingerprint}:10:40.0"
+    observed = recovery.recovery_tick(
+        config,
+        capture=lambda: new_pane,
+        pause=lambda: (_ for _ in ()).throw(AssertionError("paused")),
+        probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
+        recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
+        observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
+        previous_fingerprint=token,
+        state_dir=tmp_path,
+    )
+    assert observed.startswith(f"ready:{recovery.stale_latch(new_pane)[1]}:")
 
 
 def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
