@@ -516,8 +516,10 @@ __all__ = [
     "_deploy_tight_perm_file",
     "_deploy_verbatim_secret",
     "_read_and_interpolate",
+    "_spec_dir",
     "deploy_to_home",
     "materialize_to_home",
     "resolve_baseline_to_home_dir",
     "resolve_to_home_dir",
+    "settings_layer_dirs",
 ]
