@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
+    HermesSlashReceipt,
     HermesTuiRpcError,
+    HermesTurnProgress,
     HermesVisibleTurnReceipt,
 )
 from scitex_agent_container.runtimes.hermes_tui import (
@@ -223,9 +223,7 @@ def test_deliverability_requires_authenticated_gateway_readiness():
     def degraded(_state):
         raise HermesTuiRpcError("Hermes authenticated readiness is degraded")
 
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=_Mux(), gateway_health=degraded
-    )
+    runtime = HermesTuiSessionRuntime(multiplexer=_Mux(), gateway_health=degraded)
 
     # Act
     reason = runtime.why_not_deliverable(_config())
@@ -386,7 +384,7 @@ def test_hermes_auxiliary_failure_cleans_poller_before_session():
     )
 
 
-def test_recovery_uses_supported_same_session_controls_in_order():
+def test_recovery_uses_supported_same_session_controls_in_order(monkeypatch):
     # Arrange
     config = _config()
     config.model = "qwen38-27b"
@@ -401,11 +399,21 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     )
     # Act
     disabled = runtime.disable_periodic_turns(config)
-    with patch(
-        "scitex_agent_container.runtimes._hermes_tui_rpc.execute_slash_command",
-        side_effect=lambda state, name, command: calls.append(command) or "switched",
-    ):
-        recovered = runtime.recover_turn_admission(config)
+    import scitex_agent_container.runtimes._hermes_tui_rpc as rpc
+
+    monkeypatch.setattr(
+        rpc,
+        "execute_slash_command",
+        lambda state, name, command: (
+            calls.append(command)
+            or HermesSlashReceipt(
+                "switched",
+                "live-1",
+                HermesTurnProgress(10, 42.0, "idle"),
+            )
+        ),
+    )
+    recovered = runtime.recover_turn_admission(config)
     # Assert
     assert (
         disabled,
@@ -413,7 +421,11 @@ def test_recovery_uses_supported_same_session_controls_in_order():
         calls,
     ) == (
         True,
-        True,
+        HermesSlashReceipt(
+            "switched",
+            "live-1",
+            HermesTurnProgress(10, 42.0, "idle"),
+        ),
         [
             "heartbeat.clear",
             "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
