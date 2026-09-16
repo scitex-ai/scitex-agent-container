@@ -50,6 +50,36 @@ class HermesTurnReceipt:
 
 
 @dataclass(frozen=True)
+class HermesTurnProgress:
+    """Monotonic live-session evidence used to verify stale recovery."""
+
+    message_count: int
+    last_active: float
+    status: str
+
+
+@dataclass(frozen=True)
+class HermesTurnOutcome:
+    """Authoritative terminal event after a recovery control operation."""
+
+    progress: HermesTurnProgress
+    terminal_status: str | None
+    latest_seq: int
+    epoch: str
+
+
+@dataclass(frozen=True)
+class HermesSlashReceipt:
+    """A slash command result plus the post-command live-session baseline."""
+
+    output: str
+    session_id: str
+    progress: HermesTurnProgress
+    latest_seq: int
+    epoch: str
+
+
+@dataclass(frozen=True)
 class HermesCompressionReceipt:
     """Verified before/after telemetry from native Hermes compression."""
 
@@ -238,6 +268,105 @@ def _select_session(rows: object, expected_title: str) -> str:
     return str(_select_session_row(rows, expected_title)["id"])
 
 
+def _turn_progress(row: dict) -> HermesTurnProgress:
+    message_count = row.get("message_count")
+    last_active = row.get("last_active")
+    status = str(row.get("status") or "").strip().lower()
+    if (
+        type(message_count) is not int
+        or message_count < 0
+        or not isinstance(last_active, (int, float))
+        or last_active < 0
+        or status
+        not in {"idle", "working", "waiting", "starting", "streaming", "resuming"}
+    ):
+        raise HermesTuiRpcError(
+            f"Hermes active session returned malformed progress: {row!r}"
+        )
+    return HermesTurnProgress(message_count, float(last_active), status)
+
+
+def observe_turn_progress(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesTurnProgress:
+    """Read monotonic completion evidence without attaching a new viewer."""
+    rows = active_sessions(state_dir, timeout_s=timeout_s, connect_fn=connect_fn)
+    return _turn_progress(_select_session_row(rows, f"sac:{agent_name}"))
+
+
+def observe_turn_outcome(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    after_seq: int,
+    expected_epoch: str,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesTurnOutcome:
+    """Read the typed terminal event after a recovery watermark.
+
+    ``session.activate`` is intentionally not used: activation rebinds the live
+    renderer and touches ``last_active``, so a passive recovery observer would
+    manufacture the progress it was trying to verify.  Hermes' replay ring is
+    the non-mutating control-plane record of ``message.complete``.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            row = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
+            progress = _turn_progress(row)
+            replay = _rpc(
+                socket,
+                2,
+                "session.events.since",
+                {"session_id": str(row["id"]), "last_seen": after_seq},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    events = replay.get("events")
+    latest_seq = replay.get("latest_seq")
+    epoch = replay.get("epoch")
+    if (
+        not isinstance(events, list)
+        or type(latest_seq) is not int
+        or latest_seq < after_seq
+        or not isinstance(epoch, str)
+        or not epoch
+    ):
+        raise HermesTuiRpcError(
+            f"Hermes session.events.since returned malformed result: {replay!r}"
+        )
+    if epoch != expected_epoch:
+        raise HermesTuiRpcError(
+            "Hermes event replay epoch changed during stale recovery"
+        )
+    terminal_status = None
+    for event in events:
+        if not isinstance(event, dict):
+            raise HermesTuiRpcError(
+                f"Hermes event replay contained malformed event: {event!r}"
+            )
+        if event.get("type") != "message.complete":
+            continue
+        payload = event.get("payload")
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if status not in {"complete", "error", "interrupted"}:
+            raise HermesTuiRpcError(
+                f"Hermes message.complete had malformed status: {event!r}"
+            )
+        terminal_status = str(status)
+    return HermesTurnOutcome(progress, terminal_status, latest_seq, epoch)
+
+
 def _session_activity(row: dict) -> str:
     """Normalize the gateway's authoritative activity without guessing."""
     status = str(row.get("status") or "").strip().lower()
@@ -246,8 +375,7 @@ def _session_activity(row: dict) -> str:
     if status in {"working", "waiting", "starting"}:
         return "active"
     raise HermesTuiRpcError(
-        f"Hermes session {row.get('id')!r} returned unknown activity status "
-        f"{status!r}"
+        f"Hermes session {row.get('id')!r} returned unknown activity status {status!r}"
     )
 
 
@@ -293,10 +421,14 @@ def _submit_interactive(
         params["queued"] = True
     result = _rpc(socket, request_id, "prompt.submit", params)
     status = str(result.get("status") or "").strip()
-    allowed = {"streaming", "queued"} if delivery_mode == "queue" else {
-        "streaming",
-        "steered",
-    }
+    allowed = (
+        {"streaming", "queued"}
+        if delivery_mode == "queue"
+        else {
+            "streaming",
+            "steered",
+        }
+    )
     if status not in allowed:
         raise HermesTuiRpcError(
             f"Hermes {delivery_mode} delivery returned {result!r}; "
@@ -340,9 +472,7 @@ def submit_turn(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session = _select_session_row(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
             receipt, _next_id = _submit_interactive(
                 socket,
                 session=session,
@@ -357,6 +487,69 @@ def submit_turn(
             f"Hermes TUI gateway at {url} is unreachable: {exc}"
         ) from exc
     return receipt
+
+
+def execute_slash_command(
+    state_dir: Path,
+    agent_name: str,
+    command: str,
+    *,
+    timeout_s: float = 30.0,
+    connect_fn: Any | None = None,
+) -> HermesSlashReceipt:
+    """Execute a slash command through Hermes' command dispatcher.
+
+    Slash commands are control-plane operations, not conversational turns.
+    Sending ``/model`` through ``prompt.submit`` records ordinary user text and
+    never invokes Hermes' model-switch handler.  ``slash.exec`` runs the
+    supported command path and mirrors its side effects onto the live session.
+    """
+    command = str(command or "").strip()
+    if not command.startswith("/"):
+        raise ValueError("Hermes slash command must start with '/'")
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
+            result = _rpc(
+                socket,
+                2,
+                "slash.exec",
+                {"session_id": session_id, "command": command},
+            )
+            after = _rpc(socket, 3, "session.active_list", {})
+            progress = _turn_progress(
+                _select_session_row(after.get("sessions"), f"sac:{agent_name}")
+            )
+            replay = _rpc(
+                socket,
+                4,
+                "session.events.since",
+                {"session_id": session_id, "last_seen": 0},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url} is unreachable: {exc}"
+        ) from exc
+    output = result.get("output")
+    if not isinstance(output, str) or not output.strip():
+        raise HermesTuiRpcError(
+            f"Hermes slash.exec returned malformed result: {result!r}"
+        )
+    if warning := result.get("warning"):
+        raise HermesTuiRpcError(
+            f"Hermes slash.exec did not synchronize the live session: {warning}"
+        )
+    latest_seq = replay.get("latest_seq")
+    epoch = replay.get("epoch")
+    if type(latest_seq) is not int or latest_seq < 0 or not isinstance(epoch, str) or not epoch:
+        raise HermesTuiRpcError(
+            f"Hermes event replay returned malformed watermark: {replay!r}"
+        )
+    return HermesSlashReceipt(output, session_id, progress, latest_seq, epoch)
 
 
 def clear_heartbeat_for_session(
@@ -416,9 +609,7 @@ def clear_heartbeat(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session_id = _select_session(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session_id = _select_session(listing.get("sessions"), f"sac:{agent_name}")
             result = _rpc(
                 socket,
                 2,
@@ -445,9 +636,7 @@ def clear_heartbeat(
 def _required_nonnegative_int(payload: dict, key: str, *, source: str) -> int:
     value = payload.get(key)
     if type(value) is not int or value < 0:
-        raise HermesTuiRpcError(
-            f"Hermes {source} returned invalid {key}: {value!r}"
-        )
+        raise HermesTuiRpcError(f"Hermes {source} returned invalid {key}: {value!r}")
     return value
 
 
@@ -469,9 +658,7 @@ def compress_session(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session = _select_session_row(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
             if _session_activity(session) != "idle":
                 raise HermesTuiRpcError(
                     f"Hermes session {session['id']!r} is busy; refusing compression"
@@ -684,9 +871,7 @@ def submit_visible_turn(
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            session = _select_session_row(
-                listing.get("sessions"), f"sac:{agent_name}"
-            )
+            session = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
             session_id = str(session["id"])
             before = _rpc(
                 socket,

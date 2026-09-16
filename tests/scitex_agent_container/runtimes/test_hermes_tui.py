@@ -221,9 +221,7 @@ def test_deliverability_requires_authenticated_gateway_readiness():
     def degraded(_state):
         raise HermesTuiRpcError("Hermes authenticated readiness is degraded")
 
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=_Mux(), gateway_health=degraded
-    )
+    runtime = HermesTuiSessionRuntime(multiplexer=_Mux(), gateway_health=degraded)
 
     # Act
     reason = runtime.why_not_deliverable(_config())
@@ -380,38 +378,6 @@ def test_hermes_auxiliary_failure_cleans_poller_before_session():
             "inbox:stop",
             "recovery:stop",
             "session:stop",
-        ],
-    )
-
-
-def test_recovery_uses_supported_same_session_controls_in_order():
-    # Arrange
-    config = _config()
-    config.model = "qwen38-27b"
-    config.engine_key = "qwen38-27b"
-    mux = _Mux()
-    calls = []
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=mux,
-        rpc_submit=lambda state, name, text: calls.append(text) or "steered",
-    )
-    runtime.disable_periodic_turns = lambda _config: (
-        calls.append("heartbeat.clear") or True
-    )
-    # Act
-    disabled = runtime.disable_periodic_turns(config)
-    recovered = runtime.recover_turn_admission(config)
-    # Assert
-    assert (
-        disabled,
-        recovered,
-        calls,
-    ) == (
-        True,
-        True,
-        [
-            "heartbeat.clear",
-            "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
         ],
     )
 
