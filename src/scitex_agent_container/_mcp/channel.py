@@ -75,6 +75,7 @@ from ._channel_auto_ack import (  # noqa: E402,F401
     _post_auto_ack,
     _should_auto_ack,
 )
+from ._channel_lifecycle import absorb_completion_stage  # noqa: E402
 from ._channel_post_deliver import run_post_deliver_receipts  # noqa: E402
 from ._channel_reaction_ack import (  # noqa: E402,F401
     absorb_reaction_ack,
@@ -157,6 +158,9 @@ def _build_notification(event: dict[str, Any]) -> dict[str, Any]:
         "in_reply_to",
         "priority",
         "requires_reply",
+        "correlation_id",
+        "lineage_id",
+        "reverse_route",
         "account",
         "used_pct_5h",
         "used_pct_7d",
@@ -227,6 +231,11 @@ async def _push_channel_event(
 
     # Buffer for a2a_reply / a2a_ack lookups by msg_id.
     _recent.append(event)
+
+    # Terminal completion is already a durable channel event. Project it into
+    # the append-only lifecycle before acknowledging delivery, so a store
+    # outage leaves the event replayable rather than losing terminal evidence.
+    absorb_completion_stage(event)
 
     woke = False
     if turn_url is not None and _should_wake_turn(event):

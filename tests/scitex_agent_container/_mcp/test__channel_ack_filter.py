@@ -163,7 +163,12 @@ async def fake_listen():
 def registered_tools(fake_listen):
     rec = _ToolRecorder()
     register_tools(
-        rec, agent_name="alice", listen_url=fake_listen.base_url, bearer=None
+        rec,
+        agent_name="alice",
+        listen_url=fake_listen.base_url,
+        bearer=None,
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
     )
     return rec
 

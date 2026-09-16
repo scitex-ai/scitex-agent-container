@@ -111,7 +111,7 @@ def absorb_reaction_ack(event: dict[str, Any], *, agent: str | None = None) -> b
         log.warning("sac channel: dispatch_ledger import failed: %s", exc)
         return False
     try:
-        return mark_dispatch_reacted(did, agent=agent)
+        matched = mark_dispatch_reacted(did, agent=agent)
     except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a write failure must not break the SSE consumer — logged loudly, never silent)
         log.warning(
             "sac channel: mark_dispatch_reacted(%r) failed: %s",
@@ -119,6 +119,16 @@ def absorb_reaction_ack(event: dict[str, Any], *, agent: str | None = None) -> b
             exc,
         )
         return False
+    try:
+        from .._state.delegation_lifecycle import AGENT_OBSERVED, record_stage
+
+        record_stage(did, AGENT_OBSERVED, detail="receiver reaction acknowledged")
+    except LookupError:
+        # A legacy dispatch legitimately has no lifecycle contract.
+        pass
+    except Exception as exc:  # stx-allow: fallback (receipt already reached the sender; keep the SSE consumer alive and report the durable-stage failure loudly)
+        log.warning("sac channel: lifecycle agent_observed(%r) failed: %s", did, exc)
+    return matched
 
 
 # Default visible marker. Unicode "eyes" — the same emoji the lead's
@@ -250,6 +260,10 @@ async def post_reaction_ack(
     conversation_id = event.get("conversation_id")
     if conversation_id:
         metadata["conversation_id"] = conversation_id
+    for key in ("correlation_id", "lineage_id", "reverse_route"):
+        value = event.get(key)
+        if isinstance(value, str) and value:
+            metadata[key] = value
     extra: dict[str, Any] = {}
     dispatch_id = event.get("dispatch_id")
     if dispatch_id:

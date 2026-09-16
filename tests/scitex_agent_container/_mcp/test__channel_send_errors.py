@@ -131,7 +131,14 @@ async def _call(listen_url: str, tool: str, args: dict[str, Any]):
     from mcp.server.lowlevel import Server
 
     server = Server(name="sac-channel-test")
-    register_tools(server, agent_name="alice", listen_url=listen_url, bearer=None)
+    register_tools(
+        server,
+        agent_name="alice",
+        listen_url=listen_url,
+        bearer=None,
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
+    )
     handler = server.request_handlers[types.CallToolRequest]
     request = types.CallToolRequest(
         method="tools/call",
@@ -317,6 +324,7 @@ async def test_unreachable_error_carries_machine_readable_code(dead_port):
     result = await _call(url, "a2a_send", {"target": "bob", "content": "hi"})
     # Assert
     assert _body(result)["code"] == ERR_UNREACHABLE
+
 
 _KNOWN = [
     "scitex-agent-container-04",

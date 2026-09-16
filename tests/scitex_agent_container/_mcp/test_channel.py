@@ -563,6 +563,7 @@ async def test_register_tools_wrapper_delegates_to_channel_tools(fake_listen):
     # Assert — wiring reached _channel_tools.register_tools.
     assert {t.name for t in tools if isinstance(t, Tool)} == {
         "a2a_send",
+        "a2a_delegate",
         "a2a_reply",
         "a2a_ack",
         "a2a_peers",

@@ -219,6 +219,8 @@ def registered_tools(fake_listen):
         agent_name="alice",
         listen_url=fake_listen.base_url,
         bearer=None,
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
     )
     return rec
 
@@ -237,13 +239,34 @@ def _clear_recent_ring():
 
 
 @pytest.mark.asyncio
-async def test_list_tools_returns_five_tools(registered_tools: _ToolRecorder):
+async def test_list_tools_returns_six_tools(registered_tools: _ToolRecorder):
     # Arrange
     list_fn = registered_tools.list_tools_fn
     # Act
     tools = await list_fn()
     # Assert
-    assert len(tools) == 5
+    assert len(tools) == 6
+
+
+@pytest.mark.asyncio
+async def test_a2a_delegate_transfers_work_and_retains_sender_supervision(
+    registered_tools: _ToolRecorder, fake_listen
+):
+    out = await registered_tools.call_tool_fn(
+        "a2a_delegate", {"target": "bob", "task": "verify the release"}
+    )
+
+    sent = fake_listen.posts[-1][1]["params"]["metadata"]
+    body = json.loads(out[0].text)
+    assert sent["kind"] == "delegation"
+    assert sent["responsibility"] == {
+        "task": "bob",
+        "execution": "bob",
+        "supervision": "alice",
+    }
+    assert sent["correlation_id"] == body["correlation_id"]
+    assert sent["lineage_id"] == body["lineage_id"]
+    assert sent["reverse_route"].endswith("/agents/alice/message:send")
 
 
 @pytest.mark.asyncio
@@ -717,6 +740,8 @@ async def test_register_tools_forwards_bearer_token_on_post(fake_listen):
         agent_name="alice",
         listen_url=fake_listen.base_url,
         bearer="s3cret",
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
     )
     # Act
     await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "hi"})
@@ -806,6 +831,8 @@ async def test_a2a_send_agent_stopped_connection_refused_returns_loud_error(dead
         agent_name="alice",
         listen_url=dead_port.url(""),
         bearer=None,
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
     )
     # Act
     out = await rec.call_tool_fn("a2a_send", {"target": "bob", "content": "hi"})

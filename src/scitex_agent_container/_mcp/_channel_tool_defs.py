@@ -36,6 +36,47 @@ def build_tool_list() -> list[Tool]:
                         "enum": ["low", "normal", "high"],
                     },
                     "requires_reply": {"type": "boolean"},
+                    "correlation_id": {
+                        "type": "string",
+                        "description": "Canonical xch_ id; minted when omitted.",
+                    },
+                    "lineage_id": {
+                        "type": "string",
+                        "description": "Root xch_ lineage id; defaults to correlation_id.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="a2a_delegate",
+            description=(
+                "Delegate a task to another agent. Task and execution responsibility "
+                "transfer to the assignee; the calling agent retains supervision. "
+                "Returns durable correlation, lineage, dispatch, and deadline fields."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["target", "task"],
+                "properties": {
+                    "target": {"type": "string"},
+                    "task": {"type": "string"},
+                    "correlation_id": {"type": "string"},
+                    "lineage_id": {"type": "string"},
+                    "parent_dispatch_id": {"type": "string"},
+                    "receipt_deadline_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "default": 30,
+                    },
+                    "progress_deadline_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "default": 900,
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high"],
+                    },
                 },
             },
         ),

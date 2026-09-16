@@ -89,7 +89,14 @@ def _invoke_a2a_send(listen_url: str, target: str, content: str) -> dict:
     from scitex_agent_container._mcp._channel_tools import register_tools
 
     rec = _ToolRecorder()
-    register_tools(rec, agent_name="alice", listen_url=listen_url, bearer=None)
+    register_tools(
+        rec,
+        agent_name="alice",
+        listen_url=listen_url,
+        bearer=None,
+        _open_lifecycle=lambda **_kwargs: None,
+        _record_lifecycle_stage=lambda *_args, **_kwargs: None,
+    )
     out = asyncio.run(
         rec.call_tool_fn("a2a_send", {"target": target, "content": content})
     )

@@ -368,6 +368,9 @@ async def _publish_channel_event(
         # control-plane path in ``_listen/server.py``.
         ack=bool(sac_meta.get("ack", False)),
         dispatch_id=sac_meta.get("dispatch_id"),
+        correlation_id=sac_meta.get("correlation_id"),
+        lineage_id=sac_meta.get("lineage_id"),
+        reverse_route=sac_meta.get("reverse_route"),
         kind=kind_meta,
         extra=extra_meta,
     )

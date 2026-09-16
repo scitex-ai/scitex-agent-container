@@ -334,6 +334,9 @@ def mint_event(
     extra: dict[str, Any] | None = None,
     kind: str | None = None,
     dispatch_id: str | None = None,
+    correlation_id: str | None = None,
+    lineage_id: str | None = None,
+    reverse_route: str | None = None,
 ) -> dict[str, Any]:
     """Mint the event shape sac's channel publishes.
 
@@ -370,6 +373,12 @@ def mint_event(
         event["in_reply_to"] = in_reply_to
     if dispatch_id:
         event["dispatch_id"] = dispatch_id
+    if correlation_id:
+        event["correlation_id"] = correlation_id
+    if lineage_id:
+        event["lineage_id"] = lineage_id
+    if reverse_route:
+        event["reverse_route"] = reverse_route
     if extra:
         event["extra"] = extra
     if kind:

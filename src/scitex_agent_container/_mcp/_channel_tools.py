@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from .._listen._inbox_fault import FAULT_NOT_RUNNING
+from ..cli_pkg._send_status_code import publish_accepted_status_code
 from ._channel_send_errors import (
     SendError,
     delivery_error,
@@ -39,13 +41,17 @@ from ._channel_target_lookup import (
 from ._channel_tool_defs import build_tool_list
 from .channel import _recent
 
-from ..cli_pkg._send_status_code import publish_accepted_status_code
-
 log = logging.getLogger(__name__)
 
 
 def register_tools(
-    server, *, agent_name: str, listen_url: str, bearer: str | None
+    server,
+    *,
+    agent_name: str,
+    listen_url: str,
+    bearer: str | None,
+    _open_lifecycle=None,
+    _record_lifecycle_stage=None,
 ) -> None:
     """Wire the a2a_* tools onto the channel server.
 
@@ -58,6 +64,14 @@ def register_tools(
 
     from mcp.types import CallToolResult, TextContent, Tool
 
+    from .._state.delegation_lifecycle import (
+        AGENT_QUEUE_ACCEPTED,
+        FAILED,
+        new_correlation_id,
+        open_lifecycle,
+        record_stage,
+        validated_reverse_route,
+    )
     from .._state.dispatch_ledger import (
         STATUS_DELIVERED,
         STATUS_FAILED,
@@ -66,14 +80,26 @@ def register_tools(
         update_dispatch_status,
     )
 
-    def _ledger_record(
-        *, to_agent: str, content: str, conversation_id: str | None
-    ) -> str:
-        """Mint + record an outbound dispatch row; return its dispatch_id.
+    lifecycle_open = _open_lifecycle or open_lifecycle
+    lifecycle_record_stage = _record_lifecycle_stage or record_stage
 
-        Ledger writes are observability — a store hiccup must not break the
-        actual a2a send, so failures log loudly (never silent) and the send
-        proceeds with a freshly-minted id that simply has no row.
+    def _ledger_record(
+        *,
+        to_agent: str,
+        content: str,
+        conversation_id: str | None,
+        kind: str,
+        correlation_id: str | None = None,
+        lineage_id: str | None = None,
+        parent_dispatch_id: str | None = None,
+        receipt_deadline_seconds: float = 30.0,
+        progress_deadline_seconds: float = 900.0,
+    ) -> tuple[str, str, str, str]:
+        """Persist the outbound contract before any transport attempt.
+
+        The legacy dispatch row remains best-effort observability. The A2A
+        lifecycle row is protocol state and therefore fail-closed: a message
+        with no durable correlation/responsibility record is not sent.
 
         ``agent`` is the OWNING agent (this container). Since the ledger moved
         to the fleet-wide PostgreSQL store it is what keeps a later
@@ -82,6 +108,27 @@ def register_tools(
         question and cannot stand in for it.
         """
         did = new_dispatch_id()
+        correlation = correlation_id or new_correlation_id()
+        lineage = lineage_id or correlation
+        reverse_route = validated_reverse_route(
+            sender=agent_name, listen_url=listen_url
+        )
+        accepted_at = time.time()
+        receipt_deadline = accepted_at + float(receipt_deadline_seconds)
+        progress_deadline = accepted_at + float(progress_deadline_seconds)
+        lifecycle_open(
+            dispatch_id=did,
+            correlation_id=correlation,
+            lineage_id=lineage,
+            kind=kind,
+            sender=agent_name,
+            assignee=to_agent,
+            reverse_route=reverse_route,
+            receipt_deadline_at=receipt_deadline,
+            progress_deadline_at=progress_deadline,
+            parent_dispatch_id=parent_dispatch_id,
+            now=accepted_at,
+        )
         try:
             record_dispatch(
                 agent=agent_name,
@@ -93,15 +140,34 @@ def register_tools(
             )
         except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a DB write failure must not break the a2a send — logged loudly, never silent)
             log.warning("dispatch-ledger record (a2a_send) failed: %s", exc)
-        return did
+        return did, correlation, lineage, reverse_route
 
-    def _ledger_update(dispatch_id: str, status: str) -> None:
+    def _ledger_update(dispatch_id: str, status: str, stage: str) -> None:
         # Same owner _ledger_record stamped, so the keyed update addresses the
         # row it wrote rather than scanning the fleet-wide ledger for it.
         try:
             update_dispatch_status(dispatch_id, status, agent=agent_name)
         except Exception as exc:  # stx-allow: fallback (reason: ledger is observability; a status-update failure must not break the a2a send — logged loudly, never silent)
             log.warning("dispatch-ledger status update (a2a_send) failed: %s", exc)
+        lifecycle_record_stage(
+            dispatch_id, stage, detail=f"legacy dispatch status={status}"
+        )
+
+    def _record_send_error(dispatch_id: str, exc: SendError) -> None:
+        """Preserve queue acceptance even when no live consumer was woken."""
+        if exc.detail.get("durably_queued") is True:
+            _ledger_update(dispatch_id, STATUS_FAILED, AGENT_QUEUE_ACCEPTED)
+            return
+        _ledger_update(dispatch_id, STATUS_FAILED, FAILED)
+
+    def _record_response(dispatch_id: str, response: dict[str, Any]) -> str:
+        """Project the HTTP outcome without changing the established MCP body."""
+        status = response.get("status")
+        if isinstance(status, int) and status >= 400:
+            _ledger_update(dispatch_id, STATUS_FAILED, FAILED)
+            return FAILED
+        _ledger_update(dispatch_id, STATUS_DELIVERED, AGENT_QUEUE_ACCEPTED)
+        return AGENT_QUEUE_ACCEPTED
 
     base = listen_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
@@ -342,15 +408,21 @@ def register_tools(
             target = arguments["target"]
             content = arguments["content"]
             conversation_id = arguments.get("conversation_id") or _uuid.uuid4().hex
-            dispatch_id = _ledger_record(
+            dispatch_id, correlation_id, lineage_id, reverse_route = _ledger_record(
                 to_agent=target,
                 content=content,
                 conversation_id=conversation_id,
+                kind="message",
+                correlation_id=arguments.get("correlation_id"),
+                lineage_id=arguments.get("lineage_id"),
             )
             payload = _wrap_message_send(
                 content,
                 conversation_id=conversation_id,
                 dispatch_id=dispatch_id,
+                correlation_id=correlation_id,
+                lineage_id=lineage_id,
+                reverse_route=reverse_route,
                 priority=arguments.get("priority"),
                 requires_reply=arguments.get("requires_reply"),
             )
@@ -359,18 +431,104 @@ def register_tools(
                     target, f"/agents/{target}/message:send", payload
                 )
             except SendError as exc:
-                _ledger_update(dispatch_id, STATUS_FAILED)
+                _record_send_error(dispatch_id, exc)
                 return error_result(exc)
-            _ledger_update(dispatch_id, STATUS_DELIVERED)
+            lifecycle_stage = _record_response(dispatch_id, res)
             # ADR-0007: attach the honest StatusCode alongside the raw
             # response — http/202, final=False. A REAL measured count (the
             # publish's own fan-out), never fabricated; absent for a
             # suppressed contentless ack, which sent nothing to attach a
             # verdict to.
             body = res.get("body")
-            count = body.get("delivered_subscriber_count") if isinstance(body, dict) else None
+            count = (
+                body.get("delivered_subscriber_count")
+                if isinstance(body, dict)
+                else None
+            )
             if isinstance(count, int):
-                res["status_code"] = publish_accepted_status_code(target, count).to_dict()
+                res["status_code"] = publish_accepted_status_code(
+                    target, count
+                ).to_dict()
+            res.update(
+                {
+                    "dispatch_id": dispatch_id,
+                    "correlation_id": correlation_id,
+                    "lineage_id": lineage_id,
+                    "reverse_route": reverse_route,
+                    "stage": lifecycle_stage,
+                }
+            )
+            return [TextContent(type="text", text=json.dumps(res))]
+
+        if name == "a2a_delegate":
+            target = arguments["target"]
+            task = arguments["task"]
+            conversation_id = _uuid.uuid4().hex
+            receipt_s = float(arguments.get("receipt_deadline_seconds") or 30.0)
+            progress_s = float(arguments.get("progress_deadline_seconds") or 900.0)
+            if progress_s < receipt_s:
+                return lookup_error_result(
+                    "progress_deadline_seconds must not be less than receipt_deadline_seconds"
+                )
+            dispatch_id, correlation_id, lineage_id, reverse_route = _ledger_record(
+                to_agent=target,
+                content=task,
+                conversation_id=conversation_id,
+                kind="delegation",
+                correlation_id=arguments.get("correlation_id"),
+                lineage_id=arguments.get("lineage_id"),
+                parent_dispatch_id=arguments.get("parent_dispatch_id"),
+                receipt_deadline_seconds=receipt_s,
+                progress_deadline_seconds=progress_s,
+            )
+            payload = _wrap_message_send(
+                task,
+                conversation_id=conversation_id,
+                dispatch_id=dispatch_id,
+                correlation_id=correlation_id,
+                lineage_id=lineage_id,
+                reverse_route=reverse_route,
+                kind="delegation",
+                responsibility={
+                    "task": target,
+                    "execution": target,
+                    "supervision": agent_name,
+                },
+                priority=arguments.get("priority"),
+                requires_reply=True,
+            )
+            try:
+                res = await _send_or_raise(
+                    target, f"/agents/{target}/message:send", payload
+                )
+            except SendError as exc:
+                _record_send_error(dispatch_id, exc)
+                return error_result(exc)
+            lifecycle_stage = _record_response(dispatch_id, res)
+            body = res.get("body")
+            count = (
+                body.get("delivered_subscriber_count")
+                if isinstance(body, dict)
+                else None
+            )
+            if isinstance(count, int):
+                res["status_code"] = publish_accepted_status_code(
+                    target, count
+                ).to_dict()
+            res.update(
+                {
+                    "dispatch_id": dispatch_id,
+                    "correlation_id": correlation_id,
+                    "lineage_id": lineage_id,
+                    "reverse_route": reverse_route,
+                    "stage": lifecycle_stage,
+                    "responsibility": {
+                        "task": target,
+                        "execution": target,
+                        "supervision": agent_name,
+                    },
+                }
+            )
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_reply":
@@ -381,17 +539,49 @@ def register_tools(
             target = orig.get("from_agent", "")
             if not target:
                 return lookup_error_result("original sender unknown")
+            correlation_id = orig.get("correlation_id")
+            lineage_id = orig.get("lineage_id")
+            dispatch_id, correlation_id, lineage_id, reverse_route = _ledger_record(
+                to_agent=target,
+                content=arguments["content"],
+                conversation_id=orig.get("conversation_id"),
+                kind="reply",
+                correlation_id=(
+                    correlation_id if isinstance(correlation_id, str) else None
+                ),
+                lineage_id=lineage_id if isinstance(lineage_id, str) else None,
+                parent_dispatch_id=(
+                    orig.get("dispatch_id")
+                    if isinstance(orig.get("dispatch_id"), str)
+                    else None
+                ),
+            )
             payload = _wrap_message_send(
                 arguments["content"],
                 conversation_id=orig.get("conversation_id"),
                 in_reply_to=mid,
+                dispatch_id=dispatch_id,
+                correlation_id=correlation_id,
+                lineage_id=lineage_id,
+                reverse_route=reverse_route,
             )
             try:
                 res = await _send_or_raise(
                     target, f"/agents/{target}/message:send", payload
                 )
             except SendError as exc:
+                _record_send_error(dispatch_id, exc)
                 return error_result(exc)
+            lifecycle_stage = _record_response(dispatch_id, res)
+            res.update(
+                {
+                    "dispatch_id": dispatch_id,
+                    "correlation_id": correlation_id,
+                    "lineage_id": lineage_id,
+                    "reverse_route": reverse_route,
+                    "stage": lifecycle_stage,
+                }
+            )
             return [TextContent(type="text", text=json.dumps(res))]
 
         if name == "a2a_ack":

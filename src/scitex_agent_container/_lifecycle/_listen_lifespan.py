@@ -39,6 +39,18 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
     CLI passes the port it hands to ``uvicorn.run``; in-process tests may
     omit it (no watchdog) or pass a real bound port.
     """
+    from .._listen._delegation_reconciler import (
+        DEFAULT_INTERVAL_S as DEFAULT_DELEGATION_INTERVAL_S,
+        ENV_DISABLED as DELEGATION_ENV_DISABLED,
+        ENV_INTERVAL_S as DELEGATION_ENV_INTERVAL_S,
+        delegation_reconciler_loop,
+    )
+    from .._listen._deploy_freshness import (
+        DEFAULT_INTERVAL_S as DEFAULT_DEPLOY_FRESHNESS_INTERVAL_S,
+        ENV_DISABLED as DEPLOY_FRESHNESS_ENV_DISABLED,
+        ENV_INTERVAL_S as DEPLOY_FRESHNESS_ENV_INTERVAL_S,
+        deploy_freshness_loop,
+    )
     from .._listen._liveness_tick import (
         DEFAULT_INTERVAL_S as DEFAULT_LIVENESS_TICK_INTERVAL_S,
         DEFAULT_RENOTIFY_S as DEFAULT_LIVENESS_TICK_RENOTIFY_S,
@@ -47,12 +59,6 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
         ENV_RENOTIFY_S as LIVENESS_TICK_ENV_RENOTIFY_S,
         ENV_STALE_S as LIVENESS_TICK_ENV_STALE_S,
         liveness_tick_reconciler_loop,
-    )
-    from .._listen._deploy_freshness import (
-        DEFAULT_INTERVAL_S as DEFAULT_DEPLOY_FRESHNESS_INTERVAL_S,
-        ENV_DISABLED as DEPLOY_FRESHNESS_ENV_DISABLED,
-        ENV_INTERVAL_S as DEPLOY_FRESHNESS_ENV_INTERVAL_S,
-        deploy_freshness_loop,
     )
     from ._bind_watchdog import bind_watchdog_loop
     from ._github_ci_poll_loop import (
@@ -106,6 +112,21 @@ def build_listen_lifespan(*, health_watchdog_port: int | None = None):
             task = asyncio.create_task(periodic_drive_loop(app.state))
             app.state.periodic_drive_task = task
             tasks.append(task)
+
+        # Durable A2A supervision: expired receipt/progress obligations and
+        # terminal failures nudge the sender/delegator exactly once, with the
+        # dedupe marker persisted in PostgreSQL rather than daemon memory.
+        if os.environ.get(DELEGATION_ENV_DISABLED, "") != "1":
+            delegation_task = asyncio.create_task(
+                delegation_reconciler_loop(
+                    app.state,
+                    interval_s=_env_float(
+                        DELEGATION_ENV_INTERVAL_S, DEFAULT_DELEGATION_INTERVAL_S
+                    ),
+                )
+            )
+            app.state.delegation_reconciler_task = delegation_task
+            tasks.append(delegation_task)
 
         # GROUP SWITCH for the three loops immediately below — the GitHub-CI
         # poller and the two heartbeat writers, and ONLY those three. They
