@@ -63,6 +63,7 @@ from ..runtimes._cct_token_collision import (
 )
 from ..runtimes._cct_token_collision import SCOPE_NOTE as COLLISION_SCOPE_NOTE
 from ._helpers import _json_flag, console
+from ._image_venv_report import image_venv_lines, inspect_image_venv
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -234,6 +235,7 @@ def _render_local(
     with_pollers: bool = True,
     with_collisions: bool = True,
     with_node: bool = True,
+    with_image_venv: bool = True,
 ) -> int:
     """Run + render the requested local checks. Returns exit code.
 
@@ -245,6 +247,7 @@ def _render_local(
     """
     payload: dict = {}
     failed = False
+    image_venv = inspect_image_venv() if with_image_venv else None
 
     status = check_spec_source_drift(_local_agents_spec_dir()) if with_drift else None
     verdict = check_poller_singleton() if with_pollers else None
@@ -263,10 +266,15 @@ def _render_local(
     if readiness is not None:
         payload["node"] = readiness.to_dict()
         failed = failed or readiness.is_alarming
+    if image_venv is not None:
+        payload["image_venv"] = image_venv.to_dict()
 
     if _json_flag(ctx, as_json):
         click.echo(json.dumps(payload, indent=2))
     else:
+        if image_venv is not None:
+            for line in image_venv_lines(image_venv):
+                console.print(line)
         if status is not None:
             _render_local_human(status)
         if verdict is not None:
@@ -392,11 +400,23 @@ def doctor(
         code = _render_fleet(ctx, as_json, strict, timeout)
     elif pollers:
         code = _render_local(
-            ctx, as_json, strict, with_drift=False, with_collisions=False, with_node=False
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_collisions=False,
+            with_node=False,
+            with_image_venv=False,
         )
     elif collisions:
         code = _render_local(
-            ctx, as_json, strict, with_drift=False, with_pollers=False, with_node=False
+            ctx,
+            as_json,
+            strict,
+            with_drift=False,
+            with_pollers=False,
+            with_node=False,
+            with_image_venv=False,
         )
     elif node:
         code = _render_local(
@@ -406,6 +426,7 @@ def doctor(
             with_drift=False,
             with_pollers=False,
             with_collisions=False,
+            with_image_venv=False,
         )
     else:
         code = _render_local(ctx, as_json, strict)

@@ -264,7 +264,11 @@ def mcp_doctor() -> None:
     Example:
       $ sac mcp doctor
     """
+    from ._image_venv_report import image_venv_lines, inspect_image_venv
+
     click.secho("Checking MCP dependencies...", fg="cyan")
+    for line in image_venv_lines(inspect_image_venv()):
+        click.echo(line)
     try:
         version = _load_fastmcp_version()
         click.secho("  OK ", fg="green", nl=False)
