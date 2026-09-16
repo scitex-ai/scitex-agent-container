@@ -88,7 +88,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         # explicit-required map in `_explicit_fields`, so a spec that omits it
         # still loads and still inherits the implicit cascade. Turning that
         # omission into an error is a separate, later step.
-        "to_home_layers",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         "delegation",  # harness-neutral child concurrency/isolation policy

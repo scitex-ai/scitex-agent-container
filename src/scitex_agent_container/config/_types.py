@@ -27,6 +27,7 @@ from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 # ``from ...config._types import ProviderSpec`` is an existing import path.
 from ._provider_types import ProviderSpec  # noqa: E402,F401
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
+from ._to_home_spec import ToHomeSpec
 
 
 @dataclass
@@ -394,27 +395,11 @@ class AgentConfig:
     # Stored as ``Any`` here so this module stays import-cycle-free with
     # ``_proxy_types``; the actual type is ``ProxySpec | None``.
     proxy: Any = None
-    # ADR-0006: spec.to_home — directory whose contents are mirrored
-    # into the agent's container ``$HOME`` (= ``runtime/<name>/home/``
-    # on the host) on every start. Every path under ``to_home/``
-    # lands at the same relative path inside ``$HOME``.
-    # Default: ``./to_home`` next to ``spec.yaml`` (auto-discovered
-    # when this field is empty).
-    to_home: str = "./to_home"
-    # spec.to_home_layers — which to_home CASCADE layers this agent inherits,
-    # named explicitly so the spec states what will be merged into it instead
-    # of leaving it to be discovered on disk. Valid names are the cascade's own
-    # (``user-shared``, ``project-shared``, ``per-agent``); order is fixed by
-    # precedence, not by how they are listed here.
-    #
-    # ``None`` (key absent) means "inherit whatever is on disk" — today's
-    # implicit behaviour, kept so this field can land without changing a single
-    # existing agent. It is NOT the end state: measured 2026-08-09, ALL 102
-    # registered specs are in exactly this position, so refusing an undeclared
-    # spec today would strip every hook from every agent at once. The migration
-    # declares them first, and enforcement comes after that. Until then an
-    # absent value is warned about, never refused.
-    to_home_layers: "list[str] | None" = None
+    # Fully authored in precedence order. No host/env discovery is permitted.
+    to_home: ToHomeSpec = field(default_factory=ToHomeSpec)
+    # Filled by the fail-fast resolver immediately before materialisation and
+    # consequently included in the incarnation's compiled launch snapshot.
+    resolved_to_home_imports: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.screen_name:
