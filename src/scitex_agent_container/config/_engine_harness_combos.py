@@ -105,6 +105,14 @@ def combination_verdict(engine: EngineSpec, harness: str | None) -> EngineVerdic
         )
 
     if name == "codex":
+        if engine.subscription_provider:
+            if engine.subscription_provider != "openai" or not engine.subscription_account:
+                return _no(
+                    engine,
+                    "the Codex subscription declaration is incomplete",
+                    "set subscription.provider: openai and subscription.account: <slug>",
+                )
+            return EngineVerdict(engine.key, VERDICT_HONOURABLE)
         if engine.provider is None:
             return _no(
                 engine,

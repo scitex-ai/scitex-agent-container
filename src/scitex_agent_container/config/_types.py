@@ -299,6 +299,8 @@ class AgentConfig:
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
+    subscription_provider: str = ""
+    subscription_account: str = ""
     # RESIDENCY: does the daemon outlive its work? "resident" (default)
     # parks awaiting more turns after a conversation completes;
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when

@@ -170,6 +170,7 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         url=endpoint_url,
         auth_kind="bearer",
         auth_env=str(provider.auth_token_env or ""),
+        extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
     )
     engine = ResolvedEngine(
         key=str(config.engine_key or config.model),
@@ -180,18 +181,22 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         upstream_deadline_seconds=config.upstream_deadline_seconds,
         client_abandonment_seconds=config.client_abandonment_seconds,
     )
+    session_id = f"sac:{config.name}"
+    if str(config.claude.session or "").strip().lower() == "resume":
+        session_id = str(config.claude.resume_id or "").strip() or session_id
     return LaunchPlan(
-        "hermes",
-        launch_mode,
-        "apptainer",
-        engine,
-        endpoint,
+        harness="hermes",
+        launch_mode=launch_mode,
+        container_backend="apptainer",
+        engine=engine,
+        endpoint=endpoint,
         may_spawn=config.lineage.may_spawn,
         delegation=DelegationPolicy(
             max_concurrent_children=config.delegation.max_concurrent_children,
             worktree_isolation=config.delegation.worktree_isolation,
         ),
         agent_name=config.name,
+        session_id=session_id,
     )
 
 

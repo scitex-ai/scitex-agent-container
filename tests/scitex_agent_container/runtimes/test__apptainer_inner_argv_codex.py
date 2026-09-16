@@ -219,3 +219,17 @@ def test_overrides_trust_the_workdir_up_front():
     # Assert
     assert seen['projects."/tmp/hm-wd".trust_level'] == '"trusted"'
 
+
+def test_subscription_overrides_select_native_openai_and_exact_model():
+    # Arrange
+    config = _config(model="gpt-5.6-sol", provider=None)
+    config.subscription_provider = "openai"
+    config.subscription_account = "openai:person-example-com"
+    # Act
+    seen = _overrides(codex_config_overrides(config))
+    # Assert
+    assert (seen["model_provider"], seen["model"], CODEX_PROVIDER_ID in seen) == (
+        '"openai"',
+        '"gpt-5.6-sol"',
+        False,
+    )

@@ -90,9 +90,12 @@ def _override(key: str, value: object) -> list[str]:
 
 def codex_config_overrides(config: AgentConfig) -> list[str]:
     """The static ``-c`` overrides for one agent, rendered from its spec."""
+    subscription_provider = str(
+        getattr(config, "subscription_provider", "") or ""
+    ).strip()
     provider = _provider_spec(config)
     base_url = str(getattr(provider, "base_url", "") or "").strip().rstrip("/")
-    if not base_url:
+    if not base_url and subscription_provider != "openai":
         raise ProviderEnvError(
             f"spec.harness: codex on agent {config.name!r} needs an inference "
             "provider (spec.engines.<key>.provider with base_url + "
@@ -112,12 +115,17 @@ def codex_config_overrides(config: AgentConfig) -> list[str]:
         )
     pid = CODEX_PROVIDER_ID
     flags: list[str] = []
-    flags += _override("model_provider", pid)
-    flags += _override(f"model_providers.{pid}.name", "scitex-genai gateway")
-    flags += _override(f"model_providers.{pid}.base_url", f"{base_url}/v1")
-    flags += _override(f"model_providers.{pid}.wire_api", "responses")
-    flags += _override(f"model_providers.{pid}.env_key", CODEX_KEY_ENV)
-    flags += _override(f"model_providers.{pid}.requires_openai_auth", False)
+    if subscription_provider == "openai":
+        # Explicitly select Codex's built-in OpenAI/ChatGPT provider. Auth is
+        # the declared account copied into this agent's private CODEX_HOME.
+        flags += _override("model_provider", "openai")
+    else:
+        flags += _override("model_provider", pid)
+        flags += _override(f"model_providers.{pid}.name", "scitex-genai gateway")
+        flags += _override(f"model_providers.{pid}.base_url", f"{base_url}/v1")
+        flags += _override(f"model_providers.{pid}.wire_api", "responses")
+        flags += _override(f"model_providers.{pid}.env_key", CODEX_KEY_ENV)
+        flags += _override(f"model_providers.{pid}.requires_openai_auth", False)
     flags += _override("model", model)
     flags += _override("sandbox_mode", _SANDBOX)
     flags += _override("approval_policy", "never")

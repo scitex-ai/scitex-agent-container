@@ -16,8 +16,11 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     clear_heartbeat,
     clear_heartbeat_for_session,
     compress_session,
+    execute_slash_command,
     gateway_detailed_health,
     observe_turn_activity,
+    observe_turn_outcome,
+    observe_turn_progress,
     submit_turn,
     submit_visible_turn,
 )
@@ -25,9 +28,7 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
 
 def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
     # Arrange
-    (tmp_path / GATEWAY_FILE).write_text(
-        json.dumps({"port": 43123}), encoding="utf-8"
-    )
+    (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": 43123}), encoding="utf-8")
     (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
     seen = []
 
@@ -54,9 +55,7 @@ def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
 
 def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
     # Arrange
-    (tmp_path / GATEWAY_FILE).write_text(
-        json.dumps({"port": 43123}), encoding="utf-8"
-    )
+    (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": 43123}), encoding="utf-8")
     (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
 
     def open_(_request, timeout):
@@ -71,7 +70,9 @@ def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
     # Act
     try:
         gateway_detailed_health(tmp_path, urlopen_fn=open_)
-    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+    except (
+        HermesTuiRpcError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
         observed = str(exc)
     else:
         observed = ""
@@ -103,11 +104,20 @@ class _Socket:
                     {
                         "id": "live-1",
                         "title": "sac:hub",
+                        "message_count": 12,
+                        "last_active": 44.0,
                         **({"status": self.status} if self.status else {}),
                     }
                 ]
             },
             "session.activate": {"id": "live-1"},
+            "session.events.since": {
+                "events": [],
+                "latest_seq": 17,
+                "truncated": False,
+                "epoch": "epoch-1",
+                "open_requests": [],
+            },
             "prompt.submit": {"status": "steered"},
             "session.steer": {"status": "queued", "text": "act now"},
         }[method]
@@ -227,9 +237,7 @@ class _CompressionSocket(_Socket):
         request = self.sent[-1]
         if request["method"] == "session.compress":
             result = self.result
-            return json.dumps(
-                {"jsonrpc": "2.0", "id": request["id"], "result": result}
-            )
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
         return super().recv()
 
 
@@ -298,6 +306,7 @@ def test_compress_session_fails_closed_without_proven_reduction(tmp_path, result
     # Arrange
     _gateway_files(tmp_path)
     socket = _CompressionSocket(result=result)
+
     # Act
     def action():
         compress_session(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
@@ -400,9 +409,7 @@ def test_clear_heartbeat_resolves_named_session_without_model_turn(tmp_path):
     socket = _ControlSocket(None)
 
     # Act
-    status = clear_heartbeat(
-        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
-    )
+    status = clear_heartbeat(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
 
     # Assert
     assert (
@@ -423,9 +430,7 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
     socket = _Socket(status="working")
 
     # Act
-    receipt = submit_turn(
-        tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket
-    )
+    receipt = submit_turn(tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket)
 
     # Assert
     assert (
@@ -443,6 +448,125 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
             "text": "act now",
         },
     )
+
+
+def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class SlashSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "slash.exec":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"output": "Switched model."},
+                    }
+                )
+            return super().recv()
+
+    socket = SlashSocket(status="idle")
+
+    # Act
+    receipt = execute_slash_command(
+        tmp_path,
+        "hub",
+        "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+
+    # Assert
+    assert (
+        receipt.output,
+        receipt.progress.message_count,
+        [request["method"] for request in socket.sent],
+        socket.sent[-3]["params"],
+    ) == (
+        "Switched model.",
+        12,
+        [
+            "session.active_list",
+            "slash.exec",
+            "session.active_list",
+            "session.events.since",
+        ],
+        {
+            "session_id": "live-1",
+            "command": ("/model qwen38-27b --provider custom:sac-qwen38-27b --session"),
+        },
+    )
+
+
+def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _Socket(status="idle")
+    # Act
+    progress = observe_turn_progress(
+        tmp_path,
+        "hub",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    # Assert
+    assert (
+        progress.message_count,
+        progress.last_active,
+        progress.status,
+        [request["method"] for request in socket.sent],
+    ) == (
+        12,
+        44.0,
+        "idle",
+        ["session.active_list"],
+    )
+
+
+def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class OutcomeSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "session.events.since":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "events": [
+                                {
+                                    "type": "message.complete",
+                                    "seq": 18,
+                                    "payload": {"status": "error"},
+                                }
+                            ],
+                            "latest_seq": 18,
+                            "truncated": False,
+                            "epoch": "epoch-1",
+                            "open_requests": [],
+                        },
+                    }
+                )
+            return super().recv()
+
+    socket = OutcomeSocket(status="idle")
+    # Act
+    outcome = observe_turn_outcome(
+        tmp_path,
+        "hub",
+        after_seq=17,
+        expected_epoch="epoch-1",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    # Assert
+    assert (
+        outcome.terminal_status,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"]["last_seen"],
+    ) == ("error", ["session.active_list", "session.events.since"], 17)
 
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
@@ -523,6 +647,7 @@ def test_active_default_never_accepts_hermes_next_turn_queue_as_steer(tmp_path):
         ["session.active_list", "session.steer"],
     )
 
+
 def test_session_selection_refuses_ambiguous_gateway():
     # Arrange
     rows = [{"id": "one", "title": "other"}, {"id": "two", "title": "another"}]
@@ -547,7 +672,14 @@ def test_active_sessions_is_observation_only(tmp_path):
 
     # Assert
     assert (rows, [row["method"] for row in socket.sent]) == (
-        [{"id": "live-1", "title": "sac:hub"}],
+        [
+            {
+                "id": "live-1",
+                "title": "sac:hub",
+                "message_count": 12,
+                "last_active": 44.0,
+            }
+        ],
         ["session.active_list"],
     )
 
@@ -667,7 +799,11 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
     )
 
     # Assert
-    assert (receipt.status, receipt.visibility, socket.sent[2]["params"]["render_user_message"]) == (
+    assert (
+        receipt.status,
+        receipt.visibility,
+        socket.sent[2]["params"]["render_user_message"],
+    ) == (
         "steered",
         "session.inflight.corrections",
         True,

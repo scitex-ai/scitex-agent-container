@@ -7,9 +7,9 @@ import signal
 from pathlib import Path
 
 from scitex_agent_container.config import AgentConfig
-from scitex_agent_container.runtimes._hermes_cct_poller import (
+from scitex_agent_container.runtimes._tui_cct_poller import (
     PID_FILENAME,
-    HermesCctPollerError,
+    TuiCctPollerError,
     _preflight_cct,
     start_cct_poller,
     stop_cct_poller,
@@ -182,7 +182,7 @@ def test_preflight_fails_loud_on_unusable_store_identity(tmp_path):
     # Act
     try:
         _preflight_cct(entry, {"PGUSER": "operator__lead"}, run=run)
-    except HermesCctPollerError as exc:
+    except TuiCctPollerError as exc:
         error = str(exc)
     # Assert
     assert (

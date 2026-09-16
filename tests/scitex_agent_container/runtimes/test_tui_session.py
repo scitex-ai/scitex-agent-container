@@ -237,6 +237,7 @@ class _Config:
 
     name: str
     workdir: str = "/tmp"
+    harness: str = ""
 
 
 # Deterministic stand-in for the ``apptainer exec ... claude`` argv the
@@ -473,6 +474,98 @@ def test_tui_runtime_stop_swallows_turn_bridge_failure(
     stopped = runtime.stop(config)
     # Assert
     assert stopped is True
+
+
+def test_codex_tui_owns_one_cct_poller_for_managed_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    events: list[str] = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: events.append("bridge-start"),
+        turn_bridge_stop=lambda config: events.append("bridge-stop"),
+        inbox_dispatcher_start=lambda config: events.append("inbox-start"),
+        inbox_dispatcher_stop=lambda config: events.append("inbox-stop"),
+        cct_poller_start=lambda config: events.append("cct-start"),
+        cct_poller_stop=lambda config: events.append("cct-stop"),
+    )
+    config = _Config(name="codex-cct", harness="codex")
+    # Act
+    started = runtime.start(config)
+    stopped = runtime.stop(config)
+    # Assert — exactly one external owner, after its sink; teardown reverses it.
+    assert (started, stopped, events) == (
+        True,
+        True,
+        [
+            "bridge-start",
+            "inbox-start",
+            "cct-start",
+            "cct-stop",
+            "inbox-stop",
+            "bridge-stop",
+        ],
+    )
+
+
+def test_codex_cct_start_failure_unwinds_managed_session(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    events: list[str] = []
+
+    def fail_cct(config: object) -> None:
+        events.append("cct-start")
+        raise RuntimeError("poller preflight failed")
+
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        turn_bridge_start=lambda config: events.append("bridge-start"),
+        turn_bridge_stop=lambda config: events.append("bridge-stop"),
+        inbox_dispatcher_start=lambda config: events.append("inbox-start"),
+        inbox_dispatcher_stop=lambda config: events.append("inbox-stop"),
+        cct_poller_start=fail_cct,
+        cct_poller_stop=lambda config: events.append("cct-stop"),
+    )
+    config = _Config(name="codex-cct-fail", harness="codex")
+    # Act
+    error = ""
+    try:
+        runtime.start(config)
+    except RuntimeError as exc:
+        error = str(exc)
+    # Assert
+    assert (error, events, mux.exists("tui-codex-cct-fail")) == (
+        "poller preflight failed",
+        [
+            "bridge-start",
+            "inbox-start",
+            "cct-start",
+            "cct-stop",
+            "inbox-stop",
+            "bridge-stop",
+        ],
+        False,
+    )
+
+
+def test_codex_dry_run_never_starts_cct_poller(
+    mux: type[_MemoryMultiplexer],
+) -> None:
+    # Arrange
+    starts: list[object] = []
+    runtime = TuiSessionRuntime(
+        multiplexer=mux,
+        command_builder=_fake_builder,
+        cct_poller_start=starts.append,
+    )
+    # Act
+    result = runtime.start(_Config(name="codex-dry", harness="codex"), dry_run=True)
+    # Assert
+    assert (result, starts) == (True, [])
 
 
 def test_tui_runtime_start_invokes_claude_binary_in_session(

@@ -140,6 +140,7 @@ ENGINE_ENTRY_KEYS = frozenset(
         "harness",
         "model",
         "provider",
+        "subscription",
         "default",
         "reasoning_effort",
         "max_context_tokens",
@@ -199,6 +200,8 @@ class EngineSpec:
     model: str = ""
     provider: ProviderSpec | None = None
     provider_declared: Any = None
+    subscription_provider: str = ""
+    subscription_account: str = ""
     reasoning_effort: str = ""
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
@@ -251,6 +254,8 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
     entry = _entry_mapping(raw)
     harness = _stated(entry.get("harness"))
     provider_declared = entry.get("provider")
+    raw_subscription = entry.get("subscription")
+    subscription = raw_subscription if isinstance(raw_subscription, Mapping) else {}
     raw_env = entry.get("env")
     raw_timeouts = entry.get("timeouts")
     timeouts = raw_timeouts if isinstance(raw_timeouts, Mapping) else {}
@@ -263,6 +268,8 @@ def parse_engine_entry(key: str, raw: Any) -> EngineSpec:
         model=_stated(entry.get("model")) or "",
         provider=parse_provider_value(provider_declared),
         provider_declared=provider_declared,
+        subscription_provider=_stated(subscription.get("provider")) or "",
+        subscription_account=_stated(subscription.get("account")) or "",
         reasoning_effort=(_stated(entry.get("reasoning_effort")) or "").lower(),
         max_context_tokens=_parse_int(entry.get("max_context_tokens")),
         upstream_deadline_seconds=_parse_int(
@@ -394,6 +401,8 @@ def apply_engine(config: Any, engine: EngineSpec) -> None:
     config.max_context_tokens = engine.max_context_tokens
     config.upstream_deadline_seconds = engine.upstream_deadline_seconds
     config.client_abandonment_seconds = engine.client_abandonment_seconds
+    config.subscription_provider = engine.subscription_provider
+    config.subscription_account = engine.subscription_account
     resolved_model, display_model = resolve_model_surface(engine.model)
     config.model = resolved_model
     claude = getattr(config, "claude", None)
