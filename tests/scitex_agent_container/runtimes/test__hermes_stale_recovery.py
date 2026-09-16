@@ -198,7 +198,7 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
         message_count=10, last_active=40.0, status="idle"
     )
     completed = recovery.HermesTurnProgress(
-        message_count=12, last_active=44.0, status="idle"
+        message_count=11, last_active=44.0, status="idle"
     )
     latched = recovery.recovery_tick(
         config,
@@ -288,6 +288,24 @@ def test_recovering_proof_survives_terminal_window_shift(tmp_path):
         state_dir=tmp_path,
     )
     assert observed.startswith(f"ready:{recovery.stale_latch(new_pane)[1]}:")
+
+
+def test_ready_state_relatches_when_activity_advances_without_history(tmp_path):
+    config = _config(tmp_path)
+    pane = "Provider has been unresponsive for 5 consecutive stale attempts"
+    fingerprint = recovery.stale_latch(pane)[1]
+    token = f"ready:{fingerprint}:12:44.0"
+    paused = []
+    observed = recovery.recovery_tick(
+        config,
+        capture=lambda: "new terminal frame\n" + pane,
+        pause=lambda: paused.append(True) or True,
+        recover=lambda: (_ for _ in ()).throw(AssertionError("recovered early")),
+        observe_progress=lambda: recovery.HermesTurnProgress(12, 45.0, "idle"),
+        previous_fingerprint=token,
+        state_dir=tmp_path,
+    )
+    assert observed.startswith("latched:") and paused == [True]
 
 
 def test_monitor_natural_exit_clears_persisted_latch(tmp_path):

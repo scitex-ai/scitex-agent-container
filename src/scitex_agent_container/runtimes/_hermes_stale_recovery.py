@@ -315,7 +315,7 @@ def recovery_tick(
         progress = observe_progress()
         if (
             progress.status == "idle"
-            and progress.message_count >= int(baseline_count) + 2
+            and progress.message_count >= int(baseline_count) + 1
             and progress.last_active > float(baseline_active)
         ):
             write_control_state(
@@ -333,13 +333,18 @@ def recovery_tick(
     if previous_fingerprint.startswith("ready:"):
         if observe_progress is None:
             return previous_fingerprint
-        _, _, baseline_count, _baseline_active = previous_fingerprint.split(":", 3)
+        _, _, baseline_count, baseline_active = previous_fingerprint.split(":", 3)
         progress = observe_progress()
         baseline_count_int = int(baseline_count)
-        if progress.status != "idle" or progress.message_count == baseline_count_int:
+        if progress.status != "idle":
             return previous_fingerprint
         if (
-            progress.message_count >= baseline_count_int + 2
+            progress.message_count == baseline_count_int
+            and progress.last_active <= float(baseline_active)
+        ):
+            return previous_fingerprint
+        if (
+            progress.message_count >= baseline_count_int + 1
             or progress.message_count < baseline_count_int
         ):
             return (
