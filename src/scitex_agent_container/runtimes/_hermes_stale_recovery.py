@@ -29,6 +29,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from ..config import AgentConfig, load_config
+from ._hermes_tui_rpc import HermesSlashReceipt, HermesTurnOutcome, HermesTurnProgress
 from ._runtime_control import READY, RECOVERING, STALE_LATCHED, write_control_state
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ MODULE_PATH = "scitex_agent_container.runtimes._hermes_stale_recovery"
 POLL_SECONDS = 30.0
 PROBE_TIMEOUT_SECONDS = 3.0
 _STALE_RE = re.compile(
-    r"Provider has been unresponsive(?:[^\n]*?)for\s+(\d+)\s+consecutive stale attempts",
+    r"Provider has been unresponsive(?:(?!Provider has been unresponsive)[\s\S])*?"
+    r"for\s+(\d+)\s+consecutive stale(?:\s|[│┃])+attempts",
     re.IGNORECASE,
 )
 _STOP_EVENT = threading.Event()
@@ -282,7 +284,9 @@ def recovery_tick(
     *,
     capture: Callable[[], str],
     pause: Callable[[], bool],
-    recover: Callable[[], bool],
+    recover: Callable[[], bool | HermesSlashReceipt],
+    observe_progress: Callable[[], HermesTurnProgress] | None = None,
+    observe_outcome: Callable[[int, str], HermesTurnOutcome] | None = None,
     probe: Callable[[AgentConfig], bool] = provider_has_capacity,
     now: Callable[[], float] = time.time,
     previous_fingerprint: str = "",
@@ -305,6 +309,45 @@ def recovery_tick(
     streak, fingerprint = observed
     recovered_token = f"recovered:{fingerprint}"
     latched_token = f"latched:{fingerprint}"
+    if previous_fingerprint.startswith("recovered:"):
+        if observe_outcome is None:
+            return previous_fingerprint
+        _, _, baseline_seq, epoch = previous_fingerprint.split(":", 3)
+        outcome = observe_outcome(int(baseline_seq), epoch)
+        if outcome.terminal_status == "complete":
+            write_control_state(
+                state_dir,
+                {
+                    "turn_admission": READY,
+                    "detail": "same session completed a turn after provider recovery",
+                    "observed_at": now(),
+                },
+            )
+            return (
+                f"ready:{fingerprint}:{outcome.latest_seq}:{outcome.epoch}"
+            )
+        if outcome.terminal_status in {"error", "interrupted"}:
+            write_control_state(
+                state_dir,
+                {
+                    "turn_admission": STALE_LATCHED,
+                    "detail": "provider recovery verification turn failed",
+                    "observed_at": now(),
+                },
+            )
+            return latched_token
+        return previous_fingerprint
+    if previous_fingerprint.startswith("ready:"):
+        if observe_outcome is None:
+            return previous_fingerprint
+        _, _, baseline_seq, epoch = previous_fingerprint.split(":", 3)
+        outcome = observe_outcome(int(baseline_seq), epoch)
+        if outcome.terminal_status is None:
+            return previous_fingerprint
+        if outcome.terminal_status == "complete":
+            return (
+                f"ready:{fingerprint}:{outcome.latest_seq}:{outcome.epoch}"
+            )
     if previous_fingerprint == recovered_token:
         return previous_fingerprint
     stamp = now()
@@ -323,7 +366,8 @@ def recovery_tick(
         return latched_token if pause() else ""
     if not probe(config):
         return latched_token
-    if recover():
+    receipt = recover()
+    if receipt:
         write_control_state(
             state_dir,
             {
@@ -332,6 +376,10 @@ def recovery_tick(
                 "observed_at": stamp,
             },
         )
+        if isinstance(receipt, HermesSlashReceipt):
+            return (
+                f"recovered:{fingerprint}:{receipt.latest_seq}:{receipt.epoch}"
+            )
         return recovered_token
     return latched_token
 
@@ -363,7 +411,13 @@ def _run_monitor_loop(
                 config,
                 capture=lambda: mux.capture_content(session),
                 pause=lambda: bool(runtime.disable_periodic_turns(config)),
-                recover=lambda: bool(runtime.recover_turn_admission(config)),
+                recover=lambda: runtime.recover_turn_admission(config),
+                observe_progress=lambda: runtime.observe_turn_progress(config),
+                observe_outcome=lambda after_seq, expected_epoch: runtime.observe_turn_outcome(
+                    config,
+                    after_seq=after_seq,
+                    expected_epoch=expected_epoch,
+                ),
                 previous_fingerprint=recovered_fingerprint,
                 state_dir=state_dir,
             )
@@ -427,7 +481,9 @@ def start_recovery_monitor(
         )
     except Exception as exc:
         stream.close()
-        log.warning("Hermes recovery monitor failed to start for %r: %s", config.name, exc)
+        log.warning(
+            "Hermes recovery monitor failed to start for %r: %s", config.name, exc
+        )
         return None
     stream.close()
     pid = getattr(process, "pid", None)

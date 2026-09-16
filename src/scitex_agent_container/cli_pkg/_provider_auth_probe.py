@@ -36,7 +36,8 @@ the same command — UNKNOWN never rejects:
 
     key resolves to nothing        FAIL       (already fatal at start)
     backend answers 401/403        FAIL       (an authoritative rejection)
-    backend answers anything else  OK         (reachable, not rejected)
+    backend accepts real key and rejects control  OK
+    backend does not reject control               FAIL
     connection refused / timeout   WARN       (absence of evidence)
 
 A gateway that is briefly down must not fail every preflight on the fleet.
@@ -47,7 +48,11 @@ check would certify a dead key. So a second request is sent with a deliberately
 invalid key. If THAT is not rejected either, the endpoint does not discriminate
 on credentials and this probe cannot answer the question it was asked; it
 reports INDISCRIMINATE rather than OK. Costing one extra request in a
-diagnostic command is the price of a verdict that means something.
+    diagnostic command is the price of a verdict that means something. A
+    non-discriminating endpoint is a failed preflight: it cannot prove the
+    selected credentials or even that the probe reached an authentication
+    surface. Deployment must stop rather than turn an unknown 404 into
+    "Ready to deploy".
 """
 
 from __future__ import annotations
@@ -83,11 +88,12 @@ class ProviderAuthVerdict:
     def is_failure(self) -> bool:
         """True only for states backed by EVIDENCE that the key is wrong.
 
-        ``UNREACHABLE`` and ``INDISCRIMINATE`` are deliberately absent: the
-        first is absence of evidence, the second is evidence that the probe
-        cannot answer. Neither convicts a key.
+        ``UNREACHABLE`` is deliberately absent because it is absence of
+        evidence. ``INDISCRIMINATE`` is included because a provider preflight
+        that cannot distinguish the real credential from an invalid control
+        has not validated the declared provider and must block deployment.
         """
-        return self.state in (REJECTED, UNRESOLVED)
+        return self.state in (REJECTED, UNRESOLVED, INDISCRIMINATE)
 
 
 def models_url(base_url: str) -> str:
