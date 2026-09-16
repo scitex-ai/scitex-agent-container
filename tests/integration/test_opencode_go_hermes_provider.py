@@ -79,11 +79,8 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
     env_save_restore.set("OPENCODE_GO_API_KEY", "secret-must-not-be-serialized")
 
     # Act
-    plan = compile_launch_plan(
-        _example_spec(),
-        agent_name="scitex-notification",
-        session_id="sac:scitex-notification:opencode-go",
-    )
+    config = load_config(EXAMPLE)
+    plan = _hermes_profile._launch_plan(config, launch_mode="tui")
     rendered = compile_hermes_config(plan, workdir="/work")
     provider = rendered["providers"]["sac-opencode-go-deepseek-v4.1-flash"]
 
@@ -106,7 +103,7 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
         "deepseek-v4.1-flash",
         "https://opencode.ai/zen/go/v1/chat/completions",
         "OPENCODE_GO_API_KEY",
-        "sac:scitex-notification:opencode-go",
+        "sac:providers",
         {
             "default": "deepseek-v4.1-flash",
             "provider": "custom:sac-opencode-go-deepseek-v4.1-flash",
@@ -115,7 +112,7 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
         "https://opencode.ai/zen/go/v1",
         "OPENCODE_GO_API_KEY",
         "scitex-agent-container/hermes",
-        "sac:scitex-notification:opencode-go",
+        "sac:providers",
         [],
         False,
     )
