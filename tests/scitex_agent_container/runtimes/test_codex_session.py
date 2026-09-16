@@ -15,20 +15,25 @@ class _ContainerRuntime:
 
 
 def test_codex_runtime_dispatches_headless_agent_to_container():
+    # Arrange
     container = _ContainerRuntime()
     runtime = CodexSessionRuntime(container_runtime_for=lambda config: container)
     config = AgentConfig(name="codex-worker", harness="codex", runtime="headless")
     runtime._setup_workspace = lambda config: None
 
+    # Act
     started = runtime.start(config)
 
-    assert started is True
-    assert container.started is True
+    # Assert
+    assert (started, container.started) == (True, True)
 
 
 def test_codex_headless_inner_argv_selects_codex_session_daemon():
+    # Arrange
     config = AgentConfig(name="codex-worker", harness="codex", runtime="headless")
 
+    # Act
     argv = build_inner_argv(config)
 
+    # Assert
     assert "scitex_agent_container._runners.codex_session" in argv[-1]

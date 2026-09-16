@@ -144,6 +144,7 @@ def test_codex_runner_module_is_the_codex_session_entrypoint(codex_descriptor):
 
 
 def test_codex_claims_the_vendor_neutral_headless_runtime(codex_descriptor):
+    # Arrange
     descriptor = codex_descriptor
     # Act
     spellings = descriptor.spec_runtimes
@@ -377,6 +378,7 @@ def test_codex_env_flags_omit_routing_vars_that_are_unset(
 
 
 def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
+    # Arrange
     config = AgentConfig(
         name="t",
         harness="codex",
@@ -389,6 +391,7 @@ def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
     previous = os.environ.get("QWEN_KEY")
     os.environ["QWEN_KEY"] = "test-key"
     try:
+        # Act
         argv = codex_env.codex_env_flags(config, tmp_path)
     finally:
         if previous is None:
@@ -396,15 +399,18 @@ def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
         else:
             os.environ["QWEN_KEY"] = previous
 
-    assert "SAC_CODEX_MODEL=qwen38-27b" in argv
-    assert "SAC_CODEX_MODEL_PROVIDER=sac" in argv
     encoded = next(
         value.split("=", 1)[1]
         for value in argv
         if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_JSON=")
     )
     overrides = json.loads(encoded)
-    assert 'model_providers.sac.base_url="http://qwen.example/v1"' in overrides
+    # Assert
+    assert (
+        "SAC_CODEX_MODEL=qwen38-27b" in argv,
+        "SAC_CODEX_MODEL_PROVIDER=sac" in argv,
+        'model_providers.sac.base_url="http://qwen.example/v1"' in overrides,
+    ) == (True, True, True)
 
 
 def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(

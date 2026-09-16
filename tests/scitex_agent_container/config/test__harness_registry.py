@@ -755,10 +755,13 @@ def test_resolve_harness_codex_runtime_tui_maps_to_the_codex_tui_key():
 
 
 def test_resolve_harness_codex_headless_maps_to_the_codex_sdk_key():
+    # Arrange
     spec = {"harness": "codex", "runtime": "headless"}
 
+    # Act
     key = resolve_harness_key(spec)
 
+    # Assert
     assert key == CODEX_SDK
 
 

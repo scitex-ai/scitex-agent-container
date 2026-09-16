@@ -440,14 +440,17 @@ def test_get_runtime_returns_tui_session_for_harness_codex():
 
 
 def test_get_runtime_returns_codex_session_for_headless_codex_runner():
+    # Arrange
     from scitex_agent_container.runtimes.codex_session import CodexSessionRuntime
 
     config = AgentConfig(
         name="hm", runtime="headless", workdir="/tmp/hm", harness="codex"
     )
 
+    # Act
     runtime = _get_runtime(config)
 
+    # Assert
     assert isinstance(runtime, CodexSessionRuntime)
 
 

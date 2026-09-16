@@ -244,7 +244,7 @@ async def serve_inbound(
     async def post_turn(request: Request) -> JSONResponse:
         try:
             body = await request.json()
-        except ValueError as exc:  # stx-allow: fallback (reason: malformed JSON tolerated; surfaced as 400)
+        except ValueError as exc:  # stx-allow: fallback (reason: malformed JSON returned to the HTTP caller in a 400 JSON response)
             return JSONResponse({"error": f"bad JSON: {exc}"}, status_code=400)
         try:
             turn = TurnRequest.model_validate(body)
