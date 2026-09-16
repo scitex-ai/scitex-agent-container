@@ -101,6 +101,7 @@ dependencies = [
     "uvicorn>=0.27",
     # Hermes' official TUI and SAC share one gateway session over JSON-RPC.
     "websockets>=15,<16",
+    "psutil>=5.9",
     # protobuf 6.x removed FieldDescriptor.label, which a2a-sdk 1.0.x's
     # validate_proto_required_fields still references — pin until upstream
     # adopts the descriptor pool API. See CI failure 2026-04-27.

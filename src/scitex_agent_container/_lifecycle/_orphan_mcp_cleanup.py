@@ -224,7 +224,7 @@ def kill_orphan_mcp_children(
         killed.append(pid)
         if dry_run:
             continue
-        # stx-allow: fallback (reason: the orphan may have already exited between snapshot and kill — ESRCH / EPERM / OSError must not propagate; we logged the intent and move on)
+        # stx-allow: fallback (reason: the orphan may have already exited between snapshot and kill — ESRCH / EPERM / OSError must not propagate because orphan cleanup is best effort)
         try:
             killer(pid, signal.SIGKILL)
             log.info(

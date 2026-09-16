@@ -164,7 +164,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # because a claim that names its sink is not this gate's business at
         # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
-        "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
         "scitex_agent_container/_lifecycle/_relocate_transcript.py:172",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:188",
