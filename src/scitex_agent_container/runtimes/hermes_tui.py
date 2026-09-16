@@ -165,13 +165,13 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
     @staticmethod
     def _start_cct(config: AgentConfig) -> None:
-        from ._hermes_cct_poller import start_cct_poller
+        from ._tui_cct_poller import start_cct_poller
 
         start_cct_poller(config)
 
     @staticmethod
     def _stop_cct(config: AgentConfig) -> None:
-        from ._hermes_cct_poller import stop_cct_poller
+        from ._tui_cct_poller import stop_cct_poller
 
         stop_cct_poller(config)
 

@@ -396,6 +396,14 @@ def build_run_argv(
         _wake_url = tui_channel_plan(config).telegrammer_turn_url
         if _wake_url:
             argv += ["--env", f"CLAUDE_CODE_TELEGRAMMER_TURN_URL={_wake_url}"]
+            if harness_key == CODEX_TUI:
+                # SAC's host-side poller owns inbound delivery for the exact
+                # managed Codex /v1/turn session.  Any lazily launched CCT MCP
+                # server is outbound-only and must not race that owner.
+                argv += [
+                    "--env",
+                    "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER=1",
+                ]
 
     # v3-realign: spec.apptainer.raw_args (§1 escape-hatch invariant) —
     # appended verbatim after all curated args, before the SIF +
