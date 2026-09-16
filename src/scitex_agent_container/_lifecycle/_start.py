@@ -263,12 +263,14 @@ def agent_start(
         )
     )
     really_running = verdict.is_alive
-    if uses_production_runtime and not dry_run and (not really_running or force):
-        enforce_task_worktree_policy(config)
+    if uses_production_runtime and (dry_run or not really_running or force):
+        enforce_task_worktree_policy(config, provision=not dry_run)
     if really_running:
         from ._start_engine_noop import assert_explicit_engine_noop_safe
 
-        assert_explicit_engine_noop_safe(config, engine_override, force=force, dry_run=dry_run)
+        assert_explicit_engine_noop_safe(
+            config, engine_override, force=force, dry_run=dry_run
+        )
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
     if really_running:
@@ -382,6 +384,10 @@ def agent_start(
     _h = handover_mod if handover_mod is not None else _load_handover_module()
 
     launch_incarnation = _h.ensure_instance_uuid(config)
+    if uses_production_runtime:
+        from ._worktree_policy import refresh_task_worktree_owner
+
+        refresh_task_worktree_owner(config)
     try:
         _h.hydrate_from_hub(config)
     except Exception:
@@ -419,8 +425,7 @@ def agent_start(
         name=config.name,
         config_path=str(getattr(config, "config_path", "") or config_path),
         incarnation_id=(
-            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "")
-            or None
+            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "") or None
         ),
         state_dir=state_dir_for_config(config),
     )

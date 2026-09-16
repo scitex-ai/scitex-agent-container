@@ -27,6 +27,7 @@ no-op'd at the runtime rather than relaunched over.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
@@ -122,6 +123,16 @@ class _Cfg:
     def __init__(self, name: str = "alpha") -> None:
         self.name = name
         self.runtime = "tui"
+
+
+@contextmanager
+def _replace_attribute(target, name, value):
+    original = getattr(target, name)
+    setattr(target, name, value)
+    try:
+        yield
+    finally:
+        setattr(target, name, original)
 
 
 def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
@@ -313,6 +324,84 @@ def test_an_alive_agent_still_no_ops(pg_schema: str, tmp_path, registry):
     )
     # Assert — never relaunched over a live agent.
     assert runtime.start_calls == []
+
+
+def test_policy_refusal_precedes_a_forced_stop(
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+) -> None:
+    from scitex_agent_container._lifecycle import _start as start_mod
+    from scitex_agent_container._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+    )
+
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [Signal(SOURCE_DELIVERY, ALIVE, "live", INSTRUMENT_LISTEN_BROKER)],
+    )
+
+    def refuse(_config, **_kwargs) -> None:
+        raise WorktreePolicyError("fixture refusal")
+
+    # Act
+    error = ""
+    with _replace_attribute(start_mod, "_get_runtime", lambda _config: runtime):
+        with _replace_attribute(start_mod, "enforce_task_worktree_policy", refuse):
+            try:
+                start_mod.agent_start(
+                    str(spec),
+                    registry=registry,
+                    force=True,
+                    handover_mod=_Handover(),
+                    sleep_fn=_no_sleep,
+                    verdict_override=alive,
+                )
+            except WorktreePolicyError as exc:
+                error = str(exc)
+
+    # Assert
+    assert (error, runtime.stop_calls) == ("fixture refusal", [])
+
+
+def test_already_running_noop_does_not_claim_a_new_policy_proof(
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+) -> None:
+    from scitex_agent_container._lifecycle import _start as start_mod
+
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [Signal(SOURCE_DELIVERY, ALIVE, "live", INSTRUMENT_LISTEN_BROKER)],
+    )
+    calls: list[str] = []
+
+    # Act
+    with _replace_attribute(start_mod, "_get_runtime", lambda _config: runtime):
+        with _replace_attribute(
+            start_mod,
+            "enforce_task_worktree_policy",
+            lambda config, **_kwargs: calls.append(config.name),
+        ):
+            start_mod.agent_start(
+                str(spec),
+                registry=registry,
+                handover_mod=_Handover(),
+                sleep_fn=_no_sleep,
+                verdict_override=alive,
+            )
+
+    # Assert
+    assert calls == []
 
 
 def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry):

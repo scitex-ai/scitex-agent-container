@@ -439,7 +439,7 @@ def restart_and_record(
     if runtime_factory is _get_runtime:
         from ._worktree_policy import enforce_task_worktree_policy
 
-        enforce_task_worktree_policy(config)
+        enforce_task_worktree_policy(config, provision=True)
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:
