@@ -49,6 +49,7 @@ this harness special.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -246,5 +247,38 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
         value = os.environ.get(env_name, "").strip()
         if value:
             argv += ["--env", f"{env_name}={value}"]
+
+    from ..config._harness_registry import CODEX_SDK, resolve_harness_key
+
+    if resolve_harness_key(config) != CODEX_SDK:
+        return argv
+
+    # The headless SDK cannot consume the TUI's argv ``-c`` flags directly.
+    # Carry the exact same resolved spec values through a typed JSON env that
+    # ``_runners._codex_options`` validates before constructing CodexConfig.
+    model = str(getattr(config, "model", "") or "").strip()
+    if not model:
+        raise ProviderEnvError(
+            f"spec.harness: codex on agent {config.name!r} resolved no model; "
+            "refusing to let Codex silently choose its default model"
+        )
+    argv += ["--env", f"SAC_CODEX_MODEL={model}"]
+    argv += ["--env", "SAC_CODEX_SANDBOX=full-access"]
+
+    if provider_active(config):
+        from ._apptainer_inner_argv_codex import codex_config_overrides
+
+        flattened = codex_config_overrides(config)
+        overrides = [
+            flattened[index + 1]
+            for index, value in enumerate(flattened[:-1])
+            if value == "-c"
+        ]
+        argv += ["--env", "SAC_CODEX_MODEL_PROVIDER=sac"]
+        argv += [
+            "--env",
+            "SAC_CODEX_CONFIG_OVERRIDES_JSON="
+            + json.dumps(overrides, separators=(",", ":")),
+        ]
 
     return argv

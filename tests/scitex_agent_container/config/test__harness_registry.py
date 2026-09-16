@@ -754,17 +754,12 @@ def test_resolve_harness_codex_runtime_tui_maps_to_the_codex_tui_key():
     assert key == CODEX_TUI
 
 
-def test_resolve_harness_codex_has_no_runtime_spelling_for_the_headless_runner():
-    # Arrange -- codex-sdk has no lifecycle adapter, so no spelling selects it.
-    spec = {"harness": "codex", "runtime": "codex-sdk"}
-    # Act
-    try:
-        resolve_harness_key(spec)
-        message = ""
-    except UnmappableHarnessError as exc:
-        message = str(exc)
-    # Assert
-    assert "codex-sdk" in message
+def test_resolve_harness_codex_headless_maps_to_the_codex_sdk_key():
+    spec = {"harness": "codex", "runtime": "headless"}
+
+    key = resolve_harness_key(spec)
+
+    assert key == CODEX_SDK
 
 
 def test_resolve_harness_codex_legacy_apptainer_runtime_is_unmappable():

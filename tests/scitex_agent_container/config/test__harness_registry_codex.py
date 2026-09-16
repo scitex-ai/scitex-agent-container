@@ -23,6 +23,7 @@ restore it on teardown — no ``monkeypatch``, per the ecosystem rule.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -142,15 +143,12 @@ def test_codex_runner_module_is_the_codex_session_entrypoint(codex_descriptor):
     assert module == "scitex_agent_container._runners.codex_session"
 
 
-def test_codex_does_not_claim_any_runtime_spelling(codex_descriptor):
-    # Arrange — the runtime axis spells ANTHROPIC launch modes, so a
-    # sole-entry family must not widen it (a claimed spelling here would
-    # collide with the Claude entries and trip _check_registry).
+def test_codex_claims_the_vendor_neutral_headless_runtime(codex_descriptor):
     descriptor = codex_descriptor
     # Act
     spellings = descriptor.spec_runtimes
     # Assert
-    assert spellings == frozenset()
+    assert spellings == frozenset({"headless"})
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +188,7 @@ def test_resolve_refuses_the_registry_key_spelling_as_a_harness_name():
     # Arrange — the new family must not have widened the door: the KEY
     # spelling is not a spec.harness value and must still raise.
     spec = {"harness": "codex-sdk"}
+
     # Act
     def resolve():
         return resolve_harness_key(spec)
@@ -253,9 +252,7 @@ def test_provider_modules_harness_set_also_derived_the_new_family():
 def test_adding_codex_did_not_widen_the_runtime_spellings():
     # Arrange — the runtime axis is untouched by a new harness family;
     # a regression here would mean the row leaked into launch modes.
-    expected = frozenset(
-        {"", "apptainer", "claude-agent-sdk", "headless", "tui"}
-    )
+    expected = frozenset({"", "apptainer", "claude-agent-sdk", "headless", "tui"})
     # Act
     spellings = valid_runtime_spellings()
     # Assert
@@ -379,6 +376,37 @@ def test_codex_env_flags_omit_routing_vars_that_are_unset(
     assert not any(a.startswith("SAC_CODEX_MODEL=") for a in argv)
 
 
+def test_headless_codex_env_flags_carry_resolved_model_and_provider(tmp_path):
+    config = AgentConfig(
+        name="t",
+        harness="codex",
+        runtime="headless",
+        model="qwen38-27b",
+    )
+    config.claude.provider = type(
+        "P", (), {"base_url": "http://qwen.example", "auth_token_env": "QWEN_KEY"}
+    )()
+    previous = os.environ.get("QWEN_KEY")
+    os.environ["QWEN_KEY"] = "test-key"
+    try:
+        argv = codex_env.codex_env_flags(config, tmp_path)
+    finally:
+        if previous is None:
+            os.environ.pop("QWEN_KEY", None)
+        else:
+            os.environ["QWEN_KEY"] = previous
+
+    assert "SAC_CODEX_MODEL=qwen38-27b" in argv
+    assert "SAC_CODEX_MODEL_PROVIDER=sac" in argv
+    encoded = next(
+        value.split("=", 1)[1]
+        for value in argv
+        if value.startswith("SAC_CODEX_CONFIG_OVERRIDES_JSON=")
+    )
+    overrides = json.loads(encoded)
+    assert 'model_providers.sac.base_url="http://qwen.example/v1"' in overrides
+
+
 def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(
     tmp_path, codex_config_with_claude_provider
 ):
@@ -386,6 +414,7 @@ def test_codex_harness_refuses_to_compose_with_a_claude_provider_override(
     # spec.claude.provider: codex is an INFERENCE backend (Claude Code
     # still drives), spec.harness: codex is a HARNESS (codex drives).
     config = codex_config_with_claude_provider
+
     # Act
     def render():
         return codex_env.codex_env_flags(config, tmp_path)

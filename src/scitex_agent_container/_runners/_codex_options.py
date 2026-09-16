@@ -34,6 +34,7 @@ so the same mapping serves the start and the resume path.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any, Sequence
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "SAC_CODEX_MODEL_ENV",
     "SAC_CODEX_MODEL_PROVIDER_ENV",
+    "SAC_CODEX_CONFIG_OVERRIDES_ENV",
     "SAC_CODEX_SANDBOX_ENV",
     "build_codex_config",
     "resolve_sandbox",
@@ -54,6 +56,7 @@ __all__ = [
 SAC_CODEX_MODEL_ENV = "SAC_CODEX_MODEL"
 SAC_CODEX_MODEL_PROVIDER_ENV = "SAC_CODEX_MODEL_PROVIDER"
 SAC_CODEX_SANDBOX_ENV = "SAC_CODEX_SANDBOX"
+SAC_CODEX_CONFIG_OVERRIDES_ENV = "SAC_CODEX_CONFIG_OVERRIDES_JSON"
 
 #: Accepted ``sandbox`` spellings → the ``Sandbox`` enum member NAME.
 #: Both the wire value ("read-only") and the python spelling
@@ -89,6 +92,20 @@ def build_codex_config(codex_mod: Any, **kwargs: Any) -> Any:
     codex_bin = kwargs.get("codex_bin")
     cwd = kwargs.get("cwd")
     overrides: Sequence[str] = kwargs.get("config_overrides") or ()
+    if not overrides:
+        raw_overrides = _env(SAC_CODEX_CONFIG_OVERRIDES_ENV)
+        if raw_overrides:
+            from pydantic import TypeAdapter, ValidationError
+
+            try:
+                decoded = json.loads(raw_overrides)
+                overrides = TypeAdapter(list[str]).validate_python(decoded, strict=True)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                raise ValueError(
+                    f"{SAC_CODEX_CONFIG_OVERRIDES_ENV} must be a JSON array "
+                    "of strings; refusing to launch with malformed provider "
+                    f"routing: {exc}"
+                ) from exc
     return codex_mod.CodexConfig(
         codex_bin=codex_bin,
         cwd=cwd,
