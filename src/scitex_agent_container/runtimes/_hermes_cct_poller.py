@@ -194,9 +194,9 @@ def _poller_env(
     turn_url = f"http://127.0.0.1:{port}/v1/turn"
     env["CCT_TURN_URL"] = turn_url
     env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] = turn_url
-    # SAC owns this poller's entire lifecycle.  Tell the CCT MCP server (which
-    # Hermes may start independently inside Apptainer) not to spawn a second
-    # per-token poller; two PID namespaces make its pidfile authority unsafe.
+    # The MCP server receives the same contract through wire_hermes_cct_rail.
+    # Keep it here as well so health/preflight and the authoritative child
+    # describe the ownership topology identically.
     env["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] = "1"
     env["CCT_AGENT_ID"] = config.name
     env["SAC_NAME"] = config.name

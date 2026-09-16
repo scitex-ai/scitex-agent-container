@@ -102,8 +102,11 @@ def test_start_derives_standalone_poller_and_exact_hermes_turn_url(tmp_path):
     assert (
         pid,
         argv,
+        len(spawner.calls),
         stopped,
         len(preflights),
+        env["SAC_NAME"],
+        env["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"],
         env["CCT_TURN_URL"],
         env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"],
         env["CCT_AGENT_ID"],
@@ -111,8 +114,11 @@ def test_start_derives_standalone_poller_and_exact_hermes_turn_url(tmp_path):
     ) == (
         4242,
         [str(bun), "run", str(poller)],
+        1,
         [tmp_path],
         1,
+        "lead",
+        "1",
         "http://127.0.0.1:19003/v1/turn",
         "http://127.0.0.1:19003/v1/turn",
         "lead",
