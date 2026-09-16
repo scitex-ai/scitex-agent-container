@@ -396,6 +396,7 @@ def build_run_argv(
         _wake_url = tui_channel_plan(config).telegrammer_turn_url
         if _wake_url:
             argv += ["--env", f"CLAUDE_CODE_TELEGRAMMER_TURN_URL={_wake_url}"]
+            argv += ["--env", f"CCT_HARNESS={harness_key}"]
             if harness_key == CODEX_TUI:
                 # SAC's host-side poller owns inbound delivery for the exact
                 # managed Codex /v1/turn session.  Any lazily launched CCT MCP

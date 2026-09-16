@@ -671,7 +671,8 @@ def test_build_run_argv_codex_cct_declares_external_poller_owner(
         "--env CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
         in " ".join(argv),
         "--env CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER=1" in " ".join(argv),
-    ) == (True, True)
+        "--env CCT_HARNESS=codex" in " ".join(argv),
+    ) == (True, True, True)
 
 
 def test_build_run_argv_tui_injects_channel_subscriber_mcp(
