@@ -35,6 +35,9 @@ from scitex_agent_container._lifecycle._start_outcome import (
 )
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig, load_config
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +131,7 @@ def _write_spec(
 
     spec = agent_dir / "spec.yaml"
     spec.write_text(explicitize_yaml(body))
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 # ---------------------------------------------------------------------------

@@ -178,9 +178,13 @@ def test_sac_agents_start_dry_run_against_real_spec_yaml(
     from tests.scitex_agent_container._helpers.explicit_spec import (
         explicitize_yaml,
     )
+    from tests.scitex_agent_container._helpers.spec_authority import (
+        establish_test_spec_authority,
+    )
 
     # Red-start ruling 2026-07-21: every field explicit (body wins).
     spec.write_text(explicitize_yaml(_MINIMAL_V3_SPEC))
+    establish_test_spec_authority(spec)
     # Act
     result = _run("agents", "start", str(spec), "--dry-run", cwd=tmp_path)
     # Assert (one combined assert: exit 0 AND output mentions "dry-run")

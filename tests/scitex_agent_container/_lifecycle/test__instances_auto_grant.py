@@ -18,8 +18,6 @@ stub exposing ``_state_dir`` — no mocks, no monkeypatch.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 from typing import Iterator
@@ -27,6 +25,10 @@ from typing import Iterator
 import pytest
 
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +87,8 @@ class _RuntimeStub:
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_grants_self_to_lead(pg_schema: str, 
-    db_path: Path, tmp_path: Path
+def test_record_local_instance_grants_self_to_lead(
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -137,7 +139,8 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
     rt = _RuntimeStub(tmp_path)
     record_local_instance(cfg, rt)
     first = [
-        r for r in list_comms_grants()
+        r
+        for r in list_comms_grants()
         if (r["sender"], r["target"]) == ("grant-2", "lead")
     ]
     if len(first) != 1:
@@ -150,7 +153,8 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
     record_local_instance(cfg, rt)
     # Assert — still one row, and its timestamp did not move.
     rows = [
-        r for r in list_comms_grants()
+        r
+        for r in list_comms_grants()
         if (r["sender"], r["target"]) == ("grant-2", "lead")
     ]
     assert [r["created_at"] for r in rows] == [stamped]
@@ -162,8 +166,8 @@ def test_record_local_instance_grant_to_lead_is_idempotent(
 # ---------------------------------------------------------------------------
 
 
-def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(pg_schema: str, 
-    db_path: Path, tmp_path: Path
+def test_record_local_instance_returns_instance_id_when_grant_write_succeeds(
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     from scitex_agent_container._lifecycle._instances import record_local_instance
@@ -250,18 +254,20 @@ def _write_health_spec(tmp_path: Path, name: str) -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {tmp_path / 'work'}\n"
-        "  apptainer:\n    image: /x.sif\n    binds: []\n"
-        "  health:\n    enabled: true\n    interval: 60\n"
-        "  restart:\n    policy: on-failure\n    max_retries: 3\n"
-        "  claude:\n    model: sonnet\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {tmp_path / 'work'}\n"
+            "  apptainer:\n    image: /x.sif\n    binds: []\n"
+            "  health:\n    enabled: true\n    interval: 60\n"
+            "  restart:\n    policy: on-failure\n    max_retries: 3\n"
+            "  claude:\n    model: sonnet\n"
+        )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _fire_monitor_restart(db_path: Path, tmp_path: Path, name: str) -> None:

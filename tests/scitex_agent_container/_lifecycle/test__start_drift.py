@@ -182,6 +182,17 @@ def test_stale_source_does_not_reach_runtime_by_default(tmp_path, registry):
     assert runtime.started == []
 
 
+def test_dry_run_cannot_bypass_stale_source(tmp_path, registry):
+    # Arrange — dry-run validates the same authority a real launch would use.
+    spec = _make_spec_repo(tmp_path, drifted=True)
+    runtime = _FakeRuntime()
+    # Act
+    ctx = pytest.raises(SpecAuthorityError)
+    # Assert
+    with ctx:
+        _start(spec, registry, runtime, dry_run=True)
+
+
 def test_stale_source_banner_says_error_not_warning(tmp_path, registry, capsys):
     # Arrange — a refusal that still reads "WARNING" trains the wrong reflex.
     spec = _make_spec_repo(tmp_path, drifted=True)
@@ -213,22 +224,30 @@ def test_false_strict_argument_cannot_bypass(pg_schema: str, tmp_path, registry)
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
-    with pytest.raises(SpecAuthorityError):
+    refused = False
+    try:
         _start(spec, registry, runtime, strict_drift=False)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert runtime.started == []
+    assert refused and runtime.started == []
 
 
-def test_allow_stale_env_cannot_bypass(pg_schema: str, tmp_path, registry, env_save_restore):
+def test_allow_stale_env_cannot_bypass(
+    pg_schema: str, tmp_path, registry, env_save_restore
+):
     # Arrange — a stale shell export from the old contract is inert.
     env_save_restore.set("SAC_ALLOW_STALE_SPEC", "1")
     spec = _make_spec_repo(tmp_path, drifted=True)
     runtime = _FakeRuntime()
     # Act
-    with pytest.raises(SpecAuthorityError):
+    refused = False
+    try:
         _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert runtime.started == []
+    assert refused and runtime.started == []
 
 
 def test_unpushed_local_commits_are_refused(pg_schema: str, tmp_path, registry):
@@ -239,10 +258,13 @@ def test_unpushed_local_commits_are_refused(pg_schema: str, tmp_path, registry):
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
     # Act
-    with pytest.raises(SpecAuthorityError):
+    refused = False
+    try:
         _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert runtime.started == []
+    assert refused and runtime.started == []
 
 
 def test_unpushed_local_commits_fail_loud(pg_schema: str, tmp_path, registry, capsys):
@@ -253,10 +275,13 @@ def test_unpushed_local_commits_fail_loud(pg_schema: str, tmp_path, registry, ca
     _git(spec.parent.parent.parent, "commit", "-m", "local work")
     runtime = _FakeRuntime()
     # Act
-    with pytest.raises(SpecAuthorityError):
+    refused = False
+    try:
         _start(spec, registry, runtime)
+    except SpecAuthorityError:
+        refused = True
     # Assert
-    assert "spec authority refused launch" in capsys.readouterr().err
+    assert refused and "spec authority refused launch" in capsys.readouterr().err
 
 
 def test_clean_source_starts_normally(pg_schema: str, tmp_path, registry):

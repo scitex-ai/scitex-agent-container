@@ -2,7 +2,7 @@
 description: |
   [TOPIC] Fail-closed lifecycle authority for agent specs.
   [DETAILS] Start accepts only a clean/current develop main checkout or an exact detached sac-authority source/commit/spec-digest snapshot. Unknown, unreachable, dirty, wrong-branch, linked-feature, ahead, behind and diverged sources refuse with no bypass.
-tags: [scitex-agent-container, spec, authority, drift, worktree, snapshot]
+tags: [scitex-agent-container-spec-authority, spec, authority, drift, worktree, snapshot]
 ---
 
 # Lifecycle spec authority
