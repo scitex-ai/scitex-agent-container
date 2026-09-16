@@ -229,6 +229,7 @@ From: ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c5
         @typescript-eslint/eslint-plugin \
         jsonlint \
         @mermaid-js/mermaid-cli \
+        opencode-ai@1.18.31 \
         @anthropic-ai/claude-code@latest
 
     # ---- 3a. Claude Code CLI — decoupled from the SDK bundle -------
@@ -1033,11 +1034,20 @@ EOF
     # packaged target is absent. Apptainer runs this after %post and fails
     # the build before scitex-container atomically promotes the SIF.
     /opt/venv-sac/bin/sac --version
+    env -i \
+        PATH=/opt/npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+        HOME=/tmp \
+        XDG_CONFIG_HOME=/tmp/.config \
+        XDG_DATA_HOME=/tmp/.local/share \
+        XDG_CACHE_HOME=/tmp/.cache \
+        XDG_STATE_HOME=/tmp/.local/state \
+        BUN_INSTALL_CACHE_DIR=/tmp/.bun-cache \
+        /opt/npm-global/bin/opencode --version
 
 %labels
     org.scitex.layer base
     org.scitex.runtime apptainer
-    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint apptainer rtk hermes hermes-tui"
+    org.scitex.contains "git gh node npm rustc cargo fd bat eza rg tree jq yq delta gdu sd dust uv pipx pre-commit mermaid prettier eslint jsonlint opencode apptainer rtk hermes hermes-tui"
     org.scitex.hermes.version 0.21.2
     org.scitex.hermes.repository https://github.com/ywatanabe1989/hermes-agent.git
     org.scitex.hermes.commit 9ca9b7e5b9092465d37e4af0c2132aed188af5dd
