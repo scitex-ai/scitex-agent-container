@@ -14,7 +14,12 @@ def test_base_image_installs_and_verifies_pinned_opencode_cli():
         item in text
         for item in (
             "opencode-ai@1.18.31",
-            "HOME=/tmp /opt/npm-global/bin/opencode --version",
+            "XDG_CONFIG_HOME=/tmp/.config",
+            "XDG_DATA_HOME=/tmp/.local/share",
+            "XDG_CACHE_HOME=/tmp/.cache",
+            "XDG_STATE_HOME=/tmp/.local/state",
+            "BUN_INSTALL_CACHE_DIR=/tmp/.bun-cache",
+            "/opt/npm-global/bin/opencode --version",
             " opencode apptainer ",
         )
     )
