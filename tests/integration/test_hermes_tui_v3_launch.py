@@ -31,7 +31,7 @@ def _canonical_hermes_spec() -> dict:
             "engine": "qwen",
             "workdir": "/work",
             "to_home": "",
-            "to_home_layers": [],
+            "to_home_layers": ["per-agent"],
             "startup_prompts": ["Continue the assigned task."],
             "a2a": {"host": "127.0.0.1", "port": 4321},
             "comms": {
@@ -172,6 +172,9 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
     (tmp_path / ".scitex" / "agent-container").mkdir(parents=True)
     spec_path = tmp_path / "scholar" / "spec.yaml"
     spec_path.parent.mkdir()
+    to_home = spec_path.parent / "to_home"
+    to_home.mkdir()
+    (to_home / "AGENTS.md").write_text("canonical test instructions\n")
     spec_path.write_text(
         yaml.safe_dump(_canonical_hermes_spec(), sort_keys=False), encoding="utf-8"
     )
@@ -258,6 +261,7 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     source_passfile.chmod(0o600)
     to_home = tmp_path / "to_home"
     to_home.mkdir()
+    (to_home / "AGENTS.md").write_text("canonical test instructions\n")
     (to_home / ".mcp.json").write_text(
         json.dumps(
             {
@@ -278,9 +282,9 @@ def test_real_hermes_cct_launch_wires_mcp_and_tui_turn_bridge(
     doc["spec"]["to_home"] = str(to_home)
     doc["spec"]["comms"]["channels"] = ["server:claude-code-telegrammer"]
     doc["spec"]["apptainer"]["env"]["CCT_BOT_TOKEN"] = "test-cct-secret"
-    doc["spec"]["apptainer"]["env"][
-        "SCITEX_STORE_DSN"
-    ] = "postgresql://scitex-primary:55432/scitex"
+    doc["spec"]["apptainer"]["env"]["SCITEX_STORE_DSN"] = (
+        "postgresql://scitex-primary:55432/scitex"
+    )
     spec_path = tmp_path / "business" / "spec.yaml"
     spec_path.parent.mkdir()
     spec_path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
@@ -343,6 +347,7 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
     source_passfile.chmod(0o600)
     to_home = tmp_path / "to_home"
     to_home.mkdir()
+    (to_home / "AGENTS.md").write_text("canonical test instructions\n")
     (to_home / ".mcp.json").write_text(
         json.dumps(
             {
@@ -363,9 +368,7 @@ def test_real_hermes_launch_provisions_exact_project_pg_identity(
         encoding="utf-8",
     )
     spec = _canonical_hermes_spec()
-    spec["metadata"] = {
-        "labels": {"project": "scitex-hub", "sac-builtin": "off"}
-    }
+    spec["metadata"] = {"labels": {"project": "scitex-hub", "sac-builtin": "off"}}
     spec["spec"]["to_home"] = str(to_home)
     spec_path = tmp_path / "scitex-hub-signup" / "spec.yaml"
     spec_path.parent.mkdir()

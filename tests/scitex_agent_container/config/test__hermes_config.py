@@ -128,12 +128,17 @@ def test_default_agent_profile_leaves_hermes_turn_budgets_unset():
 
 
 def test_compiler_embeds_explicit_verified_system_prompt():
+    # Arrange
+    plan = _plan()
+
+    # Act
     result = compile_hermes_config(
-        _plan(),
+        plan,
         workdir="/work",
         system_prompt="authoritative instructions\n",
     )
 
+    # Assert
     assert result["agent"]["system_prompt"] == "authoritative instructions\n"
 
 
