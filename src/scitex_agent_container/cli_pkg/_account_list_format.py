@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ---------------------------------------------------------------------------
 # Timezone resolution
@@ -80,14 +81,19 @@ def _resolve_tz(name: str) -> tzinfo | None:
     Returns ``None`` on any failure so a bad env value falls through to
     the next layer of the precedence chain rather than crashing.
     """
+    # UTC is intrinsic to datetime and must not depend on host tzdata being
+    # readable.  Besides making the common override cheaper, this prevents an
+    # explicit UTC request from silently degrading to system-local time when a
+    # minimal image has no zoneinfo database.
+    if name.strip().upper() in {"UTC", "ETC/UTC", "GMT", "ETC/GMT", "Z"}:
+        return timezone.utc
+
     # stx-allow: fallback (reason: a bad TZ env value (typo, missing
     # tzdata on the host) must not crash `sac accounts list` — fall
     # through to the next precedence layer and ultimately system local.)
     try:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
         return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError):
+    except (ZoneInfoNotFoundError, ValueError):
         return None
     except (
         Exception
