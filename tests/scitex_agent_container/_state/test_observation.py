@@ -25,45 +25,75 @@ def _status(*, pane: str = "", verdict: str = "alive") -> dict:
 
 
 def test_ready_process_is_alive_but_turn_is_idle() -> None:
+    # Arrange
+    status = _status(pane="─ ready │ qwen38 27b low │ 204k/1M")
+
+    # Act
     observed = build_agent_observation(
-        _status(pane="─ ready │ qwen38 27b low │ 204k/1M"),
+        status,
         definition_state=DefinitionState.VALID,
     )
 
-    assert observed["definition"]["state"] == "valid"
-    assert observed["process"]["state"] == "alive"
-    assert observed["turn"]["state"] == "idle"
-    assert observed["communication"]["state"] == "reachable"
-    assert observed["progress"]["state"] == "unknown"
+    # Assert
+    assert {
+        key: observed[key]["state"]
+        for key in ("definition", "process", "turn", "communication", "progress")
+    } == {
+        "definition": "valid",
+        "process": "alive",
+        "turn": "idle",
+        "communication": "reachable",
+        "progress": "unknown",
+    }
 
 
 def test_reasoning_status_line_is_not_reported_as_idle() -> None:
+    # Arrange
+    status = _status(pane="─ ruminating… · 15m 28s │ qwen38 27b low")
+
+    # Act
     observed = build_agent_observation(
-        _status(pane="─ ruminating… · 15m 28s │ qwen38 27b low"),
+        status,
         definition_state=DefinitionState.VALID,
     )
 
-    assert observed["turn"]["state"] == "reasoning"
-    assert observed["turn"]["evidence"][0]["source"] == "terminal.status_line"
+    # Assert
+    assert (
+        observed["turn"]["state"],
+        observed["turn"]["evidence"][0]["source"],
+    ) == ("reasoning", "terminal.status_line")
 
 
 def test_unknown_progress_is_explicit_not_invented() -> None:
+    # Arrange
+    status = _status()
+
+    # Act
     observed = build_agent_observation(
-        _status(), definition_state=DefinitionState.INVALID
+        status, definition_state=DefinitionState.INVALID
     )
 
-    assert observed["definition"]["state"] == "invalid"
-    assert observed["turn"]["state"] == "unknown"
-    assert "successive observations" in observed["progress"]["evidence"][0]["detail"]
+    # Assert
+    assert (
+        observed["definition"]["state"],
+        observed["turn"]["state"],
+        "successive observations"
+        in observed["progress"]["evidence"][0]["detail"],
+    ) == ("invalid", "unknown", True)
 
 
 def test_runtime_phase_is_preferred_over_terminal_heuristic() -> None:
+    # Arrange
     status = _status(pane="─ ready │ qwen38")
     status["runtime_control"] = {"current_phase": "prefilling"}
 
+    # Act
     observed = build_agent_observation(
         status, definition_state=DefinitionState.VALID
     )
 
-    assert observed["turn"]["state"] == "prefilling"
-    assert observed["turn"]["evidence"][0]["source"] == "runtime_control.current_phase"
+    # Assert
+    assert (
+        observed["turn"]["state"],
+        observed["turn"]["evidence"][0]["source"],
+    ) == ("prefilling", "runtime_control.current_phase")
