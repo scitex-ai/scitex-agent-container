@@ -24,15 +24,24 @@ the runtime probe. This version exercises real production paths:
 
 from __future__ import annotations
 
+import json
 import os
+import socket
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
 from click.testing import CliRunner
 
-from scitex_agent_container.cli_pkg.build_cmds import check, validate
+from scitex_agent_container.cli import main
+from scitex_agent_container.cli_pkg._agents_check_result import CheckFeedback
+from scitex_agent_container.cli_pkg.build_cmds import (
+    _check_provider_auth,
+    check,
+    validate,
+)
 
 # ---------------------------------------------------------------------------
 # Real YAML spec helpers
@@ -442,3 +451,132 @@ def test_check_with_mixed_bad_and_canonical_targets_still_exits_zero(
     result = runner.invoke(check, [str(spec)])
     # Assert
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# stable structured feedback — the root flag, tri-state checks, and secrets
+# ---------------------------------------------------------------------------
+
+
+_CHECK_KEYS = {
+    "code",
+    "path",
+    "subject",
+    "status",
+    "severity",
+    "message",
+    "observed",
+    "expected",
+    "remedy",
+}
+
+
+def test_root_json_check_emits_one_stable_result(tmp_path, _runtime_shims):
+    # Arrange
+    spec = _write_spec(tmp_path)
+
+    # Act
+    result = CliRunner().invoke(main, ["--json", "agents", "check", str(spec)])
+    payload = json.loads(result.stdout)
+
+    # Assert
+    assert result.exit_code == 0
+    assert set(payload) == {"ok", "status", "subject", "path", "checks"}
+    assert payload["ok"] is True
+    assert [item["code"] for item in payload["checks"]][:3] == [
+        "spec.resolve",
+        "spec.validate",
+        "spec.load",
+    ]
+    assert all(set(item) == _CHECK_KEYS for item in payload["checks"])
+    assert "Checking " not in result.stdout
+    assert "Ready to deploy" not in result.stdout
+
+
+def test_root_json_resolution_failure_is_structured_and_exits_one(tmp_path):
+    # Arrange
+    missing = tmp_path / "absent.yaml"
+
+    # Act
+    result = CliRunner().invoke(main, ["--json", "agents", "check", str(missing)])
+    payload = json.loads(result.stdout)
+
+    # Assert
+    assert result.exit_code == 1
+    assert payload["ok"] is False
+    assert payload["status"] == "error"
+    assert payload["checks"][0]["code"] == "spec.resolve"
+    assert payload["checks"][0]["status"] == "not-ok"
+
+
+def test_json_warning_keeps_success_exit_code(tmp_path, _runtime_shims):
+    # Arrange
+    spec = _write_spec_with_binds(tmp_path, ["/host/project:/home/me/project:ro"])
+
+    # Act
+    result = CliRunner().invoke(main, ["--json", "agents", "check", str(spec)])
+    payload = json.loads(result.stdout)
+
+    # Assert
+    warning = next(
+        item for item in payload["checks"] if item["code"] == "isolation.bind-target"
+    )
+    assert result.exit_code == 0
+    assert payload["ok"] is True and payload["status"] == "warning"
+    assert warning["status"] == "not-ok" and warning["severity"] == "warning"
+
+
+def _provider_config(base_url: str, env_name: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        claude=SimpleNamespace(
+            provider=SimpleNamespace(base_url=base_url, auth_token_env=env_name)
+        )
+    )
+
+
+def test_unresolved_provider_credential_is_a_structured_failure():
+    # Arrange
+    env_name = "SAC_TEST_CHECK_DEFINITELY_UNSET_PROVIDER_KEY"
+    previous = os.environ.pop(env_name, None)
+    try:
+        # Act
+        finding = _check_provider_auth(
+            _provider_config("http://127.0.0.1:1", env_name), "/spec.yaml"
+        )
+    finally:
+        if previous is not None:
+            os.environ[env_name] = previous
+
+    # Assert
+    assert isinstance(finding, CheckFeedback)
+    assert finding.to_dict()["status"] == "not-ok"
+    assert finding.to_dict()["severity"] == "error"
+    assert finding.blocks_deploy is True
+
+
+def test_unreachable_provider_is_unknown_and_never_serializes_the_key():
+    # Arrange — reserve and release a confirmed-free port, so connect refuses.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = int(probe.getsockname()[1])
+    env_name = "SAC_TEST_CHECK_PROVIDER_SECRET"
+    secret = "never-serialize-this-provider-secret"
+    previous = os.environ.get(env_name)
+    os.environ[env_name] = secret
+    try:
+        # Act
+        finding = _check_provider_auth(
+            _provider_config(f"http://127.0.0.1:{port}", env_name), "/spec.yaml"
+        )
+        wire = json.dumps(finding.to_dict())
+    finally:
+        if previous is None:
+            os.environ.pop(env_name, None)
+        else:
+            os.environ[env_name] = previous
+
+    # Assert
+    assert finding.to_dict()["status"] == "unknown"
+    assert finding.to_dict()["severity"] == "warning"
+    assert finding.blocks_deploy is False
+    assert secret not in wire

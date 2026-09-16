@@ -1,251 +1,408 @@
-"""Build/validation commands: check, validate, build."""
+"""Build and validation commands: check and validate."""
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
-import sys
+from pathlib import Path
 
 import click
+from scitex_dev.status import Verdict
 
 from ..config import load_config, resolve_config, validate_config
-from ._helpers import agent_name_complete, console
+from ._agents_check_result import CheckFeedback, CheckResult, Severity
+from ._helpers import _json_flag, agent_name_complete, console
+
+
+def _finding(
+    code: str,
+    subject: str,
+    verdict: Verdict,
+    severity: Severity,
+    message: str,
+    *,
+    path: str | None,
+    observed: str | None = None,
+    expected: str | None = None,
+    remedy: str | None = None,
+) -> CheckFeedback:
+    return CheckFeedback(
+        code=code,
+        path=path,
+        subject=subject,
+        verdict=verdict,
+        severity=severity,
+        message=message,
+        observed=observed,
+        expected=expected,
+        remedy=remedy,
+    )
+
+
+def collect_check_result(name_or_path: str) -> CheckResult:
+    """Run the preflight and return its sole machine/human result model."""
+    checks: list[CheckFeedback] = []
+    try:
+        config_path = Path(resolve_config(name_or_path)).resolve()
+    except Exception:  # stx-allow: fallback (resolution failures are findings)
+        checks.append(
+            _finding(
+                "spec.resolve",
+                name_or_path,
+                Verdict.NOT_OK,
+                Severity.ERROR,
+                "Error resolving agent spec.",
+                path=None,
+                observed="No readable spec could be resolved from the supplied subject.",
+                expected="An agent name or an existing spec.yaml path.",
+                remedy="Pass a defined agent name or the path to its spec.yaml.",
+            )
+        )
+        return CheckResult.from_checks(subject=name_or_path, path=None, checks=checks)
+
+    path_text = str(config_path)
+    checks.append(
+        _finding(
+            "spec.resolve",
+            name_or_path,
+            Verdict.OK,
+            Severity.INFO,
+            "Agent spec resolved.",
+            path=path_text,
+            observed=path_text,
+            expected="An existing spec.yaml path.",
+        )
+    )
+
+    errors = validate_config(config_path)
+    if errors:
+        checks.append(
+            _finding(
+                "spec.validate",
+                "spec.yaml",
+                Verdict.NOT_OK,
+                Severity.ERROR,
+                "Config validation failed.",
+                path=path_text,
+                observed="\n".join(str(error) for error in errors),
+                expected="A valid, explicit scitex-agent-container/v3 spec.",
+                remedy="Fix the listed schema errors and run this check again.",
+            )
+        )
+        return CheckResult.from_checks(
+            subject=name_or_path, path=path_text, checks=checks
+        )
+
+    checks.append(
+        _finding(
+            "spec.validate",
+            "spec.yaml",
+            Verdict.OK,
+            Severity.INFO,
+            "Config validation passed.",
+            path=path_text,
+            observed="No schema errors.",
+            expected="A valid, explicit scitex-agent-container/v3 spec.",
+        )
+    )
+
+    try:
+        # Style advisories are collected below so both renderers consume the
+        # same result. load_config's default avoids printing that advice.
+        config = load_config(config_path, advise=False)
+    except Exception as exc:  # stx-allow: fallback (load failure is a finding)
+        checks.append(
+            _finding(
+                "spec.load",
+                "spec.yaml",
+                Verdict.NOT_OK,
+                Severity.ERROR,
+                "Error loading validated config.",
+                path=path_text,
+                observed=type(exc).__name__,
+                expected="The validated spec can be loaded as an AgentConfig.",
+                remedy="Inspect the spec and report this loader error if validation passes.",
+            )
+        )
+        return CheckResult.from_checks(
+            subject=name_or_path, path=path_text, checks=checks
+        )
+
+    checks.append(
+        _finding(
+            "spec.load",
+            config.name,
+            Verdict.OK,
+            Severity.INFO,
+            "Config loaded.",
+            path=path_text,
+            observed=f"agent={config.name}; runtime={config.runtime or 'apptainer'}",
+            expected="A loadable AgentConfig.",
+        )
+    )
+
+    checks.extend(_check_startup_prompts(config, path_text))
+    checks.append(_check_backend(path_text))
+    checks.append(_check_python(path_text))
+    checks.extend(_check_bind_targets(config, path_text))
+    checks.append(_check_raw_args(config, path_text))
+    checks.append(_check_host_route(config, path_text))
+    checks.append(_check_provider_auth(config, path_text))
+    return CheckResult.from_checks(subject=config.name, path=path_text, checks=checks)
 
 
 @click.command()
 @click.argument("name_or_path", type=str, shell_complete=agent_name_complete)
-def check(name_or_path: str) -> None:
+@click.pass_context
+def check(ctx: click.Context, name_or_path: str) -> None:
     """Run preflight checks for an agent deployment.
 
-    Validates the YAML spec, then probes runtime dependencies
-    (container backend, python). Accepts either a bare agent name
-    (resolved against the search chain) or an explicit path to
-    ``spec.yaml``.
-
-    \b
-    Example:
-      $ sac agent check orchestrator
-      $ sac agent check ~/.scitex/agent-container/agents/foo/spec.yaml
+    Validates the YAML spec, then probes runtime dependencies, routing, and
+    provider authentication. ``sac --json agents check NAME`` emits one stable
+    JSON object; human output is rendered from that same object.
     """
-    # stx-allow: fallback (reason: config file may not exist or contain invalid YAML; CLI exits with code 1 to signal preflight failure)
-    try:
-        config_path = resolve_config(name_or_path)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error: {exc}[/red]")
-        sys.exit(1)
-
-    errors = validate_config(config_path)
-    if errors:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
-        for error in errors:
-            console.print(f"  [red]- {error}[/red]")
-        sys.exit(1)
-
-    # advise=True: this is THE command that answers "is this spec well-formed?",
-    # so authoring lints (long startup_prompts, ...) belong here and nowhere
-    # else. They used to fire from load_config itself, which meant `agents list`
-    # printed one WARN per offending agent above the table on every run.
-    # stx-allow: fallback (reason: load_config may fail post-validation in rare schema-evolution scenarios; CLI exits cleanly)
-    try:
-        config = load_config(config_path, advise=True)
-    except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
-        console.print(f"[red]Error loading config: {exc}[/red]")
-        sys.exit(1)
-
-    console.print(
-        f"[blue]Checking {config.name} ({config.runtime or 'apptainer'})...[/blue]"
-    )
-
-    all_ok = True
-
-    # ``runtime`` selects the SAC execution path (for example ``tui``); it is
-    # not an executable name. Apptainer is the sole container backend since
-    # the 2026-05-13 backend ripout, including for TUI sessions.
-    backend = "apptainer"
-    backend_bin = shutil.which(backend)
-    if backend_bin:
-        console.print(f"  {backend + ':':30s} [green]OK ({backend_bin})[/green]")
+    result = collect_check_result(name_or_path)
+    if _json_flag(ctx, False):
+        click.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
-        all_ok = False
-        console.print(f"  {backend + ':':30s} [red]FAIL ({backend} not found)[/red]")
+        _render_check_result(result)
+    if not result.ok:
+        ctx.exit(1)
 
-    # Python (used by hooks / pre-start scripts)
-    try:
-        proc = subprocess.run(
-            ["python3", "--version"], capture_output=True, text=True, timeout=5
+
+def _render_check_result(result: CheckResult) -> None:
+    """Render the structured result without recomputing any verdict."""
+    console.print(f"[blue]Checking {result.subject}...[/blue]")
+    colours = {
+        Severity.INFO: "green",
+        Severity.WARNING: "yellow",
+        Severity.ERROR: "red",
+    }
+    labels = {
+        Verdict.OK: "OK",
+        Verdict.NOT_OK: "WARN",
+        Verdict.UNKNOWN: "UNKNOWN",
+    }
+    for item in result.checks:
+        label = "FAIL" if item.blocks_deploy else labels[item.verdict]
+        colour = colours[item.severity]
+        console.print(
+            f"  {item.subject + ':':30s} [{colour}]{label} ({item.message})[/{colour}]"
         )
-        if proc.returncode == 0:
-            console.print(
-                f"  {'python:':30s} [green]OK ({proc.stdout.strip()})[/green]"
-            )
-        else:
-            all_ok = False
-            console.print(f"  {'python:':30s} [red]FAIL[/red]")
-    except (
-        FileNotFoundError
-    ):  # stx-allow: fallback (reason: file may not exist on first use)
-        all_ok = False
-        console.print(f"  {'python:':30s} [red]FAIL (python3 not found)[/red]")
-
-    # D4 — warn (don't fail) on bind targets that mirror host paths.
-    # Container-canonical roots are /srv/, /work/, /opt/, /data/. See
-    # docs/adr/0001-isolation-hardening.md §D4.
-    _warn_host_mirroring_bind_targets(config)
-
-    # raw_args as an APPTAINER ARGV, not merely as YAML. This check said
-    # "Ready to deploy" on a spec whose raw_args carried an env assignment
-    # with no `--env` before it, minutes before that agent failed to start
-    # (2026-08-18). Everything above validates shape and environment; this
-    # is the one that reads raw_args the way apptainer will.
-    if not _check_raw_args(config):
-        all_ok = False
-
-    # `host:` as a ROUTE, not merely a string. Every runtime path already
-    # refuses an unroutable pin; until this call existed the PREFLIGHT was the
-    # one place that said "Ready to deploy" about an agent nobody could start.
-    if not _check_host_route(config):
-        all_ok = False
-
-    # `provider.auth_token_env` as a WORKING KEY, not merely a resolvable
-    # string. The start-time guard is an EMPTINESS test, so a placeholder
-    # passes it and the agent boots into an unbroken run of 401s behind a
-    # green heartbeat (measured 2026-09-07; see _provider_auth_probe). Only
-    # the backend can tell a well-formed string from a working key, so this
-    # is the one check in this command that asks something over the network.
-    if not _check_provider_auth(config):
-        all_ok = False
-
-    if all_ok:
-        console.print("[green]Ready to deploy.[/green]")
+        if item.observed and item.verdict is not Verdict.OK:
+            console.print(f"    Observed: {item.observed}")
+        if item.expected and item.verdict is not Verdict.OK:
+            console.print(f"    Expected: {item.expected}")
+        if item.remedy:
+            console.print(f"    Remedy: {item.remedy}")
+    if result.ok:
+        suffix = " (with warnings)." if result.status == "warning" else "."
+        console.print(f"[green]Ready to deploy{suffix}[/green]")
     else:
         console.print(
             "[red]Preflight checks failed. Fix the issues above before deploying.[/red]"
         )
-        sys.exit(1)
 
 
-def _check_raw_args(config) -> bool:
-    """Report whether ``spec.apptainer.raw_args`` is a well-formed argv.
+def _check_startup_prompts(config, path: str) -> list[CheckFeedback]:
+    """Collect authoring advice without ever copying prompt text."""
+    from ..config import _STARTUP_PROMPT_WARN_CHARS, _STARTUP_PROMPT_WARN_LINES
 
-    FAILS the preflight rather than warning, because the failure it catches
-    is not a deviation the operator might have chosen — a positional in
-    raw_args cannot start the agent at all. Returns True when there is
-    nothing to say, so a spec with no raw_args is unaffected.
-    """
-    from ..runtimes._apptainer_argv_guard import ApptainerArgvError, validate_raw_args
+    findings: list[CheckFeedback] = []
+    for index, prompt in enumerate(getattr(config, "startup_prompts", ()) or ()):
+        text = str(prompt)
+        chars = len(text)
+        lines = text.count("\n") + 1
+        if chars <= _STARTUP_PROMPT_WARN_CHARS and lines <= _STARTUP_PROMPT_WARN_LINES:
+            continue
+        findings.append(
+            _finding(
+                "spec.startup-prompt.length",
+                f"startup_prompts[{index}]",
+                Verdict.NOT_OK,
+                Severity.WARNING,
+                "Startup prompt is long for a per-boot instruction.",
+                path=path,
+                observed=f"{chars} characters; {lines} lines",
+                expected=(
+                    f"At most {_STARTUP_PROMPT_WARN_CHARS} characters and "
+                    f"{_STARTUP_PROMPT_WARN_LINES} lines."
+                ),
+                remedy="Move durable role and workflow prose to CLAUDE.md or skills.",
+            )
+        )
+    return findings
+
+
+def _check_backend(path: str) -> CheckFeedback:
+    binary = shutil.which("apptainer")
+    if binary:
+        return _finding(
+            "runtime.backend",
+            "apptainer",
+            Verdict.OK,
+            Severity.INFO,
+            "Container backend is available.",
+            path=path,
+            observed=binary,
+            expected="apptainer available on PATH.",
+        )
+    return _finding(
+        "runtime.backend",
+        "apptainer",
+        Verdict.NOT_OK,
+        Severity.ERROR,
+        "apptainer not found.",
+        path=path,
+        observed="No apptainer executable on PATH.",
+        expected="apptainer available on PATH.",
+        remedy="Install Apptainer or add its executable directory to PATH.",
+    )
+
+
+def _check_python(path: str) -> CheckFeedback:
+    try:
+        proc = subprocess.run(
+            ["python3", "--version"], capture_output=True, text=True, timeout=5
+        )
+    except FileNotFoundError:
+        return _finding(
+            "runtime.python",
+            "python",
+            Verdict.NOT_OK,
+            Severity.ERROR,
+            "python3 not found.",
+            path=path,
+            observed="No python3 executable on PATH.",
+            expected="python3 --version exits with code 0.",
+            remedy="Install Python 3 or add its executable directory to PATH.",
+        )
+    except subprocess.TimeoutExpired:
+        return _finding(
+            "runtime.python",
+            "python",
+            Verdict.UNKNOWN,
+            Severity.ERROR,
+            "Python probe timed out.",
+            path=path,
+            observed="python3 --version did not finish within 5 seconds.",
+            expected="python3 --version exits with code 0 within 5 seconds.",
+            remedy="Run python3 --version directly and inspect why it blocks.",
+        )
+    if proc.returncode == 0:
+        return _finding(
+            "runtime.python",
+            "python",
+            Verdict.OK,
+            Severity.INFO,
+            "Python is available.",
+            path=path,
+            observed=proc.stdout.strip() or "python3 exited 0",
+            expected="python3 --version exits with code 0.",
+        )
+    return _finding(
+        "runtime.python",
+        "python",
+        Verdict.NOT_OK,
+        Severity.ERROR,
+        "python3 --version failed.",
+        path=path,
+        observed=f"process exit code {proc.returncode}",
+        expected="process exit code 0.",
+        remedy="Run python3 --version directly and repair the Python installation.",
+    )
+
+
+_HOST_MIRRORING_TARGET_PREFIXES = ("/home/", "/Users/", "/root/")
+
+
+def _check_bind_targets(config, path: str) -> list[CheckFeedback]:
+    ap = getattr(config, "apptainer", None)
+    binds = list(getattr(ap, "binds", None) or []) if ap is not None else []
+    findings: list[CheckFeedback] = []
+    for bind in binds:
+        target = _bind_target(str(bind))
+        if target and any(
+            target.startswith(prefix) for prefix in _HOST_MIRRORING_TARGET_PREFIXES
+        ):
+            findings.append(
+                _finding(
+                    "isolation.bind-target",
+                    target,
+                    Verdict.NOT_OK,
+                    Severity.WARNING,
+                    f"Bind target {target} mirrors a host path.",
+                    path=path,
+                    observed=target,
+                    expected="A container-canonical target under /srv, /work, /opt, or /data.",
+                    remedy="Change the container-side bind target unless host mirroring is intentional.",
+                )
+            )
+    if not findings:
+        findings.append(
+            _finding(
+                "isolation.bind-target",
+                "bind targets",
+                Verdict.OK,
+                Severity.INFO,
+                "Bind targets follow the container-canonical convention.",
+                path=path,
+                observed=f"{len(binds)} bind(s) checked",
+                expected="Targets under /srv, /work, /opt, or /data.",
+            )
+        )
+    return findings
+
+
+def _check_raw_args(config, path: str) -> CheckFeedback:
+    from ..runtimes._apptainer_argv_guard import find_missing_value
 
     ap = getattr(config, "apptainer", None)
     raw = list(getattr(ap, "raw_args", None) or []) if ap is not None else []
-    if not raw:
-        console.print(f"  {'raw_args:':30s} [green]OK (none declared)[/green]")
-        return True
-    try:
-        validate_raw_args(raw, agent=getattr(config, "name", None))
-    except ApptainerArgvError as exc:
-        console.print(f"  {'raw_args:':30s} [red]FAIL[/red]")
-        console.print(f"[red]{exc}[/red]")
-        return False
-    console.print(f"  {'raw_args:':30s} [green]OK ({len(raw)} token(s))[/green]")
-    return True
-
-
-def _check_provider_auth(config) -> bool:
-    """Report whether the provider key in ``config`` actually authenticates.
-
-    Thin console wrapper: the verdict logic, its positive control, and the
-    measured incident that motivates it live in
-    :mod:`._provider_auth_probe`.
-
-    FAILS only on EVIDENCE that the key is wrong — an authoritative 401/403,
-    or a key that resolves to nothing. An unreachable backend WARNS, matching
-    :func:`_check_host_route`'s refusal to convict on absent evidence: a
-    gateway that is briefly down must not fail every preflight on the fleet.
-    """
-    from ._provider_auth_probe import (
-        INACTIVE,
-        OK,
-        UNRESOLVED,
-        probe_provider_auth,
+    malformed = find_missing_value(raw)
+    if malformed is None:
+        detail = "none declared" if not raw else f"{len(raw)} token(s) checked"
+        return _finding(
+            "runtime.raw-args",
+            "raw_args",
+            Verdict.OK,
+            Severity.INFO,
+            "Apptainer raw_args are well formed.",
+            path=path,
+            observed=detail,
+            expected="Every value-taking flag is followed by a value.",
+        )
+    index, flag, following = malformed
+    next_description = "end of raw_args" if following is None else "another option"
+    return _finding(
+        "runtime.raw-args",
+        "raw_args",
+        Verdict.NOT_OK,
+        Severity.ERROR,
+        f"Apptainer flag {flag} is missing its required value.",
+        path=path,
+        observed=f"index {index}; followed by {next_description}",
+        expected="Every value-taking flag is followed by a value.",
+        remedy=f"Give {flag} its value or delete the orphan flag.",
     )
 
-    verdict = probe_provider_auth(config)
-    label = "provider key:"
 
-    if verdict.state == INACTIVE:
-        console.print(f"  {label:30s} [green]OK (no provider declared)[/green]")
-        return True
-
-    if verdict.state == OK:
-        console.print(f"  {label:30s} [green]OK ({verdict.detail})[/green]")
-        return True
-
-    if verdict.is_failure:
-        console.print(f"  {label:30s} [red]FAIL[/red]")
-        console.print(f"[red]{verdict.detail}[/red]")
-        # An unresolvable key already stops `start`; a REJECTED one does not,
-        # which is why this check exists. Say which of the two happened.
-        if verdict.state == UNRESOLVED:
-            console.print("[red]  (start would also refuse this spec)[/red]")
-        return False
-
-    console.print(f"  {label:30s} [yellow]WARN ({verdict.detail})[/yellow]")
-    return True
-
-
-def _check_host_route(config) -> bool:
-    """Report whether ``spec.host`` names a machine sac can dispatch to.
-
-    FAILS the preflight rather than warning, for the same reason
-    :func:`_check_raw_args` does: every runtime path already treats an
-    unroutable ``host:`` as fatal, so passing one is not a deviation the
-    operator might have chosen. It is a wrong answer to the only question this
-    command exists to ask.
-
-    MEASURED 2026-09-05. Two live specs pinned ``host: scitex-02`` and
-    ``host: scitex-01``. Both names were retired on 2026-08-12 when the peer
-    table was re-keyed to ``scitex-compute-0N`` (config.yaml records why: the
-    short forms resolve nowhere in DNS). The re-key updated the registry and
-    left those two specs pointing at names that no longer exist::
-
-        sac agents start <agent>
-            -> spec.host is neither this machine nor a registered peer
-        agent_spawn <agent>
-            -> ssh: Could not resolve hostname scitex-02 (rc=255)
-        sac agents check <agent>
-            -> exit 0, "Ready to deploy."          <-- the bug this closes
-
-    Both runtime paths failed correctly and loudly for two months. Only the
-    preflight was green, so an agent that COULD NOT start read as one that
-    simply had not. A peer's card waited on a review from one of them for two
-    months and was nearly closed as "the agent did not respond" rather than
-    "the agent could not be started" -- two very different records.
-
-    NO REACHABILITY PROBE, deliberately. The resolver is called without an
-    oracle, so a registered peer that is merely DOWN stays UNKNOWN, and UNKNOWN
-    never rejects (see :mod:`.lifecycle._host_chain`). This command answers "is
-    this spec well-formed?"; "is that machine up right now?" is
-    ``sac host probe``'s question. Folding them would cost an ssh round-trip
-    per check and fail preflights on a transient blip -- turning a spec
-    validator into a fleet monitor.
-
-    Degrades to WARN when the peer table or this machine's own hostname cannot
-    be resolved. With no registry to judge against there is no EVIDENCE of a
-    bad name, and rejecting on absent evidence is the exact UNKNOWN-collapse
-    the routing modules forbid.
-    """
+def _check_host_route(config, path: str) -> CheckFeedback:
     from .lifecycle._host_chain import UNROUTABLE, chain_hosts
 
     spec_host = getattr(getattr(config, "hosts_spec", None), "host", None)
     if not chain_hosts(spec_host):
-        console.print(
-            f"  {'host:':30s} [green]OK (unpinned - starts on this machine)"
-            f"[/green]"
+        return _finding(
+            "routing.host",
+            "host",
+            Verdict.OK,
+            Severity.INFO,
+            "Agent is unpinned and starts on this machine.",
+            path=path,
+            observed="No host pin.",
+            expected="No pin, this machine, or a registered peer.",
         )
-        return True
-
-    # stx-allow: fallback (reason: an unloadable peer table or unresolvable
-    # local hostname is absence of evidence, not evidence of a bad pin; the
-    # check degrades to a warning rather than rejecting a spec it cannot judge)
     try:
         from .._state.host_config import load as _load_host_config
         from ..config._host import resolve_hostname
@@ -255,93 +412,127 @@ def _check_host_route(config) -> bool:
         current_host = resolve_hostname()
         local_names = _local_host_names(current_host)
     except Exception as exc:
-        console.print(
-            f"  {'host:':30s} [yellow]WARN (cannot verify pin: {exc})[/yellow]"
+        return _finding(
+            "routing.host",
+            str(spec_host),
+            Verdict.UNKNOWN,
+            Severity.WARNING,
+            "Host pin could not be verified.",
+            path=path,
+            observed=f"Host registry unavailable ({type(exc).__name__}).",
+            expected="The pin names this machine or a registered peer.",
+            remedy="Inspect `sac host list` and the local hostname, then rerun the check.",
         )
-        return True
 
-    from .lifecycle._host_routing import (
-        format_route_error,
-        resolve_spec_host_route,
-    )
+    from .lifecycle._host_routing import resolve_spec_host_route
 
     route = resolve_spec_host_route(
         spec_host, current_host, peers, local_names=local_names
     )
     if route.kind == UNROUTABLE and not peers:
-        # An EMPTY peer table cannot convict a name. On a machine that has
-        # never been given a `peers:` section every non-local pin would
-        # otherwise fail here, turning \"this fleet is not configured yet\"
-        # into \"your spec is wrong\" -- the misattributed-error shape this
-        # whole check exists to remove.
-        console.print(
-            f"  {'host:':30s} [yellow]WARN (not this machine, and no peers "
-            f"are registered to check it against)[/yellow]"
+        return _finding(
+            "routing.host",
+            str(spec_host),
+            Verdict.UNKNOWN,
+            Severity.WARNING,
+            "Host pin cannot be judged without registered peers.",
+            path=path,
+            observed="The pin is non-local and the peer table is empty.",
+            expected="The pin names this machine or a registered peer.",
+            remedy="Register the fleet peers or verify this pin on the target host.",
         )
-        return True
-
     if route.kind == UNROUTABLE:
-        console.print(f"  {'host:':30s} [red]FAIL[/red]")
-        console.print(
-            "[red]"
-            + format_route_error(
-                config.name,
-                spec_host,
-                route,
-                peers,
-                verb="start",
-                current_host=current_host or "",
-                local_names=local_names,
-            )
-            + "[/red]"
+        return _finding(
+            "routing.host",
+            str(spec_host),
+            Verdict.NOT_OK,
+            Severity.ERROR,
+            "Host pin is not routable.",
+            path=path,
+            observed=f"{spec_host} is neither local nor a registered peer.",
+            expected="The pin names this machine or a registered peer.",
+            remedy="Correct spec.host or register the intended peer.",
         )
-        return False
-
     where = "this machine" if route.kind == "local" else f"peer {route.peer}"
-    console.print(
-        f"  {'host:':30s} [green]OK ({route.host} - {where})[/green]"
+    return _finding(
+        "routing.host",
+        str(spec_host),
+        Verdict.OK,
+        Severity.INFO,
+        "Host pin is routable.",
+        path=path,
+        observed=f"{route.host} resolves to {where}.",
+        expected="The pin names this machine or a registered peer.",
     )
-    return True
 
 
-# Bind targets that start with these prefixes mirror host home / user
-# directories. ADR D4: container-canonical targets must live under
-# /srv/, /work/, /opt/, /data/.
-_HOST_MIRRORING_TARGET_PREFIXES = ("/home/", "/Users/", "/root/")
+def _check_provider_auth(config, path: str) -> CheckFeedback:
+    from ._provider_auth_probe import (
+        INACTIVE,
+        OK,
+        REJECTED,
+        UNRESOLVED,
+        probe_provider_auth,
+    )
 
-
-def _warn_host_mirroring_bind_targets(config) -> None:
-    """Emit a non-fatal warning for each bind whose target mirrors a host path.
-
-    See ``docs/adr/0001-isolation-hardening.md`` §D4. The
-    operator may have HPC reasons to keep mirroring (e.g. cross-host
-    path stability for shared filesystems) so this never fails the
-    check — just makes the deviation visible.
-    """
-    ap = getattr(config, "apptainer", None)
-    if ap is None:
-        return
-    binds = list(getattr(ap, "binds", None) or [])
-    for bind in binds:
-        target = _bind_target(str(bind))
-        if not target:
-            continue
-        if any(target.startswith(p) for p in _HOST_MIRRORING_TARGET_PREFIXES):
-            console.print(
-                f"[yellow]WARN  {config.name}: bind target {target} mirrors a "
-                f"host path; container-canonical convention is /srv/, /work/, "
-                f"/opt/, /data/.\n       See "
-                f"docs/adr/0001-isolation-hardening.md (D4).[/yellow]"
-            )
+    verdict = probe_provider_auth(config)
+    provider = getattr(getattr(config, "claude", None), "provider", None)
+    env_name = str(getattr(provider, "auth_token_env", "") or "provider credential")
+    if verdict.state == INACTIVE:
+        return _finding(
+            "provider.auth",
+            "provider key",
+            Verdict.OK,
+            Severity.INFO,
+            "No provider override is declared.",
+            path=path,
+            observed="Provider authentication probe is inactive.",
+            expected="No override, or a working configured credential.",
+        )
+    if verdict.state == OK:
+        return _finding(
+            "provider.auth",
+            env_name,
+            Verdict.OK,
+            Severity.INFO,
+            "Provider credential was accepted.",
+            path=path,
+            observed=f"HTTP {verdict.status_code}; invalid control credential rejected.",
+            expected="The configured credential is accepted and the control is rejected.",
+        )
+    if verdict.state in (REJECTED, UNRESOLVED):
+        observed = (
+            f"Provider returned HTTP {verdict.status_code}."
+            if verdict.state == REJECTED
+            else "The configured environment variable resolved to no credential."
+        )
+        return _finding(
+            "provider.auth",
+            env_name,
+            Verdict.NOT_OK,
+            Severity.ERROR,
+            "Provider credential failed authentication.",
+            path=path,
+            observed=observed,
+            expected="A non-empty credential accepted by the configured provider.",
+            remedy=f"Set {env_name} to the credential used by this provider and rerun the check.",
+        )
+    # An unreachable or indiscriminate provider is absence of a reliable
+    # verdict, not evidence against the key. Do not serialize URLs or keys.
+    return _finding(
+        "provider.auth",
+        env_name,
+        Verdict.UNKNOWN,
+        Severity.WARNING,
+        "Provider authentication could not be verified.",
+        path=path,
+        observed=f"probe state={verdict.state}",
+        expected="The backend accepts the configured credential and rejects a control.",
+        remedy="Check provider reachability and authentication enforcement, then rerun.",
+    )
 
 
 def _bind_target(bind: str) -> str:
-    """Return the container-side target of a ``host:target[:mode]`` bind string.
-
-    Apptainer accepts both ``host:target`` and ``host:target:mode``; we
-    parse with the same heuristic the runtime applies (the trailing
-    token is a mode only if it's exactly ``ro`` or ``rw``).
-    """
     parts = bind.split(":")
     if len(parts) < 2:
         return ""
@@ -353,33 +544,20 @@ def _bind_target(bind: str) -> str:
 @click.command()
 @click.argument("name_or_path", type=str)
 def validate(name_or_path: str) -> None:
-    """Validate a YAML config file.
-
-    Accepts either a bare agent name (resolved against the search chain)
-    or an explicit path to ``spec.yaml``.
-
-    \b
-    Example:
-      $ sac agent validate orchestrator
-      $ sac agent validate ~/.scitex/agent-container/agents/foo/spec.yaml
-    """
+    """Validate a YAML config file."""
     try:
         config_path = resolve_config(name_or_path)
-    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+    except Exception as exc:  # stx-allow: fallback (human-only legacy command)
         console.print(f"[red]Error: {exc}[/red]")
-        sys.exit(1)
+        raise click.exceptions.Exit(1) from None
     errors = validate_config(config_path)
     if not errors:
         console.print(f"[green]Config is valid: {config_path}[/green]")
-    else:
-        console.print(f"[red]Config validation failed: {config_path}[/red]")
-        for error in errors:
-            console.print(f"  [red]- {error}[/red]")
-        sys.exit(1)
+        return
+    console.print(f"[red]Config validation failed: {config_path}[/red]")
+    for error in errors:
+        console.print(f"  [red]- {error}[/red]")
+    raise click.exceptions.Exit(1)
 
 
-# NOTE: the legacy `sac build-image` command lived here and supported
-# Docker + Apptainer side-by-side. Both build paths have been removed
-# in the 2026-05-13 docker/podman ripout — the canonical builder is
-# now `sac image build` (in `image_group.py`), which delegates to
-# `scitex-container` and emits Apptainer SIFs only.
+__all__ = ["check", "collect_check_result", "validate"]
