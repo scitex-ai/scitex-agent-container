@@ -50,6 +50,9 @@ this harness special.
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from ..config._types import AgentConfig
@@ -72,6 +75,7 @@ __all__ = [
 
 #: The env var the ``codex`` binary reads its config+creds directory from.
 CODEX_HOME_ENV = "CODEX_HOME"
+_ACCOUNT_ALIAS = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 #: Prefix of the path INSIDE the container the host's codex home is bound
 #: to: ``/tmp/sac-<name>-codex-home``. Under ``/tmp`` — which exists in the
@@ -178,6 +182,103 @@ def resolve_codex_home(state_dir: Path | None = None) -> Path:
     return Path.home() / ".codex"
 
 
+def sync_subscription_auth(config: AgentConfig, codex_home: Path) -> Path | None:
+    """Copy the explicitly selected OpenAI account into private CODEX_HOME."""
+    provider = str(getattr(config, "subscription_provider", "") or "").strip()
+    if not provider:
+        return None
+    qualified = str(getattr(config, "subscription_account", "") or "").strip()
+    prefix, separator, account = qualified.partition(":")
+    if (
+        provider != "openai"
+        or separator != ":"
+        or prefix != provider
+        or not _ACCOUNT_ALIAS.fullmatch(account)
+    ):
+        raise ProviderEnvError(
+            "Codex subscription must explicitly name provider 'openai' and a "
+            "qualified openai:<slug> account collected by "
+            "`sac accounts sync-openai`"
+        )
+    source = (
+        Path.home()
+        / ".scitex"
+        / "agent-container"
+        / "accounts"
+        / "openai"
+        / account
+        / "auth.json"
+    )
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
+        raise ProviderEnvError(
+            f"selected OpenAI account {qualified!r} is unavailable at {source}; "
+            "run `sac accounts sync-openai --name <slug>` first"
+        ) from exc
+    from .._account.codex_account import _atomic_write
+
+    destination = codex_home / "auth.json"
+    _atomic_write(destination, raw, 0o600)
+    return destination
+
+
+def preflight_subscription(
+    config: AgentConfig,
+    state_dir: Path,
+    *,
+    which=shutil.which,
+    run=subprocess.run,
+) -> None:
+    """Authenticate the declared native Codex model before replacing a TUI."""
+    if str(getattr(config, "subscription_provider", "") or "") != "openai":
+        return
+    model = str(getattr(getattr(config, "claude", None), "model", "") or "").strip()
+    if not model:
+        raise ProviderEnvError("Codex subscription engine must declare an exact model")
+    executable = which("codex")
+    if not executable:
+        raise ProviderEnvError(
+            "native Codex subscription preflight requires `codex` on the host PATH"
+        )
+    codex_home = resolve_codex_home(state_dir)
+    codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    sync_subscription_auth(config, codex_home)
+    env = os.environ.copy()
+    env[CODEX_HOME_ENV] = str(codex_home)
+    result = run(
+        [
+            executable,
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "-C",
+            str(getattr(config, "expanded_workdir", "") or config.workdir or "/tmp"),
+            "-s",
+            "read-only",
+            "-m",
+            model,
+            "Reply with exactly OK. Do not call tools.",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        timeout=90,
+        check=False,
+    )
+    output_lines = result.stdout.strip().splitlines()
+    if result.returncode != 0 or not output_lines or output_lines[-1] != "OK":
+        detail = (result.stderr or result.stdout).strip().splitlines()[-1:]
+        suffix = detail[0][:240] if detail else "no diagnostic"
+        raise ProviderEnvError(
+            f"native Codex subscription preflight failed for model {model!r}: {suffix}"
+        )
+
+
 def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
     """Render the ``--bind`` / ``--env`` flags for a ``codex``-harness agent.
 
@@ -226,6 +327,7 @@ def codex_env_flags(config: AgentConfig, state_dir: Path) -> list[str]:
     # This is the directory codex itself would create on first run; sac
     # creates it, private to the user, so a fresh host starts like a used one.
     codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    sync_subscription_auth(config, codex_home)
     inside = container_codex_home(config.name)
     argv: list[str] = [
         "--bind",

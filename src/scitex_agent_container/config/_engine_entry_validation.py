@@ -61,6 +61,37 @@ def validate_engine_entry(key: str, raw: object, *, namespace: str) -> list[str]
             for msg in validate_provider(raw.get("provider"))
         ]
 
+    subscription = raw.get("subscription")
+    if subscription is not None:
+        if not isinstance(subscription, Mapping):
+            errors.append(f"{path}.subscription must be a mapping.")
+        else:
+            unknown_subscription = sorted(
+                set(map(str, subscription)) - {"provider", "account"}
+            )
+            if unknown_subscription:
+                errors.append(
+                    f"{path}.subscription has unknown field(s): "
+                    f"{', '.join(unknown_subscription)}."
+                )
+            if subscription.get("provider") != "openai":
+                errors.append(f"{path}.subscription.provider must be 'openai'.")
+            account = subscription.get("account")
+            if (
+                not isinstance(account, str)
+                or not account.strip().startswith("openai:")
+                or len(account.strip()) == len("openai:")
+            ):
+                errors.append(
+                    f"{path}.subscription.account must name a collected, qualified "
+                    "OpenAI account as openai:<slug>."
+                )
+        if "provider" in raw:
+            errors.append(
+                f"{path} cannot declare both provider and subscription; choose "
+                "an API endpoint or one collected subscription account."
+            )
+
     default = raw.get("default")
     if default is not None and not isinstance(default, bool):
         errors.append(

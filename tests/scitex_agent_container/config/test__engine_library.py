@@ -60,6 +60,30 @@ engines:
     max_context_tokens: 1048576
 """
 
+
+def test_codex_subscription_engine_is_typed_and_honourable():
+    # Arrange
+    spec = {
+        "engines": {
+            "gpt-sol": {
+                "model": "gpt-5.6-sol",
+                "subscription": {
+                    "provider": "openai",
+                    "account": "openai:person-example-com",
+                },
+            }
+        }
+    }
+    # Act
+    engine = parse_engines(spec)["gpt-sol"]
+    verdict = combination_verdict(engine, "codex")
+    # Assert
+    assert (
+        engine.subscription_provider,
+        engine.subscription_account,
+        verdict.verdict,
+    ) == ("openai", "openai:person-example-com", "honourable")
+
 QWEN_DEFAULT_LIBRARY = FLEET_LIBRARY.replace("engine: claude-opus", "engine: qwen38-27b")
 
 # --- the three declared cases, verbatim from the design ---------------------
