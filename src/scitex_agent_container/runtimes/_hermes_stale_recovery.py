@@ -39,7 +39,8 @@ MODULE_PATH = "scitex_agent_container.runtimes._hermes_stale_recovery"
 POLL_SECONDS = 30.0
 PROBE_TIMEOUT_SECONDS = 3.0
 _STALE_RE = re.compile(
-    r"Provider has been unresponsive(?:[^\n]*?)for\s+(\d+)\s+consecutive stale attempts",
+    r"Provider has been unresponsive(?:(?!Provider has been unresponsive)[\s\S])*?"
+    r"for\s+(\d+)\s+consecutive stale(?:\s|[│┃])+attempts",
     re.IGNORECASE,
 )
 _STOP_EVENT = threading.Event()

@@ -54,6 +54,18 @@ def test_only_the_exact_hermes_breaker_error_is_a_latch():
     assert observed[0] is None and observed[1][0] == 5
 
 
+def test_terminal_wrapped_hermes_breaker_error_is_a_latch():
+    # Arrange
+    pane = (
+        "Provider has been unresponsive (no response received) for 5 consecutive stale       │\n"
+        "    attempts — aborting this call to avoid an indefinite stall."
+    )
+    # Act
+    observed = recovery.stale_latch(pane)
+    # Assert
+    assert observed is not None and observed[0] == 5
+
+
 def test_health_requires_free_capacity_when_gateway_exposes_admission(tmp_path):
     # Arrange
     config = _config(tmp_path)
