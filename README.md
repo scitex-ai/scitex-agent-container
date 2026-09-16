@@ -317,6 +317,7 @@ sac fleet sync                            # cross-host spec audit (fails loud on
 
 # Diagnostics / introspection
 sac doctor [--fleet]                      # diagnose agent-spec source drift
+sac agents start <name>                   # fail-closed source authority (docs/spec-authority.md)
 sac doctor --pollers                      # >1 live Telegram poller per bot token?
 sac subagent get-state                    # Claude Code Agent-tool subagent state
 sac mcp list-tools                        # MCP introspection
@@ -340,6 +341,10 @@ sac --help-recursive                      # full subcommand tree
 ```
 
 </details>
+
+Lifecycle starts enforce [fail-closed spec authority](docs/spec-authority.md)
+in core code: a clean/current `develop` main checkout or an exactly identified
+immutable detached snapshot, with no stale-source bypass.
 
 <details>
 <summary><strong>Python ⭐⭐</strong></summary>

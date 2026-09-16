@@ -202,9 +202,8 @@ def check_target_start(facts: TargetFacts, to_host: str, agent: str) -> Check:
                 if drift.dirty
                 else ""
             )
-            + ". The named override is --allow-stale-spec / SAC_ALLOW_STALE_SPEC=1, "
-            "which starts the agent from a spec that may be out of date; prefer the "
-            "pull. This refusal happens at boot on the target, which is AFTER the "
+            + ". There is no launch bypass: this refusal happens at boot on the "
+            "target, which is AFTER the "
             "agent has been stopped on the source — that is why it is asked here"
         ),
     )

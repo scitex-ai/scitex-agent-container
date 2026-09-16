@@ -7,8 +7,6 @@ Extracted from ``_start.py`` (split for the 512-line module limit).
 
 from __future__ import annotations
 
-import logging
-import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -73,38 +71,13 @@ def _verify_real_liveness(
 
 
 def _resolve_strict_drift(strict_drift: bool | None) -> bool:
-    """Resolve effective strict-drift mode. STRICT IS NOW THE DEFAULT.
+    """Return the invariant lifecycle policy: authority checks are strict.
 
-    Operator ruling 2026-08-10: a spec that is wrong refuses to start, and the
-    way past it is an explicitly NAMED override rather than a blanket force.
-    So the precedence is:
-
-      1. ``strict_drift=True/False`` — the caller said so outright
-         (``--strict-drift`` forces strict; ``--allow-stale-spec`` passes
-         ``False``). An explicit argument always wins.
-      2. ``SAC_ALLOW_STALE_SPEC`` truthy → lenient. The named env override.
-      3. ``SAC_STRICT_DRIFT`` — the legacy opt-in knob, still honoured in
-         BOTH directions so an existing ``SAC_STRICT_DRIFT=0`` in someone's
-         environment keeps meaning "do not block me" rather than silently
-         becoming a no-op the day the default flipped.
-      4. otherwise STRICT.
-
-    Read through the sac env helper so either env prefix works. Note that
-    "strict" only ever refuses a STALE spec (BEHIND / DIVERGED) — AHEAD,
-    NOT_A_REPO and UNREACHABLE still start. See ``_drift._local``.
+    The argument remains temporarily for Python-call compatibility.  Neither
+    ``False`` nor legacy environment variables weaken the authority boundary;
+    acceptable detached snapshots are decided by immutable identity policy.
     """
-    if strict_drift is not None:
-        return strict_drift
-    from .._drift._local import ALLOW_STALE_ENV
-    from .._env import getenv as _sac_env
-
-    truthy = ("1", "true", "yes", "on")
-    allow = (_sac_env(ALLOW_STALE_ENV.removeprefix("SAC_"), "") or "").strip().lower()
-    if allow in truthy:
-        return False
-    legacy = (_sac_env("STRICT_DRIFT", "") or "").strip().lower()
-    if legacy:
-        return legacy in truthy
+    del strict_drift
     return True
 
 
@@ -459,38 +432,34 @@ def _rotate_to_healthy_account(
 def _check_spec_source_drift_at_launch(
     config_path: str, agent_name: str, strict_drift: bool | None
 ) -> None:
-    """Run the launch-time drift check; REFUSE on a stale spec by default.
+    """Prove the spec's authority identity before any runtime side effect.
 
-    Fully guarded: the underlying check never raises except the
-    deliberate strict-mode :class:`SpecSourceDriftError`. We let that
-    propagate (the CLI / caller turns it into a non-zero exit); any
-    other unexpected failure here is swallowed so a launch is never
-    crashed by the drift guard.
-
-    When the refusal was OVERRIDDEN and the spec really is stale, that fact is
-    logged at ERROR naming the condition and the agent. A silent override is
-    just a slower version of the warning nobody read.
+    This is intentionally fail-closed. Unknown sources, probe failures, dirty
+    repositories, non-develop main checkouts, linked feature worktrees and all
+    live-branch drift refuse the launch. The only non-current form accepted is
+    an immutable detached ``sac-authority`` snapshot validated by exact source,
+    commit and spec-blob identity.
     """
-    from .._drift import SpecSourceDriftError, warn_if_spec_source_drifted
-    from .._drift._local import ALLOW_STALE_ENV, ALLOW_STALE_FLAG
+    from .._drift._authority import SpecAuthorityError, validate_spec_authority
 
-    strict = _resolve_strict_drift(strict_drift)
+    _resolve_strict_drift(strict_drift)  # compatibility input; never a bypass
     try:
-        status = warn_if_spec_source_drifted(
-            config_path, agent=agent_name, strict=strict
+        validate_spec_authority(config_path)
+    except SpecAuthorityError as exc:
+        import scitex_logging
+
+        scitex_logging.getLogger(__name__).error(
+            "spec authority refused launch for agent %r: %s", agent_name, exc
         )
-        if not strict and status.is_stale:
-            logging.getLogger(__name__).error(
-                "sac-drift BYPASSED for agent %r: the spec source is STALE (%s) "
-                "and the start was allowed anyway by %s / %s.",
-                agent_name,
-                status.summary(),
-                ALLOW_STALE_FLAG,
-                ALLOW_STALE_ENV,
-            )
-    except SpecSourceDriftError:
-        # Deliberate strict-mode block — propagate so the caller exits
-        # non-zero. This is the ONE thing this guard is allowed to raise.
         raise
-    except Exception:  # stx-allow: fallback (reason: the drift guard must NEVER crash a launch; any unexpected error degrades to "no check ran" and the agent proceeds)
-        traceback.print_exc()
+    except Exception as exc:
+        import scitex_logging
+
+        wrapped = SpecAuthorityError(
+            f"spec authority validation failed unexpectedly: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        scitex_logging.getLogger(__name__).error(
+            "spec authority refused launch for agent %r: %s", agent_name, wrapped
+        )
+        raise wrapped from exc

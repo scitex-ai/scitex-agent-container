@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import click
 
-from scitex_agent_container._drift._local import ALLOW_STALE_ENV
 from scitex_agent_container._lifecycle._layers_preflight import ALLOW_ENV
 from scitex_agent_container._lifecycle._start_preflight import _resolve_strict_drift
 from scitex_agent_container.cli_pkg.lifecycle._start_gate_options import (
@@ -74,17 +73,6 @@ class TestOverridesSetTheirEnvVar:
     """Both overrides travel as env vars so the parallel path — one SUBPROCESS
     per agent — inherits them. A local variable would not survive that."""
 
-    def test_allow_stale_callback_sets_its_env_var(self, env_save_restore):
-        # Arrange
-        env_save_restore.delete(ALLOW_STALE_ENV)
-        callback = _set_env_when_given(ALLOW_STALE_ENV)
-        # Act
-        callback(None, None, True)
-        # Assert
-        import os
-
-        assert os.environ[ALLOW_STALE_ENV] == "1"
-
     def test_allow_layers_callback_sets_its_env_var(self, env_save_restore):
         # Arrange
         env_save_restore.delete(ALLOW_ENV)
@@ -99,14 +87,14 @@ class TestOverridesSetTheirEnvVar:
     def test_absent_flag_leaves_an_exported_env_var_alone(self, env_save_restore):
         # Arrange — `SAC_ALLOW_STALE_SPEC=1 sac agents start x` must behave the
         # same as the export two lines earlier in a shell script.
-        env_save_restore.set(ALLOW_STALE_ENV, "1")
-        callback = _set_env_when_given(ALLOW_STALE_ENV)
+        env_save_restore.set(ALLOW_ENV, "1")
+        callback = _set_env_when_given(ALLOW_ENV)
         # Act
         callback(None, None, False)
         # Assert
         import os
 
-        assert os.environ[ALLOW_STALE_ENV] == "1"
+        assert os.environ[ALLOW_ENV] == "1"
 
 
 class TestFlagsAreAttached:
@@ -128,13 +116,13 @@ class TestFlagsAreAttached:
         # Assert
         assert "strict_drift" in names
 
-    def test_decorator_attaches_the_allow_stale_flag(self):
+    def test_decorator_has_no_allow_stale_flag(self):
         # Arrange
         decorated = spec_gate_options(lambda **kw: None)
         # Act
         flags = [opt for p in _params(decorated).values() for opt in p.opts]
         # Assert
-        assert "--allow-stale-spec" in flags
+        assert "--allow-stale-spec" not in flags
 
     def test_decorator_attaches_the_allow_layers_flag(self):
         # Arrange
