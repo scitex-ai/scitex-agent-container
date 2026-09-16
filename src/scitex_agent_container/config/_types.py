@@ -27,6 +27,7 @@ from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
 # ``from ...config._types import ProviderSpec`` is an existing import path.
 from ._provider_types import ProviderSpec  # noqa: E402,F401
 from ._residency_types import DEFAULT_AGENT_RESIDENCY, AgentResidency
+from ._startup_spec import StartupCommand, StartupSpec
 from ._to_home_spec import ToHomeSpec
 
 
@@ -257,12 +258,6 @@ class HookSpec:
 
 
 @dataclass
-class StartupCommand:
-    delay: int = 0  # seconds after startup
-    command: str = ""
-
-
-@dataclass
 class AgentConfig:
     """Parsed agent configuration from a YAML definition file."""
 
@@ -365,6 +360,7 @@ class AgentConfig:
     # (§3). startup_commands are SHELL commands run BEFORE claude starts;
     # startup_prompts are TEXT fed to claude as the first user message(s).
     startup_prompts: list[str] = field(default_factory=list)
+    startup: StartupSpec | None = None
     # Opt-OUT switches (No-Surprise: see what an agent gets via `sac agents
     # explain`, then turn specific items off). Each entry is a substring matched
     # against a materialized hook COMMAND (e.g. "report_to_lead_on_stop" drops

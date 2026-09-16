@@ -58,18 +58,26 @@ _COMPLETE_SPEC = _complete_spec()
 
 
 def _raw_with_startup(cmds: list) -> dict:
-    """A complete, valid v3 spec whose only variable is ``startup_commands``."""
+    """A complete, valid v3 spec whose only variable is startup commands."""
     import copy
 
     raw = copy.deepcopy(_COMPLETE_SPEC)
-    raw["spec"]["startup_commands"] = cmds
+    raw["spec"]["startup"]["commands"]["entries"] = [
+        {
+            "run": item.get("command", ""),
+            "delay_seconds": item.get("delay", 0),
+        }
+        if isinstance(item, dict)
+        else item
+        for item in cmds
+    ]
     return raw
 
 
 def _startup_errors_via_validate_raw(cmds: list) -> list[str]:
     """Errors from the REAL validator, narrowed to startup_commands ones."""
     errors = validate_raw(_raw_with_startup(cmds), path="<test>")
-    return [e for e in errors if "startup_commands" in e]
+    return [e for e in errors if "startup.commands" in e]
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +174,14 @@ _REJECTED_COMMANDS = [
 ]
 
 
+def _commands_spec(entries: object) -> dict:
+    return {"startup": {"commands": {"entries": entries}}}
+
+
 @pytest.mark.parametrize("command", _REJECTED_COMMANDS)
 def test_recursive_force_variable_is_rejected(command: str) -> None:
     # Arrange
-    spec = {"startup_commands": [{"command": command}]}
+    spec = _commands_spec([{"run": command, "delay_seconds": 0}])
     # Act
     errors = validate_startup_commands(spec)
     # Assert
@@ -196,7 +208,7 @@ _ALLOWED_COMMANDS = [
 @pytest.mark.parametrize("command", _ALLOWED_COMMANDS)
 def test_safe_commands_are_not_flagged(command: str) -> None:
     # Arrange
-    spec = {"startup_commands": [{"command": command}]}
+    spec = _commands_spec([{"run": command, "delay_seconds": 0}])
     # Act
     errors = validate_startup_commands(spec)
     # Assert
@@ -208,7 +220,7 @@ def test_safe_commands_are_not_flagged(command: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_startup_commands_yields_no_error() -> None:
+def test_missing_startup_yields_no_error() -> None:
     # Arrange
     spec: dict = {}
     # Act
@@ -217,9 +229,9 @@ def test_missing_startup_commands_yields_no_error() -> None:
     assert errors == []
 
 
-def test_non_list_startup_commands_yields_no_error() -> None:
+def test_non_mapping_startup_commands_yields_no_error() -> None:
     # Arrange — wrong shape; downstream validators own the type error.
-    spec = {"startup_commands": {"command": "rm -rf $X"}}
+    spec = {"startup": {"commands": "rm -rf $X"}}
     # Act
     errors = validate_startup_commands(spec)
     # Assert
@@ -228,7 +240,7 @@ def test_non_list_startup_commands_yields_no_error() -> None:
 
 def test_non_dict_entry_is_skipped() -> None:
     # Arrange — a bare-string entry (parser drops it anyway).
-    spec = {"startup_commands": ["rm -rf $X"]}
+    spec = _commands_spec(["rm -rf $X"])
     # Act
     errors = validate_startup_commands(spec)
     # Assert
@@ -237,7 +249,7 @@ def test_non_dict_entry_is_skipped() -> None:
 
 def test_non_string_command_is_skipped() -> None:
     # Arrange
-    spec = {"startup_commands": [{"command": 42}]}
+    spec = _commands_spec([{"run": 42, "delay_seconds": 0}])
     # Act
     errors = validate_startup_commands(spec)
     # Assert
@@ -246,13 +258,13 @@ def test_non_string_command_is_skipped() -> None:
 
 def test_error_names_the_entry_index() -> None:
     # Arrange — first entry OK, second entry is the landmine; index pins 1.
-    spec = {
-        "startup_commands": [
-            {"command": "echo starting"},
-            {"command": "rm -rf $HOME/proj"},
+    spec = _commands_spec(
+        [
+            {"run": "echo starting", "delay_seconds": 0},
+            {"run": "rm -rf $HOME/proj", "delay_seconds": 0},
         ]
-    }
+    )
     # Act
     errors = validate_startup_commands(spec)
     # Assert
-    assert "startup_commands[1]" in errors[0]
+    assert "startup.commands.entries[1]" in errors[0]

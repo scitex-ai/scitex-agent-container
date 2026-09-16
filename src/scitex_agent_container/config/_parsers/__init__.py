@@ -1,9 +1,7 @@
 """Shared spec parsers used by both v1 and v2 config loaders.
 
-Thin re-export shim so ``from ..config._parsers import parse_*`` keeps
-working unchanged. One parser per file under this package; cross-cutting
-constants and helpers (HOOK_KEYS, MODEL_DISPLAY_NAMES, get_nested,
-interpolate_metadata, _parse_command_list) live in ``_helpers.py``.
+Thin re-export shim for the section parsers. Cross-cutting constants and
+helpers live in ``_helpers.py``.
 """
 
 from __future__ import annotations
@@ -22,19 +20,17 @@ from ._helpers import (
     HOOK_KEYS,
     MODEL_DISPLAY_NAMES,
     MODEL_ENV_KEY,
-    _parse_command_list,
     get_nested,
     interpolate_metadata,
     resolve_model_surface,
 )
 from ._hooks import parse_hooks
-from ._hosts import _VALID_SCHEDULING_MODES, parse_hosts_spec, parse_scheduling
+from ._hosts import parse_hosts_spec, parse_scheduling
 from ._listen import parse_listen
 from ._mcp import interpolate_mcp_servers
 from ._proxy import parse_proxy
 from ._restart import parse_restart
 from ._skills import parse_skills
-from ._startup import parse_startup_commands
 from ._watchdog import parse_watchdog
 
 __all__ = [
@@ -62,7 +58,6 @@ __all__ = [
     "parse_restart",
     "parse_scheduling",
     "parse_skills",
-    "parse_startup_commands",
     "parse_watchdog",
     "resolve_model_surface",
 ]

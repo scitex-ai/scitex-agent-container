@@ -16,17 +16,6 @@ from ._host import (
     resolve_hostname,
     substitute_hostnames,
 )
-
-# The two defaults ``load_v3`` injects into every agent — the guarded
-# direnv-allow startup command and the generic boot kick — live in the
-# sibling ``_loader_startup_defaults`` module (extracted when this
-# orchestrator hit the per-file line cap). Re-imported here so every
-# existing consumer keeps its ``config._loaders`` import path.
-from ._loader_startup_defaults import (
-    DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
-    DEFAULT_STARTUP_PROMPT,
-    _with_default_direnv_allow,
-)
 from ._parsers import (
     MODEL_ENV_KEY,
     interpolate_mcp_servers,
@@ -46,11 +35,11 @@ from ._parsers import (
     parse_proxy,
     parse_restart,
     parse_skills,
-    parse_startup_commands,
     parse_watchdog,
     resolve_model_surface,
 )
 from ._residency_types import resolve_spec_residency
+from ._startup_spec import parse_startup
 from ._to_home_spec import parse_to_home
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
@@ -361,11 +350,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
-    startup_prompts_raw = spec.get("startup_prompts", []) or []
-    startup_prompts = [str(p) for p in startup_prompts_raw if p]
-    if not startup_prompts:
-        # DRY default: specs omit startup_prompts and inherit the generic kick.
-        startup_prompts = [DEFAULT_STARTUP_PROMPT]
+    startup = parse_startup(spec.get("startup"))
     exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
     exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 
@@ -455,8 +440,9 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),
-        startup_commands=_with_default_direnv_allow(parse_startup_commands(spec)),
-        startup_prompts=startup_prompts,
+        startup_commands=list(startup.commands.entries),
+        startup_prompts=list(startup.prompts.entries),
+        startup=startup,
         exclude_hooks=exclude_hooks,
         exclude_skills=exclude_skills,
         listen=parse_listen(spec),
@@ -481,4 +467,5 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # ``_engine_types.apply_default_engine`` for why those belong on the
     # START path instead).
     apply_default_engine(config, engines, spec)
+    config.env.update(startup.environment.values)
     return config

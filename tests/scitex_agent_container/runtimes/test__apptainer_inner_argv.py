@@ -111,7 +111,7 @@ def test_single_startup_command_emits_set_e_after_git_alias():
     # Act
     argv = build_inner_argv(cfg)
     # Assert
-    assert "; set -e; pip install foo;" in argv[2]
+    assert "; set -e; ( pip install foo );" in argv[2]
 
 
 def test_single_startup_command_emits_exec_then_tini():
@@ -135,7 +135,16 @@ def test_multi_startup_commands_chain_with_semicolons():
     # Act
     argv = build_inner_argv(cfg)
     # Assert
-    assert "set -e; A; B; C; exec" in argv[2]
+    assert "set -e; ( A ); ( B ); ( C ); exec" in argv[2]
+
+
+def test_startup_command_environment_changes_do_not_escape_to_harness():
+    # Arrange
+    commands = [StartupCommand(command="export SPEC_VALUE=overridden")]
+    # Act
+    steps = _format_shell_steps(commands)
+    # Assert
+    assert steps == ["set -e", "( export SPEC_VALUE=overridden )"]
 
 
 def test_startup_command_delay_emits_sleep_n():
@@ -765,7 +774,9 @@ def test_build_inner_argv_raises_harness_mismatch_for_openai_harness():
     # Act
     try:
         build_inner_argv(cfg)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert isinstance(raised, HarnessRuntimeMismatchError)
@@ -778,7 +789,9 @@ def test_build_inner_argv_openai_harness_refusal_names_the_runner_module():
     # Act
     try:
         build_inner_argv(cfg)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert — names what was actually about to launch.
     assert raised is not None and "claude_session" in str(raised)
@@ -792,7 +805,9 @@ def test_build_inner_argv_openai_harness_refusal_covers_the_tui_branch():
     # Act
     try:
         build_inner_argv(cfg, tui=True)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert isinstance(raised, HarnessRuntimeMismatchError)
@@ -805,7 +820,9 @@ def test_build_inner_argv_openai_harness_refusal_names_the_v4_card():
     # Act
     try:
         build_inner_argv(cfg)
-    except HarnessRuntimeMismatchError as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
+    except (
+        HarnessRuntimeMismatchError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002.)
         raised = exc
     # Assert
     assert raised is not None and V4_HARNESS_DISPATCH_CARD in str(raised)

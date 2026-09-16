@@ -1,8 +1,7 @@
 """Cross-cutting helpers shared by ``parse_<section>`` functions.
 
-Holds the dotted-key traversal, the model-name display map, the
-${metadata.*} interpolator, and the small ``_parse_command_list``
-normaliser that ``_startup`` and ``parse_startup_commands`` share.
+Holds the dotted-key traversal, the model-name display map, and the
+${metadata.*} interpolator.
 
 Per-section parsers themselves enforce the ``raw or {}`` / ``not
 isinstance(raw, dict)`` guards inline — those checks vary just enough
@@ -15,8 +14,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-
-from .._types import StartupCommand
 
 # All known hook keys. Unknown keys in the YAML are ignored (forward-compat).
 HOOK_KEYS = (
@@ -88,21 +85,3 @@ def interpolate_metadata(value: str, metadata: dict) -> str:
         return m.group(0)
 
     return re.sub(r"\$\{([^}]+)\}", _replace, value)
-
-
-def _parse_command_list(raw: Any) -> list[StartupCommand]:
-    out: list[StartupCommand] = []
-    for item in raw or []:
-        if isinstance(item, str):
-            if item:
-                out.append(StartupCommand(delay=0, command=item))
-        elif isinstance(item, dict) and item.get("command"):
-            try:
-                delay = int(item.get("delay", 0))
-            except (
-                TypeError,
-                ValueError,
-            ):  # stx-allow: fallback (reason: type coercion or format mismatch)
-                delay = 0
-            out.append(StartupCommand(delay=delay, command=str(item["command"])))
-    return out
