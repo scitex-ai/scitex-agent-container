@@ -79,6 +79,16 @@ def test_snapshot_is_json_serializable(tmp_path: Path) -> None:
     assert json.loads(text)["name"] == "alpha"
 
 
+def test_snapshot_records_resolved_skill_package_allowlist() -> None:
+    cfg = AgentConfig(
+        name="alpha", skill_packages=["scitex-agent-container", "scitex-dev"]
+    )
+
+    snapshot = compiled_spec_snapshot(cfg)
+
+    assert snapshot["skill_packages"] == ["scitex-agent-container", "scitex-dev"]
+
+
 def test_launch_snapshot_records_exact_apptainer_artifact_identity() -> None:
     # Arrange
     cfg = AgentConfig(name="alpha")

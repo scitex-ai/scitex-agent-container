@@ -51,6 +51,7 @@ spec:
   apptainer:    { ... }
   claude:       { ... }
   mcp_servers:  { ... }
+  skill_packages: [scitex-agent-container] # exact IDs under ~/.scitex/dev/skills
   health:       { ... }
   restart:      { ... }
   autonomous:   { ... }
@@ -560,6 +561,25 @@ a2a:
 `to_home/.claude/skills/` (a sibling directory next to `spec.yaml`,
 materialized into the agent's `$HOME` at start).
 
+Installed skill packages are separately and explicitly selected by ID:
+
+```yaml
+spec:
+  skill_packages:
+    - scitex-agent-container
+    - scitex-dev
+```
+
+Each ID must name a directory at `~/.scitex/dev/skills/<id>` on the launch
+host. SAC copies exactly those package directories under
+`$HOME/.claude/skills/`; an absent/broken package or a collision with an
+adjacent `to_home` skill refuses launch and lists the installed package IDs.
+Omission and `[]` both mean **no installed packages**—there is no implicit
+all-packages or curated-host fallback. Package directories are the selection
+unit; file-level selection is intentionally unsupported because relative
+references and support files make a partial package a different, often broken,
+artifact. The resolved IDs are retained in the incarnation birth certificate.
+
 For AgentCard publication, declare the skill IDs via
 `metadata.labels.skills` as a CSV (e.g. `skills: "scitex-dev, gh-cli, git"`).
 The list ends up in the card's `skills[0].tags` (unioned with
@@ -570,6 +590,15 @@ The list ends up in the card's `skills[0].tags` (unioned with
 A dict-of-dicts merged into `<workdir>/.mcp.json` at start. Mirrors
 the `.mcp.json` shape directly. Use this OR drop a `.mcp.json` into
 `to_home/` (lands at `$HOME/.mcp.json`).
+
+Per-server tool include lists are not a supported spec field. The MCP client
+configuration carried by `.mcp.json`, the Claude SDK, Codex CLI, and Hermes
+adapter selects servers but exposes no common protocol-level filter for a
+server's `tools/list` result. `spec.claude.provider.allowed_tools` is a global
+Claude built-in registration control (`ClaudeAgentOptions.tools`), not an MCP
+server filter. SAC therefore does not claim an allowlist it cannot enforce;
+implementing one would require a real filtering client API or a separately
+specified MCP proxy/security boundary.
 
 ### `spec.telegram` / `spec.hooks` / `spec.extensions`
 

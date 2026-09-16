@@ -1,7 +1,7 @@
 """Tests for the host ``~/.claude`` deep-merge (developer agents).
 
-A FULL-DEVELOPER agent's materialized ``$HOME/.claude/{commands,skills,hooks}``
-is the UNION of the host operator's ``~/.claude/{commands,skills,hooks}`` and
+A FULL-DEVELOPER agent's materialized ``$HOME/.claude/{commands,hooks}``
+is the UNION of the host operator's ``~/.claude/{commands,hooks}`` and
 the ``_shared``/per-agent agent layers, with the agent layer winning on a
 name collision and host-session hooks deny-listed. A capsule/solitary agent
 gets the agent layers ONLY. Drift (a host file removed) fails loud.
@@ -160,7 +160,7 @@ class TestDeveloperGetsHostUnionAgentLayer:
         # Assert
         assert target == str(host / "commands" / "where.md")
 
-    def test_host_skill_is_linked_for_developer(self, tmp_path, env_save_restore):
+    def test_host_skill_is_not_implicitly_exposed(self, tmp_path, env_save_restore):
         # Arrange
         host = tmp_path / "host_claude"
         _write_host_tree(host)
@@ -170,7 +170,9 @@ class TestDeveloperGetsHostUnionAgentLayer:
         # Act
         apply_host_merge(_dev_config(), home)
         # Assert
-        assert (home / ".claude" / "skills" / "deep-research" / "SKILL.md").is_symlink()
+        assert not (
+            home / ".claude" / "skills" / "deep-research" / "SKILL.md"
+        ).exists()
 
     def test_agent_layer_file_wins_over_host_collision(
         self, tmp_path, env_save_restore
@@ -318,8 +320,10 @@ class TestHostSessionHooksExcluded:
 
 
 class TestAgentLayerExcludesHostFile:
-    def test_exclude_skills_drops_matching_host_skill(self, tmp_path, env_save_restore):
-        # Arrange — spec excludes the deep-research skill by substring.
+    def test_legacy_exclude_skills_does_not_reenable_host_skills(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange — legacy exclusion metadata cannot opt into a host skill.
         host = tmp_path / "host_claude"
         _write_host_tree(host)
         env_save_restore.set(_HOST_ENV, str(host))

@@ -70,7 +70,10 @@ from ._host_commands import (
     host_claude_commands_dir,
     snapshot_drift,
 )
-from ._host_skills import deploy_host_skills
+from ._skill_packages import (
+    materialize_skill_packages,
+    retain_adjacent_to_home_skills,
+)
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_deployers import (
     _clear_readonly_dst,
@@ -199,9 +202,6 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
     # a same-name shared-baseline / per-agent command overwrites it below.
     # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(workspace_home)
-    # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
-    # No-clobber: a per-agent / bundled same-name skill is left untouched.
-    deploy_host_skills(workspace_home)
     # Run-scoped, SHARED across both layers: marker-protected files (CLAUDE.md
     # / state.md) compose onto the earlier layer instead of replacing it. The
     # baseline pass still resets the section, so nothing grows across runs.
@@ -226,6 +226,9 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
             ("per-agent", root if root.is_dir() else None),
         ],
     )
+    retain_adjacent_to_home_skills(
+        workspace_home, root if root.is_dir() else None
+    )
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
@@ -247,7 +250,14 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     """
     root = resolve_to_home_dir(config)
     baseline = resolve_baseline_to_home_dir(_spec_dir(config))
-    if root is None and baseline is None:
+    if (
+        root is None
+        and baseline is None
+        and not (getattr(config, "skill_packages", []) or [])
+        and not (
+            Path(workspace_home) / ".claude" / "skills" / ".sac-skill-packages.json"
+        ).is_file()
+    ):
         return
     # Credential-leak guard runs BEFORE any deploy (both layers).
     if baseline is not None:
@@ -270,9 +280,6 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # a same-name shared-baseline / per-agent command overwrites it below.
     # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(dest)
-    # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
-    # No-clobber: a per-agent / bundled same-name skill is left untouched.
-    deploy_host_skills(dest)
     # Run-scoped and SHARED across both layers — see materialize_to_home.
     composed_dsts: set[Path] = set()
     if baseline is not None:
@@ -356,9 +363,23 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # here, while the cascade is still un-flattened. Best-effort by design: an
     # observability file must never be the reason a deploy fails.
     write_hook_manifest(getattr(config, "name", "") or "unknown", settings_provenance)
+    retain_adjacent_to_home_skills(dest, root)
+    # Canonical package exposure is opt-in and exact. Validate/materialize
+    # after the spec layers so a name collision refuses rather than silently
+    # choosing one source. The selected IDs remain on AgentConfig and thus in
+    # the incarnation birth certificate.
+    adjacent_skills = root / ".claude" / "skills" if root is not None else None
+    protected_skill_names = (
+        {entry.name for entry in adjacent_skills.iterdir()}
+        if adjacent_skills is not None and adjacent_skills.is_dir()
+        else set()
+    )
+    materialize_skill_packages(
+        config, dest, protected_names=protected_skill_names
+    )
     # HOST DEEP-MERGE (developer agents only). For a FULL-DEVELOPER agent
     # (metadata.labels.group==developer, or group-unset + a developer role),
-    # overlay the host operator's ~/.claude/{commands,skills,hooks} as per-file
+    # overlay the host operator's ~/.claude/{commands,hooks} as per-file
     # ABSOLUTE symlinks ON TOP of the agent layers just materialized — union,
     # agent layer wins, host-session hooks deny-listed. Runs LAST so the walk's
     # symlink-deref has already happened (our links are kept as symlinks) and

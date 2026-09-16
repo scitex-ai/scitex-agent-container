@@ -1,4 +1,4 @@
-"""Deploy a curated set of the operator's host ``~/.claude/skills/`` as an agent baseline.
+"""Compatibility helper for explicitly named ``~/.claude/skills`` entries.
 
 Claude Code dev-rule skills (the ``ywatanabe`` and ``scitex`` skill sets)
 live in the standard host directory ``~/.claude/skills/`` (one ``<name>/``
@@ -11,9 +11,9 @@ it resolves each curated host skill dir (``Path("~/.claude/skills/<name>").
 expanduser()`` — never a hard-coded username) and symlinks it into the agent's
 materialized ``.claude/skills/<name>``.
 
-Why a curated allowlist: the operator chose exactly the dev-rule skill SETS
-(``ywatanabe`` and ``scitex``) — NOT the tool skills, and explicitly NOT
-``secret`` / ``scitex-lead``. Keep the allowlist tight.
+There is no default allowlist. Production materialization uses the portable
+``spec.skill_packages`` declaration and canonical ``~/.scitex/dev/skills``
+source in :mod:`._skill_packages`; this helper remains for explicit callers.
 
 Why symlink (not copy): the host entry ``~/.claude/skills/<name>`` is itself a
 symlink (e.g. ``-> ~/.dotfiles/src/.claude/skills/ywatanabe``); its
@@ -37,11 +37,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# The curated host dev-rule skill SETS the operator chose to propagate into
-# every agent. Deliberately excludes tool skills and ``secret`` /
-# ``scitex-lead``. Resolved fresh at deploy time so each always tracks the real
-# host user (no hard-coded username).
-_DEFAULT_SKILLS: tuple[str, ...] = ("ywatanabe", "scitex")
+# Compatibility helper only. Production selection now comes from
+# ``spec.skill_packages`` and ~/.scitex/dev/skills; there is deliberately no
+# implicit host-skill default.
+_DEFAULT_SKILLS: tuple[str, ...] = ()
 
 
 def deploy_host_skills(

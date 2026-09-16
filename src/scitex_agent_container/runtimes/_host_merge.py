@@ -1,4 +1,4 @@
-"""Deep-merge the host operator's ``~/.claude/{commands,skills,hooks}`` into a
+"""Deep-merge the host operator's ``~/.claude/{commands,hooks}`` into a
 FULL-DEVELOPER agent's materialized ``$HOME/.claude``.
 
 Why
@@ -6,7 +6,7 @@ Why
 A "full developer" SAC agent (``sac`` maintainer, a project-maintainer, a
 contributor) is the operator working in an isolated worktree — full-host-bound,
 "the workspace is the starting cwd, not a jail" (dev-agent bind policy). Such
-an agent should see the operator's OWN slash-commands, skills, and (agent-safe)
+an agent should see the operator's OWN slash-commands and (agent-safe)
 hooks, not just the curated ``_shared`` agent layer. A *capsule* / *solitary*
 agent gets the ``_shared`` + per-agent layers ONLY — no host bleed — preserving
 hermetic isolation.
@@ -14,7 +14,7 @@ hermetic isolation.
 This module is the host side of the ``to_home`` materialization (ADR-0006 /
 ADR-0018). The per-agent + ``_shared`` layers are materialized first by the
 :mod:`_to_home` two-pass walk (real files); THEN, for a full developer, this
-module overlays the host ``~/.claude/{commands,skills,hooks}`` as per-file
+module overlays the host ``~/.claude/{commands,hooks}`` as per-file
 **symlinks** with ABSOLUTE host targets (e.g.
 ``/home/ywatanabe/.claude/commands/where.md``). The links resolve in-container
 through the existing full-home bind — exactly like the historical
@@ -68,9 +68,9 @@ from ..config import AgentConfig
 logger = logging.getLogger(__name__)
 
 # The ``~/.claude`` subdirectories that get the host deep-merge for full
-# developers. ``commands`` (slash-commands) and ``skills`` are pure additive
+# developers. ``commands`` (slash-commands) are pure additive
 # overlays; ``hooks`` is filtered by the deny-list below.
-_MERGED_SUBDIRS = ("commands", "skills", "hooks")
+_MERGED_SUBDIRS = ("commands", "hooks")
 
 # A host hook whose RELATIVE path (under ~/.claude/hooks) contains any of these
 # substrings is operator-session-only and is NEVER linked into an agent. This

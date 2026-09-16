@@ -47,6 +47,7 @@ from ._placement_validation import validate_placement
 from ._reserved_names import reserved_spec_path_errors
 from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
+from ._skill_package_validation import validate_skill_packages
 from ._startup_command_validation import validate_startup_commands
 
 # ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
@@ -165,6 +166,7 @@ def validate_raw(raw: dict, path: str) -> list[str]:
     if not isinstance(spec, dict):
         errors.append("spec is required and must be a mapping")
     else:
+        errors.extend(validate_skill_packages(spec))
         # v3-realign — fields that moved into engine blocks: reject with
         # a relocation hint so the operator knows the new home.
         for k, new_home in _V3_RELOCATED_FIELDS.items():

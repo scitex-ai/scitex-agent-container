@@ -69,6 +69,7 @@ _KNOWN_SPEC_KEYS = frozenset(
         "listen",
         "extensions",
         "mcp_servers",
+        "skill_packages",  # package IDs under ~/.scitex/dev/skills
         "host",
         "hosts",
         "session",  # shortcut alias for spec.claude.session

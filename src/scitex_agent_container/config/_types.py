@@ -288,6 +288,9 @@ class AgentConfig:
     # Which engine key this config resolved to. "" = no engines block;
     # provenance for the launch env and the birth certificate.
     engine_key: str = ""
+    # Canonical skill packages exposed from ~/.scitex/dev/skills/<id>.
+    # Empty means expose none; there is no implicit all-packages mode.
+    skill_packages: list[str] = field(default_factory=list)
     # PER-ENGINE PARAMETERS (operator answer Q4 — parameters per model,
     # reasoning_effort above all). They live on AgentConfig rather than
     # on ClaudeSpec on purpose: ``_explicit_fields._claude_fields``

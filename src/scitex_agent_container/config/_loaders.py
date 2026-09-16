@@ -451,6 +451,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         apptainer=apptainer_spec,
         hooks=hooks,
         skills=parse_skills(spec),
+        skill_packages=list(spec.get("skill_packages") or []),
         startup_commands=_with_default_direnv_allow(parse_startup_commands(spec)),
         startup_prompts=startup_prompts,
         exclude_hooks=exclude_hooks,

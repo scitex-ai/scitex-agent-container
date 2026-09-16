@@ -38,7 +38,7 @@ class TestDeployHostSkills:
         )
         agent_home = tmp_path / "agent_home"
         # Act
-        deploy_host_skills(agent_home)
+        deploy_host_skills(agent_home, names=("ywatanabe",))
         # Assert — the agent skill resolves to the host skill dir.
         landed = agent_home / ".claude" / "skills" / "ywatanabe"
         assert landed.resolve() == host_skill.resolve()
@@ -50,7 +50,7 @@ class TestDeployHostSkills:
         _seed_host_skill(tmp_path / "host_home", "ywatanabe", env_save_restore)
         agent_home = tmp_path / "agent_home"
         # Act — default allowlist requests both, but scitex must not be fabricated.
-        deploy_host_skills(agent_home)
+        deploy_host_skills(agent_home, names=("ywatanabe", "scitex"))
         # Assert — the absent name did not land.
         assert not (agent_home / ".claude" / "skills" / "scitex").exists()
 
