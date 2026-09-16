@@ -288,11 +288,11 @@ def test_format_snapshot_age_future_clamps_to_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_format_as_of_short_day_hour(env_save_restore):
+def test_format_as_of_short_day_hour():
     # Arrange
-    env_save_restore.set("TZ", "UTC")
+    env = {"TZ": "UTC"}
     # Act — Sunday 2026-05-31, 21:00 UTC.
-    rendered = format_as_of_short("2026-05-31T21:00:00+00:00")
+    rendered = format_as_of_short("2026-05-31T21:00:00+00:00", env=env)
     # Assert — `Sun 21h` shape.
     assert rendered == "Sun 21h"
 

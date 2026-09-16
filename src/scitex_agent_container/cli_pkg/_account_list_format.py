@@ -80,6 +80,12 @@ def _resolve_tz(name: str) -> tzinfo | None:
     Returns ``None`` on any failure so a bad env value falls through to
     the next layer of the precedence chain rather than crashing.
     """
+    # UTC does not need the optional system/pip timezone database.  Keeping
+    # this path on the stdlib singleton also makes an explicit UTC override
+    # deterministic in stripped container images.
+    if name.strip().casefold() in {"utc", "etc/utc", "gmt", "etc/gmt"}:
+        return timezone.utc
+
     # stx-allow: fallback (reason: a bad TZ env value (typo, missing
     # tzdata on the host) must not crash `sac accounts list` — fall
     # through to the next precedence layer and ultimately system local.)
