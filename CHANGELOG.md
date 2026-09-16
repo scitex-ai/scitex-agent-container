@@ -7,6 +7,13 @@ versioning follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Lifecycle spec authority now fails closed instead of warning through
+  provenance uncertainty.** Starts refuse non-git/unreachable sources, dirty
+  repositories, a main checkout not on `develop`, linked feature worktrees,
+  and live sources that are ahead, behind, or diverged. The former
+  `--allow-stale-spec`/environment bypass is removed. Intentional detached
+  `sac-authority/<source>-<commit>` snapshots remain supported only when their
+  origin identity, HEAD, clean tree, and loaded spec blob match exactly.
 - **Remote image staging includes SAC's console bootstrap package.** The HPC
   bake context now copies `_scitex_agent_container_bootstrap` alongside the
   main package, matching the wheel manifest and preventing the image `%test`
