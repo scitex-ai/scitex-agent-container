@@ -1034,7 +1034,7 @@ EOF
     # packaged target is absent. Apptainer runs this after %post and fails
     # the build before scitex-container atomically promotes the SIF.
     /opt/venv-sac/bin/sac --version
-    /opt/npm-global/bin/opencode --version
+    HOME=/tmp /opt/npm-global/bin/opencode --version
 
 %labels
     org.scitex.layer base

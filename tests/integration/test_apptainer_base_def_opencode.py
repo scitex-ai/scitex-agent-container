@@ -14,7 +14,7 @@ def test_base_image_installs_and_verifies_pinned_opencode_cli():
         item in text
         for item in (
             "opencode-ai@1.18.31",
-            "/opt/npm-global/bin/opencode --version",
+            "HOME=/tmp /opt/npm-global/bin/opencode --version",
             " opencode apptainer ",
         )
     )
