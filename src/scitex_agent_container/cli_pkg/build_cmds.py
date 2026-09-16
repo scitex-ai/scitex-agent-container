@@ -156,10 +156,11 @@ def _check_provider_auth(config) -> bool:
     measured incident that motivates it live in
     :mod:`._provider_auth_probe`.
 
-    FAILS only on EVIDENCE that the key is wrong — an authoritative 401/403,
-    or a key that resolves to nothing. An unreachable backend WARNS, matching
-    :func:`_check_host_route`'s refusal to convict on absent evidence: a
-    gateway that is briefly down must not fail every preflight on the fleet.
+    Generic providers fail only on evidence that the key is wrong. Hermes
+    chat-completions providers additionally fail when the actual inference
+    path cannot prove a successful selected-model response, or reports a
+    different model identity. An unreachable backend still warns, matching
+    :func:`_check_host_route`'s refusal to convict on absent evidence.
     """
     from ._provider_auth_probe import (
         INACTIVE,
@@ -365,7 +366,7 @@ def validate(name_or_path: str) -> None:
     """
     try:
         config_path = resolve_config(name_or_path)
-    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+    except Exception as exc:  # stx-allow: fallback (reason: resolution error written to stderr)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
     errors = validate_config(config_path)
