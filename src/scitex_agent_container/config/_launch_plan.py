@@ -14,6 +14,7 @@ from ._delegation_types import (
     DEFAULT_MAX_CONCURRENT_CHILDREN,
     MAX_CONCURRENT_CHILDREN,
 )
+from ._provider_types import is_credential_header
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class Endpoint:
     url: str
     auth_kind: str
     auth_env: str
+    extra_headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class LaunchPlan:
     may_spawn: bool = True
     delegation: DelegationPolicy = DelegationPolicy()
     agent_name: str | None = None
+    session_id: str | None = None
 
 
 _ALIASES = {"anthropic": "claude-code", "claude": "claude-code"}
@@ -127,7 +130,7 @@ def _endpoint(protocol: str, value: object, path: str) -> Endpoint:
     if protocol not in _PATHS:
         raise ValueError(f"{path}: unsupported protocol {protocol!r}")
     data = _mapping(value, path)
-    _keys(data, {"url", "auth"}, path)
+    _keys(data, {"url", "auth", "extra_headers"}, path)
     url = _text(data.get("url"), f"{path}.url")
     parsed = urlsplit(url)
     if (
@@ -152,7 +155,31 @@ def _endpoint(protocol: str, value: object, path: str) -> Endpoint:
         raise ValueError(f"{path}: unauthenticated endpoints must not name an auth env")
     if env and (not env.isidentifier() or not env.isascii()):
         raise ValueError(f"{path}.auth.env must name an environment variable")
-    return Endpoint(protocol, url, kind, env)
+    raw_headers = _mapping(data.get("extra_headers", {}), f"{path}.extra_headers")
+    headers: list[tuple[str, str]] = []
+    seen_names: set[str] = set()
+    for raw_name, raw_value in raw_headers.items():
+        name = _text(raw_name, f"{path}.extra_headers key")
+        value = _text(raw_value, f"{path}.extra_headers.{name}")
+        if any(character in name for character in "\r\n:"):
+            raise ValueError(f"{path}.extra_headers contains invalid name {name!r}")
+        if is_credential_header(name):
+            raise ValueError(
+                f"{path}.extra_headers must not contain credential header "
+                f"{name!r}; declare authentication through auth.env"
+            )
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"{path}.extra_headers.{name} must not contain a newline"
+            )
+        folded = name.casefold()
+        if folded in seen_names:
+            raise ValueError(
+                f"{path}.extra_headers repeats case-insensitive header {name!r}"
+            )
+        seen_names.add(folded)
+        headers.append((name, value))
+    return Endpoint(protocol, url, kind, env, tuple(headers))
 
 
 def compile_launch_plan(
@@ -161,6 +188,7 @@ def compile_launch_plan(
     engine: str | None = None,
     harness: str | None = None,
     agent_name: str | None = None,
+    session_id: str | None = None,
 ) -> LaunchPlan:
     """Compile the selection section of a self-contained spec, without I/O.
 
@@ -179,6 +207,12 @@ def compile_launch_plan(
             raise ValueError(
                 "agent_name must use lowercase letters, digits, '-' and '_' only"
             )
+    if session_id is not None:
+        session_id = _text(session_id, "session_id")
+        if "\r" in session_id or "\n" in session_id:
+            raise ValueError("session_id must not contain a newline")
+    elif agent_name is not None:
+        session_id = f"sac:{agent_name}"
     may_spawn, delegation = _delegation_policy(spec)
     family = _text(
         harness if harness is not None else spec.get("harness"), "spec.harness"
@@ -282,6 +316,7 @@ def compile_launch_plan(
                 may_spawn=may_spawn,
                 delegation=delegation,
                 agent_name=agent_name,
+                session_id=session_id,
             )
     raise ValueError(
         f"harness {family!r} cannot use engine {key!r}: requires one of {_PROTOCOLS[family]}"

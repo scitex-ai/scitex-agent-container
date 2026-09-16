@@ -12,6 +12,8 @@ from ._launch_plan import LaunchPlan
 
 AGENT_ID_HEADER = "X-SciTeX-Agent-ID"
 SESSION_ID_HEADER = "X-SciTeX-Session-ID"
+AGENT_ID_TEMPLATE = "${sac:agent_id}"
+SESSION_ID_TEMPLATE = "${sac:session_id}"
 
 
 def _api_root(endpoint_url: str, protocol: str) -> str:
@@ -38,6 +40,8 @@ def compile_hermes_config(
         raise ValueError(f"Hermes compiler received harness {plan.harness!r}")
     if plan.agent_name is None:
         raise ValueError("Hermes compiler requires an agent-bound launch plan")
+    if plan.session_id is None:
+        raise ValueError("Hermes compiler requires a session-bound launch plan")
     if plan.launch_mode not in {"headless", "tui"}:
         raise ValueError("Hermes requires launch_mode 'headless' or 'tui'")
     if plan.endpoint.protocol not in {
@@ -66,6 +70,19 @@ def compile_hermes_config(
 
     provider_key = f"sac-{plan.engine.key}"
     model = plan.engine.model_id
+    session_id = plan.session_id
+    extra_headers = {
+        name: value.replace(AGENT_ID_TEMPLATE, plan.agent_name).replace(
+            SESSION_ID_TEMPLATE, session_id
+        )
+        for name, value in plan.endpoint.extra_headers
+    }
+    extra_headers.update(
+        {
+            AGENT_ID_HEADER: plan.agent_name,
+            SESSION_ID_HEADER: session_id,
+        }
+    )
     api_mode = {
         "openai-chat-completions": "chat_completions",
         "openai-responses": "responses",
@@ -84,10 +101,7 @@ def compile_hermes_config(
         "model": model,
         "default_model": model,
         "models": {model: model_config},
-        "extra_headers": {
-            AGENT_ID_HEADER: plan.agent_name,
-            SESSION_ID_HEADER: f"sac:{plan.agent_name}",
-        },
+        "extra_headers": extra_headers,
     }
     agent: dict[str, Any] = {
         # SAC's autonomous loop has its own independent safety cap.  Hermes'
@@ -149,4 +163,10 @@ def compile_hermes_config(
     }
 
 
-__all__ = ["AGENT_ID_HEADER", "SESSION_ID_HEADER", "compile_hermes_config"]
+__all__ = [
+    "AGENT_ID_HEADER",
+    "AGENT_ID_TEMPLATE",
+    "SESSION_ID_HEADER",
+    "SESSION_ID_TEMPLATE",
+    "compile_hermes_config",
+]
