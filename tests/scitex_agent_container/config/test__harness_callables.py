@@ -40,7 +40,11 @@ def _session_tail(argv: list[str]) -> list[str]:
     ("session", "resume_id", "expected_tail"),
     [
         ("fresh", "", []),
-        ("continue", "", ["--continue", "sac:cards", "--create-if-missing"]),
+        (
+            "continue",
+            "",
+            ["--continue", "sac:cards:qwen38-27b", "--create-if-missing"],
+        ),
         ("resume", "session-20260910", ["--resume", "session-20260910"]),
     ],
 )
@@ -73,6 +77,14 @@ def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():
     # Assert
     with pytest.raises(ValueError, match="resolved engine model and key"):
         call()
+
+
+def test_hermes_refuses_model_as_an_implicit_engine_key():
+    config = _config(session="continue")
+    config.engine_key = ""
+
+    with pytest.raises(ValueError, match="resolved engine model and key"):
+        _hermes_tui_inner_argv(config)
 
 
 def test_explicit_resume_reaches_native_hermes_argv():
