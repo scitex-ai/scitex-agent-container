@@ -390,6 +390,12 @@ from importlib import import_module
 # it as dead because nothing references the name, and removing it on that
 # advice blinded the gate and reddened test_probe_imports_scitex_cards.
 import scitex_cards  # noqa: F401  (the import itself is the check)
+
+# SAC's inbox sidecar reconciliation and Hermes stale-session recovery import
+# this symbol on the clean-start path.  Probe that exact runtime capability in
+# the built artifact so dependency metadata alone cannot make a broken SIF
+# appear healthy.
+from psutil import process_iter as _psutil_process_iter  # noqa: F401
 from scitex_cards._throughput import WIP_STATUSES
 
 canonical_agent_identity = import_module(
