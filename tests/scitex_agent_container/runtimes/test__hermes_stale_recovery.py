@@ -192,6 +192,7 @@ def test_one_observed_latch_can_trigger_only_one_recovery(tmp_path):
 
 
 def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     baseline = recovery.HermesTurnProgress(
@@ -200,6 +201,7 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
     receipt = recovery.HermesSlashReceipt(
         "switched", "live-1", baseline, 17, "epoch-1"
     )
+    # Act
     latched = recovery.recovery_tick(
         config,
         capture=lambda: pane,
@@ -231,15 +233,20 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
         previous_fingerprint=recovering,
         state_dir=tmp_path,
     )
-    assert ready.startswith("ready:")
-    assert read_control_state(tmp_path)["turn_admission"] == "ready"
+    # Assert
+    assert (ready.startswith("ready:"), read_control_state(tmp_path)["turn_admission"]) == (
+        True,
+        "ready",
+    )
 
 
 def test_recovered_latch_does_not_clear_for_only_an_accepted_user_message(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     fingerprint = recovery.stale_latch(pane)[1]
     token = f"recovered:{fingerprint}:17:epoch-1"
+    # Act
     observed = recovery.recovery_tick(
         config,
         capture=lambda: pane,
@@ -255,14 +262,17 @@ def test_recovered_latch_does_not_clear_for_only_an_accepted_user_message(tmp_pa
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
+    # Assert
     assert observed == token
 
 
 def test_ready_proof_is_not_relatched_by_the_historical_same_error(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     fingerprint = recovery.stale_latch(pane)[1]
     token = f"ready:{fingerprint}:23:epoch-1"
+    # Act
     observed = recovery.recovery_tick(
         config,
         capture=lambda: pane,
@@ -275,15 +285,18 @@ def test_ready_proof_is_not_relatched_by_the_historical_same_error(tmp_path):
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
+    # Assert
     assert observed == token
 
 
 def test_recovering_proof_survives_terminal_window_shift(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     old_pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     new_pane = "shifted\n" + old_pane
     old_fingerprint = recovery.stale_latch(old_pane)[1]
     token = f"recovered:{old_fingerprint}:17:epoch-1"
+    # Act
     observed = recovery.recovery_tick(
         config,
         capture=lambda: new_pane,
@@ -299,15 +312,18 @@ def test_recovering_proof_survives_terminal_window_shift(tmp_path):
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
+    # Assert
     assert observed.startswith(f"ready:{recovery.stale_latch(new_pane)[1]}:")
 
 
 def test_ready_state_relatches_on_typed_failed_turn(tmp_path):
+    # Arrange
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     fingerprint = recovery.stale_latch(pane)[1]
     token = f"ready:{fingerprint}:23:epoch-1"
     paused = []
+    # Act
     observed = recovery.recovery_tick(
         config,
         capture=lambda: "new terminal frame\n" + pane,
@@ -322,9 +338,12 @@ def test_ready_state_relatches_on_typed_failed_turn(tmp_path):
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
-    assert observed.startswith("latched:")
-    assert paused == [True]
-    assert read_control_state(tmp_path)["turn_admission"] == "stale_latched"
+    # Assert
+    assert (
+        observed.startswith("latched:"),
+        paused,
+        read_control_state(tmp_path)["turn_admission"],
+    ) == (True, [True], "stale_latched")
 
 
 def test_monitor_natural_exit_clears_persisted_latch(tmp_path):

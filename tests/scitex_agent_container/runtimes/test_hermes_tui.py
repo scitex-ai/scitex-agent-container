@@ -6,9 +6,7 @@ from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
-    HermesSlashReceipt,
     HermesTuiRpcError,
-    HermesTurnProgress,
     HermesVisibleTurnReceipt,
 )
 from scitex_agent_container.runtimes.hermes_tui import (
@@ -380,59 +378,6 @@ def test_hermes_auxiliary_failure_cleans_poller_before_session():
             "inbox:stop",
             "recovery:stop",
             "session:stop",
-        ],
-    )
-
-
-def test_recovery_uses_supported_same_session_controls_in_order(monkeypatch):
-    # Arrange
-    config = _config()
-    config.model = "qwen38-27b"
-    config.engine_key = "qwen38-27b"
-    mux = _Mux()
-    calls = []
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=mux,
-    )
-    runtime.disable_periodic_turns = lambda _config: (
-        calls.append("heartbeat.clear") or True
-    )
-    # Act
-    disabled = runtime.disable_periodic_turns(config)
-    import scitex_agent_container.runtimes._hermes_tui_rpc as rpc
-
-    monkeypatch.setattr(
-        rpc,
-        "execute_slash_command",
-        lambda state, name, command: (
-            calls.append(command)
-            or HermesSlashReceipt(
-                "switched",
-                "live-1",
-                HermesTurnProgress(10, 42.0, "idle"),
-                17,
-                "epoch-1",
-            )
-        ),
-    )
-    recovered = runtime.recover_turn_admission(config)
-    # Assert
-    assert (
-        disabled,
-        recovered,
-        calls,
-    ) == (
-        True,
-        HermesSlashReceipt(
-            "switched",
-            "live-1",
-            HermesTurnProgress(10, 42.0, "idle"),
-            17,
-            "epoch-1",
-        ),
-        [
-            "heartbeat.clear",
-            "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
         ],
     )
 

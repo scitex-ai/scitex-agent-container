@@ -500,22 +500,31 @@ def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
 
 
 def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
+    # Arrange
     _gateway_files(tmp_path)
     socket = _Socket(status="idle")
+    # Act
     progress = observe_turn_progress(
         tmp_path,
         "hub",
         connect_fn=lambda *args, **kwargs: socket,
     )
-    assert (progress.message_count, progress.last_active, progress.status) == (
+    # Assert
+    assert (
+        progress.message_count,
+        progress.last_active,
+        progress.status,
+        [request["method"] for request in socket.sent],
+    ) == (
         12,
         44.0,
         "idle",
+        ["session.active_list"],
     )
-    assert [request["method"] for request in socket.sent] == ["session.active_list"]
 
 
 def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
+    # Arrange
     _gateway_files(tmp_path)
 
     class OutcomeSocket(_Socket):
@@ -544,6 +553,7 @@ def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
             return super().recv()
 
     socket = OutcomeSocket(status="idle")
+    # Act
     outcome = observe_turn_outcome(
         tmp_path,
         "hub",
@@ -551,12 +561,12 @@ def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
         expected_epoch="epoch-1",
         connect_fn=lambda *args, **kwargs: socket,
     )
-    assert outcome.terminal_status == "error"
-    assert [request["method"] for request in socket.sent] == [
-        "session.active_list",
-        "session.events.since",
-    ]
-    assert socket.sent[-1]["params"]["last_seen"] == 17
+    # Assert
+    assert (
+        outcome.terminal_status,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"]["last_seen"],
+    ) == ("error", ["session.active_list", "session.events.since"], 17)
 
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
