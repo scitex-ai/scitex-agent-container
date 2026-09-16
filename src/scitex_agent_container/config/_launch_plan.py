@@ -185,7 +185,23 @@ def compile_launch_plan(
     )
     family = _ALIASES.get(family, family)
     if family not in _PROTOCOLS:
-        raise ValueError(f"unsupported harness {family!r}")
+        raise ValueError(
+            f"unknown harness {family!r}; available harnesses: "
+            f"{', '.join(sorted(_PROTOCOLS))}. No fallback was selected."
+        )
+    harness_entries = spec.get("available_harnesses")
+    if harness_entries is not None:
+        harness_entries = _mapping(harness_entries, "spec.available_harnesses")
+        available_harnesses = {
+            _ALIASES.get(_text(label, "harness key"), str(label))
+            for label in harness_entries
+        }
+        if family not in available_harnesses:
+            choices = ", ".join(map(str, harness_entries)) or "(none)"
+            raise ValueError(
+                f"harness {family!r} is not available in this spec; available "
+                f"harnesses: {choices}. No fallback was selected."
+            )
     mode = spec.get("launch_mode")
     if mode not in ("tui", "headless"):
         raise ValueError("spec.launch_mode must be tui or headless")
@@ -268,7 +284,10 @@ def compile_launch_plan(
             client_abandonment,
         )
     if key not in resolved:
-        raise ValueError(f"unknown engine {key!r}; available: {', '.join(resolved)}")
+        raise ValueError(
+            f"unknown engine {key!r}; available engines: {', '.join(resolved)}. "
+            "No fallback was selected."
+        )
     selected = resolved[key]
     for protocol in _PROTOCOLS[family]:
         endpoint = next((e for e in selected.endpoints if e.protocol == protocol), None)
@@ -284,5 +303,8 @@ def compile_launch_plan(
                 agent_name=agent_name,
             )
     raise ValueError(
-        f"harness {family!r} cannot use engine {key!r}: requires one of {_PROTOCOLS[family]}"
+        f"incompatible harness/engine pair: harness {family!r} cannot use "
+        f"engine {key!r}; it requires one of {_PROTOCOLS[family]}. available "
+        f"harnesses: {', '.join(map(str, harness_entries or _PROTOCOLS))}; "
+        f"available engines: {', '.join(resolved)}. No fallback was selected."
     )

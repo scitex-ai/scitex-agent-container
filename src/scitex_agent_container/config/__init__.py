@@ -87,7 +87,12 @@ __all__ = [
 ]
 
 
-def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
+def load_config(
+    path: str | Path,
+    *,
+    advise: bool = False,
+    harness_override: str | None = None,
+) -> AgentConfig:
     """Load and validate a YAML config, returning an AgentConfig.
 
     Only ``scitex-agent-container/v3`` is accepted. Older apiVersions
@@ -118,6 +123,11 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
         with open(path) as f:
             raw = yaml.safe_load(f)
         _spec_cache.put(path, raw)
+
+    if harness_override is not None:
+        from ._schema_compat import select_harness_document
+
+        raw = select_harness_document(raw, harness_override)
 
     errors = validate_raw(raw, str(path))
     if errors:

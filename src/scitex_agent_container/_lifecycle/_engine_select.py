@@ -62,6 +62,7 @@ from ..config._engine_types import (
 
 __all__ = [
     "EngineNotHonourableError",
+    "assert_engine_harness_compatible",
     "check_engine_before_stop",
     "engine_probe_requested",
     "refusal_message",
@@ -71,6 +72,28 @@ __all__ = [
 
 class EngineNotHonourableError(RuntimeError):
     """The selected engine cannot be honoured, so the start REFUSES."""
+
+
+def assert_engine_harness_compatible(
+    config: Any, engine: EngineSpec, *, harness_explicit: bool
+) -> None:
+    """Reject a legacy engine-owned harness that contradicts ``--harness``."""
+    if not harness_explicit or engine.harness is None:
+        return
+    from ..config._harness_lookup import canonical_harness
+
+    selected_harness = canonical_harness(str(getattr(config, "harness", "") or ""))
+    legacy_harness = canonical_harness(engine.harness)
+    if legacy_harness == selected_harness:
+        return
+    available = ", ".join(repr(key) for key in getattr(config, "engines", {}))
+    raise EngineNotHonourableError(
+        f"incompatible launch selection: explicit --harness resolves to "
+        f"{selected_harness!r}, but engine {engine.key!r} carries legacy "
+        f"engine.harness={legacy_harness!r}. Engines do not own harnesses; "
+        "remove the legacy engine.harness field or select a compatible pair. "
+        f"Available engines: {available or '(none)'}. sac will not fall back."
+    )
 
 
 def _logger():
@@ -144,6 +167,7 @@ def select_engine_at_start(
     probe: bool | None = None,
     timeout_s: float = PROBE_TIMEOUT_S,
     log: bool = True,
+    harness_explicit: bool = False,
 ) -> EngineSpec | None:
     """Resolve THIS start's engine onto ``config``, or refuse.
 
@@ -189,6 +213,10 @@ def select_engine_at_start(
     engine = select_engine(engines, selected_key)
     if engine is None:
         return None
+
+    assert_engine_harness_compatible(
+        config, engine, harness_explicit=harness_explicit
+    )
 
     # A RECORD, NOT A GATE, and deliberately so: honouring an explicit
     # --engine is correct, and refusing here would make the override
@@ -257,6 +285,7 @@ def check_engine_before_stop(
     probe: bool | None = None,
     timeout_s: float = PROBE_TIMEOUT_S,
     log: bool = True,
+    harness_override: str | None = None,
 ) -> None:
     """Refuse a RESTART before its stop leg when the engine is unhonourable.
 
@@ -294,7 +323,12 @@ def check_engine_before_stop(
     # and both are decidable here, before the stop.
     from ..config import load_config
 
-    config = load_config(config_path)
+    config = load_config(config_path, harness_override=harness_override)
     select_engine_at_start(
-        config, requested, probe=probe, timeout_s=timeout_s, log=log
+        config,
+        requested,
+        probe=probe,
+        timeout_s=timeout_s,
+        log=log,
+        harness_explicit=harness_override is not None,
     )

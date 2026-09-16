@@ -95,6 +95,40 @@ def test_no_fleet_or_implicit_engine_fallback():
         compile_launch_plan(raw, engine="missing")
 
 
+def test_explicit_harness_must_be_declared_available_without_fallback():
+    raw = spec()
+    raw["available_harnesses"] = {"claude-code": {}, "hermes": {}}
+
+    with pytest.raises(ValueError) as caught:
+        compile_launch_plan(raw, harness="codex")
+
+    message = str(caught.value)
+    assert (
+        "available harnesses: claude-code, hermes" in message
+        and "No fallback was selected" in message
+    )
+
+
+def test_incompatible_pair_feedback_lists_both_available_axes():
+    raw = spec()
+    raw["available_harnesses"] = {"claude-code": {}, "codex": {}}
+    del raw["engines"]["qwen"]["endpoints"]["openai-responses"]
+
+    with pytest.raises(ValueError) as caught:
+        compile_launch_plan(raw, harness="codex", engine="qwen")
+
+    message = str(caught.value)
+    assert all(
+        fragment in message
+        for fragment in (
+            "incompatible harness/engine pair",
+            "available harnesses: claude-code, codex",
+            "available engines: qwen",
+            "No fallback was selected",
+        )
+    )
+
+
 def test_missing_protocol_refuses_pairing():
     # Arrange
     raw = spec()

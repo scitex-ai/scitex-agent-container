@@ -98,6 +98,8 @@ def _emit_report_json(
         "host_workdir": host_workdir,
         "container_workdir": container_workdir,
         "dry_run": dry_run,
+        "harness": str(getattr(config, "harness", "") or ""),
+        "engine": str(getattr(config, "engine_key", "") or ""),
         "a2a_port": _resolved_port,
         "started_at": None if dry_run else _now_iso(),
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""The ``--engine`` / ``--probe-engine`` option group (``spec.engines``).
+"""The launch-time ``--harness`` / ``--engine`` selection options.
 
 Sibling of ``_start_gate_options`` / ``_start_session_options``: one
 cohesive option group per module so the click entry stays a thin
@@ -37,6 +37,17 @@ from ..._lifecycle._engine_select import ENGINE_PROBE_ENV
 def engine_options(func):
     """Apply the engine-selection flags to a click command, in help order."""
     options = (
+        click.option(
+            "--harness",
+            "harness",
+            type=str,
+            default=None,
+            metavar="KEY",
+            help="Start with the named harness from `available_harnesses:`. "
+            "The harness and engine are selected independently, then the pair "
+            "is validated. Unknown, unavailable, or incompatible selections "
+            "fail and list the available choices; sac never falls back.",
+        ),
         click.option(
             "--engine",
             "engine",

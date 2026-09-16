@@ -197,6 +197,7 @@ def start(
     session_mode: str | None,
     continue_session: bool,
     fresh_session: bool,
+    harness: str | None,
     engine: str | None,
     probe_engine: bool | None,
     dry_run: bool,
@@ -369,12 +370,19 @@ def start(
     # ``_start_parallel``, so a multi-target run would silently drop it —
     # the fallback-by-dropped-field this whole axis refuses. Fail loud on
     # BOTH shapes instead.
-    if engine and (is_bulk or len(single_targets) > 1):
+    if (engine or harness) and (is_bulk or len(single_targets) > 1):
+        selections = " ".join(
+            value
+            for value in (
+                f"--harness {harness}" if harness else "",
+                f"--engine {engine}" if engine else "",
+            )
+            if value
+        )
         click.echo(
-            f"Error: --engine {engine} cannot be combined with directory or "
-            "multi-agent targets — engine keys are declared per spec, so one "
-            "key does not name the same backend across agents. Start each "
-            "agent separately.",
+            f"Error: {selections} cannot be combined with directory or "
+            "multi-agent targets — available harnesses and engines are declared "
+            "per spec. Start each agent separately.",
             err=True,
         )
         sys.exit(2)
@@ -476,6 +484,7 @@ def start(
         force=force,
         resume_id=resume_id,
         session_mode=session_mode,
+        harness=harness,
         engine=engine,
         probe_engine=probe_engine,
         dry_run=dry_run,

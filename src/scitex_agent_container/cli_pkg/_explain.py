@@ -549,7 +549,9 @@ def _host_merge_lines(config: AgentConfig) -> "list[str]":
 
 @click.command("explain")
 @click.argument("name")
-def explain(name: str) -> None:
+@click.option("--harness", default=None, metavar="KEY")
+@click.option("--engine", default=None, metavar="KEY")
+def explain(name: str, harness: str | None, engine: str | None) -> None:
     """Render the FULL effective launch plan for agent NAME (no launch).
 
     Mounts + --pwd are parsed from the same build_run_argv the runtime uses,
@@ -562,5 +564,18 @@ def explain(name: str) -> None:
             "(project-scope .scitex/agent-container/agents/ or "
             "~/.scitex/agent-container/agents/). Run `sac agents list`."
         )
-    config = load_config(str(spec))
+    config = load_config(str(spec), harness_override=harness)
+    if engine:
+        from ..config._engine_types import apply_engine, select_engine
+        from .._lifecycle._engine_select import assert_engine_harness_compatible
+
+        selected = select_engine(config.engines, engine)
+        if selected is not None:
+            try:
+                assert_engine_harness_compatible(
+                    config, selected, harness_explicit=harness is not None
+                )
+            except RuntimeError as exc:
+                raise click.ClickException(str(exc)) from exc
+            apply_engine(config, selected)
     click.echo(render_plan(config, spec_path=spec))

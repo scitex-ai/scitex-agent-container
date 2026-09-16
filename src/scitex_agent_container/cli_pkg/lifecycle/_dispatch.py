@@ -55,6 +55,7 @@ def _dispatch_remote_start(
     *,
     dry_run: bool = False,
     force: bool = False,
+    harness: str | None = None,
     engine: str | None = None,
     session_mode: str | None = None,
     resume_id: str | None = None,
@@ -176,6 +177,7 @@ def _dispatch_remote_start(
 
     remote_argv = remote_start_argv(
         name,
+        harness=harness,
         engine=engine,
         session_mode=session_mode,
         resume_id=resume_id,
@@ -253,7 +255,9 @@ def _dispatch_remote_start(
             pass
     click.echo(
         f"[dispatch] {name!r} started on {peer!r} "
-        f"(a2a_port={peer_state.get('a2a_port')!s}, "
+        f"(harness={peer_state.get('harness')!s}, "
+        f"engine={peer_state.get('engine')!s}, "
+        f"a2a_port={peer_state.get('a2a_port')!s}, "
         f"started_at={peer_state.get('started_at')!s})."
     )
     return 0
@@ -266,6 +270,7 @@ def try_dispatch(
     *,
     dry_run: bool,
     force: bool,
+    harness: str | None = None,
     engine: str | None = None,
     session_mode: str | None = None,
     resume_id: str | None = None,
@@ -348,6 +353,7 @@ def try_dispatch(
             peer=dispatch_peer,
             dry_run=dry_run,
             force=force,
+            harness=harness,
             engine=engine,
             session_mode=session_mode,
             resume_id=resume_id,

@@ -13,12 +13,15 @@ def spawned_by() -> str:
 def remote_start_argv(
     name: str,
     *,
+    harness: str | None = None,
     engine: str | None = None,
     session_mode: str | None = None,
     resume_id: str | None = None,
 ) -> list[str]:
     """Carry start-time engine and conversation choices across SSH."""
     argv = ["sac", "agents", "start", name, "--no-redispatch", "--json"]
+    if harness:
+        argv += ["--harness", harness]
     if engine:
         argv += ["--engine", engine]
     if resume_id:

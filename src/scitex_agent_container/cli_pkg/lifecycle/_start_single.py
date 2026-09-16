@@ -72,6 +72,7 @@ def run_single_targets(
     force: bool,
     resume_id: str | None,
     session_mode: str | None,
+    harness: str | None = None,
     engine: str | None = None,
     probe_engine: bool | None = None,
     dry_run: bool,
@@ -169,7 +170,21 @@ def run_single_targets(
             # stx-allow: fallback (reason: config resolution, YAML parse, or agent_start can raise on misconfiguration or launch failure; catching here gives a clean error message and continues to the next target)
             try:
                 config_path = resolve_with_prefix(raw_target)
-                config = load_config(config_path)
+                config = load_config(config_path, harness_override=harness)
+                if engine:
+                    from ...config._engine_types import apply_engine, select_engine
+                    from ..._lifecycle._engine_select import (
+                        assert_engine_harness_compatible,
+                    )
+
+                    selected_engine = select_engine(config.engines, engine)
+                    if selected_engine is not None:
+                        assert_engine_harness_compatible(
+                            config,
+                            selected_engine,
+                            harness_explicit=harness is not None,
+                        )
+                        apply_engine(config, selected_engine)
                 try:
                     current_host = resolve_hostname()
                 except RuntimeError:  # stx-allow: fallback (reason: runtime state error — handled gracefully)
@@ -203,6 +218,7 @@ def run_single_targets(
                         peers,
                         dry_run=dry_run,
                         force=force,
+                        harness=harness,
                         engine=engine,
                         session_mode=session_mode,
                         resume_id=resume_id,
@@ -338,6 +354,7 @@ def run_single_targets(
                     session_override=session_mode,
                     resume_id_override=resume_id,
                     engine_override=engine,
+                    harness_override=harness,
                     probe_engine=probe_engine,
                     foreground=foreground,
                     one_shot=one_shot,

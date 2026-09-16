@@ -64,6 +64,7 @@ def agent_start(
     session_override: str | None = None,
     resume_id_override: str | None = None,
     engine_override: str | None = None,
+    harness_override: str | None = None,
     probe_engine: bool | None = None,
     dry_run: bool = False,
     no_preflight: bool = False,
@@ -140,7 +141,7 @@ def agent_start(
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
-    config = load_config(config_path)
+    config = load_config(config_path, harness_override=harness_override)
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
@@ -168,16 +169,23 @@ def agent_start(
     # of a dropped field rather than a decision. Refuse instead, naming
     # the command that works. (Threading engine through the broker body,
     # the host listen handler and its argv builder is the follow-up.)
-    if engine_override and not dry_run and is_in_sif():
+    if (engine_override or harness_override) and not dry_run and is_in_sif():
+        requested = " ".join(
+            part
+            for part in (
+                f"--harness {harness_override}" if harness_override else "",
+                f"--engine {engine_override}" if engine_override else "",
+            )
+            if part
+        )
         raise RuntimeError(
-            f"--engine {engine_override!r} cannot be honoured from inside "
+            f"launch selection {requested!r} cannot be honoured from inside "
             "an apptainer SIF: the start is brokered to the host's `sac "
             "listen`, whose request body has no engine field, so the "
             "engine would be silently dropped and the agent would start "
             "on its DEFAULT engine. sac refuses to start rather than "
             f"start on a backend you did not ask for. Run on the host: "
-            f"sac agents start {config.name} --force --yes --engine "
-            f"{engine_override}"
+            f"sac agents start {config.name} --force --yes {requested}"
         )
     if maybe_broker_in_sif_spawn(
         config.name,
@@ -205,6 +213,7 @@ def agent_start(
         session_override=session_override,
         resume_id_override=resume_id_override,
         engine_override=engine_override,
+        harness_override=harness_override,
         probe_engine=probe_engine,
         one_shot=one_shot,
         dry_run=dry_run,

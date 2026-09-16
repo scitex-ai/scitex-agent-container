@@ -7,6 +7,7 @@ import pytest
 from scitex_agent_container.config._schema_compat import (
     canonical_surface_errors,
     normalize_document,
+    select_harness_document,
 )
 from scitex_agent_container.config._validation import validate_raw
 
@@ -477,4 +478,37 @@ def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
     assert any(
         "available_harnesses.hermes.session.max_age_minutes must be null" in error
         for error in errors
+    )
+
+
+def test_launch_harness_selection_is_copying_and_exact():
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "available_harnesses": {"claude-code": {}, "hermes": {}},
+        }
+    }
+
+    selected = select_harness_document(raw, "hermes")
+
+    assert (
+        selected["spec"]["harness"],
+        raw["spec"]["harness"],
+    ) == ("hermes", "claude-code")
+
+
+def test_unknown_launch_harness_lists_choices_and_never_falls_back():
+    raw = {
+        "spec": {
+            "harness": "claude-code",
+            "available_harnesses": {"claude-code": {}, "hermes": {}},
+        }
+    }
+
+    with pytest.raises(ValueError) as caught:
+        select_harness_document(raw, "codex")
+
+    assert str(caught.value) == (
+        "unknown harness 'codex'; available harnesses: 'claude-code', 'hermes'. "
+        "An explicit --harness never falls back to spec.harness."
     )

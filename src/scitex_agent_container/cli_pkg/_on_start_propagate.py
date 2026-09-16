@@ -51,6 +51,8 @@ _START_VERB = "start"
 # positional agent name. Mirrors the value-taking options on the
 # ``agents start`` click command.
 _VALUE_FLAGS = {
+    "--harness",
+    "--engine",
     "--resume",
     "--session",
     "--params-file",

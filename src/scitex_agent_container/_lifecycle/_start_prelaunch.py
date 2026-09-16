@@ -47,6 +47,7 @@ def run_prelaunch(
     session_override: str | None,
     resume_id_override: str | None,
     engine_override: str | None,
+    harness_override: str | None,
     probe_engine: bool | None,
     one_shot: bool,
     dry_run: bool,
@@ -98,7 +99,10 @@ def run_prelaunch(
     # fall back to another engine (answer Q3). A legacy single-backend
     # spec with no --engine returns None here and changes nothing.
     select_engine_at_start(
-        config, engine_override, probe=probe_engine
+        config,
+        engine_override,
+        probe=probe_engine,
+        harness_explicit=harness_override is not None,
     )
 
     if session_override:

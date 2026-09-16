@@ -30,3 +30,20 @@ def test_explicit_resume_reaches_remote_cli_argv_without_mode_conflict():
     argv = remote_start_argv("cards", session_mode=session_mode, resume_id="session-42")
     # Assert
     assert argv[-2:] == ["--resume", "session-42"]
+
+
+def test_harness_and_engine_selection_reach_remote_cli_argv_independently():
+    argv = remote_start_argv("cards", harness="hermes", engine="qwen")
+
+    assert argv == [
+        "sac",
+        "agents",
+        "start",
+        "cards",
+        "--no-redispatch",
+        "--json",
+        "--harness",
+        "hermes",
+        "--engine",
+        "qwen",
+    ]

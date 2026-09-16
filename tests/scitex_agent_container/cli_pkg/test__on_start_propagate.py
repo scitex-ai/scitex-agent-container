@@ -135,6 +135,21 @@ class TestArgvClassification:
         # Assert
         assert name == "clew"
 
+    def test_positional_name_parsed_past_harness_and_engine_flags(self) -> None:
+        argv = [
+            "agents",
+            "start",
+            "--harness",
+            "hermes",
+            "--engine",
+            "qwen",
+            "clew",
+        ]
+
+        name = parse_started_agent_name(argv)
+
+        assert name == "clew"
+
     def test_positional_name_parsed_past_plain_flag(self) -> None:
         # Arrange
         argv = ["agents", "start", "--force", "--json", "neurovista"]

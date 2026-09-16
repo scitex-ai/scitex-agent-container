@@ -385,9 +385,31 @@ def normalize_document(raw: object) -> object:
     return out
 
 
+def select_harness_document(raw: object, requested: str) -> object:
+    """Return a copied document with one declared harness selected.
+
+    This is the single validation boundary used by launch-time ``--harness``.
+    It never mutates the cached YAML object and never substitutes the default.
+    """
+    selected = requested.strip()
+    out = copy.deepcopy(raw)
+    spec = out.get("spec") if isinstance(out, dict) else None
+    choices = spec.get(AVAILABLE_HARNESSES_KEY) if isinstance(spec, dict) else None
+    available = list(map(str, choices)) if isinstance(choices, Mapping) else []
+    if not selected or selected not in available:
+        rendered = ", ".join(repr(value) for value in available) or "(none)"
+        raise ValueError(
+            f"unknown harness {selected!r}; available harnesses: {rendered}. "
+            "An explicit --harness never falls back to spec.harness."
+        )
+    spec["harness"] = selected
+    return out
+
+
 __all__ = [
     "AVAILABLE_ENGINES_KEY",
     "AVAILABLE_HARNESSES_KEY",
     "canonical_surface_errors",
     "normalize_document",
+    "select_harness_document",
 ]
