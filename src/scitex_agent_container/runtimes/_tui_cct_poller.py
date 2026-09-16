@@ -203,6 +203,11 @@ def _poller_env(
     # Keep it here as well so health/preflight and the authoritative child
     # describe the ownership topology identically.
     env["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] = "1"
+    # CCT must choose a fallback the selected harness can semantically
+    # acknowledge. Codex does not execute Claude channel notifications.
+    from ..config._harness_registry import resolve_harness_key
+
+    env["CCT_HARNESS"] = resolve_harness_key(config)
     env["CCT_AGENT_ID"] = config.name
     env["SAC_NAME"] = config.name
     env["SCITEX_AGENT_CONTAINER_NAME"] = config.name
