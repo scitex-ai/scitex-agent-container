@@ -260,6 +260,8 @@ def preflight_subscription(
             "read-only",
             "-m",
             model,
+            "-c",
+            'model_provider="openai"',
             "Reply with exactly OK. Do not call tools.",
         ],
         stdin=subprocess.DEVNULL,
