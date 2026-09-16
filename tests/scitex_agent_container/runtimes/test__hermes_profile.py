@@ -810,13 +810,19 @@ def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
         rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
             "CCT_BOT_TOKEN"
         ],
+        rendered["mcp_servers"]["claude-code-telegrammer"]["env"][
+            "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"
+        ],
         "mcp-claude-code-telegrammer" in rendered["toolsets"],
         "CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
         in profile_env,
+        "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER=1" in profile_env,
     ) == (
         {"claude-code-telegrammer"},
         "http://127.0.0.1:19007/v1/turn",
         "${env:CCT_BOT_TOKEN}",
+        "1",
+        True,
         True,
         True,
     )
