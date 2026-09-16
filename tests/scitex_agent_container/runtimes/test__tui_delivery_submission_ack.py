@@ -70,20 +70,33 @@ def _deliver() -> bool:
 
 
 def test_codex_turn_is_acknowledged_after_observable_submission() -> None:
+    # Arrange
     _CodexMux.reset(drop_enter=False)
 
-    assert _deliver() is True
+    # Act
+    delivered = _deliver()
+
+    # Assert
+    assert delivered is True
 
 
 def test_codex_turn_is_not_acknowledged_when_enter_is_dropped() -> None:
+    # Arrange
     _CodexMux.reset(drop_enter=True)
 
-    assert _deliver() is False
+    # Act
+    delivered = _deliver()
+
+    # Assert
+    assert delivered is False
 
 
 def test_legitimate_ci_feedback_is_not_suppressed() -> None:
+    # Arrange
     _CodexMux.reset(drop_enter=False)
 
+    # Act
     _deliver()
 
+    # Assert
     assert _CodexMux.pasted == [_PAYLOAD]
