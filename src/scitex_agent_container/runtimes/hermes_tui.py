@@ -299,8 +299,15 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
     def recover_turn_admission(self, config: AgentConfig) -> bool:
         """Use Hermes' supported same-session model switch."""
         from ._hermes_stale_recovery import recovery_command
+        from ._hermes_tui_rpc import execute_slash_command
 
-        return self.send_turn(config, recovery_command(config), wait_ready=False)
+        return bool(
+            execute_slash_command(
+                state_dir_for_config(config),
+                config.name,
+                recovery_command(config),
+            )
+        )
 
     def disable_periodic_turns(self, config: AgentConfig) -> bool:
         """Remove model-calling heartbeat state through Hermes' control plane."""

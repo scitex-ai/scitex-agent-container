@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
@@ -393,14 +395,17 @@ def test_recovery_uses_supported_same_session_controls_in_order():
     calls = []
     runtime = HermesTuiSessionRuntime(
         multiplexer=mux,
-        rpc_submit=lambda state, name, text: calls.append(text) or "steered",
     )
     runtime.disable_periodic_turns = lambda _config: (
         calls.append("heartbeat.clear") or True
     )
     # Act
     disabled = runtime.disable_periodic_turns(config)
-    recovered = runtime.recover_turn_admission(config)
+    with patch(
+        "scitex_agent_container.runtimes._hermes_tui_rpc.execute_slash_command",
+        side_effect=lambda state, name, command: calls.append(command) or "switched",
+    ):
+        recovered = runtime.recover_turn_admission(config)
     # Assert
     assert (
         disabled,

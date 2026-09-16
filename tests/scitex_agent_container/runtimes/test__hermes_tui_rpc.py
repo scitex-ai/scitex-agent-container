@@ -16,6 +16,7 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     clear_heartbeat,
     clear_heartbeat_for_session,
     compress_session,
+    execute_slash_command,
     gateway_detailed_health,
     observe_turn_activity,
     submit_turn,
@@ -444,6 +445,50 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
         },
     )
 
+
+def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class SlashSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "slash.exec":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"output": "Switched model."},
+                    }
+                )
+            return super().recv()
+
+    socket = SlashSocket(status="idle")
+
+    # Act
+    output = execute_slash_command(
+        tmp_path,
+        "hub",
+        "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+
+    # Assert
+    assert (
+        output,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"],
+    ) == (
+        "Switched model.",
+        ["session.active_list", "slash.exec"],
+        {
+            "session_id": "live-1",
+            "command": (
+                "/model qwen38-27b --provider "
+                "custom:sac-qwen38-27b --session"
+            ),
+        },
+    )
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
     # Arrange

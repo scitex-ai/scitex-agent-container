@@ -359,6 +359,55 @@ def submit_turn(
     return receipt
 
 
+def execute_slash_command(
+    state_dir: Path,
+    agent_name: str,
+    command: str,
+    *,
+    timeout_s: float = 30.0,
+    connect_fn: Any | None = None,
+) -> str:
+    """Execute a slash command through Hermes' command dispatcher.
+
+    Slash commands are control-plane operations, not conversational turns.
+    Sending ``/model`` through ``prompt.submit`` records ordinary user text and
+    never invokes Hermes' model-switch handler.  ``slash.exec`` runs the
+    supported command path and mirrors its side effects onto the live session.
+    """
+    command = str(command or "").strip()
+    if not command.startswith("/"):
+        raise ValueError("Hermes slash command must start with '/'")
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session_id = _select_session(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+            result = _rpc(
+                socket,
+                2,
+                "slash.exec",
+                {"session_id": session_id, "command": command},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url} is unreachable: {exc}"
+        ) from exc
+    output = result.get("output")
+    if not isinstance(output, str) or not output.strip():
+        raise HermesTuiRpcError(
+            f"Hermes slash.exec returned malformed result: {result!r}"
+        )
+    if warning := result.get("warning"):
+        raise HermesTuiRpcError(
+            f"Hermes slash.exec did not synchronize the live session: {warning}"
+        )
+    return output
+
+
 def clear_heartbeat_for_session(
     state_dir: Path,
     session_id: str,
