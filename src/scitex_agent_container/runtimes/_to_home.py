@@ -65,6 +65,7 @@ from ._cct_token_pool import ensure_cct_bot_token, prune_tokenless_telegrammer_m
 from ._envrc import fold_envrc_cascade_into_env, fold_envrc_into_env
 from ._github_token import ensure_github_token
 from ._hook_origin_manifest import write_hook_manifest
+from ._home_materialization import resolve_home_imports
 from ._host_commands import (
     deploy_host_claude_commands,
     host_claude_commands_dir,
@@ -229,31 +230,24 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
 
 
 def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
-    """``AgentConfig``-driven entrypoint for to_home materialization.
+    """Materialize the spec's ordered imports before harness launch.
 
-    Two-pass overlay:
-
-      1. The shared/common baseline ``to_home/``.
-      2. The per-agent ``to_home/`` on top — so per-agent files win on
-         conflict.
-
-    Resolves the per-agent directory via :func:`resolve_to_home_dir`
-    (honours ``spec.to_home`` overrides) and the baseline via
-    :func:`resolve_baseline_to_home_dir`, then applies metadata-aware
-    interpolation (${metadata.name}, ${metadata.labels.*}, ${ENV_VAR})
-    to text files. Symlinks are dereference-copied to real content; the
-    runtime never auto-reads host state. No-op when neither the baseline
-    nor the per-agent to_home resolves.
+    The authored import list is the sole source of paths and precedence.  The
+    complete plan is resolved, digested and conflict-checked before the first
+    destination write, then recorded on ``config`` for the birth certificate.
     """
-    root = resolve_to_home_dir(config)
-    baseline = resolve_baseline_to_home_dir(_spec_dir(config))
-    if root is None and baseline is None:
+    # Resolve the complete authored plan before touching the destination. This
+    # is the launch boundary: required-source and conflict failures are atomic.
+    resolved_layers = resolve_home_imports(config)
+    present_layers = [
+        (layer, Path(layer.source))
+        for layer in resolved_layers
+        if layer.status == "present"
+    ]
+    if not present_layers:
         return
-    # Credential-leak guard runs BEFORE any deploy (both layers).
-    if baseline is not None:
-        _scan_for_credential_leak(baseline)
-    if root is not None:
-        _scan_for_credential_leak(root)
+    for _layer, source in present_layers:
+        _scan_for_credential_leak(source)
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
     # Idempotency: re-derive the deep-merged .mcp.json FRESH each deploy. Drop
@@ -275,12 +269,11 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     deploy_host_skills(dest)
     # Run-scoped and SHARED across both layers — see materialize_to_home.
     composed_dsts: set[Path] = set()
-    if baseline is not None:
+    for layer, source in present_layers:
+        layer_dest = dest if layer.destination == "." else dest / layer.destination
         _walk_and_apply(
-            baseline, baseline, dest, config=config, composed_dsts=composed_dsts
+            source, source, layer_dest, config=config, composed_dsts=composed_dsts
         )
-    if root is not None:
-        _walk_and_apply(root, root, dest, config=config, composed_dsts=composed_dsts)
     # Launch-time snapshot drift (card sac-launch-compares-the-copied-
     # commands-snapshot-to-the-dotfiles-ref-and-logs-divergence-20260905):
     # the commands the agent will read from the runtime home may differ
@@ -304,10 +297,12 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # no layer ships a .envrc.
     workdir = (getattr(config, "workdir", "") or "").strip()
     workdir_dir = Path(workdir).expanduser() if workdir else None
-    user_shared = _user_baseline_to_home_dir()
     envrc_cascade = [
-        (user_shared / ".envrc") if user_shared is not None else None,
-        (baseline / ".envrc") if baseline is not None else None,
+        *[
+            source / ".envrc"
+            for layer, source in present_layers
+            if layer.destination == "."
+        ],
         (workdir_dir / ".envrc") if workdir_dir is not None else None,
         dest / ".envrc",
     ]
@@ -349,7 +344,13 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # layer's .claude/settings.json into dest, raising on a cross-layer scalar
     # conflict (ADR-0018). The walk SKIPS settings.json so this is the single
     # writer. setup_settings_json later folds SAC's managed keys on top.
-    settings_provenance = deploy_settings_cascade(dest, settings_layer_dirs(config))
+    settings_provenance = deploy_settings_cascade(
+        dest,
+        [
+            (layer.id, source if layer.destination == "." else None)
+            for layer, source in present_layers
+        ],
+    )
     # ...then record WHICH layer armed each hook, to runtime (not to the home
     # we just wrote). The deployed settings.json is the flattened result, so it
     # cannot answer "where is this hook coming from?" — the origin only exists

@@ -51,6 +51,7 @@ from ._parsers import (
     resolve_model_surface,
 )
 from ._residency_types import resolve_spec_residency
+from ._to_home_spec import parse_to_home
 from ._types import AgentConfig, HostsSpec
 from ._workdir_hook import mapped_workdir_mkdir_hook
 
@@ -471,16 +472,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         delegation=delegation_spec,
         kind=kind,
         proxy=proxy_spec,
-        # ADR-0006: default to ``./to_home`` when the key is absent so a
-        # ``to_home/`` dir next to spec.yaml auto-discovers. An empty
-        # string in YAML keeps the same default behaviour.
-        to_home=str(spec.get("to_home", "./to_home") or "./to_home"),
-        # ABSENT key -> None ("inherit whatever is on disk", today's implicit
-        # cascade). An explicit empty list is NOT the same thing and must not
-        # collapse into it: that is a spec saying "inherit NOTHING", which is a
-        # legitimate thing for a sandboxed agent to declare. Only `is None`
-        # distinguishes them, so the default here cannot be `[]`.
-        to_home_layers=_parse_to_home_layers(spec.get("to_home_layers")),
+        to_home=parse_to_home(spec.get("to_home")),
     )
 
     # ``spec.engines`` — fold the DEFAULT engine onto the resolved
@@ -490,30 +482,3 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     # START path instead).
     apply_default_engine(config, engines, spec)
     return config
-
-
-def _parse_to_home_layers(value: object) -> "list[str] | None":
-    """Normalise ``spec.to_home_layers`` to a list of names, or ``None``.
-
-    ``None``/absent keeps the implicit cascade. A string is accepted as a
-    one-element list, because a single-layer declaration is the common case and
-    writing it as a bare scalar in YAML is the obvious thing to do.
-
-    Any other type RAISES. Returning ``None`` for, say, a mapping would make an
-    unusable declaration indistinguishable from an absent one — the spec would
-    silently fall back to inheriting everything while its author believed it had
-    restricted the cascade. That is the exact class of surprise this field
-    exists to remove, so it cannot be how the field itself fails.
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if isinstance(value, (list, tuple)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    raise ValueError(
-        f"spec.to_home_layers must be a list of layer names (or a single name), "
-        f"got {type(value).__name__}: {value!r}. Valid names: "
-        f"user-shared, project-shared, per-agent. Omit the key entirely to "
-        f"inherit the implicit cascade."
-    )

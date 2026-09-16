@@ -207,7 +207,12 @@ def _top_level_fields() -> list[RequiredField]:
         RequiredField("extensions", "dict", "{}", {}),
         RequiredField("mcp_servers", "dict", "{}", {}),
         RequiredField("user", "str", "''", ""),
-        RequiredField("to_home", "str", "'./to_home'", "./to_home"),
+        RequiredField(
+            "to_home",
+            "mapping",
+            "no implicit layers",
+            {"imports": []},
+        ),
     ]
 
 
