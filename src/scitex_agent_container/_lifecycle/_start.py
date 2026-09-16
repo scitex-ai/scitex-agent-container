@@ -47,6 +47,7 @@ from ._start_preflight import (  # noqa: F401
 )
 from ._start_prelaunch import run_prelaunch
 from ._start_supervision import start_background_supervision
+from ._worktree_policy import enforce_task_worktree_policy
 
 
 def _should_clear_persisted_session(
@@ -263,6 +264,8 @@ def agent_start(
         )
     )
     really_running = verdict.is_alive
+    if uses_production_runtime and not dry_run and (not really_running or force):
+        enforce_task_worktree_policy(config)
     if really_running:
         from ._start_engine_noop import assert_explicit_engine_noop_safe
 

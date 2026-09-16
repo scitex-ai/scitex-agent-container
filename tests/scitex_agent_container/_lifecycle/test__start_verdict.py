@@ -26,8 +26,6 @@ no-op'd at the runtime rather than relaunched over.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 from typing import Iterator
@@ -52,6 +50,7 @@ from scitex_agent_container._lifecycle._verdict import (
     decide,
 )
 from scitex_agent_container._state.registry import Registry
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 
 @pytest.fixture(autouse=True)
@@ -307,6 +306,78 @@ def test_an_alive_agent_still_no_ops(pg_schema: str, tmp_path, registry):
     )
     # Assert — never relaunched over a live agent.
     assert runtime.start_calls == []
+
+
+def test_policy_refusal_precedes_a_forced_stop(
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scitex_agent_container._lifecycle import _start as start_mod
+    from scitex_agent_container._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+    )
+
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [Signal(SOURCE_DELIVERY, ALIVE, "live", INSTRUMENT_LISTEN_BROKER)],
+    )
+    monkeypatch.setattr(start_mod, "_get_runtime", lambda _config: runtime)
+
+    def refuse(_config) -> None:
+        raise WorktreePolicyError("fixture refusal")
+
+    monkeypatch.setattr(start_mod, "enforce_task_worktree_policy", refuse)
+
+    with pytest.raises(WorktreePolicyError, match="fixture refusal"):
+        start_mod.agent_start(
+            str(spec),
+            registry=registry,
+            force=True,
+            handover_mod=_Handover(),
+            sleep_fn=_no_sleep,
+            verdict_override=alive,
+        )
+
+    assert runtime.stop_calls == []
+
+
+def test_already_running_noop_does_not_claim_a_new_policy_proof(
+    pg_schema: str,
+    tmp_path: Path,
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scitex_agent_container._lifecycle import _start as start_mod
+
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [Signal(SOURCE_DELIVERY, ALIVE, "live", INSTRUMENT_LISTEN_BROKER)],
+    )
+    monkeypatch.setattr(start_mod, "_get_runtime", lambda _config: runtime)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        start_mod,
+        "enforce_task_worktree_policy",
+        lambda config: calls.append(config.name),
+    )
+
+    start_mod.agent_start(
+        str(spec),
+        registry=registry,
+        handover_mod=_Handover(),
+        sleep_fn=_no_sleep,
+        verdict_override=alive,
+    )
+
+    assert calls == []
 
 
 def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry):

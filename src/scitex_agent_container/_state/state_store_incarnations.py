@@ -155,6 +155,8 @@ def _schema() -> Any:
             "host": fact(FieldKind.TEXT, required=True),
             "born_at": fact(FieldKind.TEXT, required=True),
             "compiled_spec_json": fact(FieldKind.TEXT, required=True),
+            "policy_sha256": fact(FieldKind.TEXT),
+            "projection_sha256": fact(FieldKind.TEXT),
             # --- death: absent until the incarnation ends ---
             "exit_reason": fact(FieldKind.TEXT),
             "exit_code": fact(FieldKind.INTEGER),
@@ -212,6 +214,8 @@ def record_incarnation_birth(
     spec_git_sha: str,
     host: str | None,
     compiled_spec_json: str,
+    policy_sha256: str | None = None,
+    projection_sha256: str | None = None,
 ) -> str:
     """Write the birth certificate for one incarnation. Returns the id.
 
@@ -238,6 +242,8 @@ def record_incarnation_birth(
                 "host": resolve_host(host),
                 "born_at": now_iso(),
                 "compiled_spec_json": compiled_spec_json,
+                "policy_sha256": policy_sha256,
+                "projection_sha256": projection_sha256,
             },
             expected_revision=ANY_REVISION,
         )
