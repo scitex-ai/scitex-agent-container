@@ -68,7 +68,7 @@ def _remote_instance_status(name: str) -> dict | None:
         bound = row.get("bound_port")
         if bound is None:
             bound = row.get("a2a_port")
-        return {
+        result = {
             "name": name,
             "config": "",
             "screen": row.get("screen", "") or "",
@@ -88,6 +88,22 @@ def _remote_instance_status(name: str) -> dict | None:
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
+        from .._state.observation import DefinitionState, build_agent_observation
+
+        result["liveness"] = {
+            "verdict": "unknown",
+            "evidence": [
+                {
+                    "source": "registry",
+                    "verdict": "unknown",
+                    "detail": "remote active row is not a live process observation",
+                }
+            ],
+        }
+        result["observation"] = build_agent_observation(
+            result, definition_state=DefinitionState.MISSING
+        )
+        return result
     except Exception:  # stx-allow: fallback (reason: best-effort cross-host status — caller raises the normal "not found" error when None)
         return None
 
@@ -320,6 +336,15 @@ def agent_status(
         # Don't overwrite a field that a prior enrich step already set —
         # the additive contract says NEW keys, not "always replaces".
         result.setdefault(k, v)
+
+    from .._state.observation import DefinitionState, build_agent_observation
+
+    result["observation"] = build_agent_observation(
+        result,
+        definition_state=(
+            DefinitionState.VALID if config is not None else DefinitionState.INVALID
+        ),
+    )
 
     return result
 
