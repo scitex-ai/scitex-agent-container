@@ -217,6 +217,7 @@ def test_real_canonical_spec_reaches_hermes_profile_and_argv(
         and config.hermes_run_budget_seconds == 90
         and profile["auxiliary"]["background_review"] == {"enabled": True}
         and profile["agent"]["run_budget_seconds"] == 90
+        and profile["agent"]["max_turns"] == "none"
         and profile["compression"]
         == {
             "enabled": True,

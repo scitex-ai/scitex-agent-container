@@ -1,4 +1,6 @@
-"""Selected Hermes runs have an explicit, short steering boundary."""
+"""Hermes run budgets are opt-in and validated at every parser boundary."""
+
+import pytest
 
 from scitex_agent_container.config._hermes_run_budget import (
     DEFAULT_HERMES_RUN_BUDGET_SECONDS,
@@ -24,7 +26,7 @@ def test_selected_hermes_entry_supplies_run_budget():
     assert budget == 45
 
 
-def test_hermes_default_caps_one_run_at_two_minutes():
+def test_hermes_default_leaves_run_budget_disabled():
     # Arrange
     spec = {
         "harness": "hermes",
@@ -38,4 +40,23 @@ def test_hermes_default_caps_one_run_at_two_minutes():
     # Act
     budget = parse_selected_hermes_run_budget(spec)
     # Assert
-    assert budget == DEFAULT_HERMES_RUN_BUDGET_SECONDS == 120
+    assert budget is DEFAULT_HERMES_RUN_BUDGET_SECONDS is None
+
+
+@pytest.mark.parametrize("value", [None, True, 1.5, "90", 0, -1])
+def test_direct_parser_rejects_explicit_invalid_run_budget(value):
+    # Arrange
+    spec = {
+        "harness": "hermes",
+        "available_harnesses": {"hermes": {"run_budget_seconds": value}},
+    }
+
+    def action():
+        return parse_selected_hermes_run_budget(spec)
+
+    # Act
+    run = action
+
+    # Assert
+    with pytest.raises(ValueError, match="positive integer"):
+        run()

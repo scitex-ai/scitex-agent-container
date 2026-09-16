@@ -34,6 +34,9 @@ import pytest
 from scitex_agent_container._lifecycle import lifecycle as lc
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures — real env, real Registry, no monkeypatch
@@ -219,7 +222,7 @@ def _write_spec(workdir_root: Path, *, name: str = "alpha") -> Path:
     spec = agent_dir / "spec.yaml"
     # Red-start ruling 2026-07-21: every field explicit (body wins).
     spec.write_text(explicitize_yaml(body))
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _seed_session_id(runtime_root: Path, name: str, sid: str) -> Path:

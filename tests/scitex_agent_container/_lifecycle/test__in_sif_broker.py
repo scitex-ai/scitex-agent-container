@@ -47,6 +47,9 @@ from scitex_agent_container._runners import _session_state
 from scitex_agent_container._state.registry import Registry
 from scitex_agent_container.config import AgentConfig
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 # ---------------------------------------------------------------------------
 # Real (non-mock) fake response + opener (urllib protocol)
@@ -474,7 +477,9 @@ def test_in_flight_spawn_returns_true_so_caller_skips_local_start(
     # Act
     brokered = maybe_broker_in_sif_spawn("child", dry_run=False, opener=opener)
     # Assert
-    assert brokered is True, "in-flight must count as brokered, never as 'do it locally'"
+    assert brokered is True, (
+        "in-flight must count as brokered, never as 'do it locally'"
+    )
 
 
 def test_a_genuine_nonzero_returncode_still_raises(sif_env, listen_env) -> None:
@@ -596,7 +601,7 @@ def _write_spec(yaml_root: Path, name: str) -> Path:
             "    interval: 60\n"
         )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def test_agent_start_in_sif_skips_local_runtime_start(
@@ -694,8 +699,7 @@ def test_agent_start_forwards_assume_yes_to_broker_body(
 
 
 def test_agent_start_not_in_sif_uses_local_runtime(
-    pg_schema: str,
-    isolated_state, sif_env, listen_env, tmp_path
+    pg_schema: str, isolated_state, sif_env, listen_env, tmp_path
 ) -> None:
     # Arrange — NO in-SIF env vars set → regression guard: local flow intact.
     sif_env(None, key="APPTAINER_CONTAINER")

@@ -59,7 +59,8 @@ session inside Apptainer (local or remote via SSH), observe via
 - [18_full-agent-delegation.md](18_full-agent-delegation.md) — delegate to another *full* agent
 - [19](19_full-agent-troubleshooting.md) — stuck-peer recovery + reaper
 - [33](33_twin-spawning.md) — context-inheriting twin
-- [34](34_spec-is-a-contract-not-state.md) — spec = contract; state = DB
+- [34](34_spec-is-a-contract-not-state.md)
+- [35](35_spec-authority.md)
 
 ### Workflows
 - [10_cli.md](10_cli.md) — CLI commands and Python API

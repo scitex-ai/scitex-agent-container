@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -321,11 +322,32 @@ def isolated_home(tmp_path: Path) -> Iterator[Path]:
 def _write_undeclared_spec(tmp_path: Path) -> Path:
     """A real, loadable spec.yaml that declares no ``to_home_layers``.
 
-    Deliberately NOT inside a git repo: the sibling drift gate then reports
-    NOT_A_REPO (drift unknown, never a refusal), so this test measures the
-    layers gate alone.
+    It lives in a clean/current develop authority so the earlier authority gate
+    passes and this test measures the layers gate alone.
     """
-    agent_dir = tmp_path / "agents" / "alpha"
+    remote = tmp_path / "authority.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
+    )
+    repo = tmp_path / "authority"
+    subprocess.run(
+        ["git", "clone", str(remote), str(repo)], check=True, capture_output=True
+    )
+    for key, value in (
+        ("user.email", "layers@example.com"),
+        ("user.name", "Layers Test"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(repo), "config", key, value],
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "develop"],
+        check=True,
+        capture_output=True,
+    )
+    agent_dir = repo / "agents" / "alpha"
     agent_dir.mkdir(parents=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
@@ -344,6 +366,19 @@ def _write_undeclared_spec(tmp_path: Path) -> Path:
             "    enabled: false\n"
             "    interval: 60\n"
         )
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "authority"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-u", "origin", "develop"],
+        check=True,
+        capture_output=True,
     )
     return spec
 

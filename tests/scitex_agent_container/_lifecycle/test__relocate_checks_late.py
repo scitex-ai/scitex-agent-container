@@ -338,7 +338,7 @@ def test_a_clean_behind_repo_is_not_warned_about_a_dirty_tree() -> None:
     assert "--ff-only aborts" not in check.hint
 
 
-def test_the_refusal_names_the_override_without_recommending_it() -> None:
+def test_the_refusal_states_there_is_no_launch_bypass() -> None:
     # Arrange
     facts = TargetFacts(
         spec_source_drift=SpecSourceDrift(state="behind", behind=1, repo="/r")
@@ -346,7 +346,7 @@ def test_the_refusal_names_the_override_without_recommending_it() -> None:
     # Act
     check = check_target_start(facts, A, AGENT)
     # Assert
-    assert "prefer the pull" in check.hint
+    assert "There is no launch bypass" in check.hint
 
 
 def test_the_start_check_is_named_for_the_report() -> None:

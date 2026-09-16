@@ -26,6 +26,10 @@ from typing import Iterator
 
 import pytest
 
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
+
 
 class FakeThread:
     """Hand-rolled stand-in for ``threading.Thread`` that NEVER runs.
@@ -46,6 +50,7 @@ class FakeThread:
 
     def start(self) -> None:
         self.started = True
+
 
 @pytest.fixture
 def db_path(tmp_path: Path, pg_schema: str) -> Iterator[Path]:
@@ -415,7 +420,7 @@ def _write_zombie_spec(tmp_path: Path) -> Path:
             "    post_stop: []\n"
         )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _drive_dead_runtime_start_scenario(
@@ -455,8 +460,7 @@ def _drive_dead_runtime_start_scenario(
 
 
 def test_agent_start_clears_dead_pid_from_active_zombie_rows(
-    pg_schema: str,
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
@@ -470,8 +474,7 @@ def test_agent_start_clears_dead_pid_from_active_zombie_rows(
 
 
 def test_agent_start_reaches_runtime_start_after_clearing_zombie_lease(
-    pg_schema: str,
-    db_path: Path, tmp_path: Path
+    pg_schema: str, db_path: Path, tmp_path: Path
 ) -> None:
     # Arrange
     scenario = _drive_dead_runtime_start_scenario
