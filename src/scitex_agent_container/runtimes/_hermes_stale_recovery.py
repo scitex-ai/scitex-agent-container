@@ -29,7 +29,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from ..config import AgentConfig, load_config
-from ._hermes_tui_rpc import HermesSlashReceipt, HermesTurnProgress
+from ._hermes_tui_rpc import HermesSlashReceipt, HermesTurnOutcome, HermesTurnProgress
 from ._runtime_control import READY, RECOVERING, STALE_LATCHED, write_control_state
 
 log = logging.getLogger(__name__)
@@ -286,6 +286,7 @@ def recovery_tick(
     pause: Callable[[], bool],
     recover: Callable[[], bool | HermesSlashReceipt],
     observe_progress: Callable[[], HermesTurnProgress] | None = None,
+    observe_outcome: Callable[[], HermesTurnOutcome] | None = None,
     probe: Callable[[AgentConfig], bool] = provider_has_capacity,
     now: Callable[[], float] = time.time,
     previous_fingerprint: str = "",
@@ -311,13 +312,16 @@ def recovery_tick(
     if previous_fingerprint.startswith("recovered:"):
         if observe_progress is None:
             return previous_fingerprint
-        _, _, baseline_count, baseline_active = previous_fingerprint.split(":", 3)
+        _, _, _baseline_count, baseline_active = previous_fingerprint.split(":", 3)
         progress = observe_progress()
         if (
             progress.status == "idle"
-            and progress.message_count >= int(baseline_count) + 1
             and progress.last_active > float(baseline_active)
+            and observe_outcome is not None
         ):
+            outcome = observe_outcome()
+            if outcome.inflight_status == "error":
+                return previous_fingerprint
             write_control_state(
                 state_dir,
                 {
@@ -327,28 +331,26 @@ def recovery_tick(
                 },
             )
             return (
-                f"ready:{fingerprint}:{progress.message_count}:{progress.last_active}"
+                f"ready:{fingerprint}:{outcome.progress.message_count}:"
+                f"{outcome.progress.last_active}"
             )
         return previous_fingerprint
     if previous_fingerprint.startswith("ready:"):
         if observe_progress is None:
             return previous_fingerprint
-        _, _, baseline_count, baseline_active = previous_fingerprint.split(":", 3)
+        _, _, _baseline_count, baseline_active = previous_fingerprint.split(":", 3)
         progress = observe_progress()
-        baseline_count_int = int(baseline_count)
         if progress.status != "idle":
             return previous_fingerprint
-        if (
-            progress.message_count == baseline_count_int
-            and progress.last_active <= float(baseline_active)
-        ):
+        if progress.last_active <= float(baseline_active):
             return previous_fingerprint
-        if (
-            progress.message_count >= baseline_count_int + 1
-            or progress.message_count < baseline_count_int
-        ):
+        if observe_outcome is None:
+            return previous_fingerprint
+        outcome = observe_outcome()
+        if outcome.inflight_status != "error":
             return (
-                f"ready:{fingerprint}:{progress.message_count}:{progress.last_active}"
+                f"ready:{fingerprint}:{outcome.progress.message_count}:"
+                f"{outcome.progress.last_active}"
             )
     if previous_fingerprint == recovered_token:
         return previous_fingerprint
@@ -417,6 +419,7 @@ def _run_monitor_loop(
                 pause=lambda: bool(runtime.disable_periodic_turns(config)),
                 recover=lambda: runtime.recover_turn_admission(config),
                 observe_progress=lambda: runtime.observe_turn_progress(config),
+                observe_outcome=lambda: runtime.observe_turn_outcome(config),
                 previous_fingerprint=recovered_fingerprint,
                 state_dir=state_dir,
             )

@@ -19,6 +19,7 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     execute_slash_command,
     gateway_detailed_health,
     observe_turn_activity,
+    observe_turn_outcome,
     observe_turn_progress,
     submit_turn,
     submit_visible_turn,
@@ -500,6 +501,36 @@ def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
         "idle",
     )
     assert [request["method"] for request in socket.sent] == ["session.active_list"]
+
+
+def test_observe_turn_outcome_reads_retained_error_without_messages(tmp_path):
+    _gateway_files(tmp_path)
+
+    class OutcomeSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "session.activate":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"inflight": {"status": "error"}},
+                    }
+                )
+            return super().recv()
+
+    socket = OutcomeSocket(status="idle")
+    outcome = observe_turn_outcome(
+        tmp_path,
+        "hub",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    assert outcome.inflight_status == "error"
+    assert [request["method"] for request in socket.sent] == [
+        "session.active_list",
+        "session.activate",
+    ]
+    assert socket.sent[-1]["params"]["omit_messages"] is True
 
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):

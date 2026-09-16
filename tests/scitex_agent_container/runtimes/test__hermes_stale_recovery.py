@@ -225,6 +225,7 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("re-probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered twice")),
         observe_progress=lambda: completed,
+        observe_outcome=lambda: recovery.HermesTurnOutcome(completed, None),
         previous_fingerprint=recovering,
         state_dir=tmp_path,
     )
@@ -265,6 +266,9 @@ def test_ready_proof_is_not_relatched_by_the_historical_same_error(tmp_path):
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
         observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
+        observe_outcome=lambda: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 44.0, "idle"), None
+        ),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
@@ -284,6 +288,9 @@ def test_recovering_proof_survives_terminal_window_shift(tmp_path):
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
         observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
+        observe_outcome=lambda: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 44.0, "idle"), None
+        ),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
@@ -302,6 +309,9 @@ def test_ready_state_relatches_when_activity_advances_without_history(tmp_path):
         pause=lambda: paused.append(True) or True,
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered early")),
         observe_progress=lambda: recovery.HermesTurnProgress(12, 45.0, "idle"),
+        observe_outcome=lambda: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 45.0, "idle"), "error"
+        ),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )

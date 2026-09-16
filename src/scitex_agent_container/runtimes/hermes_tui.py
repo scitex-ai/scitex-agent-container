@@ -313,6 +313,12 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
         return observe_turn_progress(state_dir_for_config(config), config.name)
 
+    def observe_turn_outcome(self, config: AgentConfig):
+        """Read Hermes' retained turn error after non-attaching progress changes."""
+        from ._hermes_tui_rpc import observe_turn_outcome
+
+        return observe_turn_outcome(state_dir_for_config(config), config.name)
+
     def disable_periodic_turns(self, config: AgentConfig) -> bool:
         """Remove model-calling heartbeat state through Hermes' control plane."""
         from ._hermes_tui_rpc import clear_heartbeat

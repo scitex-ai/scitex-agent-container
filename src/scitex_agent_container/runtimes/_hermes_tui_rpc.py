@@ -59,6 +59,14 @@ class HermesTurnProgress:
 
 
 @dataclass(frozen=True)
+class HermesTurnOutcome:
+    """Authoritative retained-error state after a turn becomes idle."""
+
+    progress: HermesTurnProgress
+    inflight_status: str | None
+
+
+@dataclass(frozen=True)
 class HermesSlashReceipt:
     """A slash command result plus the post-command live-session baseline."""
 
@@ -284,6 +292,43 @@ def observe_turn_progress(
     """Read monotonic completion evidence without attaching a new viewer."""
     rows = active_sessions(state_dir, timeout_s=timeout_s, connect_fn=connect_fn)
     return _turn_progress(_select_session_row(rows, f"sac:{agent_name}"))
+
+
+def observe_turn_outcome(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesTurnOutcome:
+    """Read Hermes' retained failure projection without serializing messages."""
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            row = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
+            progress = _turn_progress(row)
+            snapshot = _rpc(
+                socket,
+                2,
+                "session.activate",
+                {"session_id": str(row["id"]), "omit_messages": True},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    inflight = snapshot.get("inflight")
+    if inflight is not None and not isinstance(inflight, dict):
+        raise HermesTuiRpcError(
+            f"Hermes session.activate returned malformed inflight state: {inflight!r}"
+        )
+    inflight_status = (
+        str(inflight.get("status") or "").strip().lower() if inflight else None
+    )
+    return HermesTurnOutcome(progress, inflight_status or None)
 
 
 def _session_activity(row: dict) -> str:
