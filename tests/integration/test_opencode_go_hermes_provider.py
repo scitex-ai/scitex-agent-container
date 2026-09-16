@@ -9,7 +9,12 @@ import pytest
 from click.testing import CliRunner
 
 from scitex_agent_container.cli_pkg.build_cmds import check
-from scitex_agent_container.config import AgentConfig, load_config
+from scitex_agent_container.config import (
+    AgentConfig,
+    apply_engine,
+    load_config,
+    select_engine,
+)
 from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._launch_plan import compile_launch_plan
 from scitex_agent_container.config._provider_parse import parse_provider_value
@@ -113,6 +118,52 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
         "OPENCODE_GO_API_KEY",
         "scitex-agent-container/hermes",
         "sac:providers",
+        [],
+        False,
+    )
+
+
+def test_portable_alternative_resolves_exact_responses_transport(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set(
+        "SCITEX_GENAI_GATEWAY_API_KEY", "secret-must-not-be-serialized"
+    )
+    config = load_config(EXAMPLE)
+    selected = select_engine(config.engines, "codex-subscription-gpt-5.6-sol")
+    apply_engine(config, selected)
+
+    # Act
+    plan = _hermes_profile._launch_plan(config, launch_mode="tui")
+    rendered = compile_hermes_config(plan, workdir="/work")
+    provider = rendered["providers"]["sac-codex-subscription-gpt-5.6-sol"]
+
+    # Assert
+    assert (
+        plan.engine.key,
+        plan.engine.model_id,
+        plan.endpoint.protocol,
+        plan.endpoint.url,
+        plan.endpoint.auth_env,
+        rendered["model"],
+        provider["base_url"],
+        provider["key_env"],
+        rendered["fallback_providers"],
+        "secret-must-not-be-serialized" in repr(rendered),
+    ) == (
+        "codex-subscription-gpt-5.6-sol",
+        "gpt-5.6-sol",
+        "openai-responses",
+        "http://127.0.0.1:18765/v1/responses",
+        "SCITEX_GENAI_GATEWAY_API_KEY",
+        {
+            "default": "gpt-5.6-sol",
+            "provider": "custom:sac-codex-subscription-gpt-5.6-sol",
+            "api_mode": "responses",
+        },
+        "http://127.0.0.1:18765/v1",
+        "SCITEX_GENAI_GATEWAY_API_KEY",
         [],
         False,
     )

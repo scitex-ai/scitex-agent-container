@@ -129,6 +129,8 @@ def _serve_hermes_chat(*, actual_model: str | None = None, accept_all=False):
                     "key": presented,
                     "model": payload.get("model"),
                     "max_tokens": payload.get("max_tokens"),
+                    "input": payload.get("input"),
+                    "max_output_tokens": payload.get("max_output_tokens"),
                     "user_agent": self.headers.get("User-Agent"),
                     "session": self.headers.get("x-opencode-session"),
                     "x_api_key": self.headers.get("x-api-key"),
@@ -275,6 +277,8 @@ def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key)
                 "key": _GOOD_KEY,
                 "model": "deepseek-v4.1-flash",
                 "max_tokens": 1,
+                "input": None,
+                "max_output_tokens": None,
                 "user_agent": "scitex-agent-container/hermes",
                 "session": "sac-preflight:probe-subject",
                 "x_api_key": None,
@@ -284,9 +288,48 @@ def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key)
                 "key": "sac-preflight-control-not-a-valid-key",
                 "model": "deepseek-v4.1-flash",
                 "max_tokens": 1,
+                "input": None,
+                "max_output_tokens": None,
                 "user_agent": "scitex-agent-container/hermes",
                 "session": "sac-preflight:probe-subject",
                 "x_api_key": None,
+            },
+        ],
+    ), verdict.detail
+
+
+def test_hermes_responses_probe_uses_exact_path_and_discriminates_keys(
+    provider_key,
+):
+    # Arrange
+    provider_key(_GOOD_KEY)
+
+    # Act
+    with _serve_hermes_chat() as (base_url, observed):
+        config = _hermes_config(
+            f"{base_url}/v1/responses", model="gpt-5.6-sol"
+        )
+        verdict = probe_provider_auth(config, timeout=5)
+
+    # Assert
+    expected_common = {
+        "path": "/v1/responses",
+        "model": "gpt-5.6-sol",
+        "max_tokens": None,
+        "input": "Reply OK.",
+        "max_output_tokens": None,
+        "user_agent": "scitex-agent-container/hermes",
+        "session": "sac-preflight:probe-subject",
+        "x_api_key": None,
+    }
+    assert (verdict.state, verdict.actual_model, observed) == (
+        OK,
+        "gpt-5.6-sol",
+        [
+            {**expected_common, "key": _GOOD_KEY},
+            {
+                **expected_common,
+                "key": "sac-preflight-control-not-a-valid-key",
             },
         ],
     ), verdict.detail

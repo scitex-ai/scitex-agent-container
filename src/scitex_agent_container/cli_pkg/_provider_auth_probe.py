@@ -41,12 +41,12 @@ the same command — UNKNOWN never rejects:
 
 A gateway that is briefly down must not fail every preflight on the fleet.
 
-Hermes chat-completions engines need stronger evidence. Some providers expose
+Hermes inference engines need stronger evidence. Some providers expose
 ``GET /v1/models`` without authenticating it, so Hermes is probed through the
-resolved ``POST /v1/chat/completions`` path with the selected model. The real
-key must succeed, the invalid control must be rejected, and a returned model
-identity must equal the selection. Non-Hermes providers retain the generic
-``/models`` behavior above.
+resolved ``POST`` path with the selected model: either OpenAI chat completions
+or OpenAI Responses. The real key must succeed, the invalid control must be
+rejected, and a returned model identity must equal the selection. Non-Hermes
+providers retain the generic ``/models`` behavior above.
 
 THE PROBE CARRIES ITS OWN POSITIVE CONTROL. A backend that answers 200 to every
 request regardless of credentials would make an "OK" verdict meaningless — the
@@ -132,6 +132,13 @@ def _uses_hermes_chat_completions(config, base_url: str) -> bool:
         return False
     path = urllib.parse.urlsplit(base_url).path.rstrip("/")
     return not path.endswith("/responses")
+
+
+def _uses_hermes_responses(config, base_url: str) -> bool:
+    """True when Hermes will send OpenAI Responses requests to this provider."""
+    if str(getattr(config, "harness", "") or "").strip() != "hermes":
+        return False
+    return urllib.parse.urlsplit(base_url).path.rstrip("/").endswith("/responses")
 
 
 def _status_for(url: str, api_key: str, timeout: float) -> int | None:
@@ -228,6 +235,44 @@ def _chat_completion_for(
     return status, str(actual) if isinstance(actual, str) and actual else None
 
 
+def _response_for(
+    config,
+    provider,
+    url: str,
+    api_key: str,
+    model: str,
+    timeout: float,
+) -> tuple[int | None, str | None]:
+    """Return ``(status, response model)`` for one minimal Responses turn."""
+    body = json.dumps(
+        {
+            "model": model,
+            "input": "Reply OK.",
+            "stream": False,
+        }
+    ).encode()
+    request = urllib.request.Request(  # noqa: S310 (scheme comes from the spec)
+        url,
+        data=body,
+        method="POST",
+        headers=_hermes_headers(config, provider, api_key),
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            status = int(response.status)
+            payload = response.read(1_048_576)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), None
+    except Exception:  # stx-allow: fallback (unreachable is not a bad key)
+        return None, None
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, ValueError):
+        return status, None
+    actual = decoded.get("model") if isinstance(decoded, dict) else None
+    return status, str(actual) if isinstance(actual, str) and actual else None
+
+
 def _probe_hermes_chat_auth(
     config,
     provider,
@@ -269,6 +314,84 @@ def _probe_hermes_chat_auth(
             f"{model!r}; successful authentication/model resolution was not proven.",
             status,
         )
+    if actual != model:
+        return ProviderAuthVerdict(
+            MODEL_MISMATCH,
+            f"{url} accepted the real key but returned model identity "
+            f"{actual!r}, not selected config.model {model!r}.",
+            status,
+            actual,
+        )
+
+    control, _ = _chat_completion_for(
+        config, provider, url, _CONTROL_KEY, model, timeout
+    )
+    if control is None:
+        return ProviderAuthVerdict(
+            UNREACHABLE,
+            f"{url} accepted the real key for selected model {model!r} but did "
+            "not answer the deliberately invalid-key control request.",
+            status,
+            actual,
+        )
+    if control not in _REJECTING_STATUSES:
+        return ProviderAuthVerdict(
+            INDISCRIMINATE,
+            f"{url} answered HTTP {status} for the real key and HTTP {control} "
+            f"for a deliberately invalid key while probing model {model!r}; "
+            "authentication is not discriminated on the actual inference path.",
+            status,
+            actual,
+        )
+    identity = f" and returned model {actual!r}" if actual is not None else ""
+    return ProviderAuthVerdict(
+        OK,
+        f"{url} accepted the real key (HTTP {status}){identity}, and rejected "
+        f"an invalid key (HTTP {control}) for selected model {model!r}.",
+        status,
+        actual,
+    )
+
+
+def _probe_hermes_responses_auth(
+    config,
+    provider,
+    *,
+    base_url: str,
+    api_key: str,
+    timeout: float,
+) -> ProviderAuthVerdict:
+    """Prove auth and exact model identity on Hermes' Responses endpoint."""
+    model = str(getattr(config, "model", "") or "").strip()
+    url = base_url.rstrip("/")
+    if not model:
+        return ProviderAuthVerdict(
+            PROBE_FAILED,
+            f"Hermes provider preflight cannot POST {url}: resolved config.model "
+            "is empty.",
+        )
+    status, actual = _response_for(config, provider, url, api_key, model, timeout)
+    if status is None:
+        return ProviderAuthVerdict(
+            UNREACHABLE,
+            f"{url} did not answer the Hermes Responses authentication probe "
+            f"for selected model {model!r} within {timeout:g}s.",
+        )
+    env_name = str(getattr(provider, "auth_token_env", "") or "?")
+    if status in _REJECTING_STATUSES:
+        return ProviderAuthVerdict(
+            REJECTED,
+            f"{url} rejected the key from {env_name} with HTTP {status} while "
+            f"probing selected model {model!r}.",
+            status,
+        )
+    if not 200 <= status < 300:
+        return ProviderAuthVerdict(
+            PROBE_FAILED,
+            f"{url} returned HTTP {status} for the real key and selected model "
+            f"{model!r}; successful authentication/model resolution was not proven.",
+            status,
+        )
     if actual is not None and actual != model:
         return ProviderAuthVerdict(
             MODEL_MISMATCH,
@@ -277,10 +400,7 @@ def _probe_hermes_chat_auth(
             status,
             actual,
         )
-
-    control, _ = _chat_completion_for(
-        config, provider, url, _CONTROL_KEY, model, timeout
-    )
+    control, _ = _response_for(config, provider, url, _CONTROL_KEY, model, timeout)
     if control is None:
         return ProviderAuthVerdict(
             UNREACHABLE,
@@ -327,6 +447,14 @@ def probe_provider_auth(config, *, timeout: float = 5.0) -> ProviderAuthVerdict:
     claude = getattr(config, "claude", None)
     provider = getattr(claude, "provider", None) if claude is not None else None
     base_url = str(getattr(provider, "base_url", "") or "")
+    if _uses_hermes_responses(config, base_url):
+        return _probe_hermes_responses_auth(
+            config,
+            provider,
+            base_url=base_url,
+            api_key=api_key,
+            timeout=timeout,
+        )
     if _uses_hermes_chat_completions(config, base_url):
         return _probe_hermes_chat_auth(
             config,
