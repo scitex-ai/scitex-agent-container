@@ -37,10 +37,16 @@ from scitex_agent_container._listen._inline_spec_startup_lint import (
 
 
 def _spec_with_startup_commands(cmds: list) -> dict:
+    entries = [
+        {"run": item.get("command", ""), "delay_seconds": item.get("delay", 0)}
+        if isinstance(item, dict)
+        else item
+        for item in cmds
+    ]
     return {
         "apiVersion": "scitex-agent-container/v3",
         "kind": "Agent",
-        "spec": {"startup_commands": cmds},
+        "spec": {"startup": {"commands": {"entries": entries}}},
     }
 
 

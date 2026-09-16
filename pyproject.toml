@@ -56,6 +56,10 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Strict validation boundary for the portable spec recipe. Runtime
+    # carriers remain small frozen dataclasses; Pydantic validates authored
+    # YAML before any value can reach launch planning or filesystem effects.
+    "pydantic>=2.10,<3",
     # Two distinct uses:
     #   1. `scitex_config._ecosystem.local_state` — canonical local-state
     #      directory helper (project-scope override + auto runtime/ seed

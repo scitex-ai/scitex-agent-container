@@ -36,6 +36,7 @@ from ._loaders import compose_effective_name, load_v3
 from ._provider_types import ProviderSpec
 from ._proxy_types import ProxySpec
 from ._resolve import resolve_config
+from ._startup_spec import StartupSpec, StartupSpecError
 from ._types import (
     AgentConfig,
     ClaudeSpec,
@@ -73,6 +74,8 @@ __all__ = [
     "SchedulingSpec",
     "SkillsSpec",
     "StartupCommand",
+    "StartupSpec",
+    "StartupSpecError",
     "UnknownEngineError",
     "WatchdogSpec",
     "apply_engine",

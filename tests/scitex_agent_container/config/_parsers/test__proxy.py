@@ -285,26 +285,14 @@ def test_validator_rejects_claude_block_on_agent_proxy() -> None:
     assert any("spec.claude is not allowed when kind: AgentProxy" in e for e in errors)
 
 
-def test_validator_rejects_startup_prompts_on_agent_proxy() -> None:
+def test_validator_rejects_startup_on_agent_proxy() -> None:
     # Arrange
-    raw = _base_proxy_raw(startup_prompts=["hi"])
+    raw = _base_proxy_raw(startup={"prompts": {"entries": ["hi"]}})
     # Act
     errors = validate_raw(raw, "spec.yaml")
     # Assert
     assert any(
-        "spec.startup_prompts is not allowed when kind: AgentProxy" in e for e in errors
-    )
-
-
-def test_validator_rejects_startup_commands_on_agent_proxy() -> None:
-    # Arrange
-    raw = _base_proxy_raw(startup_commands=[{"command": "echo hi"}])
-    # Act
-    errors = validate_raw(raw, "spec.yaml")
-    # Assert
-    assert any(
-        "spec.startup_commands is not allowed when kind: AgentProxy" in e
-        for e in errors
+        "spec.startup is not allowed when kind: AgentProxy" in e for e in errors
     )
 
 

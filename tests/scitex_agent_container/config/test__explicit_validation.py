@@ -38,13 +38,39 @@ spec:
   host: ${HOSTNAME}
   workdir: /home/agent/work
   python-venv: ""
-  startup_commands: []
-  startup_prompts: []
+  startup:
+    environment:
+      resolve_on: target-host
+      conflict_policy: specification-wins
+      values: {}
+    commands:
+      execution:
+        location: apptainer
+        phase: before-harness
+        shell: /bin/bash -lc
+        failure: abort
+      entries: []
+    prompts:
+      execution:
+        location: harness
+        phase: first-turn
+        readiness: required
+      entries: []
   listen: []
   extensions: {}
   mcp_servers: {}
   user: ""
-  to_home: ./to_home
+  to_home:
+    imports:
+      - id: per-agent
+        source: ./to_home
+        precedence: 100
+        apply: pre-launch-on-start-and-restart
+        destination: .
+        mode: managed-overlay-v1
+        conflict: higher-precedence-wins
+        stale: preserve
+        required: false
   container:
     image: scitex-agent-container:latest
     volumes: []

@@ -21,15 +21,12 @@ import yaml
 
 from scitex_agent_container.config import load_config
 from scitex_agent_container.config._loaders import (
-    DEFAULT_DIRENV_ALLOW_COMMAND,
-    DEFAULT_STARTUP_PROMPT,
     _parse_env_files,
     _resolve_python_venv,
     _resolve_venv,
-    _with_default_direnv_allow,
     compose_effective_name,
 )
-from scitex_agent_container.config._types import HostsSpec, StartupCommand
+from scitex_agent_container.config._types import HostsSpec
 from tests.scitex_agent_container._helpers.explicit_spec import (
     deep_merge,
     explicit_spec,
@@ -522,7 +519,9 @@ def test_load_config_warns_when_startup_prompt_is_long(
     # Arrange — a long role/rules PROSE startup_prompt (belongs in CLAUDE.md +
     # skills, not a per-boot turn).
     p = _v3_yaml(
-        tmp_path, "verbose", {"startup_prompts": ["You are X. " + "rule. " * 120]}
+        tmp_path,
+        "verbose",
+        {"startup": {"prompts": {"entries": ["You are X. " + "rule. " * 120]}}},
     )
     # Act
     with caplog.at_level(scitex_logging.WARNING):
@@ -538,7 +537,13 @@ def test_load_config_no_warn_for_short_startup_kick(
     p = _v3_yaml(
         tmp_path,
         "kick",
-        {"startup_prompts": ["You restarted — check inbox + todo; report readiness."]},
+        {
+            "startup": {
+                "prompts": {
+                    "entries": ["You restarted — check inbox + todo; report readiness."]
+                }
+            }
+        },
     )
     # Act — advise=True, so this asserts the LENGTH rule, not the gate. Without
     # it the test would pass even if the warning were deleted outright.
@@ -559,7 +564,9 @@ def test_load_config_is_silent_about_prompt_length_unless_asked(
     # nobody asked a question about spec style.
     # Arrange
     p = _v3_yaml(
-        tmp_path, "verbose", {"startup_prompts": ["You are X. " + "rule. " * 120]}
+        tmp_path,
+        "verbose",
+        {"startup": {"prompts": {"entries": ["You are X. " + "rule. " * 120]}}},
     )
     # Act
     with caplog.at_level(scitex_logging.WARNING):
@@ -568,18 +575,22 @@ def test_load_config_is_silent_about_prompt_length_unless_asked(
     assert "startup_prompts" not in caplog.text
 
 
-def test_load_config_defaults_startup_prompt_when_omitted(tmp_path: Path):
-    # Arrange — a spec with NO startup_prompts inherits the generic sac default.
+def test_load_config_does_not_inject_startup_prompt(tmp_path: Path):
+    # Arrange
     p = _v3_yaml(tmp_path, "nodefault", {})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.startup_prompts == [DEFAULT_STARTUP_PROMPT]
+    assert cfg.startup_prompts == []
 
 
-def test_load_config_keeps_explicit_startup_prompt_over_default(tmp_path: Path):
-    # Arrange — an explicit startup_prompts must NOT be replaced by the default.
-    p = _v3_yaml(tmp_path, "explicit", {"startup_prompts": ["my own kick"]})
+def test_load_config_keeps_explicit_startup_prompt(tmp_path: Path):
+    # Arrange
+    p = _v3_yaml(
+        tmp_path,
+        "explicit",
+        {"startup": {"prompts": {"entries": ["my own kick"]}}},
+    )
     # Act
     cfg = load_config(p)
     # Assert
@@ -859,96 +870,47 @@ def test_load_config_rejects_banned_local_host_at_load_time(
         _do()
 
 
-# ---------------------------------------------------------------------------
-# Default direnv-allow startup command (operator directive, Telegram 2862 /
-# card sac-auto-direnv-allow-at-agent-start-guarded-20260717). sac appends a
-# GUARDED + FAIL-SOFT + IDEMPOTENT `direnv allow` to EVERY agent's
-# startup_commands so a project's non-secret .envrc surfaces in-container,
-# fleet-wide and VISIBLE in the materialized spec. Secrets/identity stay
-# sac-direct-injected (never routed through direnv).
-# ---------------------------------------------------------------------------
-
-
-def test_default_direnv_allow_command_has_guarded_fail_soft_shape() -> None:
-    # Arrange — the exact guarded, fail-soft form (guard on direnv + .envrc,
-    # trailing `|| true` so a failed allow never breaks boot; $PWD is the
-    # agent workdir the inner bash -lc inherits from apptainer --pwd).
-    expected = (
-        'command -v direnv >/dev/null 2>&1 && [ -f "$PWD/.envrc" ] '
-        '&& direnv allow "$PWD" || true'
-    )
-    # Act
-    actual = DEFAULT_DIRENV_ALLOW_COMMAND
-    # Assert
-    assert actual == expected
-
-
-def test_with_default_direnv_allow_appends_to_empty_list() -> None:
-    # Arrange — a spec authoring no startup_commands.
-    incoming: list[StartupCommand] = []
-    # Act
-    out = _with_default_direnv_allow(incoming)
-    # Assert
-    assert [c.command for c in out] == [DEFAULT_DIRENV_ALLOW_COMMAND]
-
-
-def test_with_default_direnv_allow_appends_after_authored_commands() -> None:
-    # Arrange — an authored bootstrap command must keep position 0.
-    incoming = [StartupCommand(command="echo hi")]
-    # Act
-    out = _with_default_direnv_allow(incoming)
-    # Assert
-    assert [c.command for c in out] == ["echo hi", DEFAULT_DIRENV_ALLOW_COMMAND]
-
-
-def test_with_default_direnv_allow_is_idempotent_when_already_present() -> None:
-    # Arrange — a spec that already runs `direnv allow` must not be doubled.
-    incoming = [StartupCommand(command='direnv allow "$PWD"')]
-    # Act
-    out = _with_default_direnv_allow(incoming)
-    # Assert
-    assert out == incoming
-
-
-def test_load_config_appends_direnv_allow_when_no_startup_commands(
-    tmp_path: Path,
-) -> None:
-    # Arrange — a bare spec (no startup_commands) loaded through the real API.
+def test_load_config_does_not_inject_startup_commands(tmp_path: Path) -> None:
+    # Arrange
     p = _v3_yaml(tmp_path, "direnv-bare", {})
     # Act
     cfg = load_config(p)
     # Assert
-    assert [c.command for c in cfg.startup_commands] == [DEFAULT_DIRENV_ALLOW_COMMAND]
+    assert cfg.startup_commands == []
 
 
-def test_load_config_keeps_authored_startup_command_and_appends_direnv_allow(
+def test_load_config_keeps_only_authored_startup_command(
     tmp_path: Path,
 ) -> None:
-    # Arrange — an authored startup command stays first; direnv-allow is last.
+    # Arrange
     p = _v3_yaml(
         tmp_path,
         "direnv-authored",
-        {"startup_commands": [{"command": "echo hello"}]},
+        {
+            "startup": {
+                "commands": {"entries": [{"run": "echo hello", "delay_seconds": 0}]}
+            }
+        },
     )
     # Act
     cfg = load_config(p)
     # Assert
-    assert [c.command for c in cfg.startup_commands] == [
-        "echo hello",
-        DEFAULT_DIRENV_ALLOW_COMMAND,
-    ]
+    assert [c.command for c in cfg.startup_commands] == ["echo hello"]
 
 
-def test_load_config_does_not_duplicate_authored_direnv_allow(
+def test_startup_environment_values_win_over_apptainer_environment(
     tmp_path: Path,
 ) -> None:
-    # Arrange — a spec whose author already wrote a `direnv allow` command.
+    # Arrange
     p = _v3_yaml(
         tmp_path,
-        "direnv-idempotent",
-        {"startup_commands": [{"command": 'direnv allow "$PWD"'}]},
+        "environment-precedence",
+        {
+            "apptainer": {"env": {"EXAMPLE": "lower-precedence"}},
+            "startup": {"environment": {"values": {"EXAMPLE": "specification-wins"}}},
+        },
     )
     # Act
     cfg = load_config(p)
-    # Assert — exactly one direnv-allow, no sac-appended duplicate.
-    assert sum("direnv allow" in c.command for c in cfg.startup_commands) == 1
+    # Assert
+    assert cfg.env["EXAMPLE"] == "specification-wins"

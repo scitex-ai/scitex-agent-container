@@ -48,6 +48,8 @@ from ._reserved_names import reserved_spec_path_errors
 from ._residency_types import residency_coupling_error, residency_value_error
 from ._shape_validation import validate_autonomous, validate_proxy_coupling
 from ._startup_command_validation import validate_startup_commands
+from ._startup_spec import StartupSpecError, parse_startup
+from ._to_home_spec import ToHomeSpecError, parse_to_home
 
 # ``_VALID_MODEL_RE`` (accepted ``spec.claude.model`` shapes) moved to
 # ``_claude_validation`` alongside the rest of the claude-block checks;
@@ -425,7 +427,18 @@ def validate_raw(raw: dict, path: str) -> list[str]:
         errors.extend(validate_engines(spec, kind))
         errors.extend(validate_engine_pin(spec, kind))
 
-        # spec.startup_commands destructive-command guard — REJECT an
+        if "startup" in spec:
+            try:
+                parse_startup(spec["startup"])
+            except StartupSpecError as exc:
+                errors.extend(str(exc).splitlines())
+        if "to_home" in spec:
+            try:
+                parse_to_home(spec["to_home"])
+            except ToHomeSpecError as exc:
+                errors.extend(str(exc).splitlines())
+
+        # spec.startup.commands destructive-command guard — REJECT an
         # unguarded recursive-force ``rm`` on a variable target (the
         # 2026-07-16 P0 landmine: ``rm -rf $HOME/proj`` one bad symlink
         # from wiping ~195 repos). Sibling ``_startup_command_validation``

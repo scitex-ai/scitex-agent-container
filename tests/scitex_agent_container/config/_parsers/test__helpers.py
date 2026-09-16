@@ -6,8 +6,6 @@ Covers the four public surfaces of the module:
 - ``MODEL_DISPLAY_NAMES`` — alias-to-display-name map.
 - ``get_nested`` — dotted-path dict accessor with a default.
 - ``interpolate_metadata`` — ``${metadata.*}`` placeholder substitution.
-- ``_parse_command_list`` — coerces a YAML command list into typed
-  ``Command(delay, command)`` records.
 
 Each test is single-assertion and AAA-marked so a failing CI line maps
 directly to one behavioural contract.
@@ -22,7 +20,6 @@ import pytest
 from scitex_agent_container.config._parsers._helpers import (
     HOOK_KEYS,
     MODEL_DISPLAY_NAMES,
-    _parse_command_list,
     get_nested,
     interpolate_metadata,
 )
@@ -219,87 +216,3 @@ def test_interpolate_metadata_substitutes_multiple_placeholders_in_one_pass():
     out = interpolate_metadata(template, metadata)
     # Assert
     assert out == "n=alpha t=core"
-
-
-# ---------------------------------------------------------------------------
-# _parse_command_list
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        pytest.param(None, id="none"),
-        pytest.param([], id="empty-list"),
-    ],
-)
-def test_parse_command_list_returns_empty_for_falsy_input(raw):
-    # Arrange
-    payload = raw
-    # Act
-    result = _parse_command_list(payload)
-    # Assert
-    assert result == []
-
-
-def test_parse_command_list_converts_strings_to_zero_delay_records():
-    # Arrange
-    payload = ["echo a", "echo b"]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert [(c.delay, c.command) for c in out] == [(0, "echo a"), (0, "echo b")]
-
-
-def test_parse_command_list_skips_empty_string_entries():
-    # Arrange
-    payload = ["", "echo go"]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert [c.command for c in out] == ["echo go"]
-
-
-def test_parse_command_list_preserves_delay_from_dict_entry():
-    # Arrange
-    payload = [{"command": "x", "delay": 7}]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert out[0].delay == 7
-
-
-def test_parse_command_list_preserves_command_text_from_dict_entry():
-    # Arrange
-    payload = [{"command": "x", "delay": 7}]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert out[0].command == "x"
-
-
-def test_parse_command_list_falls_back_to_zero_delay_when_delay_invalid():
-    # Arrange
-    payload = [{"command": "x", "delay": "junk"}]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert out[0].delay == 0
-
-
-def test_parse_command_list_skips_dict_entry_missing_command_field():
-    # Arrange
-    payload = [{"delay": 5}, {"command": "ok"}]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert [c.command for c in out] == ["ok"]
-
-
-def test_parse_command_list_skips_entries_that_are_neither_str_nor_dict():
-    # Arrange
-    payload = ["echo", 42, None, {"command": "go"}]
-    # Act
-    out = _parse_command_list(payload)
-    # Assert
-    assert [c.command for c in out] == ["echo", "go"]

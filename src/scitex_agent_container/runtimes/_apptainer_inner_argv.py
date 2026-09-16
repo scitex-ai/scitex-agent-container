@@ -94,11 +94,11 @@ _SUPERVISOR_RESTART_FLOOR = 3
 # _format_shell_steps below may emit, so a false ``[ -n ... ]`` (unset var)
 # never aborts the launch.
 _GIT_ENV_ALIAS_STEPS: list[str] = [
-    '[ -n "${SAC_GIT_AUTHOR_NAME:-}" ] && export GIT_AUTHOR_NAME="$SAC_GIT_AUTHOR_NAME"',
-    '[ -n "${SAC_GIT_AUTHOR_EMAIL:-}" ] && export GIT_AUTHOR_EMAIL="$SAC_GIT_AUTHOR_EMAIL"',
-    '[ -n "${SAC_GIT_COMMITTER_NAME:-}" ] && export GIT_COMMITTER_NAME="$SAC_GIT_COMMITTER_NAME"',
-    '[ -n "${SAC_GIT_COMMITTER_EMAIL:-}" ] && export GIT_COMMITTER_EMAIL="$SAC_GIT_COMMITTER_EMAIL"',
-    '[ -n "${SAC_GIT_SSH_COMMAND:-}" ] && export GIT_SSH_COMMAND="$SAC_GIT_SSH_COMMAND"',
+    '[ -z "${GIT_AUTHOR_NAME:-}" ] && [ -n "${SAC_GIT_AUTHOR_NAME:-}" ] && export GIT_AUTHOR_NAME="$SAC_GIT_AUTHOR_NAME"',
+    '[ -z "${GIT_AUTHOR_EMAIL:-}" ] && [ -n "${SAC_GIT_AUTHOR_EMAIL:-}" ] && export GIT_AUTHOR_EMAIL="$SAC_GIT_AUTHOR_EMAIL"',
+    '[ -z "${GIT_COMMITTER_NAME:-}" ] && [ -n "${SAC_GIT_COMMITTER_NAME:-}" ] && export GIT_COMMITTER_NAME="$SAC_GIT_COMMITTER_NAME"',
+    '[ -z "${GIT_COMMITTER_EMAIL:-}" ] && [ -n "${SAC_GIT_COMMITTER_EMAIL:-}" ] && export GIT_COMMITTER_EMAIL="$SAC_GIT_COMMITTER_EMAIL"',
+    '[ -z "${GIT_SSH_COMMAND:-}" ] && [ -n "${SAC_GIT_SSH_COMMAND:-}" ] && export GIT_SSH_COMMAND="$SAC_GIT_SSH_COMMAND"',
 ]
 
 
@@ -117,7 +117,7 @@ def _format_shell_steps(cmds: list) -> list[str]:
         delay = int(getattr(c, "delay", 0) or 0)
         if delay > 0:
             steps.append(f"sleep {delay}")
-        steps.append(cmd)
+        steps.append(f"( {cmd} )")
     return steps
 
 
