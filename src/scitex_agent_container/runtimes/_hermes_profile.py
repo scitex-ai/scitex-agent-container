@@ -376,11 +376,9 @@ def materialize_hermes_profile(
     api_key = ensure_api_key(state_dir)
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config)
-    max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
-        max_turns=max_turns,
         run_budget_seconds=config.hermes_run_budget_seconds,
         approval_mode="off",
         compression=config.hermes_compression,
@@ -452,11 +450,9 @@ def materialize_hermes_tui_profile(
     setup_mcp_config(config, str(home))
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config, launch_mode="tui")
-    max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
-        max_turns=max_turns,
         run_budget_seconds=config.hermes_run_budget_seconds,
         approval_mode="off",
         compression=config.hermes_compression,

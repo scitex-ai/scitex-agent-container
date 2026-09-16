@@ -73,7 +73,7 @@ spec:
     hermes:
       session: { mode: continue, max_age_minutes: null }
       background_review: false
-      run_budget_seconds: 120
+      # run_budget_seconds: 900  # optional; one-shot/eval jobs only
       compression:
         threshold: 0.80
         threshold_tokens: null           # optional absolute trigger cap
@@ -249,13 +249,18 @@ field makes that high-cost behavior declared and testable rather than implicit.
 
 ### `spec.available_harnesses.hermes.run_budget_seconds`
 
-This positive integer caps one continuous Hermes agent run. It defaults to
-`120` seconds. Telegram and other priority inputs are steered into Hermes'
-native session immediately, but Hermes applies queued steering at safe run
-boundaries; the former hard-coded `1200`-second budget could therefore leave an
-already-delivered operator message waiting for twenty minutes. Keep this bound
-shorter than the maximum acceptable operator-response latency. It is compiled
-to Hermes' internal `agent.run_budget_seconds` setting.
+This optional positive integer gives one Hermes run a wall-clock checkpoint for
+one-shot/eval jobs that already have an external deadline. It is unset by
+default for agentic SAC sessions, so Hermes runs to completion and does not
+receive the 80%-elapsed wrap-up instruction. When explicitly set, SAC compiles
+the value to Hermes' internal `agent.run_budget_seconds` setting. This is not a
+hard kill and does not trigger context compression; it injects a one-time
+wrap-up notice and tightens implicit stale-call timeouts.
+
+SAC separately emits Hermes' `agent.max_turns: none` sentinel for agentic
+sessions. This keeps Hermes' own tool loop unbounded while leaving
+`spec.autonomous.max_turns` as the independent safety cap for SAC's outer
+drive-until loop. One-shot/eval callers can still use Hermes CLI overrides.
 
 Telegram is an edge transport, not a per-agent dependency. Select the CCT
 Telegram channel only on the human-facing gateway agent (normally
