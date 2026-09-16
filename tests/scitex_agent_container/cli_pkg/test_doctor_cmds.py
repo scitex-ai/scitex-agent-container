@@ -182,6 +182,16 @@ def test_local_json_carries_state_field(local_drifted_source):
     assert payload["local"]["state"] == "behind"
 
 
+def test_local_json_carries_the_image_frozen_warning(local_drifted_source):
+    # Arrange
+    expected = "image-frozen"
+    # Act
+    result = CliRunner().invoke(doctor, ["--json"])
+    payload = json.loads(result.stdout)
+    # Assert
+    assert expected in payload["image_venv"]["warning"]
+
+
 # ---------------------------------------------------------------------------
 # sac doctor --pollers  (one live Telegram poller per bot token?)
 # ---------------------------------------------------------------------------
