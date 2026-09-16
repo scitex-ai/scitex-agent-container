@@ -270,7 +270,6 @@ def _submit_interactive(
             request_id,
             "session.steer",
             {
-                "render_user_message": True,
                 "session_id": session_id,
                 "text": text,
             },
@@ -285,7 +284,6 @@ def _submit_interactive(
         return HermesTurnReceipt("steered", "steer", session_id), request_id + 1
 
     params: dict[str, Any] = {
-        "render_user_message": True,
         "session_id": session_id,
         "text": text,
     }

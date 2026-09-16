@@ -11,8 +11,8 @@ from scitex_agent_container.cli_pkg import _hermes_source as source
 def test_pin_names_the_validated_sac_hermes_source() -> None:
     # Arrange
     expected = (
-        "https://github.com/ywatanabe1989/hermes-agent.git",
-        "9ca9b7e5b9092465d37e4af0c2132aed188af5dd",
+        "https://github.com/NousResearch/hermes-agent.git",
+        "eb442593b66a255f7f7789d4bf2e862d861cec61",
     )
 
     # Act

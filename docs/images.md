@@ -7,7 +7,7 @@ domain dependencies on top:
 
 | Tag       | What's inside                                                                                               | When                                   |
 |-----------|-------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| `:base`   | Ubuntu 24.04 + dev tools, Node 22, pinned Cards source, pinned Hermes 0.21.2 and its official TUI | **Default** when `spec.image` is unset |
+| `:base`   | Ubuntu 24.04 + dev tools, Node 22, pinned Cards source, pinned Hermes 0.21.3 and its official TUI | **Default** when `spec.image` is unset |
 | `:scitex` | `FROM :base` + ffmpeg + portaudio + `scitex[all]` + claude-agent-sdk + sac itself                           | Optional heavier layer                 |
 
 Hermes is a capability of `:base`, not a separate `:hermes` layer. The build
