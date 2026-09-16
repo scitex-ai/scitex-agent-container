@@ -512,6 +512,32 @@ class TestMergeHomeMcpServers:
         # Assert
         assert out["x"]["env"]["K"] == "resolved-value"
 
+    def test_telegrammer_server_env_keeps_current_and_drops_retired_names(
+        self, home_with_mcp
+    ):
+        # Arrange
+        (home_with_mcp / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "claude-code-telegrammer": {
+                            "command": "cct",
+                            "env": {
+                                "CCT_BOT_TOKEN": "current",
+                                "CCT_ALLOWED_USERS": "123",
+                                "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": "old",
+                                "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": "old",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        # Act
+        env = merge_home_mcp_servers({})["claude-code-telegrammer"]["env"]
+        # Assert
+        assert env == {"CCT_BOT_TOKEN": "current", "CCT_ALLOWED_USERS": "123"}
+
 
 # ---------------------------------------------------------------------------
 # Bug #41 hardening — diagnostics for the telegrammer-wake silent-skip paths.

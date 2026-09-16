@@ -160,6 +160,10 @@ def merge_home_mcp_servers(mcp_servers: dict) -> dict:
         if name in merged or not isinstance(entry, dict):
             continue  # registry config wins; skip non-dict junk
         e = _resolve_env_refs_local(dict(entry))
+        if name == _TELEGRAMMER_MCP_KEY and isinstance(e.get("env"), dict):
+            from ._cct_env_contract import scrub_retired_cct_env
+
+            scrub_retired_cct_env(e["env"])
         e.setdefault("type", "stdio")
         merged[name] = e
     return merged

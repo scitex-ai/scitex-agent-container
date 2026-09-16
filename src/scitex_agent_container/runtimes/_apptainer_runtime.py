@@ -285,6 +285,9 @@ class ApptainerContainerRuntime(RuntimeBase):
         from ._apptainer_host_env import host_cargo_bin_append_env
 
         launch_env = {**os.environ, **host_cargo_bin_append_env(os.environ)}
+        from ._cct_env_contract import scrub_retired_cct_env
+
+        scrub_retired_cct_env(launch_env)
 
         # Jailed-capsule guardrail: strip the apptainer/singularity bind
         # env vars from the launch environment so NO env-injected bind
