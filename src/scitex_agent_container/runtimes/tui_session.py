@@ -361,6 +361,10 @@ class TuiSessionRuntime(
             )
             if not dry_run:
                 return True
+        if not dry_run and self._owns_external_cct_poller(config):
+            from ._apptainer_codex_env import preflight_subscription
+
+            preflight_subscription(config, state_dir_for_config(config))
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)
