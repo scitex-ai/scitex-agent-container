@@ -17,14 +17,13 @@ from ._host import (
     substitute_hostnames,
 )
 
-# The two defaults ``load_v3`` injects into every agent — the guarded
-# direnv-allow startup command and the generic boot kick — live in the
+# The guarded direnv-allow startup command ``load_v3`` injects into every agent
+# lives in the
 # sibling ``_loader_startup_defaults`` module (extracted when this
 # orchestrator hit the per-file line cap). Re-imported here so every
 # existing consumer keeps its ``config._loaders`` import path.
 from ._loader_startup_defaults import (
     DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
-    DEFAULT_STARTUP_PROMPT,
     _with_default_direnv_allow,
 )
 from ._parsers import (
@@ -360,11 +359,8 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
-    startup_prompts_raw = spec.get("startup_prompts", []) or []
+    startup_prompts_raw = spec["startup_prompts"]
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
-    if not startup_prompts:
-        # DRY default: specs omit startup_prompts and inherit the generic kick.
-        startup_prompts = [DEFAULT_STARTUP_PROMPT]
     exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
     exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 

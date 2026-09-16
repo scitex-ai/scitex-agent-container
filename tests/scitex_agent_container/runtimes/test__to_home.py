@@ -674,6 +674,28 @@ class TestMarkerProtectedStateMd:
 
 
 class TestDeployToHomeFromConfig:
+    def test_declared_layers_control_materialization_and_write_prompt_manifest(
+        self, tmp_path, env_save_restore
+    ):
+        # Arrange
+        cfg, own = _build_cfg(tmp_path)
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        (shared / "AGENTS.md").write_text("undeclared shared prompt\n")
+        (own / "HERMES.md").write_text("declared agent prompt\n")
+        cfg.to_home_layers = ["per-agent"]
+        cfg.startup_prompts = []
+        env_save_restore.set("SAC_USER_TO_HOME_BASELINE", str(shared))
+        home = tmp_path / "home"
+        # Act
+        deploy_to_home(cfg, str(home))
+        # Assert
+        assert (
+            (home / "AGENTS.md").exists(),
+            (home / "HERMES.md").is_file(),
+            (home / ".sac" / "prompt-projections.json").is_file(),
+        ) == (False, True, True)
+
     def test_metadata_name_is_interpolated_in_claude_md(self, tmp_path):
         # Arrange
         cfg, root = _build_cfg(tmp_path)
