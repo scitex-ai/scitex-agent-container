@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Executable contract fixture for SAC's external policy adapter.
+
+This is intentionally not a policy implementation.  It exercises the real
+process/JSON/exit-code boundary while test-selected modes emulate outcomes.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import sys
+
+POLICY_SHA = "1" * 64
+PROJECTION_SHA = "2" * 64
+
+
+def emit(payload: object, code: int = 0) -> None:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(code)
+
+
+mode = os.environ.get("SCITEX_POLICY_FIXTURE_MODE", "allow")
+if mode == "invalid-json":
+    print("not-json")
+    raise SystemExit(0)
+
+operation = sys.argv[1] if len(sys.argv) > 1 else ""
+if operation == "check-projections":
+    if mode == "stale":
+        emit(
+            {
+                "allowed": False,
+                "decision": "stale",
+                "policy_sha256": POLICY_SHA,
+                "stale": ["AGENTS"],
+            },
+            3,
+        )
+    emit(
+        {
+            "allowed": True,
+            "decision": "current",
+            "policy_sha256": POLICY_SHA,
+            "projection_sha256": PROJECTION_SHA,
+        }
+    )
+
+if operation != "assert-context":
+    emit({"allowed": False, "decision": "error", "error": "bad operation"}, 3)
+
+repo = Path(sys.argv[sys.argv.index("--repo") + 1]).resolve()
+if mode == "deny":
+    emit(
+        {
+            "allowed": False,
+            "decision": "deny",
+            "reason": "fixture denied authority checkout",
+        },
+        2,
+    )
+projection_sha = "3" * 64 if mode == "hash-drift" else PROJECTION_SHA
+emit(
+    {
+        "allowed": True,
+        "branch": "feature/fixture",
+        "decision": "allow",
+        "policy_id": "scitex.worktree.fixture",
+        "policy_sha256": POLICY_SHA,
+        "projection_sha256": projection_sha,
+        "repo_root": str(repo),
+        "schema_version": 1,
+        "surface": "linked-worktree",
+    }
+)
