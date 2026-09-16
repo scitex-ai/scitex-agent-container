@@ -37,9 +37,31 @@ def agent_list(
     capability: str | None = None,
     machine: str | None = None,
 ) -> dict[str, Any]:
-    """List every registered agent + liveness flags. Mirrors
-    ``sac agents list --json``. Filter by ``capability`` (label
-    substring match) or ``machine`` (label exact match)."""
+    """List the authoritative fleet inventory and liveness flags.
+
+    Inside a container this MUST come from the bare-host ``sac listen``
+    authority.  Container-local specs are necessarily partial and are never a
+    fallback.  ``a2a_peers`` remains the separate, listener-local
+    communication-peer view.
+    """
+    import os
+
+    from ..._lifecycle._in_sif_broker import is_in_sif
+
+    # SAC_LISTEN_BASE_URL is also an explicit declaration that a host authority
+    # exists.  Honour it even if a custom container launcher stripped the
+    # APPTAINER_CONTAINER marker; otherwise that launcher would silently fall
+    # back to precisely the partial local inventory this boundary forbids.
+    if is_in_sif() or (os.environ.get("SAC_LISTEN_BASE_URL") or "").strip():
+        from .._fleet_inventory_client import request_fleet_inventory
+
+        payload = request_fleet_inventory(
+            capability=capability, machine=machine
+        ).wire_dict()
+        # Preserve the long-standing CLI-wrapper envelope while making its
+        # ``data`` authoritative and versioned.  Existing MCP consumers keep
+        # reading ``data.agents``; new ones can require data.authority.
+        return {"exit_code": 0, "data": payload, "stdout": "", "stderr": ""}
     argv = ["agents", "list", "--json"]
     if capability:
         argv += ["--capability", capability]

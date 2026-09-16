@@ -56,6 +56,10 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Fleet inventory crosses a process/version boundary (the in-container MCP
+    # client -> the host listen authority).  Keep that wire contract explicit
+    # and validated instead of accepting arbitrary JSON from a stale daemon.
+    "pydantic>=2.0,<3",
     # Two distinct uses:
     #   1. `scitex_config._ecosystem.local_state` — canonical local-state
     #      directory helper (project-scope override + auto runtime/ seed
