@@ -18,6 +18,7 @@ seams.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shlex
 import stat
@@ -265,6 +266,32 @@ def test_argv_first_two_tokens_are_apptainer_exec(tmp_path: Path) -> None:
     )
     # Assert
     assert argv[0:2] == ["apptainer", "exec"]
+
+
+def test_argv_keeps_current_cct_names_and_drops_retired_names(tmp_path: Path) -> None:
+    # Arrange
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd")
+    cfg.env.update(
+        {
+            "CCT_BOT_TOKEN": "current",
+            "CCT_ALLOWED_USERS": "123",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": "old",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": "old",
+        }
+    )
+    # Act
+    argv = rt.build_run_argv(
+        cfg, state_dir=tmp_path / "state", sif_path=tmp_path / "x.sif"
+    )
+    env = _env_pairs(argv)
+    # Assert
+    assert (
+        env.get("CCT_BOT_TOKEN"),
+        env.get("CCT_ALLOWED_USERS"),
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN" in env,
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS" in env,
+    ) == ("current", "123", False, False)
 
 
 def test_argv_pwd_opens_at_workdir(tmp_path: Path) -> None:
@@ -1786,6 +1813,51 @@ def test_start_background_apptainer_subprocess_receives_the_real_secret(
     assert (
         _env_pairs(received).get("SAC_ANTHROPIC_API_KEY")
         == "sk-ant-oat01-supersecrettoken"
+    )
+
+
+def test_start_child_env_preserves_current_cct_and_scrubs_retired_ambient_names(
+    state_root: Path,
+    tmp_path: Path,
+    apptainer_on_path: Path,
+    env_save_restore,
+) -> None:
+    # Arrange
+    observed = tmp_path / "child-env.json"
+    script = apptainer_on_path.read_text(encoding="utf-8")
+    script = script.replace("import json, sys\n", "import json, os, sys\n")
+    script = script.replace(
+        "sys.exit(0)\n",
+        "if args[:1] == ['exec']:\n"
+        "    names = ['CCT_BOT_TOKEN', 'CCT_ALLOWED_USERS', "
+        "'CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN', "
+        "'CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS']\n"
+        "    Path(os.environ['SAC_TEST_ENV_LOG']).write_text("
+        "json.dumps({name: os.environ.get(name) for name in names}))\n"
+        "sys.exit(0)\n",
+    )
+    apptainer_on_path.write_text(script, encoding="utf-8")
+    env_save_restore.set("SAC_TEST_ENV_LOG", str(observed))
+    env_save_restore.set("CCT_BOT_TOKEN", "current")
+    env_save_restore.set("CCT_ALLOWED_USERS", "123")
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN", "old")
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS", "old")
+    sif = tmp_path / "ready.sif"
+    sif.write_bytes(b"\x00")
+    rt = ApptainerContainerRuntime()
+    cfg = _config(tmp_path / "wd", image=str(sif))
+    # Act
+    started = rt.start(cfg, foreground=True)
+    child_env = json.loads(observed.read_text(encoding="utf-8"))
+    # Assert
+    assert (started, child_env) == (
+        True,
+        {
+            "CCT_BOT_TOKEN": "current",
+            "CCT_ALLOWED_USERS": "123",
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN": None,
+            "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS": None,
+        },
     )
 
 

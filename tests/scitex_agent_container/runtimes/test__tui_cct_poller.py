@@ -10,6 +10,7 @@ from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.runtimes._tui_cct_poller import (
     PID_FILENAME,
     TuiCctPollerError,
+    _poller_env,
     _preflight_cct,
     start_cct_poller,
     stop_cct_poller,
@@ -134,6 +135,28 @@ def test_start_is_noop_when_telegram_channel_is_not_selected(tmp_path):
     pid = start_cct_poller(config, state_dir=tmp_path, spawn=spawner)
     # Assert
     assert (pid, spawner.calls) == (None, [])
+
+
+def test_poller_env_preserves_current_cct_names_and_scrubs_retired_names(
+    tmp_path, env_save_restore
+):
+    # Arrange
+    config = _config()
+    _materialize_cct(tmp_path)
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN", "retired")
+    env_save_restore.set("CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS", "old")
+    entry = json.loads(
+        (tmp_path / "home" / ".mcp.json").read_text(encoding="utf-8")
+    )["mcpServers"]["claude-code-telegrammer"]
+    # Act
+    env = _poller_env(config, home=tmp_path / "home", entry=entry)
+    # Assert
+    assert (
+        env.get("CCT_BOT_TOKEN"),
+        env.get("CCT_ALLOWED_USERS"),
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_BOT_TOKEN" in env,
+        "CLAUDE_CODE_TELEGRAMMER_TELEGRAM_ALLOWED_USERS" in env,
+    ) == ("test-token", "123", False, False)
 
 
 def test_start_refuses_before_spawn_when_cct_preflight_fails(tmp_path):

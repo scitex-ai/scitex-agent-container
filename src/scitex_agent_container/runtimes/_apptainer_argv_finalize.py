@@ -87,6 +87,10 @@ def finalize_flag_argv(
 
     argv = remove_vendor_credential_flags(argv, config)
 
+    from ._cct_env_contract import remove_retired_cct_env_flags
+
+    argv = remove_retired_cct_env_flags(argv)
+
     # The LAST ``--env`` contributor has now run, so reconcile the layers
     # that can name the same key. The fleet/spec env layer and raw_args
     # both declare SCITEX_CARDS_DB across this fleet, and until now the

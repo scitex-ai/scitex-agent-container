@@ -209,6 +209,9 @@ def _poller_env(
     env["CCT_AGENT_STATE_DIR"] = str(
         Path.home() / ".scitex" / "claude-code-telegrammer" / "runtime" / config.name
     )
+    from ._cct_env_contract import scrub_retired_cct_env
+
+    scrub_retired_cct_env(env)
     return env
 
 
