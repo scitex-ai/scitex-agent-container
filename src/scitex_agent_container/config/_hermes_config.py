@@ -7,7 +7,10 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from ._hermes_compression import HermesCompressionSpec
-from ._hermes_run_budget import DEFAULT_HERMES_RUN_BUDGET_SECONDS
+from ._hermes_run_budget import (
+    DEFAULT_HERMES_MAX_TURNS,
+    DEFAULT_HERMES_RUN_BUDGET_SECONDS,
+)
 from ._hermes_session import hermes_session_key
 from ._launch_plan import LaunchPlan
 
@@ -29,8 +32,8 @@ def compile_hermes_config(
     plan: LaunchPlan,
     *,
     workdir: str,
-    max_turns: int = 50,
-    run_budget_seconds: int = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
+    max_turns: int | None = DEFAULT_HERMES_MAX_TURNS,
+    run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
     background_review: bool = False,
@@ -53,9 +56,11 @@ def compile_hermes_config(
         key_env = ""
     else:
         key_env = plan.endpoint.auth_env
-    if type(max_turns) is not int or max_turns <= 0:
+    if max_turns is not None and (type(max_turns) is not int or max_turns <= 0):
         raise ValueError("max_turns must be a positive integer")
-    if type(run_budget_seconds) is not int or run_budget_seconds <= 0:
+    if run_budget_seconds is not None and (
+        type(run_budget_seconds) is not int or run_budget_seconds <= 0
+    ):
         raise ValueError("run_budget_seconds must be a positive integer")
     if approval_mode not in {"manual", "smart", "off"}:
         raise ValueError("approval_mode must be manual, smart, or off")
@@ -92,13 +97,15 @@ def compile_hermes_config(
         },
     }
     agent: dict[str, Any] = {
-        "max_turns": max_turns,
-        "run_budget_seconds": run_budget_seconds,
         # Hermes subtracts disabled toolsets after expanding ``hermes-cli``.
         # Naming its one-tool ``delegation`` toolset removes delegate_task
         # completely instead of relying on prompt compliance.
         "disabled_toolsets": [] if plan.may_spawn else ["delegation"],
     }
+    if max_turns is not None:
+        agent["max_turns"] = max_turns
+    if run_budget_seconds is not None:
+        agent["run_budget_seconds"] = run_budget_seconds
     if plan.engine.reasoning_effort is not None:
         agent["reasoning_effort"] = plan.engine.reasoning_effort
     return {

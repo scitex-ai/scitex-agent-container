@@ -98,9 +98,7 @@ def run_prelaunch(
     # back to the default, and an engine that cannot be honoured does not
     # fall back to another engine (answer Q3). A legacy single-backend
     # spec with no --engine returns None here and changes nothing.
-    select_engine_at_start(
-        config, engine_override, probe=probe_engine
-    )
+    select_engine_at_start(config, engine_override, probe=True)
 
     if session_override:
         config.claude.session = session_override

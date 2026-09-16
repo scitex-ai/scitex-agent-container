@@ -114,6 +114,15 @@ def test_compiles_observed_qwen_profile_without_reading_secret(env_save_restore)
     assert observed == expected
 
 
+def test_unlimited_turn_limits_are_omitted_from_generated_profile():
+    result = compile_hermes_config(
+        _plan(), workdir="/work", max_turns=None, run_budget_seconds=None
+    )
+
+    assert "max_turns" not in result["agent"]
+    assert "run_budget_seconds" not in result["agent"]
+
+
 def test_compiles_explicit_hermes_compression_controls():
     # Arrange
     compression = HermesCompressionSpec(

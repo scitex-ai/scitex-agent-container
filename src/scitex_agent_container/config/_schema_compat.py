@@ -174,6 +174,8 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.add("background_review")
         if "run_budget_seconds" in raw_entry:
             allowed.add("run_budget_seconds")
+        if "max_turns" in raw_entry:
+            allowed.add("max_turns")
         if family == "claude-code":
             allowed.update({"account", "approval_policy", "watchdog"})
             required.update({"approval_policy", "watchdog"})
@@ -181,7 +183,9 @@ def canonical_surface_errors(raw: object) -> list[str]:
             allowed.update({"approval_policy", "sandbox_mode"})
             required.update({"approval_policy", "sandbox_mode"})
         elif family == "hermes":
-            allowed.update({"background_review", "compression", "run_budget_seconds"})
+            allowed.update(
+                {"background_review", "compression", "max_turns", "run_budget_seconds"}
+            )
         missing = sorted(required - entry_keys)
         unknown = sorted(entry_keys - allowed - {"channels"})
         if missing:
@@ -222,9 +226,21 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 )
             else:
                 budget = raw_entry.get("run_budget_seconds")
-                if type(budget) is not int or budget <= 0:
+                if budget is not None and (type(budget) is not int or budget <= 0):
                     errors.append(
-                        f"{path}.run_budget_seconds must be a positive integer"
+                        f"{path}.run_budget_seconds must be null or a positive integer"
+                    )
+
+        if "max_turns" in raw_entry:
+            if family != "hermes":
+                errors.append(f"{path}.max_turns is only valid for the Hermes harness")
+            else:
+                max_turns = raw_entry.get("max_turns")
+                if max_turns is not None and (
+                    type(max_turns) is not int or max_turns <= 0
+                ):
+                    errors.append(
+                        f"{path}.max_turns must be null or a positive integer"
                     )
 
         session = raw_entry.get("session")

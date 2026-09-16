@@ -233,20 +233,17 @@ def select_engine_at_start(
             _logger().error(message)
         raise EngineNotHonourableError(message)
     if verdict.undetermined:
-        # COULD NOT TELL is its own state and must read as its own state.
-        # Proceeding is the right call (a flapping link must not ground
-        # the fleet), but proceeding QUIETLY would turn "I do not know"
-        # into "it is fine" — which is the claim this warning exists to
-        # refuse to make.
-        warning = (
-            f"engine {engine.key!r} for agent {agent_name!r}: reachability "
-            f"COULD NOT BE DETERMINED — {verdict.reason}. Starting anyway "
-            "(an undetermined network is not evidence the endpoint is "
-            "down), but this start is NOT a verified-honourable start. "
-            f"{verdict.fix}."
+        message = (
+            f"REFUSING to start agent {agent_name!r} on engine "
+            f"{engine.key!r}: preflight could not prove the selected engine "
+            f"is reachable — {verdict.reason}. Fix: {verdict.fix}. "
+            "The existing agent is left running. sac never treats an "
+            "unknown successor as safe and never falls back to another "
+            "engine."
         )
         if log:
-            _logger().warning(warning)
+            _logger().error(message)
+        raise EngineNotHonourableError(message)
     return engine
 
 
@@ -296,5 +293,5 @@ def check_engine_before_stop(
 
     config = load_config(config_path)
     select_engine_at_start(
-        config, requested, probe=probe, timeout_s=timeout_s, log=log
+        config, requested, probe=True, timeout_s=timeout_s, log=log
     )

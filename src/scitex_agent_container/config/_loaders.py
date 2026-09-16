@@ -10,7 +10,10 @@ from ._explicit_validation import validate as _validate_explicit_fields
 from ._harness_types import resolve_spec_harness, uses_legacy_harness_key
 from ._hermes_background_review import parse_selected_hermes_background_review
 from ._hermes_compression import parse_selected_hermes_compression
-from ._hermes_run_budget import parse_selected_hermes_run_budget
+from ._hermes_run_budget import (
+    parse_selected_hermes_max_turns,
+    parse_selected_hermes_run_budget,
+)
 from ._host import (
     contains_hostname_placeholder,
     resolve_hostname,
@@ -446,6 +449,7 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
         restart=parse_restart(spec),
         autonomous=parse_autonomous(spec),
         hermes_background_review=parse_selected_hermes_background_review(spec),
+        hermes_max_turns=parse_selected_hermes_max_turns(spec),
         hermes_run_budget_seconds=parse_selected_hermes_run_budget(spec),
         hermes_compression=parse_selected_hermes_compression(spec),
         apptainer=apptainer_spec,

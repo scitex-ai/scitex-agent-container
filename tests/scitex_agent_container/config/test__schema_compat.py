@@ -196,7 +196,7 @@ def test_canonical_hermes_run_budget_is_accepted():
     assert errors == []
 
 
-@pytest.mark.parametrize("value", [None, True, 0, -1, 1.5, "90"])
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "90"])
 def test_hermes_run_budget_requires_a_positive_integer(value):
     # Arrange
     entry = _hermes_entry()
@@ -213,8 +213,24 @@ def test_hermes_run_budget_requires_a_positive_integer(value):
     errors = canonical_surface_errors(raw)
     # Assert
     assert errors == [
-        "spec.available_harnesses.hermes.run_budget_seconds must be a positive integer"
+        "spec.available_harnesses.hermes.run_budget_seconds must be null or a positive integer"
     ]
+
+
+def test_canonical_hermes_unlimited_limits_are_accepted():
+    entry = _hermes_entry()
+    entry["max_turns"] = None
+    entry["run_budget_seconds"] = None
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+
+    assert canonical_surface_errors(raw) == []
 
 
 @pytest.mark.parametrize("value", [None, 0, 1, "false", {}])
