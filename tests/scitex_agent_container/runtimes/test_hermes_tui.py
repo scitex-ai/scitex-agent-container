@@ -410,6 +410,8 @@ def test_recovery_uses_supported_same_session_controls_in_order(monkeypatch):
                 "switched",
                 "live-1",
                 HermesTurnProgress(10, 42.0, "idle"),
+                17,
+                "epoch-1",
             )
         ),
     )
@@ -425,6 +427,8 @@ def test_recovery_uses_supported_same_session_controls_in_order(monkeypatch):
             "switched",
             "live-1",
             HermesTurnProgress(10, 42.0, "idle"),
+            17,
+            "epoch-1",
         ),
         [
             "heartbeat.clear",

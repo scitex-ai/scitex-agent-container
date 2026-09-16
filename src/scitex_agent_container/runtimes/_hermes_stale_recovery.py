@@ -286,7 +286,7 @@ def recovery_tick(
     pause: Callable[[], bool],
     recover: Callable[[], bool | HermesSlashReceipt],
     observe_progress: Callable[[], HermesTurnProgress] | None = None,
-    observe_outcome: Callable[[], HermesTurnOutcome] | None = None,
+    observe_outcome: Callable[[int, str], HermesTurnOutcome] | None = None,
     probe: Callable[[AgentConfig], bool] = provider_has_capacity,
     now: Callable[[], float] = time.time,
     previous_fingerprint: str = "",
@@ -310,18 +310,11 @@ def recovery_tick(
     recovered_token = f"recovered:{fingerprint}"
     latched_token = f"latched:{fingerprint}"
     if previous_fingerprint.startswith("recovered:"):
-        if observe_progress is None:
+        if observe_outcome is None:
             return previous_fingerprint
-        _, _, _baseline_count, baseline_active = previous_fingerprint.split(":", 3)
-        progress = observe_progress()
-        if (
-            progress.status == "idle"
-            and progress.last_active > float(baseline_active)
-            and observe_outcome is not None
-        ):
-            outcome = observe_outcome()
-            if outcome.inflight_status == "error":
-                return previous_fingerprint
+        _, _, baseline_seq, epoch = previous_fingerprint.split(":", 3)
+        outcome = observe_outcome(int(baseline_seq), epoch)
+        if outcome.terminal_status == "complete":
             write_control_state(
                 state_dir,
                 {
@@ -331,26 +324,29 @@ def recovery_tick(
                 },
             )
             return (
-                f"ready:{fingerprint}:{outcome.progress.message_count}:"
-                f"{outcome.progress.last_active}"
+                f"ready:{fingerprint}:{outcome.latest_seq}:{outcome.epoch}"
             )
+        if outcome.terminal_status in {"error", "interrupted"}:
+            write_control_state(
+                state_dir,
+                {
+                    "turn_admission": STALE_LATCHED,
+                    "detail": "provider recovery verification turn failed",
+                    "observed_at": now(),
+                },
+            )
+            return latched_token
         return previous_fingerprint
     if previous_fingerprint.startswith("ready:"):
-        if observe_progress is None:
-            return previous_fingerprint
-        _, _, _baseline_count, baseline_active = previous_fingerprint.split(":", 3)
-        progress = observe_progress()
-        if progress.status != "idle":
-            return previous_fingerprint
-        if progress.last_active <= float(baseline_active):
-            return previous_fingerprint
         if observe_outcome is None:
             return previous_fingerprint
-        outcome = observe_outcome()
-        if outcome.inflight_status != "error":
+        _, _, baseline_seq, epoch = previous_fingerprint.split(":", 3)
+        outcome = observe_outcome(int(baseline_seq), epoch)
+        if outcome.terminal_status is None:
+            return previous_fingerprint
+        if outcome.terminal_status == "complete":
             return (
-                f"ready:{fingerprint}:{outcome.progress.message_count}:"
-                f"{outcome.progress.last_active}"
+                f"ready:{fingerprint}:{outcome.latest_seq}:{outcome.epoch}"
             )
     if previous_fingerprint == recovered_token:
         return previous_fingerprint
@@ -381,10 +377,8 @@ def recovery_tick(
             },
         )
         if isinstance(receipt, HermesSlashReceipt):
-            progress = receipt.progress
             return (
-                f"recovered:{fingerprint}:{progress.message_count}:"
-                f"{progress.last_active}"
+                f"recovered:{fingerprint}:{receipt.latest_seq}:{receipt.epoch}"
             )
         return recovered_token
     return latched_token
@@ -419,7 +413,11 @@ def _run_monitor_loop(
                 pause=lambda: bool(runtime.disable_periodic_turns(config)),
                 recover=lambda: runtime.recover_turn_admission(config),
                 observe_progress=lambda: runtime.observe_turn_progress(config),
-                observe_outcome=lambda: runtime.observe_turn_outcome(config),
+                observe_outcome=lambda after_seq, expected_epoch: runtime.observe_turn_outcome(
+                    config,
+                    after_seq=after_seq,
+                    expected_epoch=expected_epoch,
+                ),
                 previous_fingerprint=recovered_fingerprint,
                 state_dir=state_dir,
             )

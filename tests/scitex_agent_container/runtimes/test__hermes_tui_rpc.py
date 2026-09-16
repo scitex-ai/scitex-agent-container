@@ -111,6 +111,13 @@ class _Socket:
                 ]
             },
             "session.activate": {"id": "live-1"},
+            "session.events.since": {
+                "events": [],
+                "latest_seq": 17,
+                "truncated": False,
+                "epoch": "epoch-1",
+                "open_requests": [],
+            },
             "prompt.submit": {"status": "steered"},
             "session.steer": {"status": "queued", "text": "act now"},
         }[method]
@@ -475,11 +482,16 @@ def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
         receipt.output,
         receipt.progress.message_count,
         [request["method"] for request in socket.sent],
-        socket.sent[-2]["params"],
+        socket.sent[-3]["params"],
     ) == (
         "Switched model.",
         12,
-        ["session.active_list", "slash.exec", "session.active_list"],
+        [
+            "session.active_list",
+            "slash.exec",
+            "session.active_list",
+            "session.events.since",
+        ],
         {
             "session_id": "live-1",
             "command": ("/model qwen38-27b --provider custom:sac-qwen38-27b --session"),
@@ -503,18 +515,30 @@ def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
     assert [request["method"] for request in socket.sent] == ["session.active_list"]
 
 
-def test_observe_turn_outcome_reads_retained_error_without_messages(tmp_path):
+def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
     _gateway_files(tmp_path)
 
     class OutcomeSocket(_Socket):
         def recv(self):
             request = self.sent[-1]
-            if request["method"] == "session.activate":
+            if request["method"] == "session.events.since":
                 return json.dumps(
                     {
                         "jsonrpc": "2.0",
                         "id": request["id"],
-                        "result": {"inflight": {"status": "error"}},
+                        "result": {
+                            "events": [
+                                {
+                                    "type": "message.complete",
+                                    "seq": 18,
+                                    "payload": {"status": "error"},
+                                }
+                            ],
+                            "latest_seq": 18,
+                            "truncated": False,
+                            "epoch": "epoch-1",
+                            "open_requests": [],
+                        },
                     }
                 )
             return super().recv()
@@ -523,14 +547,16 @@ def test_observe_turn_outcome_reads_retained_error_without_messages(tmp_path):
     outcome = observe_turn_outcome(
         tmp_path,
         "hub",
+        after_seq=17,
+        expected_epoch="epoch-1",
         connect_fn=lambda *args, **kwargs: socket,
     )
-    assert outcome.inflight_status == "error"
+    assert outcome.terminal_status == "error"
     assert [request["method"] for request in socket.sent] == [
         "session.active_list",
-        "session.activate",
+        "session.events.since",
     ]
-    assert socket.sent[-1]["params"]["omit_messages"] is True
+    assert socket.sent[-1]["params"]["last_seen"] == 17
 
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):

@@ -60,10 +60,12 @@ class HermesTurnProgress:
 
 @dataclass(frozen=True)
 class HermesTurnOutcome:
-    """Authoritative retained-error state after a turn becomes idle."""
+    """Authoritative terminal event after a recovery control operation."""
 
     progress: HermesTurnProgress
-    inflight_status: str | None
+    terminal_status: str | None
+    latest_seq: int
+    epoch: str
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,8 @@ class HermesSlashReceipt:
     output: str
     session_id: str
     progress: HermesTurnProgress
+    latest_seq: int
+    epoch: str
 
 
 @dataclass(frozen=True)
@@ -298,21 +302,29 @@ def observe_turn_outcome(
     state_dir: Path,
     agent_name: str,
     *,
+    after_seq: int,
+    expected_epoch: str,
     timeout_s: float = 10.0,
     connect_fn: Any | None = None,
 ) -> HermesTurnOutcome:
-    """Read Hermes' retained failure projection without serializing messages."""
+    """Read the typed terminal event after a recovery watermark.
+
+    ``session.activate`` is intentionally not used: activation rebinds the live
+    renderer and touches ``last_active``, so a passive recovery observer would
+    manufacture the progress it was trying to verify.  Hermes' replay ring is
+    the non-mutating control-plane record of ``message.complete``.
+    """
     url, _token = _gateway_connection(state_dir)
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
             row = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
             progress = _turn_progress(row)
-            snapshot = _rpc(
+            replay = _rpc(
                 socket,
                 2,
-                "session.activate",
-                {"session_id": str(row["id"]), "omit_messages": True},
+                "session.events.since",
+                {"session_id": str(row["id"]), "last_seen": after_seq},
             )
     except HermesTuiRpcError:
         raise
@@ -320,15 +332,39 @@ def observe_turn_outcome(
         raise HermesTuiRpcError(
             f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
         ) from exc
-    inflight = snapshot.get("inflight")
-    if inflight is not None and not isinstance(inflight, dict):
+    events = replay.get("events")
+    latest_seq = replay.get("latest_seq")
+    epoch = replay.get("epoch")
+    if (
+        not isinstance(events, list)
+        or type(latest_seq) is not int
+        or latest_seq < after_seq
+        or not isinstance(epoch, str)
+        or not epoch
+    ):
         raise HermesTuiRpcError(
-            f"Hermes session.activate returned malformed inflight state: {inflight!r}"
+            f"Hermes session.events.since returned malformed result: {replay!r}"
         )
-    inflight_status = (
-        str(inflight.get("status") or "").strip().lower() if inflight else None
-    )
-    return HermesTurnOutcome(progress, inflight_status or None)
+    if epoch != expected_epoch:
+        raise HermesTuiRpcError(
+            "Hermes event replay epoch changed during stale recovery"
+        )
+    terminal_status = None
+    for event in events:
+        if not isinstance(event, dict):
+            raise HermesTuiRpcError(
+                f"Hermes event replay contained malformed event: {event!r}"
+            )
+        if event.get("type") != "message.complete":
+            continue
+        payload = event.get("payload")
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if status not in {"complete", "error", "interrupted"}:
+            raise HermesTuiRpcError(
+                f"Hermes message.complete had malformed status: {event!r}"
+            )
+        terminal_status = str(status)
+    return HermesTurnOutcome(progress, terminal_status, latest_seq, epoch)
 
 
 def _session_activity(row: dict) -> str:
@@ -486,6 +522,12 @@ def execute_slash_command(
             progress = _turn_progress(
                 _select_session_row(after.get("sessions"), f"sac:{agent_name}")
             )
+            replay = _rpc(
+                socket,
+                4,
+                "session.events.since",
+                {"session_id": session_id, "last_seen": 0},
+            )
     except HermesTuiRpcError:
         raise
     except Exception as exc:
@@ -501,7 +543,13 @@ def execute_slash_command(
         raise HermesTuiRpcError(
             f"Hermes slash.exec did not synchronize the live session: {warning}"
         )
-    return HermesSlashReceipt(output, session_id, progress)
+    latest_seq = replay.get("latest_seq")
+    epoch = replay.get("epoch")
+    if type(latest_seq) is not int or latest_seq < 0 or not isinstance(epoch, str) or not epoch:
+        raise HermesTuiRpcError(
+            f"Hermes event replay returned malformed watermark: {replay!r}"
+        )
+    return HermesSlashReceipt(output, session_id, progress, latest_seq, epoch)
 
 
 def clear_heartbeat_for_session(

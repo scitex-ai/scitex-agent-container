@@ -197,15 +197,14 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
     baseline = recovery.HermesTurnProgress(
         message_count=10, last_active=40.0, status="idle"
     )
-    completed = recovery.HermesTurnProgress(
-        message_count=11, last_active=44.0, status="idle"
+    receipt = recovery.HermesSlashReceipt(
+        "switched", "live-1", baseline, 17, "epoch-1"
     )
     latched = recovery.recovery_tick(
         config,
         capture=lambda: pane,
         pause=lambda: True,
-        recover=lambda: recovery.HermesSlashReceipt("switched", "live-1", baseline),
-        observe_progress=lambda: completed,
+        recover=lambda: receipt,
         state_dir=tmp_path,
     )
     recovering = recovery.recovery_tick(
@@ -213,8 +212,7 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
         capture=lambda: pane,
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused twice")),
         probe=lambda _config: True,
-        recover=lambda: recovery.HermesSlashReceipt("switched", "live-1", baseline),
-        observe_progress=lambda: completed,
+        recover=lambda: receipt,
         previous_fingerprint=latched,
         state_dir=tmp_path,
     )
@@ -224,8 +222,12 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused twice")),
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("re-probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered twice")),
-        observe_progress=lambda: completed,
-        observe_outcome=lambda: recovery.HermesTurnOutcome(completed, None),
+        observe_outcome=lambda seq, epoch: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(11, 44.0, "idle"),
+            "complete",
+            23,
+            epoch,
+        ),
         previous_fingerprint=recovering,
         state_dir=tmp_path,
     )
@@ -236,18 +238,20 @@ def test_recovered_latch_becomes_ready_after_one_completed_turn(tmp_path):
 def test_recovered_latch_does_not_clear_for_only_an_accepted_user_message(tmp_path):
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
-    progress = recovery.HermesTurnProgress(
-        message_count=11, last_active=44.0, status="working"
-    )
     fingerprint = recovery.stale_latch(pane)[1]
-    token = f"recovered:{fingerprint}:10:40.0"
+    token = f"recovered:{fingerprint}:17:epoch-1"
     observed = recovery.recovery_tick(
         config,
         capture=lambda: pane,
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused")),
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
-        observe_progress=lambda: progress,
+        observe_outcome=lambda seq, epoch: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(11, 44.0, "working"),
+            None,
+            seq,
+            epoch,
+        ),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
@@ -258,16 +262,15 @@ def test_ready_proof_is_not_relatched_by_the_historical_same_error(tmp_path):
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     fingerprint = recovery.stale_latch(pane)[1]
-    token = f"ready:{fingerprint}:12:44.0"
+    token = f"ready:{fingerprint}:23:epoch-1"
     observed = recovery.recovery_tick(
         config,
         capture=lambda: pane,
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused")),
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
-        observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
-        observe_outcome=lambda: recovery.HermesTurnOutcome(
-            recovery.HermesTurnProgress(12, 44.0, "idle"), None
+        observe_outcome=lambda seq, epoch: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 44.0, "idle"), None, seq, epoch
         ),
         previous_fingerprint=token,
         state_dir=tmp_path,
@@ -280,16 +283,18 @@ def test_recovering_proof_survives_terminal_window_shift(tmp_path):
     old_pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     new_pane = "shifted\n" + old_pane
     old_fingerprint = recovery.stale_latch(old_pane)[1]
-    token = f"recovered:{old_fingerprint}:10:40.0"
+    token = f"recovered:{old_fingerprint}:17:epoch-1"
     observed = recovery.recovery_tick(
         config,
         capture=lambda: new_pane,
         pause=lambda: (_ for _ in ()).throw(AssertionError("paused")),
         probe=lambda _config: (_ for _ in ()).throw(AssertionError("probed")),
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered")),
-        observe_progress=lambda: recovery.HermesTurnProgress(12, 44.0, "idle"),
-        observe_outcome=lambda: recovery.HermesTurnOutcome(
-            recovery.HermesTurnProgress(12, 44.0, "idle"), None
+        observe_outcome=lambda seq, epoch: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 44.0, "idle"),
+            "complete",
+            23,
+            epoch,
         ),
         previous_fingerprint=token,
         state_dir=tmp_path,
@@ -297,25 +302,29 @@ def test_recovering_proof_survives_terminal_window_shift(tmp_path):
     assert observed.startswith(f"ready:{recovery.stale_latch(new_pane)[1]}:")
 
 
-def test_ready_state_relatches_when_activity_advances_without_history(tmp_path):
+def test_ready_state_relatches_on_typed_failed_turn(tmp_path):
     config = _config(tmp_path)
     pane = "Provider has been unresponsive for 5 consecutive stale attempts"
     fingerprint = recovery.stale_latch(pane)[1]
-    token = f"ready:{fingerprint}:12:44.0"
+    token = f"ready:{fingerprint}:23:epoch-1"
     paused = []
     observed = recovery.recovery_tick(
         config,
         capture=lambda: "new terminal frame\n" + pane,
         pause=lambda: paused.append(True) or True,
         recover=lambda: (_ for _ in ()).throw(AssertionError("recovered early")),
-        observe_progress=lambda: recovery.HermesTurnProgress(12, 45.0, "idle"),
-        observe_outcome=lambda: recovery.HermesTurnOutcome(
-            recovery.HermesTurnProgress(12, 45.0, "idle"), "error"
+        observe_outcome=lambda seq, epoch: recovery.HermesTurnOutcome(
+            recovery.HermesTurnProgress(12, 45.0, "idle"),
+            "error",
+            29,
+            epoch,
         ),
         previous_fingerprint=token,
         state_dir=tmp_path,
     )
-    assert observed.startswith("latched:") and paused == [True]
+    assert observed.startswith("latched:")
+    assert paused == [True]
+    assert read_control_state(tmp_path)["turn_admission"] == "stale_latched"
 
 
 def test_monitor_natural_exit_clears_persisted_latch(tmp_path):
