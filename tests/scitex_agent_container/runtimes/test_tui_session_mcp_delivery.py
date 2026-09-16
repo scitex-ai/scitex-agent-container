@@ -19,7 +19,7 @@ import yaml
 
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._provider_types import ProviderSpec
-from scitex_agent_container.runtimes import _hermes_profile
+from scitex_agent_container.runtimes import _hermes_profile, _pg_identity_credentials
 from scitex_agent_container.runtimes._tui_workspace import materialize_workspace
 
 
@@ -142,6 +142,11 @@ def test_hermes_tui_profile_translates_explicit_mcp_server(tmp_path: Path) -> No
         (_hermes_profile, "deploy_to_home", lambda _config, _target: None),
         (_hermes_profile, "deploy_to_home_overlay", lambda _config: None),
         (_hermes_profile, "resolve_overlay_upper_home", lambda _config: None),
+        (
+            _pg_identity_credentials,
+            "materialize_project_pgpass",
+            lambda _config, *, home_backings, servers: None,
+        ),
     ]
 
     # Act
