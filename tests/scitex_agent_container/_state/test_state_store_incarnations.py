@@ -311,6 +311,8 @@ def test_returned_dict_carries_no_store_bookkeeping(pg_schema: str) -> None:
         "host",
         "born_at",
         "compiled_spec_json",
+        "policy_sha256",
+        "projection_sha256",
         "exit_reason",
         "exit_code",
         "exited_at",

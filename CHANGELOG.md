@@ -52,10 +52,13 @@ versioning follows [SemVer](https://semver.org/).
 ### Added
 - **Write-capable agent tasks now pass the harness-neutral worktree policy
   gate.** SAC invokes the operator-owned `scitex-worktree-policy` CLI before a
-  new Claude, Codex, or Hermes harness process starts, fails closed on missing,
-  denied, stale, malformed, or hash-inconsistent results, and records
-  `policy_sha256` plus `projection_sha256` on the incarnation. Policy remains
-  in dotfiles; SAC adds no hook-specific rule copy or bypass.
+  new Claude, Codex, or Hermes harness process starts; automatically resolves a
+  stable agent-owned linked worktree while preserving/refusing dirty or
+  conflicting checkouts; exposes the migration plan in dry-run/explain; fails
+  closed on missing, denied, stale, malformed, or hash-inconsistent results;
+  and records `policy_sha256` plus `projection_sha256` on the incarnation.
+  Policy remains in dotfiles; SAC adds no hook-, skill-, prompt-, or doc-based
+  rule copy or bypass.
 - **Hermes Cards messages now enter the visible TUI as durable steer turns.**
   Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
   doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed

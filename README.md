@@ -198,10 +198,13 @@ generic provider shape. **[Full harness + model + provider reference →](docs/s
 **SAC-from-SAC (in-SIF spawn).** An agent running INSIDE an apptainer SIF can spawn a child agent on the **bare host** by calling `sac agents start <child>` as normal — the CLI auto-detects the in-SIF condition (`APPTAINER_CONTAINER`) and POSTs the spawn RPC to the host's `sac listen` instead of trying nested apptainer (which the supported HPC shape forbids). The host re-runs ACL gating, records the parent → child lineage, and shells the real start against the bare host's apptainer. Wiring is automatic: `SAC_LISTEN_BASE_URL` + `SAC_LISTEN_BEARER` are injected at container launch.
 
 **Worktree policy.** Before a new write-capable Claude, Codex, or Hermes task
-starts, the host invokes the neutral `scitex-worktree-policy` CLI and fails
-closed unless its context and generated projections are current and allowed.
-SAC records the returned policy/projection hashes on the incarnation; it does
-not copy policy rules into hooks or prompts. See
+starts, the host resolves or provisions a deterministic agent-owned linked
+worktree, then invokes the neutral `scitex-worktree-policy` CLI and fails closed
+unless its context and generated projections are current and allowed. Existing
+agent work is resumed; dirty authority or conflicting ownership is preserved
+and refused. Dry-run/explain show the planned resolution without creating it.
+SAC records the returned policy/projection hashes on the incarnation and does
+not copy policy rules into hooks, skills, prompts, or docs. See
 [`docs/worktree-policy-gate.md`](docs/worktree-policy-gate.md).
 
 **[Full architecture →](docs/how-sac-works.md)** — launch flow, to_home merge rules, A2A inbound, control plane, restart/health.

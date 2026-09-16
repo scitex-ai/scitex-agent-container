@@ -104,6 +104,7 @@ def test_launch_snapshot_records_exact_storage_paths() -> None:
 
 
 def test_launch_snapshot_records_worktree_policy_identity() -> None:
+    # Arrange
     cfg = AgentConfig(name="alpha")
     cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
         policy_id="scitex.worktree.v1",
@@ -115,11 +116,15 @@ def test_launch_snapshot_records_worktree_policy_identity() -> None:
         surface="linked-worktree",
     )
 
+    # Act
     snapshot = compiled_launch_snapshot(cfg)
-
     policy = snapshot["launch_artifacts"]["worktree_policy"]
-    assert policy["policy_sha256"] == "a" * 64
-    assert policy["projection_sha256"] == "b" * 64
+
+    # Assert
+    assert (policy["policy_sha256"], policy["projection_sha256"]) == (
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +265,7 @@ def test_certificate_compiled_spec_carries_residency(
 
 
 def test_certificate_row_carries_policy_hashes(pg_schema: str) -> None:
+    # Arrange
     cfg = AgentConfig(name="alpha")
     cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
         policy_id="scitex.worktree.v1",
@@ -271,11 +277,16 @@ def test_certificate_row_carries_policy_hashes(pg_schema: str) -> None:
         surface="linked-worktree",
     )
 
-    assert write_birth_certificate(cfg, "inc-policy") is True
+    # Act
+    written = write_birth_certificate(cfg, "inc-policy")
     row = get_incarnation("inc-policy")
 
-    assert row["policy_sha256"] == "a" * 64
-    assert row["projection_sha256"] == "b" * 64
+    # Assert
+    assert (written, row["policy_sha256"], row["projection_sha256"]) == (
+        True,
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 def test_certificate_failure_is_false_not_raise(pg_schema: str) -> None:
