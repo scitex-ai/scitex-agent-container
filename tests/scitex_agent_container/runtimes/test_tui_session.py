@@ -532,10 +532,14 @@ def test_codex_cct_start_failure_unwinds_managed_session(
     )
     config = _Config(name="codex-cct-fail", harness="codex")
     # Act
-    with pytest.raises(RuntimeError, match="poller preflight failed"):
+    error = ""
+    try:
         runtime.start(config)
+    except RuntimeError as exc:
+        error = str(exc)
     # Assert
-    assert (events, mux.exists("tui-codex-cct-fail")) == (
+    assert (error, events, mux.exists("tui-codex-cct-fail")) == (
+        "poller preflight failed",
         [
             "bridge-start",
             "inbox-start",
