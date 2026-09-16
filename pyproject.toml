@@ -90,6 +90,10 @@ dependencies = [
     # public durable poll/confirm API and confirms only after terminal-visible
     # delivery.  This is a runtime dependency, not an optional MCP tool.
     "scitex-cards>=0.52.1",
+    # Process ownership is checked during every start/restart while
+    # reconciling inbox sidecars.  This is therefore a core runtime
+    # dependency, not an optional observability extra.
+    "psutil>=5.9",
     # A2A protocol surface — Phase 1 SDK adoption (see GITIGNORED/A2A_MIGRATION.md).
     # `[http-server]` extras pull in starlette + sse-starlette for the
     # JSON-RPC + SSE routes we mount in `a2a/_server.py`.
