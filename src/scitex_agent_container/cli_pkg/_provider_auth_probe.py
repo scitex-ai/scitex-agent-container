@@ -171,18 +171,19 @@ def _hermes_headers(config, provider, api_key: str) -> dict[str, str]:
     agent = str(getattr(config, "name", "") or "provider-preflight")
     session = f"sac-preflight:{agent}"
     raw = getattr(provider, "extra_headers", {}) or {}
-    headers = {
+    headers = {"User-Agent": "scitex-agent-container/preflight"}
+    headers.update(
+        {
         str(name): str(value)
         .replace(AGENT_ID_TEMPLATE, agent)
         .replace(SESSION_ID_TEMPLATE, session)
         for name, value in raw.items()
-    }
+        }
+    )
     headers.update(
         {
             "Authorization": f"Bearer {api_key}",
-            "x-api-key": api_key,
             "Content-Type": "application/json",
-            "User-Agent": "scitex-agent-container/preflight",
         }
     )
     return headers

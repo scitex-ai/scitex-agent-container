@@ -131,6 +131,7 @@ def _serve_hermes_chat(*, actual_model: str | None = None, accept_all=False):
                     "max_tokens": payload.get("max_tokens"),
                     "user_agent": self.headers.get("User-Agent"),
                     "session": self.headers.get("x-opencode-session"),
+                    "x_api_key": self.headers.get("x-api-key"),
                 }
             )
             if not accept_all and presented != _GOOD_KEY:
@@ -212,6 +213,7 @@ def _hermes_config(base_url: str, *, model="deepseek-v4.1-flash"):
     config.harness = "hermes"
     config.model = model
     config.claude.provider.extra_headers = {
+        "User-Agent": "scitex-agent-container/hermes",
         "x-opencode-session": "${sac:session_id}"
     }
     return config
@@ -273,16 +275,18 @@ def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key)
                 "key": _GOOD_KEY,
                 "model": "deepseek-v4.1-flash",
                 "max_tokens": 1,
-                "user_agent": "scitex-agent-container/preflight",
+                "user_agent": "scitex-agent-container/hermes",
                 "session": "sac-preflight:probe-subject",
+                "x_api_key": None,
             },
             {
                 "path": "/v1/chat/completions",
                 "key": "sac-preflight-control-not-a-valid-key",
                 "model": "deepseek-v4.1-flash",
                 "max_tokens": 1,
-                "user_agent": "scitex-agent-container/preflight",
+                "user_agent": "scitex-agent-container/hermes",
                 "session": "sac-preflight:probe-subject",
+                "x_api_key": None,
             },
         ],
     ), verdict.detail
