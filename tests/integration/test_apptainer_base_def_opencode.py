@@ -6,15 +6,31 @@ RECIPE = ROOT / "src" / "scitex_agent_container" / "containers" / "apptainer-bas
 
 
 def test_base_image_installs_and_verifies_pinned_opencode_cli():
+    # Arrange
     text = RECIPE.read_text()
 
-    assert "opencode-ai@1.18.31" in text
-    assert "/opt/npm-global/bin/opencode --version" in text
-    assert " opencode apptainer " in text
+    # Act
+    has_image_contract = all(
+        item in text
+        for item in (
+            "opencode-ai@1.18.31",
+            "/opt/npm-global/bin/opencode --version",
+            " opencode apptainer ",
+        )
+    )
+
+    # Assert
+    assert has_image_contract
 
 
 def test_base_image_never_bakes_opencode_go_credentials():
+    # Arrange
     text = RECIPE.read_text()
 
-    assert "OPENCODE_GO_API_KEY" not in text
-    assert "sk-Ze" not in text
+    # Act
+    has_embedded_credential = any(
+        marker in text for marker in ("OPENCODE_GO_API_KEY", "sk-Ze")
+    )
+
+    # Assert
+    assert not has_embedded_credential
