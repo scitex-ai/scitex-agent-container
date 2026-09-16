@@ -6,9 +6,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import yaml
+from click.testing import CliRunner
 
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.cli_pkg.build_cmds import check
+from scitex_agent_container.config import AgentConfig, load_config
 from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._launch_plan import compile_launch_plan
 from scitex_agent_container.config._provider_parse import parse_provider_value
@@ -17,7 +18,7 @@ from scitex_agent_container.runtimes import _hermes_profile
 from scitex_agent_container.runtimes._apptainer_provider import ProviderEnvError
 
 EXAMPLE = (
-    Path(__file__).parents[3]
+    Path(__file__).parents[2]
     / "examples"
     / "providers"
     / "opencode-go-hermes.yaml"
@@ -25,8 +26,50 @@ EXAMPLE = (
 
 
 def _example_spec() -> dict:
-    document = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
-    return document["spec"]
+    """Load the portable v3 example, then expose its neutral launch shape."""
+    config = load_config(EXAMPLE)
+    provider = config.claude.provider
+    return {
+        "harness": config.harness,
+        "launch_mode": config.runtime,
+        "container": {"backend": "apptainer"},
+        "engine": config.engine_key,
+        "available_engines": {
+            config.engine_key: {
+                "model": config.model,
+                "endpoints": {
+                    "openai-chat-completions": {
+                        "url": f"{provider.base_url}/chat/completions",
+                        "auth": {
+                            "kind": "bearer",
+                            "env": provider.auth_token_env,
+                        },
+                        "extra_headers": provider.extra_headers,
+                    }
+                },
+            }
+        },
+    }
+
+
+def test_real_preflight_loads_example_and_fails_closed_without_key(
+    env_save_restore, tmp_path
+):
+    # Arrange
+    env_save_restore.set("HOME", str(tmp_path))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+
+    # Act
+    result = CliRunner().invoke(check, [str(EXAMPLE)])
+
+    # Assert
+    assert (
+        result.exit_code,
+        "Config validation failed" in result.output,
+        "provider key:" in result.output,
+        "OPENCODE_GO_API_KEY" in result.output,
+        "start would also refuse this spec" in result.output,
+    ) == (1, False, True, True, True)
 
 
 def test_standalone_opencode_go_config_resolves_exact_backend_identity(

@@ -1,18 +1,110 @@
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
 spec:
+  runtime: tui
   harness: hermes
-  launch_mode: tui
-  container:
-    backend: apptainer
+  host: ${HOSTNAME}
+  workdir: /home/agent/work
   engine: opencode-go-deepseek-v4.1-flash
+
   available_engines:
     opencode-go-deepseek-v4.1-flash:
       model: deepseek-v4.1-flash
-      endpoints:
-        openai-chat-completions:
-          url: https://opencode.ai/zen/go/v1/chat/completions
-          auth:
-            kind: bearer
-            env: OPENCODE_GO_API_KEY
-          extra_headers:
-            User-Agent: scitex-agent-container/hermes
-            x-opencode-session: ${sac:session_id}
+      provider:
+        base_url: https://opencode.ai/zen/go/v1
+        auth_token_env: OPENCODE_GO_API_KEY
+        extra_headers:
+          User-Agent: scitex-agent-container/hermes
+          x-opencode-session: ${sac:session_id}
+
+  available_harnesses:
+    hermes:
+      session:
+        mode: fresh
+        max_age_minutes: null
+      compression:
+        threshold: 0.8
+        target_ratio: 0.2
+        tail_mode: lean
+        in_place: true
+      background_review: false
+      run_budget_seconds: 3600
+
+  python-venv: ''
+  startup_commands: []
+  startup_prompts: []
+  listen: []
+  extensions: {}
+  mcp_servers: {}
+  user: ''
+  to_home: ./to_home
+
+  health:
+    enabled: false
+    interval: 30
+    timeout: 5
+    method: sdk-alive
+
+  restart:
+    policy: never
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+    prune_on_stop: false
+
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+
+  apptainer:
+    image: ''
+    binds: []
+    env: {}
+    raw_args: []
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    relaxed: false
+    fakeroot: false
+    jail: false
+    nested_build: false
+
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+
+  a2a:
+    host: 127.0.0.1
+    port: auto
+
+  comms:
+    channels: []
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+
+  lineage:
+    group: ''
+    may_spawn: true

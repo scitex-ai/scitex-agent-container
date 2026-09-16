@@ -366,7 +366,7 @@ def validate(name_or_path: str) -> None:
     """
     try:
         config_path = resolve_config(name_or_path)
-    except Exception as exc:  # stx-allow: fallback (reason: not-found / unresolvable name surfaced to user)
+    except Exception as exc:  # stx-allow: fallback (reason: resolution error written to stderr)
         console.print(f"[red]Error: {exc}[/red]")
         sys.exit(1)
     errors = validate_config(config_path)

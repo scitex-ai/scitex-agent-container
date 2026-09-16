@@ -246,11 +246,13 @@ def test_probe_identifies_itself_for_providers_that_reject_generic_clients(
     verdict = probe_provider_auth(_config(base_url), timeout=5)
 
     # Assert
-    assert verdict.state == OK, verdict.detail
-    assert observed == [
-        "scitex-agent-container/preflight",
-        "scitex-agent-container/preflight",
-    ]
+    assert (verdict.state, observed) == (
+        OK,
+        [
+            "scitex-agent-container/preflight",
+            "scitex-agent-container/preflight",
+        ],
+    ), verdict.detail
 
 
 def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key):
@@ -262,26 +264,28 @@ def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key)
         verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
 
     # Assert
-    assert verdict.state == OK, verdict.detail
-    assert verdict.actual_model == "deepseek-v4.1-flash"
-    assert observed == [
-        {
-            "path": "/v1/chat/completions",
-            "key": _GOOD_KEY,
-            "model": "deepseek-v4.1-flash",
-            "max_tokens": 1,
-            "user_agent": "scitex-agent-container/preflight",
-            "session": "sac-preflight:probe-subject",
-        },
-        {
-            "path": "/v1/chat/completions",
-            "key": "sac-preflight-control-not-a-valid-key",
-            "model": "deepseek-v4.1-flash",
-            "max_tokens": 1,
-            "user_agent": "scitex-agent-container/preflight",
-            "session": "sac-preflight:probe-subject",
-        },
-    ]
+    assert (verdict.state, verdict.actual_model, observed) == (
+        OK,
+        "deepseek-v4.1-flash",
+        [
+            {
+                "path": "/v1/chat/completions",
+                "key": _GOOD_KEY,
+                "model": "deepseek-v4.1-flash",
+                "max_tokens": 1,
+                "user_agent": "scitex-agent-container/preflight",
+                "session": "sac-preflight:probe-subject",
+            },
+            {
+                "path": "/v1/chat/completions",
+                "key": "sac-preflight-control-not-a-valid-key",
+                "model": "deepseek-v4.1-flash",
+                "max_tokens": 1,
+                "user_agent": "scitex-agent-container/preflight",
+                "session": "sac-preflight:probe-subject",
+            },
+        ],
+    ), verdict.detail
 
 
 def test_hermes_probe_fails_loud_when_real_key_is_rejected(provider_key):
@@ -293,11 +297,13 @@ def test_hermes_probe_fails_loud_when_real_key_is_rejected(provider_key):
         verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
 
     # Assert
-    assert verdict.state == REJECTED
-    assert verdict.is_failure is True
-    assert _ENV_NAME in verdict.detail
-    assert "deepseek-v4.1-flash" in verdict.detail
-    assert "/v1/chat/completions" in verdict.detail
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        _ENV_NAME in verdict.detail,
+        "deepseek-v4.1-flash" in verdict.detail,
+        "/v1/chat/completions" in verdict.detail,
+    ) == (REJECTED, True, True, True, True)
 
 
 def test_hermes_probe_fails_loud_on_returned_model_mismatch(provider_key):
@@ -312,11 +318,13 @@ def test_hermes_probe_fails_loud_on_returned_model_mismatch(provider_key):
         verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
 
     # Assert
-    assert verdict.state == MODEL_MISMATCH
-    assert verdict.is_failure is True
-    assert verdict.actual_model == "substituted-model"
-    assert "substituted-model" in verdict.detail
-    assert "deepseek-v4.1-flash" in verdict.detail
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        verdict.actual_model,
+        "substituted-model" in verdict.detail,
+        "deepseek-v4.1-flash" in verdict.detail,
+    ) == (MODEL_MISMATCH, True, "substituted-model", True, True)
 
 
 def test_hermes_probe_warns_when_chat_path_accepts_invalid_control(provider_key):
@@ -328,9 +336,11 @@ def test_hermes_probe_warns_when_chat_path_accepts_invalid_control(provider_key)
         verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
 
     # Assert
-    assert verdict.state == INDISCRIMINATE
-    assert verdict.is_failure is False
-    assert "actual inference path" in verdict.detail
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        "actual inference path" in verdict.detail,
+    ) == (INDISCRIMINATE, False, True)
 
 
 def test_a_PLACEHOLDER_the_backend_rejects_is_caught(
