@@ -374,7 +374,7 @@ def test_hermes_probe_fails_loud_on_returned_model_mismatch(provider_key):
     ) == (MODEL_MISMATCH, True, "substituted-model", True, True)
 
 
-def test_hermes_probe_warns_when_chat_path_accepts_invalid_control(provider_key):
+def test_hermes_probe_fails_when_chat_path_accepts_invalid_control(provider_key):
     # Arrange
     provider_key(_GOOD_KEY)
 
@@ -387,7 +387,7 @@ def test_hermes_probe_warns_when_chat_path_accepts_invalid_control(provider_key)
         verdict.state,
         verdict.is_failure,
         "actual inference path" in verdict.detail,
-    ) == (INDISCRIMINATE, False, True)
+    ) == (INDISCRIMINATE, True, True)
 
 
 def test_a_PLACEHOLDER_the_backend_rejects_is_caught(
@@ -449,18 +449,19 @@ def test_a_backend_that_accepts_ANY_key_yields_no_green_tick(
     assert verdict.state == INDISCRIMINATE, verdict.detail
 
 
-def test_an_indiscriminate_backend_does_NOT_fail_the_preflight(
+def test_an_indiscriminate_backend_fails_the_preflight(
     permissive_backend, provider_key
 ):
-    # Arrange — "I cannot tell" is not "the key is wrong". Failing here would
-    # block every agent behind a backend with an open models endpoint.
+    # Arrange — a provider preflight must prove that the selected endpoint
+    # authenticates. Equal responses for a real and invalid key prove that it
+    # cannot answer that question and must stop deployment.
     provider_key(_GOOD_KEY)
 
     # Act
     verdict = probe_provider_auth(_config(permissive_backend), timeout=5)
 
     # Assert
-    assert verdict.is_failure is False, verdict.detail
+    assert verdict.is_failure is True, verdict.detail
 
 
 # --- UNKNOWN NEVER REJECTS --------------------------------------------------

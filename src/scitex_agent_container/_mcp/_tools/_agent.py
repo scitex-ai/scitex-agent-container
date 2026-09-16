@@ -37,9 +37,14 @@ def agent_list(
     capability: str | None = None,
     machine: str | None = None,
 ) -> dict[str, Any]:
-    """List every registered agent + liveness flags. Mirrors
-    ``sac agents list --json``. Filter by ``capability`` (label
-    substring match) or ``machine`` (label exact match)."""
+    """Return the fleet inventory, including defined and observed agents.
+
+    This is the authoritative discovery tool for answering which agents are
+    defined or running. It is broader than ``a2a_peers``, which lists only
+    communication peers registered on one listener and MUST NOT be presented
+    as the complete fleet. Filter by ``capability`` (label substring match)
+    or ``machine`` (label exact match).
+    """
     argv = ["agents", "list", "--json"]
     if capability:
         argv += ["--capability", capability]
@@ -49,8 +54,12 @@ def agent_list(
 
 
 def agent_status(name: str) -> dict[str, Any]:
-    """Detailed status for one agent (heartbeat, session id, quota,
-    snapshot, context-management %). Mirrors
+    """Detailed, evidence-bearing status for one agent.
+
+    The ``observation`` object keeps definition validity, process liveness,
+    turn activity, communication reachability, and progress as separate typed
+    dimensions. A live process is not necessarily busy or making progress.
+    Mirrors
     ``sac agents list <name> --json`` — the ``list`` leaf renders a
     single-agent status view when given a NAME (the old ``status``
     subcommand was folded into ``list`` in the group rename)."""
