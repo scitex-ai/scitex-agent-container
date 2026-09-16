@@ -17,6 +17,8 @@ from ._sdk_channels import (
     compute_channel_plan,
 )
 
+_EXTERNAL_POLLER_ENV = "CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"
+
 
 class HermesCctRailError(RuntimeError):
     """A selected Hermes Telegram rail cannot receive and wake this session."""
@@ -78,7 +80,15 @@ def wire_hermes_cct_rail(
     env["CCT_BOT_TOKEN"] = "${env:CCT_BOT_TOKEN}"
     env["CCT_AGENT_ID"] = "${env:CCT_AGENT_ID}"
     env[_TELEGRAMMER_TURN_URL_ENV] = turn_url
-    return {_TELEGRAMMER_TURN_URL_ENV: turn_url}
+    # The host-side SAC lifecycle starts the one authoritative standalone
+    # poller.  This value must live in the independently launched MCP server's
+    # environment too: putting it only on SAC's poller child cannot flow
+    # backwards into Hermes or its later MCP children.
+    env[_EXTERNAL_POLLER_ENV] = "1"
+    return {
+        _TELEGRAMMER_TURN_URL_ENV: turn_url,
+        _EXTERNAL_POLLER_ENV: "1",
+    }
 
 
 def inspect_materialized_hermes_cct(config: AgentConfig, home: Path) -> dict[str, Any]:
