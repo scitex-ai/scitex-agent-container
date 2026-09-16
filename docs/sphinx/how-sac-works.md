@@ -49,16 +49,26 @@ parent directory — no name field in the YAML. See [spec-reference.md](spec-ref
 A directory next to `spec.yaml`. At start, `sac` mirrors its contents into the
 agent's container `$HOME` (= `runtime/<name>/home/`). Every path under
 `to_home/` lands at the same relative path under `$HOME` — the mirror itself is
-harness-agnostic; the rows below are the Claude Code harness's filenames as the
-worked example:
+harness-agnostic. `AGENTS.md` is the neutral instruction source. For Hermes,
+SAC verifies the projected bytes and passes them through Hermes'
+`agent.system_prompt` configuration. It never translates `CLAUDE.md` silently:
 
 | Source                    | Destination                     | Merge rule             |
 |---------------------------|---------------------------------|------------------------|
-| `CLAUDE.md`               | `$HOME/CLAUDE.md`               | marker-protected append |
+| `AGENTS.md` | `$HOME/AGENTS.md` | exact projection |
+| `CLAUDE.md` | `$HOME/CLAUDE.md` | marker-protected projection |
 | `.mcp.json`               | `$HOME/.mcp.json`               | full overwrite         |
 | `.env`                    | `$HOME/.env`                    | mode 0600, overwrite   |
 | `state.md`                | `$HOME/state.md`                | marker-protected append |
 | `.claude/{commands,skills,hooks}/` | `$HOME/.claude/*/`     | recursive copy         |
+
+Every launch writes `$HOME/.sac/prompt-projections.json` from the executable
+materializer. It records SHA-256 provenance for the explicit startup prompts,
+declared instruction/skill sources, and effective runtime projections. Source
+changes during assembly or a projection that no longer matches the manifest
+abort launch; documentation is not used as a runtime fallback.
+Hermes launch also fails if the manifest has no verified root `AGENTS.md`, if
+the home backings disagree, or if its recorded hash no longer matches.
 
 ### Apptainer instance
 

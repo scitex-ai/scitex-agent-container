@@ -20,6 +20,7 @@ from ..config._launch_plan import (
     ResolvedEngine,
 )
 from ._apptainer_provider import resolve_provider_api_key
+from ._prompt_projection_integrity import resolve_hermes_instruction_projection
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
 from .mcp_config import setup_mcp_config
@@ -34,6 +35,23 @@ _MCP_NON_SECRET_ENV = {
     "SCITEX_CARDS_NOTIFY_DSN",
     "SCITEX_STORE_DSN",
 }
+
+
+def _verified_instruction_text(config: AgentConfig, targets: list[Path]) -> str:
+    """Verify every possible home backing projects the same Hermes prompt."""
+    resolved = [
+        resolve_hermes_instruction_projection(config, target) for target in targets
+    ]
+    texts = {text for text, _identity in resolved}
+    hashes = {identity["sha256"] for _text, identity in resolved}
+    if len(texts) != 1 or len(hashes) != 1:
+        raise RuntimeError(
+            f"Hermes instruction projections disagree across home backings for "
+            f"agent {config.name!r}; refusing launch"
+        )
+    return resolved[0][0]
+
+
 _MCP_SAC_ENV_REFS = {
     "SAC_LISTEN_BASE_URL": "${env:SAC_LISTEN_BASE_URL}",
     "SAC_LISTEN_BEARER": "${env:SAC_LISTEN_BEARER}",
@@ -373,6 +391,12 @@ def materialize_hermes_profile(
     deploy_to_home(config, str(home))
     setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
+    targets = [home]
+    resolved_upper = resolve_overlay_upper_home(config)
+    if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
+        targets.append(resolved_upper)
+    system_prompt = _verified_instruction_text(config, targets)
     api_key = ensure_api_key(state_dir)
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config)
@@ -383,6 +407,7 @@ def materialize_hermes_profile(
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
+        system_prompt=system_prompt,
     )
     rendered["gateway"] = {
         "api_server": {
@@ -405,11 +430,6 @@ def materialize_hermes_profile(
         rendered["mcp_servers"] = servers
     if eager_toolsets:
         rendered["toolsets"] = [*rendered.get("toolsets", []), *eager_toolsets]
-    targets = [home]
-    resolved_upper = resolve_overlay_upper_home(config)
-    if overlay_home is not None and resolved_upper is not None:
-        setup_mcp_config(config, str(resolved_upper))
-        targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 
     materialize_project_pgpass(config, home_backings=targets, servers=servers)
@@ -448,6 +468,12 @@ def materialize_hermes_tui_profile(
     else:
         overlay_home = resolve_overlay_upper_home(config)
     setup_mcp_config(config, str(home))
+    targets = [home]
+    resolved_upper = resolve_overlay_upper_home(config)
+    if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
+        targets.append(resolved_upper)
+    system_prompt = _verified_instruction_text(config, targets)
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config, launch_mode="tui")
     rendered = compile_hermes_config(
@@ -457,6 +483,7 @@ def materialize_hermes_tui_profile(
         approval_mode="off",
         compression=config.hermes_compression,
         background_review=config.hermes_background_review,
+        system_prompt=system_prompt,
     )
     servers, eager_toolsets = _mcp_servers(
         home, channels=getattr(config.claude, "channels", None)
@@ -470,11 +497,6 @@ def materialize_hermes_tui_profile(
         rendered["mcp_servers"] = servers
     if eager_toolsets:
         rendered["toolsets"] = [*rendered.get("toolsets", []), *eager_toolsets]
-    targets = [home]
-    resolved_upper = resolve_overlay_upper_home(config)
-    if overlay_home is not None and resolved_upper is not None:
-        setup_mcp_config(config, str(resolved_upper))
-        targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 
     materialize_project_pgpass(config, home_backings=targets, servers=servers)

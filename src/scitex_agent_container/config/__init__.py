@@ -183,8 +183,8 @@ def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
 
 
 # A startup_prompt is a per-boot KICK, not durable context. Past these sizes it
-# is almost certainly role/rules/workflow PROSE that belongs in CLAUDE.md +
-# skills (see _warn_if_startup_prompt_long). Generous so a real boot-kick never
+# is almost certainly role/rules/workflow prose that belongs in the selected
+# harness's declared instruction projection + skills. Generous so a real boot-kick never
 # trips them; the trimmed proj-scitex-dev kick (~430 chars, 1 line) clears both.
 _STARTUP_PROMPT_WARN_CHARS = 600
 _STARTUP_PROMPT_WARN_LINES = 8
@@ -197,10 +197,10 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
     once at start, not persistent context. Durable ROLE / SCOPE / RULES /
     WORKFLOW prose therefore does NOT belong there: it bloats every boot, stale-
     replays on restart, and (multi-line) stresses the TUI paste-submit path. Such
-    prose belongs in the auto-loaded ``$HOME/.claude/CLAUDE.md`` (role + skill
-    ``@``-imports) and reusable rules in ``.claude/skills/`` — claude re-reads
-    those EVERY session. Keep startup_prompts to a short boot-KICK (what to DO on
-    start). Best-effort: any hiccup must never break config loading.
+    prose belongs in a harness-native instruction file declared under
+    ``to_home`` and reusable rules in a declared skills directory. Keep
+    startup_prompts to a short boot kick (what to do on start). Best-effort:
+    any hiccup must never break config loading.
     """
     try:
         for idx, prompt in enumerate(getattr(config, "startup_prompts", []) or []):
@@ -216,10 +216,9 @@ def _warn_if_startup_prompt_long(config: AgentConfig) -> None:
                 f"'{getattr(config, 'name', '?')}' is long "
                 f"({n_chars} chars, {n_lines} lines). startup_prompts are pasted "
                 "as a per-boot user turn — durable ROLE / RULES / WORKFLOW prose "
-                "belongs in the auto-loaded $HOME/.claude/CLAUDE.md (role + skill "
-                "@-imports) and reusable rules in .claude/skills/, which claude "
-                "re-reads every session. Keep startup_prompts to a short boot-KICK "
-                "(what to DO on start); move the prose to CLAUDE.md + skills."
+                "belongs in a harness-native instruction file declared under "
+                "to_home and reusable rules in a declared skills directory. "
+                "Keep startup_prompts to a short boot kick (what to do on start)."
             )
     except Exception:  # stx-allow: fallback (reason: advisory only; never break load)
         pass

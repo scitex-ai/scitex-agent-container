@@ -32,6 +32,7 @@ def compile_hermes_config(
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
     background_review: bool = False,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Return a credential-free Hermes configuration derived from ``plan``."""
     if plan.harness != "hermes":
@@ -102,6 +103,10 @@ def compile_hermes_config(
         agent["run_budget_seconds"] = run_budget_seconds
     if plan.engine.reasoning_effort is not None:
         agent["reasoning_effort"] = plan.engine.reasoning_effort
+    if system_prompt is not None:
+        if not system_prompt.strip():
+            raise ValueError("Hermes system_prompt must contain non-whitespace text")
+        agent["system_prompt"] = system_prompt
     return {
         "model": {
             "default": model,
