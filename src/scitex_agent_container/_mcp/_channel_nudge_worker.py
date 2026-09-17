@@ -33,6 +33,17 @@ def _seconds(env_name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _positive_int(env_name: str, default: int) -> int:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 def schedule_dispatch_nudge(*, agent: str, dispatch_id: str, target: str) -> None:
     """Persist nudge timing on successful visible delivery; idempotent."""
     schedule_nudge(
@@ -91,12 +102,20 @@ def _send_nudge(
 
 
 def _escalate_operator(record: NudgeRecord) -> None:
-    message = (
-        "A2A semantic ACK deadline exceeded: "
-        f"{record.agent} -> {record.target}, dispatch_id={record.dispatch_id}, "
-        f"attempts={record.attempts}. Transport may have delivered, but recipient "
-        "understanding remains unproven."
-    )
+    if record.state == "transport_unreachable":
+        message = (
+            "A2A transport unreachable: "
+            f"{record.agent} -> {record.target}, dispatch_id={record.dispatch_id}, "
+            f"consecutive_failures={record.consecutive_transport_failures}. "
+            "Recipient delivery is not established."
+        )
+    else:
+        message = (
+            "A2A semantic ACK deadline exceeded: "
+            f"{record.agent} -> {record.target}, dispatch_id={record.dispatch_id}, "
+            f"attempts={record.attempts}. Transport may have delivered, but recipient "
+            "understanding remains unproven."
+        )
     executable = shutil.which("scitex-notification")
     if executable is None:
         raise RuntimeError(
@@ -120,11 +139,13 @@ def run_nudge_tick(*, agent: str, listen_url: str, bearer: str | None) -> None:
         row = get_dispatch(dispatch_id, agent=agent)
         return str(row.get("status")) if row is not None else None
 
-    def send(record: NudgeRecord) -> None:
+    def send(record: NudgeRecord) -> bool:
         try:
             _send_nudge(record, listen_url=listen_url, bearer=bearer)
+            return True
         except Exception as exc:  # stx-allow: fallback (reason: nudge attempt is pre-persisted for restart dedup; one HTTP failure must not kill the scheduler)
             log.warning("agentic-ACK nudge failed for %s: %s", record.dispatch_id, exc)
+            return False
 
     def escalate(record: NudgeRecord) -> None:
         try:
@@ -145,6 +166,9 @@ def run_nudge_tick(*, agent: str, listen_url: str, bearer: str | None) -> None:
         escalate=escalate,
         initial_delay_s=_seconds("SAC_AGENTIC_ACK_NUDGE_INITIAL_S", 30.0),
         max_delay_s=_seconds("SAC_AGENTIC_ACK_NUDGE_MAX_S", 300.0),
+        max_transport_failures=_positive_int(
+            "SAC_AGENTIC_ACK_TRANSPORT_FAILURES", 3
+        ),
     )
 
 

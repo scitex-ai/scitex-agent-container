@@ -78,7 +78,7 @@ Receipt levels stay separate:
 - only the recipient model intentionally calling `a2a_agentic_ack` with the exact inbound `dispatch_id` advances the sender to `agentic_acked`. It includes bounded `understood`, `owner`, and concrete `next_checkpoint`; wrong/stale nonces are refused and exact replay is idempotent.
 - `a2a_progress` reports real `in_progress`, `completed`, or `failed` state plus optional blocker. `a2a_dispatch_status` reads verified state and timeout escalation.
 
-Thus `a2a_send` returns `dispatch_status: delivered_unacknowledged`, the nonce, and an understanding-unproven hint. Missing ACKs use a durable bounded nudge state machine: nonce reminder only (never the task), persisted attempts/last nudge/deadline, bounded backoff, stop on ACK/terminal state, then `scitex-notification` escalation. Controls: `SAC_AGENTIC_ACK_NUDGE_INITIAL_S`, `SAC_AGENTIC_ACK_NUDGE_MAX_S`, `SAC_AGENTIC_ACK_NUDGE_POLL_S`, `SAC_AGENTIC_ACK_DEADLINE_S`.
+Thus `a2a_send` returns `dispatch_status: delivered_unacknowledged`, the nonce, and an understanding-unproven hint. Missing ACKs use a durable bounded nudge state machine: nonce reminder only (never the task), persisted attempts/last nudge/deadline, bounded exponential backoff, stop on ACK/progress/terminal state, then `scitex-notification` escalation. Semantic silence and transport failure stay distinct: three consecutive reminder-delivery failures mark `transport_unreachable` and escalate immediately instead of waiting for the semantic-ACK deadline; one successful delivery resets that counter. Controls: `SAC_AGENTIC_ACK_NUDGE_INITIAL_S`, `SAC_AGENTIC_ACK_NUDGE_MAX_S`, `SAC_AGENTIC_ACK_NUDGE_POLL_S`, `SAC_AGENTIC_ACK_DEADLINE_S`, `SAC_AGENTIC_ACK_TRANSPORT_FAILURES`.
 
 ## SDK 1.x methods (gRPC-style names)
 

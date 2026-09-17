@@ -182,3 +182,80 @@ def test_deadline_escalates_once_without_infinite_nudges() -> None:
     row = repo.rows[("alice", "nonce")]
     # Assert
     assert (sent, escalated, row.state) == (["nonce"], ["nonce"], "escalated")
+
+
+def test_three_consecutive_transport_failures_escalate_unreachable() -> None:
+    # Arrange
+    schedule_nudge, tick_nudges = _api()
+    repo = _Repo()
+    escalated: list[str] = []
+    schedule_nudge(
+        repo,
+        agent="alice",
+        dispatch_id="nonce",
+        target="bob",
+        now=0.0,
+        initial_delay_s=10.0,
+        deadline_s=1000.0,
+    )
+
+    # Act
+    for now in (10.0, 30.0, 70.0):
+        tick_nudges(
+            repo,
+            agent="alice",
+            now=now,
+            status_of=lambda _: "delivered",
+            send_nudge=lambda _row: False,
+            escalate=lambda row: escalated.append(row.dispatch_id),
+            initial_delay_s=10.0,
+            max_delay_s=40.0,
+            max_transport_failures=3,
+        )
+    row = repo.rows[("alice", "nonce")]
+
+    # Assert
+    assert (
+        row.attempts,
+        row.consecutive_transport_failures,
+        row.state,
+        escalated,
+    ) == (3, 3, "transport_unreachable", ["nonce"])
+
+
+def test_successful_transport_resets_consecutive_failure_count() -> None:
+    # Arrange
+    schedule_nudge, tick_nudges = _api()
+    repo = _Repo()
+    outcomes = iter((False, True))
+    schedule_nudge(
+        repo,
+        agent="alice",
+        dispatch_id="nonce",
+        target="bob",
+        now=0.0,
+        initial_delay_s=10.0,
+        deadline_s=1000.0,
+    )
+
+    # Act
+    for now in (10.0, 30.0):
+        tick_nudges(
+            repo,
+            agent="alice",
+            now=now,
+            status_of=lambda _: "delivered",
+            send_nudge=lambda _row: next(outcomes),
+            escalate=lambda _row: None,
+            initial_delay_s=10.0,
+            max_delay_s=40.0,
+            max_transport_failures=3,
+        )
+    row = repo.rows[("alice", "nonce")]
+
+    # Assert
+    assert (row.attempts, row.consecutive_transport_failures, row.state) == (
+        2,
+        0,
+        "pending",
+    )

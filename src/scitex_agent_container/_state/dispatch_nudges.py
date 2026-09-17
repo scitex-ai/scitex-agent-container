@@ -24,6 +24,7 @@ class NudgeRecord:
     target: str
     created_at: float
     attempts: int
+    consecutive_transport_failures: int
     last_nudge: float | None
     next_nudge_at: float
     deadline: float
@@ -62,6 +63,7 @@ def schedule_nudge(
         target=target,
         created_at=float(now),
         attempts=0,
+        consecutive_transport_failures=0,
         last_nudge=None,
         next_nudge_at=float(now) + float(initial_delay_s),
         deadline=float(now) + float(deadline_s),
@@ -76,10 +78,11 @@ def tick_nudges(
     agent: str,
     now: float,
     status_of: Callable[[str], str | None],
-    send_nudge: Callable[[NudgeRecord], None],
+    send_nudge: Callable[[NudgeRecord], bool | None],
     escalate: Callable[[NudgeRecord], None],
     initial_delay_s: float,
     max_delay_s: float,
+    max_transport_failures: int = 3,
 ) -> list[tuple[str, str]]:
     """Advance due rows once; persistence happens before each side effect.
 
@@ -88,6 +91,8 @@ def tick_nudges(
     """
     if initial_delay_s <= 0 or max_delay_s < initial_delay_s:
         raise ValueError("invalid nudge backoff bounds")
+    if type(max_transport_failures) is not int or max_transport_failures <= 0:
+        raise ValueError("max_transport_failures must be a positive integer")
     actions: list[tuple[str, str]] = []
     for record in repo.pending(agent):
         status = status_of(record.dispatch_id)
@@ -113,7 +118,28 @@ def tick_nudges(
             next_nudge_at=float(now) + delay,
         )
         repo.put(attempted)
-        send_nudge(attempted)
+        delivered = send_nudge(attempted)
+        if delivered is False:
+            failures = record.consecutive_transport_failures + 1
+            failed = replace(
+                attempted,
+                consecutive_transport_failures=failures,
+            )
+            if failures >= max_transport_failures:
+                failed = replace(
+                    failed,
+                    state="transport_unreachable",
+                    escalated_at=float(now),
+                )
+                repo.put(failed)
+                escalate(failed)
+                actions.append((record.dispatch_id, "transport_unreachable"))
+            else:
+                repo.put(failed)
+                actions.append((record.dispatch_id, "transport_failed"))
+            continue
+        if record.consecutive_transport_failures:
+            repo.put(replace(attempted, consecutive_transport_failures=0))
         actions.append((record.dispatch_id, "nudged"))
     return actions
 
@@ -141,6 +167,9 @@ def _schema() -> Any:
             "target": _policy(FieldKind.TEXT),
             "created_at": _policy(FieldKind.REAL),
             "attempts": _policy(FieldKind.INTEGER, moving=True),
+            "consecutive_transport_failures": _policy(
+                FieldKind.INTEGER, moving=True
+            ),
             "last_nudge": _policy(FieldKind.REAL, moving=True),
             "next_nudge_at": _policy(FieldKind.REAL, moving=True),
             "deadline": _policy(FieldKind.REAL),
@@ -170,6 +199,9 @@ def _from_values(values: dict[str, Any]) -> NudgeRecord:
         target=str(values["target"]),
         created_at=float(values["created_at"]),
         attempts=int(values["attempts"]),
+        consecutive_transport_failures=int(
+            values.get("consecutive_transport_failures") or 0
+        ),
         last_nudge=(
             float(values["last_nudge"])
             if values.get("last_nudge") is not None
