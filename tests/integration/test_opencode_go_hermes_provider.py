@@ -15,6 +15,7 @@ from scitex_agent_container.config import (
     load_config,
     select_engine,
 )
+from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.config._hermes_config import compile_hermes_config
 from scitex_agent_container.config._launch_plan import compile_launch_plan
 from scitex_agent_container.config._provider_parse import parse_provider_value
@@ -108,7 +109,7 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
         "deepseek-v4.1-flash",
         "https://opencode.ai/zen/go/v1/chat/completions",
         "OPENCODE_GO_API_KEY",
-        "sac:providers",
+        "sac:providers:opencode-go-deepseek-v4.1-flash",
         {
             "default": "deepseek-v4.1-flash",
             "provider": "custom:sac-opencode-go-deepseek-v4.1-flash",
@@ -117,9 +118,34 @@ def test_standalone_opencode_go_config_resolves_exact_backend_identity(
         "https://opencode.ai/zen/go/v1",
         "OPENCODE_GO_API_KEY",
         "scitex-agent-container/hermes",
-        "sac:providers",
+        "sac:providers:opencode-go-deepseek-v4.1-flash",
         [],
         False,
+    )
+
+
+def test_native_continue_and_opencode_header_share_exact_session_identity(
+    env_save_restore,
+):
+    # Arrange
+    env_save_restore.set("OPENCODE_GO_API_KEY", "secret-must-not-be-serialized")
+    config = load_config(EXAMPLE)
+    config.claude.session = "continue"
+
+    # Act
+    plan = _hermes_profile._launch_plan(config, launch_mode="tui")
+    rendered = compile_hermes_config(plan, workdir="/work")
+    header = rendered["providers"]["sac-opencode-go-deepseek-v4.1-flash"][
+        "extra_headers"
+    ]["x-opencode-session"]
+    argv = _hermes_tui_inner_argv(config)
+    native = argv[argv.index("--continue") + 1]
+
+    # Assert
+    assert (plan.session_id, header, native) == (
+        "sac:providers:opencode-go-deepseek-v4.1-flash",
+        "sac:providers:opencode-go-deepseek-v4.1-flash",
+        "sac:providers:opencode-go-deepseek-v4.1-flash",
     )
 
 

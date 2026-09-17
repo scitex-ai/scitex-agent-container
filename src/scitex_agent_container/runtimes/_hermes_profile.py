@@ -13,6 +13,7 @@ import yaml
 
 from ..config import AgentConfig
 from ..config._hermes_config import compile_hermes_config
+from ..config._hermes_session import hermes_session_key
 from ..config._launch_plan import (
     DelegationPolicy,
     Endpoint,
@@ -158,6 +159,13 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
     base_url = str(provider.base_url or "").rstrip("/")
     if not base_url:
         raise RuntimeError("Hermes requires the selected engine provider.base_url")
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or "").strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes requires a resolved engine model and key; refusing to "
+            "materialize a profile with implicit provider/session identity"
+        )
     if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
         protocol = "openai-responses"
         endpoint_url = base_url
@@ -173,15 +181,15 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
         extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
     )
     engine = ResolvedEngine(
-        key=str(config.engine_key or config.model),
-        model_id=str(config.model),
+        key=engine_key,
+        model_id=model,
         endpoints=(endpoint,),
         context_window_tokens=config.max_context_tokens,
         reasoning_effort=str(config.reasoning_effort or "") or None,
         upstream_deadline_seconds=config.upstream_deadline_seconds,
         client_abandonment_seconds=config.client_abandonment_seconds,
     )
-    session_id = f"sac:{config.name}"
+    session_id = hermes_session_key(config.name, engine_key)
     if str(config.claude.session or "").strip().lower() == "resume":
         session_id = str(config.claude.resume_id or "").strip() or session_id
     return LaunchPlan(

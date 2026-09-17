@@ -92,6 +92,51 @@ def test_launch_plan_preserves_openai_responses_endpoint():
     )
 
 
+def test_launch_plan_refuses_model_as_an_implicit_engine_key():
+    # Arrange
+    config = AgentConfig(name="hub", harness="hermes", runtime="tui")
+    config.engine_key = ""
+    config.model = "gpt-5.6-sol"
+    config.claude.provider = ProviderSpec(
+        base_url="http://127.0.0.1:18765/v1/responses",
+        auth_token_env="GATEWAY_KEY",
+    )
+
+    # Act
+    call = lambda: profile._launch_plan(config, launch_mode="tui")  # noqa: E731
+
+    # Assert
+    with pytest.raises(ValueError, match="resolved engine model and key"):
+        call()
+
+
+def test_launch_plan_scopes_automatic_session_identity_by_engine():
+    # Arrange
+    qwen = AgentConfig(name="scholar", harness="hermes", runtime="tui")
+    qwen.engine_key = "qwen"
+    qwen.model = "qwen-model"
+    qwen.claude.provider = ProviderSpec(
+        base_url="http://qwen.example:8000/v1",
+        auth_token_env="QWEN_KEY",
+    )
+    deepseek = AgentConfig(name="scholar", harness="hermes", runtime="tui")
+    deepseek.engine_key = "deepseek"
+    deepseek.model = "deepseek-chat"
+    deepseek.claude.provider = ProviderSpec(
+        base_url="https://api.deepseek.com/v1",
+        auth_token_env="DEEPSEEK_API_KEY",
+    )
+
+    # Act
+    identities = (
+        profile._launch_plan(qwen, launch_mode="tui").session_id,
+        profile._launch_plan(deepseek, launch_mode="tui").session_id,
+    )
+
+    # Assert
+    assert identities == ("sac:scholar:qwen", "sac:scholar:deepseek")
+
+
 def test_launch_plan_carries_live_spawn_and_parallelism_policy():
     # Arrange
     config = AgentConfig(name="cards", harness="hermes", runtime="headless")
@@ -720,7 +765,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     ]
     expected_headers = {
         "X-SciTeX-Agent-ID": "scholar",
-        "X-SciTeX-Session-ID": "sac:scholar",
+        "X-SciTeX-Session-ID": "sac:scholar:qwen",
     }
     # Act
     with _replace_attributes(replacements):
