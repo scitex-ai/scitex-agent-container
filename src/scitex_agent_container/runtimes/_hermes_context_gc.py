@@ -31,6 +31,7 @@ class WorktreeFact:
     sha: str
     branch: str
     dirty: tuple[str, ...]
+    accounted: bool = True
 
 
 @dataclass(frozen=True)
@@ -60,8 +61,17 @@ def _write_handoff(path: Path, payload: dict) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    os.replace(temporary, path)
-    os.chmod(path, 0o600)
+    try:
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def record_inbound_task_event(
@@ -98,6 +108,37 @@ def record_inbound_task_event(
     _write_handoff(active_path, {"card_id": card_id})
 
 
+def _validate_worktrees(
+    worktrees: list[WorktreeFact], workdir: Path
+) -> tuple[WorktreeFact, tuple[tuple[str, str, str], ...]]:
+    dirty = [fact for fact in worktrees if fact.dirty]
+    if dirty:
+        detail = "; ".join(
+            f"{fact.path}: {', '.join(fact.dirty)}" for fact in dirty
+        )
+        raise HermesContextGcRefused(
+            f"dirty worktree content is not committed/accounted: {detail}"
+        )
+    unaccounted = [fact for fact in worktrees if not fact.accounted]
+    if unaccounted:
+        raise HermesContextGcRefused(
+            "subagent commits are not preserved on a remote ref: "
+            + ", ".join(f"{fact.path}@{fact.sha}" for fact in unaccounted)
+        )
+    resolved = workdir.resolve()
+    matches = [fact for fact in worktrees if fact.path.resolve() == resolved]
+    if len(matches) != 1 or not matches[0].sha:
+        raise HermesContextGcRefused(
+            f"cannot bind handoff to one exact worktree SHA for {workdir}"
+        )
+    signature = tuple(
+        sorted(
+            (str(fact.path.resolve()), fact.sha, fact.branch) for fact in worktrees
+        )
+    )
+    return matches[0], signature
+
+
 def handle_compression_failure(
     *,
     state_dir: Path,
@@ -115,20 +156,7 @@ def handle_compression_failure(
     failure = str(session_record.get("compression_failure_error") or "").strip()
     if not failure:
         return None
-    dirty = [fact for fact in worktrees if fact.dirty]
-    if dirty:
-        detail = "; ".join(
-            f"{fact.path}: {', '.join(fact.dirty)}" for fact in dirty
-        )
-        raise HermesContextGcRefused(
-            f"dirty worktree content is not committed/accounted: {detail}"
-        )
-    resolved = workdir.resolve()
-    matches = [fact for fact in worktrees if fact.path.resolve() == resolved]
-    if len(matches) != 1 or not matches[0].sha:
-        raise HermesContextGcRefused(
-            f"cannot bind handoff to one exact worktree SHA for {workdir}"
-        )
+    current, _signature = _validate_worktrees(worktrees, workdir)
     task_id = str(card.get("id") or "").strip()
     next_action = str(
         card.get("task") or card.get("title") or card.get("note") or ""
@@ -142,11 +170,10 @@ def handle_compression_failure(
     payload = {
         "task_id": task_id,
         "repo_worktree": str(workdir),
-        "exact_sha": matches[0].sha,
+        "exact_sha": current.sha,
         "tests": str(verification.get("tests") or "unknown"),
         "next_action": next_action,
         "blocker": str(card.get("blocker") or "none"),
-        "compression_failure": failure,
     }
     _write_handoff(handoff_path, payload)
     nonce = str(next_nonce() or "").strip()
@@ -193,7 +220,10 @@ def collect_worktree_facts(
         path = Path(record.get("worktree", ""))
         branch = record.get("branch", "")
         include = path.resolve() == resolved
-        if branch.startswith("refs/heads/hermes-subagent/"):
+        is_subagent = branch.startswith("refs/heads/hermes-subagent/") or any(
+            part.startswith("subagent-") for part in path.parts
+        )
+        if is_subagent:
             include = True
         if include:
             selected.append(record)
@@ -213,6 +243,18 @@ def collect_worktree_facts(
                 sha=record.get("HEAD", ""),
                 branch=record.get("branch", "").removeprefix("refs/heads/"),
                 dirty=dirty,
+                accounted=(
+                    path.resolve() == resolved
+                    or bool(
+                        _git(
+                            path,
+                            "branch",
+                            "-r",
+                            "--contains",
+                            record.get("HEAD", ""),
+                        ).strip()
+                    )
+                ),
             )
         )
     return facts
@@ -272,6 +314,7 @@ def reconcile_context_lifecycle(
     worktree_reader: Callable[..., list[WorktreeFact]] | None = None,
     rotate_session: Callable[..., str] | None = None,
     close_live: Callable[[Path, str], None] | None = None,
+    transition_guard: Callable[[Path, str], None] | None = None,
     nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16),
 ) -> str | None:
     """Return a replacement stored id, ``""`` for fresh, or ``None`` to continue."""
@@ -285,6 +328,9 @@ def reconcile_context_lifecycle(
         session_handoff_facts as default_handoff_facts,
     )
     from ._hermes_context_rpc import (
+        session_transition_guard as default_transition_guard,
+    )
+    from ._hermes_context_rpc import (
         stored_session_record as default_stored_record,
     )
 
@@ -294,6 +340,7 @@ def reconcile_context_lifecycle(
     worktree_reader = worktree_reader or collect_worktree_facts
     rotate_session = rotate_session or default_replace_session
     close_live = close_live or default_close_session
+    transition_guard = transition_guard or default_transition_guard
 
     live_id = str(observed_session.get("id") or "").strip()
     stored_id = str(
@@ -307,6 +354,21 @@ def reconcile_context_lifecycle(
         )
     fresh_marker = state_dir / FRESH_NEXT_TASK_FILE
     if fresh_marker.exists():
+        try:
+            marker = json.loads(fresh_marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise HermesContextGcRefused(
+                f"fresh-next-task marker is unreadable: {exc}"
+            ) from exc
+        if (
+            not isinstance(marker, dict)
+            or marker.get("reason") != "task-completed"
+            or not str(marker.get("card_id") or "").strip()
+        ):
+            raise HermesContextGcRefused("fresh-next-task marker is malformed")
+        transition_guard(state_dir, live_id)
+        completion_facts = worktree_reader(workdir, session_started_at=0)
+        _validate_worktrees(completion_facts, workdir)
         close_live(state_dir, live_id)
         fresh_marker.unlink(missing_ok=True)
         return ""
@@ -328,7 +390,11 @@ def reconcile_context_lifecycle(
     worktrees = worktree_reader(
         workdir, session_started_at=float(record.get("started_at") or time.time())
     )
+    _current, initial_signature = _validate_worktrees(worktrees, workdir)
+    task_id = str(card.get("id") or "").strip()
+
     def pre_close_check() -> None:
+        transition_guard(state_dir, live_id)
         _evidence, still_active = handoff_facts_reader(
             state_dir, live_id, workdir=workdir
         )
@@ -339,11 +405,24 @@ def reconcile_context_lifecycle(
         refreshed = worktree_reader(
             workdir, session_started_at=float(record.get("started_at") or 0)
         )
-        dirty = [fact for fact in refreshed if fact.dirty]
-        if dirty:
+        _refreshed_current, refreshed_signature = _validate_worktrees(
+            refreshed, workdir
+        )
+        if refreshed_signature != initial_signature:
             raise HermesContextGcRefused(
-                "worktree became dirty during fresh-session proof: "
-                + ", ".join(str(fact.path) for fact in dirty)
+                "worktree path/SHA set changed during fresh-session proof"
+            )
+        try:
+            active_marker = json.loads(
+                (state_dir / ACTIVE_CARD_FILE).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            raise HermesContextGcRefused(
+                f"active card marker changed during fresh-session proof: {exc}"
+            ) from exc
+        if active_marker.get("card_id") != task_id:
+            raise HermesContextGcRefused(
+                "active card changed during fresh-session proof"
             )
 
     transition = handle_compression_failure(
