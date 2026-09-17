@@ -197,10 +197,16 @@ def _do_start_listen(
         )
 
     from .._listen.server import create_app
-    from .._listen.tokens import default_token_path, ensure_token
+    from .._listen.tokens import (
+        default_owner_token_path,
+        default_token_path,
+        ensure_owner_token,
+        ensure_token,
+    )
 
     tok_path = token_file or default_token_path()
     token = ensure_token(tok_path)
+    owner_token = ensure_owner_token(default_owner_token_path())
     if print_token:
         click.echo(token)
         return
@@ -284,7 +290,11 @@ def _do_start_listen(
     # 127.0.0.1:<port>/v1/health after startup and scream if the daemon
     # comes up but never serves (the silent fleet-comms outage this
     # guards against).
-    app = create_app(token=token, health_watchdog_port=port)
+    app = create_app(
+        token=token,
+        owner_token=owner_token,
+        health_watchdog_port=port,
+    )
     import os
 
     import uvicorn

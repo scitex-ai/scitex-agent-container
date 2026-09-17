@@ -1,7 +1,7 @@
 ---
 description: |
   [TOPIC] Fork spawning — fork context from a running agent
-  [DETAILS] `sac agents fork <parent>` creates a new isolated agent from the parent's selected harness/spec. Claude context inheritance is supported; Hermes forks fail closed until a Hermes-native state.db fork exists. Remote agent-authenticated forks also fail closed while listen has only a host-wide bearer. Use from the bare-host admin path.
+  [DETAILS] `sac agents fork <parent>` creates an isolated fork from the host-authoritative parent. Claude and Hermes-native context inheritance are supported from the bare-host owner path. Agent-authenticated remote forks fail closed until transport identity is cryptographically bound.
 tags: [scitex-agent-container-twin-spawning, fork, fork-session, claude-session, sac, identity-split, ephemeral, persistent]
 ---
 
@@ -11,11 +11,11 @@ A **fork** is a new isolated agent derived from a running **parent**. For the
 Claude harness it inherits the conversation at birth and then diverges. The
 parent is never touched.
 
-> **Current safety boundary:** Hermes stores context in
-> `~/.hermes/state.db`; copying Claude JSONL/session IDs is not valid for it.
-> Hermes therefore fails closed. In-container fork requests also fail closed
-> because the current host-wide listen bearer cannot bind a JSON `caller` to an
-> agent identity cryptographically. Use the explicit bare-host admin path.
+> **Current safety boundary:** Hermes context is copied only through its native
+> authenticated `session.branch` gateway; SAC never copies `state.db`.
+> In-container fork requests fail closed because the shared listen bearer cannot
+> cryptographically bind a JSON `caller`. Use the bare-host owner path, whose
+> separate credential is not injected into containers.
 
 ```bash
 # ephemeral Claude fork
@@ -30,9 +30,12 @@ The old `sac agents twin` spelling remains a hidden compatibility alias.
 
 ## What you get
 
-The twin inherits the parent's spec **verbatim** — same repo, workdir,
-image, apptainer binds, model, skills/hooks (`to_home`) — with only these
-overridden:
+The listener derives the fork from one authoritative parent read. The client
+sends only parent/name/task/role/lifetime parameters and cannot supply image,
+harness, engine/model/provider, session, startup, `to_home`, Cards or lineage
+execution fields. Image, selected harness and provider references are retained;
+all parent writable binds are dropped. The host injects exactly one writable
+bind for the child worktree and may retain explicitly read-only binds.
 
 | Field | Twin value | Why |
 |---|---|---|
@@ -98,8 +101,9 @@ coordinate results back to the parent via a2a or a parent-owned card.
 
 ## How context inheritance works (mechanism)
 
-`sac agents twin` derives the twin's inline spec and POSTs it to the host
-`sac listen` (the same broker `agent_spawn` uses). On the host, at twin
+`sac agents fork` posts only fork parameters to the host `sac listen`; the
+listener authenticates the separate owner credential and derives the complete
+spec. On the host, at fork
 start, `_lifecycle._twin.seed_twin_from_parent` runs BEFORE the runtime
 launches:
 
@@ -116,10 +120,11 @@ on later restarts the twin `continue`s its OWN diverged session — a pinned
 `resume` would instead re-fork from the parent each restart and discard the
 twin's history — and a persistent twin keeps starting even after its parent
 stops. Because the parent's uuid is resolved on the host at first-boot time,
-the twin inherits the **freshest** transcript, and all paths resolve on the
-bare host regardless of whether you ran `twin` on the host or brokered it
-from inside a container. Fail-loud on first boot: if the parent has no live
-session or its transcript is missing, the twin start aborts (a twin with no
+the Claude fork inherits the **freshest** transcript and all paths resolve on
+the bare host. Hermes forks instead select the exact engine-scoped live session,
+call native `session.branch`, and import a 0600 digest-attested seed through the
+child's authenticated gateway. Fail-loud on first boot: if the parent has no live
+session or its transcript is missing, the fork start aborts (a fork with no
 inherited context is pointless).
 
 ## When NOT to use a twin

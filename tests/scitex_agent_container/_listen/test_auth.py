@@ -20,14 +20,22 @@ from scitex_agent_container._listen.auth import (
 )
 
 TOKEN = "secret-token-xyz-987"
+OWNER_TOKEN = "owner-only-token-123"
 
 
 # --- Helpers ---------------------------------------------------------------
 
 
-def _build_client(token: str = TOKEN) -> TestClient:
-    async def ok(_request):
-        return JSONResponse({"ok": True})
+def _build_client(
+    token: str = TOKEN, owner_token: str | None = OWNER_TOKEN
+) -> TestClient:
+    async def ok(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "principal": getattr(request.state, "authenticated_principal", None),
+            }
+        )
 
     async def health(_request):
         return JSONResponse({"status": "up"})
@@ -38,7 +46,7 @@ def _build_client(token: str = TOKEN) -> TestClient:
             Route("/v1/health", health),
         ]
     )
-    app.add_middleware(BearerAuthMiddleware, token=token)
+    app.add_middleware(BearerAuthMiddleware, token=token, owner_token=owner_token)
     return TestClient(app)
 
 
@@ -127,6 +135,57 @@ def test_valid_bearer_token_allows_request(client: TestClient):
     assert resp.status_code == 200
 
 
+def test_shared_container_bearer_has_no_owner_authority(client: TestClient):
+    # Arrange
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "X-SAC-Authority": "admin",
+    }
+    # Act
+    response = client.get(
+        "/v1/echo",
+        headers=headers,
+    )
+
+    # Assert
+    assert response.json()["principal"] is None
+
+
+def test_separate_owner_token_authenticates_host_principal(client: TestClient):
+    # Arrange
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "X-SAC-Owner-Token": OWNER_TOKEN,
+    }
+    # Act
+    response = client.get(
+        "/v1/echo",
+        headers=headers,
+    )
+
+    # Assert
+    assert response.json()["principal"] == "host-owner"
+
+
+def test_wrong_owner_token_never_elevates_shared_bearer(client: TestClient):
+    # Arrange
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "X-SAC-Owner-Token": "wrong-owner-token",
+    }
+    # Act
+    response = client.get(
+        "/v1/echo",
+        headers=headers,
+    )
+
+    # Assert
+    assert (response.status_code, response.json()) == (
+        403,
+        {"error": "invalid owner credential"},
+    )
+
+
 def test_missing_authorization_header_returns_401(client: TestClient):
     # Arrange
     # (no headers)
@@ -191,7 +250,6 @@ def test_health_endpoint_skips_auth_entirely(client: TestClient):
 
 def test_token_rotation_invalidates_old_token():
     # Arrange
-    client_old = _build_client(token="old-token")
     client_new = _build_client(token="new-token")
     headers_old = {"Authorization": "Bearer old-token"}
     # Act

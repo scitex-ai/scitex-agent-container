@@ -46,11 +46,13 @@ session, so this exercises the actual asyncio shield/detach/probe path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NamedTuple
 
 import pytest
@@ -58,6 +60,7 @@ from starlette.testclient import TestClient
 
 from scitex_agent_container._lifecycle._startup_failed import read_marker
 from scitex_agent_container._listen import _handler_deadline, _spawn_detach
+from scitex_agent_container._listen._inline_spec import InlineSpecHandoff
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._runners._session_state import state_dir_for
@@ -132,8 +135,7 @@ class _Rc0Spawn(NamedTuple):
 def isolated_listen_env(tmp_path: Path):
     """Isolated state.db + registry/runtime dirs (mirrors the sibling tests)."""
     saved = {
-        key: os.environ.get(key)
-        for key in ("SCITEX_AGENT_CONTAINER_STATE_DB", "HOME")
+        key: os.environ.get(key) for key in ("SCITEX_AGENT_CONTAINER_STATE_DB", "HOME")
     }
     saved_reg_const = _reg.REGISTRY_DIR
     saved_state_const = _ss.DEFAULT_STATE_ROOT
@@ -205,13 +207,9 @@ def rc0_no_session_spawn(
     bin_dir = tmp_path / "sac_bin_rc0"
     bin_dir.mkdir()
     _install_rc0_no_session_shim(bin_dir, flag)
-    env_save_restore.set(
-        "PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     # Positive, unlike the sibling deadline module: the probe must RUN.
-    env_save_restore.set(
-        "SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", _PROBE_WINDOW_S
-    )
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", _PROBE_WINDOW_S)
     with TestClient(create_app(token=_TOKEN)) as client:
         resp = client.post(
             "/agents",
@@ -357,3 +355,31 @@ def test_a_logged_line_says_the_launch_started_nothing(
     verdicts = [m for m in result.log_messages if "STARTED NOTHING" in m]
     # Assert
     assert verdicts != []
+
+
+def test_detached_launch_failure_rolls_back_owned_handoff(tmp_path: Path) -> None:
+    # Arrange
+    spec_path = tmp_path / "agents" / "child" / "spec.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("owned", encoding="utf-8")
+    handoff = InlineSpecHandoff(spec_path=spec_path, spec_created=True)
+
+    async def failed_launch():
+        return SimpleNamespace(returncode=9, stdout="", stderr="failed")
+
+    # Act
+    loop = asyncio.new_event_loop()
+    try:
+        task = loop.create_task(failed_launch())
+        loop.run_until_complete(task)
+        _spawn_detach._on_launch_done(
+            task,
+            name="child",
+            started_at="2026-09-17T00:00:00Z",
+            handoff=handoff,
+        )
+    finally:
+        loop.close()
+
+    # Assert
+    assert not spec_path.exists()

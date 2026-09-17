@@ -48,16 +48,27 @@ def agent_twin(
     """
     from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
-    from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
+    from ..._lifecycle._twin import TwinSeedError, resolve_twin_name
 
     try:
-        twin_name, doc = prepare_twin_spawn(
-            parent, twin_name=name, task=task, persist=persist, role=role
-        )
+        from ...config._resolve import enumerate_agent_names
+
+        existing = enumerate_agent_names()
+        if name and name in set(existing):
+            raise TwinSeedError(f"fork name {name!r} is already taken")
+        twin_name = resolve_twin_name(parent, name, existing)
     except TwinSeedError as exc:
         return {"status": "error", "reason": str(exc)}
 
     in_sif = is_in_sif()
+    if in_sif:
+        return {
+            "status": "error",
+            "reason": (
+                "agent-authenticated remote forks are disabled until caller "
+                "identity is cryptographically bound; invoke the fork on the host"
+            ),
+        }
     base_url = None
     if not in_sif:
         from ..._listen._config import listen_base_url
@@ -66,9 +77,14 @@ def agent_twin(
     try:
         result = request_spawn(
             twin_name,
-            spec=doc,
-            caller=(caller if in_sif else ""),
-            admin=not in_sif,
+            fork={
+                "parent": parent,
+                "task": task,
+                "persist": persist,
+                "role": role,
+            },
+            caller="",
+            admin=True,
             base_url=base_url,
             assume_yes=True,
         )
@@ -79,8 +95,10 @@ def agent_twin(
             "http_status": exc.status,
             "body": exc.body,
         }
+    accepted = result.get("status") == "accepted"
     return {
-        "status": "ok",
+        "status": "accepted" if accepted else "ok",
+        "outcome": "unknown" if accepted else "completed",
         "fork": twin_name,
         "twin": twin_name,  # legacy API compatibility; user-facing name is fork
         "parent": parent,

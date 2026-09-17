@@ -393,6 +393,7 @@ def _v1_agent_routes(prefix: str) -> list[Route]:
 def create_app(
     *,
     token: str,
+    owner_token: str | None = None,
     local_host: str | None = None,
     health_watchdog_port: int | None = None,
 ) -> Starlette:
@@ -407,8 +408,9 @@ def create_app(
     :class:`BearerAuthMiddleware` to resolve a per-node bearer to a
     node identity; it was removed 2026-08-28 (nothing ever minted one
     — see the comment at the ``add_middleware`` call below).
-    :class:`BearerAuthMiddleware` and the host-wide token are the
-    whole perimeter. Sender identity for the ACL gate in
+    :class:`BearerAuthMiddleware` validates the shared host-wide bearer and,
+    independently, an optional owner-only credential that is never injected
+    into containers. Sender identity for the ordinary ACL gate in
     :func:`node_message_send` comes from ``metadata.from_agent``, and
     the spawn-gate in :func:`agents_start` consumes the same
     body-``caller`` shape.
@@ -510,6 +512,7 @@ def create_app(
     # getting ``None`` with the layer removed. One middleware fewer per
     # request, and no layer left claiming to establish an identity it
     # could not establish.
-    # Perimeter — admits the host-wide token, rejects everything else.
-    app.add_middleware(BearerAuthMiddleware, token=token)
+    # Perimeter — shared bearer authenticates ordinary control-plane access;
+    # the separate owner token establishes the host-owner fork principal.
+    app.add_middleware(BearerAuthMiddleware, token=token, owner_token=owner_token)
     return app

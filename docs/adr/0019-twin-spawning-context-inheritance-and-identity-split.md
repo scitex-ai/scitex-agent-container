@@ -7,11 +7,12 @@
 
 > **Terminology and safety amendment:** the user-facing operation is **fork**
 > (``sac agents fork``). ``twin`` remains only as an internal compatibility
-> name and in the existing ``SAC_TWIN_PARENT`` wire key. Context inheritance is
-> currently proven only for Claude's JSONL/session-id store. Hermes uses
-> ``~/.hermes/state.db`` and different session semantics, so Hermes forks fail
-> closed before persistence/start until an atomic Hermes-native context fork is
-> implemented and tested.
+> name and in the existing ``SAC_TWIN_PARENT`` wire key. Hermes context is
+> branched through its authenticated native gateway, never by copying
+> ``state.db``. A fork is accepted only from a bare-host client presenting the
+> separate owner credential; the shared listener bearer injected into agent
+> containers confers no fork authority. Agent-authenticated remote forks remain
+> fail closed until caller identity is cryptographically bound.
 
 ## Context
 
@@ -44,14 +45,22 @@ default of any kind**. So author=twin is env-enforceable, but owner=parent is
 
 ## Decision
 
-### Twin = derived spec + host-side session-fork
+### Fork = server-derived spec + host-side session branch
 
-`sac agents fork <parent>` (with the legacy hidden `twin` alias) derives the fork's
-inline spec from the parent's on-disk spec — inheriting repo / workdir /
-image / binds / model / `to_home` verbatim — and POST it to the host
-`sac listen` via the **existing** ADR-0010 spawn substrate
-(`_spawn_client.request_spawn`). No new spawn mechanism; the same
-`check_spawn` ACL + lineage recording apply.
+`sac agents fork <parent>` (with the legacy hidden `twin` alias) sends only
+fork parameters: parent, child name, task, role and lifetime. It never sends an
+execution spec. Under a per-child lock, `sac listen` reads the authoritative
+parent once and derives the complete child document. Image, selected harness
+configuration, engine/model/provider references, session policy, `to_home`,
+startup policy and Cards lineage therefore come from the host authority rather
+than attacker-controlled JSON. A body claim such as `authority=admin` has no
+effect.
+
+The parent repo remains read-only. The fork receives one writable bind: its
+fresh detached worktree at the parent's container workdir. Other writable binds
+(including broad `/scratch`, host-home and parent-repo binds) are dropped;
+explicit read-only binds may be retained. Its canonical overlay must be absent,
+non-symlinked and distinct from the parent's real path/inode.
 
 Context inheritance is a **host-side** pre-start step,
 `_lifecycle._twin.seed_twin_from_parent`, called from `agent_start`
@@ -70,6 +79,18 @@ runtime paths resolve on the bare host regardless of whether `twin` ran on
 the host or was brokered from inside a container, and the twin inherits the
 FRESHEST transcript rather than one captured at command time. Fail-loud: a
 parent with no live session / no transcript aborts the twin start.
+
+For Hermes, the listener selects only the exact engine-scoped parent title or
+session key, invokes native `session.branch`, and records a 0600 seed bound to
+parent name, engine, stored session id, child title/cwd and a visible-history
+digest. Descriptor-safe bounded reads/writes and atomic replace protect the
+handoff; retries must match every binding.
+
+Spec, snapshot, seed, runtime, overlay and worktree ownership are recorded in a
+single handoff ledger. Synchronous failures and failures after a `202 Accepted`
+remove only artifacts created by that request, verify each removal and report
+cleanup failures. Reused winner artifacts are never deleted. A `202` always
+means accepted with an unknown outcome and names the status route to poll.
 
 ### Identity split (safety-critical)
 
@@ -99,8 +120,9 @@ also serves as the twin-detection trigger for `seed_twin_from_parent`.
 
 ## Consequences
 
-- An agent can spawn its own context-carrying second self without pausing —
-  enabling parallel twins on sub-tasks and heavy work off the main loop.
+- Bare-host operators can create context-carrying forks without pausing the
+  parent. In-container agent/MCP requests fail closed until per-agent transport
+  identity is cryptographically authenticated.
 - The identity split is the safety-critical surface: author=twin is guaranteed
   by env; owner=parent is a documented convention (env cannot enforce it), so
   it is stated in the boot-kick AND the skill, backed by `SAC_TWIN_PARENT`.
@@ -111,3 +133,5 @@ also serves as the twin-detection trigger for `seed_twin_from_parent`.
   Full cleanup of a finished ephemeral twin is `sac agents delete <twin>`.
 - Twin logic is isolated in `_lifecycle/_twin.py` (derivation + host seed) and
   `cli_pkg/lifecycle/_twin.py` (CLI); `_start.py` gains one guarded call.
+- Live canary mutation remains blocked pending PR #1501; only isolated tests and
+  dry validation are permitted meanwhile.

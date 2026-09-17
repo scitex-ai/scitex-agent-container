@@ -224,9 +224,13 @@ def branch_visible_history(
             max_size=_FORK_RPC_MAX_BYTES,
         ) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
-            parent = _select_session_row(
-                listing.get("sessions"), parent_session_key
-            )
+            parent = _select_session_row(listing.get("sessions"), parent_session_key)
+            expected_parent_stored = str(
+                parent.get("stored_session_id")
+                or parent.get("session_key")
+                or parent.get("id")
+                or ""
+            ).strip()
             branch = _rpc(
                 socket,
                 2,
@@ -245,6 +249,7 @@ def branch_visible_history(
                     or not stored_id
                     or branch.get("title") != child_session_key
                     or not parent_id
+                    or parent_id != expected_parent_stored
                     or not isinstance(messages, list)
                     or not all(isinstance(message, dict) for message in messages)
                     or type(count) is not int
@@ -277,7 +282,9 @@ def branch_visible_history(
                             socket, 4, "session.delete", {"session_id": stored_id}
                         )
                         if deleted.get("deleted") != stored_id:
-                            cleanup_errors.append("temporary stored branch did not delete")
+                            cleanup_errors.append(
+                                "temporary stored branch did not delete"
+                            )
                     except Exception:
                         cleanup_errors.append("temporary stored branch delete failed")
             if cleanup_errors:
@@ -341,15 +348,26 @@ def import_fork_seed(
         raise HermesTuiRpcError("Hermes fork seed has an unsupported format")
     title = str(seed.get("title") or "").strip()
     parent_id = str(seed.get("parent_session_id") or "").strip()
+    parent_name = str(seed.get("parent_name") or "").strip()
+    parent_engine = str(seed.get("parent_engine") or "").strip()
     cwd = str(seed.get("cwd") or "").strip()
     messages = seed.get("messages")
+    from .._lifecycle._twin import _visible_history_digest
+
+    try:
+        digest = _visible_history_digest(messages)
+    except Exception as exc:
+        raise HermesTuiRpcError(f"Hermes fork seed is incomplete: {exc}") from exc
     if (
         not title
         or not parent_id
+        or not parent_name
+        or not parent_engine
         or not cwd
         or not isinstance(messages, list)
         or not messages
         or not all(isinstance(message, dict) for message in messages)
+        or seed.get("visible_history_sha256") != digest
     ):
         raise HermesTuiRpcError("Hermes fork seed is incomplete")
     seed_title = f"{title} [fork seed:{parent_id}]"
@@ -375,9 +393,7 @@ def import_fork_seed(
                 stored_id = str(existing.get("id") or "").strip()
                 if not stored_id:
                     raise HermesTuiRpcError("existing Hermes fork has no stored id")
-                resumed = _rpc(
-                    socket, 2, "session.resume", {"session_id": stored_id}
-                )
+                resumed = _rpc(socket, 2, "session.resume", {"session_id": stored_id})
                 live_id = str(resumed.get("session_id") or "").strip()
                 if (
                     not live_id
@@ -388,9 +404,7 @@ def import_fork_seed(
                     raise HermesTuiRpcError(
                         "existing Hermes fork does not match the pending seed"
                     )
-                closed = _rpc(
-                    socket, 3, "session.close", {"session_id": live_id}
-                )
+                closed = _rpc(socket, 3, "session.close", {"session_id": live_id})
                 if closed.get("closed") is not True:
                     raise HermesTuiRpcError(
                         "existing Hermes fork verification session did not close"
@@ -471,7 +485,9 @@ def import_fork_seed(
                             {"session_id": branch_live_id},
                         )
                         if closed.get("closed") is not True:
-                            cleanup_errors.append("imported child session did not close")
+                            cleanup_errors.append(
+                                "imported child session did not close"
+                            )
                     except Exception:
                         cleanup_errors.append("imported child session close failed")
                     request_id += 1
@@ -563,13 +579,12 @@ def _select_session_row(rows: object, expected_title: str) -> dict:
         if row.get("title") == expected_title
         or row.get("session_key") == expected_title
     ]
-    candidates = exact or sessions
-    if len(candidates) != 1:
+    if len(exact) != 1:
         raise HermesTuiRpcError(
             f"cannot identify one live Hermes session for {expected_title!r}: "
             f"{len(exact)} exact matches among {len(sessions)} live sessions"
         )
-    row = candidates[0]
+    row = exact[0]
     session_id = str(row.get("id") or "").strip()
     if not session_id:
         raise HermesTuiRpcError("Hermes active session has no id")
@@ -857,7 +872,12 @@ def execute_slash_command(
         )
     latest_seq = replay.get("latest_seq")
     epoch = replay.get("epoch")
-    if type(latest_seq) is not int or latest_seq < 0 or not isinstance(epoch, str) or not epoch:
+    if (
+        type(latest_seq) is not int
+        or latest_seq < 0
+        or not isinstance(epoch, str)
+        or not epoch
+    ):
         raise HermesTuiRpcError(
             f"Hermes event replay returned malformed watermark: {replay!r}"
         )

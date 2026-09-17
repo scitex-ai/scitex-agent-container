@@ -203,14 +203,17 @@ def test_post_body_includes_child_name(listen_env) -> None:
     assert json.loads(captured["body"])["name"] == "c"
 
 
-def test_admin_spawn_declares_explicit_authority(listen_env) -> None:
+def test_admin_spawn_uses_owner_transport_credential_not_json(listen_env) -> None:
     # Arrange
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
     # Act
-    request_spawn("c", admin=True, opener=opener)
+    request_spawn("c", admin=True, owner_token="owner-secret", opener=opener)
     # Assert
-    assert json.loads(captured["body"])["authority"] == "admin"
+    assert (
+        "authority" not in json.loads(captured["body"]),
+        captured["headers"]["x-sac-owner-token"],
+    ) == (True, "owner-secret")
 
 
 def test_admin_spawn_rejects_claimed_agent_caller(listen_env) -> None:
@@ -227,7 +230,9 @@ def test_canary_spawn_requests_non_live_handoff(listen_env) -> None:
     listen_env("LISTEN_BASE_URL", "http://host:9100")
     opener, captured = _opener_returning(b'{"name":"c","canary":true,"started":false}')
     # Act
-    request_spawn("c", admin=True, canary=True, opener=opener)
+    request_spawn(
+        "c", admin=True, owner_token="owner-secret", canary=True, opener=opener
+    )
     # Assert
     assert json.loads(captured["body"])["canary"] is True
 

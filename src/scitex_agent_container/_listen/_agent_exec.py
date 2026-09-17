@@ -93,16 +93,10 @@ async def agents_start(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "'caller' must be a string if present"}, status_code=400
         )
-    authority = body.get("authority")
-    if authority not in (None, "admin"):
-        return JSONResponse(
-            {"error": "'authority' must be 'admin' if present"}, status_code=400
-        )
-    if authority == "admin" and caller:
-        return JSONResponse(
-            {"error": "admin authority cannot also claim an agent caller"},
-            status_code=400,
-        )
+    # JSON is never an authority channel.  Older clients sent
+    # ``{"authority":"admin"}`` over the same shared bearer every agent
+    # receives; accepting that would let any container self-elect as owner.
+    # The middleware derives the owner principal from a separate credential.
     canary = body.get("canary", False)
     if not isinstance(canary, bool):
         return JSONResponse(
@@ -175,24 +169,46 @@ async def agents_start(request: Request) -> JSONResponse:
         return deny_response(reason or "spawn denied")
 
     inline_spec = body.get("spec")
+    fork_params = body.get("fork")
+    if fork_params is not None and not isinstance(fork_params, dict):
+        return JSONResponse(
+            {
+                "error": "'fork' must be a parameter object",
+                "kind": "twin_parameters_invalid",
+            },
+            status_code=400,
+        )
     handoff = InlineSpecHandoff()
-    if inline_spec is not None:
+    if inline_spec is not None or fork_params is not None:
         err = materialize_inline_spec(
             name,
             inline_spec,
             overwrite=bool(body.get("overwrite")),
             caller=caller,
-            authority=authority,
+            fork_params=fork_params,
+            owner_authorized=(
+                getattr(request.state, "authenticated_principal", None) == "host-owner"
+            ),
             handoff=handoff,
         )
         if err is not None:
             return err
     if canary:
-        if inline_spec is None:
+        if inline_spec is None and fork_params is None:
             return JSONResponse(
-                {"error": "canary requires an inline spec"}, status_code=400
+                {"error": "canary requires an inline spec or fork parameters"},
+                status_code=400,
             )
-        handoff.rollback()
+        cleanup_failures = handoff.rollback()
+        if cleanup_failures:
+            return JSONResponse(
+                {
+                    "name": name,
+                    "error": "canary cleanup failed",
+                    "cleanup_failures": cleanup_failures,
+                },
+                status_code=500,
+            )
         return JSONResponse(
             {
                 "name": name,
@@ -203,31 +219,42 @@ async def agents_start(request: Request) -> JSONResponse:
             status_code=200,
         )
 
-    # Record lineage on allowed-spawn so the new child inherits the
-    # caller's group. ``caller=None`` → no lineage record (admin /
-    # operator path; the new agent starts as a root).
-    if caller:
+    # Fork lineage always comes from the validated authoritative parent, never
+    # from a client caller claim. Ordinary spawns retain their caller lineage.
+    lineage_parent = (
+        str(fork_params["parent"])
+        if isinstance(fork_params, dict) and isinstance(fork_params.get("parent"), str)
+        else caller
+    )
+    if lineage_parent:
         from .._state.state_store_nodes import record_lineage as _record_lineage
 
         try:
-            _record_lineage(child=name, parent=caller)
+            _record_lineage(child=name, parent=lineage_parent)
         except ValueError as exc:
             # The start handoff has not happened; undo this request's spec and
             # newly-created detached worktree before reporting the conflict.
-            handoff.rollback()
-            return JSONResponse({"error": str(exc)}, status_code=409)
+            cleanup_failures = handoff.rollback()
+            return JSONResponse(
+                {"error": str(exc), "cleanup_failures": cleanup_failures},
+                status_code=409,
+            )
 
     try:
         sac_bin = sac_binary()
     except SacBinaryNotFoundError as exc:
-        handoff.rollback()
+        cleanup_failures = handoff.rollback()
         # Resolution-time failure (bug root cause, see _sac_binary.py):
         # surface a structured, diagnosable error instead of building an
         # unresolvable argv that would later die deep inside a subprocess
         # call as an opaque FileNotFoundError / 500. Shape mirrors
         # ``host_exec``'s error responses (``_host_exec.py``).
         return JSONResponse(
-            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            {
+                "name": name,
+                "error": f"{type(exc).__name__}: {exc}",
+                "cleanup_failures": cleanup_failures,
+            },
             status_code=500,
         )
     # ``agents`` (plural) is the canonical command group; the singular
@@ -295,7 +322,7 @@ async def agents_start(request: Request) -> JSONResponse:
     # would serialize everything for no safety gain).
     from ._credential_refresh_lock import run_brokered_launch
     from ._handler_deadline import AGENT_START_DEADLINE_S, Deadline, accepted_payload
-    from ._spawn_detach import detach_launch
+    from ._spawn_detach import _schedule_post_ack_verification, detach_launch
 
     # DECLARED answer-by budget for the whole handler (see _handler_deadline).
     # Before this, the handler could block for as long as the credential boot
@@ -332,20 +359,24 @@ async def agents_start(request: Request) -> JSONResponse:
     except asyncio.TimeoutError:
         # Still queued behind the boot gate, or the start subprocess is still
         # running. ACCEPTED, outcome unknown — never a failure code.
-        detach_launch(launch, name=name, started_at=started_at)
+        detach_launch(launch, name=name, started_at=started_at, handoff=handoff)
         return JSONResponse(
             accepted_payload(name, phase="launch", deadline_s=AGENT_START_DEADLINE_S),
             status_code=202,
         )
-    except OSError as exc:
-        handoff.rollback()
+    except Exception as exc:  # noqa: BLE001 - every launch failure rolls back owned fork artifacts
+        cleanup_failures = handoff.rollback()
         # Launch-time failure (e.g. the resolved sac_bin vanished between
         # resolution and exec, or any other subprocess-creation error).
         # Never let this propagate as an unhandled exception → opaque
         # framework 500; surface it structured, same shape as the
         # resolution-failure branch above / host_exec's error responses.
         return JSONResponse(
-            {"name": name, "error": f"{type(exc).__name__}: {exc}"},
+            {
+                "name": name,
+                "error": f"{type(exc).__name__}: {exc}",
+                "cleanup_failures": cleanup_failures,
+            },
             status_code=500,
         )
     if proc.returncode != 0:
@@ -399,7 +430,7 @@ async def agents_start(request: Request) -> JSONResponse:
             stderr=proc.stderr,
             declined=declined,
         )
-        handoff.rollback()
+        cleanup_failures = handoff.rollback()
         return JSONResponse(
             {
                 "name": name,
@@ -409,6 +440,7 @@ async def agents_start(request: Request) -> JSONResponse:
                 "declined": declined,
                 "kind": failure.kind,
                 "hint": failure.hint,
+                "cleanup_failures": cleanup_failures,
             },
             status_code=failure.status,
         )
@@ -447,6 +479,7 @@ async def agents_start(request: Request) -> JSONResponse:
     # signal is the inner rc captured above; rc!=0 already wrote
     # STARTUP_FAILED with stderr_tail (the cohort one-shot diagnostic).
     if foreground:
+        handoff.commit()
         return JSONResponse(
             {
                 "name": name,
@@ -489,6 +522,9 @@ async def agents_start(request: Request) -> JSONResponse:
         timeout_s=probe_budget,
     )
     if liveness_failure is not None and truncated:
+        _schedule_post_ack_verification(
+            name, started_at=started_at, proc=proc, handoff=handoff
+        )
         return JSONResponse(
             accepted_payload(name, phase="liveness", deadline_s=AGENT_START_DEADLINE_S),
             status_code=202,
@@ -511,7 +547,7 @@ async def agents_start(request: Request) -> JSONResponse:
             )
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             pass
-        handoff.rollback()
+        cleanup_failures = handoff.rollback()
         return JSONResponse(
             {
                 "name": name,
@@ -519,10 +555,12 @@ async def agents_start(request: Request) -> JSONResponse:
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
                 "post_ack_liveness": {"kind": kind, "hint": hint},
+                "cleanup_failures": cleanup_failures,
             },
             status_code=502,
         )
 
+    handoff.commit()
     return JSONResponse(
         {
             "name": name,

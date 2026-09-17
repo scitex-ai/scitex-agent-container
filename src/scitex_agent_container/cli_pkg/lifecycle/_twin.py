@@ -188,7 +188,7 @@ def twin(
     card write. scitex-cards cannot default owner=parent from env, so this
     is a hard rule, not an env guarantee.
     """
-    from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
+    from ..._lifecycle._twin import TwinSeedError, resolve_twin_name
 
     def _fail(msg: str, code: int = 2) -> None:
         if as_json:
@@ -198,17 +198,20 @@ def twin(
         sys.exit(code)
 
     if persist and ttl:
-        _fail("--persist and --ttl are mutually exclusive (a persistent fork "
-              "has no TTL).")
+        _fail(
+            "--persist and --ttl are mutually exclusive (a persistent fork has no TTL)."
+        )
     ttl_seconds = _parse_ttl(ttl) if ttl else None
 
-    # Resolve parent spec + twin name and derive the inline twin doc (the
-    # shared front-half reused by the agent_twin MCP tool). Fail loud on an
-    # unknown parent or a taken explicit --name.
+    # The client resolves only the child NAME.  The authenticated host listener
+    # loads the authoritative parent and derives every execution field.
     try:
-        resolved_name, doc = prepare_twin_spawn(
-            parent, twin_name=twin_name, task=task, persist=persist, role=role
-        )
+        from ...config._resolve import enumerate_agent_names
+
+        existing = enumerate_agent_names()
+        if twin_name and twin_name in set(existing):
+            raise TwinSeedError(f"fork name {twin_name!r} is already taken")
+        resolved_name = resolve_twin_name(parent, twin_name, existing)
     except TwinSeedError as exc:
         _fail(str(exc))
 
@@ -219,6 +222,12 @@ def twin(
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
     in_sif = is_in_sif()
+    if in_sif:
+        _fail(
+            "agent-authenticated remote forks are disabled until caller identity "
+            "is cryptographically bound; run `sac agents fork` on the host",
+            code=1,
+        )
     base_url = (os.environ.get("SAC_LISTEN_BASE_URL", "") or "").strip() or None
     if base_url is None:
         # Bare-host invocation: env not set — fall back to the canonical
@@ -230,9 +239,14 @@ def twin(
     try:
         result = request_spawn(
             resolved_name,
-            spec=doc,
-            caller=(caller if in_sif else ""),
-            admin=not in_sif,
+            fork={
+                "parent": parent,
+                "task": task,
+                "persist": persist,
+                "role": role,
+            },
+            caller="",
+            admin=True,
             base_url=base_url,
             assume_yes=True,
         )
@@ -240,23 +254,36 @@ def twin(
         _fail(f"spawn of fork {resolved_name!r} failed: {exc}", code=1)
 
     rc = result.get("returncode") if isinstance(result, dict) else None
+    accepted = isinstance(result, dict) and result.get("status") == "accepted"
     ttl_note = ""
     if rc == 0 and ttl_seconds is not None:
         ttl_note = _schedule_ttl_stop(resolved_name, ttl_seconds)
 
     if as_json:
-        click.echo(json.dumps({
-            "status": "ok" if rc == 0 else "error",
-            "fork": resolved_name,
-            "parent": parent,
-            "persist": persist,
-            "ttl_seconds": ttl_seconds,
-            "returncode": rc,
-            "ttl_note": ttl_note,
-            "result": result,
-        }, ensure_ascii=False))
+        click.echo(
+            json.dumps(
+                {
+                    "status": "accepted"
+                    if accepted
+                    else ("ok" if rc == 0 else "error"),
+                    "fork": resolved_name,
+                    "parent": parent,
+                    "persist": persist,
+                    "ttl_seconds": ttl_seconds,
+                    "returncode": rc,
+                    "ttl_note": ttl_note,
+                    "result": result,
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
-        if rc == 0:
+        if accepted:
+            console.print(
+                f"[yellow]fork accepted[/yellow] {resolved_name}; outcome unknown. "
+                f"Poll {result.get('poll')}"
+            )
+        elif rc == 0:
             lifetime = "persistent" if persist else "ephemeral"
             console.print(
                 f"[green]spawned fork[/green] {resolved_name} "

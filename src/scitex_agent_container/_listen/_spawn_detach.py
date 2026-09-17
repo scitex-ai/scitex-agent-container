@@ -87,6 +87,16 @@ def inflight_count() -> int:
     return len(_INFLIGHT)
 
 
+def _rollback_handoff(handoff: Any, *, name: str) -> None:
+    failures = handoff.rollback()
+    if failures:
+        logger.warning(
+            "spawn_detach: rollback of owned fork artifacts for %r failed: %s",
+            name,
+            "; ".join(failures),
+        )
+
+
 def _write_launch_marker(
     name: str,
     *,
@@ -152,7 +162,9 @@ def _tail(text: str, limit: int = 400) -> str:
     return "..." + flattened[-limit:]
 
 
-async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
+async def _verify_post_ack(
+    name: str, *, started_at: str, proc: Any, handoff: Any | None = None
+) -> None:
     """Run the SAME post-ack liveness probe the synchronous path runs.
 
     Reached only for a detached launch that exited 0. ``rc == 0`` from
@@ -183,13 +195,13 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
         if budget <= 0.0:
             # Operator/suite disabled the probe. Honour it on BOTH paths, or
             # the two would disagree about what a missing marker means.
+            if handoff is not None:
+                handoff.commit()
             return
         runtime_dir = state_dir_for(name)
 
         def post_ack_liveness_probe() -> tuple[str, str] | None:
-            return _probe_post_ack_liveness(
-                runtime_dir, name=name, timeout_s=budget
-            )
+            return _probe_post_ack_liveness(runtime_dir, name=name, timeout_s=budget)
 
         try:
             failure = await run_blocking(
@@ -208,6 +220,8 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
                 budget + _PROBE_DISPATCH_MARGIN_S,
                 name,
             )
+            if handoff is not None:
+                handoff.commit()
             return
         if failure is None:
             logger.warning(
@@ -216,6 +230,8 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
                 name,
                 budget,
             )
+            if handoff is not None:
+                handoff.commit()
             return
         kind, hint = failure
         logger.warning(
@@ -237,6 +253,8 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
             + f"\n\n[listen post-ack liveness probe] {kind}: {hint}\n",
             kind_override=kind,
         )
+        if handoff is not None:
+            _rollback_handoff(handoff, name=name)
     except Exception as exc:  # stx-allow: fallback (reason: this runs in a detached task for an already-answered request; it must never escape as an unretrieved-task exception. The line below reaches the daemon's stderr, which systemd captures into `journalctl -u sac-listen` at WARNING, which is the entire point of the module.)
         logger.warning(
             "spawn_detach: post-ack verification of %r blew up (%s: %s). The "
@@ -246,6 +264,8 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
             exc,
             name,
         )
+        if handoff is not None:
+            handoff.commit()
 
 
 def _on_verify_done(task: "asyncio.Task") -> None:
@@ -254,7 +274,7 @@ def _on_verify_done(task: "asyncio.Task") -> None:
 
 
 def _schedule_post_ack_verification(
-    name: str, *, started_at: str, proc: Any
+    name: str, *, started_at: str, proc: Any, handoff: Any | None = None
 ) -> None:
     """Kick the blocking liveness probe OFF the done-callback's thread.
 
@@ -268,7 +288,7 @@ def _schedule_post_ack_verification(
     try:
         loop = asyncio.get_running_loop()
         task = loop.create_task(
-            _verify_post_ack(name, started_at=started_at, proc=proc)
+            _verify_post_ack(name, started_at=started_at, proc=proc, handoff=handoff)
         )
     except RuntimeError as exc:  # stx-allow: fallback (reason: the loop is gone or closing — e.g. the daemon is shutting down; nothing can be scheduled, and RAISING here would surface as an opaque "Exception in callback". The line below reaches the daemon's stderr, which systemd captures into `journalctl -u sac-listen` at WARNING instead.)
         logger.warning(
@@ -277,12 +297,16 @@ def _schedule_post_ack_verification(
             name,
             exc,
         )
+        if handoff is not None:
+            handoff.commit()
         return
     _INFLIGHT.add(task)
     task.add_done_callback(_on_verify_done)
 
 
-def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None:
+def _on_launch_done(
+    task: "asyncio.Task", *, name: str, started_at: str, handoff: Any | None = None
+) -> None:
     """Done callback: drop the strong ref, then RECORD the outcome.
 
     Every terminal outcome now leaves a trace. A failing rc writes the marker as
@@ -301,6 +325,8 @@ def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None
             "shielded, so this should be unreachable. Outcome unknown.",
             name,
         )
+        if handoff is not None:
+            _rollback_handoff(handoff, name=name)
         return
     exc = task.exception()
     if exc is not None:
@@ -317,6 +343,8 @@ def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None
             stdout="",
             stderr=f"{type(exc).__name__}: {exc}",
         )
+        if handoff is not None:
+            _rollback_handoff(handoff, name=name)
         return
     proc: Any = task.result()
     returncode = getattr(proc, "returncode", None)
@@ -334,11 +362,21 @@ def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None
             stdout=getattr(proc, "stdout", "") or "",
             stderr=getattr(proc, "stderr", "") or "",
         )
+        if handoff is not None:
+            _rollback_handoff(handoff, name=name)
         return
-    _schedule_post_ack_verification(name, started_at=started_at, proc=proc)
+    _schedule_post_ack_verification(
+        name, started_at=started_at, proc=proc, handoff=handoff
+    )
 
 
-def detach_launch(task: "asyncio.Task", *, name: str, started_at: str) -> None:
+def detach_launch(
+    task: "asyncio.Task",
+    *,
+    name: str,
+    started_at: str,
+    handoff: Any | None = None,
+) -> None:
     """Adopt ``task`` so it survives the handler that started it.
 
     Called ONLY when the handler has already decided to answer 202. Holds a
@@ -358,5 +396,5 @@ def detach_launch(task: "asyncio.Task", *, name: str, started_at: str) -> None:
         len(_INFLIGHT),
     )
     task.add_done_callback(
-        lambda t: _on_launch_done(t, name=name, started_at=started_at)
+        lambda t: _on_launch_done(t, name=name, started_at=started_at, handoff=handoff)
     )

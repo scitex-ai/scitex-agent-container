@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scitex_agent_container._lifecycle._twin import _visible_history_digest
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
@@ -663,6 +664,17 @@ def test_session_selection_refuses_ambiguous_gateway():
         action()
 
 
+def test_session_selection_refuses_wrong_singleton_identity():
+    # Arrange
+    rows = [{"id": "one", "title": "sac:other:engine-a"}]
+
+    # Act
+    action = pytest.raises(HermesTuiRpcError, match="0 exact matches")
+    # Assert
+    with action:
+        _select_session(rows, "sac:hub:engine-a")
+
+
 def test_active_sessions_is_observation_only(tmp_path):
     # Arrange
     (tmp_path / GATEWAY_FILE).write_text('{"port":19000}', encoding="utf-8")
@@ -1100,14 +1112,21 @@ def test_child_import_receives_identical_visible_history_and_native_lineage(tmp_
             {"role": "assistant", "text": "context retained"},
         ],
     }
-    # Act
-    stored = import_fork_seed(
-        tmp_path, seed, connect_fn=lambda *args, **kwargs: socket
+    seed.update(
+        parent_name="scitex-hub-gui",
+        parent_engine="engine-a",
+        visible_history_sha256=_visible_history_digest(seed["messages"]),
     )
+    # Act
+    stored = import_fork_seed(tmp_path, seed, connect_fn=lambda *args, **kwargs: socket)
     # Assert
     methods = [request["method"] for request in socket.sent]
-    create = next(request for request in socket.sent if request["method"] == "session.create")
-    branch = next(request for request in socket.sent if request["method"] == "session.branch")
+    create = next(
+        request for request in socket.sent if request["method"] == "session.create"
+    )
+    branch = next(
+        request for request in socket.sent if request["method"] == "session.branch"
+    )
     assert (stored, methods, create["params"], branch["params"]) == (
         "child-stored",
         [
@@ -1170,10 +1189,13 @@ def test_retry_verifies_existing_fork_without_creating_or_branching_again(tmp_pa
         "cwd": "/work/repo",
         "messages": [{"role": "user", "text": "parent nonce"}],
     }
-    # Act
-    stored = import_fork_seed(
-        tmp_path, seed, connect_fn=lambda *args, **kwargs: socket
+    seed.update(
+        parent_name="parent",
+        parent_engine="engine-a",
+        visible_history_sha256=_visible_history_digest(seed["messages"]),
     )
+    # Act
+    stored = import_fork_seed(tmp_path, seed, connect_fn=lambda *args, **kwargs: socket)
     # Assert
     assert (
         stored,

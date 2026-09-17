@@ -80,7 +80,7 @@ __all__ = ["SpawnRequestError", "request_spawn"]
 # inside the handler) while this snapshot does not. The ordering client > server
 # would invert silently, which is the bug this comment is about, arriving by way
 # of its own fix.
-from .._listen._handler_deadline import client_timeout_for
+from .._listen._handler_deadline import client_timeout_for  # noqa: E402
 
 # Request-construction plumbing — where do I send this, and as whom — now lives
 # in ._listen_client_resolve. It was never spawn-specific: _host_exec_client
@@ -89,7 +89,7 @@ from .._listen._handler_deadline import client_timeout_for
 # happened to get written down first. Re-exported so every existing import path
 # (_host_exec_client, the MCP tools, _in_sif_broker, cli_pkg/lifecycle/_twin and
 # the tests) keeps working byte-identically.
-from ._listen_client_resolve import (  # noqa: F401
+from ._listen_client_resolve import (  # noqa: E402, F401
     SpawnRequestError,
     _parse_body,
     _read_bearer_token_file,
@@ -134,6 +134,7 @@ def request_spawn(
     *,
     caller: str | None = None,
     spec: dict | None = None,
+    fork: dict[str, Any] | None = None,
     overwrite: bool = False,
     base_url: str | None = None,
     bearer: str | None = None,
@@ -144,6 +145,7 @@ def request_spawn(
     assume_yes: bool = False,
     force: bool = False,
     admin: bool = False,
+    owner_token: str | None = None,
     canary: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
@@ -264,9 +266,19 @@ def request_spawn(
             "admin spawn cannot claim an agent caller; choose exactly one authority path"
         )
 
+    if spec is not None and fork is not None:
+        raise SpawnRequestError("fork requests may not include an execution spec")
     body: dict[str, Any] = {"name": child_name}
     if admin:
-        body["authority"] = "admin"
+        if owner_token is None:
+            try:
+                from .._listen.tokens import read_owner_token
+
+                owner_token = read_owner_token()
+            except (OSError, PermissionError) as exc:
+                raise SpawnRequestError(
+                    f"host-owner fork credential is unavailable: {exc}"
+                ) from exc
     if canary:
         body["canary"] = True
     if resolved_caller:
@@ -274,6 +286,8 @@ def request_spawn(
     if spec is not None:
         body["spec"] = spec
         body["overwrite"] = bool(overwrite)
+    if fork is not None:
+        body["fork"] = fork
     # Cohort one-shot diagnostic (clew dogfood 2026-06-06, lead msg
     # d96a468c): only emit the keys when truthy so the wire shape is
     # back-compat with pre-α brokers (they ignore the absent fields).
@@ -299,6 +313,8 @@ def request_spawn(
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
+    if admin and owner_token:
+        headers["X-SAC-Owner-Token"] = owner_token
 
     req = urlrequest.Request(url, data=payload, method="POST", headers=headers)
     opener_fn = opener if opener is not None else urlrequest.urlopen

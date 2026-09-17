@@ -39,10 +39,12 @@ IDENTITY SPLIT — safety-critical:
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
 import re
+import stat
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
@@ -227,14 +229,14 @@ def _twin_isolation_paths(
     parent_overlay = parent_overlay.strip()
     if parent_overlay:
         overlay_path = Path(parent_overlay)
-        if overlay_path.name == "overlay" and overlay_path.parent.parent.name == "agents":
+        if (
+            overlay_path.name == "overlay"
+            and overlay_path.parent.parent.name == "agents"
+        ):
             twin_overlay = overlay_path.parent.parent / twin_name / "overlay"
         else:
             twin_overlay = (
-                overlay_path.parent
-                / ".sac-twins"
-                / twin_name
-                / overlay_path.name
+                overlay_path.parent / ".sac-twins" / twin_name / overlay_path.name
             )
     else:
         twin_overlay = Path("/scratch/sac/agents") / twin_name / "overlay"
@@ -250,9 +252,7 @@ def _normalize_selected_harness_authority(spec: dict[str, Any]) -> str:
     family = canonical_harness(selected)
     if family is None:
         raise TwinSeedError(f"parent selects unknown harness {selected!r}")
-    public = {"anthropic": "claude-code", "openai": "openai-agents"}.get(
-        family, family
-    )
+    public = {"anthropic": "claude-code", "openai": "openai-agents"}.get(family, family)
     harnesses = spec.get("available_harnesses")
     if not isinstance(harnesses, dict):
         return family
@@ -389,6 +389,27 @@ def derive_twin_spec(
     env.pop(SELF_NAME_ENV, None)
     env.pop(RETIRED_AGENT_ENV, None)
 
+    # A fork may inherit explicitly read-only data mounts, never the parent's
+    # writable host surface.  In particular, broad ``/scratch`` and host-home
+    # binds would expose sibling overlays, runtime credentials and the parent
+    # checkout.  The host listener injects exactly one writable bind later:
+    # the fresh child worktree at the unchanged container workdir.
+    from .._listen._inline_spec_bind_translate import _parse_bind
+
+    inherited_binds = apptainer.get("binds")
+    safe_read_only: list[Any] = []
+    if isinstance(inherited_binds, list):
+        for raw_bind in inherited_binds:
+            parsed = _parse_bind(raw_bind)
+            if parsed is not None and parsed[2] == "ro":
+                safe_read_only.append(raw_bind)
+    apptainer["binds"] = safe_read_only
+    # A parent's relaxed/raw-arg escape hatch is not inherited by a fork. Raw
+    # apptainer flags can add unreviewed binds or undo containall; the child is
+    # always launched through SAC's hardened isolation flags.
+    apptainer["relaxed"] = False
+    apptainer["raw_args"] = []
+
     _unused_client_guess, twin_overlay = _twin_isolation_paths(
         str(spec.get("workdir") or ""),
         str(apptainer.get("overlay") or ""),
@@ -515,6 +536,16 @@ def _validate_registered_detached_worktree(parent: Path, target: Path) -> None:
     status = _git_probe(target, "status", "--porcelain")
     if status.returncode != 0 or status.stdout:
         raise TwinSeedError(f"fork workdir is not clean: {target}")
+    parent_head = _git_probe(parent, "rev-parse", "--verify", "HEAD")
+    target_head = _git_probe(target, "rev-parse", "--verify", "HEAD")
+    if (
+        parent_head.returncode != 0
+        or target_head.returncode != 0
+        or target_head.stdout.strip() != parent_head.stdout.strip()
+    ):
+        raise TwinSeedError(
+            f"existing detached fork workdir does not match exact parent HEAD: {target}"
+        )
 
 
 def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
@@ -547,6 +578,89 @@ def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
 
 
 HERMES_FORK_SEED_FILE = "hermes-fork-seed.json"
+_HERMES_FORK_SEED_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _visible_history_digest(messages: object) -> str:
+    if not isinstance(messages, list) or not messages:
+        raise TwinSeedError("Hermes fork seed has no visible history")
+    encoded = json.dumps(
+        messages, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _secure_read_hermes_seed(path: Path) -> dict[str, Any]:
+    """Descriptor-safe bounded seed read; never follows or races a symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise TwinSeedError(
+                "Hermes fork seed must be an owner-controlled exact 0600 regular file"
+            )
+        if info.st_size > _HERMES_FORK_SEED_MAX_BYTES:
+            raise TwinSeedError("Hermes fork seed exceeds the 64 MiB safety limit")
+        chunks: list[bytes] = []
+        remaining = _HERMES_FORK_SEED_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > _HERMES_FORK_SEED_MAX_BYTES:
+            raise TwinSeedError("Hermes fork seed exceeds the 64 MiB safety limit")
+        parsed = json.loads(raw.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise TwinSeedError("Hermes fork seed must be a JSON object")
+        return parsed
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise TwinSeedError(f"Hermes fork seed is unreadable: {exc}") from exc
+    finally:
+        os.close(fd)
+
+
+def _atomic_write_hermes_seed(path: Path, payload: bytes, *, write_fn=None) -> None:
+    """Complete-write + fsync + atomic-replace an exact-0600 seed."""
+    if len(payload) > _HERMES_FORK_SEED_MAX_BYTES:
+        raise TwinSeedError("Hermes fork seed exceeds the 64 MiB safety limit")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _reject_symlink_components(path.parent, label="Hermes fork seed parent")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{os.urandom(8).hex()}.tmp")
+    fd: int | None = None
+    writer = write_fn or os.write
+    try:
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        offset = 0
+        while offset < len(payload):
+            written = writer(fd, payload[offset:])
+            if written <= 0:
+                raise OSError("short write while materializing Hermes fork seed")
+            offset += written
+        os.fsync(fd)
+        os.close(fd)
+        fd = None
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        temporary.unlink(missing_ok=True)
 
 
 def _materialize_hermes_fork_seed(
@@ -574,21 +688,22 @@ def _materialize_hermes_fork_seed(
     seed_path = child_state / HERMES_FORK_SEED_FILE
     child_key = hermes_session_key(child_name, child_engine)
 
-    # A completed handoff is idempotent.  Never branch the live parent again
-    # merely because the materialize request was retried after its response was
-    # lost.
-    if seed_path.is_file():
-        try:
-            existing = json.loads(seed_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError) as exc:
-            raise TwinSeedError(f"existing Hermes fork seed is unreadable: {exc}") from exc
+    # A completed handoff is idempotent only when every bound identity and the
+    # visible-history attestation matches.  A stale file is never trusted just
+    # because its child title/cwd happen to agree.
+    if os.path.lexists(seed_path):
+        existing = _secure_read_hermes_seed(seed_path)
+        messages = existing.get("messages")
+        digest = _visible_history_digest(messages)
         if (
-            isinstance(existing, dict)
-            and existing.get("version") == 1
+            existing.get("version") == 1
+            and existing.get("parent_name") == parent_name
+            and existing.get("parent_engine") == parent_engine
             and existing.get("title") == child_key
             and existing.get("cwd") == str(child_spec.get("workdir") or "")
-            and isinstance(existing.get("messages"), list)
-            and existing["messages"]
+            and isinstance(existing.get("parent_session_id"), str)
+            and bool(existing.get("parent_session_id"))
+            and existing.get("visible_history_sha256") == digest
         ):
             return seed_path
         raise TwinSeedError("existing Hermes fork seed does not match this child")
@@ -600,17 +715,15 @@ def _materialize_hermes_fork_seed(
         child_session_key=child_key,
         child_cwd=str(child_spec.get("workdir") or ""),
     )
-    child_state.mkdir(parents=True, exist_ok=True)
-    temporary = seed_path.with_name(f".{seed_path.name}.{os.getpid()}.tmp")
-    encoded = json.dumps(seed, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        os.write(fd, encoded)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(temporary, seed_path)
-    os.chmod(seed_path, 0o600)
+    if not isinstance(seed, dict):
+        raise TwinSeedError("Hermes native branch returned no seed document")
+    seed["parent_name"] = parent_name
+    seed["parent_engine"] = parent_engine
+    seed["visible_history_sha256"] = _visible_history_digest(seed.get("messages"))
+    encoded = json.dumps(seed, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    _atomic_write_hermes_seed(seed_path, encoded)
     return seed_path
 
 

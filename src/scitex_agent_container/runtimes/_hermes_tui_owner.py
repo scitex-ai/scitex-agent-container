@@ -164,24 +164,35 @@ def _consume_fork_seed(
     path = state_dir / HERMES_FORK_SEED_FILE
     if not os.path.lexists(path):
         return False
-    if path.is_symlink():
-        raise RuntimeError(f"Hermes fork seed must not be a symlink: {path}")
-    stat_result = path.stat()
-    if not path.is_file() or stat_result.st_uid != os.geteuid():
-        raise RuntimeError("Hermes fork seed must be an owner-controlled regular file")
-    if stat_result.st_mode & 0o077:
-        raise RuntimeError("Hermes fork seed permissions must be 0600")
-    if stat_result.st_size > 64 * 1024 * 1024:
-        raise RuntimeError("Hermes fork seed exceeds the 64 MiB safety limit")
+    from .._lifecycle._twin import (
+        TwinSeedError,
+        _secure_read_hermes_seed,
+        _visible_history_digest,
+    )
+
     try:
-        seed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError) as exc:
+        before = path.lstat()
+        seed = _secure_read_hermes_seed(path)
+    except (OSError, TwinSeedError) as exc:
         raise RuntimeError(f"Hermes fork seed is unreadable: {exc}") from exc
     mode, expected_identity = _requested_session(command)
-    title = str(seed.get("title") or "").strip() if isinstance(seed, dict) else ""
-    if mode != "continue" or not expected_identity or title != expected_identity:
+    title = str(seed.get("title") or "").strip()
+    try:
+        digest = _visible_history_digest(seed.get("messages"))
+    except TwinSeedError as exc:
+        raise RuntimeError(f"Hermes fork seed attestation is invalid: {exc}") from exc
+    if (
+        mode != "continue"
+        or not expected_identity
+        or title != expected_identity
+        or not str(seed.get("parent_name") or "").strip()
+        or not str(seed.get("parent_engine") or "").strip()
+        or not str(seed.get("parent_session_id") or "").strip()
+        or not str(seed.get("cwd") or "").strip()
+        or seed.get("visible_history_sha256") != digest
+    ):
         raise RuntimeError(
-            "Hermes fork seed identity does not match the requested continuation"
+            "Hermes fork seed identity/attestation does not match the requested continuation"
         )
     if import_fn is None:
         from ._hermes_tui_rpc import import_fork_seed as import_fn
@@ -189,7 +200,15 @@ def _consume_fork_seed(
     stored_id = import_fn(state_dir, seed)
     if not str(stored_id or "").strip():
         raise RuntimeError("Hermes fork seed import returned no stored session id")
+    try:
+        after = path.lstat()
+    except OSError as exc:
+        raise RuntimeError("Hermes fork seed changed during import") from exc
+    if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        raise RuntimeError("Hermes fork seed changed during import")
     path.unlink()
+    if os.path.lexists(path):
+        raise RuntimeError("Hermes fork seed removal was not durable")
     return True
 
 

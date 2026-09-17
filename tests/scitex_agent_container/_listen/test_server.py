@@ -83,6 +83,7 @@ def _instances_store(pg_schema: str):
     """
     yield
 
+
 TOKEN = "test-token-abc123"
 
 # WI-4 cross-host forwarder: both apps in the loopback tests run
@@ -580,6 +581,23 @@ class TestAgentsStartValidation:
         # Assert
         assert resp.json()["kind"] == "invalid_agent_name"
 
+    def test_self_claimed_json_admin_cannot_authorize_fork(self, client, auth_headers):
+        # Arrange
+        body = {
+            "name": "claimed-admin-fork",
+            "authority": "admin",
+            "fork": {"parent": "parent"},
+        }
+
+        # Act
+        resp = client.post("/agents", json=body, headers=auth_headers)
+
+        # Assert
+        assert (resp.status_code, resp.json()["kind"]) == (
+            403,
+            "twin_authority_required",
+        )
+
     def test_canary_materializes_without_starting(
         self, client, auth_headers, isolated_env
     ):
@@ -905,12 +923,13 @@ def _send_payload(text: str, *, from_agent: str) -> dict:
     }
 
 
-def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str) -> None:
+def test_cross_host_send_forwards_to_target_host(
+    cross_host_env, pg_schema: str
+) -> None:
     """End-to-end: a POST to host B's ``message:send`` for a target
     pinned to host A arrives on host A's broker.
     """
     # Arrange
-    db = cross_host_env["db"]
     # Register the target as a live instance on host-a.
     state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     # Permitted-peer is registered as a child of root, so is alice;
@@ -983,13 +1002,14 @@ def test_cross_host_send_forwards_to_target_host(cross_host_env, pg_schema: str)
     assert event.get("content") == "hi from b"
 
 
-def test_cross_host_forward_preserves_from_agent_metadata(cross_host_env, pg_schema: str) -> None:
+def test_cross_host_forward_preserves_from_agent_metadata(
+    cross_host_env, pg_schema: str
+) -> None:
     """The forwarded event keeps the original ``from_agent`` so
     host A's ACL can gate on the real sender, not the forwarding
     host's identity.
     """
     # Arrange
-    db = cross_host_env["db"]
     state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
@@ -1069,9 +1089,7 @@ def missing_peer_token_response(pg_schema: str, tmp_path: Path):
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
-    state_store.record_instance_start(
-        name="alice", host="host-z", a2a_port=9999
-    )
+    state_store.record_instance_start(name="alice", host="host-z", a2a_port=9999)
     app_local = create_app(token=SHARED_TOKEN, local_host="host-b")
 
     try:
@@ -1223,7 +1241,6 @@ def _drive_ssh_cross_host_send(
     uvicorn). Mirrors :func:`test_cross_host_send_forwards_to_target_host`
     one section above — the only difference is the transport.
     """
-    db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
 
@@ -1281,14 +1298,14 @@ def _drive_ssh_cross_host_send(
 
 
 def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
-    cross_host_ssh_env, pg_schema: str,
+    cross_host_ssh_env,
+    pg_schema: str,
 ) -> None:
     """End-to-end ssh-transport: a POST to host B's ``message:send`` for
     a target pinned to host A arrives on host A's broker through the
     ssh-shim leg.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     # Act
@@ -1300,14 +1317,14 @@ def test_cross_host_send_via_ssh_shim_delivers_to_remote_inbox(
 
 
 def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
-    cross_host_ssh_env, pg_schema: str,
+    cross_host_ssh_env,
+    pg_schema: str,
 ) -> None:
     """The forwarded event keeps the original ``from_agent`` across the
     ssh transport so host A's ACL gates on the real sender, not the
     forwarding host's identity.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     # Act
@@ -1319,7 +1336,8 @@ def test_cross_host_send_via_ssh_shim_preserves_from_agent_metadata(
 
 
 def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
-    cross_host_ssh_env, pg_schema: str,
+    cross_host_ssh_env,
+    pg_schema: str,
 ) -> None:
     """A cross-group send delivered across the ssh transport lands at the
     destination. (Under messaging DEFAULT-ALLOW, operator 2026-07-03, the
@@ -1332,7 +1350,6 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
     # grant because they share one in-process SCITEX_STORE_DSN, NOT because
     # the fixture's tmp HOME pins them to a file: comms_grants is PostgreSQL
     # now. record_lineage below still takes db_path — lineage had not moved yet.
-    db = cross_host_ssh_env["db"]
     record_lineage(child="alice", parent="root-a")
     record_lineage(child="outsider", parent="root-b")
     # db_path is gone from the grants primitives — that store is on
@@ -1352,7 +1369,8 @@ def test_cross_host_send_with_explicit_grant_unblocks_cross_group_push(
 
 
 def test_cross_host_send_without_grant_returns_403_from_target_listen(
-    cross_host_ssh_env, pg_schema: str,
+    cross_host_ssh_env,
+    pg_schema: str,
 ) -> None:
     """A receiver-side ACL deny must surface across the ssh transport as
     a non-2xx response to the originating sender (loud failure, no silent
@@ -1361,14 +1379,11 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
     deny`` on the receiver (``alice``); ``outsider`` is a sibling.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
     host_a_port = cross_host_ssh_env["host_a_port"]
     host_b_port = cross_host_ssh_env["host_b_port"]
     record_lineage(child="alice", parent="root")
     record_lineage(child="outsider", parent="root")
-    state_store_nodes_grant.record_comms_policy(
-        name="alice", inbound_siblings="deny"
-    )
+    state_store_nodes_grant.record_comms_policy(name="alice", inbound_siblings="deny")
     state_store.record_instance_start(name="alice", host="host-a", a2a_port=0)
     _bind_instance_port("alice", host_a_port)
     app_a = create_app(token=SHARED_TOKEN, local_host="host-a")
@@ -1391,14 +1406,14 @@ def test_cross_host_send_without_grant_returns_403_from_target_listen(
 
 
 def test_cross_host_send_via_ssh_shim_uses_peer_token_bearer_header(
-    cross_host_ssh_env, pg_schema: str,
+    cross_host_ssh_env,
+    pg_schema: str,
 ) -> None:
     """The shim's captured Authorization header matches the destination
     host's bearer (``peer-tokens/host-a.token``) — proves the forwarder
     rotated to the *destination's* token, not its own listen token.
     """
     # Arrange
-    db = cross_host_ssh_env["db"]
     record_lineage(child="permitted-peer", parent="root")
     record_lineage(child="alice", parent="root")
     _drive_ssh_cross_host_send(
@@ -1442,7 +1457,6 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
     ``bob`` and target ``alice`` are siblings under ``root`` so the
     intra-group ACL allows the send.
     """
-    db = cross_host_env["db"]
     record_lineage(child="bob", parent="root")
     record_lineage(child="alice", parent="root")
     port = _free_port()
@@ -1491,7 +1505,8 @@ def _roundtrip_local_send(cross_host_env, *, metadata: dict) -> dict:
 
 
 def test_message_send_with_ack_metadata_yields_ack_true_event(
-    cross_host_env, pg_schema: str,
+    cross_host_env,
+    pg_schema: str,
 ) -> None:
     # Arrange
     metadata = {"from_agent": "bob", "ack": True}
@@ -1502,7 +1517,8 @@ def test_message_send_with_ack_metadata_yields_ack_true_event(
 
 
 def test_message_send_without_ack_metadata_yields_falsey_ack_event(
-    cross_host_env, pg_schema: str,
+    cross_host_env,
+    pg_schema: str,
 ) -> None:
     # Arrange
     metadata = {"from_agent": "bob"}
@@ -1513,7 +1529,8 @@ def test_message_send_without_ack_metadata_yields_falsey_ack_event(
 
 
 def test_message_send_threads_dispatch_id_into_published_event(
-    cross_host_env, pg_schema: str,
+    cross_host_env,
+    pg_schema: str,
 ) -> None:
     # Arrange
     # The sender-minted dispatch_id must ride from metadata onto the

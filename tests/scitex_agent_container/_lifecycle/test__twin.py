@@ -24,10 +24,12 @@ from scitex_agent_container._lifecycle._twin import (
     RETIRED_AGENT_ENV,
     TWIN_PARENT_ENV,
     TwinSeedError,
+    _atomic_write_hermes_seed,
     _ensure_twin_worktree,
     _materialize_hermes_fork_seed,
     _reject_symlink_components,
     _resolve_host_repo_from_binds,
+    _visible_history_digest,
     build_twin_boot_kick,
     derive_twin_spec,
     prepare_twin_spawn,
@@ -197,11 +199,38 @@ def test_current_v3_twin_keeps_container_workdir_and_isolates_overlay() -> None:
     # Assert
     assert (
         twin["spec"]["workdir"] == parent["spec"]["workdir"],
-        twin["spec"]["apptainer"]["overlay"]
-        != parent["spec"]["apptainer"]["overlay"],
+        twin["spec"]["apptainer"]["overlay"] != parent["spec"]["apptainer"]["overlay"],
         "parent-twin" not in twin["spec"]["workdir"],
         "parent-twin" in twin["spec"]["apptainer"]["overlay"],
     ) == (True, True, True, True)
+
+
+def test_derived_fork_drops_broad_and_parent_writable_binds() -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()
+    parent["spec"]["apptainer"]["binds"] = [
+        "/scratch:/scratch:rw",
+        "/home/ywatanabe:/home/ywatanabe:rw",
+        "/srv/parent:/work/repo:rw",
+        "/etc/ssl:/etc/ssl:ro",
+    ]
+    parent["spec"]["apptainer"]["relaxed"] = True
+    parent["spec"]["apptainer"]["raw_args"] = [
+        "--bind",
+        "/home/ywatanabe:/host-home:rw",
+    ]
+
+    # Act
+    fork = derive_twin_spec(
+        parent, twin_name="parent-fork", parent_name="parent", persist=False
+    )
+
+    # Assert
+    assert (
+        fork["spec"]["apptainer"]["binds"],
+        fork["spec"]["apptainer"]["relaxed"],
+        fork["spec"]["apptainer"]["raw_args"],
+    ) == (["/etc/ssl:/etc/ssl:ro"], False, [])
 
 
 def test_current_v3_claude_twin_sets_selected_session_continue() -> None:
@@ -352,7 +381,9 @@ def test_actual_scitex_hub_gui_hermes_parent_preserves_references_not_secrets(
         "env" in fork["spec"],
         fork["spec"]["engine"],
         fork["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"]["model"],
-        fork["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"]["provider"]["auth_token_env"],
+        fork["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"][
+            "provider"
+        ]["auth_token_env"],
         fork["spec"]["workdir"],
         fork["spec"]["apptainer"]["binds"],
         fork["spec"]["available_harnesses"]["hermes"]["session"]["mode"],
@@ -366,7 +397,10 @@ def test_actual_scitex_hub_gui_hermes_parent_preserves_references_not_secrets(
         "deepseek-v4.1-flash",
         "SAC_PROVIDER_KEY",
         "/home/ywatanabe/proj/scitex-hub",
-        parent["spec"]["apptainer"]["binds"],
+        [
+            "/home/ywatanabe/.ssh:/home/agent/.ssh:ro",
+            "/home/ywatanabe/.config/gh:/home/agent/.config/gh:ro",
+        ],
         "continue",
         "scitex-hub-gui",
         False,
@@ -436,9 +470,82 @@ def test_hermes_fork_seed_uses_engine_scoped_keys_and_owner_only_file(
             "parent_session_id": "parent-stored",
             "cwd": parent["workdir"],
             "messages": visible,
+            "parent_name": "scitex-hub-gui",
+            "parent_engine": "engine-a",
+            "visible_history_sha256": _visible_history_digest(visible),
         },
         0o600,
     )
+
+
+def test_hermes_seed_atomic_writer_completes_partial_writes(tmp_path: Path) -> None:
+    # Arrange
+    target = tmp_path / "runtime" / "child" / "hermes-fork-seed.json"
+    payload = b'{"version":1,"messages":[{"role":"user","text":"x"}]}'
+
+    def partial_write(fd: int, remaining: bytes) -> int:
+        return os.write(fd, remaining[:3])
+
+    # Act
+    _atomic_write_hermes_seed(target, payload, write_fn=partial_write)
+
+    # Assert
+    assert (target.read_bytes(), target.stat().st_mode & 0o777) == (payload, 0o600)
+
+
+def test_hermes_seed_reuse_rejects_stale_parent_binding(tmp_path: Path) -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()["spec"]
+    parent["harness"] = "hermes"
+    parent["available_harnesses"] = {
+        "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+    }
+    parent["engine"] = "engine-a"
+    child = derive_twin_spec(
+        {"apiVersion": "scitex-agent-container/v3", "kind": "Agent", "spec": parent},
+        twin_name="child",
+        parent_name="parent",
+        persist=False,
+    )["spec"]
+    visible = [{"role": "user", "text": "bound history"}]
+
+    def branch(_state_dir, **kwargs):
+        return {
+            "version": 1,
+            "title": kwargs["child_session_key"],
+            "parent_session_id": "stored-parent",
+            "cwd": kwargs["child_cwd"],
+            "messages": visible,
+        }
+
+    path = _materialize_hermes_fork_seed(
+        parent_name="parent",
+        child_name="child",
+        parent_spec=parent,
+        child_spec=child,
+        state_root=tmp_path,
+        branch_fn=branch,
+    )
+    stale = json.loads(path.read_text(encoding="utf-8"))
+    stale["parent_name"] = "attacker"
+    path.write_text(json.dumps(stale), encoding="utf-8")
+    path.chmod(0o600)
+
+    def must_not_rebranch(*_args, **_kwargs):
+        raise AssertionError("must not rebranch")
+
+    # Act
+    action = pytest.raises(TwinSeedError, match="does not match")
+    # Assert
+    with action:
+        _materialize_hermes_fork_seed(
+            parent_name="parent",
+            child_name="child",
+            parent_spec=parent,
+            child_spec=child,
+            state_root=tmp_path,
+            branch_fn=must_not_rebranch,
+        )
 
 
 def test_parent_container_workdir_maps_to_host_bind_source(tmp_path: Path) -> None:
@@ -490,9 +597,7 @@ def test_ensure_twin_worktree_creates_detached_checkout(tmp_path: Path) -> None:
     )
     (parent / "tracked.txt").write_text("parent\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(parent), "add", "tracked.txt"], check=True)
-    subprocess.run(
-        ["git", "-C", str(parent), "commit", "-qm", "seed"], check=True
-    )
+    subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
 
     # Act
     _ensure_twin_worktree(str(parent), str(twin))
@@ -544,18 +649,25 @@ def test_ensure_twin_worktree_rejects_unrelated_git_checkout(tmp_path: Path) -> 
         _ensure_twin_worktree(str(parent), str(occupied))
 
 
-def test_ensure_twin_worktree_rejects_attached_existing_worktree(tmp_path: Path) -> None:
+def test_ensure_twin_worktree_rejects_attached_existing_worktree(
+    tmp_path: Path,
+) -> None:
     # Arrange
     parent = tmp_path / "parent"
     twin = tmp_path / "twin"
     parent.mkdir()
     subprocess.run(["git", "init", "-q", str(parent)], check=True)
-    subprocess.run(["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True
+    )
     subprocess.run(["git", "-C", str(parent), "config", "user.name", "T"], check=True)
     (parent / "f").write_text("x", encoding="utf-8")
     subprocess.run(["git", "-C", str(parent), "add", "f"], check=True)
     subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
-    subprocess.run(["git", "-C", str(parent), "worktree", "add", "-q", "-b", "child", str(twin)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "worktree", "add", "-q", "-b", "child", str(twin)],
+        check=True,
+    )
     # Act
     # Assert
     with pytest.raises(TwinSeedError, match="detached HEAD"):
@@ -568,12 +680,17 @@ def test_ensure_twin_worktree_rejects_dirty_existing_worktree(tmp_path: Path) ->
     twin = tmp_path / "twin"
     parent.mkdir()
     subprocess.run(["git", "init", "-q", str(parent)], check=True)
-    subprocess.run(["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True
+    )
     subprocess.run(["git", "-C", str(parent), "config", "user.name", "T"], check=True)
     (parent / "f").write_text("x", encoding="utf-8")
     subprocess.run(["git", "-C", str(parent), "add", "f"], check=True)
     subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
-    subprocess.run(["git", "-C", str(parent), "worktree", "add", "-q", "--detach", str(twin)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "worktree", "add", "-q", "--detach", str(twin)],
+        check=True,
+    )
     (twin / "f").write_text("dirty", encoding="utf-8")
     # Act
     # Assert
@@ -581,7 +698,36 @@ def test_ensure_twin_worktree_rejects_dirty_existing_worktree(tmp_path: Path) ->
         _ensure_twin_worktree(str(parent), str(twin))
 
 
-def test_ensure_twin_worktree_rejects_symlinked_parent_component(tmp_path: Path) -> None:
+def test_ensure_twin_worktree_rejects_stale_parent_head(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    twin = tmp_path / "twin"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(parent), "config", "user.name", "T"], check=True)
+    (parent / "f").write_text("first", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "add", "f"], check=True)
+    subprocess.run(["git", "-C", str(parent), "commit", "-qm", "first"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "worktree", "add", "-q", "--detach", str(twin)],
+        check=True,
+    )
+    (parent / "f").write_text("second", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "commit", "-qam", "second"], check=True)
+
+    # Act
+    action = pytest.raises(TwinSeedError, match="parent HEAD")
+    # Assert
+    with action:
+        _ensure_twin_worktree(str(parent), str(twin))
+
+
+def test_ensure_twin_worktree_rejects_symlinked_parent_component(
+    tmp_path: Path,
+) -> None:
     # Arrange
     real = tmp_path / "real"
     real.mkdir()
@@ -622,9 +768,7 @@ def test_prepare_current_v3_twin_validates_without_mutating_parent_checkout(
     )
     (parent / "tracked.txt").write_text("parent\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(parent), "add", "tracked.txt"], check=True)
-    subprocess.run(
-        ["git", "-C", str(parent), "commit", "-qm", "seed"], check=True
-    )
+    subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
     agents = tmp_path / "agents"
     spec_dir = agents / "parent"
     spec_dir.mkdir(parents=True)
@@ -660,7 +804,9 @@ def test_derive_sets_cards_author_to_twin():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert — the CANONICAL board-identity key, never the retired one.
     assert out["spec"]["apptainer"]["env"][CARDS_AGENT_ENV] == "parent-twin"
 
@@ -669,7 +815,9 @@ def test_derive_never_writes_the_retired_author_key():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert — a generated spec must not re-declare the retired name.
     assert RETIRED_AGENT_ENV not in out["spec"]["apptainer"]["env"]
 
@@ -680,7 +828,9 @@ def test_derive_drops_an_inherited_retired_author_key():
     doc = _parent_doc()
     doc["spec"]["env"][RETIRED_AGENT_ENV] = "parent"
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert RETIRED_AGENT_ENV not in out["spec"]["apptainer"]["env"]
 
@@ -689,7 +839,9 @@ def test_derive_sets_twin_parent_env_to_parent():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["apptainer"]["env"][TWIN_PARENT_ENV] == "parent"
 
@@ -698,7 +850,9 @@ def test_derive_drops_inherited_sac_name_env():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert "SAC_NAME" not in out["spec"]["apptainer"]["env"]
 
@@ -707,7 +861,9 @@ def test_derive_inherits_other_env_verbatim():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["apptainer"]["env"]["FOO"] == "bar"
 
@@ -719,7 +875,9 @@ def test_derive_sets_session_continue():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["claude"]["session"] == "continue"
 
@@ -728,7 +886,9 @@ def test_derive_clears_resume_id_for_host_resolution():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["claude"]["resume_id"] == ""
 
@@ -737,7 +897,9 @@ def test_derive_ephemeral_sets_restart_never():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["restart"]["policy"] == "never"
 
@@ -746,7 +908,9 @@ def test_derive_persist_sets_restart_always():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=True)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=True
+    )
     # Assert
     assert out["spec"]["restart"]["policy"] == "always"
 
@@ -755,7 +919,9 @@ def test_derive_sets_fresh_a2a_port_auto():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["a2a"]["port"] == "auto"
 
@@ -764,7 +930,9 @@ def test_derive_drops_telegrammer_channel():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["claude"]["channels"] == ["server:sac"]
 
@@ -790,7 +958,9 @@ def test_derive_preserves_container_workdir_for_host_bind_handoff():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["workdir"] == "/home/agent/proj/x"
 
@@ -799,7 +969,9 @@ def test_derive_inherits_image_verbatim():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert out["spec"]["apptainer"]["image"] == "/x.sif"
 
@@ -808,7 +980,9 @@ def test_derive_sets_role_label_when_given():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="t", parent_name="parent", persist=False, role="writer")
+    out = derive_twin_spec(
+        doc, twin_name="t", parent_name="parent", persist=False, role="writer"
+    )
     # Assert
     assert out["metadata"]["labels"]["role"] == "writer"
 
@@ -817,7 +991,9 @@ def test_derive_sets_to_home_when_given():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="t", parent_name="parent", persist=False, to_home="/abs/th")
+    out = derive_twin_spec(
+        doc, twin_name="t", parent_name="parent", persist=False, to_home="/abs/th"
+    )
     # Assert
     assert out["spec"]["to_home"] == "/abs/th"
 
@@ -826,7 +1002,9 @@ def test_derive_startup_prompt_carries_ownership_rule():
     # Arrange
     doc = _parent_doc()
     # Act
-    out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
+    out = derive_twin_spec(
+        doc, twin_name="parent-twin", parent_name="parent", persist=False
+    )
     # Assert
     assert "assignee=parent" in out["spec"]["startup_prompts"][0]
 
@@ -878,27 +1056,29 @@ def _write_parent_spec(agents_dir: Path, name: str) -> None:
     spec_dir = agents_dir / name
     spec_dir.mkdir(parents=True, exist_ok=True)
     (spec_dir / "spec.yaml").write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        # ${HOSTNAME} is the validator-documented portable-fixture form:
-        # 'host: local' is BANNED (operator directive 2026-07-10) and a
-        # hardcoded hostname would break on any other machine (incl. CI).
-        "  host: ${HOSTNAME}\n"
-        "  workdir: /home/agent/proj/x\n"
-        "  apptainer:\n"
-        "    image: /x.sif\n"
-        "    binds: []\n"
-        "  claude:\n"
-        "    model: haiku\n"
-        "  health:\n"
-        "    enabled: true\n"
-        "    interval: 30\n"
-        "    method: sdk-alive\n"
-        "  restart:\n"
-        "    policy: never\n"
-        "    max_retries: 0\n"),
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            # ${HOSTNAME} is the validator-documented portable-fixture form:
+            # 'host: local' is BANNED (operator directive 2026-07-10) and a
+            # hardcoded hostname would break on any other machine (incl. CI).
+            "  host: ${HOSTNAME}\n"
+            "  workdir: /home/agent/proj/x\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
+            "  claude:\n"
+            "    model: haiku\n"
+            "  health:\n"
+            "    enabled: true\n"
+            "    interval: 30\n"
+            "    method: sdk-alive\n"
+            "  restart:\n"
+            "    policy: never\n"
+            "    max_retries: 0\n"
+        ),
         encoding="utf-8",
     )
 
@@ -981,7 +1161,9 @@ def test_seed_returns_true_for_twin(_twin_env):
     # Arrange
     state_root, _ = _twin_env
     # Act
-    seeded = seed_twin_from_parent(_twin_cfg("twinp", "twinp-twin"), _RuntimeStub(state_root))
+    seeded = seed_twin_from_parent(
+        _twin_cfg("twinp", "twinp-twin"), _RuntimeStub(state_root)
+    )
     # Assert
     assert seeded is True
 
@@ -1018,7 +1200,9 @@ def test_seed_noop_when_twin_already_booted(_twin_env):
     own = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     write_session_id(state_root / "twinp-twin", own)
     # Act
-    seeded = seed_twin_from_parent(_twin_cfg("twinp", "twinp-twin"), _RuntimeStub(state_root))
+    seeded = seed_twin_from_parent(
+        _twin_cfg("twinp", "twinp-twin"), _RuntimeStub(state_root)
+    )
     # Assert
     assert seeded is False
 

@@ -5,9 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from scitex_agent_container._listen.tokens import (
+    default_owner_token_path,
     default_token_path,
+    ensure_owner_token,
     ensure_token,
+    read_owner_token,
     read_token,
 )
 
@@ -77,3 +82,38 @@ def test_read_token_strips_whitespace(tmp_path: Path):
     result = read_token(p)
     # Assert
     assert result == "abc"
+
+
+def test_owner_token_uses_non_home_runtime_path(tmp_path: Path):
+    # Arrange
+    expected = tmp_path / "scitex-agent-container" / "fork-owner-host-a.token"
+    # Act
+    path = default_owner_token_path(runtime_dir=tmp_path, hostname="host-a")
+    # Assert
+    assert path == expected
+
+
+def test_owner_token_is_exact_0600_and_round_trips(tmp_path: Path):
+    # Arrange
+    path = tmp_path / "private" / "fork-owner.token"
+
+    # Act
+    created = ensure_owner_token(path)
+
+    # Assert
+    assert (read_owner_token(path), path.stat().st_mode & 0o777) == (created, 0o600)
+
+
+def test_owner_token_reader_refuses_symlink(tmp_path: Path):
+    # Arrange
+    source = tmp_path / "source"
+    source.write_text("not-secret", encoding="utf-8")
+    source.chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(source)
+
+    # Act
+    action = pytest.raises(OSError)
+    # Assert
+    with action:
+        read_owner_token(alias)

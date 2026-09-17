@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from scitex_agent_container._lifecycle._twin import _visible_history_digest
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
@@ -42,12 +43,16 @@ def test_old_owner_cleanup_cannot_remove_new_gateway_projection(tmp_path):
     # Assert: descriptor and ready marker still agree on the live new owner.
     descriptor = json.loads((tmp_path / owner.GATEWAY_FILE).read_text())
     ready = json.loads((tmp_path / owner.READY_FILE).read_text())
-    assert descriptor == ready == {
-        "generation": "new-generation",
-        "owner_pid": descriptor["owner_pid"],
-        "pid": 202,
-        "port": 40789,
-    }
+    assert (
+        descriptor
+        == ready
+        == {
+            "generation": "new-generation",
+            "owner_pid": descriptor["owner_pid"],
+            "pid": 202,
+            "port": 40789,
+        }
+    )
 
 
 def test_current_owner_cleanup_removes_its_gateway_projection(tmp_path):
@@ -106,6 +111,11 @@ def test_gateway_owner_consumes_seed_before_tui_and_deletes_after_import(tmp_pat
         "cwd": "/work/repo",
         "messages": [{"role": "user", "text": "parent nonce"}],
     }
+    seed.update(
+        parent_name="parent",
+        parent_engine="engine-a",
+        visible_history_sha256=_visible_history_digest(seed["messages"]),
+    )
     seed_path = tmp_path / "hermes-fork-seed.json"
     seed_path.write_text(json.dumps(seed), encoding="utf-8")
     seed_path.chmod(0o600)
@@ -145,6 +155,11 @@ def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
         "cwd": "/work/repo",
         "messages": [{"role": "user", "text": "parent nonce"}],
     }
+    seed.update(
+        parent_name="parent",
+        parent_engine="engine-a",
+        visible_history_sha256=_visible_history_digest(seed["messages"]),
+    )
     seed_path = tmp_path / "hermes-fork-seed.json"
     seed_path.write_text(json.dumps(seed), encoding="utf-8")
     seed_path.chmod(0o600)
@@ -495,7 +510,12 @@ def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):
 
     # Assert
     supervision = (tmp_path / owner.SUPERVISION_FILE).read_text(encoding="utf-8")
-    assert (result, len(spawned), spawned[0].terminated, "identity mismatch" in supervision) == (
+    assert (
+        result,
+        len(spawned),
+        spawned[0].terminated,
+        "identity mismatch" in supervision,
+    ) == (
         70,
         1,
         False,
