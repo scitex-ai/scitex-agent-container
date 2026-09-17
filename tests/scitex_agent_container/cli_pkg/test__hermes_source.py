@@ -44,6 +44,42 @@ def test_explicit_source_must_contain_pinned_commit(tmp_path):
             os.environ[source.HERMES_SOURCE_ENV] = saved
 
 
+def test_staged_heartbeat_lifecycle_events_ignore_disabled_display_mode(tmp_path):
+    # Arrange — these are the exact two gates in the pinned Hermes source.
+    staged = tmp_path / "hermes-agent-src"
+    module = staged / "tui_gateway" / "tool_progress.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        """\
+def _emit_tool_lifecycle(event, sid, name, args, payload):
+    if not _connector_tool_lifecycle(name, args):
+        return _emit(event, sid, payload)
+    return _emit(event, sid, payload)
+
+def start(sid, name, args, payload):
+    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
+            or _connector_tool_lifecycle(name, args)):
+        _emit_tool_lifecycle("tool.start", sid, name, args, payload)
+
+def complete(sid, name, args, payload):
+    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
+            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):
+        _emit_tool_lifecycle("tool.complete", sid, name, args, payload)
+""",
+        encoding="utf-8",
+    )
+
+    # Act
+    source._patch_hermes_lifecycle_instrumentation(staged)
+    patched = module.read_text(encoding="utf-8")
+
+    # Assert — display.tool_progress=off and /focus may hide UI chrome, but
+    # heartbeat instrumentation must still receive every lifecycle event.
+    assert "_tool_progress_enabled(sid) or" not in patched
+    assert patched.count("SAC heartbeat instrumentation is display-independent") == 2
+    assert "SAC heartbeat instrumentation replay-only" in patched
+
+
 def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):
     # Arrange
     repository = tmp_path / "repository"

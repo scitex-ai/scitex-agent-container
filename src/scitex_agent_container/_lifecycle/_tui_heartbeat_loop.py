@@ -218,25 +218,15 @@ def _beat_one(
     try:
         config = agent.get("config")
         if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
-            if hermes_observe_fn is None:
-                from ..runtimes._hermes_heartbeat_projection import (
-                    read_hermes_heartbeat_projection as hermes_observe_fn,
-                )
-            from .._runners._session_state import read_heartbeat
-            from ..runtimes._hermes_heartbeat import WRITER_HERMES_SESSION_EVENTS
+            from ..runtimes._hermes_heartbeat_projection import (
+                promote_hermes_heartbeat_projection,
+            )
 
-            observed = hermes_observe_fn(
+            promote_hermes_heartbeat_projection(
                 Path(state_dir),
                 name,
-                previous=read_heartbeat(Path(state_dir)),
-            )
-            write_fn(
-                Path(state_dir),
-                pid=0,
-                state=observed.state,
-                ts=observed.activity_at,
-                writer=WRITER_HERMES_SESSION_EVENTS,
-                authoritative_fields=observed.heartbeat_fields(),
+                write_fn=write_fn,
+                observe_fn=hermes_observe_fn,
             )
             return True
         # ``writer`` marks this as OBSERVER testimony (host-side proxy

@@ -255,6 +255,44 @@ def _state_from_row(row: dict) -> str:
     )
 
 
+def _assert_live_hermes_observation(
+    state_dir: Path,
+    agent_name: str,
+    observed: HermesHeartbeatObservation,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> None:
+    """Fence promotion against both gateway and authoritative live-session identity."""
+    state_dir = Path(state_dir)
+    identity = _gateway_identity(state_dir)
+    if identity.generation != observed.gateway_generation:
+        raise HermesTuiRpcError(
+            "Hermes gateway incarnation changed before heartbeat publication"
+        )
+    try:
+        with _connect(identity.url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            row = _select_session_row(
+                listing.get("sessions"), f"sac:{agent_name}"
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes live-session fence at {identity.url.split('?')[0]} failed: {exc}"
+        ) from exc
+    final_identity = _gateway_identity(state_dir)
+    if final_identity != identity:
+        raise HermesTuiRpcError(
+            "Hermes gateway incarnation changed during live-session fence"
+        )
+    if str(row.get("id") or "") != observed.session_id:
+        raise HermesTuiRpcError(
+            "Hermes heartbeat projection is not the authoritative live session"
+        )
+
+
 def observe_hermes_heartbeat(
     state_dir: Path,
     agent_name: str,
