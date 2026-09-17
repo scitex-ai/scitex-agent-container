@@ -1,0 +1,111 @@
+apiVersion: scitex-agent-container/v3
+kind: Agent
+
+spec:
+  runtime: tui
+  harness: hermes
+  host: ${HOSTNAME}
+  workdir: /home/agent/work
+  engine: command-code-deepseek-v4.1-flash
+
+  available_engines:
+    command-code-deepseek-v4.1-flash:
+      model: deepseek/deepseek-v4.1-flash
+      provider:
+        base_url: https://api.commandcode.ai/provider/v1
+        auth_token_env: COMMAND_CODE_API_KEY
+      max_context_tokens: 1048576
+      timeouts:
+        upstream_deadline_seconds: 1800
+        client_abandonment_seconds: 1860
+
+  available_harnesses:
+    hermes:
+      session:
+        mode: fresh
+        max_age_minutes: null
+      compression:
+        threshold: 0.8
+        target_ratio: 0.2
+        tail_mode: lean
+        in_place: true
+      background_review: false
+      run_budget_seconds: 3600
+
+  python-venv: ''
+  startup_commands: []
+  startup_prompts: []
+  listen: []
+  extensions: {}
+  mcp_servers: {}
+  user: ''
+  to_home: ./to_home
+
+  health:
+    enabled: false
+    interval: 30
+    timeout: 5
+    method: sdk-alive
+
+  restart:
+    policy: never
+    max_retries: 3
+    backoff:
+      initial: 30
+      max: 300
+      multiplier: 2
+    prune_on_stop: false
+
+  autonomous:
+    enabled: false
+    drive_until: DONE
+    max_turns: 50
+    idle_kick_after_s: 120
+    kick_text: Continue. Print DONE when finished.
+
+  apptainer:
+    image: ''
+    binds: []
+    env: {}
+    raw_args: []
+    post: ''
+    environment: {}
+    def_file: ''
+    nv: false
+    rocm: false
+    overlay: ''
+    overlay_size: ''
+    overlay_create_if_missing: true
+    tmpfs_size: 2G
+    relaxed: false
+    fakeroot: false
+    jail: false
+    nested_build: false
+
+  hooks:
+    pre_start: []
+    post_start: []
+    pre_stop: []
+    post_stop: []
+    on_compact: []
+    on_restart: []
+    on_diff: []
+
+  a2a:
+    host: 127.0.0.1
+    port: auto
+
+  comms:
+    channels: []
+    outbound:
+      siblings: allow
+      parent: allow
+    inbound:
+      siblings: allow
+      parent: allow
+    a2a:
+      listen: true
+
+  lineage:
+    group: ''
+    may_spawn: true

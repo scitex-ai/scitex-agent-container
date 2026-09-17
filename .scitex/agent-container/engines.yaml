@@ -78,3 +78,17 @@ engines:
     # HARNESS axis — the coupling the harness/engine split removes. Stating
     # none means "no opinion", so the spec's own `harness:` wins and this ONE
     # entry serves a Claude-Code agent and a Codex agent unchanged.
+
+  # Command Code's OpenAI-compatible provider API. This is manual-only: the
+  # fleet default remains unset, and there is no automatic provider fallback.
+  # The API key is resolved only from the approved host secret name; its value
+  # never appears in this file or the rendered Hermes profile.
+  command-code-deepseek-v4.1-flash:
+    model: deepseek/deepseek-v4.1-flash
+    provider:
+      base_url: https://api.commandcode.ai/provider/v1
+      auth_token_env: COMMAND_CODE_API_KEY
+    max_context_tokens: 1048576
+    timeouts:
+      upstream_deadline_seconds: 1800
+      client_abandonment_seconds: 1860

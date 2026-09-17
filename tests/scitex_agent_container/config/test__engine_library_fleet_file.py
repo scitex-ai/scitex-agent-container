@@ -115,12 +115,12 @@ def test_the_tracked_library_parses_without_errors(library) -> None:
     assert errors == ()
 
 
-def test_the_tracked_library_declares_the_gateway_engine(library) -> None:
-    # Arrange — the entry the sweep used to copy into every spec.
+def test_the_tracked_library_declares_the_manual_engines(library) -> None:
+    # Arrange — global manual choices, with no fleet default.
     # Act
     keys = sorted(library.engines)
     # Assert
-    assert keys == [FLEET_QWEN_KEY]
+    assert keys == ["command-code-deepseek-v4.1-flash", FLEET_QWEN_KEY]
 
 
 # ---------------------------------------------------------------------------

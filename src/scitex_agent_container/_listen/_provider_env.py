@@ -31,6 +31,11 @@ from ..runtimes._secret_pool import PoolRead, read_pool
 _STATIC_AUTHORIZED_PROVIDER_SECRETS = frozenset(
     {
         (
+            "command-code-deepseek-v4.1-flash",
+            "https://api.commandcode.ai/provider/v1",
+            "COMMAND_CODE_API_KEY",
+        ),
+        (
             "opencode-go-deepseek-v4.1-flash",
             "https://opencode.ai/zen/go/v1",
             "OPENCODE_GO_API_KEY",
