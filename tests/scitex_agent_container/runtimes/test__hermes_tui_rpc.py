@@ -21,11 +21,13 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
     _select_session,
     active_sessions,
+    branch_visible_history,
     clear_heartbeat,
     clear_heartbeat_for_session,
     compress_session,
     execute_slash_command,
     gateway_detailed_health,
+    import_fork_seed,
     observe_turn_activity,
     observe_turn_outcome,
     observe_turn_progress,
@@ -1624,3 +1626,208 @@ def test_accepted_submit_closes_with_post_submit_persisted_identity(tmp_path):
         receipt.visibility,
         [request["method"] for request in socket.sent].count("prompt.submit"),
     ) == ("steered", "session.search", 1)
+
+
+class _ForkSocket(_Socket):
+    def recv(self):
+        request = self.sent[-1]
+        method = request["method"]
+        if method == "session.active_list":
+            result = {
+                "sessions": [
+                    {
+                        "id": "parent-live",
+                        "title": "sac:scitex-hub-gui:engine-a",
+                        "session_key": "parent-stored",
+                    }
+                ]
+            }
+        elif method == "session.branch":
+            result = {
+                "session_id": "branch-live",
+                "stored_session_id": "branch-stored",
+                "title": "sac:disposable-fork:engine-a",
+                "parent": "parent-stored",
+                "message_count": 2,
+                "messages": [
+                    {"role": "user", "text": "nonce-parent-context"},
+                    {"role": "assistant", "text": "context retained"},
+                ],
+                "info": {"cwd": "/work/scitex-hub"},
+            }
+        elif method == "session.close":
+            result = {"closed": True}
+        elif method == "session.delete":
+            result = {"deleted": "branch-stored"}
+        else:  # pragma: no cover - a new RPC is itself a test failure
+            raise AssertionError(method)
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def test_native_fork_branches_once_and_closes_only_temporary_branch(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ForkSocket()
+    # Act
+    seed = branch_visible_history(
+        tmp_path,
+        parent_session_key="sac:scitex-hub-gui:engine-a",
+        child_session_key="sac:disposable-fork:engine-a",
+        child_cwd="/work/scitex-hub",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    # Assert
+    assert (
+        [request["method"] for request in socket.sent],
+        socket.sent[1]["params"],
+        socket.sent[2]["params"],
+        socket.sent[3]["params"],
+        seed,
+    ) == (
+        ["session.active_list", "session.branch", "session.close", "session.delete"],
+        {
+            "session_id": "parent-live",
+            "name": "sac:disposable-fork:engine-a",
+        },
+        {"session_id": "branch-live"},
+        {"session_id": "branch-stored"},
+        {
+            "version": 1,
+            "title": "sac:disposable-fork:engine-a",
+            "parent_session_id": "parent-stored",
+            "cwd": "/work/scitex-hub",
+            "messages": [
+                {"role": "user", "text": "nonce-parent-context"},
+                {"role": "assistant", "text": "context retained"},
+            ],
+        },
+    )
+
+
+class _ImportForkSocket(_Socket):
+    def recv(self):
+        request = self.sent[-1]
+        method = request["method"]
+        if method == "session.list":
+            result = {"sessions": []}
+        elif method == "session.create":
+            result = {
+                "session_id": "seed-parent-live",
+                "stored_session_id": "seed-parent-stored",
+                "message_count": 2,
+                "messages": request["params"]["messages"],
+                "info": {"cwd": request["params"]["cwd"]},
+            }
+        elif method == "session.branch":
+            result = {
+                "session_id": "child-live",
+                "stored_session_id": "child-stored",
+                "title": "sac:disposable-fork:engine-a",
+                "parent": "seed-parent-stored",
+                "message_count": 2,
+                "messages": [
+                    {"role": "user", "text": "nonce-parent-context"},
+                    {"role": "assistant", "text": "context retained"},
+                ],
+                "info": {"cwd": "/work/scitex-hub"},
+            }
+        elif method == "session.close":
+            result = {"closed": True}
+        else:  # pragma: no cover - a new RPC is itself a test failure
+            raise AssertionError(method)
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def test_child_import_receives_identical_visible_history_and_native_lineage(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ImportForkSocket()
+    seed = {
+        "version": 1,
+        "title": "sac:disposable-fork:engine-a",
+        "parent_session_id": "parent-stored",
+        "cwd": "/work/scitex-hub",
+        "messages": [
+            {"role": "user", "text": "nonce-parent-context"},
+            {"role": "assistant", "text": "context retained"},
+        ],
+    }
+    # Act
+    stored = import_fork_seed(
+        tmp_path, seed, connect_fn=lambda *args, **kwargs: socket
+    )
+    # Assert
+    methods = [request["method"] for request in socket.sent]
+    create = next(request for request in socket.sent if request["method"] == "session.create")
+    branch = next(request for request in socket.sent if request["method"] == "session.branch")
+    assert (stored, methods, create["params"], branch["params"]) == (
+        "child-stored",
+        [
+            "session.list",
+            "session.list",
+            "session.create",
+            "session.branch",
+            "session.close",
+            "session.close",
+        ],
+        {
+            "messages": seed["messages"],
+            "title": "sac:disposable-fork:engine-a [fork seed:parent-stored]",
+            "cwd": "/work/scitex-hub",
+            "hidden": True,
+        },
+        {
+            "session_id": "seed-parent-live",
+            "name": "sac:disposable-fork:engine-a",
+        },
+    )
+
+
+class _ExistingForkSocket(_Socket):
+    def recv(self):
+        request = self.sent[-1]
+        method = request["method"]
+        if method == "session.list":
+            result = {
+                "sessions": [
+                    {
+                        "id": "child-stored",
+                        "title": "sac:child:engine-a",
+                        "message_count": 1,
+                    }
+                ]
+            }
+        elif method == "session.resume":
+            result = {
+                "session_id": "child-live",
+                "session_key": "child-stored",
+                "message_count": 1,
+                "messages": [{"role": "user", "text": "parent nonce"}],
+            }
+        elif method == "session.close":
+            result = {"closed": True}
+        else:  # pragma: no cover
+            raise AssertionError(method)
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def test_retry_verifies_existing_fork_without_creating_or_branching_again(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ExistingForkSocket()
+    seed = {
+        "version": 1,
+        "title": "sac:child:engine-a",
+        "parent_session_id": "parent-stored",
+        "cwd": "/work/repo",
+        "messages": [{"role": "user", "text": "parent nonce"}],
+    }
+    # Act
+    stored = import_fork_seed(
+        tmp_path, seed, connect_fn=lambda *args, **kwargs: socket
+    )
+    # Assert
+    assert (
+        stored,
+        [request["method"] for request in socket.sent],
+    ) == ("child-stored", ["session.list", "session.resume", "session.close"])

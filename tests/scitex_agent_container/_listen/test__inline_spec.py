@@ -18,7 +18,10 @@ import pytest
 import yaml
 
 from scitex_agent_container._lifecycle._twin import CARDS_AGENT_ENV, TWIN_PARENT_ENV
-from scitex_agent_container._listen._inline_spec import materialize_inline_spec
+from scitex_agent_container._listen._inline_spec import (
+    InlineSpecHandoff,
+    materialize_inline_spec,
+)
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 
@@ -89,6 +92,18 @@ def _twin_spec(*, workdir: str | Path, overlay: Path, binds: list[str] | None = 
         doc["spec"].pop(legacy, None)
     doc["spec"]["comms"]["channels"] = ["server:sac", "server:scitex-cards"]
     return doc
+
+
+def test_failed_start_handoff_removes_owner_only_fork_seed(tmp_path: Path) -> None:
+    # Arrange
+    seed = tmp_path / "runtime" / "child" / "hermes-fork-seed.json"
+    seed.parent.mkdir(parents=True)
+    seed.write_text('{"version":1}', encoding="utf-8")
+    handoff = InlineSpecHandoff(seed_path=seed)
+    # Act
+    handoff.rollback()
+    # Assert
+    assert not seed.exists()
 
 
 def test_materialized_twin_creates_worktree_on_host(home_root: Path) -> None:

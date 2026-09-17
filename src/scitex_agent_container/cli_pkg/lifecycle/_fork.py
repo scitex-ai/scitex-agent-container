@@ -183,9 +183,9 @@ def fork(
           --task "draft the results section"
 
     Identity contract (enforced by the boot-kick + the fork skill): the
-    fork AUTHORS scitex-todo writes under its own name, but card OWNERSHIP
+    fork AUTHORS scitex-cards writes under its own name, but card OWNERSHIP
     stays with PARENT — the fork passes assignee=$SAC_FORK_PARENT on every
-    card write. scitex-todo cannot default owner=parent from env, so this
+    card write. scitex-cards cannot default owner=parent from env, so this
     is a hard rule, not an env guarantee.
     """
     from ..._lifecycle._fork import ForkSeedError, prepare_fork_spawn

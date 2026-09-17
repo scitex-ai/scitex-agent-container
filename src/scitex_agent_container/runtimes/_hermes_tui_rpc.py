@@ -216,6 +216,296 @@ def _connect(url: str, timeout_s: float, connect_fn: Any | None) -> Any:
     return connect_fn(url, open_timeout=timeout_s, close_timeout=1)
 
 
+def branch_visible_history(
+    state_dir: Path,
+    *,
+    parent_session_key: str,
+    child_session_key: str,
+    child_cwd: str,
+    timeout_s: float = 30.0,
+    connect_fn: Any | None = None,
+) -> dict[str, Any]:
+    """Fork one live parent through Hermes and return a portable visible seed.
+
+    ``session.branch`` is the sole context-copy operation.  Its live branch and
+    durable row are temporary extraction artifacts: close/delete exactly those
+    returned identities before handing the transcript to the child profile.
+    """
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            parent = _select_session_row(
+                listing.get("sessions"), parent_session_key
+            )
+            branch = _rpc(
+                socket,
+                2,
+                "session.branch",
+                {"session_id": str(parent["id"]), "name": child_session_key},
+            )
+            live_id = str(branch.get("session_id") or "").strip()
+            stored_id = str(branch.get("stored_session_id") or "").strip()
+            cleanup_errors: list[str] = []
+            try:
+                messages = branch.get("messages")
+                count = branch.get("message_count")
+                parent_id = str(branch.get("parent") or "").strip()
+                if (
+                    not live_id
+                    or not stored_id
+                    or branch.get("title") != child_session_key
+                    or not parent_id
+                    or not isinstance(messages, list)
+                    or not all(isinstance(message, dict) for message in messages)
+                    or type(count) is not int
+                    or count != len(messages)
+                    or count < 1
+                ):
+                    raise HermesTuiRpcError(
+                        "Hermes session.branch returned malformed fork history"
+                    )
+                seed = {
+                    "version": 1,
+                    "title": child_session_key,
+                    "parent_session_id": parent_id,
+                    "cwd": child_cwd,
+                    "messages": messages,
+                }
+            finally:
+                if live_id:
+                    try:
+                        closed = _rpc(
+                            socket, 3, "session.close", {"session_id": live_id}
+                        )
+                        if closed.get("closed") is not True:
+                            cleanup_errors.append("temporary live branch did not close")
+                    except Exception:  # cleanup continues with the durable row
+                        cleanup_errors.append("temporary live branch close failed")
+                if stored_id:
+                    try:
+                        deleted = _rpc(
+                            socket, 4, "session.delete", {"session_id": stored_id}
+                        )
+                        if deleted.get("deleted") != stored_id:
+                            cleanup_errors.append("temporary stored branch did not delete")
+                    except Exception:
+                        cleanup_errors.append("temporary stored branch delete failed")
+            if cleanup_errors:
+                raise HermesTuiRpcError(
+                    "Hermes fork cleanup failed: " + "; ".join(cleanup_errors)
+                )
+            return seed
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+
+
+def _visible_text_projection(messages: object) -> list[tuple[str, str]]:
+    if not isinstance(messages, list):
+        return []
+    projected: list[tuple[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "")
+        content = (
+            message.get("text")
+            if message.get("content") is None
+            else message.get("content")
+        )
+        if role in {"user", "assistant", "system"} and isinstance(content, str):
+            projected.append((role, content))
+    return projected
+
+
+def _one_stored_session(result: dict, title: str) -> dict | None:
+    rows = result.get("sessions")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise HermesTuiRpcError("Hermes session.list returned malformed result")
+    if len(rows) > 1:
+        raise HermesTuiRpcError(
+            f"Hermes session title {title!r} is ambiguous ({len(rows)} matches)"
+        )
+    return rows[0] if rows else None
+
+
+def import_fork_seed(
+    state_dir: Path,
+    seed: dict[str, Any],
+    *,
+    timeout_s: float = 30.0,
+    connect_fn: Any | None = None,
+) -> str:
+    """Import a portable fork seed through only native Hermes session RPCs.
+
+    A cross-profile ``parent_session_id`` cannot be passed directly to
+    ``session.create``: pinned Hermes enforces a foreign key to a row in the
+    *child* state.db.  Create a hidden local seed parent from the exact visible
+    history, then ``session.branch`` it to the requested child title.  This
+    preserves native lineage without copying a database or weakening its FK.
+    """
+    if not isinstance(seed, dict) or seed.get("version") != 1:
+        raise HermesTuiRpcError("Hermes fork seed has an unsupported format")
+    title = str(seed.get("title") or "").strip()
+    parent_id = str(seed.get("parent_session_id") or "").strip()
+    cwd = str(seed.get("cwd") or "").strip()
+    messages = seed.get("messages")
+    if (
+        not title
+        or not parent_id
+        or not cwd
+        or not isinstance(messages, list)
+        or not messages
+        or not all(isinstance(message, dict) for message in messages)
+    ):
+        raise HermesTuiRpcError("Hermes fork seed is incomplete")
+    seed_title = f"{title} [fork seed:{parent_id}]"
+    expected_projection = _visible_text_projection(messages)
+    if len(expected_projection) != len(messages):
+        raise HermesTuiRpcError("Hermes fork seed contains a non-visible message")
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            existing = _one_stored_session(
+                _rpc(socket, 1, "session.list", {"title": title}), title
+            )
+            if existing is not None:
+                if existing.get("message_count") != len(messages):
+                    raise HermesTuiRpcError(
+                        "existing Hermes fork has a different visible history size"
+                    )
+                stored_id = str(existing.get("id") or "").strip()
+                if not stored_id:
+                    raise HermesTuiRpcError("existing Hermes fork has no stored id")
+                resumed = _rpc(
+                    socket, 2, "session.resume", {"session_id": stored_id}
+                )
+                live_id = str(resumed.get("session_id") or "").strip()
+                if (
+                    not live_id
+                    or resumed.get("message_count") != len(messages)
+                    or _visible_text_projection(resumed.get("messages"))
+                    != expected_projection
+                ):
+                    raise HermesTuiRpcError(
+                        "existing Hermes fork does not match the pending seed"
+                    )
+                closed = _rpc(
+                    socket, 3, "session.close", {"session_id": live_id}
+                )
+                if closed.get("closed") is not True:
+                    raise HermesTuiRpcError(
+                        "existing Hermes fork verification session did not close"
+                    )
+                return stored_id
+
+            seed_parent = _one_stored_session(
+                _rpc(socket, 2, "session.list", {"title": seed_title}), seed_title
+            )
+            if seed_parent is None:
+                imported = _rpc(
+                    socket,
+                    3,
+                    "session.create",
+                    {
+                        "messages": messages,
+                        "title": seed_title,
+                        "cwd": cwd,
+                        "hidden": True,
+                    },
+                )
+            else:
+                imported = _rpc(
+                    socket,
+                    3,
+                    "session.resume",
+                    {"session_id": str(seed_parent.get("id") or "")},
+                )
+            seed_live_id = str(imported.get("session_id") or "").strip()
+            seed_stored_id = str(
+                imported.get("stored_session_id")
+                or imported.get("session_key")
+                or (seed_parent.get("id") if seed_parent else "")
+            ).strip()
+            if (
+                not seed_live_id
+                or not seed_stored_id
+                or imported.get("message_count") != len(messages)
+                or _visible_text_projection(imported.get("messages"))
+                != expected_projection
+            ):
+                raise HermesTuiRpcError(
+                    "Hermes session.create did not preserve the fork seed history"
+                )
+
+            branch: dict[str, Any] | None = None
+            branch_live_id = ""
+            cleanup_errors: list[str] = []
+            try:
+                branch = _rpc(
+                    socket,
+                    4,
+                    "session.branch",
+                    {"session_id": seed_live_id, "name": title},
+                )
+                branch_live_id = str(branch.get("session_id") or "").strip()
+                child_stored_id = str(branch.get("stored_session_id") or "").strip()
+                if (
+                    not branch_live_id
+                    or not child_stored_id
+                    or branch.get("title") != title
+                    or branch.get("parent") != seed_stored_id
+                    or branch.get("message_count") != len(messages)
+                    or _visible_text_projection(branch.get("messages"))
+                    != expected_projection
+                ):
+                    raise HermesTuiRpcError(
+                        "Hermes session.branch did not preserve the imported history"
+                    )
+            finally:
+                request_id = 5
+                if branch_live_id:
+                    try:
+                        closed = _rpc(
+                            socket,
+                            request_id,
+                            "session.close",
+                            {"session_id": branch_live_id},
+                        )
+                        if closed.get("closed") is not True:
+                            cleanup_errors.append("imported child session did not close")
+                    except Exception:
+                        cleanup_errors.append("imported child session close failed")
+                    request_id += 1
+                if seed_live_id:
+                    try:
+                        closed = _rpc(
+                            socket,
+                            request_id,
+                            "session.close",
+                            {"session_id": seed_live_id},
+                        )
+                        if closed.get("closed") is not True:
+                            cleanup_errors.append("seed parent session did not close")
+                    except Exception:
+                        cleanup_errors.append("seed parent session close failed")
+            if cleanup_errors:
+                raise HermesTuiRpcError(
+                    "Hermes fork import cleanup failed: " + "; ".join(cleanup_errors)
+                )
+            return child_stored_id
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+
+
 def active_sessions(
     state_dir: Path,
     *,
@@ -1175,8 +1465,10 @@ __all__ = [
     "HermesVisibleTurnReceipt",
     "_stored_delivery_visibility",
     "active_sessions",
+    "branch_visible_history",
     "compress_session",
     "gateway_detailed_health",
+    "import_fork_seed",
     "observe_turn_activity",
     "observe_pending_clarification",
     "clear_heartbeat_for_session",
