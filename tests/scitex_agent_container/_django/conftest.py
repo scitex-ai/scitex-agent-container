@@ -82,7 +82,6 @@ STATUS: dict[str, Any] = {
 # /status for delta returns a TYPED 400 (spec invalid), not a body.
 SPEC_ERROR = {"error": "Config validation failed for delta/spec.yaml",
               "kind": "spec_resolution_failed", "name": "delta"}
-
 # SSE tail for alpha (follow=false). Carries a secret to prove redaction.
 TAIL_ALPHA = (
     'data: {"line_no": 1, "record": {"type": "user", "text": "start the job"}}\n\n'
@@ -94,6 +93,10 @@ TAIL_ALPHA = (
 
 class _Listener(BaseHTTPRequestHandler):
     """Serves the SAC control-plane contract with bearer auth (real HTTP)."""
+
+    # Set to a list to serve a different fleet (e.g. [] for a genuinely empty
+    # scope). None serves the module-level AGENTS.
+    agents_override: list[dict[str, Any]] | None = None
 
     def log_message(self, *args: Any) -> None:
         return  # silence request logging in tests
@@ -114,7 +117,8 @@ class _Listener(BaseHTTPRequestHandler):
             return
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/agents":
-            self._send(200, json.dumps({"agents": AGENTS}).encode())
+            rows = AGENTS if self.agents_override is None else self.agents_override
+            self._send(200, json.dumps({"agents": rows}).encode())
         elif path.endswith("/status"):
             name = path.rsplit("/status", 1)[0].rsplit("/", 1)[-1]
             if name == "delta":

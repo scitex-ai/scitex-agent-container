@@ -64,8 +64,18 @@ def test_fleet_page_shows_error_state_when_unreachable(client, unreachable_liste
     # Arrange
     # Act
     html = client.get("/").content.decode()
-    # Assert
-    assert "could not reach the SAC host control plane" in html
+    # Assert: the outage is named as an outage (the old blended banner text is
+    # gone on purpose — see _fleet_states; a configured-but-silent listener is
+    # `unavailable`, which is a different fix from an unconfigured deployment).
+    assert "did not answer" in html and 'data-fleet-state="unavailable"' in html
+
+
+def test_fleet_page_distinguishes_unavailable_from_setup(client, unreachable_listener):
+    # Arrange / Act: configured, listener silent.
+    html = client.get("/").content.decode()
+    # Assert: not confusable with the setup-required state.
+    assert 'data-fleet-state="unavailable"' in html
+    assert 'data-fleet-state="setup-required"' not in html
 
 
 # ── lifecycle control + audit ─────────────────────────────────────────────────
@@ -231,8 +241,10 @@ def test_fleet_labels_action_column(client, loopback, env_save_restore):
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
     html = client.get("/").content.decode()
-    # Assert
-    assert '<th class="row-actions">Actions</th>' in html
+    # Assert: the column keeps an accessible name for assistive tech. It moved
+    # from a visible "Actions" header to an sr-only label so the header row stops
+    # shouting a label the buttons already carry.
+    assert 'class="row-actions"' in html and ">Actions</span>" in html
 
 
 # ── dual-mode: mounted in the Hub shell (global_base) not the standalone shell ─

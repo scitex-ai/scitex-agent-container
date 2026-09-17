@@ -119,6 +119,13 @@
 .btn.bad { color: var(--agents-bad); border-color: color-mix(in srgb, var(--agents-bad) 45%, var(--agents-border)); }
 
 .agents-empty { text-align: center; color: var(--agents-dim); padding: 48px 0; font-size: 15px; }
+
+/* ── state surfaces ──────────────────────────────────────────────────────────
+   Each fleet state gets its own visual weight, because the fix an operator
+   should reach for differs: `unavailable` is an outage (retry / escalate),
+   `setup-required` is a deploy gap (configure it), `empty` is ordinary, and
+   `denied` is an access request. One blended banner sent people to the wrong
+   action, which is what this replaces. */
 .agents-bannor {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   border: 1px solid var(--agents-border); border-radius: 10px; padding: 12px 14px;
@@ -126,8 +133,39 @@
 }
 .agents-bannor.err { border-color: color-mix(in srgb, var(--agents-bad) 45%, var(--agents-border)); }
 .agents-bannor.err i { color: var(--agents-bad); }
+.agents-bannor.warn { border-color: color-mix(in srgb, var(--agents-warn) 45%, var(--agents-border)); }
+.agents-bannor.warn i { color: var(--agents-warn); }
 .agents-bannor small { color: var(--agents-dim); width: 100%; }
 .agents-bannor code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.diag { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Non-error states: same shell, calmer treatment — deliberately not the .err/
+   .warn banner, so `empty` and `denied` never read as failures. */
+.agents-notice {
+  border: 1px solid var(--agents-border); border-radius: 12px;
+  background: var(--agents-panel); padding: 28px 24px; text-align: center;
+}
+.agents-notice i { font-size: 22px; color: var(--agents-faint); }
+.agents-notice h2 { margin: 10px 0 8px; font-size: 16px; font-weight: 650; text-transform: none; letter-spacing: 0; }
+.agents-notice p { margin: 0 auto 14px; max-width: 52ch; color: var(--agents-dim); font-size: 13px; }
+.agents-notice.denied i { color: var(--agents-warn); }
+.agents-notice.denied h2 { color: var(--agents-warn); }
+.btn-retry { margin: 0; }
+
+/* Loading skeleton: shown only while no state has resolved, then superseded in
+   the same response (this surface is server-rendered). */
+.agents-skeleton { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.skel-row {
+  height: 42px; border-radius: 10px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--agents-text) 6%, transparent) 25%,
+    color-mix(in srgb, var(--agents-text) 11%, transparent) 37%,
+    color-mix(in srgb, var(--agents-text) 6%, transparent) 63%);
+  background-size: 400% 100%;
+  animation: agents-skel 1.4s ease infinite;
+}
+@keyframes agents-skel { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) { .skel-row { animation: none; } }
 
 .back { color: var(--agents-dim); text-decoration: none; font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; margin-bottom: 8px; }
 .back:hover { color: var(--agents-cross); }

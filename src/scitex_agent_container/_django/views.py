@@ -19,6 +19,7 @@ both modes.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlencode
 
@@ -32,6 +33,8 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from ._authorization import can_control, resolve_identity, scope_rows
+from ._constants import API_URL_ENV
+from ._diagnostics import diagnostic_id, diagnostic_summary
 from ._projection import project_detail, project_row
 from ._remote import RemoteFleet
 
@@ -99,6 +102,41 @@ def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
     return agents, ""
 
 
+def _is_configured() -> bool:
+    """Whether this deployment has *chosen* a listener.
+
+    Distinguishes "nobody told me where the control plane is" (a setup problem
+    the deployer fixes) from "the listener I was given is not answering" (an
+    outage the operator retries). Treating both as one banner is what the old
+    page did, and it sent operators to the wrong fix.
+    """
+    return bool(os.environ.get(API_URL_ENV, "").strip())
+
+
+def _fleet_view_state(agents: list[dict], comm_error: str) -> dict:
+    """Resolve the page into exactly one of these states:
+
+    ``setup-required | unavailable | empty | ok``
+
+    ``denied`` is deliberately NOT resolved here. It is an AUTHORIZATION
+    outcome, not a fleet-read outcome, and the two must not be conflated: a
+    caller can be fully authorized for the fleet it read (``ok``) and still be
+    refused a specific action. Resolving ``denied`` from the read path would
+    either mask a working fleet or leak its size, so the view decides it from
+    the authorization result alone (see ``index``).
+    """
+    if comm_error:
+        return {
+            "fleet_state": "setup-required" if not _is_configured() else "unavailable",
+            "diagnostic_id": diagnostic_id(comm_error),
+            "diagnostic_reason": diagnostic_summary(comm_error),
+        }
+    if agents:
+        return {"fleet_state": "ok", "diagnostic_id": "", "diagnostic_reason": ""}
+    return {"fleet_state": "empty", "diagnostic_id": "", "diagnostic_reason": ""}
+
+
+
 @require_GET
 def index(request: HttpRequest):
     fleet = RemoteFleet.from_environment()
@@ -118,6 +156,7 @@ def index(request: HttpRequest):
         comm_error=comm_error,
         listener=fleet.base_url,
         page="fleet",
+        **_fleet_view_state(agents, comm_error),
     )
     template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
     return render(request, template, context)

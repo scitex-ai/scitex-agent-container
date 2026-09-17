@@ -4,8 +4,32 @@ Shared Agents fleet content. Included by:
   * fleet_hub.html    (Hub: inside global_base.html — no second header)
 `url_base` is the app's mount prefix ("" at root, "/apps/agents" when
 mounted) so the per-row links are correct in both modes.
+
+STATE CONTRACT. `fleet_state` is exactly one of:
+  loading | empty | setup-required | denied | unavailable | ok
+It is on the app root as data-fleet-state so the states are machine-checkable
+and visually distinct rather than blended into one banner. `denied` is a
+SECURITY state: it must never let the caller infer fleet contents, so it says
+nothing about how many agents exist.
 {% endcomment %}
-<div class="agents-app" data-page="fleet">
+<div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}">
+
+  {% comment %}
+  LOADING SKELETON. The fleet read is server-rendered: this document arrives
+  already resolved, so the skeleton exists to cover the browser's navigation
+  window, and it is superseded by the resolved state in the same response. It
+  is rendered only when no state was resolved at all, so it never overstays.
+  {% endcomment %}
+  {% if not fleet_state %}
+  <div class="agents-skeleton" role="status" aria-live="polite">
+    <span class="agents-sr-only">Loading the agent fleet</span>
+    <div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div>
+  </div>
+  {% endif %}
+  <template id="agents-loading-skeleton">
+    <div class="agents-skeleton"><div class="skel-row"></div><div class="skel-row"></div></div>
+  </template>
+
   <header class="agents-head">
     <div class="agents-title">
       <h1><i class="fas fa-robot"></i> Agents</h1>
@@ -21,13 +45,30 @@ mounted) so the per-row links are correct in both modes.
     </div>
   </header>
 
-  {% if comm_error %}
+  {% if fleet_state == "unavailable" %}
   <div class="agents-bannor err" role="alert">
     <i class="fas fa-triangle-exclamation"></i>
-    <span>{{ comm_error }}</span>
-    <small>The dashboard could not reach the SAC host control plane. Set
-    <code>SCITEX_AGENT_CONTAINER_API_URL</code> and the bearer token
-    (<code>SCITEX_AGENT_CONTAINER_API_TOKEN[_FILE]</code>), then retry.</small>
+    <span>The SAC host control plane did not answer.</span>
+    <small>{% if diagnostic_reason %}{{ diagnostic_reason }} — {% endif %}the console is configured
+    (<code>{{ listener }}</code>) but the listener is not responding. This is an
+    outage, not a misconfiguration; retry, and if it persists treat it as a
+    control-plane incident.</small>
+    <small class="diag">Diagnostic ID <code>{{ diagnostic_id }}</code>
+      <button type="button" class="btn btn-retry" data-action="retry"
+              onclick="window.location.reload()"><i class="fas fa-rotate"></i> Retry</button>
+    </small>
+  </div>
+  {% endif %}
+
+  {% if fleet_state == "setup-required" %}
+  <div class="agents-bannor warn" role="alert">
+    <i class="fas fa-screwdriver-wrench"></i>
+    <span>This console has no control plane configured.</span>
+    <small>Set <code>SCITEX_AGENT_CONTAINER_API_URL</code> and the bearer token
+    (<code>SCITEX_AGENT_CONTAINER_API_TOKEN[_FILE]</code>), then reload. The
+    listener address is not a secret; the token is, and belongs in the
+    deployment's own credential store rather than this page.</small>
+    {% if diagnostic_id %}<small class="diag">Diagnostic ID <code>{{ diagnostic_id }}</code></small>{% endif %}
   </div>
   {% endif %}
 
@@ -40,6 +81,20 @@ mounted) so the per-row links are correct in both modes.
     {% endif %}
   </div>
 
+  {% if fleet_state == "denied" %}
+  {% comment %}
+  DENIED. Deliberately asserts nothing about the fleet's size or contents: an
+  unauthorized caller must not be able to infer either from this page.
+  {% endcomment %}
+  <div class="agents-notice denied" role="status">
+    <i class="fas fa-lock"></i>
+    <h2>Not authorized</h2>
+    <p>Control and fleet visibility for this scope require an identity listed in
+    the operator allowlist. Ask an operator to add
+    <strong>{{ identity|default:"(unidentified)" }}</strong>, then reload.</p>
+  </div>
+  {% endif %}
+
   {% if agents %}
   <div class="agents-table-wrap">
   <table class="agents-table">
@@ -47,7 +102,7 @@ mounted) so the per-row links are correct in both modes.
       <tr>
         <th>Agent</th><th>State</th><th>Runtime</th><th>Harness</th>
         <th>Engine / Model</th><th>Activity</th><th>Host</th><th>a2a port</th>
-        <th class="row-actions">Actions</th>
+        <th class="row-actions"><span class="agents-sr-only">Actions</span></th>
       </tr>
     </thead>
     <tbody>
@@ -71,10 +126,23 @@ mounted) so the per-row links are correct in both modes.
     </tbody>
   </table>
   </div>
-  {% else %}
-  {% if not comm_error %}
-  <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
-    <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
   {% endif %}
+
+  {% if fleet_state == "empty" %}
+  {% comment %}
+  EMPTY. The listener answered and this identity may see nothing in scope. This
+  is an ordinary state with a next step, NOT an error — it must be visually and
+  textually distinct from `unavailable` (an outage) and `denied` (no access).
+  {% endcomment %}
+  <div class="agents-notice empty" role="status">
+    <i class="fas fa-inbox"></i>
+    <h2>No agents in scope</h2>
+    <p>The control plane answered, and no agent is visible to
+    <strong>{{ identity|default:"(unidentified)" }}</strong> on
+    <code>{{ listener }}</code>.</p>
+    <button type="button" class="btn btn-retry" data-action="retry"
+            onclick="window.location.reload()"><i class="fas fa-rotate"></i> Retry</button>
+  </div>
   {% endif %}
+
 </div>
