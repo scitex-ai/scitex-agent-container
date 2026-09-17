@@ -16,6 +16,7 @@ app_name = "scitex_agent_container"
 urlpatterns = [
     path("", views.index, name="index"),
     path("api/fleet", views.fleet_api, name="fleet_api"),
+    path("api/timeline", views.timeline_api, name="timeline_api"),
     path("<str:name>/", views.detail, name="detail"),
     path("<str:name>/action", views.lifecycle_action, name="lifecycle_action"),
 ]
