@@ -198,7 +198,7 @@ def _hermes_tui_inner_argv(
         "--pass-session-id",
     ]
     model = str(config.model or "").strip()
-    engine_key = str(config.engine_key or model).strip()
+    engine_key = str(config.engine_key or "").strip()
     if not model or not engine_key:
         raise ValueError(
             "Hermes TUI requires a resolved engine model and key; refusing "
@@ -207,9 +207,11 @@ def _hermes_tui_inner_argv(
     argv += ["--model", model, "--provider", f"custom:sac-{engine_key}"]
     session_mode = str(config.claude.session or "").strip().lower()
     if session_mode == "continue":
+        from ._hermes_session import hermes_session_key
+
         argv += [
             "--continue",
-            f"sac:{config.name}",
+            hermes_session_key(config.name, engine_key),
             "--create-if-missing",
         ]
     elif session_mode == "resume":
