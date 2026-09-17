@@ -7,12 +7,19 @@ AAA markers and a single assertion (STX-TQ002/TQ007).
 
 from __future__ import annotations
 
+import json
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
 from scitex_agent_container._django._remote import (
     FleetUnavailableError,
     RemoteFleet,
     RemoteOperationError,
     resolve_token,
 )
+from scitex_agent_container._django.views import _fleet_rows
 
 from .conftest import TOKEN
 
@@ -119,3 +126,158 @@ def test_wrong_token_is_rejected(loopback):
         raised = exc.status_code == 401
     # Assert
     assert raised
+
+# ── the bounded fleet read (timeout budget; see the baseline card) ─────────
+# A fleet read that cannot finish inside the client timeout used to render
+# the page's "listener unreachable" banner against a HEALTHY listener: the
+# real control plane measured 5.1-6.9s warm / 19.0s cold against an 8.0s
+# ceiling, so the whole fleet table disappeared. These tests live here
+# because _remote.py is what they exercise (STX/PS-204: a test file must
+# mirror a src module).
+class _SlowListener(BaseHTTPRequestHandler):
+    """A control plane where EVERY status read is slow (the 2026-09-17 shape)."""
+
+    delay = 0.0
+    agents: list[str] = []
+
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):  # noqa: N802 (http.server API)
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/agents":
+            body = json.dumps({"agents": [self._row(n) for n in self.agents]}).encode()
+            self._send(200, body)
+            return
+        if path.endswith("/status"):
+            time.sleep(self.delay)
+            name = path.rsplit("/status", 1)[0].rsplit("/", 1)[-1]
+            self._send(200, json.dumps({"name": name, "liveness": {"verdict": "ALIVE"}}).encode())
+            return
+        self._send(404, b'{"error": "not found"}')
+
+    @staticmethod
+    def _row(name: str) -> dict:
+        import socket
+
+        return {
+            "name": name,
+            "role": "worker",
+            "project": "proj",
+            "pid": 1,
+            "a2a_port": 19000,
+            "turn_url": f"http://{socket.gethostname()}:19000/v1/turn",
+            "started_at": "2026-09-01T00:00:00Z",
+        }
+
+    def _send(self, code: int, body: bytes) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _BlackHole(BaseHTTPRequestHandler):
+    """A listener that accepts the connection and never answers."""
+
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):  # noqa: N802 (http.server API)
+        time.sleep(30)
+
+
+@pytest.fixture
+def slow_listener():
+    """A real loopback listener whose /status reads sleep.
+
+    Yields a control object exposing ``fleet`` — it OWNS a socket, so it must
+    yield rather than return (STX-TQ005).
+    """
+    import threading
+
+    _SlowListener.delay = 0.0
+    _SlowListener.agents = [f"agent-{i}" for i in range(12)]
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _SlowListener)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    class Control:
+        def __init__(self, port: int) -> None:
+            self.port = port
+
+        @property
+        def fleet(self) -> RemoteFleet:
+            return RemoteFleet(f"http://127.0.0.1:{self.port}", "tok")
+
+    try:
+        yield Control(server.server_address[1])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        _SlowListener.delay = 0.0
+
+
+@pytest.fixture
+def black_hole():
+    """A listener that accepts the TCP connection then never responds."""
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BlackHole)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_slow_status_reads_still_return_every_row(slow_listener):
+    # Arrange: every agent's status read is slower than one per-agent budget.
+    _SlowListener.delay = 1.2
+    _SlowListener.agents = [f"agent-{i}" for i in range(40)]
+    # Act
+    agents, comm_error = _fleet_rows(slow_listener.fleet, "operator")
+    # Assert: 40 agents x 1.2s would be 48s serially; the rows must survive.
+    assert len(agents) == 40 and comm_error == ""
+
+
+def test_slow_status_reads_stay_within_the_ceiling(slow_listener):
+    # Arrange
+    _SlowListener.delay = 1.2
+    _SlowListener.agents = [f"agent-{i}" for i in range(40)]
+    # Act
+    started = time.monotonic()
+    _fleet_rows(slow_listener.fleet, "operator")
+    elapsed = time.monotonic() - started
+    # Assert: bounded by the client ceiling, not by the agent count.
+    assert elapsed < 30.0
+
+
+def test_silent_listener_resolves_to_unavailable_within_its_budget(black_hole):
+    # Arrange: TCP connect succeeds, no response ever arrives — this must
+    # resolve rather than hang the worker.
+    fleet = RemoteFleet(black_hole, "tok", timeout=2.0)
+    # Act
+    started = time.monotonic()
+    try:
+        fleet.list_all()
+        outcome = "ok"
+    except FleetUnavailableError:
+        outcome = "unavailable"
+    elapsed = time.monotonic() - started
+    # Assert
+    assert outcome == "unavailable" and elapsed < fleet.timeout * 2
+
+
+def test_client_timeout_outlasts_the_measured_control_plane_latency():
+    # Arrange: measured warm /agents latency on scitex-compute-03 was 5.1-6.9s.
+    fleet = RemoteFleet("http://127.0.0.1:1", "tok")
+    # Act
+    timeout = fleet.timeout
+    # Assert: the client must not sit on that boundary.
+    assert timeout >= 30.0
