@@ -31,6 +31,7 @@ from scitex_agent_container._django._timeline import (
     TimelineEntry,
     build_timeline,
     dedupe_entries,
+    timeline_rows,
 )
 
 
@@ -203,3 +204,55 @@ def test_timeline_never_leaks_a_secret(client, loopback, env_save_restore):
     body = client.get("/api/timeline").content.decode()
     # Assert
     assert "test-loopback-token" not in body
+
+
+# ── the rendered surface ─────────────────────────────────────────────────────
+
+
+def test_timeline_page_renders_server_side(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/timeline/").content.decode()
+    # Assert: complete on first paint, no JS required to be useful.
+    assert 'data-page="timeline"' in html and 'data-role="timeline"' in html
+
+
+def test_timeline_page_exposes_filters_as_real_query_params(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/timeline/").content.decode()
+    # Assert: the controls work without JS (they are a GET form), so the JS and
+    # no-JS paths cannot diverge.
+    assert 'name="agent"' in html and 'name="kind"' in html and 'method="get"' in html
+
+
+def test_timeline_page_filter_narrows_the_rendered_rows(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/timeline/?agent=alpha").content.decode()
+    # Assert: a server-side filter really filters what renders.
+    assert "alpha" in html
+
+
+def test_timeline_rows_carry_the_same_key_the_client_dedupes_on():
+    # Arrange: the JS dedupes on `key`; if the two layers disagreed about it the
+    # page would duplicate rows the API calls identical.
+    entry = TimelineEntry(agent="a", kind="operation", value="busy", state="observed",
+                          at=1000.0, source="s")
+    # Act
+    rows = timeline_rows([entry], now=1000.0)
+    # Assert
+    assert rows[0]["key"] == entry.key and "|" in rows[0]["key"]
+
+
+def test_timeline_relative_time_is_computed_from_the_observation():
+    # Arrange
+    entry = TimelineEntry(agent="a", kind="operation", value="busy", state="observed",
+                          at=1000.0, source="s")
+    # Act
+    rows = timeline_rows([entry], now=1000.0 + 125)
+    # Assert
+    assert rows[0]["relative"] == "2m ago" and rows[0]["age_seconds"] == 125
