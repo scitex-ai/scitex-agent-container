@@ -10,6 +10,7 @@ importers are unchanged.
 
 from __future__ import annotations
 
+from ..._lifecycle._runtime_identity import resolve_runtime_identity
 from ..._state.registry import Registry
 from ...config import load_config
 
@@ -34,10 +35,6 @@ from ._agent_list_auth import (  # noqa: F401
     is_live_status,
     resolve_auth,
 )
-
-# The LIVE credential bind — ground truth for a running local agent, and the
-# STRONGEST of the three Account signals. Same re-import rationale as above.
-from ._agent_list_bound_account import bound_accounts_by_agent  # noqa: F401
 
 # Host-DISPLAY resolution (Host column) — sibling module, 512-line cap split.
 from ._agent_list_host import _host_display_for, _resolve_display_host
@@ -262,10 +259,12 @@ def get_agent_list_data(
 
     entries = registry.list_all()
 
-    # Live credential binds, measured ONCE for this listing (one /proc walk,
-    # not one per row). Re-measured on every call, so ``--watch`` never
-    # renders a bind read minutes ago.
-    live_binds = bound_accounts_by_agent()
+    # ONE active-instance read for both local birth-certificate correlation and
+    # the remote-row merge below. Never re-query per row.
+    from ..._state.state_store import _resolve_host, list_active_instances
+
+    active_instances = list_active_instances(host=None)
+    local_host = _resolve_host(None)
 
     # Host DISPLAY column hostname, resolved ONCE (test-swappable seam).
     display_host = _resolve_display_host()
@@ -320,6 +319,33 @@ def get_agent_list_data(
             "config_path": config_path,
         }
         prepared.append(prep)
+
+    # Correlate active local instances to immutable birth certificates with one
+    # bounded store query. Missing evidence is a labelled spec fallback.
+    active_by_name: dict[str, dict] = {}
+    prepared_names = {prep["name"] for prep in prepared}
+    for instance in active_instances:
+        instance_name = str(instance.get("name") or "")
+        if (
+            instance_name in prepared_names
+            and not instance.get("remote")
+            and str(instance.get("host") or "") == local_host
+            and instance_name not in active_by_name
+        ):
+            active_by_name[instance_name] = instance
+    incarnation_ids = tuple(
+        str(instance.get("id") or "")
+        for instance in active_by_name.values()
+        if instance.get("id")
+    )
+    birth_by_id: dict[str, dict] = {}
+    if incarnation_ids:
+        try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
+            from ..._state.state_store_incarnations import get_incarnations
+
+            birth_by_id = get_incarnations(incarnation_ids)
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            birth_by_id = {}
 
     # Second pass: parallel local liveness probes with per-probe
     # timeout. The thread pool keeps the wall-clock cost low when many
@@ -465,23 +491,16 @@ def get_agent_list_data(
         # SHOWN in the default view, so deferring its enrichment would blank out
         # its Account — and that account is precisely the one that is dead.
         deferred = running_only and not is_live_status(status_val)
-        # Which Anthropic account this agent authenticates as. For a LIVE agent
-        # prefer the ACTUAL runtime account (its per-agent
-        # ``<runtime>/home/.claude.json``) over the spec-derived label — pool
-        # agents share one host-OAuth spec label otherwise. Bare names so a
-        # test can rebind ``_al._safe_account_for`` / ``_al._runtime_account_for``.
-        if deferred:
-            account_label = ""
-        else:
-            account_label = _safe_account_for(cfg)
-            if is_live_status(status_val):
-                # Precedence: live BIND > runtime login RECORD > spec label.
-                # See ``_agent_list_bound_account`` for why leading with the
-                # record was wrong — it is a PAST login, measured 11-37 days
-                # stale, and the spec label collapses to one host identity.
-                account_label = (
-                    live_binds.get(name) or _runtime_account_for(name) or account_label
-                )
+        # Credential inventory is verbose-only and deliberately separate from
+        # the actual auth identity resolved from launch evidence below.
+        account_label = "" if deferred else _safe_account_for(cfg)
+        active = active_by_name.get(name)
+        birth = birth_by_id.get(str((active or {}).get("id") or ""))
+        identity = resolve_runtime_identity(
+            cfg,
+            running=is_live_status(status_val),
+            birth_record=birth,
+        )
         results.append(
             build_agent_row(
                 name=name,
@@ -497,10 +516,13 @@ def get_agent_list_data(
                 deferred=deferred,
                 errors=errors,
                 liveness_unknown=liveness_unknown,
-                runtime=str(getattr(cfg, "runtime", "") or ""),
-                harness=str(getattr(cfg, "harness", "") or ""),
-                engine=str(getattr(cfg, "engine_key", "") or ""),
-                model=str(getattr(cfg, "model", "") or ""),
+                runtime=identity["runtime"],
+                harness=identity["harness"],
+                engine=identity["engine"],
+                model=identity["model"],
+                billing_mode=identity["billing_mode"],
+                auth_identity=identity["auth_identity"],
+                runtime_identity_source=identity["runtime_identity_source"],
                 probe_runtime=probe_runtime,
                 probe_error=probe_error,
                 labels=labels,
@@ -525,6 +547,7 @@ def get_agent_list_data(
         group=group,
         status_probe=remote_status_probe,
         run_ssh=remote_run_ssh,
+        instances_oracle=lambda: active_instances,
     )
     results.extend(remote_rows)
     covered = reg_names | {r["name"] for r in remote_rows}

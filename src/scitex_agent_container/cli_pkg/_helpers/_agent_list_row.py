@@ -87,6 +87,9 @@ def build_agent_row(
     harness: str = "",
     engine: str = "",
     model: str = "",
+    billing_mode: str = "unspecified",
+    auth_identity: str = "unknown",
+    runtime_identity_source: str = "unknown",
     probe_runtime: str | None = None,
     probe_error: str | None = None,
 ) -> dict:
@@ -112,11 +115,16 @@ def build_agent_row(
         "host_display": host_display,
         "path": spec_path,
         "a2a_port": a2a_port,
+        "stored_credential": account_label,
+        # Deprecated compatibility alias. This is inventory, never proof of use.
         "account": account_label,
         "runtime": runtime,
         "harness": harness,
         "engine": engine,
         "model": model,
+        "billing_mode": billing_mode,
+        "auth_identity": auth_identity,
+        "runtime_identity_source": runtime_identity_source,
     }
     row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
     if errors:

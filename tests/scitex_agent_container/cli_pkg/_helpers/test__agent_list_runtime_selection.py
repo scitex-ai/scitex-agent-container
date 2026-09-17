@@ -16,6 +16,9 @@ def _row() -> dict:
         "started_at": "-",
         "host_display": "scitex-compute-03",
         "account": "unused-claude-credential",
+        "billing_mode": "usage",
+        "auth_identity": "api-key:OPENCODE_API_KEY",
+        "runtime_identity_source": "birth_certificate",
         "harness": "hermes",
         "engine": "opencode-go-deepseek-v4.1-flash",
         "model": "deepseek-v4.1-flash",
@@ -32,7 +35,9 @@ def _console_width(width: int) -> Iterator[None]:
         console.width = before
 
 
-def test_default_listing_shows_runtime_selection_not_stored_credential(capsys) -> None:
+def test_default_listing_shows_billing_auth_and_runtime_not_stored_credential(
+    capsys,
+) -> None:
     # Arrange
     rows = [_row()]
 
@@ -44,9 +49,13 @@ def test_default_listing_shows_runtime_selection_not_stored_credential(capsys) -
     # Assert
     assert (
         "Harness" in rendered
+        and "Billing" in rendered
+        and "Auth identity" in rendered
         and "Engine" in rendered
         and "Model" in rendered
         and "hermes" in rendered
+        and "usage" in rendered
+        and "api-key:OPENCODE_API_KEY" in rendered
         and "deepseek" in rendered
         and "unused-claude-credential" not in rendered
     )
@@ -62,3 +71,16 @@ def test_verbose_listing_labels_account_as_stored_credential(capsys) -> None:
     rendered = capsys.readouterr().out
     # Assert
     assert "Stored credential" in rendered and "unused-claude-credential" in rendered
+
+
+def test_verbose_listing_shows_runtime_identity_provenance(capsys) -> None:
+    # Arrange
+    rows = [_row()]
+
+    # Act
+    with _console_width(240):
+        print_agent_list(None, rows=rows, verbose=True)
+    rendered = capsys.readouterr().out
+
+    # Assert
+    assert "Identity source" in rendered and "birth_certificate" in rendered

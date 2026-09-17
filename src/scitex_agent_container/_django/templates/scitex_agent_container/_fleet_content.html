@@ -45,8 +45,9 @@ mounted) so the per-row links are correct in both modes.
   <table class="agents-table">
     <thead>
       <tr>
-        <th>Agent</th><th>State</th><th>Runtime</th><th>Harness</th>
-        <th>Engine / Model</th><th>Activity</th><th>Host</th><th>a2a port</th>
+        <th>Agent</th><th>State</th><th>Runtime</th><th>Billing</th>
+        <th>Auth identity</th><th>Harness</th><th>Engine / Model</th>
+        <th>Activity</th><th>Host</th><th>a2a port</th>
         <th class="row-actions">Actions</th>
       </tr>
     </thead>
@@ -57,6 +58,8 @@ mounted) so the per-row links are correct in both modes.
           {% if a.cross_host %}<span class="pill cross-mini">remote</span>{% endif %}</td>
         <td title="{{ a.state_detail }}"><span class="dot {{ a.state_tone }}"></span>{{ a.state_label }}</td>
         <td>{{ a.runtime }}</td>
+        <td>{{ a.billing_mode }}</td>
+        <td title="identity source: {{ a.runtime_identity_source }}">{{ a.auth_identity }}</td>
         <td>{{ a.harness }}</td>
         <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span></td>
         <td class="c-activity">

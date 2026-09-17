@@ -60,7 +60,9 @@ AGENTS: list[dict[str, Any]] = [
 STATUS: dict[str, Any] = {
     "alpha": {"name": "alpha", "liveness": {"verdict": "ALIVE"}, "status": "running",
               "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
-              "model": "sonnet", "pid": 4294967291, "session_id": "a" * 32,
+              "model": "sonnet", "billing_mode": "subscription",
+              "auth_identity": "anthropic/team-max", "runtime_identity_source": "birth_certificate",
+              "pid": 4294967291, "session_id": "a" * 32,
               "a2a_port": 19000, "turn_url": f"http://{LOCAL_NAME}:19000/v1/turn",
               "inbox_reachable": "true",
               "activity": {

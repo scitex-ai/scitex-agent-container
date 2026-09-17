@@ -42,6 +42,32 @@ def _resolve_account(config: AgentConfig | None) -> str:
         return "unknown"
 
 
+def _runtime_identity(name: str, config: AgentConfig | None, running: bool) -> dict:
+    """Runtime selection/auth facts, preferring this incarnation's birth."""
+    birth = None
+    if running:
+        try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
+            from .._state.state_store import _resolve_host, list_active_instances
+            from .._state.state_store_incarnations import get_incarnation
+
+            host = _resolve_host(None)
+            instance = next(
+                (
+                    row
+                    for row in list_active_instances(host=host)
+                    if row.get("name") == name and not row.get("remote")
+                ),
+                None,
+            )
+            if instance and instance.get("id"):
+                birth = get_incarnation(str(instance["id"]))
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            birth = None
+    from ._runtime_identity import resolve_runtime_identity
+
+    return resolve_runtime_identity(config, running=running, birth_record=birth)
+
+
 def _remote_instance_status(name: str) -> dict | None:
     """Build a status dict from the active ``instances`` row for ``name``.
 
@@ -79,8 +105,14 @@ def _remote_instance_status(name: str) -> dict | None:
             "status": "running",
             "model": "unknown",
             "runtime": "unknown",
+            "harness": "unknown",
+            "engine": "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "unknown",
             # Cross-host agent: its credentials live on the remote host,
-            # not resolvable from here. Keep the key for shape parity.
+            # not resolvable from here. Keep compatibility alias explicit.
+            "stored_credential": "unknown",
             "account": "unknown",
             "host": row.get("host", "") or "",
             "a2a_port": row.get("a2a_port"),
@@ -193,15 +225,10 @@ def agent_status(
         "screen": entry.get("screen", ""),
         "started_at": entry.get("started_at", ""),
         "status": "running" if running else "stopped",
-        "model": config.model if config else "unknown",
-        "runtime": config.runtime if config else "unknown",
-        "harness": config.harness if config else "unknown",
-        "engine": config.engine_key if config else "unknown",
-        # Which Anthropic account this agent authenticates as (operator
-        # request 4581). Agents sharing one label share one server-side
-        # rate limit. Resolved from the agent's effective auth source.
-        "account": _resolve_account(config),
+        # Stored credential inventory is not actual runtime auth identity.
+        "stored_credential": _resolve_account(config),
     }
+    result["account"] = result["stored_credential"]  # deprecated inventory alias
 
     # Runtime-specific detection stays behind a neutral control-plane shape.
     # A live process can still be unable to admit turns (for example a
@@ -234,6 +261,7 @@ def agent_status(
     result["liveness"] = liveness
     if liveness.get("verdict") == "alive":
         result["status"] = "running"
+    result.update(_runtime_identity(name, config, result["status"] == "running"))
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.

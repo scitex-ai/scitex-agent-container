@@ -1038,7 +1038,7 @@ def test_get_data_row_carries_runtime_harness_engine_and_model(tmp_path):
         row["harness"],
         row["engine"],
         row["model"],
-    ) == ("apptainer", "anthropic", "", "sonnet")
+    ) == ("apptainer", "anthropic", "unknown", "sonnet")
 
 
 def test_get_data_defined_agent_row_carries_account_field(tmp_path):
@@ -1407,20 +1407,17 @@ def test_print_agent_list_verbose_includes_definition_and_validation(capsys, tmp
 
 
 # ---------------------------------------------------------------------------
-# Account column = ACTUAL runtime account for running agents (operator TG
-# 1490-1495). Pool-based agents (``credentials_files`` with no ``account``
-# pin) all resolve to the same host-OAuth spec label; the runtime picker
-# binds a different pool account per agent, and its identity is host-readable
-# from ``<runtime>/home/.claude.json``. A running row prefers that; a
-# non-running row (no live auth) keeps the spec label.
+# ``account`` is verbose-only stored credential inventory. It must never be
+# promoted to actual auth identity; that comes from ``auth_identity`` and the
+# launch birth certificate.
 # ---------------------------------------------------------------------------
 
 
-def test_get_data_running_row_prefers_runtime_account(tmp_path):
+def test_get_data_running_row_keeps_stored_credential_separate(tmp_path):
     # Arrange
     spec = _write_valid_spec(tmp_path / "x")
     registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
-    # Act — running (probe True): runtime account wins over the spec label.
+    # Act — a runtime login record must not overwrite credential inventory.
     with (
         _swap_discover(_no_discover),
         _swap_probe(_running(True)),
@@ -1429,7 +1426,7 @@ def test_get_data_running_row_prefers_runtime_account(tmp_path):
     ):
         out = get_agent_list_data(registry)
     # Assert
-    assert out[0]["account"] == "runtime-pick@example.com"
+    assert out[0]["account"] == "spec-label (host@example.com)"
 
 
 def test_get_data_stopped_row_uses_spec_account_not_runtime(tmp_path):
