@@ -80,11 +80,34 @@ def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():
 
 
 def test_hermes_refuses_model_as_an_implicit_engine_key():
+    # Arrange
     config = _config(session="continue")
     config.engine_key = ""
 
+    # Act
+    call = lambda: _hermes_tui_inner_argv(config)  # noqa: E731
+
+    # Assert
     with pytest.raises(ValueError, match="resolved engine model and key"):
-        _hermes_tui_inner_argv(config)
+        call()
+
+
+def test_hermes_engine_change_selects_a_different_continuation_name():
+    # Arrange
+    qwen = _config(session="continue")
+    gpt = _config(session="continue")
+    gpt.engine_key = "gpt-sol"
+    gpt.model = "gpt-5.6-sol"
+
+    # Act
+    qwen_tail = _session_tail(_hermes_tui_inner_argv(qwen))
+    gpt_tail = _session_tail(_hermes_tui_inner_argv(gpt))
+
+    # Assert
+    assert (qwen_tail, gpt_tail) == (
+        ["--continue", "sac:cards:qwen38-27b", "--create-if-missing"],
+        ["--continue", "sac:cards:gpt-sol", "--create-if-missing"],
+    )
 
 
 def test_explicit_resume_reaches_native_hermes_argv():

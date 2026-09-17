@@ -45,18 +45,21 @@ class _Mux:
         return pane
 
 
-def _config() -> AgentConfig:
-    return AgentConfig(name="scholar", harness="hermes", runtime="tui")
-
-
-def test_fresh_session_does_not_request_continuation():
-    # Arrange
+def _config(*, session: str | None = None) -> AgentConfig:
     config = AgentConfig(
         name="scholar",
         harness="hermes",
         runtime="tui",
-        claude=ClaudeSpec(session="fresh"),
+        claude=ClaudeSpec(session=session or "fresh"),
     )
+    config.engine_key = "qwen38-27b"
+    config.model = "qwen38-27b"
+    return config
+
+
+def test_fresh_session_does_not_request_continuation():
+    # Arrange
+    config = _config(session="fresh")
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
@@ -84,18 +87,13 @@ def test_tui_launches_through_single_gateway_owner():
 
 def test_continue_session_resumes_the_stable_agent_session_name():
     # Arrange
-    config = AgentConfig(
-        name="scholar",
-        harness="hermes",
-        runtime="tui",
-        claude=ClaudeSpec(session="continue"),
-    )
+    config = _config(session="continue")
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
     assert argv[argv.index("--continue") :] == [
         "--continue",
-        "sac:scholar",
+        "sac:scholar:qwen38-27b",
         "--create-if-missing",
     ]
 
