@@ -75,12 +75,16 @@ def test_backlog_boundaries_select_the_declared_mode(
         "src/project/auth/session.py",
         "src/project/oauth/token.py",
         "src/project/authorization/policy.py",
+        "src/project/login/session.py",
         "src/project/secrets/loader.py",
         "src/project/billing/invoice.py",
+        "src/project/payments/invoice.py",
         "src/project/tenancy/lease.py",
         "src/project/credentials/store.py",
+        "db/schema.sql",
         "migrations/0042_add_owner.sql",
         ".github/workflows/deploy-production.yml",
+        ".github/workflows/release-production.yml",
     ],
 )
 def test_sensitive_paths_are_high_risk(policy, path: str) -> None:
@@ -269,6 +273,28 @@ def test_later_approval_supersedes_same_reviewers_change_request(policy) -> None
     assert verdict == "APPROVED"
 
 
+def test_later_comment_does_not_erase_exact_head_approval(policy) -> None:
+    # Arrange
+    reviews = [
+        {
+            "id": 1,
+            "state": "APPROVED",
+            "commit_id": "head",
+            "user": {"login": "reviewer"},
+        },
+        {
+            "id": 2,
+            "state": "COMMENTED",
+            "commit_id": "head",
+            "user": {"login": "reviewer"},
+        },
+    ]
+    # Act
+    verdict = policy.review_verdict("head", reviews)
+    # Assert
+    assert verdict == "APPROVED"
+
+
 def test_review_cli_flattens_paginated_github_json() -> None:
     # Arrange
     command = [sys.executable, str(_POLICY), "review", "head"]
@@ -297,6 +323,9 @@ def test_review_cli_flattens_paginated_github_json() -> None:
         ("DRAIN", "review", True),
         ("DRAIN", "integration", True),
         ("DRAIN", "unknown", False),
+        ("drain", "feature", False),
+        ("UNKNOWN", "feature", False),
+        ("", "feature", False),
     ],
 )
 def test_fleet_mode_applies_feature_dispatch_backpressure(
@@ -328,3 +357,33 @@ def test_merge_attribution_records_the_deterministic_risk_lane(
     attribution = script[script.index("attribution=$(printf") : script.index("prior=")]
     # Assert
     assert r"deterministic risk lane = \`$risk\`" in attribution
+
+
+def test_dry_run_never_calls_update_branch(merge_step: dict) -> None:
+    # Arrange
+    script = merge_step["run"]
+    stale_branch = script[script.index('if [ "$merge_base" != "$dev_sha" ]') :]
+    update_at = stale_branch.index("update-branch")
+    # Act
+    guard = stale_branch[:update_at]
+    # Assert
+    assert ('"$DRY_RUN" = "true"' in guard, "continue" in guard) == (True, True)
+
+
+def test_last_inch_rechecks_base_head_and_develop_after_attribution(
+    merge_step: dict,
+) -> None:
+    # Arrange
+    script = merge_step["run"]
+    after_comment = script[script.index("gh pr comment") :]
+    merge_at = after_comment.index("gh pr merge")
+    gate = after_comment[:merge_at]
+    # Act
+    contract = (
+        "baseRefName,headRefOid" in gate,
+        '"$last_base" != "develop"' in gate,
+        '"$last_head" != "$pr_sha"' in gate,
+        '"$last_dev" != "$dev_sha"' in gate,
+    )
+    # Assert
+    assert contract == (True, True, True, True)

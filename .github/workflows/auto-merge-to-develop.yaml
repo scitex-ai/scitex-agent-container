@@ -316,7 +316,11 @@ jobs:
           # Collect candidate PRs.
           # ---------------------------------------------------------------
           if [ -n "${HEAD_SHA:-}" ]; then
-            prs=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[] | select(.state=="open") | .number' 2>/dev/null || true)
+            if ! prs=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/pulls?per_page=100" \
+                  --jq '.[] | select(.state=="open") | .number' 2>/dev/null); then
+              echo "::warning::could not resolve pull requests for check-suite head $HEAD_SHA — merging nothing this tick"
+              exit 0
+            fi
           else
             # --limit is LOAD-BEARING: `gh pr list` silently defaults to 30 and
             # truncates with no marker. sac alone holds 36 open PRs against
@@ -434,6 +438,10 @@ jobs:
               continue
             fi
             if [ "$merge_base" != "$dev_sha" ]; then
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "DRY RUN: would update #$pr from $pr_sha to latest develop@$dev_sha, then wait for exact-head CI"
+                continue
+              fi
               if gh api -X PUT "repos/$REPO/pulls/$pr/update-branch" \
                    -f expected_head_sha="$pr_sha" >/dev/null; then
                 echo "#$pr updated to latest develop@$dev_sha — waiting for exact-head CI on the new SHA before any merge"
@@ -710,11 +718,16 @@ jobs:
             # the merge. Before, not after, so that a merge can never exist
             # without its explanation — if the comment fails, nothing merges.
             run_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/${GITHUB_RUN_ID:-unknown}"
+            if [ "$risk" = "NORMAL" ]; then
+              review_trace="A formal GitHub approval was recorded for exact head $pr_sha."
+            else
+              review_trace="LOW risk: this lane deliberately requires no formal review."
+            fi
             attribution=$(printf '%s\n' \
               "$ATTRIB_MARKER" \
-              "**Merged by automation. No human read this diff.**" \
+              "**Merged by automation.**" \
               "" \
-              "\`auto-merge-to-develop\` (\`.github/workflows/auto-merge-to-develop.yaml\` in this repo) is merging this pull request now — before you look for a reviewer, there wasn't one." \
+              "\`auto-merge-to-develop\` (\`.github/workflows/auto-merge-to-develop.yaml\` in this repo) is merging this pull request now. $review_trace" \
               "" \
               "Why it merged:" \
               "" \
@@ -782,6 +795,28 @@ jobs:
             # IF YOU RESTORE `--admin`, NAME THE REQUIRED CHECK THAT FORCED IT,
             # here, in this comment. Putting it back by inertia re-arms the exact
             # incident this block exists to prevent.
+            # LAST-INCH RACE GATE: attribution is an API round trip and may take
+            # long enough for the PR to be retargeted, its head to move, or
+            # develop to advance. Re-read all three immediately before merge.
+            last_pr=$(gh pr view "$pr" --repo "$REPO" \
+              --json baseRefName,headRefOid \
+              --jq '[.baseRefName, .headRefOid] | @tsv' 2>/dev/null || echo "")
+            tab=$'\t'
+            last_base="${last_pr%%"$tab"*}"
+            last_head="${last_pr#*"$tab"}"
+            last_dev=$(gh api "repos/$REPO/commits/develop" --jq .sha 2>/dev/null || echo "")
+            if [ "$last_base" != "develop" ]; then
+              echo "::error::#$pr was retargeted to ${last_base:-unreadable} after validation — refusing merge"
+              continue
+            fi
+            if [ "$last_head" != "$pr_sha" ] || [ -z "$last_head" ]; then
+              echo "::warning::#$pr head moved after attribution — refusing merge"
+              continue
+            fi
+            if [ "$last_dev" != "$dev_sha" ] || [ -z "$last_dev" ]; then
+              echo "develop advanced after attribution — #$pr must update/re-CI; refusing merge"
+              continue
+            fi
             if gh pr merge "$pr" --repo "$REPO" --merge --delete-branch \
                  --match-head-commit "$pr_sha"; then
               echo "MERGED #$pr -> develop (attribution comment posted first; merged WITHOUT --admin, so branch protection agreed)"

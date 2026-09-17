@@ -18,9 +18,15 @@ _HIGH_RISK_WORDS = {
     "credentials",
     "deploy",
     "deployment",
+    "login",
     "migration",
     "migrations",
     "oauth",
+    "payment",
+    "payments",
+    "production",
+    "release",
+    "schema",
     "secret",
     "secrets",
     "tenant",
@@ -43,6 +49,9 @@ def fleet_mode(open_green: int) -> str:
 
 def dispatch_allowed(mode: str, work_kind: str) -> bool:
     """Admit only drain work after the integration backlog crosses 20."""
+    mode = str(mode or "").strip().upper()
+    if mode not in {"BUILD", "BALANCED", "INTEGRATION_HEAVY", "DRAIN"}:
+        return False
     if mode not in {"INTEGRATION_HEAVY", "DRAIN"}:
         return True
     return work_kind in {"critical_fix", "review", "integration"}
@@ -77,7 +86,9 @@ def review_verdict(head_sha: str, reviews: list[dict]) -> str:
     for index, review in enumerate(exact):
         user = review.get("user") or {}
         reviewer = str(user.get("login") or f"__unknown_{index}")
-        latest_by_reviewer[reviewer] = str(review.get("state", "")).upper()
+        state = str(review.get("state", "")).upper()
+        if state in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
+            latest_by_reviewer[reviewer] = state
     states = set(latest_by_reviewer.values())
     if "CHANGES_REQUESTED" in states:
         return "CHANGES_REQUESTED"
