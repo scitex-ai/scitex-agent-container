@@ -150,9 +150,10 @@ def bind_active_instance(
     """Bind a live local runtime to exactly one active instance row.
 
     Name+host is only a population filter, never authority: duplicate active
-    rows are possible after crashes and store races.  Authority requires a
-    process-owned incarnation marker/heartbeat, or an exact PID/session handle.
-    Conflicting evidence abstains rather than choosing the newest row.
+    rows are possible after crashes and store races.  Every available
+    process-owned marker, heartbeat incarnation, PID and session handle must
+    identify the same unique row.  Conflicting or unmatched evidence abstains
+    rather than choosing the newest row or trusting one signal over another.
     """
     candidates = [
         row
@@ -164,22 +165,23 @@ def bind_active_instance(
     if not candidates:
         return None
 
-    ids = {
-        value
-        for value in (
-            _text(marker_id),
-            _text(_mapping(heartbeat).get("incarnation_id")),
-        )
-        if value
-    }
-    if len(ids) > 1:
-        return None
-    if ids:
-        wanted = next(iter(ids))
-        matches = [row for row in candidates if _text(row.get("id")) == wanted]
-        return matches[0] if len(matches) == 1 else None
-
     evidence_matches: list[set[int]] = []
+    # Every available process-owned fact is a constraint.  An incarnation id is
+    # stronger than a handle in isolation, but it is not permission to ignore a
+    # disagreeing current PID/session: stale marker and heartbeat files survive
+    # exactly the crashes/restarts this binder has to distinguish.
+    for wanted in (
+        _text(marker_id),
+        _text(_mapping(heartbeat).get("incarnation_id")),
+    ):
+        if wanted:
+            evidence_matches.append(
+                {
+                    idx
+                    for idx, row in enumerate(candidates)
+                    if _text(row.get("id")) == wanted
+                }
+            )
     if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
         evidence_matches.append(
             {idx for idx, row in enumerate(candidates) if row.get("pid") == pid}

@@ -79,8 +79,12 @@ def test_fleet_remote_spec_fallback_is_not_dressed_as_selected() -> None:
         [
             {
                 "name": "remote-a",
+                "runtime": "tui",
+                "harness": "hermes",
                 "engine": "stale-spec-engine",
                 "model": "stale-spec-model",
+                "billing_mode": "subscription",
+                "auth_identity": "private-account",
                 "runtime_identity_source": "spec",
             }
         ],
@@ -88,11 +92,67 @@ def test_fleet_remote_spec_fallback_is_not_dressed_as_selected() -> None:
     )[0]
 
     # Assert
-    assert (row["engine"], row["model"], row["runtime_identity_source"]) == (
+    assert (
+        row["runtime"],
+        row["harness"],
+        row["engine"],
+        row["model"],
+        row["billing_mode"],
+        row["auth_identity"],
+        row["runtime_identity_source"],
+    ) == (
         "unknown",
+        "unknown",
+        "unknown",
+        "unknown",
+        "unspecified",
         "unknown",
         "owning_host_spec_only",
     )
+
+
+def test_fleet_remote_unavailable_fallback_clears_every_identity_claim() -> None:
+    # Arrange
+    target = HostTarget(name="remote-node", ssh="remote-node")
+
+    # Act
+    row = _stamp_host(
+        [
+            {
+                "name": "remote-a",
+                "runtime": "tui",
+                "harness": "hermes",
+                "engine": "stale-engine",
+                "model": "stale-model",
+                "billing_mode": "subscription",
+                "auth_identity": "private-account",
+                "runtime_identity_source": "unknown",
+            }
+        ],
+        target,
+    )[0]
+
+    # Assert
+    assert {
+        key: row[key]
+        for key in (
+            "runtime",
+            "harness",
+            "engine",
+            "model",
+            "billing_mode",
+            "auth_identity",
+            "runtime_identity_source",
+        )
+    } == {
+        "runtime": "unknown",
+        "harness": "unknown",
+        "engine": "unknown",
+        "model": "unknown",
+        "billing_mode": "unspecified",
+        "auth_identity": "unknown",
+        "runtime_identity_source": "owning_host_status_unavailable",
+    }
 
 
 def test_fleet_remote_birth_bound_selection_is_preserved() -> None:

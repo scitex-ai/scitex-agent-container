@@ -152,8 +152,16 @@ def _stamp_host(rows: list[dict], target: HostTarget) -> list[dict]:
         # provenance and fail closed to unknown.
         source = str(stamped.get("runtime_identity_source") or "unknown")
         if source != "birth_certificate":
-            stamped["engine"] = "unknown"
-            stamped["model"] = "unknown"
+            stamped.update(
+                {
+                    "runtime": "unknown",
+                    "harness": "unknown",
+                    "engine": "unknown",
+                    "model": "unknown",
+                    "billing_mode": "unspecified",
+                    "auth_identity": "unknown",
+                }
+            )
             stamped["runtime_identity_source"] = (
                 "owning_host_spec_only"
                 if source == "spec"

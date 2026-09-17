@@ -17,6 +17,7 @@ from rich.text import Text
 
 from ..._state.registry import Registry
 from .._account_list_format import format_dt_display_tz
+from .._terminal_text import terminal_safe
 from ._agent_list_auth import STATUS_AUTH_FAILED, is_live_status
 from ._console import console
 
@@ -67,7 +68,7 @@ def _status_cell(row: dict) -> Text:
 
     Every other status renders exactly as it always did.
     """
-    status = row.get("status") or "unknown"
+    status = terminal_safe(row.get("status") or "unknown")
     if status != STATUS_AUTH_FAILED:
         col = _CMAP.get(status, "white")
         return Text(str(status), style=col)
@@ -90,8 +91,8 @@ def _auth_cell(row: dict) -> Text:
     age = _fmt_age(row.get("auth_check_age_s"))
     stale = row.get("auth_check_stale")
     if row.get("auth_failed"):
-        reason = row.get("auth_reason") or "unknown"
-        remedy = row.get("auth_remedy") or "restart"
+        reason = terminal_safe(row.get("auth_reason") or "unknown")
+        remedy = terminal_safe(row.get("auth_remedy") or "restart")
         body = f"failed {age} ({reason} → {remedy})"
         return Text(
             f"{body}?" if stale else body,
@@ -108,30 +109,31 @@ def _started_cell(row: dict) -> str:
     raw_started = row["started_at"]
     if raw_started in ("-", "?"):
         return "—"
-    return format_dt_display_tz(raw_started)
+    return terminal_safe(format_dt_display_tz(raw_started))
 
 
 def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
     """Keep identity and start evidence readable when a table cannot fit."""
     lines = [
-        f"{row['name']} identity:",
-        f"  Host: {row.get('host_display') or row.get('host') or 'local'}",
-        f"  Billing: {row.get('billing_mode') or 'unspecified'}",
-        f"  Auth identity: {row.get('auth_identity') or 'unknown'}",
-        f"  Harness: {row.get('harness') or '—'}",
-        f"  Engine: {row.get('engine') or '—'}",
-        f"  Model: {row.get('model') or '—'}",
+        f"{terminal_safe(row['name'])} identity:",
+        "  Host: "
+        f"{terminal_safe(row.get('host_display') or row.get('host') or 'local')}",
+        f"  Billing: {terminal_safe(row.get('billing_mode') or 'unspecified')}",
+        f"  Auth identity: {terminal_safe(row.get('auth_identity') or 'unknown')}",
+        f"  Harness: {terminal_safe(row.get('harness') or '—')}",
+        f"  Engine: {terminal_safe(row.get('engine') or '—')}",
+        f"  Model: {terminal_safe(row.get('model') or '—')}",
         "  Identity source: "
-        f"{row.get('runtime_identity_source') or 'unknown'}",
+        f"{terminal_safe(row.get('runtime_identity_source') or 'unknown')}",
         f"  Started: {_started_cell(row)}",
     ]
     if verbose:
         lines.extend(
             [
                 "  Stored credential: "
-                f"{row.get('stored_credential') or row.get('account') or '—'}",
+                f"{terminal_safe(row.get('stored_credential') or row.get('account') or '—')}",
                 f"  Auth status: {_auth_cell(row).plain}",
-                f"  Path: {row.get('path') or '—'}",
+                f"  Path: {terminal_safe(row.get('path') or '—')}",
             ]
         )
     return lines
@@ -188,8 +190,9 @@ def _print_auth_footer(data: list[dict]) -> None:
         )
     if failed:
         detail = ", ".join(
-            f"{r['name']} ({r.get('auth_reason') or 'unknown'} → "
-            f"{r.get('auth_remedy') or 'restart'})"
+            f"{terminal_safe(r['name'])} "
+            f"({terminal_safe(r.get('auth_reason') or 'unknown')} → "
+            f"{terminal_safe(r.get('auth_remedy') or 'restart')})"
             for r in failed
         )
         console.print(
@@ -267,18 +270,17 @@ def _print_hidden_footer(
             parts.append(f"{n} {word}")
     for key, n in status_hidden.items():
         if key not in known and n:
-            parts.append(f"{n} {key}")
+            parts.append(f"{n} {terminal_safe(key)}")
     if hidden_ghosts:
         parts.append(f"{hidden_ghosts} stale")
     if not parts:
         return
     summary = ", ".join(parts)
     if none_running:
-        console.print(
-            f"[dim]No running agents ({summary} hidden — -v for all).[/dim]"
-        )
+        message = f"No running agents ({summary} hidden — -v for all)."
+        console.print(Text(message, style="dim"))
     else:
-        console.print(f"[dim]({summary} hidden — -v for all)[/dim]")
+        console.print(Text(f"({summary} hidden — -v for all)", style="dim"))
 
 
 def print_agent_list(
@@ -401,12 +403,14 @@ def print_agent_list(
         # Host column: show the RESOLVED machine hostname (e.g. ``ywata-note-win``)
         # from ``host_display`` (set by get_agent_list_data), not the raw
         # ``"local"`` sentinel. Fall back to the raw host, then the sentinel.
-        host = row.get("host_display") or row.get("host") or "local"
-        host_cell = Text(str(host), style="cyan")
+        host = terminal_safe(row.get("host_display") or row.get("host") or "local")
+        host_cell = Text(host, style="cyan")
         errors = row.get("validation_errors") or []
         yaml_cell = (
             Text(
-                f"✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}",
+                terminal_safe(
+                    f"✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}"
+                ),
                 style="bold red",
             )
             if errors
@@ -417,28 +421,33 @@ def print_agent_list(
         # 2026-07-13); the ``--json`` path keeps the raw ISO. Sentinels
         # ("-"/"?") stay an em-dash.
         started = _started_cell(row)
-        account_cell = row.get("stored_credential") or row.get("account") or "—"
+        account_cell = terminal_safe(
+            row.get("stored_credential") or row.get("account") or "—"
+        )
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.
         if not verbose and " (" in account_cell:
             account_cell = account_cell.split(" (", 1)[0]
         cells = [
-            Text(str(row["name"])),
+            Text(terminal_safe(row["name"])),
             _status_cell(row),
             yaml_cell,
             host_cell,
-            Text(str(row.get("billing_mode") or "unspecified")),
-            Text(str(row.get("auth_identity") or "unknown")),
-            Text(str(row.get("harness") or "—")),
-            Text(f"{row.get('engine') or '—'} / {row.get('model') or '—'}"),
-            Text(str(row.get("runtime_identity_source") or "unknown")),
+            Text(terminal_safe(row.get("billing_mode") or "unspecified")),
+            Text(terminal_safe(row.get("auth_identity") or "unknown")),
+            Text(terminal_safe(row.get("harness") or "—")),
+            Text(
+                f"{terminal_safe(row.get('engine') or '—')} / "
+                f"{terminal_safe(row.get('model') or '—')}"
+            ),
+            Text(terminal_safe(row.get("runtime_identity_source") or "unknown")),
         ]
         if verbose:
-            cells.append(Text(str(account_cell)))
+            cells.append(Text(account_cell))
         if verbose:
             cells.append(_auth_cell(row))
         if verbose:
-            cells.append(Text(str(row.get("path") or "—")))
+            cells.append(Text(terminal_safe(row.get("path") or "—")))
         cells.append(Text(str(started)))
         table.add_row(*cells)
 
@@ -462,10 +471,11 @@ def print_agent_list(
     if not show_full:
         _print_hidden_footer(status_hidden, hidden_ghosts, none_running=False)
     elif hidden_ghosts:
-        console.print(
-            f"[dim]({hidden_ghosts} stale/ghost agent(s) hidden — --all to "
-            "show, -v for paths)[/dim]"
+        message = (
+            f"({hidden_ghosts} stale/ghost agent(s) hidden — --all to show, "
+            "-v for paths)"
         )
+        console.print(Text(message, style="dim"))
 
     # Full per-agent validation-error text — FULL view only. In the default
     # view these blocks (repeated dozens of times on a real fleet) are the
@@ -473,11 +483,10 @@ def print_agent_list(
     if show_full:
         for row in data:
             if row.get("validation_errors"):
-                console.print(
-                    Text(f"✗ {row['name']} validation errors:", style="bold red")
-                )
+                heading = f"✗ {terminal_safe(row['name'])} validation errors:"
+                console.print(Text(heading, style="bold red"))
                 for err in row["validation_errors"]:
-                    console.print(Text(f"    - {err}", style="red"))
+                    console.print(Text(f"    - {terminal_safe(err)}", style="red"))
 
 
 def _extract_damaged_fields(errors: list[str]) -> list[str]:
