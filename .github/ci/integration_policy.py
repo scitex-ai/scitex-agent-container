@@ -19,6 +19,7 @@ _HIGH_RISK_WORDS = {
     "deploy",
     "deployment",
     "login",
+    "iam",
     "migration",
     "migrations",
     "oauth",
@@ -26,6 +27,7 @@ _HIGH_RISK_WORDS = {
     "payments",
     "production",
     "release",
+    "rbac",
     "schema",
     "secret",
     "secrets",
@@ -35,10 +37,13 @@ _HIGH_RISK_WORDS = {
     "tokens",
 }
 _HIGH_RISK_STEMS = (
+    "authn",
     "authheal",
+    "authoriz",
     "cred",
     "deploy",
     "migrat",
+    "oauth",
     "releas",
     "schema",
 )

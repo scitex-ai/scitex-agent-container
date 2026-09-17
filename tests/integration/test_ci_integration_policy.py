@@ -73,8 +73,13 @@ def test_backlog_boundaries_select_the_declared_mode(
     "path",
     [
         "src/project/auth/session.py",
+        "src/project/authn/session.py",
         "src/project/oauth/token.py",
+        "src/project/oauth2/client.py",
         "src/project/authorization/policy.py",
+        "src/project/authorize.py",
+        "src/project/iam/policy.py",
+        "src/project/rbac/policy.py",
         "src/scitex_agent_container/_authheal/_detect.py",
         "src/project/login/session.py",
         "src/project/secrets/loader.py",
@@ -370,9 +375,10 @@ def test_risk_classification_is_bracketed_by_exact_head_reads(
         before.rfind("headRefOid") > before.rfind("RISK LANE"),
         after.index("risk_head=") < after.index("LATEST-DEVELOP"),
         '"$risk_head" != "$pr_sha"' in after,
+        ".previous_filename" in after,
     )
     # Assert
-    assert contract == (True, True, True)
+    assert contract == (True, True, True, True)
 
 
 def test_server_side_strict_base_protection_is_required(merge_step: dict) -> None:
@@ -396,9 +402,11 @@ def test_attribution_is_exact_head_and_workflow_identity_scoped(
     # Act
     contract = (
         'attrib_marker="<!-- $ATTRIB_MARKER:$pr_sha -->"' in script,
-        'test("github-actions")' in script,
+        '== "github-actions"' in script,
+        '== "github-actions[bot]"' in script,
         "Automation is attempting this merge now" in script,
         "No human read this diff" not in script,
+        "Why it merged" not in script,
     )
     # Assert
-    assert contract == (True, True, True, True)
+    assert contract == (True, True, True, True, True, True)

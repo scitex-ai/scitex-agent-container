@@ -421,7 +421,7 @@ jobs:
             fi
             if ! changed_paths=$(gh api --paginate \
                   "repos/$REPO/pulls/$pr/files?per_page=100" \
-                  --jq '.[].filename' 2>/dev/null); then
+                  --jq '.[] | .filename, (.previous_filename // empty)' 2>/dev/null); then
               echo "::warning::#$pr HIGH risk — changed files are unreadable, so protected paths cannot be ruled out. Held for human/security review."
               continue
             fi
@@ -752,16 +752,16 @@ jobs:
               "" \
               "\`auto-merge-to-develop\` (\`.github/workflows/auto-merge-to-develop.yaml\` in this repo) is merging this pull request now. $review_trace" \
               "" \
-              "Why it merged:" \
+              "Why it is eligible for this automated merge attempt:" \
               "" \
               "- base branch is \`develop\` (the only base this sweep touches);" \
               "- no hold marker: not a draft, and none of the labels \`$HOLD_LABELS\`;" \
               "- deterministic risk lane = \`$risk\`: LOW merges without review; NORMAL reached this point only with a formal GitHub approval bound to exact head \`$pr_sha\`; HIGH never reaches this merge path;" \
               "- every non-advisory check on the PR head is green — $n_pass passing, $n_fail failing, $n_unknown not yet known, of $n_total (codecov and readthedocs are advisory and ignored). A queued or in-progress check counts as NOT YET KNOWN and blocks this merge; it is not read as green;" \
-              "- \`develop\`'s own head was settled and green when the sweep ran, so this lands on a base that was known good;" \
+              "- \`develop\`'s own head was settled and green when this attempt was validated;" \
               "- \`mergeStateStatus\` = \`$merge_state\`." \
               "" \
-              "This comment exists because the merging IDENTITY cannot tell you any of that. Every agent, workflow and human in this fleet acts through the same GitHub account, so \`merged_by\` on this PR is the same name whether a watcher merged it on a green check or a person merged it after reading it. If you are reading this months later: it was the watcher." \
+              "This comment records an automation attempt, not a completed merge. The pull request's GitHub state and merge event are authoritative about whether it actually landed and at which head." \
               "" \
               "To stop an automated merge, add a \`hold\` (or \`do-not-merge\`) label, or convert the PR to a draft. The sweep refuses a held PR on every tick and says so in its log; removing the marker lets it merge again." \
               "" \
@@ -774,7 +774,7 @@ jobs:
             # (An unreadable comment list falls through to posting: a duplicate
             # comment is a nuisance, a missing one is the bug.)
             prior=$(gh pr view "$pr" --repo "$REPO" --json comments --jq \
-              '[.comments[] | select((.author.login // "") | test("github-actions")) | .body] | join("\n")' \
+              '[.comments[] | select((.author.login // "") == "github-actions" or (.author.login // "") == "github-actions[bot]") | .body] | join("\n")' \
               2>/dev/null || echo "")
             case "$prior" in
               *"$attrib_marker"*)
