@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from scitex_agent_container._lifecycle._twin import CARDS_AGENT_ENV, TWIN_PARENT_ENV
 from scitex_agent_container._listen._inline_spec import materialize_inline_spec
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 
 @pytest.fixture
@@ -51,6 +54,80 @@ def _valid_spec() -> dict:
 def _body(resp) -> dict:
     """Extract the JSON payload from a Starlette ``JSONResponse``."""
     return json.loads(bytes(resp.body).decode("utf-8"))
+
+
+def _twin_spec(*, workdir: Path, overlay: Path) -> dict:
+    doc = explicit_doc(
+        {
+            "runtime": "tui",
+            "harness": "hermes",
+            "workdir": str(workdir),
+            "apptainer": {
+                "image": "sac-base",
+                "overlay": str(overlay),
+                "env": {
+                    CARDS_AGENT_ENV: "parent-twin",
+                    TWIN_PARENT_ENV: "parent",
+                },
+            },
+            "available_harnesses": {
+                "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+            },
+        },
+        metadata={"labels": {"role": "worker"}},
+    )
+    for legacy in ("claude", "container", "watchdog", "context_management"):
+        doc["spec"].pop(legacy, None)
+    doc["spec"]["comms"]["channels"] = ["server:sac", "server:scitex-cards"]
+    return doc
+
+
+def test_materialized_twin_creates_worktree_on_host(home_root: Path) -> None:
+    # Arrange
+    parent_repo = home_root / "parent-repo"
+    twin_workdir = home_root / ".sac-twins" / "parent-twin" / "workdir"
+    parent_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent_repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "config", "user.name", "Twin Test"],
+        check=True,
+    )
+    (parent_repo / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent_repo), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "commit", "-qm", "seed"], check=True
+    )
+    parent_spec = _twin_spec(
+        workdir=parent_repo,
+        overlay=home_root / "runtime" / "parent" / "overlay",
+    )
+    parent_spec["spec"]["apptainer"]["env"] = {CARDS_AGENT_ENV: "parent"}
+    parent_dir = (
+        home_root / ".scitex" / "agent-container" / "agents" / "parent"
+    )
+    parent_dir.mkdir(parents=True)
+    (parent_dir / "spec.yaml").write_text(
+        yaml.safe_dump(parent_spec, sort_keys=False), encoding="utf-8"
+    )
+    child_spec = _twin_spec(
+        workdir=twin_workdir,
+        overlay=home_root / "runtime" / "parent" / ".sac-twins" / "parent-twin" / "overlay",
+    )
+
+    # Act
+    result = materialize_inline_spec(
+        "parent-twin", child_spec, overwrite=False, caller="parent"
+    )
+
+    # Assert
+    assert (
+        result,
+        (twin_workdir / "tracked.txt").read_text(encoding="utf-8"),
+    ) == (None, "parent\n")
 
 
 class TestMaterializeValidSpec:

@@ -12,17 +12,21 @@ ApptainerContainerRuntime's resolver API), same as the session-seed suite.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scitex_agent_container._lifecycle._twin import (
     CARDS_AGENT_ENV,
     RETIRED_AGENT_ENV,
     TWIN_PARENT_ENV,
     TwinSeedError,
+    _ensure_twin_worktree,
     build_twin_boot_kick,
     derive_twin_spec,
+    prepare_twin_spawn,
     resolve_twin_name,
     seed_twin_from_parent,
 )
@@ -32,7 +36,11 @@ from scitex_agent_container._runners._session_state import (
 )
 from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._types import ClaudeSpec
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from scitex_agent_container.config._validation import validate_raw
+from tests.scitex_agent_container._helpers.explicit_spec import (
+    explicit_doc,
+    explicitize_yaml,
+)
 
 _UUID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -67,6 +75,31 @@ def _parent_doc() -> dict:
     }
 
 
+def _current_v3_parent_doc() -> dict:
+    doc = explicit_doc(
+        {
+            "runtime": "tui",
+            "harness": "hermes",
+            "workdir": "/scratch/ywatanabe/parent-workdir",
+            "apptainer": {
+                "image": "sac-base",
+                "overlay": "/scratch/sac/agents/parent/overlay",
+                "env": {CARDS_AGENT_ENV: "parent", "KEEP": "yes"},
+            },
+            "available_harnesses": {
+                "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+            },
+        },
+        metadata={"labels": {"role": "worker"}},
+    )
+    # Current independent-harness specs declare one surface, not the legacy
+    # Claude/Docker/watchdog compatibility blocks in the generic test defaults.
+    for legacy in ("claude", "container", "watchdog", "context_management"):
+        doc["spec"].pop(legacy, None)
+    doc["spec"]["comms"]["channels"] = ["server:sac", "server:scitex-cards"]
+    return doc
+
+
 # ─── resolve_twin_name ────────────────────────────────────────────────────
 
 
@@ -97,6 +130,188 @@ def test_resolve_twin_name_honours_explicit_request():
     assert name == "neurovista-writer"
 
 
+# ─── derive_twin_spec: current-v3 isolation contract ──────────────────────
+
+
+def test_current_v3_twin_validates_and_uses_apptainer_env() -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()
+    # Act
+    twin = derive_twin_spec(
+        parent, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert (
+        validate_raw(twin, "<twin>"),
+        "env" in twin["spec"],
+        twin["spec"]["apptainer"]["env"][CARDS_AGENT_ENV],
+        twin["spec"]["apptainer"]["env"][TWIN_PARENT_ENV],
+    ) == ([], False, "parent-twin", "parent")
+
+
+def test_current_v3_twin_has_unique_workdir_and_overlay() -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()
+    # Act
+    twin = derive_twin_spec(
+        parent, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert (
+        twin["spec"]["workdir"] != parent["spec"]["workdir"],
+        twin["spec"]["apptainer"]["overlay"]
+        != parent["spec"]["apptainer"]["overlay"],
+        "parent-twin" in twin["spec"]["workdir"],
+        "parent-twin" in twin["spec"]["apptainer"]["overlay"],
+    ) == (True, True, True, True)
+
+
+def test_current_v3_hermes_twin_does_not_inject_legacy_claude_block() -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()
+    # Act
+    twin = derive_twin_spec(
+        parent, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert (
+        twin["spec"].get("claude"),
+        twin["spec"]["available_harnesses"]["hermes"]["session"]["mode"],
+    ) == (parent["spec"].get("claude"), "continue")
+
+
+def test_current_v3_twin_does_not_mutate_parent() -> None:
+    # Arrange
+    import copy
+
+    parent = _current_v3_parent_doc()
+    before = copy.deepcopy(parent)
+    # Act
+    derive_twin_spec(
+        parent, twin_name="parent-twin", parent_name="parent", persist=False
+    )
+    # Assert
+    assert parent == before
+
+
+def test_ensure_twin_worktree_creates_detached_checkout(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    twin = tmp_path / "twins" / "child" / "workdir"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.name", "Twin Test"],
+        check=True,
+    )
+    (parent / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "commit", "-qm", "seed"], check=True
+    )
+
+    # Act
+    _ensure_twin_worktree(str(parent), str(twin))
+
+    # Assert
+    assert (
+        (twin / "tracked.txt").read_text(encoding="utf-8"),
+        subprocess.run(
+            ["git", "-C", str(twin), "rev-parse", "--is-inside-work-tree"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        subprocess.run(
+            ["git", "-C", str(twin), "symbolic-ref", "-q", "HEAD"],
+            check=False,
+        ).returncode,
+    ) == ("parent\n", "true", 1)
+
+
+def test_ensure_twin_worktree_rejects_existing_non_worktree(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    twin = tmp_path / "occupied"
+    parent.mkdir()
+    twin.mkdir()
+
+    # Act
+    raises_ctx = pytest.raises(TwinSeedError, match="not a git worktree")
+
+    # Assert
+    with raises_ctx:
+        _ensure_twin_worktree(str(parent), str(twin))
+
+
+def test_ensure_twin_worktree_rejects_unrelated_git_checkout(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    occupied = tmp_path / "occupied"
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(["git", "init", "-q", str(occupied)], check=True)
+
+    # Act
+    raises_ctx = pytest.raises(TwinSeedError, match="different git repository")
+
+    # Assert
+    with raises_ctx:
+        _ensure_twin_worktree(str(parent), str(occupied))
+
+
+def test_prepare_current_v3_twin_validates_without_mutating_parent_checkout(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange
+    parent = tmp_path / "parent-repo"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(parent), "config", "user.name", "Twin Test"],
+        check=True,
+    )
+    (parent / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent), "commit", "-qm", "seed"], check=True
+    )
+    agents = tmp_path / "agents"
+    spec_dir = agents / "parent"
+    spec_dir.mkdir(parents=True)
+    doc = _current_v3_parent_doc()
+    doc["spec"]["workdir"] = str(parent)
+    (spec_dir / "spec.yaml").write_text(
+        yaml.safe_dump(doc, sort_keys=False), encoding="utf-8"
+    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(agents))
+    env_save_restore.set("SCITEX_DIR", str(tmp_path / "state"))
+
+    # Act
+    name, twin = prepare_twin_spawn("parent", twin_name="parent-twin")
+
+    # Assert
+    twin_workdir = Path(twin["spec"]["workdir"])
+    assert (
+        name,
+        validate_raw(twin, "<twin>"),
+        twin_workdir.exists(),
+        subprocess.run(
+            ["git", "-C", str(parent), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout,
+    ) == ("parent-twin", [], False, "")
+
+
 # ─── derive_twin_spec: identity split (safety-critical) ───────────────────
 
 
@@ -106,7 +321,7 @@ def test_derive_sets_cards_author_to_twin():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert — the CANONICAL board-identity key, never the retired one.
-    assert out["spec"]["env"][CARDS_AGENT_ENV] == "parent-twin"
+    assert out["spec"]["apptainer"]["env"][CARDS_AGENT_ENV] == "parent-twin"
 
 
 def test_derive_never_writes_the_retired_author_key():
@@ -115,7 +330,7 @@ def test_derive_never_writes_the_retired_author_key():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert — a generated spec must not re-declare the retired name.
-    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
+    assert RETIRED_AGENT_ENV not in out["spec"]["apptainer"]["env"]
 
 
 def test_derive_drops_an_inherited_retired_author_key():
@@ -126,7 +341,7 @@ def test_derive_drops_an_inherited_retired_author_key():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert RETIRED_AGENT_ENV not in out["spec"]["env"]
+    assert RETIRED_AGENT_ENV not in out["spec"]["apptainer"]["env"]
 
 
 def test_derive_sets_twin_parent_env_to_parent():
@@ -135,7 +350,7 @@ def test_derive_sets_twin_parent_env_to_parent():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["env"][TWIN_PARENT_ENV] == "parent"
+    assert out["spec"]["apptainer"]["env"][TWIN_PARENT_ENV] == "parent"
 
 
 def test_derive_drops_inherited_sac_name_env():
@@ -144,7 +359,7 @@ def test_derive_drops_inherited_sac_name_env():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert "SAC_NAME" not in out["spec"]["env"]
+    assert "SAC_NAME" not in out["spec"]["apptainer"]["env"]
 
 
 def test_derive_inherits_other_env_verbatim():
@@ -153,7 +368,7 @@ def test_derive_inherits_other_env_verbatim():
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["env"]["FOO"] == "bar"
+    assert out["spec"]["apptainer"]["env"]["FOO"] == "bar"
 
 
 # ─── derive_twin_spec: session / lifetime / port / channels ───────────────
@@ -230,13 +445,13 @@ def test_derive_drops_telegrammer_from_neutral_channels():
 # ─── derive_twin_spec: inheritance / role / to_home / boot-kick ───────────
 
 
-def test_derive_inherits_workdir_verbatim():
+def test_derive_assigns_unique_twin_workdir():
     # Arrange
     doc = _parent_doc()
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["workdir"] == "/home/agent/proj/x"
+    assert out["spec"]["workdir"] == "/home/agent/proj/.sac-twins/parent-twin/workdir"
 
 
 def test_derive_inherits_image_verbatim():
