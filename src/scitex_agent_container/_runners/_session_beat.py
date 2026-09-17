@@ -237,6 +237,7 @@ def write_heartbeat(
     ts: float | None = None,
     db_writer=None,
     writer: str | None = None,
+    authoritative_fields: dict | None = None,
 ) -> None:
     """Atomically write the heartbeat record to ``heartbeat.json``
     AND append a row to ``state.db.heartbeats`` (diary).
@@ -260,8 +261,8 @@ def write_heartbeat(
     when ``None`` (the SDK-runner default) the current wall-clock is
     used. The TUI heartbeat writer passes the agent's tmux pane-activity
     epoch here so ``heartbeat_at`` reflects the SAME liveness signal
-    ``TuiSessionRuntime.is_running`` keys off (rather than the moment
-    the centralized loop happened to observe it).
+    ``TuiSessionRuntime.is_running`` keys off. Hermes instead passes the last
+    gap-free session-event activity time from its owner-side projection.
 
     When the container tmpfs is probeable it also carries
     ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
@@ -309,6 +310,20 @@ def write_heartbeat(
 
     payload.update(heartbeat_jsonl_fields(state_dir, now))
     payload.update(heartbeat_progress_fields(state_dir))
+    if authoritative_fields:
+        # Harness-native instruments may replace fields whose generic source
+        # does not exist for that harness.  Hermes, for example, has no SDK
+        # quota.json: its session event replay is the authority for completed
+        # turns.  Keep the heartbeat envelope owned here so callers cannot
+        # rewrite liveness identity or ordering accidentally.
+        protected = {"ts", "pid", "state", "seq", "writer", "incarnation_id"}
+        overlap = protected.intersection(authoritative_fields)
+        if overlap:
+            raise ValueError(
+                "authoritative heartbeat fields cannot replace envelope keys: "
+                f"{sorted(overlap)!r}"
+            )
+        payload.update(authoritative_fields)
     atomic_write_text(state_dir / "heartbeat.json", json.dumps(payload))
     if name and host:
         db = _resolve_db_writer(db_writer)
