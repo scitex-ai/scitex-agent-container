@@ -36,6 +36,7 @@ from ._authorization import can_control, fleet_visibility, resolve_identity, sco
 from ._constants import API_URL_ENV
 from ._projection import project_detail, project_row
 from ._remote import RemoteFleet, safe_error_message
+from ._timeline import STALE_AFTER_SECONDS, build_timeline
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
@@ -207,6 +208,41 @@ def fleet_api(request: HttpRequest) -> JsonResponse:
     except Exception as exc:  # stx-allow: fallback (reason: surface the failure as JSON, not a 500 page)
         CACHE.record_error(identity, error=safe_error_message(exc), scope=scope)
         return JsonResponse({"ok": False, "error": safe_error_message(exc)}, status=502)
+
+
+@require_GET
+def timeline_api(request: HttpRequest) -> JsonResponse:
+    """The activity timeline as JSON, for the near-real-time poll.
+
+    Reads the SAME per-agent status the fleet view reads, so this endpoint adds
+    no second source of truth and no state of its own. Filters are applied
+    server-side (``agent``, ``kind``): the browser must not pull the whole fleet
+    to render one agent's history.
+    """
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE, reported as JSON)
+        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+    names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    statuses = fleet.read_statuses(names)
+    agent_filter = request.GET.get("agent") or None
+    kind_filter = request.GET.get("kind") or None
+    entries = build_timeline(
+        statuses,
+        agent=agent_filter if isinstance(agent_filter, str) else None,
+        kind=kind_filter if isinstance(kind_filter, str) else None,
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "identity": identity,
+            "count": len(entries),
+            "entries": [e.as_dict() for e in entries],
+            "stale_after_seconds": STALE_AFTER_SECONDS,
+        }
+    )
 
 
 def _detail_extras(fleet: RemoteFleet, name: str, status: Any) -> dict:
