@@ -43,9 +43,10 @@ the operator's standardized provider-key and scitex secret files
 default ``scripts/systemd/install-sac-listen.sh`` computes.
 The CCT pool resolver (``_cct_token_pool._pool_env``) uses it, so any caller
 re-resolves the bot token from the default pool AFTER the fold — no more
-stripping. The general ``.envrc`` fold preamble (:func:`_secrets_preamble_lines`)
-deliberately stays env-ONLY: it runs in a strict bash and must not couple every
-deploy to host ``$HOME`` state; the CCT re-resolution (fail-open) is what heals
+stripping. The general ``.envrc`` fold preamble (:func:`_secrets_preamble_env`)
+deliberately stays env-ONLY: it securely parses only the explicitly configured
+files and must not couple every deploy to host ``$HOME`` state; the CCT
+re-resolution (fail-open) is what heals
 the reported incident. A host without that directory resolves to nothing (a safe
 no-op, exactly as before).
 """
@@ -124,47 +125,56 @@ def resolve_secret_files(
     )
 
 
-def _secrets_preamble_lines() -> list[str]:
-    """Return ``. <path>`` source lines from an EXPLICIT ``SAC_SECRETS_ENVRC``.
+def _secrets_preamble_env() -> dict[str, str]:
+    """Securely parse the EXPLICIT pool into the env inherited by bash.
 
-    Env-ONLY by design (unset var ⇒ empty preamble, unchanged pre-fix
-    behaviour): the general ``.envrc`` fold sources these in a strict
-    ``--noprofile --norc`` bash, so it must stay a pure function of the
-    explicitly-configured var and never couple a deploy to host ``$HOME``
-    state. The canonical ``$HOME`` default fallback lives in
-    :func:`resolve_secret_files` and is applied only by the CCT pool resolver
-    (``_cct_token_pool._pool_env``) — which is fail-open and re-resolves the
-    bot token AFTER the fold, so an unset var no longer strips it.
-
-    The same list is spliced into BOTH the baseline AND the loaded shell so the
-    secret files' own vars cancel in the diff (no leak) while the per-agent
-    ``.envrc``'s references still resolve.
+    Env-only by design: an unset variable stays a no-op and does not consult
+    the host default. Secret files are data, never shell programs. Each file is
+    opened and verified by :func:`_read_secret_file_secure`, then the parsed
+    mapping is supplied to BOTH baseline and loaded shells through
+    ``subprocess.run(env=...)``. Source vars therefore cancel in the diff while
+    agent ``.envrc`` references still resolve.
     """
     raw = os.environ.get(_SECRETS_ENVRC_VAR, "")
-    lines: list[str] = []
+    if not raw:
+        return {}
+    from ._secret_pool import SecretPoolFileError, _read_secret_file_secure
+
+    env: dict[str, str] = {}
     for entry in raw.split(":"):
         if not entry:
             continue
-        if Path(entry).is_file():
-            lines.append(f". {shlex.quote(entry)}")
-    return lines
+        path = Path(entry)
+        if not path.is_file():
+            continue
+        try:
+            env.update(_read_secret_file_secure(path))
+        except SecretPoolFileError as exc:
+            raise EnvrcEvalError(
+                f"secret pool rejected (category={exc.category})"
+            ) from exc
+    return env
 
 
-def _capture_env(script: str, cwd: Path) -> dict[str, str]:
+def _capture_env(
+    script: str, cwd: Path, *, environ: dict[str, str] | None = None
+) -> dict[str, str]:
     """Run ``script`` in a clean (no rc/profile) bash and return its env.
 
     Output is parsed from ``env -0`` (NUL-delimited ``KEY=VALUE``) so values
-    containing newlines or ``=`` survive intact. A non-zero exit raises
-    :class:`EnvrcEvalError` carrying bash's stderr.
+    containing newlines or ``=`` survive intact. A non-zero exit raises a
+    category-only :class:`EnvrcEvalError`; raw stderr may contain secrets and is
+    never copied into the exception.
     """
     proc = subprocess.run(
         ["bash", "--noprofile", "--norc", "-c", script],
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        env=environ,
     )
     if proc.returncode != 0:
-        raise EnvrcEvalError(proc.stderr.strip() or f"bash exited {proc.returncode}")
+        raise EnvrcEvalError(f"envrc shell failed (exit={proc.returncode})")
     env: dict[str, str] = {}
     for entry in proc.stdout.split("\0"):
         if not entry:
@@ -184,19 +194,21 @@ def eval_envrc(envrc: Path, *, base_env: Path | None = None) -> dict[str, str]:
     the keys the scripts ADDED or CHANGED (shell-internal noise filtered).
     ``cwd`` is ``envrc``'s directory so relative paths inside it resolve.
 
-    Raises :class:`EnvrcEvalError` (wrapping bash stderr) on a non-zero exit.
+    Raises a category-only :class:`EnvrcEvalError` on a non-zero exit; raw
+    stderr is discarded because an envrc can print secret values there.
     """
     cwd = envrc.parent
-    preamble = _secrets_preamble_lines()
-    baseline_lines = ["set -a", *preamble, "set +a", "env -0"]
-    baseline = _capture_env("\n".join(baseline_lines), cwd)
-    lines = ["set -a", *preamble]
+    capture_env = dict(os.environ)
+    capture_env.update(_secrets_preamble_env())
+    baseline_lines = ["set -a", "set +a", "env -0"]
+    baseline = _capture_env("\n".join(baseline_lines), cwd, environ=capture_env)
+    lines = ["set -a"]
     if base_env is not None and base_env.is_file():
         lines.append(f". {shlex.quote(str(base_env))}")
     lines.append(f". {shlex.quote(str(envrc))}")
     lines.append("set +a")
     lines.append("env -0")
-    loaded = _capture_env("\n".join(lines), cwd)
+    loaded = _capture_env("\n".join(lines), cwd, environ=capture_env)
     return _folded_env(loaded, baseline)
 
 
@@ -271,8 +283,8 @@ def eval_envrc_cascade(
     resolve, and a later layer overrides an earlier one. Returns only the keys
     ADDED or CHANGED vs a baseline shell (shell-internal noise filtered).
 
-    Fail-loud: a ``.envrc`` whose bash evaluation exits non-zero raises
-    :class:`EnvrcEvalError` carrying bash's stderr.
+    Fail-loud: a ``.envrc`` whose bash evaluation exits non-zero raises a
+    category-only :class:`EnvrcEvalError`; raw stderr is never exposed.
     """
     files: list[Path] = []
     seen: set[Path] = set()
@@ -287,10 +299,11 @@ def eval_envrc_cascade(
     if base_env is None and not files:
         return {}
     cwd = files[-1].parent if files else base_env.parent  # type: ignore[union-attr]
-    preamble = _secrets_preamble_lines()
-    baseline_lines = ["set -a", *preamble, "set +a", "env -0"]
-    baseline = _capture_env("\n".join(baseline_lines), cwd)
-    lines = ["set -a", *preamble]
+    capture_env = dict(os.environ)
+    capture_env.update(_secrets_preamble_env())
+    baseline_lines = ["set -a", "set +a", "env -0"]
+    baseline = _capture_env("\n".join(baseline_lines), cwd, environ=capture_env)
+    lines = ["set -a"]
     if base_env is not None and base_env.is_file():
         lines.append(f". {shlex.quote(str(base_env))}")
     for f in files:
@@ -298,7 +311,7 @@ def eval_envrc_cascade(
         lines.append(f". {shlex.quote(f.name)}")
     lines.append("set +a")
     lines.append("env -0")
-    loaded = _capture_env("\n".join(lines), cwd)
+    loaded = _capture_env("\n".join(lines), cwd, environ=capture_env)
     return _folded_env(loaded, baseline)
 
 

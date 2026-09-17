@@ -120,6 +120,14 @@ def secrets_envrc() -> Iterator[None]:
             os.environ[_SECRETS_VAR] = saved
 
 
+def _envrc_error(action) -> EnvrcEvalError | None:
+    try:
+        action()
+    except EnvrcEvalError as exc:
+        return exc
+    return None
+
+
 def test_eval_envrc_captures_exported_var(tmp_path: Path) -> None:
     # Arrange
     envrc = tmp_path / ".envrc"
@@ -160,6 +168,19 @@ def test_eval_envrc_raises_on_nonzero_exit(tmp_path: Path) -> None:
     # Assert
     with pytest.raises(EnvrcEvalError):
         eval_envrc(envrc)
+
+
+def test_eval_envrc_error_does_not_expose_raw_stderr(tmp_path: Path) -> None:
+    # Arrange
+    marker = "RAW-STDERR-SECRET-MUST-NOT-APPEAR"
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(f"echo {marker} >&2\nexit 1\n", encoding="utf-8")
+
+    # Act
+    error = _envrc_error(lambda: eval_envrc(envrc))
+
+    # Assert
+    assert error is not None and marker not in str(error)
 
 
 def test_fold_envrc_writes_combined_env_file(tmp_path: Path) -> None:
@@ -253,6 +274,7 @@ def test_secrets_preamble_resolves_referenced_secret(
     # Arrange — a secret file in scope; the .envrc references its var.
     secret = tmp_path / "secret.env"
     secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    secret.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(secret)
     envrc = tmp_path / ".envrc"
     envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
@@ -268,6 +290,7 @@ def test_secrets_preamble_does_not_leak_source_secret(
     # Arrange — same setup as the resolve test.
     secret = tmp_path / "secret.env"
     secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    secret.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(secret)
     envrc = tmp_path / ".envrc"
     envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
@@ -275,6 +298,25 @@ def test_secrets_preamble_does_not_leak_source_secret(
     out = eval_envrc(envrc)
     # Assert — the source secret var is NOT folded (cancels in the diff).
     assert "SECRET_TOK" not in out
+
+
+def test_secret_preamble_shell_code_is_rejected_without_execution(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    canary = tmp_path / "secret-file-executed"
+    secret = tmp_path / "secret.env"
+    secret.write_text(f"SECRET_TOK=$(touch {canary})\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+
+    # Act
+    error = _envrc_error(lambda: eval_envrc(envrc))
+
+    # Assert
+    assert error is not None and not canary.exists()
 
 
 def test_empty_unresolved_reference_is_dropped(

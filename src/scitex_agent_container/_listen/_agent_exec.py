@@ -226,9 +226,16 @@ async def agents_start(request: Request) -> JSONResponse:
     # provider key named by this agent's selected engine. Resolve the canonical
     # host pool and propagate ONLY that spec-declared variable. Missing stays
     # missing so the child start refuses; there is no provider fallback.
-    from ._provider_env import provider_secret_env_for_agent
+    from ._provider_env import (
+        ProviderPreflightError,
+        provider_preflight_refusal,
+        provider_secret_env_for_agent,
+    )
 
-    child_env.update(provider_secret_env_for_agent(name, child_env))
+    try:
+        child_env.update(provider_secret_env_for_agent(name, child_env))
+    except ProviderPreflightError as exc:
+        return provider_preflight_refusal(name, exc)
     # Consent-propagation fix (2026-07-05, paper-scitex-clew report): set
     # the env-var escape valve in ADDITION to the --yes flag below so the
     # inner subprocess's refuse-without-``--yes`` gate

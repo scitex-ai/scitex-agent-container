@@ -26,15 +26,27 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from scitex_agent_container.runtimes import _secret_pool as secret_pool_mod
 from scitex_agent_container.runtimes._secret_pool import (
     _SECRETS_ENVRC_VAR,
     _pool_env,
     read_pool,
 )
+
+
+@contextmanager
+def _swap(name: str, value):
+    saved = getattr(secret_pool_mod, name)
+    setattr(secret_pool_mod, name, value)
+    try:
+        yield
+    finally:
+        setattr(secret_pool_mod, name, saved)
 
 
 @pytest.fixture
@@ -54,6 +66,7 @@ def _real_pool_file(tmp_path: Path, body: str) -> None:
     """Write a REAL secrets file and point ``SAC_SECRETS_ENVRC`` at it."""
     pool = tmp_path / "pool.src"
     pool.write_text(body, encoding="utf-8")
+    pool.chmod(0o600)
     os.environ[_SECRETS_ENVRC_VAR] = str(pool)
 
 
@@ -166,3 +179,137 @@ def test_pool_env_still_returns_the_bare_mapping(
     env = _pool_env()
     # Assert
     assert env.get("CCT_BOT_TOKEN_ZZ_COMPAT") == "zz-value"
+
+
+# ---------------------------------------------------------------------------
+# hostile pool files fail closed without executing or disclosing content
+# ---------------------------------------------------------------------------
+
+
+def test_symlink_pool_file_is_rejected(tmp_path: Path, secrets_envrc: None) -> None:
+    # Arrange
+    target = tmp_path / "outside.src"
+    target.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    target.chmod(0o600)
+    link = tmp_path / "pool.src"
+    link.symlink_to(target)
+    os.environ[_SECRETS_ENVRC_VAR] = str(link)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_world_writable_pool_file_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o606)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_group_readable_pool_file_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o640)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_pool_file_not_owned_by_effective_user_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    with _swap("_effective_uid", lambda: pool.stat().st_uid + 1):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_pool_replacement_with_symlink_at_open_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    attacker = tmp_path / "attacker.src"
+    attacker.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    attacker.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+    swapped = False
+
+    def swap_then_open(path, flags):
+        nonlocal swapped
+        if not swapped and Path(path) == pool:
+            swapped = True
+            pool.unlink()
+            pool.symlink_to(attacker)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_shell_code_in_pool_is_rejected_and_not_executed(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    canary = tmp_path / "executed"
+    pool = tmp_path / "pool.src"
+    pool.write_text(f"ZZ_SECRET=safe; touch {canary}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and not canary.exists()
+
+
+def test_pool_parse_error_never_discloses_secret_content(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    marker = "RAW-SECRET-MUST-NOT-APPEAR"
+    pool = tmp_path / "pool.src"
+    pool.write_text(f"echo {marker} >&2\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert marker not in read.detail and marker not in caplog.text

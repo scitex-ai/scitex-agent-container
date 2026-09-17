@@ -372,3 +372,115 @@ def test_node_caller_restarting_peer_does_not_self_schedule(pg_schema: str, clie
         )
     # Assert — an allowed cross-agent restart never self-schedules.
     assert recorder.calls == [] and response.status_code != 403
+
+
+# ---------------------------------------------------------------------------
+# Provider preflight — the same authorized pool overlay protects every restart
+# shape before any stop/schedule side effect.
+# ---------------------------------------------------------------------------
+
+
+def _install_approved_provider_agent(root: Path, name: str) -> None:
+    source = Path(__file__).resolve().parents[3] / "examples/providers/opencode-go-hermes.yaml"
+    target = root / "home/.scitex/agent-container/agents" / name / "spec.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _install_provider_pool(root: Path, env_save_restore) -> None:
+    pool = root / "provider-pool.src"
+    pool.write_text("OPENCODE_GO_API_KEY=pool-only-restart-key\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+
+
+def _install_env_recording_restart(root: Path) -> tuple[Path, Path]:
+    import sys
+
+    log = root / "restart-env.json"
+    script = root / "fake-sac-restart"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(log)!r}, 'w').write(json.dumps({{'key': os.environ.get('OPENCODE_GO_API_KEY')}}))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    return script, log
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_sync_restart_receives_pool_only_provider_key(
+    client, isolated_env: Path, env_save_restore, fresh: bool
+) -> None:
+    # Arrange
+    name = f"sync-provider-{fresh}"
+    _install_approved_provider_agent(isolated_env, name)
+    _install_provider_pool(isolated_env, env_save_restore)
+    script, log = _install_env_recording_restart(isolated_env)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={"fresh": fresh},
+        )
+    observed = json.loads(log.read_text(encoding="utf-8"))
+
+    # Assert
+    assert response.status_code == 200 and observed["key"] == "pool-only-restart-key"
+
+
+def test_detached_self_restart_receives_pool_only_provider_key(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    name = "detached-provider"
+    _install_approved_provider_agent(isolated_env, name)
+    _install_provider_pool(isolated_env, env_save_restore)
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls[0][1].get("OPENCODE_GO_API_KEY"),
+    ) == (202, "pool-only-restart-key")
+
+
+def test_missing_provider_key_refuses_before_self_restart_and_preserves_canary(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange — the immutable canary stands for the already-live session state.
+    name = "preserved-provider-session"
+    _install_approved_provider_agent(isolated_env, name)
+    env_save_restore.delete("SAC_SECRETS_ENVRC")
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    canary = isolated_env / "runtime" / name / "session-preservation.canary"
+    canary.parent.mkdir(parents=True, exist_ok=True)
+    canary.write_text("existing-session-remains-alive", encoding="utf-8")
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls,
+        canary.read_text(encoding="utf-8"),
+    ) == (412, [], "existing-session-remains-alive")

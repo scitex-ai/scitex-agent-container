@@ -18,6 +18,8 @@ never appear in a log line; only slot names and paths do.
 from __future__ import annotations
 
 import os
+import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,6 +102,101 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return env
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class SecretPoolFileError(RuntimeError):
+    """A value-free secret-file refusal safe to expose in logs/errors."""
+
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__(category)
+
+
+def _parse_secret_file(content: str) -> dict[str, str]:
+    """Parse literal assignments only; never invoke a shell.
+
+    ``export KEY=VALUE`` is explicitly supported for the fleet's existing
+    ``*.src`` format.  Quotes may wrap the entire literal value and are removed;
+    interpolation, command substitution, redirects, pipelines and standalone
+    shell commands are rejected rather than interpreted.
+    """
+    env: dict[str, str] = {}
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not _ENV_KEY_RE.fullmatch(key):
+            raise SecretPoolFileError("secret_file_syntax")
+        value = value.strip()
+        if any(marker in value for marker in ("$(", "${", "`", "\x00")):
+            raise SecretPoolFileError("secret_file_shell_syntax")
+        if value[:1] in {"'", '"'}:
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote or quote in value[1:-1]:
+                raise SecretPoolFileError("secret_file_syntax")
+            value = value[1:-1]
+        elif value[-1:] in {"'", '"'} or any(
+            char.isspace() or char in ";&|<>" for char in value
+        ):
+            raise SecretPoolFileError("secret_file_shell_syntax")
+        env[key] = value
+    return env
+
+
+def _effective_uid() -> int:
+    """Effective owner expected for a host secret (small testable OS seam)."""
+    return os.geteuid()
+
+
+def _open_secret_fd(path: Path, flags: int) -> int:
+    """Descriptor-open seam; production always delegates directly to ``os.open``."""
+    return os.open(path, flags)
+
+
+def _read_secret_file_secure(path: Path) -> dict[str, str]:
+    """Read one canonical owner-only regular file through its verified fd."""
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        raise SecretPoolFileError("secret_file_noncanonical")
+    absolute = Path(os.path.abspath(candidate))
+    try:
+        canonical = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise SecretPoolFileError("secret_file_unavailable") from exc
+    if canonical != absolute:
+        raise SecretPoolFileError("secret_file_symlink")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = _open_secret_fd(canonical, flags)
+    except OSError as exc:
+        raise SecretPoolFileError("secret_file_open") from exc
+    try:
+        observed = os.fstat(fd)
+        if not stat.S_ISREG(observed.st_mode):
+            raise SecretPoolFileError("secret_file_not_regular")
+        if observed.st_uid != _effective_uid():
+            raise SecretPoolFileError("secret_file_owner")
+        if stat.S_IMODE(observed.st_mode) & 0o077:
+            raise SecretPoolFileError("secret_file_permissions")
+        with os.fdopen(
+            fd, "r", encoding="utf-8", errors="strict", closefd=True
+        ) as stream:
+            fd = -1
+            content = stream.read()
+    except UnicodeError as exc:
+        raise SecretPoolFileError("secret_file_encoding") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return _parse_secret_file(content)
+
+
 def _write_env_file(path: Path, env: dict[str, str]) -> None:
     """Rewrite ``path`` as sorted ``KEY=VALUE`` lines, owner-only perms."""
     body = "".join(f"{k}={v}\n" for k, v in sorted(env.items()))
@@ -114,14 +211,15 @@ def read_pool() -> PoolRead:
     honours an explicit ``SAC_SECRETS_ENVRC`` AND — the 2026-07-18 class fix —
     falls back to the canonical ``$HOME`` default pool when the var is unset, so
     a cron / raw-ssh / federated-timer restart that never had the var exported
-    still finds the bot token instead of folding (and STRIPPING) it. Sourced in
-    a strict bash with the same ``set -a`` semantics as the ``.envrc`` fold.
+    still finds the bot token instead of folding (and STRIPPING) it. Files are
+    descriptor-opened without symlink following, verified, and parsed as
+    literal assignments; they are never shell-sourced.
 
     Three outcomes, and the middle one is the point (see :class:`PoolRead`):
 
-    * secret file(s) resolved AND sourced cleanly → ``trusted=True``. A miss
+    * secret file(s) resolved AND parsed cleanly → ``trusted=True``. A miss
       here means the slot really is not in the pool.
-    * secret file(s) resolved but the source FAILED → ``trusted=False``. We
+    * secret file(s) resolved but verification/parsing FAILED → ``trusted=False``. We
       hold the process env, which is not the pool we meant to read.
     * NO secret file resolved at all → ``trusted=False``. This is the
       relocation shape: the pool exists on disk and sac never opened it,
@@ -132,9 +230,7 @@ def read_pool() -> PoolRead:
     Never raises — a pool that cannot be read is a verdict, not a crash, and
     the caller's missing-token message names the pool source either way.
     """
-    import shlex
-
-    from ._envrc import EnvrcEvalError, _capture_env, resolve_secret_files
+    from ._envrc import resolve_secret_files
 
     files = resolve_secret_files()
     if not files:
@@ -150,26 +246,22 @@ def read_pool() -> PoolRead:
                 f"{_SECRETS_ENVRC_VAR}, a non-interactive ssh, a cron tick)"
             ),
         )
-    preamble = [f". {shlex.quote(str(p))}" for p in files]
+    env = dict(os.environ)
     try:
-        env = _capture_env(
-            "\n".join(["set -a", *preamble, "set +a", "env -0"]), Path.cwd()
-        )
-    except EnvrcEvalError as exc:  # stx-allow: fallback (reason: pool read must not abort deploy; the failure is returned as an UNTRUSTED read so callers report "could not tell" rather than "absent")
+        for path in files:
+            env.update(_read_secret_file_secure(path))
+    except SecretPoolFileError as exc:  # stx-allow: fallback (reason: a rejected pool read is an UNTRUSTED verdict, not a process crash; values/content are deliberately absent from the diagnostic)
         _logger().warning(
-            "secrets pool: failed to source %s (%s); falling back to the "
-            "launching process env only. A slot MISS against this read is "
-            "INCONCLUSIVE, not evidence of absence.",
-            _pool_source_label(),
-            exc,
+            "secrets pool: rejected secret file category=%s; using launching "
+            "process environment only (slot misses are inconclusive)",
+            exc.category,
         )
         return PoolRead(
             env=dict(os.environ),
             trusted=False,
             detail=(
-                f"the resolved secret file(s) ({_pool_source_label()}) could not "
-                f"be sourced ({exc}), so sac fell back to the launching process "
-                "environment. A miss against that read is inconclusive"
+                f"secret pool rejected (category={exc.category}); sac used only "
+                "the launching process environment, so a miss is inconclusive"
             ),
         )
     return PoolRead(env=env, trusted=True, detail="")

@@ -225,6 +225,26 @@ async def agent_restart(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    # Build and preflight the child environment BEFORE resolving/scheduling a
+    # restart command.  The command's first action may stop the live session;
+    # therefore an unavailable or unauthorized selected provider credential
+    # must refuse here while that session is still untouched.  This is the
+    # same helper used by POST /agents, so sync, fresh and detached restarts do
+    # not drift into different secret-resolution policies.
+    child_env = dict(os.environ)
+    child_env.pop("APPTAINER_CONTAINER", None)
+    child_env.pop("SINGULARITY_CONTAINER", None)
+    from ._provider_env import (
+        ProviderPreflightError,
+        provider_preflight_refusal,
+        provider_secret_env_for_agent,
+    )
+
+    try:
+        child_env.update(provider_secret_env_for_agent(name, child_env))
+    except ProviderPreflightError as exc:
+        return provider_preflight_refusal(name, exc)
+
     try:
         sac_bin = sac_binary()
     except SacBinaryNotFoundError as exc:
@@ -243,9 +263,6 @@ async def agent_restart(request: Request) -> JSONResponse:
     # tool + cross-host dispatch already run. Strip the in-SIF env markers
     # so a listen running inside a parent SIF doesn't re-broker the child
     # restart back to itself (same recursion guard as ``agents_start``).
-    child_env = dict(os.environ)
-    child_env.pop("APPTAINER_CONTAINER", None)
-    child_env.pop("SINGULARITY_CONTAINER", None)
 
     # SELF-RESTART (resolved caller IS the target): a synchronous
     # ``sac agents restart <self>`` DEADLOCKS — the stop-half cannot complete

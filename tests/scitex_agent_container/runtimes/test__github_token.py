@@ -48,6 +48,7 @@ def secrets_pool(tmp_path: Path):
     """A real secrets file wired through the real SAC_SECRETS_ENVRC seam."""
     secrets = tmp_path / "secrets"
     secrets.write_text(f"export GITHUB_TOKEN={_FAKE_TOKEN}\n", encoding="utf-8")
+    secrets.chmod(0o600)
     key = "SAC_SECRETS_ENVRC"
     saved = os.environ.get(key)
     os.environ[key] = str(secrets)
@@ -65,6 +66,7 @@ def empty_pool(tmp_path: Path):
     """A resolvable but token-free secrets file — the WARN path."""
     secrets = tmp_path / "empty-secrets"
     secrets.write_text("# no token here\n", encoding="utf-8")
+    secrets.chmod(0o600)
     key = "SAC_SECRETS_ENVRC"
     saved_envrc = os.environ.get(key)
     saved_tokens = {

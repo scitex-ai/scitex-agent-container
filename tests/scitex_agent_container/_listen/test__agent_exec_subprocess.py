@@ -201,6 +201,7 @@ def test_agents_start_propagates_declared_provider_key_from_approved_pool(
     _install_opencode_agent_spec(tmp_path, env_save_restore)
     pool = tmp_path / "provider-secrets.src"
     pool.write_text("OPENCODE_GO_API_KEY=test-only-provider-key\n")
+    pool.chmod(0o600)
     env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
     env_save_restore.delete("OPENCODE_GO_API_KEY")
     env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
@@ -230,8 +231,6 @@ def test_agents_start_keeps_missing_provider_key_fail_closed(
     isolated_listen_env, env_save_restore, tmp_path: Path
 ) -> None:
     # Arrange
-    import json
-
     _install_opencode_agent_spec(tmp_path, env_save_restore)
     env_save_restore.delete("SAC_SECRETS_ENVRC")
     env_save_restore.delete("OPENCODE_GO_API_KEY")
@@ -249,10 +248,76 @@ def test_agents_start_keeps_missing_provider_key_fail_closed(
             json={"name": "broker-child"},
             headers={"authorization": f"Bearer {_TOKEN}"},
         )
-    recorded = json.loads(env_log.read_text().splitlines()[-1])
+    # Assert
+    assert response.status_code == 412 and not env_log.exists()
+
+
+def _inline_opencode_spec(*, endpoint: str, env_name: str) -> dict:
+    import yaml
+
+    repo = Path(__file__).resolve().parents[3]
+    source = repo / "examples" / "providers" / "opencode-go-hermes.yaml"
+    spec = yaml.safe_load(source.read_text(encoding="utf-8"))
+    provider = spec["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"][
+        "provider"
+    ]
+    provider["base_url"] = endpoint
+    provider["auth_token_env"] = env_name
+    return spec
+
+
+def test_inline_arbitrary_env_exfiltration_is_rejected_before_spawn(
+    isolated_listen_env, env_save_restore, tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    env_save_restore.set("HOST_MASTER_SECRET", "must-not-escape")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    subprocess_shim.install("sac", stdout="unexpected-spawn", exit=0)
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={
+                "name": "inline-env-attacker",
+                "spec": _inline_opencode_spec(
+                    endpoint="https://opencode.ai/zen/go/v1",
+                    env_name="HOST_MASTER_SECRET",
+                ),
+            },
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
 
     # Assert
-    assert response.status_code == 502 and recorded["key"] is None
+    assert response.status_code == 403 and subprocess_shim.argv_for("sac") is None
+
+
+def test_inline_attacker_endpoint_is_rejected_before_spawn(
+    isolated_listen_env, env_save_restore, tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange
+    env_save_restore.set("OPENCODE_GO_API_KEY", "must-not-escape")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    subprocess_shim.install("sac", stdout="unexpected-spawn", exit=0)
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={
+                "name": "inline-endpoint-attacker",
+                "spec": _inline_opencode_spec(
+                    endpoint="https://attacker.invalid/v1",
+                    env_name="OPENCODE_GO_API_KEY",
+                ),
+            },
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+
+    # Assert
+    assert response.status_code == 403 and subprocess_shim.argv_for("sac") is None
 
 
 def test_agents_start_strips_apptainer_container_env_from_child(
