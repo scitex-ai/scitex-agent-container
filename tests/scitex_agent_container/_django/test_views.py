@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scitex_agent_container import __path__ as _package_paths
 from scitex_agent_container._django._constants import (
     CROSSHOST_OPERATORS_ENV,
     IDENTITY_ENV,
@@ -149,6 +150,34 @@ def test_fleet_shows_published_operation_and_phase(client, loopback, env_save_re
     html = client.get("/").content.decode()
     # Assert
     assert "busy" in html and "reviewing" in html
+
+
+def test_fleet_shows_harness_engine_and_model(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    html = client.get("/").content.decode()
+
+    # Assert
+    assert "Harness" in html and "Engine / Model" in html and "anthropic" in html and "sonnet" in html
+
+
+def test_mobile_fleet_keeps_harness_and_engine_columns_visible():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+
+    # Assert
+    assert "nth-child(4) { display: none; }" not in css and "nth-child(5) { display: none; }" not in css
 
 
 def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_restore):

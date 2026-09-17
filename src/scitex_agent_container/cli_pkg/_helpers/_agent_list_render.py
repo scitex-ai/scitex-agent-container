@@ -243,7 +243,7 @@ def print_agent_list(
     """Print a rich table of registered agents.
 
     DEFAULT (no flags): show ONLY ``status="running"`` agents with their
-    Account — the stopped / invalid / definition roster and the per-agent
+    actual Harness and Engine / Model selection — the stopped / invalid / definition roster and the per-agent
     validation-error blocks are an unusable wall on a real fleet (operator
     TG 1490-1495). A one-line footer counts what was hidden.
 
@@ -321,14 +321,14 @@ def print_agent_list(
     table.add_column("Status")
     table.add_column("YAML")
     table.add_column("Host")
+    table.add_column("Harness")
+    table.add_column("Engine / Model")
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
     # the cell rather than stealing width from the name column.
     # Account folds the long ``<name> (<email>)`` label to ~5 lines; show the
     # short account name only by default (no_wrap), full label in --verbose.
     if verbose:
-        table.add_column("Account", overflow="fold")
-    else:
-        table.add_column("Account", no_wrap=True, overflow="ellipsis")
+        table.add_column("Stored credential", overflow="fold")
     # ``Auth`` (the cached verdict + its age, for EVERY row) answers "is this
     # green verified, or merely tmux-alive?" — but one extra column on the
     # default view is a cost the compact view should not pay, so it lives behind
@@ -372,8 +372,11 @@ def print_agent_list(
             _status_cell(row),
             yaml_cell,
             host_cell,
-            account_cell,
+            row.get("harness") or "—",
+            f"{row.get('engine') or '—'} / {row.get('model') or '—'}",
         ]
+        if verbose:
+            cells.append(account_cell)
         if verbose:
             cells.append(_auth_cell(row))
         if verbose:

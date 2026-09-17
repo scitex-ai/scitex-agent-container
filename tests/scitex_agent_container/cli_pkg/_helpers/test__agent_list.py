@@ -1023,6 +1023,24 @@ def test_get_data_row_carries_account_field(tmp_path):
     assert out[0]["account"] == "alice@example.com"
 
 
+def test_get_data_row_carries_runtime_harness_engine_and_model(tmp_path):
+    # Arrange
+    spec = _write_valid_spec(tmp_path / "x")
+    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+
+    # Act
+    with _swap_discover(_no_discover), _swap_probe(_running(True)):
+        row = get_agent_list_data(registry)[0]  # type: ignore[arg-type]
+
+    # Assert
+    assert (
+        row["runtime"],
+        row["harness"],
+        row["engine"],
+        row["model"],
+    ) == ("apptainer", "anthropic", "", "sonnet")
+
+
 def test_get_data_defined_agent_row_carries_account_field(tmp_path):
     # Arrange — agent on disk only, not in registry.
     spec = _write_valid_spec(tmp_path / "ondisk")
@@ -1039,36 +1057,49 @@ def test_get_data_defined_agent_row_carries_account_field(tmp_path):
     assert row["account"] == "bob@example.com"
 
 
-def test_print_agent_list_renders_account_column_header(capsys, tmp_path):
+def test_print_agent_list_prioritizes_runtime_selection_over_account(capsys, tmp_path):
     # Arrange
-    spec = _write_valid_spec(tmp_path / "x")
-    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    row = {
+        "name": "x",
+        "status": "running",
+        "started_at": "-",
+        "host_display": "host",
+        "account": "acct-x",
+        "harness": "hermes",
+        "engine": "opencode-go-deepseek-v4.1-flash",
+        "model": "deepseek-v4.1-flash",
+    }
     # Act
-    with (
-        _swap_discover(_no_discover),
-        _swap_probe(_running(True)),
-        _swap_account(lambda cfg: "alice@example.com"),
-    ):
-        print_agent_list(registry)
+    print_agent_list(None, rows=[row])
     # Assert
-    assert "Account" in capsys.readouterr().out
+    rendered = capsys.readouterr().out
+    assert (
+        "Harness" in rendered
+        and "Engine" in rendered
+        and "Model" in rendered
+        and "Account" not in rendered
+    )
 
 
-def test_print_agent_list_renders_account_value(capsys, tmp_path):
+def test_print_agent_list_verbose_labels_stored_credential_inventory(capsys, tmp_path):
     # Arrange — a short label survives the narrow capture-mode terminal
     # width (a long email gets ellipsised by rich; the JSON test below
     # covers the full value).
-    spec = _write_valid_spec(tmp_path / "x")
-    registry = _FakeRegistry([{"name": "x", "config": str(spec)}])
+    row = {
+        "name": "x",
+        "status": "running",
+        "started_at": "-",
+        "host_display": "host",
+        "account": "acct-x",
+        "harness": "hermes",
+        "engine": "opencode-go-deepseek-v4.1-flash",
+        "model": "deepseek-v4.1-flash",
+    }
     # Act
-    with (
-        _swap_discover(_no_discover),
-        _swap_probe(_running(True)),
-        _swap_account(lambda cfg: "acct-x"),
-    ):
-        print_agent_list(registry)
+    print_agent_list(None, rows=[row], verbose=True)
     # Assert
-    assert "acct-x" in capsys.readouterr().out
+    rendered = capsys.readouterr().out
+    assert "Storedcredential" in "".join(rendered.split()) and "acct-x" in rendered
 
 
 def test_print_agent_list_json_emits_account_in_row(capsys, tmp_path):
