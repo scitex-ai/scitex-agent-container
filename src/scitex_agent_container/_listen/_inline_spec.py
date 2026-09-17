@@ -170,10 +170,10 @@ def _prepare_twin_host_isolation(
             status_code=403,
         )
 
-    root = Path(agents_root)
-    parent_path = root / parent_name / "spec.yaml"
+    from ..config import resolve_config
+
     try:
-        parent_path.relative_to(root)
+        parent_path = Path(resolve_config(parent_name))
         parent_doc = yaml.safe_load(parent_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError) as exc:
         return spec, JSONResponse(
