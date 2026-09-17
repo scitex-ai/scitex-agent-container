@@ -22,6 +22,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from socket import timeout as SocketTimeout
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
@@ -33,6 +34,23 @@ from ._constants import (
     TOKEN_ENV,
     TOKEN_FILE_ENV,
 )
+
+# Wall-clock ceiling for one HTTP exchange, and the per-agent share of it when a
+# read fans out over the fleet.
+#
+# These are NOT arbitrary. Measured against the real control plane on
+# scitex-compute-03 (22 agents, 2026-09-17): ``GET /agents`` 200 in 5.11s /
+# 5.23s / 6.91s warm and 18.99s cold, with one spike at 117.8s. The former 8.0s
+# ceiling sat inside that band, so the fleet page rendered "listener
+# unreachable" while the listener was healthy and answering — every agent and
+# the whole lifecycle surface vanished behind one slow fan-out.
+#
+# The ceiling now has to clear the COLD latency of a real fleet, because a cold
+# read is the normal case after a restart, and a bounded wait that reports
+# "unavailable" for a fleet that is merely slow is a false negative. Per-agent
+# reads stay tight so one wedged agent degrades only its own row.
+DEFAULT_TIMEOUT_SECONDS = 60.0
+PER_AGENT_TIMEOUT_SECONDS = 12.0
 
 
 class RemoteOperationError(RuntimeError):
@@ -143,7 +161,9 @@ def resolve_token(base_url: str) -> str:
 class RemoteFleet:
     """Small authenticated HTTP client matching the /agents row + status shape."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: float = 8.0) -> None:
+    def __init__(
+        self, base_url: str, token: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
@@ -173,8 +193,9 @@ class RemoteFleet:
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         req = Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        budget = self.timeout if timeout is None else timeout
         try:
-            with urlopen(req, timeout=timeout or self.timeout) as resp:
+            with urlopen(req, timeout=budget) as resp:
                 payload = json.load(resp)
         except HTTPError as exc:
             try:
@@ -185,6 +206,16 @@ class RemoteFleet:
             kind = payload.get("kind") if isinstance(payload, dict) else None
             raise RemoteOperationError(exc.code, str(message or exc.reason), kind) from exc
         except (OSError, json.JSONDecodeError) as exc:
+            # ``socket.timeout`` IS an OSError, and a read that ran out of its
+            # budget is precisely "the listener did not answer in time" — the
+            # SAME conclusion as an unreachable one. Classifying it here (rather
+            # than letting it escape as a bare socket error) is what lets a
+            # caller bound a fan-out per item and still tell the two apart from
+            # any other transport failure.
+            if isinstance(exc, SocketTimeout):
+                raise FleetUnavailableError(
+                    self.base_url, f"no response within {budget:g}s"
+                ) from exc
             raise FleetUnavailableError(self.base_url, str(exc)) from exc
         if not isinstance(payload, dict):
             raise FleetUnavailableError(self.base_url, "non-object JSON response")
@@ -198,8 +229,10 @@ class RemoteFleet:
             raise FleetUnavailableError(self.base_url, "'/agents' has no agents list")
         return [row for row in rows if isinstance(row, dict)]
 
-    def read_status(self, name: str) -> dict[str, Any]:
-        return self._request(f"/agents/{quote(name, safe='')}/status")
+    def read_status(self, name: str, *, timeout: float | None = None) -> dict[str, Any]:
+        return self._request(
+            f"/agents/{quote(name, safe='')}/status", timeout=timeout
+        )
 
     def read_tail(self, name: str, *, max_bytes: int = 262144) -> str:
         """Read the bounded ``follow=false`` SSE tail of an agent's session log.
@@ -239,13 +272,20 @@ class RemoteFleet:
         """Read independent agent observations concurrently.
 
         Failures are returned per-name (never raised) so one dead agent degrades
-        to an explicit row without taking the whole fleet page down.
+        to an explicit row without taking the whole fleet page down. Each read is
+        budgeted at ``PER_AGENT_TIMEOUT_SECONDS`` — the fleet is read together,
+        so no single agent may spend the whole page's budget. A read that runs
+        out of its budget arrives here as :class:`FleetUnavailableError` and
+        becomes that row's explicit state, exactly like an unreachable one.
         """
         if not names:
             return {}
+        budget = min(self.timeout, PER_AGENT_TIMEOUT_SECONDS)
         results: dict[str, dict[str, Any] | Exception] = {}
         with ThreadPoolExecutor(max_workers=min(16, len(names))) as pool:
-            futures = {pool.submit(self.read_status, name): name for name in names}
+            futures = {
+                pool.submit(self.read_status, name, timeout=budget): name for name in names
+            }
             for future in as_completed(futures):
                 name = futures[future]
                 try:
@@ -269,6 +309,8 @@ class RemoteFleet:
 
 
 __all__ = [
+    "DEFAULT_TIMEOUT_SECONDS",
+    "PER_AGENT_TIMEOUT_SECONDS",
     "FleetUnavailableError",
     "RemoteFleet",
     "RemoteOperationError",
