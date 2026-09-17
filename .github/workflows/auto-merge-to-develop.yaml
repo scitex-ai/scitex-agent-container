@@ -182,6 +182,11 @@ jobs:
           "$bindir/gh" --version
           echo "$bindir" >> "$GITHUB_PATH"
 
+      - name: Check out the repository-owned integration policy
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: merge green PRs targeting develop
         env:
           GH_TOKEN: ${{ github.token }}
@@ -240,6 +245,21 @@ jobs:
           # PRs that were green and unheld but could not be given an attribution
           # comment. Counted, not swallowed: it turns the run red at the end.
           attrib_failures=0
+
+          # Backpressure is derived from GitHub on every sweep. If the query is
+          # unreadable, fail safe to DRAIN: inability to measure downstream
+          # congestion must never be interpreted as permission to make more.
+          mode="DRAIN"
+          open_green=$(gh pr list --repo "$REPO" --base develop --state open \
+            --search "status:success" --limit 200 --json number --jq 'length' \
+            2>/dev/null || echo "")
+          case "$open_green" in
+            ""|*[!0-9]*)
+              echo "::warning::could not measure the open-green backlog — FLEET MODE remains DRAIN (fail-safe)" ;;
+            *)
+              mode=$(python3 .github/ci/integration_policy.py mode "$open_green") ;;
+          esac
+          echo "FLEET MODE: $mode (open-green=${open_green:-unreadable}; BUILD<=10, BALANCED=11..20, INTEGRATION_HEAVY=21..40, DRAIN>40)"
 
           # ---------------------------------------------------------------
           # GATE: develop must be SETTLED and GREEN before anything lands.
@@ -366,6 +386,63 @@ jobs:
               echo "::warning::#$pr is HELD ($hold) — auto-merge refuses to merge it. This is not a one-off skip: it will be refused on every tick until the marker is removed, and it costs no merge budget. Remove the label (or mark the PR ready for review) and it merges normally on the next tick, with no other intervention."
               continue
             fi
+
+            # -------------------------------------------------------------
+            # RISK LANE — GitHub's changed-file set is the source of truth.
+            # -------------------------------------------------------------
+            # The classifier defaults ordinary source to NORMAL and fails safe:
+            # an unreadable/empty file set is HIGH. HIGH never reaches the
+            # merge path; LOW needs no review; NORMAL is handled below.
+            if ! changed_paths=$(gh api --paginate \
+                  "repos/$REPO/pulls/$pr/files?per_page=100" \
+                  --jq '.[].filename' 2>/dev/null); then
+              echo "::warning::#$pr HIGH risk — changed files are unreadable, so protected paths cannot be ruled out. Held for human/security review."
+              continue
+            fi
+            risk=$(printf '%s\n' "$changed_paths" | \
+              python3 .github/ci/integration_policy.py risk)
+            case "$risk" in
+              LOW|NORMAL|HIGH) ;;
+              *)
+                echo "::warning::#$pr classifier returned unknown lane '$risk'; coercing to HIGH fail-safe."
+                risk="HIGH" ;;
+            esac
+            if [ "$risk" = "HIGH" ]; then
+              echo "::warning::#$pr HIGH risk — auth/billing/tenancy/credential/migration/deploy path changed. Held for human/security review."
+              continue
+            fi
+            echo "PR #$pr deterministic risk lane: $risk"
+
+            # -------------------------------------------------------------
+            # LATEST-DEVELOP + EXACT-HEAD BINDING.
+            # -------------------------------------------------------------
+            # Green against an older base is not integration evidence. Capture
+            # the PR SHA once, prove current develop is its ancestor, and ask
+            # GitHub to update the branch when it is not. The update gets this
+            # tick's whole budget only on a later green run; it never updates
+            # and merges in one pass.
+            pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
+              --jq .headRefOid 2>/dev/null || echo "")
+            if [ -z "$pr_sha" ]; then
+              echo "::warning::#$pr head SHA is unreadable — no exact-SHA verdict exists. Not merging."
+              continue
+            fi
+            merge_base=$(gh api "repos/$REPO/compare/$dev_sha...$pr_sha" \
+              --jq .merge_base_commit.sha 2>/dev/null || echo "")
+            if [ -z "$merge_base" ]; then
+              echo "::warning::#$pr merge base is unreadable — cannot prove it includes develop@$dev_sha. Not merging."
+              continue
+            fi
+            if [ "$merge_base" != "$dev_sha" ]; then
+              if gh api -X PUT "repos/$REPO/pulls/$pr/update-branch" \
+                   -f expected_head_sha="$pr_sha" >/dev/null; then
+                echo "#$pr updated to latest develop@$dev_sha — waiting for exact-head CI on the new SHA before any merge"
+              else
+                echo "::warning::#$pr is behind develop@$dev_sha and GitHub could not update it. Owner must resolve/rebase; not merging."
+              fi
+              continue
+            fi
+            echo "PR #$pr exact head $pr_sha contains latest measured develop $dev_sha"
 
             # -------------------------------------------------------------
             # GREENNESS IS THREE-VALUED: passing / failing / NOT YET KNOWN.
@@ -536,8 +613,40 @@ jobs:
               continue
             fi
 
-            # -------------------------------------------------------------
             # mergeStateStatus IS COMPUTED LAZILY — handle it or undercount.
+            # This remains the extraction boundary for the executable
+            # greenness tests; every gate below runs only after green passed.
+
+            # -------------------------------------------------------------
+            # NORMAL = ONE FORMAL REVIEW, FRESH FOR THIS EXACT HEAD.
+            # -------------------------------------------------------------
+            # LOW deliberately bypasses review. HIGH was held above. NORMAL
+            # reads GitHub's formal review objects, never comments containing
+            # PASS-like prose. An approval attached to an older commit is stale
+            # and cannot authorize the current head.
+            if [ "$risk" = "NORMAL" ]; then
+              if ! review_pages=$(gh api --paginate --slurp \
+                    "repos/$REPO/pulls/$pr/reviews?per_page=100" 2>/dev/null); then
+                echo "::warning::#$pr NORMAL risk — formal reviews are unreadable. Not merging."
+                continue
+              fi
+              if ! review_verdict=$(printf '%s' "$review_pages" | \
+                    python3 .github/ci/integration_policy.py review "$pr_sha"); then
+                echo "::warning::#$pr NORMAL risk — formal review payload is invalid. Not merging."
+                continue
+              fi
+              if [ "$review_verdict" = "APPROVED" ]; then
+                echo "PR #$pr NORMAL review gate passed: exact-head formal approval"
+              else
+                echo "#$pr NORMAL risk — exact-head formal review verdict is $review_verdict; needs one GitHub approval on $pr_sha. Comments do not count. Not merging."
+                continue
+              fi
+            else
+              echo "PR #$pr LOW risk — no review required"
+            fi
+
+            # -------------------------------------------------------------
+            # MERGEABILITY IS COMPUTED LAZILY — handle it or undercount.
             # -------------------------------------------------------------
             # GitHub starts the mergeability computation when asked and answers
             # UNKNOWN until it finishes. A bulk `gh pr list --json
@@ -569,6 +678,23 @@ jobs:
               *) ;;
             esac
 
+            # Re-read both moving refs after every API decision above. A push
+            # during the sweep invalidates the checks/review we just read; an
+            # external develop merge invalidates the ancestry proof. Neither
+            # race is allowed to fall through to the merge command.
+            current_pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
+              --jq .headRefOid 2>/dev/null || echo "")
+            current_dev_sha=$(gh api "repos/$REPO/commits/develop" \
+              --jq .sha 2>/dev/null || echo "")
+            if [ "$current_pr_sha" != "$pr_sha" ] || [ -z "$current_pr_sha" ]; then
+              echo "::warning::#$pr head moved from $pr_sha to ${current_pr_sha:-unreadable} during the sweep — prior CI/review verdicts are superseded. Not merging."
+              continue
+            fi
+            if [ "$current_dev_sha" != "$dev_sha" ] || [ -z "$current_dev_sha" ]; then
+              echo "develop moved from $dev_sha to ${current_dev_sha:-unreadable} during the sweep — #$pr must update/re-CI against the new base. Not merging."
+              continue
+            fi
+
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN: would post the automation-attribution comment on #$pr and merge it -> develop (mergeStateStatus=$merge_state)"
               merges=$((merges + 1))
@@ -594,6 +720,7 @@ jobs:
               "" \
               "- base branch is \`develop\` (the only base this sweep touches);" \
               "- no hold marker: not a draft, and none of the labels \`$HOLD_LABELS\`;" \
+              "- deterministic risk lane = \`$risk\`: LOW merges without review; NORMAL reached this point only with a formal GitHub approval bound to exact head \`$pr_sha\`; HIGH never reaches this merge path;" \
               "- every non-advisory check on the PR head is green — $n_pass passing, $n_fail failing, $n_unknown not yet known, of $n_total (codecov and readthedocs are advisory and ignored). A queued or in-progress check counts as NOT YET KNOWN and blocks this merge; it is not read as green;" \
               "- \`develop\`'s own head was settled and green when the sweep ran, so this lands on a base that was known good;" \
               "- \`mergeStateStatus\` = \`$merge_state\`." \
@@ -655,7 +782,8 @@ jobs:
             # IF YOU RESTORE `--admin`, NAME THE REQUIRED CHECK THAT FORCED IT,
             # here, in this comment. Putting it back by inertia re-arms the exact
             # incident this block exists to prevent.
-            if gh pr merge "$pr" --repo "$REPO" --merge --delete-branch; then
+            if gh pr merge "$pr" --repo "$REPO" --merge --delete-branch \
+                 --match-head-commit "$pr_sha"; then
               echo "MERGED #$pr -> develop (attribution comment posted first; merged WITHOUT --admin, so branch protection agreed)"
               merges=$((merges + 1))
             else
