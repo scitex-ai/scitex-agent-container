@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scitex_agent_container.config._validation import validate_raw
 from scitex_agent_container._mcp._tools._template import (  # noqa: F401
     _derive_branch_short,
     _render,
@@ -262,3 +263,57 @@ def test_contributor_header_is_a_comment_and_does_not_change_the_spec(
     doc = yaml.safe_load(dry_run_result["yaml"])
     # Assert
     assert doc["apiVersion"] == "scitex-agent-container/v3"
+
+# ---------------------------------------------------------------------------
+# The rendered spec must be VALID, not merely parseable.
+#
+# Measured 2026-09-17: the tool rendered its own embedded template, which the
+# v3 grammar had left behind — top-level `image` / `model` / `skills`, a
+# `multiplexer` key, `health.method: multiplexer-alive`, no `host`, and 65
+# required fields absent. The validator rejected it with 8 errors (the missing
+# set dominating), so every spec materialised from this tool was born invalid:
+# 28 agents in the fleet inventory carry exactly that shape, and a twin inherits
+# its parent's spec verbatim. The field set now comes from the canonical
+# scaffold in cli_pkg/_create_templates.py, which renders clean, and the tool
+# validates its own output before returning it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_rendered_spec_validates_against_the_v3_grammar(dry_run_result: dict) -> None:
+    """A generator that can emit an invalid spec is a generator that will."""
+    # Arrange
+    doc = yaml.safe_load(dry_run_result["yaml"])
+    # Act
+    errors = validate_raw(doc, "<test:rendered-contributor-spec>")
+    # Assert
+    assert errors == [], f"the rendered contributor spec must load: {errors[:3]}"
+
+
+def test_the_rendered_spec_names_the_portable_image(dry_run_result: dict) -> None:
+    """#1376 made managed image specs portable; a .sif path is an artefact."""
+    # Arrange
+    doc = yaml.safe_load(dry_run_result["yaml"])
+    # Act
+    image = doc["spec"]["apptainer"]["image"]
+    # Assert
+    assert image == "sac-base"
+
+
+def test_the_rendered_spec_has_no_legacy_top_level_keys(dry_run_result: dict) -> None:
+    """image / model / skills / multiplexer moved in the v3 realignment."""
+    # Arrange
+    doc = yaml.safe_load(dry_run_result["yaml"])
+    # Act
+    legacy = [key for key in ("image", "model", "skills", "multiplexer") if key in doc["spec"]]
+    # Assert
+    assert legacy == []
+
+
+def test_the_rendered_spec_declares_a_host(dry_run_result: dict) -> None:
+    """`spec.host` is REQUIRED (operator directive 2026-06-23, no hidden default)."""
+    # Arrange
+    doc = yaml.safe_load(dry_run_result["yaml"])
+    # Act
+    host = doc["spec"].get("host")
+    # Assert
+    assert host, "a rendered spec must declare placement"
