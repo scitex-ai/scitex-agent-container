@@ -293,7 +293,14 @@ def test_missing_nonce_proof_never_closes_old_session(tmp_path):
             elif method == "prompt.submit":
                 result = {"status": "streaming"}
             elif method == "session.history":
-                result = {"messages": [{"role": "assistant", "content": "wrong"}]}
+                result = {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "prefix HANDOFF_READY:nonce-123 suffix",
+                        }
+                    ]
+                }
             elif method == "session.close":
                 result = {"closed": True}
             else:

@@ -94,7 +94,6 @@ def test_explicit_compression_failure_writes_minimal_handoff_before_rotation(
             "tests": "191 passed",
             "next_action": "finish context lifecycle",
             "blocker": "none",
-            "compression_failure": "summary backend timed out",
         },
         "fresh-session-2",
         [(transition.handoff_path, "nonce-123", "old-session-1")],
@@ -194,6 +193,9 @@ def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> No
     # Arrange
     workdir = tmp_path / "repo"
     workdir.mkdir()
+    (tmp_path / "hermes-active-card.json").write_text(
+        '{"card_id":"card-1"}', encoding="utf-8"
+    )
     stored_record = {
         "id": "stored-old",
         "started_at": 100.0,
@@ -214,7 +216,10 @@ def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> No
         handoff_facts_reader=lambda *_args, **_kwargs: ({"status": "passed"}, []),
         card_reader=lambda _state: {"id": "card-1", "task": "continue safely"},
         worktree_reader=lambda *_args, **_kwargs: facts,
-        rotate_session=lambda *_args, **_kwargs: "stored-fresh",
+        rotate_session=lambda *_args, **kwargs: (
+            kwargs["pre_close_check"]() or "stored-fresh"
+        ),
+        transition_guard=lambda _state, _session: None,
         nonce_factory=lambda: "nonce-123",
     )
     # Assert
@@ -238,6 +243,11 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
             "status": "idle",
         },
         close_live=lambda _state, session_id: closed.append(session_id),
+        transition_guard=lambda _state, _session: None,
+        handoff_facts_reader=lambda *_args, **_kwargs: ({}, []),
+        worktree_reader=lambda *_args, **_kwargs: [
+            WorktreeFact(tmp_path, "abc123", "fix/task", ())
+        ],
     )
     # Assert
     assert (
@@ -245,3 +255,118 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
         closed,
         (tmp_path / "hermes-fresh-next-task.json").exists(),
     ) == ("", ["live-old"], False)
+
+
+def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None:
+    # Arrange
+    (tmp_path / "hermes-fresh-next-task.json").write_text(
+        '{"card_id":"card-1","reason":"task-completed"}', encoding="utf-8"
+    )
+    closed = []
+
+    def action():
+        return context_gc.reconcile_context_lifecycle(
+            state_dir=tmp_path,
+            agent_name="agent",
+            workdir=tmp_path,
+            observed_session={"id": "live", "session_key": "stored", "status": "idle"},
+            close_live=lambda _state, session_id: closed.append(session_id),
+            transition_guard=lambda _state, _session: None,
+            worktree_reader=lambda *_args, **_kwargs: [
+                WorktreeFact(tmp_path, "abc", "fix/task", (" M work.py",))
+            ],
+        )
+
+    # Act
+    try:
+        action()
+    except HermesContextGcRefused as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert ("dirty worktree" in error, closed) == (True, [])
+
+
+def test_preclose_refuses_sha_drift_during_nonce_proof(tmp_path) -> None:
+    # Arrange
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    (tmp_path / "hermes-active-card.json").write_text(
+        '{"card_id":"card-1"}', encoding="utf-8"
+    )
+    facts = iter(
+        (
+            [WorktreeFact(workdir, "sha-before", "fix/task", ())],
+            [WorktreeFact(workdir, "sha-after", "fix/task", ())],
+        )
+    )
+
+    def action():
+        return context_gc.reconcile_context_lifecycle(
+            state_dir=tmp_path,
+            agent_name="agent",
+            workdir=workdir,
+            observed_session={"id": "live", "session_key": "stored", "status": "idle"},
+            stored_record_reader=lambda *_args: {
+                "id": "stored",
+                "started_at": 100.0,
+                "compression_failure_error": "failed",
+            },
+            handoff_facts_reader=lambda *_args, **_kwargs: ({"status": "passed"}, []),
+            card_reader=lambda _state: {"id": "card-1", "title": "continue"},
+            worktree_reader=lambda *_args, **_kwargs: next(facts),
+            transition_guard=lambda _state, _session: None,
+            rotate_session=lambda *_args, **kwargs: (
+                kwargs["pre_close_check"]() or "fresh"
+            ),
+            nonce_factory=lambda: "nonce",
+        )
+
+    # Act
+    try:
+        action()
+    except HermesContextGcRefused as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert "path/SHA set changed" in error
+
+
+def test_clean_unpushed_subagent_commit_is_unaccounted(tmp_path) -> None:
+    # Arrange
+    workdir = tmp_path / "repo"
+    facts = [
+        WorktreeFact(workdir, "current", "fix/task", ()),
+        WorktreeFact(
+            tmp_path / "subagent-1",
+            "child",
+            "hermes-subagent/child",
+            (),
+            accounted=False,
+        ),
+    ]
+
+    def action():
+        return handle_compression_failure(
+            state_dir=tmp_path,
+            agent_name="agent",
+            workdir=workdir,
+            session_record={"id": "old", "compression_failure_error": "failed"},
+            card={"id": "card", "title": "continue"},
+            worktrees=facts,
+            verification={"tests": "passed"},
+            next_nonce=lambda: "nonce",
+            rotate=lambda *_args: "fresh",
+        )
+
+    # Act
+    try:
+        action()
+    except HermesContextGcRefused as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert "not preserved on a remote ref" in error

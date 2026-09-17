@@ -151,6 +151,42 @@ def session_handoff_facts(
     return evidence, active
 
 
+def session_transition_guard(
+    state_dir: Path,
+    session_id: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> None:
+    """Re-prove old-session idleness and absence of active subagents."""
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            delegation = _rpc(socket, 2, "delegation.status", {})
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes transition guard at {url.split('?')[0]} failed: {exc}"
+        ) from exc
+    rows = listing.get("sessions")
+    exact = (
+        [row for row in rows if isinstance(row, dict) and row.get("id") == session_id]
+        if isinstance(rows, list)
+        else []
+    )
+    if len(exact) != 1 or str(exact[0].get("status") or "").lower() != "idle":
+        raise HermesTuiRpcError(
+            f"Hermes old session {session_id!r} is absent or no longer idle"
+        )
+    active = delegation.get("active")
+    if not isinstance(active, list) or active:
+        raise HermesTuiRpcError(
+            "Hermes delegation state is unreadable or gained active subagents"
+        )
+
+
 def close_session(
     state_dir: Path,
     session_id: str,
@@ -300,7 +336,7 @@ def replace_session_from_handoff(
             proven = isinstance(messages, list) and any(
                 isinstance(message, dict)
                 and message.get("role") == "assistant"
-                and marker in _message_text(message)
+                and _message_text(message).strip() == marker
                 for message in messages
             )
             if not proven:
@@ -365,6 +401,7 @@ __all__ = [
     "close_session",
     "replace_session_from_handoff",
     "session_handoff_facts",
+    "session_transition_guard",
     "stored_session_for_identity",
     "stored_session_for_title",
     "stored_session_record",
