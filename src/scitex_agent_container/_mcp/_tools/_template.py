@@ -147,21 +147,30 @@ def _contributor_spec(
     from ...cli_pkg import _create_templates
 
     text = _create_templates._TEMPLATES["minimal"].format(
-        name=name,
+        # The scaffold's own line 4 is a COMMENT naming the agent; a newline in
+        # the name would end the comment early and spill prose into the YAML.
+        name=name.replace("\n", " ").replace("\r", " "),
         host="${HOSTNAME}",
         credentials_files="[]",
         overlay='""',
     )
 
+    # EVERY value below is data, and the file is YAML. Interpolated bare, a value
+    # containing ": " or a newline makes the document unparseable and a value
+    # containing " #" makes it VALID AND WRONG — "run task #42" loaded as
+    # "run task", with no error to notice. json.dumps produces a double-quoted
+    # YAML scalar with escapes, so the text is safe whatever the value is.
+    import json as _json
+
     labels = (
         "metadata:\n"
         "  labels:\n"
-        f"    role: contributor-{target_repo}\n"
-        "    trigger: pr-driven\n"
-        f"    project: {target_repo}\n"
-        f"    branch_kind: {branch_kind}\n"
-        f"    branch_short: {branch_short}\n"
-        "    capabilities: fork,clone,branch,commit,push,open-pr\n"
+        f"    role: {_json.dumps(f'contributor-{target_repo}')}\n"
+        f"    trigger: {_json.dumps('pr-driven')}\n"
+        f"    project: {_json.dumps(target_repo)}\n"
+        f"    branch_kind: {_json.dumps(branch_kind)}\n"
+        f"    branch_short: {_json.dumps(branch_short)}\n"
+        f"    capabilities: {_json.dumps('fork,clone,branch,commit,push,open-pr')}\n"
     )
     lines = text.splitlines(keepends=True)
     out: list[str] = []
@@ -176,7 +185,7 @@ def _contributor_spec(
         if line.strip() == "startup_commands: []":
             out.append("  startup_commands:\n")
             out.append("  - delay: 5\n")
-            out.append(f"    command: {task}\n")
+            out.append(f"    command: {_json.dumps(task)}\n")
             continue
         out.append(line)
     rendered = "".join(out)

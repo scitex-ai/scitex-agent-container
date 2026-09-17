@@ -317,3 +317,67 @@ def test_the_rendered_spec_declares_a_host(dry_run_result: dict) -> None:
     host = doc["spec"].get("host")
     # Assert
     assert host, "a rendered spec must declare placement"
+
+# ---------------------------------------------------------------------------
+# The startup task is DATA, and the spec is YAML.
+#
+# Found by turning my own review checklist on the fix before asking anyone else
+# to: the task was interpolated into the text as a bare scalar, so
+#   "do the thing: carefully"  -> ScannerError (mapping values not allowed)
+#   "run task #42"            -> VALID YAML, command silently became "run task"
+#   "line one\nline two"      -> ScannerError
+# The second one is the dangerous shape: no error, no warning, half the command
+# gone. Escaping is the fix, and a round-trip is the assertion.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "do the thing: carefully",
+        "run task #42",
+        'say "hello" now',
+        "line one\nline two",
+        "path C:\\tmp\\x",
+        "--- not a doc",
+    ],
+)
+def test_the_startup_task_round_trips_exactly(tmp_path: Path, task: str) -> None:
+    """A task is data: it must survive the YAML text unchanged."""
+    # Arrange / Act
+    result = template_render_contributor_spec(
+        name="round-trip", port=19991, task=task, output_dir=str(tmp_path), dry_run=False
+    )
+    # Assert
+    doc = yaml.safe_load(result["yaml"])
+    assert doc["spec"]["startup_commands"][0]["command"] == task
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "do the thing: carefully",
+        "run task #42",
+        "line one\nline two",
+    ],
+)
+def test_a_task_with_yaml_significant_characters_still_validates(tmp_path: Path, task: str) -> None:
+    """The spec must LOAD — a task is allowed to contain ':' or a newline."""
+    # Arrange / Act
+    result = template_render_contributor_spec(
+        name="yaml-task", port=19992, task=task, output_dir=str(tmp_path), dry_run=False
+    )
+    # Assert
+    errors = validate_raw(yaml.safe_load(result["yaml"]), "<task-with-yaml-chars>")
+    assert errors == []
+
+
+def test_a_project_name_with_yaml_characters_does_not_break_the_labels() -> None:
+    """The labels block is text too: the same class of bug lives there."""
+    # Arrange / Act
+    result = template_render_contributor_spec(
+        name="label-check", port=19993, task="ok", target_repo="repo: with colon"
+    )
+    # Assert
+    doc = yaml.safe_load(result["yaml"])
+    assert doc["metadata"]["labels"]["project"] == "repo: with colon"
