@@ -496,6 +496,25 @@ def test_default_globs_sorted_colon_joined_paths(default_unit_text):
     assert value == expected
 
 
+def test_default_includes_nested_provider_api_key_files(tmp_path):
+    # Arrange
+    home = tmp_path / "home"
+    provider = home / ".bash.d/secrets/000_ENV/api_keys/10_llm_opencode.src"
+    standard = home / ".bash.d/secrets/010_scitex/01_agent-container.src"
+    provider.parent.mkdir(parents=True)
+    standard.parent.mkdir(parents=True)
+    provider.write_text("OPENCODE_GO_API_KEY=test-only\n")
+    standard.write_text("CCT_BOT_TOKEN_TEST=test-only\n")
+
+    # Act
+    text = _run_apply(tmp_path, home, override=None)
+    prefix = "Environment=SAC_SECRETS_ENVRC="
+    value = _envrc_lines(text)[0][len(prefix):]
+
+    # Assert
+    assert value == f"{provider}:{standard}"
+
+
 def test_override_used_verbatim(tmp_path):
     # Arrange — real *.src files present, but an explicit override given.
     home = tmp_path / "home"

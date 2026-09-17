@@ -59,6 +59,26 @@ def test_resolve_secret_files_honours_explicit_var(tmp_path: Path) -> None:
     assert files == [explicit]
 
 
+def test_resolve_secret_files_default_includes_nested_provider_key_pool(
+    tmp_path: Path,
+) -> None:
+    # Arrange — provider API keys live under 000_ENV/api_keys, while the
+    # historical CCT/GitHub pool lives under 010_scitex.
+    provider = (
+        tmp_path
+        / ".bash.d/secrets/000_ENV/api_keys/10_llm_opencode.src"
+    )
+    provider.parent.mkdir(parents=True)
+    provider.write_text("OPENCODE_GO_API_KEY=test-only\n", encoding="utf-8")
+    standard = _seed_default_pool(tmp_path, "01_agent-container.src")[0]
+
+    # Act
+    files = resolve_secret_files(environ={}, home=tmp_path)
+
+    # Assert
+    assert files == [provider, standard]
+
+
 def test_resolve_secret_files_falls_back_to_canonical_default(tmp_path: Path) -> None:
     # Arrange — the var is UNSET (the cron / raw-ssh / timer case), but the
     # operator's standardized secret files exist under $HOME.
