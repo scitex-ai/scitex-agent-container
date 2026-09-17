@@ -164,7 +164,7 @@ async def run_nudge_scheduler(
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # stx-allow: fallback (reason: store outage is logged each bounded poll and must not kill the MCP server)
+        except Exception as exc:  # stx-allow: fallback (reason: store outage is logged to the MCP process stderr each bounded poll and must not kill the MCP server)
             log.warning("agentic-ACK nudge scheduler tick failed: %s", exc)
 
 

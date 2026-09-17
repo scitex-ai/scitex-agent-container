@@ -70,7 +70,7 @@ def absorb_agentic_feedback(
     except (TypeError, ValueError) as exc:
         log.warning("sac channel: refusing malformed %s feedback: %s", kind, exc)
         return False
-    except Exception as exc:  # stx-allow: fallback (reason: feedback persistence must not kill the SSE consumer; failure is logged loudly)
+    except Exception as exc:  # stx-allow: fallback (reason: feedback persistence must not kill the SSE consumer; failure is logged to the MCP process stderr)
         log.warning("sac channel: persisting %s feedback failed: %s", kind, exc)
         return False
     if saved is None:
