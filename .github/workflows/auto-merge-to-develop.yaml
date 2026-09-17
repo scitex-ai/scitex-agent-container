@@ -217,7 +217,7 @@ jobs:
           # can recognise its own earlier comment instead of stacking another.
           # Changing this string orphans every comment already posted — the old
           # ones stay valid as a record, they just stop being recognised.
-          ATTRIB_MARKER: "<!-- auto-merge-to-develop:attribution -->"
+          ATTRIB_MARKER: "auto-merge-to-develop:attribution"
           # Space-separated; every entry must accept a bare workflow_dispatch.
           POST_MERGE_GATES: >-
             pytest-matrix-on-ubuntu-py3-11-3-12-3-13.yml
@@ -270,6 +270,18 @@ jobs:
             exit 0
           fi
           echo "develop head: $dev_sha"
+
+          # The GitHub merge API has an expected-HEAD lease but no expected-BASE
+          # lease. Strict required-check protection is therefore the server-side
+          # atomic guard: if develop advances after our last read, GitHub must
+          # reject the merge rather than land against an untested base.
+          strict_base=$(gh api \
+            "repos/$REPO/branches/develop/protection/required_status_checks" \
+            --jq .strict 2>/dev/null || echo "")
+          if [ "$strict_base" != "true" ]; then
+            echo "::error::develop required-status protection is not strict (observed ${strict_base:-unreadable}). Refusing all automatic merges until the server enforces up-to-date heads."
+            exit 1
+          fi
 
           dev_bad=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
             [ .check_runs[]
@@ -334,8 +346,12 @@ jobs:
             # forever — a starvation bug that looks exactly like the outage we
             # are fixing (a green PR that never lands, with nobody noticing).
             # FIFO cannot starve.
-            prs=$(gh pr list --repo "$REPO" --base develop --state open --limit 200 \
-                    --json number,createdAt --jq 'sort_by(.createdAt) | .[].number' 2>/dev/null || true)
+            if ! prs=$(gh api --paginate --slurp \
+                  "repos/$REPO/pulls?base=develop&state=open&per_page=100" \
+                  --jq 'add | sort_by(.created_at) | .[].number' 2>/dev/null); then
+              echo "::warning::could not list open develop pull requests — merging nothing this tick"
+              exit 0
+            fi
           fi
           [ -z "${prs:-}" ] && { echo "no open PRs"; exit 0; }
 
@@ -397,6 +413,12 @@ jobs:
             # The classifier defaults ordinary source to NORMAL and fails safe:
             # an unreadable/empty file set is HIGH. HIGH never reaches the
             # merge path; LOW needs no review; NORMAL is handled below.
+            pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
+              --jq .headRefOid 2>/dev/null || echo "")
+            if [ -z "$pr_sha" ]; then
+              echo "::warning::#$pr head SHA is unreadable — risk cannot be bound to an exact head. Not merging."
+              continue
+            fi
             if ! changed_paths=$(gh api --paginate \
                   "repos/$REPO/pulls/$pr/files?per_page=100" \
                   --jq '.[].filename' 2>/dev/null); then
@@ -416,6 +438,12 @@ jobs:
               continue
             fi
             echo "PR #$pr deterministic risk lane: $risk"
+            risk_head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
+              --jq .headRefOid 2>/dev/null || echo "")
+            if [ "$risk_head" != "$pr_sha" ] || [ -z "$risk_head" ]; then
+              echo "::warning::#$pr head moved while changed files were classified — refusing stale risk verdict"
+              continue
+            fi
 
             # -------------------------------------------------------------
             # LATEST-DEVELOP + EXACT-HEAD BINDING.
@@ -425,12 +453,6 @@ jobs:
             # GitHub to update the branch when it is not. The update gets this
             # tick's whole budget only on a later green run; it never updates
             # and merges in one pass.
-            pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
-              --jq .headRefOid 2>/dev/null || echo "")
-            if [ -z "$pr_sha" ]; then
-              echo "::warning::#$pr head SHA is unreadable — no exact-SHA verdict exists. Not merging."
-              continue
-            fi
             merge_base=$(gh api "repos/$REPO/compare/$dev_sha...$pr_sha" \
               --jq .merge_base_commit.sha 2>/dev/null || echo "")
             if [ -z "$merge_base" ]; then
@@ -718,14 +740,15 @@ jobs:
             # the merge. Before, not after, so that a merge can never exist
             # without its explanation — if the comment fails, nothing merges.
             run_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/${GITHUB_RUN_ID:-unknown}"
+            attrib_marker="<!-- $ATTRIB_MARKER:$pr_sha -->"
             if [ "$risk" = "NORMAL" ]; then
               review_trace="A formal GitHub approval was recorded for exact head $pr_sha."
             else
               review_trace="LOW risk: this lane deliberately requires no formal review."
             fi
             attribution=$(printf '%s\n' \
-              "$ATTRIB_MARKER" \
-              "**Merged by automation.**" \
+              "$attrib_marker" \
+              "**Automation is attempting this merge now.**" \
               "" \
               "\`auto-merge-to-develop\` (\`.github/workflows/auto-merge-to-develop.yaml\` in this repo) is merging this pull request now. $review_trace" \
               "" \
@@ -750,10 +773,12 @@ jobs:
             # this workflow signs its comments with and post at most one.
             # (An unreadable comment list falls through to posting: a duplicate
             # comment is a nuisance, a missing one is the bug.)
-            prior=$(gh pr view "$pr" --repo "$REPO" --json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+            prior=$(gh pr view "$pr" --repo "$REPO" --json comments --jq \
+              '[.comments[] | select((.author.login // "") | test("github-actions")) | .body] | join("\n")' \
+              2>/dev/null || echo "")
             case "$prior" in
-              *"$ATTRIB_MARKER"*)
-                echo "#$pr already carries this automation's attribution comment from an earlier tick — merging without posting a second one." ;;
+              *"$attrib_marker"*)
+                echo "#$pr already carries this automation's exact-head attribution attempt — merging without posting a second one." ;;
               *)
                 if ! gh pr comment "$pr" --repo "$REPO" --body "$attribution"; then
                   echo "::error::#$pr — could NOT post the pre-merge attribution comment, so it was NOT merged. An automated merge that cannot say it was automated is the exact defect this comment exists to close; merging anyway would trade a small delay for an untraceable merge. The PR stays open and the next tick retries."

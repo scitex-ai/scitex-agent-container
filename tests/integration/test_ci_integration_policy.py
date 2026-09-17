@@ -75,15 +75,19 @@ def test_backlog_boundaries_select_the_declared_mode(
         "src/project/auth/session.py",
         "src/project/oauth/token.py",
         "src/project/authorization/policy.py",
+        "src/scitex_agent_container/_authheal/_detect.py",
         "src/project/login/session.py",
         "src/project/secrets/loader.py",
         "src/project/billing/invoice.py",
         "src/project/payments/invoice.py",
         "src/project/tenancy/lease.py",
         "src/project/credentials/store.py",
+        "src/scitex_agent_container/_account/creds_sync.py",
         "db/schema.sql",
         "migrations/0042_add_owner.sql",
+        "scripts/migrate_containers_layout.sh",
         ".github/workflows/deploy-production.yml",
+        "src/scitex_agent_container/runtimes/_to_home_deployers.py",
         ".github/workflows/release-production.yml",
     ],
 )
@@ -312,42 +316,6 @@ def test_review_cli_flattens_paginated_github_json() -> None:
     assert (completed.returncode, completed.stdout.strip()) == (0, "APPROVED")
 
 
-@pytest.mark.parametrize(
-    ("mode", "work_kind", "expected"),
-    [
-        ("BUILD", "feature", True),
-        ("BALANCED", "feature", True),
-        ("INTEGRATION_HEAVY", "feature", False),
-        ("DRAIN", "feature", False),
-        ("DRAIN", "critical_fix", True),
-        ("DRAIN", "review", True),
-        ("DRAIN", "integration", True),
-        ("DRAIN", "unknown", False),
-        ("drain", "feature", False),
-        ("UNKNOWN", "feature", False),
-        ("", "feature", False),
-    ],
-)
-def test_fleet_mode_applies_feature_dispatch_backpressure(
-    policy, mode: str, work_kind: str, expected: bool
-) -> None:
-    # Arrange — mode and work kind are explicit dispatcher facts.
-    current_mode = mode
-    # Act
-    allowed = policy.dispatch_allowed(current_mode, work_kind)
-    # Assert
-    assert allowed is expected
-
-
-def test_admit_cli_rejects_feature_dispatch_in_drain() -> None:
-    # Arrange
-    command = [sys.executable, str(_POLICY), "admit", "DRAIN", "feature"]
-    # Act
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    # Assert
-    assert (completed.returncode, completed.stdout.strip()) == (2, "REJECT")
-
-
 def test_merge_attribution_records_the_deterministic_risk_lane(
     merge_step: dict,
 ) -> None:
@@ -384,6 +352,53 @@ def test_last_inch_rechecks_base_head_and_develop_after_attribution(
         '"$last_base" != "develop"' in gate,
         '"$last_head" != "$pr_sha"' in gate,
         '"$last_dev" != "$dev_sha"' in gate,
+    )
+    # Assert
+    assert contract == (True, True, True, True)
+
+
+def test_risk_classification_is_bracketed_by_exact_head_reads(
+    merge_step: dict,
+) -> None:
+    # Arrange
+    script = merge_step["run"]
+    files_at = script.index('pulls/$pr/files')
+    before = script[:files_at]
+    after = script[files_at:]
+    # Act
+    contract = (
+        before.rfind("headRefOid") > before.rfind("RISK LANE"),
+        after.index("risk_head=") < after.index("LATEST-DEVELOP"),
+        '"$risk_head" != "$pr_sha"' in after,
+    )
+    # Assert
+    assert contract == (True, True, True)
+
+
+def test_server_side_strict_base_protection_is_required(merge_step: dict) -> None:
+    # Arrange
+    script = merge_step["run"]
+    # Act
+    strict_at = script.index("protection/required_status_checks")
+    merge_at = script.index("gh pr merge")
+    # Assert
+    assert (strict_at < merge_at, '"$strict_base" != "true"' in script) == (
+        True,
+        True,
+    )
+
+
+def test_attribution_is_exact_head_and_workflow_identity_scoped(
+    merge_step: dict,
+) -> None:
+    # Arrange
+    script = merge_step["run"]
+    # Act
+    contract = (
+        'attrib_marker="<!-- $ATTRIB_MARKER:$pr_sha -->"' in script,
+        'test("github-actions")' in script,
+        "Automation is attempting this merge now" in script,
+        "No human read this diff" not in script,
     )
     # Assert
     assert contract == (True, True, True, True)

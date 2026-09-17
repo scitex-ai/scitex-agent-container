@@ -34,6 +34,14 @@ _HIGH_RISK_WORDS = {
     "token",
     "tokens",
 }
+_HIGH_RISK_STEMS = (
+    "authheal",
+    "cred",
+    "deploy",
+    "migrat",
+    "releas",
+    "schema",
+)
 
 
 def fleet_mode(open_green: int) -> str:
@@ -47,16 +55,6 @@ def fleet_mode(open_green: int) -> str:
     return "BUILD"
 
 
-def dispatch_allowed(mode: str, work_kind: str) -> bool:
-    """Admit only drain work after the integration backlog crosses 20."""
-    mode = str(mode or "").strip().upper()
-    if mode not in {"BUILD", "BALANCED", "INTEGRATION_HEAVY", "DRAIN"}:
-        return False
-    if mode not in {"INTEGRATION_HEAVY", "DRAIN"}:
-        return True
-    return work_kind in {"critical_fix", "review", "integration"}
-
-
 def classify_risk(changed_paths: list[str]) -> str:
     """Classify a PR from the paths GitHub reports as changed."""
     if not changed_paths:
@@ -66,7 +64,10 @@ def classify_risk(changed_paths: list[str]) -> str:
         low = path.lower().lstrip("./")
         words = set(re.split(r"[/_.-]+", low))
         documentation_or_test = low.startswith(("docs/", "tests/"))
-        if words & _HIGH_RISK_WORDS and not documentation_or_test:
+        sensitive = bool(words & _HIGH_RISK_WORDS) or any(
+            word.startswith(stem) for word in words for stem in _HIGH_RISK_STEMS
+        )
+        if sensitive and not documentation_or_test:
             return "HIGH"
 
     low_risk = all(
@@ -105,9 +106,7 @@ def main() -> int:
     subparsers.add_parser("risk")
     review_parser = subparsers.add_parser("review")
     review_parser.add_argument("head_sha")
-    admit_parser = subparsers.add_parser("admit")
-    admit_parser.add_argument("mode")
-    admit_parser.add_argument("work_kind")
+
     args = parser.parse_args()
 
     if args.command == "mode":
@@ -118,10 +117,6 @@ def main() -> int:
         payload = json.load(sys.stdin)
         reviews = [review for page in payload for review in page]
         print(review_verdict(args.head_sha, reviews))
-    elif args.command == "admit":
-        allowed = dispatch_allowed(args.mode, args.work_kind)
-        print("ALLOW" if allowed else "REJECT")
-        return 0 if allowed else 2
     return 0
 
 
