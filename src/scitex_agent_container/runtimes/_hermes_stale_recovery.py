@@ -220,8 +220,15 @@ def _owns_monitor_process(pid: int, config_path: str) -> bool:
 
 def recovery_command(config: AgentConfig) -> str:
     """The documented Hermes same-session provider rebind."""
-    provider = f"custom:sac-{config.engine_key or config.model}"
-    return f"/model {config.model} --provider {provider} --session"
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or "").strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes stale recovery requires a resolved engine model and key; "
+            "refusing implicit provider identity"
+        )
+    provider = f"custom:sac-{engine_key}"
+    return f"/model {model} --provider {provider} --session"
 
 
 def health_url(config: AgentConfig) -> str:

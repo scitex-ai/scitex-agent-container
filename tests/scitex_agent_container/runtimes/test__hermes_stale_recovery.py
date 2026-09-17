@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from scitex_agent_container.runtimes import _hermes_stale_recovery as recovery
 from scitex_agent_container.runtimes._runtime_control import read_control_state
 
@@ -103,6 +105,19 @@ def test_recovery_rebinds_same_model_and_provider_without_global_write(tmp_path)
     command = recovery.recovery_command(config)
     # Assert
     assert command == ("/model qwen38-27b --provider custom:sac-qwen38-27b --session")
+
+
+def test_recovery_refuses_model_as_an_implicit_engine_key(tmp_path):
+    # Arrange
+    config = _config(tmp_path)
+    config.engine_key = ""
+
+    # Act
+    call = lambda: recovery.recovery_command(config)  # noqa: E731
+
+    # Assert
+    with pytest.raises(ValueError, match="resolved engine model and key"):
+        call()
 
 
 def test_recovery_tick_preserves_session_context_and_incarnation(tmp_path):
