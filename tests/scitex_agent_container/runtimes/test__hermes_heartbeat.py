@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import pytest
 from scitex_agent_container._lifecycle._tui_heartbeat_loop import _beat_one
 from scitex_agent_container._runners._session_state import write_heartbeat
 from scitex_agent_container.runtimes._hermes_heartbeat import (
+    HermesHeartbeatObservation,
     observe_hermes_heartbeat,
 )
 from scitex_agent_container.runtimes._hermes_heartbeat_projection import (
@@ -18,6 +20,7 @@ from scitex_agent_container.runtimes._hermes_heartbeat_projection import (
     read_hermes_heartbeat_projection,
     refresh_hermes_heartbeat_projection,
 )
+from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
 
 class _Socket:
@@ -90,6 +93,77 @@ def _observe(tmp_path, socket: _Socket, previous: dict | None = None):
         previous=previous,
         connect_fn=lambda *args, **kwargs: socket,
     )
+
+
+def _valid_projection() -> dict:
+    return {
+        "writer": "hermes-session-events",
+        "agent_name": "scholar",
+        "observed_at": 100.0,
+        "state": "ready",
+        "engine_incarnation_id": "generation-1:epoch-1:session-1",
+        "hermes_activity_at": 99.0,
+        "hermes_gateway_generation": "generation-1",
+        "hermes_event_epoch": "epoch-1",
+        "hermes_event_seq": 4,
+        "hermes_event_history_complete": True,
+        "hermes_counter_scope_started_seq": 0,
+        "hermes_session_id": "session-1",
+        "turns_accepted": 1,
+        "turns_completed": 1,
+        "tools_started": 1,
+        "tools_completed": 1,
+        "tools_inflight": 0,
+        "hermes_tools_inflight": [],
+        "last_event_type": "message.complete",
+        "last_turn_status": "complete",
+    }
+
+
+@pytest.mark.parametrize(
+    ("updates", "reason"),
+    [
+        ({"observed_at": float("nan")}, "observation time"),
+        ({"hermes_activity_at": float("inf")}, "observation time"),
+        ({"last_event_type": {"bad": "shape"}}, "last_event_type"),
+        ({"last_turn_status": 1}, "last_turn_status"),
+        ({"last_turn_status": "successful"}, "last_turn_status"),
+        (
+            {
+                "tools_started": 2,
+                "tools_inflight": 1,
+                "hermes_tools_inflight": ["duplicate", "duplicate"],
+            },
+            "duplicate tool",
+        ),
+        ({"hermes_counter_scope_started_seq": 5}, "counter scope"),
+        ({"turns_accepted": 1, "turns_completed": 2}, "turn counters"),
+        ({"tools_started": 1, "tools_completed": 2}, "tool counters"),
+        (
+            {
+                "tools_started": 2,
+                "tools_completed": 1,
+                "tools_inflight": 2,
+                "hermes_tools_inflight": ["call-1", "call-2"],
+            },
+            "inflight tool counters",
+        ),
+    ],
+)
+def test_malformed_projection_is_rejected(tmp_path, updates, reason):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection.update(updates)
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+
+    # Act / Assert
+    with pytest.raises(HermesHeartbeatProjectionError, match=reason):
+        read_hermes_heartbeat_projection(
+            tmp_path, "scholar", previous=None, now_fn=lambda: 101.0
+        )
 
 
 def test_accepted_turn_is_counted_from_message_start(tmp_path):
@@ -193,6 +267,55 @@ def test_gateway_crash_leaves_the_last_heartbeat_untouched(tmp_path):
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=lambda *_args, **_kwargs: None,
         hermes_observe_fn=crash,
+    )
+
+    # Assert
+    assert (written, heartbeat.read_bytes()) == (False, original)
+
+
+def test_live_session_rpc_failure_leaves_last_heartbeat_untouched(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection["observed_at"] = time.time()
+    projection["hermes_activity_at"] = projection["observed_at"]
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    heartbeat = tmp_path / "heartbeat.json"
+    original = b'{"writer":"hermes-session-events","turns_completed":4}'
+    heartbeat.write_bytes(original)
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+
+    class BrokenSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, _raw):
+            return None
+
+        def recv(self):
+            raise OSError("gateway RPC failed")
+
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: BrokenSocket(),
+    )
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
     )
 
     # Assert
@@ -350,6 +473,103 @@ def test_owner_projection_persists_the_gap_free_event_cursor(tmp_path):
     )
 
 
+def test_replay_gap_preserves_previous_projection_byte_for_byte(tmp_path):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection["observed_at"] = time.time()
+    projection["hermes_activity_at"] = projection["observed_at"]
+    projection_path = tmp_path / "hermes-heartbeat-events.json"
+    original = json.dumps(projection, separators=(",", ":")).encode()
+    projection_path.write_bytes(original)
+    socket = _Socket(
+        epoch="epoch-1",
+        replays=[{"events": [_event(6, "thinking.delta")], "latest_seq": 6}],
+        statuses=["idle"],
+    )
+
+    # Act / Assert
+    with pytest.raises(HermesTuiRpcError, match="replay has a gap"):
+        refresh_hermes_heartbeat_projection(
+            tmp_path,
+            "scholar",
+            connect_fn=lambda *_args, **_kwargs: socket,
+        )
+    assert projection_path.read_bytes() == original
+
+
+def test_overlapping_projection_refreshes_cannot_regress_event_sequence(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    first_started = threading.Event()
+    newer_finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def observation(seq: int) -> HermesHeartbeatObservation:
+        return HermesHeartbeatObservation(
+            observed_at=100.0 + seq,
+            activity_at=100.0 + seq,
+            state="ready",
+            engine_incarnation_id="generation-1:epoch-1:session-1",
+            gateway_generation="generation-1",
+            event_epoch="epoch-1",
+            event_seq=seq,
+            event_history_complete=True,
+            counter_scope_started_seq=0,
+            session_id="session-1",
+            turns_accepted=0,
+            turns_completed=0,
+            tools_started=0,
+            tools_completed=0,
+            tools_inflight=0,
+            inflight_tool_ids=(),
+            last_event_type="",
+            last_turn_status="",
+        )
+
+    def observe(*_args, previous=None, **_kwargs):
+        if threading.current_thread().name == "stale-owner":
+            first_started.set()
+            newer_finished.wait(timeout=0.2)
+            return observation(1)
+        # Without serialization both owners read the empty baseline and this
+        # newer owner publishes first. With serialization it sees seq=1.
+        assert previous is None or previous["hermes_event_seq"] == 1
+        newer_finished.set()
+        return observation(2)
+
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat_projection.observe_hermes_heartbeat",
+        observe,
+    )
+
+    def refresh():
+        try:
+            refresh_hermes_heartbeat_projection(tmp_path, "scholar")
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    stale = threading.Thread(target=refresh, name="stale-owner")
+    newer = threading.Thread(target=refresh, name="newer-owner")
+
+    # Act
+    stale.start()
+    assert first_started.wait(timeout=1)
+    newer.start()
+    stale.join(timeout=2)
+    newer.join(timeout=2)
+    projection = json.loads(
+        (tmp_path / "hermes-heartbeat-events.json").read_text(encoding="utf-8")
+    )
+
+    # Assert
+    assert not errors
+    assert not stale.is_alive() and not newer.is_alive()
+    assert projection["hermes_event_seq"] == 2
+
+
 def test_idle_projection_refresh_preserves_last_event_activity_time(tmp_path):
     # Arrange
     _gateway(tmp_path)
@@ -420,7 +640,218 @@ def test_projection_from_a_replaced_gateway_is_rejected(tmp_path):
         action()
 
 
-def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
+def test_gateway_replacement_after_projection_read_prevents_heartbeat_write(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection["observed_at"] = time.time()
+    projection["hermes_activity_at"] = projection["observed_at"] - 10
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    original = b'{"writer":"hermes-session-events","hermes_event_seq":3}'
+    (tmp_path / "heartbeat.json").write_bytes(original)
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+
+    def replace_after_read(*args, **kwargs):
+        observed = read_hermes_heartbeat_projection(*args, **kwargs)
+        _gateway(tmp_path, generation="generation-2")
+        return observed
+
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle"]
+        ),
+    )
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
+        hermes_observe_fn=replace_after_read,
+    )
+
+    # Assert
+    assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
+
+
+def test_gateway_replacement_during_publication_retracts_stale_heartbeat(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection["observed_at"] = time.time()
+    projection["hermes_activity_at"] = projection["observed_at"] - 10
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    original = b'{"writer":"hermes-session-events","hermes_event_seq":3}'
+    (tmp_path / "heartbeat.json").write_bytes(original)
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+    socket = _Socket(
+        epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+    )
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: socket,
+    )
+
+    def replace_while_writing(*args, **kwargs):
+        write_heartbeat(*args, **kwargs)
+        _gateway(tmp_path, generation="generation-2")
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=replace_while_writing,
+    )
+
+    # Assert
+    assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
+
+
+def test_stale_same_generation_session_projection_cannot_overwrite_current_session(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    now = time.time()
+    projection.update(
+        {
+            "observed_at": now,
+            "hermes_activity_at": now - 10,
+            "engine_incarnation_id": "generation-1:epoch-1:session-old",
+            "hermes_session_id": "session-old",
+        }
+    )
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    original = b'{"writer":"hermes-session-events","hermes_gateway_generation":"generation-1","engine_incarnation_id":"generation-1:epoch-1:session-new","hermes_session_id":"session-new","hermes_event_seq":10}'
+    (tmp_path / "heartbeat.json").write_bytes(original)
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1",
+            replays=[],
+            statuses=["idle", "idle"],
+            session_id="session-new",
+        ),
+    )
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
+    )
+
+    # Assert
+    assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
+
+
+def test_same_engine_projection_cannot_regress_published_sequence(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    now = time.time()
+    projection.update({"observed_at": now, "hermes_activity_at": now})
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    previous = {
+        **projection,
+        "hermes_event_seq": 5,
+        "writer": "hermes-session-events",
+    }
+    original = json.dumps(previous, separators=(",", ":")).encode()
+    (tmp_path / "heartbeat.json").write_bytes(original)
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
+    )
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
+    )
+
+    # Assert
+    assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
+
+
+def test_heartbeat_liveness_is_fresh_while_hermes_activity_remains_old(
+    tmp_path, monkeypatch
+):
+    # Arrange
+    _gateway(tmp_path)
+    now = time.time()
+    old_activity = now - 300
+    projection = _valid_projection()
+    projection.update({"observed_at": now, "hermes_activity_at": old_activity})
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
+    )
+    agent = {
+        "name": "scholar",
+        "state_dir": tmp_path,
+        "config": SimpleNamespace(harness="hermes"),
+    }
+
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
+    )
+    heartbeat = json.loads(
+        (tmp_path / "heartbeat.json").read_text(encoding="utf-8")
+    )
+
+    # Assert
+    assert written is True
+    assert heartbeat["ts"] == now
+    assert heartbeat["hermes_activity_at"] == old_activity
+
+
+def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path, monkeypatch):
     # Arrange
     _gateway(tmp_path)
     now = time.time()
@@ -442,6 +873,12 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         "scholar",
         connect_fn=lambda *args, **kwargs: socket,
         now_fn=lambda: now,
+    )
+    monkeypatch.setattr(
+        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
+        lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
     )
     agent = {
         "name": "scholar",

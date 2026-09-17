@@ -261,8 +261,9 @@ def write_heartbeat(
     when ``None`` (the SDK-runner default) the current wall-clock is
     used. The TUI heartbeat writer passes the agent's tmux pane-activity
     epoch here so ``heartbeat_at`` reflects the SAME liveness signal
-    ``TuiSessionRuntime.is_running`` keys off. Hermes instead passes the last
-    gap-free session-event activity time from its owner-side projection.
+    ``TuiSessionRuntime.is_running`` keys off. Hermes instead passes the fresh
+    projection observation time for liveness and carries the older, independent
+    event activity time in ``hermes_activity_at``.
 
     When the container tmpfs is probeable it also carries
     ``tmp_used_pct`` — the ``/tmp`` fill percentage — so a filling
