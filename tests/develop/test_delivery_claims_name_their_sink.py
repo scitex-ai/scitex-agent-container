@@ -171,9 +171,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:328",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:206",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:346",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:375",
         "scitex_agent_container/_listen/_deploy_freshness.py:227",
         "scitex_agent_container/_listen/_liveness_tick.py:123",
         # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason

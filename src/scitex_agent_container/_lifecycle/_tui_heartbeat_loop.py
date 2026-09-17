@@ -18,10 +18,10 @@ Every tick it:
      :func:`_tmux_probe.list_sessions_activity`);
   2. lists agents whose ``spec.runtime == "tui"`` (the ``agent_lister``
      seam; production default walks the Registry + on-disk specs);
-  3. writes ``heartbeat.json`` for each agent present in that snapshot via
-     :func:`_session_state.write_heartbeat`, stamping ``ts`` with the
-     pane-activity epoch (the SAME liveness signal ``is_running`` keys
-     off) and ``state="running"``;
+  3. writes ``heartbeat.json`` for each agent present in that snapshot. Generic
+     TUIs use pane activity; Hermes consumes the fresh, incarnation-fenced
+     session-event projection maintained by its TUI owner, so accepted turns,
+     streamed tools and terminal turns come from Hermes' own registry;
   4. RE-ASSERTS each live agent's host-side ``/v1/turn`` turn bridge
      (:mod:`._tui_bridge_supervisor`) — respawning it when nothing is bound
      to the port it should serve. That bridge was spawned once at start and
@@ -187,6 +187,8 @@ def _beat_one(
     *,
     snapshot: dict[str, int],
     write_fn: Callable[..., None],
+    hermes_observe_fn: Any = None,
+    hermes_connect_fn: Any = None,
 ) -> bool:
     """Write one TUI agent's heartbeat from the ALREADY-FETCHED fleet snapshot.
 
@@ -215,6 +217,20 @@ def _beat_one(
         # No live ``tui-<name>`` session in the snapshot — nothing to beat.
         return False
     try:
+        config = agent.get("config")
+        if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
+            from ..runtimes._hermes_heartbeat_projection import (
+                promote_hermes_heartbeat_projection,
+            )
+
+            promote_hermes_heartbeat_projection(
+                Path(state_dir),
+                name,
+                write_fn=write_fn,
+                observe_fn=hermes_observe_fn,
+                connect_fn=hermes_connect_fn,
+            )
+            return True
         # ``writer`` marks this as OBSERVER testimony (host-side proxy
         # liveness), distinguishable from the runner's own beats. An
         # observer beat carries no incarnation_id — it knows the process
@@ -227,7 +243,7 @@ def _beat_one(
             writer="listen-tui-observer",
         )
         return True
-    except Exception as exc:  # stx-allow: fallback (per-agent best-effort: one failure must not abort the tick — logged, skipped)
+    except Exception as exc:  # stx-allow: fallback (per-agent best-effort: one failure must not abort the tick — logged to stderr, skipped)
         logger.debug("tui_heartbeat: beat for %r failed (skipped): %s", name, exc)
         return False
 
@@ -241,6 +257,8 @@ async def tui_heartbeat_loop(
     tmux_check: Any = None,
     tick_timeout_s: float | None = None,
     supervise_fn: Any = None,
+    hermes_observe_fn: Any = None,
+    hermes_connect_fn: Any = None,
 ) -> None:
     """Long-running TUI heartbeat-writer task for the listen lifespan.
 
@@ -256,6 +274,11 @@ async def tui_heartbeat_loop(
     ``sessions_fn`` replaced the former per-agent ``session_exists_fn`` /
     ``activity_fn`` pair: those cost 3 ``tmux`` spawns per agent, so the
     tick was O(N) subprocesses and blew its budget at fleet scale.
+
+    Hermes agents do not infer turns from pane movement or SDK ``quota.json``.
+    Their owner drains Hermes' bounded event replay every supervision poll and
+    this loop promotes only that fresh projection. A missing/stale projection
+    writes nothing, preserving the last exact record.
 
     ``tick_timeout_s`` is the ``off_loop`` budget for ONE tick (default
     ``max(interval_s, 15.0)``). Exceeding it ABANDONS that tick — which is
@@ -331,7 +354,13 @@ async def tui_heartbeat_loop(
                 return
             agents = list(lister())
             for agent in agents:
-                _beat_one(agent, snapshot=snapshot, write_fn=write_fn)
+                _beat_one(
+                    agent,
+                    snapshot=snapshot,
+                    write_fn=write_fn,
+                    hermes_observe_fn=hermes_observe_fn,
+                    hermes_connect_fn=hermes_connect_fn,
+                )
             # RE-ASSERT THE TURN BRIDGE (2026-08-11 incident: 14 of 15
             # host-side bridges were dead PIDs and nothing ever noticed — a
             # live agent whose /v1/turn port is unbound silently refuses every
@@ -343,7 +372,7 @@ async def tui_heartbeat_loop(
             # that were just written.
             try:
                 supervise(agents, snapshot=snapshot)
-            except Exception as exc:  # stx-allow: fallback (reason: bridge supervision is additive to the heartbeat's primary duty — a failure in it must never abort a tick that already wrote fresh liveness data; logged, retried next tick)
+            except Exception as exc:  # stx-allow: fallback (reason: bridge supervision is additive to the heartbeat's primary duty — a failure in it must never abort a tick that already wrote fresh liveness data; logged to stderr, retried next tick)
                 logger.warning(
                     "tui_heartbeat_loop: turn-bridge supervision failed this "
                     "tick (%s); heartbeats were still written, retrying next "
@@ -372,7 +401,7 @@ async def tui_heartbeat_loop(
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # stx-allow: fallback (loop must survive a transient registry/tmux/FS error; logged, retried next tick)
+            except Exception as exc:  # stx-allow: fallback (loop must survive a transient registry/tmux/FS error; logged to stderr, retried next tick)
                 logger.warning(
                     "tui_heartbeat_loop: tick failed (%s); retry next tick", exc
                 )
