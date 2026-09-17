@@ -203,10 +203,22 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
     a2a_port = row.get("a2a_port", status.get("a2a_port"))
     turn_url = row.get("turn_url", status.get("turn_url"))
     host = _node(row, turn_url)
-    runtime = _text(row.get("runtime") or status.get("runtime"), "unknown")
-    harness = _text(row.get("harness") or status.get("harness"), "unknown")
-    engine = _text(row.get("engine") or status.get("engine"), "default")
-    model = _text(row.get("model") or status.get("model"), "unknown")
+    # /status publishes active birth-certificate identity; /agents may carry a
+    # stale declaration. Status therefore wins whenever it has a value.
+    runtime = _text(status.get("runtime") or row.get("runtime"), "unknown")
+    harness = _text(status.get("harness") or row.get("harness"), "unknown")
+    engine = _text(status.get("engine") or row.get("engine"), "default")
+    model = _text(status.get("model") or row.get("model"), "unknown")
+    billing_mode = _text(
+        status.get("billing_mode") or row.get("billing_mode"), "unspecified"
+    )
+    auth_identity = _text(
+        status.get("auth_identity") or row.get("auth_identity"), "unknown"
+    )
+    identity_source = _text(
+        status.get("runtime_identity_source") or row.get("runtime_identity_source"),
+        "unknown",
+    )
     role = row.get("role")
     if isinstance(role, list):
         role = ", ".join(str(r) for r in role)
@@ -222,6 +234,9 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
         "role": _text(role, "—"),
         "engine": engine,
         "model": model,
+        "billing_mode": billing_mode,
+        "auth_identity": auth_identity,
+        "runtime_identity_source": identity_source,
         "project": _text(row.get("project"), "—"),
         "host": host or "this node",
         "scope": scope,

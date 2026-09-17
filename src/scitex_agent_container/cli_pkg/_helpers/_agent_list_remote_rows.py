@@ -182,6 +182,7 @@ def remote_instance_rows(
     row shape uniform. Helpers resolve through the ``_agent_list`` module
     namespace so the suite's real-attribute seams keep working.
     """
+    from ..._lifecycle._runtime_identity import resolve_runtime_identity
     from ..._state.auth_state import verdict_for
     from ..._state.state_store import list_active_instances
     from ...config import load_config
@@ -266,11 +267,17 @@ def remote_instance_rows(
                 account = _al._safe_account_for(cfg)
             except Exception:  # stx-allow: fallback (reason: see inline comment)
                 account = ""
+        status = statuses.get(name, "unknown")
+        identity = resolve_runtime_identity(
+            cfg,
+            running=status == "running",
+            birth_record=None,
+        )
         row: dict = {
             "name": name,
             # A probe that could not OBSERVE the peer is "unknown" (hidden from
             # the default view, counted in the footer), never a false "running".
-            "status": statuses.get(name, "unknown"),
+            "status": status,
             "screen": "-",
             "multiplexer": None,
             "started_at": cand["started_at"],
@@ -278,11 +285,9 @@ def remote_instance_rows(
             "host_display": _al._host_display_for(host, display_host),
             "path": str(spec_path or ""),
             "a2a_port": cand["a2a_port"],
-            "account": account,
-            "runtime": str(getattr(cfg, "runtime", "") or ""),
-            "harness": str(getattr(cfg, "harness", "") or ""),
-            "engine": str(getattr(cfg, "engine_key", "") or ""),
-            "model": str(getattr(cfg, "model", "") or ""),
+            "stored_credential": account,
+            "account": account,  # deprecated inventory alias
+            **identity,
             "remote": True,
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))

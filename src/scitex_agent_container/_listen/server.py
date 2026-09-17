@@ -140,6 +140,11 @@ async def agent_status(request: Request) -> JSONResponse:
         "session_id": sid,
         "state_dir": str(sd),
     }
+    # Selection/auth identity comes from the active incarnation's immutable
+    # birth certificate when available; the current spec is a labelled fallback.
+    from .._lifecycle._status import _runtime_identity
+
+    body.update(_runtime_identity(name, cfg, running=True))
     # Additive, harness-neutral turn-admission state. Runtime adapters own
     # their detection mechanism; this route and its GUI consumers do not.
     try:

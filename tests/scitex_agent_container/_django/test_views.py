@@ -152,7 +152,7 @@ def test_fleet_shows_published_operation_and_phase(client, loopback, env_save_re
     assert "busy" in html and "reviewing" in html
 
 
-def test_fleet_shows_harness_engine_and_model(client, loopback, env_save_restore):
+def test_fleet_shows_billing_auth_harness_engine_and_model(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
 
@@ -160,10 +160,18 @@ def test_fleet_shows_harness_engine_and_model(client, loopback, env_save_restore
     html = client.get("/").content.decode()
 
     # Assert
-    assert "Harness" in html and "Engine / Model" in html and "anthropic" in html and "sonnet" in html
+    assert (
+        "Billing" in html
+        and "Auth identity" in html
+        and "Harness" in html
+        and "Engine / Model" in html
+        and "subscription" in html
+        and "anthropic/team-max" in html
+        and "sonnet" in html
+    )
 
 
-def test_mobile_fleet_keeps_harness_and_engine_columns_visible():
+def test_mobile_fleet_keeps_identity_and_runtime_columns_visible():
     # Arrange
     css_path = (
         Path(next(iter(_package_paths)))
@@ -177,7 +185,10 @@ def test_mobile_fleet_keeps_harness_and_engine_columns_visible():
     css = css_path.read_text(encoding="utf-8")
 
     # Assert
-    assert "nth-child(4) { display: none; }" not in css and "nth-child(5) { display: none; }" not in css
+    assert all(
+        f"nth-child({column}) {{ display: none; }}" not in css
+        for column in (4, 5, 6, 7)
+    )
 
 
 def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_restore):

@@ -138,6 +138,7 @@ def defined_agent_rows(
     function-level import also avoids a cycle: ``_agent_list`` imports THIS
     module at module scope.
     """
+    from ..._lifecycle._runtime_identity import resolve_runtime_identity
     from ..._state.auth_state import verdict_for
     from ...config import load_config
     from ...config._validation import validate_config
@@ -198,6 +199,7 @@ def defined_agent_rows(
         # count). An agent we just promoted to "unknown" IS a candidate for
         # that view, so it must not be deferred.
         deferred = running_only and not beat_live
+        identity = resolve_runtime_identity(cfg, running=False, birth_record=None)
         row: dict = {
             "name": name,
             "status": status,
@@ -208,12 +210,10 @@ def defined_agent_rows(
             "host_display": _al._host_display_for("local", display_host),
             "path": str(spec_path),
             "a2a_port": port_claims.get(name),
-            "account": "" if deferred else _al._safe_account_for(cfg),
-            "runtime": str(getattr(cfg, "runtime", "") or ""),
-            "harness": str(getattr(cfg, "harness", "") or ""),
-            "engine": str(getattr(cfg, "engine_key", "") or ""),
-            "model": str(getattr(cfg, "model", "") or ""),
+            "stored_credential": "" if deferred else _al._safe_account_for(cfg),
+            **identity,
         }
+        row["account"] = row["stored_credential"]  # deprecated inventory alias
         movement = (
             dict(_al._MOVEMENT_DEFAULTS) if deferred else _al._movement_fields(name)
         )

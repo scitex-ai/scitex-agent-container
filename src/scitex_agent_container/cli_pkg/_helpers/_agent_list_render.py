@@ -321,6 +321,8 @@ def print_agent_list(
     table.add_column("Status")
     table.add_column("YAML")
     table.add_column("Host")
+    table.add_column("Billing")
+    table.add_column("Auth identity", overflow="fold")
     table.add_column("Harness")
     table.add_column("Engine / Model")
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
@@ -329,13 +331,14 @@ def print_agent_list(
     # short account name only by default (no_wrap), full label in --verbose.
     if verbose:
         table.add_column("Stored credential", overflow="fold")
+        table.add_column("Identity source")
     # ``Auth`` (the cached verdict + its age, for EVERY row) answers "is this
     # green verified, or merely tmux-alive?" — but one extra column on the
     # default view is a cost the compact view should not pay, so it lives behind
     # `-v`. The default view still shows a FAILING agent loudly (Status) and
     # summarises the cache's freshness in the footer.
     if verbose:
-        table.add_column("Auth")
+        table.add_column("Auth status")
     # ``Path`` (full spec.yaml path) folds every row to 10+ lines, so it is
     # verbose-only (operator 2026-06-17).
     if verbose:
@@ -362,7 +365,7 @@ def print_agent_list(
             started = "—"
         else:
             started = format_dt_display_tz(raw_started)
-        account_cell = row.get("account") or "—"
+        account_cell = row.get("stored_credential") or row.get("account") or "—"
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.
         if not verbose and " (" in account_cell:
@@ -372,11 +375,14 @@ def print_agent_list(
             _status_cell(row),
             yaml_cell,
             host_cell,
+            row.get("billing_mode") or "unspecified",
+            row.get("auth_identity") or "unknown",
             row.get("harness") or "—",
             f"{row.get('engine') or '—'} / {row.get('model') or '—'}",
         ]
         if verbose:
             cells.append(account_cell)
+            cells.append(row.get("runtime_identity_source") or "unknown")
         if verbose:
             cells.append(_auth_cell(row))
         if verbose:
