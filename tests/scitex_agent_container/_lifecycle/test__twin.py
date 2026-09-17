@@ -11,6 +11,7 @@ ApptainerContainerRuntime's resolver API), same as the session-seed suite.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -24,6 +25,7 @@ from scitex_agent_container._lifecycle._twin import (
     TWIN_PARENT_ENV,
     TwinSeedError,
     _ensure_twin_worktree,
+    _materialize_hermes_fork_seed,
     _reject_symlink_components,
     _resolve_host_repo_from_binds,
     build_twin_boot_kick,
@@ -154,7 +156,7 @@ def test_resolve_twin_name_rejects_non_component_child(name: str) -> None:
     # Arrange
     # Act
     # Assert
-    with pytest.raises(TwinSeedError, match="invalid twin agent name"):
+    with pytest.raises(TwinSeedError, match="invalid fork agent name"):
         resolve_twin_name("parent", name, [])
 
 
@@ -216,7 +218,7 @@ def test_current_v3_claude_twin_sets_selected_session_continue() -> None:
     ) == (parent["spec"].get("claude"), "continue")
 
 
-def test_hermes_twin_fails_closed_without_context_fork_support() -> None:
+def test_hermes_fork_uses_native_continue_session() -> None:
     # Arrange
     parent = _current_v3_parent_doc()
     parent["spec"]["harness"] = "hermes"
@@ -224,11 +226,19 @@ def test_hermes_twin_fails_closed_without_context_fork_support() -> None:
         "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
     }
     # Act
+    fork = derive_twin_spec(
+        parent, twin_name="parent-fork", parent_name="parent", persist=False
+    )
     # Assert
-    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
-        derive_twin_spec(
-            parent, twin_name="parent-twin", parent_name="parent", persist=False
-        )
+    assert (
+        fork["spec"]["harness"],
+        tuple(fork["spec"]["available_harnesses"]),
+        fork["spec"]["available_harnesses"]["hermes"]["session"],
+    ) == (
+        "hermes",
+        ("hermes",),
+        {"mode": "continue", "max_age_minutes": None},
+    )
 
 
 def test_scitex_hub_gui_shape_normalizes_to_selected_harness_authority() -> None:
@@ -292,8 +302,11 @@ def test_scitex_hub_gui_shape_normalizes_to_selected_harness_authority() -> None
     )
 
 
-def test_actual_scitex_hub_gui_hermes_parent_fails_closed() -> None:
-    # Arrange — sanitized compute-03 authority shape; no secret values.
+def test_actual_scitex_hub_gui_hermes_parent_preserves_references_not_secrets(
+    env_save_restore,
+) -> None:
+    # Arrange — sanitized compute authority shape; the provider key is an env
+    # NAME in the spec and its VALUE must never be resolved into the fork.
     parent = _current_v3_parent_doc()
     parent["spec"]["harness"] = "hermes"
     parent["spec"]["engine"] = "opencode-go-deepseek-v4.1-flash"
@@ -313,16 +326,119 @@ def test_actual_scitex_hub_gui_hermes_parent_fails_closed() -> None:
         },
         "hermes": {"session": {"mode": "continue", "max_age_minutes": None}},
     }
+    parent["spec"]["available_engines"] = {
+        "opencode-go-deepseek-v4.1-flash": {
+            "model": "deepseek-v4.1-flash",
+            "provider": {
+                "base_url": "http://provider.invalid/v1",
+                "auth_token_env": "SAC_PROVIDER_KEY",
+            },
+        }
+    }
     parent["spec"]["env"] = {"NON_SECRET_IDENTITY": "scitex-hub-gui"}
+    env_save_restore.set("SAC_PROVIDER_KEY", "must-not-enter-fork-artifacts")
     # Act
+    fork = derive_twin_spec(
+        parent,
+        twin_name="scitex-hub-disposable-fork",
+        parent_name="scitex-hub-gui",
+        persist=False,
+    )
+    encoded = yaml.safe_dump(fork)
     # Assert
-    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
-        derive_twin_spec(
-            parent,
-            twin_name="scitex-hub-auth-gui",
-            parent_name="scitex-hub-gui",
-            persist=False,
-        )
+    assert (
+        fork["spec"]["harness"],
+        tuple(fork["spec"]["available_harnesses"]),
+        "env" in fork["spec"],
+        fork["spec"]["engine"],
+        fork["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"]["model"],
+        fork["spec"]["available_engines"]["opencode-go-deepseek-v4.1-flash"]["provider"]["auth_token_env"],
+        fork["spec"]["workdir"],
+        fork["spec"]["apptainer"]["binds"],
+        fork["spec"]["available_harnesses"]["hermes"]["session"]["mode"],
+        fork["spec"]["apptainer"]["env"]["NON_SECRET_IDENTITY"],
+        "must-not-enter-fork-artifacts" in encoded,
+    ) == (
+        "hermes",
+        ("hermes",),
+        False,
+        "opencode-go-deepseek-v4.1-flash",
+        "deepseek-v4.1-flash",
+        "SAC_PROVIDER_KEY",
+        "/home/ywatanabe/proj/scitex-hub",
+        parent["spec"]["apptainer"]["binds"],
+        "continue",
+        "scitex-hub-gui",
+        False,
+    )
+
+
+def test_hermes_fork_seed_uses_engine_scoped_keys_and_owner_only_file(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()["spec"]
+    parent["harness"] = "hermes"
+    parent["available_harnesses"] = {
+        "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+    }
+    parent["engine"] = "engine-a"
+    child = derive_twin_spec(
+        {"apiVersion": "scitex-agent-container/v3", "kind": "Agent", "spec": parent},
+        twin_name="disposable-fork",
+        parent_name="scitex-hub-gui",
+        persist=False,
+    )["spec"]
+    calls = []
+    visible = [
+        {"role": "user", "text": "known-parent-nonce"},
+        {"role": "assistant", "text": "acknowledged"},
+    ]
+
+    def branch(state_dir, **kwargs):
+        calls.append((state_dir, kwargs))
+        return {
+            "version": 1,
+            "title": kwargs["child_session_key"],
+            "parent_session_id": "parent-stored",
+            "cwd": kwargs["child_cwd"],
+            "messages": visible,
+        }
+
+    # Act
+    path = _materialize_hermes_fork_seed(
+        parent_name="scitex-hub-gui",
+        child_name="disposable-fork",
+        parent_spec=parent,
+        child_spec=child,
+        state_root=tmp_path,
+        branch_fn=branch,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Assert
+    assert (
+        len(calls),
+        calls[0][0],
+        calls[0][1],
+        payload,
+        path.stat().st_mode & 0o777,
+    ) == (
+        1,
+        tmp_path / "scitex-hub-gui",
+        {
+            "parent_session_key": "sac:scitex-hub-gui:engine-a",
+            "child_session_key": "sac:disposable-fork:engine-a",
+            "child_cwd": parent["workdir"],
+        },
+        {
+            "version": 1,
+            "title": "sac:disposable-fork:engine-a",
+            "parent_session_id": "parent-stored",
+            "cwd": parent["workdir"],
+            "messages": visible,
+        },
+        0o600,
+    )
 
 
 def test_parent_container_workdir_maps_to_host_bind_source(tmp_path: Path) -> None:
@@ -847,18 +963,18 @@ def test_seed_noop_for_non_twin(tmp_path):
     assert seeded is False
 
 
-def test_seed_fails_closed_for_forged_hermes_twin(tmp_path: Path) -> None:
+def test_seed_defers_hermes_fork_to_native_owner_handoff(tmp_path: Path) -> None:
     # Arrange
     cfg = AgentConfig(
-        name="forged-hermes-twin",
+        name="hermes-fork",
         runtime="tui",
         harness="hermes",
         env={TWIN_PARENT_ENV: "parent"},
     )
     # Act
-    # Assert
-    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
-        seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))
+    seeded = seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))
+    # Assert — no Claude marker/JSONL is fabricated for Hermes.
+    assert (seeded, list(tmp_path.rglob("*"))) == (False, [])
 
 
 def test_seed_returns_true_for_twin(_twin_env):

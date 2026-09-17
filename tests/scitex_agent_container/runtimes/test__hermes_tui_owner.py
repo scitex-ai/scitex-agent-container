@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
@@ -95,6 +97,71 @@ def test_gateway_owner_waits_for_authenticated_readiness():
         "ok",
         [(43123, "secret-token-1234", 1.0)] * 2,
     )
+
+
+def test_gateway_owner_consumes_seed_before_tui_and_deletes_after_import(tmp_path):
+    # Arrange
+    seed = {
+        "version": 1,
+        "title": "sac:child:engine-a",
+        "parent_session_id": "parent-stored",
+        "cwd": "/work/repo",
+        "messages": [{"role": "user", "text": "parent nonce"}],
+    }
+    seed_path = tmp_path / "hermes-fork-seed.json"
+    seed_path.write_text(json.dumps(seed), encoding="utf-8")
+    seed_path.chmod(0o600)
+    imported = []
+
+    def import_(state_dir, payload):
+        imported.append((state_dir, payload))
+        return "child-stored"
+
+    # Act
+    consumed = owner._consume_fork_seed(
+        tmp_path,
+        [
+            "hermes",
+            "chat",
+            "--tui",
+            "--continue",
+            "sac:child:engine-a",
+            "--create-if-missing",
+        ],
+        import_fn=import_,
+    )
+    # Assert
+    assert (consumed, imported, seed_path.exists()) == (
+        True,
+        [(tmp_path, seed)],
+        False,
+    )
+
+
+def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
+    # Arrange
+    seed = {
+        "version": 1,
+        "title": "sac:child:engine-a",
+        "parent_session_id": "parent-stored",
+        "cwd": "/work/repo",
+        "messages": [{"role": "user", "text": "parent nonce"}],
+    }
+    seed_path = tmp_path / "hermes-fork-seed.json"
+    seed_path.write_text(json.dumps(seed), encoding="utf-8")
+    seed_path.chmod(0o600)
+
+    def fail_import(_state_dir, _payload):
+        raise HermesTuiRpcError("native import failed")
+
+    # Act / Assert
+    with pytest.raises(HermesTuiRpcError, match="native import failed"):
+        owner._consume_fork_seed(
+            tmp_path,
+            ["hermes", "chat", "--continue", "sac:child:engine-a"],
+            import_fn=fail_import,
+        )
+    assert seed_path.is_file()
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():

@@ -39,12 +39,19 @@ class InlineSpecHandoff:
     worktree_parent: Path | None = None
     worktree_path: Path | None = None
     worktree_created: bool = False
+    seed_path: Path | None = None
     spec_path: Path | None = None
     spec_created: bool = False
     spec_previous: bytes | None = None
 
     def rollback(self) -> None:
         """Remove only artifacts created by this request."""
+        if self.seed_path is not None:
+            self.seed_path.unlink(missing_ok=True)
+            try:
+                self.seed_path.parent.rmdir()
+            except OSError:
+                pass
         if self.spec_path is not None:
             if self.spec_created:
                 self.spec_path.unlink(missing_ok=True)
@@ -138,7 +145,7 @@ def _prepare_twin_host_isolation(
         )
     if name == parent_name:
         return spec, JSONResponse(
-            {"error": "twin agent name must differ from its parent", "kind": "twin_identity_mismatch"},
+            {"error": "fork agent name must differ from its parent", "kind": "twin_identity_mismatch"},
             status_code=400,
         )
     if authority == "admin" and caller is None:
@@ -147,7 +154,7 @@ def _prepare_twin_host_isolation(
         return spec, JSONResponse(
             {
                 "error": (
-                    "agent-authenticated twin spawning is unavailable: the current "
+                    "agent-authenticated fork spawning is unavailable: the current "
                     "host-wide bearer does not cryptographically bind caller identity"
                 ),
                 "kind": "twin_agent_auth_unavailable",
@@ -157,7 +164,7 @@ def _prepare_twin_host_isolation(
     else:
         return spec, JSONResponse(
             {
-                "error": "twin spawn requires explicit admin authority",
+                "error": "fork spawn requires explicit admin authority",
                 "kind": "twin_authority_required",
             },
             status_code=403,
@@ -185,14 +192,10 @@ def _prepare_twin_host_isolation(
             },
             status_code=400,
         )
-    if str(parent_spec.get("harness") or "").strip().lower() == "hermes":
-        return spec, JSONResponse(
-            {
-                "error": "Hermes context inheritance is unavailable: no proven safe state fork exists",
-                "kind": "twin_context_unsupported",
-            },
-            status_code=400,
-        )
+    from ..config._harness_lookup import canonical_harness
+    from ..config._harness_types import resolve_spec_harness
+
+    parent_family = canonical_harness(resolve_spec_harness(parent_spec))
     parent_apptainer = parent_spec.get("apptainer")
     parent_apptainer = parent_apptainer if isinstance(parent_apptainer, dict) else {}
     container_workdir = str(parent_spec.get("workdir") or "")
@@ -207,7 +210,7 @@ def _prepare_twin_host_isolation(
         )
         host_worktree = Path(expected_worktree)
         _reject_symlink_components(
-            Path(expected_overlay), label="twin overlay"
+            Path(expected_overlay), label="fork overlay"
         )
     except TwinSeedError as exc:
         return spec, JSONResponse(
@@ -223,7 +226,7 @@ def _prepare_twin_host_isolation(
     ):
         return spec, JSONResponse(
             {
-                "error": "twin workdir/overlay do not match canonical isolation paths",
+                "error": "fork workdir/overlay do not match canonical isolation paths",
                 "kind": "twin_isolation_mismatch",
             },
             status_code=400,
@@ -237,7 +240,7 @@ def _prepare_twin_host_isolation(
         if errors:
             return spec, JSONResponse(
                 {
-                    "error": "derived twin spec failed v3 validation",
+                    "error": "derived fork spec failed v3 validation",
                     "kind": "spec_invalid",
                     "details": {"validation": errors[:5]},
                 },
@@ -252,6 +255,23 @@ def _prepare_twin_host_isolation(
     handoff.worktree_parent = host_parent
     handoff.worktree_path = host_worktree
     handoff.worktree_created = created
+    if parent_family == "hermes":
+        from .._lifecycle._twin import _materialize_hermes_fork_seed
+        from ..runtimes._hermes_tui_rpc import HermesTuiRpcError
+
+        try:
+            handoff.seed_path = _materialize_hermes_fork_seed(
+                parent_name=parent_name,
+                child_name=name,
+                parent_spec=parent_spec,
+                child_spec=child_spec,
+            )
+        except (TwinSeedError, HermesTuiRpcError, OSError) as exc:
+            handoff.rollback()
+            return spec, JSONResponse(
+                {"error": str(exc), "kind": "twin_context_failed"},
+                status_code=400,
+            )
     return _inject_twin_workdir_bind(spec, host_worktree, container_workdir), None
 
 

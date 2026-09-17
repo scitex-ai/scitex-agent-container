@@ -39,6 +39,7 @@ IDENTITY SPLIT — safety-critical:
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
 import re
@@ -119,9 +120,9 @@ def resolve_twin_name(
     """
     parent_name = _validate_agent_component(parent_name, role="parent")
     if requested:
-        resolved = _validate_agent_component(requested, role="twin")
+        resolved = _validate_agent_component(requested, role="fork")
         if resolved == parent_name:
-            raise TwinSeedError("twin agent name must differ from its parent")
+            raise TwinSeedError("fork agent name must differ from its parent")
         return resolved
     taken = {str(n) for n in (existing or ())}
     base = f"{parent_name}-fork"
@@ -147,13 +148,13 @@ def build_twin_boot_kick(
     so the boot-kick is the deterministic delivery of the hard rule.
     """
     lines = [
-        f"You are {twin_name}, a TWIN forked from {parent_name}'s live session.",
+        f"You are {twin_name}, a FORK of {parent_name}'s live session.",
         f"You have INHERITED {parent_name}'s conversation context up to this "
         "moment and now DIVERGE — your future turns are yours alone and are "
         f"NOT shared back to {parent_name}.",
         "",
         "IDENTITY CONTRACT (hard rule — do not deviate):",
-        f"  - Your scitex-todo writes are attributed to YOU ({twin_name}); that "
+        f"  - Your scitex-cards writes are attributed to YOU ({twin_name}); that "
         "is intended.",
         f"  - But card OWNERSHIP must stay with {parent_name}. On EVERY "
         f"add_task / reassign, pass assignee={parent_name} (also available as "
@@ -219,7 +220,7 @@ def _twin_isolation_paths(
     """Return canonical host paths for a twin's worktree and overlay."""
     parent_workdir = parent_workdir.strip()
     if not parent_workdir:
-        raise TwinSeedError("parent spec.workdir is empty; cannot isolate a twin")
+        raise TwinSeedError("parent spec.workdir is empty; cannot isolate a fork")
     parent_path = Path(parent_workdir)
     twin_workdir = parent_path.parent / ".sac-twins" / twin_name / "workdir"
 
@@ -321,22 +322,16 @@ def derive_twin_spec(
     if not isinstance(doc, dict):
         raise TwinSeedError(
             f"parent spec of {parent_name!r} did not parse to a mapping "
-            f"(got {type(parent_doc).__name__!r}); cannot derive a twin."
+            f"(got {type(parent_doc).__name__!r}); cannot derive a fork."
         )
     spec = doc.setdefault("spec", {})
     if not isinstance(spec, dict):
         raise TwinSeedError(
             f"parent spec of {parent_name!r} has a non-mapping 'spec' block; "
-            "cannot derive a twin."
+            "cannot derive a fork."
         )
 
-    selected_family = _normalize_selected_harness_authority(spec)
-    if selected_family == "hermes":
-        raise TwinSeedError(
-            "Hermes context inheritance is unavailable: SAC has no proven safe "
-            "fork for Hermes state.db/session semantics, so refusing to create a "
-            "twin rather than claiming Claude JSONL inheritance applies"
-        )
+    _normalize_selected_harness_authority(spec)
     selected_harness = str(spec.get("harness") or "").strip().lower()
     harnesses = spec.get("available_harnesses")
     selected_config = (
@@ -487,23 +482,23 @@ def _git_common_dir(root: Path) -> Path:
 def _validate_registered_detached_worktree(parent: Path, target: Path) -> None:
     """Verify an existing target is the exact safe worktree we may reuse."""
     if target == parent:
-        raise TwinSeedError("twin workdir must be distinct from the parent workdir")
+        raise TwinSeedError("fork workdir must be distinct from the parent workdir")
     if not target.is_dir():
         raise TwinSeedError(
-            f"twin workdir already exists but is not a git worktree: {target}"
+            f"fork workdir already exists but is not a git worktree: {target}"
         )
     top = _git_probe(target, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
         raise TwinSeedError(
-            f"twin workdir already exists but is not a git worktree: {target}"
+            f"fork workdir already exists but is not a git worktree: {target}"
         )
     if _lexical_path(top.stdout.strip()) != target:
         raise TwinSeedError(
-            f"twin workdir must be the exact git top-level path: {target}"
+            f"fork workdir must be the exact git top-level path: {target}"
         )
     if _git_common_dir(target) != _git_common_dir(parent):
         raise TwinSeedError(
-            f"twin workdir belongs to a different git repository: {target}"
+            f"fork workdir belongs to a different git repository: {target}"
         )
     listed = _git_probe(parent, "worktree", "list", "--porcelain")
     registered = {
@@ -513,13 +508,13 @@ def _validate_registered_detached_worktree(parent: Path, target: Path) -> None:
     }
     if listed.returncode != 0 or target not in registered:
         raise TwinSeedError(
-            f"twin workdir is not registered with the parent repository: {target}"
+            f"fork workdir is not registered with the parent repository: {target}"
         )
     if _git_probe(target, "symbolic-ref", "-q", "HEAD").returncode == 0:
-        raise TwinSeedError(f"twin workdir must use detached HEAD: {target}")
+        raise TwinSeedError(f"fork workdir must use detached HEAD: {target}")
     status = _git_probe(target, "status", "--porcelain")
     if status.returncode != 0 or status.stdout:
-        raise TwinSeedError(f"twin workdir is not clean: {target}")
+        raise TwinSeedError(f"fork workdir is not clean: {target}")
 
 
 def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
@@ -527,7 +522,7 @@ def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
     parent = _lexical_path(parent_workdir)
     target = _lexical_path(twin_workdir)
     _reject_symlink_components(parent, label="parent workdir")
-    _reject_symlink_components(target, label="twin workdir")
+    _reject_symlink_components(target, label="fork workdir")
     parent_top = _git_probe(parent, "rev-parse", "--show-toplevel")
     if parent_top.returncode != 0:
         raise TwinSeedError(
@@ -541,14 +536,82 @@ def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
         _validate_registered_detached_worktree(parent, target)
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
-    _reject_symlink_components(target.parent, label="twin workdir parent")
+    _reject_symlink_components(target.parent, label="fork workdir parent")
     created = _git_probe(parent, "worktree", "add", "--detach", str(target), "HEAD")
     if created.returncode != 0:
         raise TwinSeedError(
-            f"could not create isolated twin git worktree: {created.stderr.strip()}"
+            f"could not create isolated fork git worktree: {created.stderr.strip()}"
         )
     _validate_registered_detached_worktree(parent, target)
     return True
+
+
+HERMES_FORK_SEED_FILE = "hermes-fork-seed.json"
+
+
+def _materialize_hermes_fork_seed(
+    *,
+    parent_name: str,
+    child_name: str,
+    parent_spec: dict[str, Any],
+    child_spec: dict[str, Any],
+    state_root: Path | None = None,
+    branch_fn=None,
+) -> Path:
+    """Capture one native Hermes branch into the child runtime handoff file."""
+    from .._runners._session_state import state_dir_for
+    from ..config._hermes_session import hermes_session_key
+    from ..runtimes._hermes_tui_rpc import branch_visible_history
+
+    parent_engine = str(parent_spec.get("engine") or "").strip()
+    child_engine = str(child_spec.get("engine") or "").strip()
+    if not parent_engine or child_engine != parent_engine:
+        raise TwinSeedError(
+            "Hermes fork requires one preserved selected engine key on parent and child"
+        )
+    parent_state = state_dir_for(parent_name, root=state_root)
+    child_state = state_dir_for(child_name, root=state_root)
+    seed_path = child_state / HERMES_FORK_SEED_FILE
+    child_key = hermes_session_key(child_name, child_engine)
+
+    # A completed handoff is idempotent.  Never branch the live parent again
+    # merely because the materialize request was retried after its response was
+    # lost.
+    if seed_path.is_file():
+        try:
+            existing = json.loads(seed_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise TwinSeedError(f"existing Hermes fork seed is unreadable: {exc}") from exc
+        if (
+            isinstance(existing, dict)
+            and existing.get("version") == 1
+            and existing.get("title") == child_key
+            and existing.get("cwd") == str(child_spec.get("workdir") or "")
+            and isinstance(existing.get("messages"), list)
+            and existing["messages"]
+        ):
+            return seed_path
+        raise TwinSeedError("existing Hermes fork seed does not match this child")
+
+    branch = branch_fn or branch_visible_history
+    seed = branch(
+        parent_state,
+        parent_session_key=hermes_session_key(parent_name, parent_engine),
+        child_session_key=child_key,
+        child_cwd=str(child_spec.get("workdir") or ""),
+    )
+    child_state.mkdir(parents=True, exist_ok=True)
+    temporary = seed_path.with_name(f".{seed_path.name}.{os.getpid()}.tmp")
+    encoded = json.dumps(seed, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, encoded)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(temporary, seed_path)
+    os.chmod(seed_path, 0o600)
+    return seed_path
 
 
 def prepare_twin_spawn(
@@ -595,7 +658,7 @@ def prepare_twin_spawn(
         existing = []
     if twin_name and twin_name in set(existing):
         raise TwinSeedError(
-            f"twin name {twin_name!r} is already taken; pick another name or "
+            f"fork name {twin_name!r} is already taken; pick another name or "
             "omit it to auto-bump <parent>-fork-N."
         )
     resolved_name = resolve_twin_name(parent_name, twin_name, existing)
@@ -615,7 +678,7 @@ def prepare_twin_spawn(
     errors = validate_raw(copy.deepcopy(doc), f"<twin:{resolved_name}>")
     if errors:
         raise TwinSeedError(
-            f"derived twin spec for {resolved_name!r} is invalid: "
+            f"derived fork spec for {resolved_name!r} is invalid: "
             + " | ".join(error.splitlines()[0] for error in errors[:5])
         )
     return resolved_name, doc
@@ -697,16 +760,16 @@ def seed_twin_from_parent(config: Any, runtime: Any) -> bool:
     if not parent_name:
         return False
     twin_name = _validate_agent_component(
-        str(getattr(config, "name", "") or ""), role="twin"
+        str(getattr(config, "name", "") or ""), role="fork"
     )
     _validate_agent_component(parent_name, role="parent")
     if twin_name == parent_name:
-        raise TwinSeedError("twin agent name must differ from its parent")
+        raise TwinSeedError("fork agent name must differ from its parent")
     if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
-        raise TwinSeedError(
-            "Hermes context inheritance is unavailable: refusing Claude JSONL/session-id "
-            "seeding for a Hermes state.db session"
-        )
+        # Hermes forks are captured by the host listener through native
+        # session.branch and imported by _hermes_tui_owner.  Never run the
+        # Claude marker/JSONL copier against a Hermes state.db profile.
+        return False
 
     from .._runners._session_state import read_session_id, write_session_id
 

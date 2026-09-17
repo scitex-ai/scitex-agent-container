@@ -399,6 +399,7 @@ async def agents_start(request: Request) -> JSONResponse:
             stderr=proc.stderr,
             declined=declined,
         )
+        handoff.rollback()
         return JSONResponse(
             {
                 "name": name,
@@ -510,6 +511,7 @@ async def agents_start(request: Request) -> JSONResponse:
             )
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             pass
+        handoff.rollback()
         return JSONResponse(
             {
                 "name": name,
