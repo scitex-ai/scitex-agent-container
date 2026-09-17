@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
@@ -154,14 +152,19 @@ def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
     def fail_import(_state_dir, _payload):
         raise HermesTuiRpcError("native import failed")
 
-    # Act / Assert
-    with pytest.raises(HermesTuiRpcError, match="native import failed"):
+    # Act
+    try:
         owner._consume_fork_seed(
             tmp_path,
             ["hermes", "chat", "--continue", "sac:child:engine-a"],
             import_fn=fail_import,
         )
-    assert seed_path.is_file()
+        error = ""
+    except HermesTuiRpcError as exc:
+        error = str(exc)
+
+    # Assert
+    assert (error, seed_path.is_file()) == ("native import failed", True)
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():

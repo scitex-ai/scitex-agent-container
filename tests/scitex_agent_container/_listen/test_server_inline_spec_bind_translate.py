@@ -28,6 +28,7 @@ import pytest
 import yaml
 from starlette.testclient import TestClient
 
+from scitex_agent_container._listen._inline_spec import materialize_inline_spec
 from scitex_agent_container._listen.server import create_app
 
 TOKEN = "test-token-bind-translate"
@@ -170,10 +171,7 @@ def test_child_with_work_prefix_bind_is_accepted_after_translate(
     )
 
 
-def test_translated_bind_is_what_gets_written_to_disk(
-    pg_schema: str,
-    client, auth_headers, isolated_env, tmp_path
-):
+def test_translated_bind_is_what_gets_written_to_disk(isolated_env, tmp_path):
     # Arrange — same setup as above, but inspect the materialised
     # spec on disk. The spec.yaml at the install root must carry
     # the TRANSLATED host path, not the original ``/work/...``.
@@ -187,7 +185,12 @@ def test_translated_bind_is_what_gets_written_to_disk(
         binds=["/work/data/capsule-X:/inside:ro"],
     )
     # Act
-    client.post("/agents", json=body, headers=auth_headers)
+    error = materialize_inline_spec(
+        "child-disk-check",
+        body["spec"],
+        overwrite=False,
+        caller="parent-disk",
+    )
     persisted_spec_path = (
         home
         / ".scitex"
@@ -199,7 +202,10 @@ def test_translated_bind_is_what_gets_written_to_disk(
     persisted = yaml.safe_load(persisted_spec_path.read_text())
     persisted_binds = persisted["spec"]["apptainer"]["binds"]
     # Assert — disk shows the host path, not the in-SIF view.
-    assert persisted_binds == [f"{host_root}/data/capsule-X:/inside:ro"]
+    assert (error, persisted_binds) == (
+        None,
+        [f"{host_root}/data/capsule-X:/inside:ro"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -282,8 +288,7 @@ def test_translate_passthrough_for_non_work_bind_still_caught_by_pr1(
 
 
 def test_mixed_binds_translate_only_work_prefix_others_pass_through(
-    pg_schema: str,
-    client, auth_headers, isolated_env, tmp_path
+    isolated_env, tmp_path
 ):
     # Arrange — child requests two binds: one /work-prefixed
     # (translatable) and one already-host-visible (passes through).
@@ -304,7 +309,12 @@ def test_mixed_binds_translate_only_work_prefix_others_pass_through(
         ],
     )
     # Act
-    client.post("/agents", json=body, headers=auth_headers)
+    error = materialize_inline_spec(
+        "mixed-bind-child",
+        body["spec"],
+        overwrite=False,
+        caller="mixed-parent",
+    )
     persisted_spec_path = (
         home
         / ".scitex"
@@ -317,7 +327,10 @@ def test_mixed_binds_translate_only_work_prefix_others_pass_through(
         "apptainer"
     ]["binds"]
     # Assert
-    assert persisted_binds == [
-        f"{host_root}/data:/inside_data:ro",
-        f"{sibling}:/inside_sibling:rw",
-    ]
+    assert (error, persisted_binds) == (
+        None,
+        [
+            f"{host_root}/data:/inside_data:ro",
+            f"{sibling}:/inside_sibling:rw",
+        ],
+    )
