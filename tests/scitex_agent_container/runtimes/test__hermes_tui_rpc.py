@@ -343,6 +343,26 @@ def test_respond_to_pending_clarification_refuses_stale_request_id(tmp_path):
             answers={"q0": "Yes", "q1": "route"},
             connect_fn=lambda *args, **kwargs: socket,
         )
+
+
+def test_stale_clarification_request_does_not_submit_any_answer(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    try:
+        rpc_module.respond_to_pending_clarification(
+            tmp_path,
+            "hub",
+            request_id="stale-request",
+            answers={"q0": "Yes", "q1": "route"},
+            connect_fn=lambda *args, **kwargs: socket,
+        )
+    except HermesTuiRpcError:
+        pass
+
+    # Assert
     assert [r["method"] for r in socket.sent] == [
         "session.active_list",
         "session.activate",
