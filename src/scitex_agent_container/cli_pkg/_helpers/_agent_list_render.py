@@ -13,6 +13,7 @@ import json as json_mod
 
 import click
 from rich.table import Table
+from rich.text import Text
 
 from ..._state.registry import Registry
 from .._account_list_format import format_dt_display_tz
@@ -122,7 +123,7 @@ def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
                 f"{row.get('stored_credential') or row.get('account') or '—'}",
                 "  Identity source: "
                 f"{row.get('runtime_identity_source') or 'unknown'}",
-                f"  Auth status: {_auth_cell(row)}",
+                f"  Auth status: {Text.from_markup(_auth_cell(row)).plain}",
                 f"  Path: {row.get('path') or '—'}",
             ]
         )
