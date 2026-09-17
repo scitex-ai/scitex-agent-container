@@ -366,10 +366,21 @@ def test_secret_preamble_pythonuserbase_cannot_execute_pth(
     # Arrange — a plain child Python automatically imports executable .pth
     # lines from PYTHONUSERBASE. Exercise the interpreter, not just the parser.
     canary = tmp_path / "python-userbase-executed"
+    system_version = subprocess.run(
+        [
+            str(_SYSTEM_PYTHON),
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    user_base = tmp_path / "python-userbase"
     user_site = (
-        tmp_path
-        / "python-userbase/lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        user_base
+        / "lib"
+        / f"python{system_version}"
         / "site-packages"
     )
     user_site.mkdir(parents=True)
@@ -378,7 +389,7 @@ def test_secret_preamble_pythonuserbase_cannot_execute_pth(
         encoding="utf-8",
     )
     secret = tmp_path / "python-hook.env"
-    secret.write_text(f"PYTHONUSERBASE={user_site.parents[2]}\n", encoding="utf-8")
+    secret.write_text(f"PYTHONUSERBASE={user_base}\n", encoding="utf-8")
     secret.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(secret)
     envrc = tmp_path / ".envrc"
@@ -387,7 +398,7 @@ def test_secret_preamble_pythonuserbase_cannot_execute_pth(
         encoding="utf-8",
     )
     control_env = dict(os.environ)
-    control_env["PYTHONUSERBASE"] = str(user_site.parents[2])
+    control_env["PYTHONUSERBASE"] = str(user_base)
     subprocess.run([str(_SYSTEM_PYTHON), "-c", "pass"], check=True, env=control_env)
     control_executed = canary.exists()
     canary.unlink(missing_ok=True)
