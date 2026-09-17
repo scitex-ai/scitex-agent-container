@@ -266,3 +266,21 @@
   .tl-source { display: none; }
   .timeline-filters select { flex: 1 1 40%; }
 }
+
+/* ── message / steer + UI control ────────────────────────────────────────────
+   A control that injects text into a LIVE agent session gets a visibly
+   deliberate shape: a full-width box, an explicit verb, and no accidental
+   submit on Enter inside the textarea. */
+.control-sub {
+  margin: 18px 0 6px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--agents-dim);
+}
+.message-form textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font: inherit; font-size: 13px; line-height: 1.5;
+  padding: 8px 10px; border-radius: 8px;
+  background: var(--agents-bg, transparent); color: var(--agents-text);
+  border: 1px solid var(--agents-border);
+}
+.message-form textarea:focus { outline: 2px solid var(--agents-cross); outline-offset: 1px; }
+.lifecycle-btns button[value="Escape"], .lifecycle-btns button[value="C-c"] { color: var(--agents-warn); }

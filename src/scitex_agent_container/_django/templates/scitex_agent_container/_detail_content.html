@@ -92,6 +92,37 @@ back link and the lifecycle form action are correct in both modes.
           <button type="submit" name="action" value="stop" class="btn bad"><i class="fas fa-stop"></i> Stop</button>
         </div>
       </form>
+
+      {% comment %}
+      Message / steer and the three SAC UI-control keys. Both POST to the
+      agent's OWN bridge endpoint (its published turn_url) — the GUI never
+      constructs a host/port and never drives tmux. Each submit carries a
+      dispatch id so a double-click cannot inject the text twice.
+      {% endcomment %}
+      <h3 class="control-sub">Send a message</h3>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="message-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <label class="visually-hidden" for="msg-{{ agent.name }}">Message</label>
+        <textarea id="msg-{{ agent.name }}" name="message" rows="3" maxlength="4000"
+                  placeholder="Message or steering instruction…"></textarea>
+        <div class="lifecycle-btns">
+          <button type="submit" class="btn"><i class="fas fa-paper-plane"></i> Send</button>
+        </div>
+      </form>
+
+      <h3 class="control-sub">UI control</h3>
+      <p class="dim">Positional input to the agent's live terminal — Enter submits,
+      Escape dismisses, C-c interrupts. Nothing else is available.</p>
+      <form method="post" action="{{ url_base }}/{{ agent.name }}/message" class="control-form">
+        {% if csrf_token %}<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">{% endif %}
+        <input type="hidden" name="dispatch_id" value="{{ dispatch_id }}">
+        <div class="lifecycle-btns">
+          {% for key in control_keys %}
+          <button type="submit" name="control_key" value="{{ key }}" class="btn">{{ key }}</button>
+          {% endfor %}
+        </div>
+      </form>
       {% else %}
       <p class="dim"><i class="fas fa-lock"></i> Read-only. Control requires an
       identity listed in the lifecycle-operator allowlist{% if cross_host %} — or, for
