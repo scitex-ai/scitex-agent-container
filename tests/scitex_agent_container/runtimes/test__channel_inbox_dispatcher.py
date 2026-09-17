@@ -115,3 +115,43 @@ def test_daemon_dispatches_sac_and_cards_through_one_target_adapter():
 
     # Assert
     assert set(seen) == {("sac-1", True), ("cards-1", True)}
+
+
+def test_completed_owned_card_marks_fresh_next_task_after_delivery(tmp_path):
+    # Arrange
+    delivered = []
+
+    async def dispatch(event):
+        delivered.append(event["msg_id"])
+
+    async def consume_sse(_url, _bearer, on_event, **_kwargs):
+        await on_event(
+            {
+                "msg_id": "done-1",
+                "kind": "card-event",
+                "extra": {
+                    "card_id": "card-7",
+                    "card_event_kind": "completed",
+                    "card_event_owner": "scholar",
+                },
+            }
+        )
+
+    # Act
+    asyncio.run(
+        bridge.consume(
+            name="scholar",
+            listen_url="http://127.0.0.1:7878",
+            turn_url="direct://resident-session",
+            bearer="secret",
+            channels=("server:sac",),
+            consume_sse=consume_sse,
+            dispatch_event=dispatch,
+            state_dir=tmp_path,
+        )
+    )
+    # Assert
+    assert (delivered, (tmp_path / "hermes-fresh-next-task.json").exists()) == (
+        ["done-1"],
+        True,
+    )

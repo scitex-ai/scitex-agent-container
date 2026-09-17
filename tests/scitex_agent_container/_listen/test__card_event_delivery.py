@@ -220,8 +220,18 @@ def test_delivery_carries_bearer_and_card_id(fake_notify_daemon) -> None:
     post = fake_notify_daemon.posts[0]
     # Assert — bearer header + card_id threaded onto the /v1/notify body.
     assert (
-        post["authorization"] == "Bearer test-c10-bearer"
-        and post["body"]["card_id"] == "card-7"
+        post["authorization"],
+        post["body"]["card_id"],
+        post["body"]["kind"],
+        post["body"]["extra"],
+    ) == (
+        "Bearer test-c10-bearer",
+        "card-7",
+        "card-event",
+        {
+            "card_event_kind": "completed",
+            "card_event_owner": "worker-x",
+        },
     )
 
 

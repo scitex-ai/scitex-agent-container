@@ -15,6 +15,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
+from ._hermes_tui_context_owner import (
+    apply_session_age_policy,
+    clear_session_heartbeat,
+    make_session_observer,
+    reconcile_command,
+    requested_session,
+    resume_command,
+    transition_tui_child,
+)
+
 GATEWAY_FILE = "hermes-tui-gateway.json"
 READY_FILE = "hermes-tui-gateway.ready.json"
 GATEWAY_LOCK_FILE = "hermes-tui-gateway.lock"
@@ -142,49 +152,6 @@ def _remove_owned_gateway_state(state_dir: Path, *, generation: str) -> None:
         _unlink_if_generation(state_dir / READY_FILE, generation)
 
 
-def _requested_session(command: list[str]) -> tuple[str, str]:
-    """Return SAC's requested Hermes session mode and stable identity."""
-    for index, value in enumerate(command[:-1]):
-        if value in {"--continue", "-c"}:
-            return "continue", str(command[index + 1]).strip()
-        if value in {"--resume", "-r"}:
-            return "resume", str(command[index + 1]).strip()
-    return "fresh", ""
-
-
-def _resume_command(command: list[str], stored_session_id: str) -> list[str]:
-    """Resume one exact transcript without replaying the startup task."""
-    rebuilt: list[str] = []
-    skip_value = False
-    value_flags = {"--continue", "-c", "--resume", "-r", "--query"}
-    for value in command:
-        if skip_value:
-            skip_value = False
-            continue
-        if value in value_flags:
-            skip_value = True
-            continue
-        if value == "--create-if-missing":
-            continue
-        rebuilt.append(value)
-    return rebuilt + ["--resume", stored_session_id]
-
-
-def _reconcile_command(command: list[str]) -> list[str]:
-    """Re-open the named session without replaying its startup turn."""
-    rebuilt: list[str] = []
-    skip_value = False
-    for value in command:
-        if skip_value:
-            skip_value = False
-            continue
-        if value in {"--query", "--query-file", "-q"}:
-            skip_value = True
-            continue
-        rebuilt.append(value)
-    return rebuilt
-
-
 def _select_owned_session(
     sessions: list[dict],
     *,
@@ -240,30 +207,6 @@ def _write_supervision(state_dir: Path, **fields: object) -> None:
     )
 
 
-def _clear_session_heartbeat(state_dir: Path, session: dict) -> None:
-    """Remove persisted periodic model wakeup for one proven live session.
-
-    SAC's durable Cards/CCT/SAC ingress owns wakeup.  A Hermes heartbeat does
-    a full-context model turn merely to discover whether work exists, so the
-    owner removes legacy heartbeat state before it declares the TUI attached.
-    """
-    session_id = str(session.get("id") or "").strip()
-    if not session_id:
-        raise RuntimeError("owned Hermes session has no id")
-    from ._hermes_tui_rpc import clear_heartbeat_for_session
-
-    clear_heartbeat_for_session(state_dir, session_id)
-
-
-def _refresh_heartbeat_projection(state_dir: Path) -> None:
-    try:
-        from ._hermes_heartbeat_projection import refresh_hermes_heartbeat_projection
-        refresh_hermes_heartbeat_projection(state_dir, state_dir.name)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Hermes heartbeat projection failed: %s", exc)
-
-
 def _supervise_tui(
     command: list[str],
     *,
@@ -278,7 +221,7 @@ def _supervise_tui(
     startup_grace_s: float = STARTUP_GRACE_SECONDS,
     on_spawn: Callable[[Any], None] | None = None,
     on_session_attached: Callable[[dict], None] | None = None,
-    on_session_observed: Callable[[dict], None] | None = None,
+    on_session_observed: Callable[[dict], str | None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
@@ -290,7 +233,7 @@ def _supervise_tui(
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
 
-    session_mode, expected_identity = _requested_session(command)
+    session_mode, expected_identity = requested_session(command)
     tui = spawn(command, env=env)
     if on_spawn is not None:
         on_spawn(tui)
@@ -357,8 +300,52 @@ def _supervise_tui(
                     sleep(poll_s)
                     continue
                 attached_session_prepared = True
+            replacement: str | None = None
             if on_session_observed is not None:
-                on_session_observed(owned_session)
+                try:
+                    replacement = on_session_observed(owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_refused",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        stored_session_id=resume_key,
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+            if replacement is not None:
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_transition",
+                    detail=(
+                        "fresh session proven from durable handoff"
+                        if replacement
+                        else "task completed; starting next task fresh"
+                    ),
+                    recoveries=len(recoveries),
+                )
+                (
+                    tui,
+                    command,
+                    session_mode,
+                    expected_identity,
+                    resume_key,
+                ) = transition_tui_child(
+                    tui=tui,
+                    command=command,
+                    replacement=replacement,
+                    env=env,
+                    spawn=spawn,
+                    terminate=_terminate,
+                    on_spawn=on_spawn,
+                )
+                generation_started = monotonic()
+                absent_polls = 0
+                attached_session_prepared = False
+                sleep(poll_s)
+                continue
             _write_supervision(
                 state_dir,
                 state="attached",
@@ -409,9 +396,9 @@ def _supervise_tui(
         )
         _terminate(tui)
         recovery_command = (
-            _resume_command(command, resume_key)
+            resume_command(command, resume_key)
             if resume_key
-            else _reconcile_command(command)
+            else reconcile_command(command)
         )
         tui = spawn(recovery_command, env=env)
         if on_spawn is not None:
@@ -426,6 +413,7 @@ def _supervise_tui(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sac-hermes-tui-owner")
     parser.add_argument("--state-dir", required=True)
+    parser.add_argument("--max-session-age-minutes", type=int, default=4320)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = list(args.command)
@@ -475,16 +463,25 @@ def main(argv: list[str] | None = None) -> int:
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
         )
+        from ._hermes_context_rpc import stored_session_for_identity
+
+        command = apply_session_age_policy(
+            command,
+            state_dir=state_dir,
+            max_age_minutes=args.max_session_age_minutes,
+            stored_lookup=stored_session_for_identity,
+        )
+
         tui, result = _supervise_tui(
             command,
             env=tui_env,
             state_dir=state_dir,
             gateway=gateway,
             on_spawn=remember_tui,
-            on_session_attached=lambda session: _clear_session_heartbeat(
+            on_session_attached=lambda session: clear_session_heartbeat(
                 state_dir, session
             ),
-            on_session_observed=lambda _session: _refresh_heartbeat_projection(state_dir),
+            on_session_observed=make_session_observer(state_dir, command),
         )
         return result
     finally:

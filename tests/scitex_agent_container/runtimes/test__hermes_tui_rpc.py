@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from scitex_agent_container.runtimes._hermes_context_rpc import (
+    replace_session_from_handoff,
+    stored_session_for_title,
+)
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
@@ -79,6 +84,250 @@ def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
 
     # Assert
     assert "malformed response" in observed
+
+
+def test_stored_session_lookup_joins_exact_title_to_management_record(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class ListSocket:
+        def __init__(self):
+            self.sent = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] != "session.list":
+                raise RuntimeError(request["method"])
+            result = {
+                "sessions": [
+                    {
+                        "id": "root-1",
+                        "resolved_id": "tip-2",
+                        "title": "sac:hub:qwen",
+                        "started_at": 100.0,
+                    }
+                ]
+            }
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = ListSocket()
+    seen = []
+
+    def open_(request, timeout):
+        seen.append((request.full_url, timeout))
+        return nullcontext(
+            SimpleNamespace(
+                status=200,
+                read=lambda *_args: json.dumps(
+                    {
+                        "id": "tip-2",
+                        "started_at": 100.0,
+                        "compression_failure_error": "summary timed out",
+                    }
+                ).encode(),
+            )
+        )
+
+    # Act
+    record = stored_session_for_title(
+        tmp_path,
+        "sac:hub:qwen",
+        connect_fn=lambda *args, **kwargs: socket,
+        urlopen_fn=open_,
+    )
+    # Assert
+    assert (
+        record,
+        seen[0][0].endswith("/api/sessions/tip-2"),
+        [request["method"] for request in socket.sent],
+    ) == (
+        {
+            "id": "tip-2",
+            "started_at": 100.0,
+            "compression_failure_error": "summary timed out",
+        },
+        True,
+        ["session.list"],
+    )
+
+
+def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text('{"task_id":"card"}', encoding="utf-8")
+
+    class RotationSocket:
+        def __init__(self):
+            self.sent = []
+            self.replays = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if method == "session.create":
+                result = {
+                    "session_id": "fresh-live",
+                    "stored_session_id": "fresh-stored",
+                }
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [
+                            {
+                                "type": "message.complete",
+                                "payload": {"status": "complete"},
+                            }
+                        ]
+                    ),
+                    "latest_seq": 5 + self.replays,
+                    "epoch": "epoch-1",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {
+                    "messages": [
+                        {"role": "assistant", "content": "HANDOFF_READY:nonce-123"}
+                    ]
+                }
+            elif method == "session.close":
+                result = {"closed": True}
+            else:  # pragma: no cover - any extra mutation is the failure
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = RotationSocket()
+    # Act
+    session_id = replace_session_from_handoff(
+        tmp_path,
+        agent_name="hub",
+        workdir=Path("/repo"),
+        handoff_path=handoff,
+        nonce="nonce-123",
+        old_session_id="old-live",
+        connect_fn=lambda *args, **kwargs: socket,
+        sleep_fn=lambda _seconds: None,
+    )
+    # Assert
+    assert (
+        session_id,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"],
+    ) == (
+        "fresh-stored",
+        [
+            "session.create",
+            "session.events.since",
+            "prompt.submit",
+            "session.events.since",
+            "session.history",
+            "session.close",
+        ],
+        {"session_id": "old-live"},
+    )
+
+
+def test_missing_nonce_proof_never_closes_old_session(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text("{}", encoding="utf-8")
+
+    class MissingProofSocket:
+        def __init__(self):
+            self.sent = []
+            self.replays = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if method == "session.create":
+                result = {"session_id": "fresh", "stored_session_id": "stored"}
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [
+                            {
+                                "type": "message.complete",
+                                "payload": {"status": "complete"},
+                            }
+                        ]
+                    ),
+                    "latest_seq": self.replays,
+                    "epoch": "epoch",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {"messages": [{"role": "assistant", "content": "wrong"}]}
+            elif method == "session.close":
+                result = {"closed": True}
+            else:
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = MissingProofSocket()
+
+    def action():
+        return replace_session_from_handoff(
+            tmp_path,
+            agent_name="hub",
+            workdir=Path("/repo"),
+            handoff_path=handoff,
+            nonce="nonce-123",
+            old_session_id="old-live",
+            connect_fn=lambda *args, **kwargs: socket,
+            sleep_fn=lambda _seconds: None,
+        )
+
+    # Act
+    try:
+        action()
+    except HermesTuiRpcError as exc:
+        error = str(exc)
+    else:
+        error = ""
+    closed = [
+        request["params"]["session_id"]
+        for request in socket.sent
+        if request["method"] == "session.close"
+    ]
+    # Assert
+    assert ("without the required nonce" in error, closed) == (True, ["fresh"])
 
 
 class _Socket:
