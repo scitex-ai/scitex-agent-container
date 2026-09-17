@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from scitex_agent_container.runtimes._hermes_context_rpc import (
+    reconcile_pending_transition,
     replace_session_from_handoff,
     stored_session_for_title,
 )
@@ -227,13 +228,17 @@ def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
         handoff_path=handoff,
         nonce="nonce-123",
         old_session_id="old-live",
+        model="qwen3-coder",
+        provider="custom:sac-vllm",
         connect_fn=lambda *args, **kwargs: socket,
         sleep_fn=lambda _seconds: None,
     )
     # Assert
+    create_params = socket.sent[0]["params"]
     assert (
         session_id,
         [request["method"] for request in socket.sent],
+        (create_params["model"], create_params["provider"]),
         socket.sent[-1]["params"],
     ) == (
         "fresh-stored",
@@ -245,8 +250,137 @@ def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
             "session.history",
             "session.close",
         ],
+        ("qwen3-coder", "custom:sac-vllm"),
         {"session_id": "old-live"},
     )
+
+
+def test_lost_close_reply_reconciles_old_absent_and_keeps_fresh(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text("{}", encoding="utf-8")
+
+    class Socket:
+        def __init__(self, reconcile=False):
+            self.sent = []
+            self.replays = 0
+            self.reconcile = reconcile
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if self.reconcile:
+                if method != "session.active_list":
+                    raise AssertionError(method)
+                result = {"sessions": [{"id": "fresh-live", "status": "idle"}]}
+            elif method == "session.create":
+                result = {"session_id": "fresh-live", "stored_session_id": "fresh-stored"}
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [{"type": "message.complete", "payload": {"status": "complete"}}]
+                    ),
+                    "latest_seq": self.replays,
+                    "epoch": "epoch",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {
+                    "messages": [
+                        {"role": "assistant", "content": "HANDOFF_READY:nonce-123"}
+                    ]
+                }
+            elif method == "session.close":
+                raise ConnectionError("reply lost after server-side close")
+            else:
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    sockets = iter((Socket(), Socket(reconcile=True)))
+    # Act
+    replacement = replace_session_from_handoff(
+        tmp_path,
+        agent_name="hub",
+        workdir=Path("/repo"),
+        handoff_path=handoff,
+        nonce="nonce-123",
+        old_session_id="old-live",
+        model="qwen3-coder",
+        provider="custom:sac-vllm",
+        connect_fn=lambda *_args, **_kwargs: next(sockets),
+        sleep_fn=lambda _seconds: None,
+    )
+    # Assert
+    assert replacement == "fresh-stored"
+
+
+def test_startup_reconciliation_rolls_back_fresh_when_old_is_live(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    journal = tmp_path / "hermes-context-transition.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "fresh_title": "sac:hub:handoff:nonce123",
+                "old_session_id": "old-live",
+                "phase": "proven",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Socket:
+        def __init__(self, listing):
+            self.sent = []
+            self.listing = listing
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            result = self.listing if request["method"] == "session.active_list" else {"closed": True}
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    listing_socket = Socket(
+        {
+            "sessions": [
+                {"id": "old-live", "title": "sac:hub"},
+                {"id": "fresh-live", "title": "sac:hub:handoff:nonce123"},
+            ]
+        }
+    )
+    close_socket = Socket({})
+    sockets = iter((listing_socket, close_socket))
+    # Act
+    reconcile_pending_transition(
+        tmp_path, connect_fn=lambda *_args, **_kwargs: next(sockets)
+    )
+    # Assert
+    assert (
+        journal.exists(),
+        close_socket.sent[-1]["params"],
+    ) == (False, {"session_id": "fresh-live"})
 
 
 def test_missing_nonce_proof_never_closes_old_session(tmp_path):
@@ -317,6 +451,8 @@ def test_missing_nonce_proof_never_closes_old_session(tmp_path):
             handoff_path=handoff,
             nonce="nonce-123",
             old_session_id="old-live",
+            model="qwen3-coder",
+            provider="custom:sac-vllm",
             connect_fn=lambda *args, **kwargs: socket,
             sleep_fn=lambda _seconds: None,
         )

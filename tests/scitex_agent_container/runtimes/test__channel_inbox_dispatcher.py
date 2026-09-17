@@ -120,6 +120,9 @@ def test_daemon_dispatches_sac_and_cards_through_one_target_adapter():
 def test_completed_owned_card_marks_fresh_next_task_after_delivery(tmp_path):
     # Arrange
     delivered = []
+    (tmp_path / "hermes-active-card.json").write_text(
+        '{"card_id":"card-7"}', encoding="utf-8"
+    )
 
     async def dispatch(event):
         delivered.append(event["msg_id"])
@@ -129,6 +132,7 @@ def test_completed_owned_card_marks_fresh_next_task_after_delivery(tmp_path):
             {
                 "msg_id": "done-1",
                 "kind": "card-event",
+                "from_agent": "scitex-cards",
                 "extra": {
                     "card_id": "card-7",
                     "card_event_kind": "completed",

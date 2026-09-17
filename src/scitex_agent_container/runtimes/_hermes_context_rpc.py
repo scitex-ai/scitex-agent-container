@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -12,6 +13,64 @@ from urllib.request import Request, urlopen
 from ._hermes_tui_rpc import HermesTuiRpcError, _connect, _gateway_connection, _rpc
 
 _SESSION_RESPONSE_MAX_BYTES = 256 * 1024
+_PENDING_TRANSITION_FILE = "hermes-context-transition.json"
+
+
+def _write_transition_journal(state_dir: Path, payload: dict) -> None:
+    from ._hermes_context_gc import _write_handoff
+
+    _write_handoff(state_dir / _PENDING_TRANSITION_FILE, payload)
+
+
+def _clear_transition_journal(state_dir: Path) -> None:
+    path = state_dir / _PENDING_TRANSITION_FILE
+    path.unlink(missing_ok=True)
+    directory = os.open(state_dir, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def reconcile_pending_transition(
+    state_dir: Path,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> None:
+    """Recover a crash-interrupted replacement without closing both sessions."""
+    path = state_dir / _PENDING_TRANSITION_FILE
+    if not path.exists():
+        return
+    try:
+        journal = json.loads(path.read_text(encoding="utf-8"))
+        old_id = str(journal.get("old_session_id") or "").strip()
+        title = str(journal.get("fresh_title") or "").strip()
+    except (OSError, ValueError, TypeError) as exc:
+        raise HermesTuiRpcError(f"Hermes transition journal is unreadable: {exc}") from exc
+    if not old_id or not title:
+        raise HermesTuiRpcError("Hermes transition journal is malformed")
+    url, _token = _gateway_connection(state_dir)
+    with _connect(url, timeout_s, connect_fn) as socket:
+        listing = _rpc(socket, 1, "session.active_list", {})
+    rows = listing.get("sessions")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise HermesTuiRpcError("Hermes transition reconciliation returned malformed sessions")
+    old_present = any(row.get("id") == old_id for row in rows)
+    candidates = [
+        str(row.get("id") or "").strip()
+        for row in rows
+        if row.get("title") == title and row.get("id") != old_id
+    ]
+    if len(candidates) > 1:
+        raise HermesTuiRpcError("Hermes transition journal resolved multiple fresh candidates")
+    if old_present and candidates:
+        _close_failed_candidate(
+            state_dir, candidates[0], timeout_s=timeout_s, connect_fn=connect_fn
+        )
+    # old+candidate means rollback completed; old absent means the cut committed.
+    # old-only/no-live means there is no candidate left to leak.
+    _clear_transition_journal(state_dir)
 
 
 def stored_session_for_title(
@@ -220,6 +279,24 @@ def _message_text(message: dict) -> str:
     return ""
 
 
+def _live_session_present(
+    url: str,
+    session_id: str,
+    *,
+    timeout_s: float,
+    connect_fn: Any | None,
+) -> bool:
+    """Reconcile one live-session identity after an ambiguous close reply."""
+    with _connect(url, timeout_s, connect_fn) as socket:
+        listing = _rpc(socket, 1, "session.active_list", {})
+    rows = listing.get("sessions")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise HermesTuiRpcError(
+            f"Hermes session.active_list returned malformed result: {listing!r}"
+        )
+    return any(row.get("id") == session_id for row in rows)
+
+
 def replace_session_from_handoff(
     state_dir: Path,
     *,
@@ -228,6 +305,8 @@ def replace_session_from_handoff(
     handoff_path: Path,
     nonce: str,
     old_session_id: str,
+    model: str,
+    provider: str,
     timeout_s: float = 120.0,
     max_observations: int = 60,
     poll_s: float = 1.0,
@@ -239,8 +318,13 @@ def replace_session_from_handoff(
     nonce = str(nonce or "").strip()
     if not nonce:
         raise ValueError("fresh Hermes handoff requires a nonce")
+    model = str(model or "").strip()
+    provider = str(provider or "").strip()
+    if not model or not provider:
+        raise ValueError("fresh Hermes handoff requires the resolved model and provider")
     url, _token = _gateway_connection(state_dir)
     marker = f"HANDOFF_READY:{nonce}"
+    fresh_title = f"sac:{agent_name}:handoff:{nonce[:8]}"
     prompt = (
         f"Read the durable handoff JSON at {handoff_path}. Treat GitHub, Cards, "
         f"and referenced artifacts as source of truth. Reply exactly {marker} "
@@ -248,6 +332,15 @@ def replace_session_from_handoff(
     )
     fresh_live = ""
     old_closed = False
+    _write_transition_journal(
+        state_dir,
+        {
+            "fresh_title": fresh_title,
+            "nonce": nonce,
+            "old_session_id": old_session_id,
+            "phase": "creating",
+        },
+    )
     try:
         with _connect(url, timeout_s, connect_fn) as socket:
             created = _rpc(
@@ -255,10 +348,12 @@ def replace_session_from_handoff(
                 1,
                 "session.create",
                 {
-                    "title": f"sac:{agent_name}:handoff:{nonce[:8]}",
+                    "title": fresh_title,
                     "cwd": str(workdir),
                     "source": "cli",
                     "close_on_disconnect": False,
+                    "model": model,
+                    "provider": provider,
                 },
             )
             fresh_live = str(created.get("session_id") or "").strip()
@@ -267,6 +362,17 @@ def replace_session_from_handoff(
                 raise HermesTuiRpcError(
                     f"Hermes session.create returned no fresh identity: {created!r}"
                 )
+            _write_transition_journal(
+                state_dir,
+                {
+                    "fresh_live_id": fresh_live,
+                    "fresh_stored_id": fresh_stored,
+                    "fresh_title": fresh_title,
+                    "nonce": nonce,
+                    "old_session_id": old_session_id,
+                    "phase": "proving",
+                },
+            )
             baseline = _rpc(
                 socket,
                 2,
@@ -343,30 +449,66 @@ def replace_session_from_handoff(
                 raise HermesTuiRpcError(
                     "Hermes fresh session completed without the required nonce proof"
                 )
+            _write_transition_journal(
+                state_dir,
+                {
+                    "fresh_live_id": fresh_live,
+                    "fresh_stored_id": fresh_stored,
+                    "fresh_title": fresh_title,
+                    "nonce": nonce,
+                    "old_session_id": old_session_id,
+                    "phase": "proven",
+                },
+            )
             if pre_close_check is not None:
                 pre_close_check()
-            closed = _rpc(
-                socket,
-                request_id,
-                "session.close",
-                {"session_id": old_session_id},
-            )
+            try:
+                closed = _rpc(
+                    socket,
+                    request_id,
+                    "session.close",
+                    {"session_id": old_session_id},
+                )
+            except Exception as close_exc:
+                try:
+                    old_present = _live_session_present(
+                        url,
+                        old_session_id,
+                        timeout_s=timeout_s,
+                        connect_fn=connect_fn,
+                    )
+                except Exception as reconcile_exc:
+                    # The old session may already be gone. Never close the
+                    # proven replacement while authoritative state is unknown.
+                    old_closed = True
+                    raise HermesTuiRpcError(
+                        "Hermes old-session close acknowledgement and "
+                        f"reconciliation both failed: {reconcile_exc}"
+                    ) from close_exc
+                if old_present:
+                    raise
+                # session.close committed server-side and only its reply was
+                # lost. Keep the proven replacement; this is a successful cut.
+                closed = {"closed": True}
             if closed.get("closed") is not True:
                 raise HermesTuiRpcError(
                     f"Hermes old session did not close after nonce proof: {closed!r}"
                 )
             old_closed = True
+            _clear_transition_journal(state_dir)
     except HermesTuiRpcError:
         if fresh_live and not old_closed:
             _close_failed_candidate(
                 state_dir, fresh_live, timeout_s=timeout_s, connect_fn=connect_fn
             )
+            _clear_transition_journal(state_dir)
         raise
     except Exception as exc:
         if fresh_live and not old_closed:
             _close_failed_candidate(
                 state_dir, fresh_live, timeout_s=timeout_s, connect_fn=connect_fn
             )
+            _clear_transition_journal(state_dir)
         raise HermesTuiRpcError(
             f"Hermes handoff rotation at {url.split('?')[0]} failed: {exc}"
         ) from exc
@@ -399,6 +541,7 @@ def _close_failed_candidate(
 
 __all__ = [
     "close_session",
+    "reconcile_pending_transition",
     "replace_session_from_handoff",
     "session_handoff_facts",
     "session_transition_guard",

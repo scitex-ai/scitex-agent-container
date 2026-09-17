@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from scitex_agent_container.runtimes import _hermes_context_gc as context_gc
@@ -139,8 +140,13 @@ def test_dirty_subagent_worktree_refuses_handoff_and_session_mutation(tmp_path) 
 
 def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
     # Arrange
+    (tmp_path / "hermes-active-card.json").write_text(
+        '{"card_id":"task-20260917"}', encoding="utf-8"
+    )
     event = {
+        "msg_id": "delivery-1",
         "kind": "card-event",
+        "from_agent": "scitex-cards",
         "extra": {
             "card_id": "task-20260917",
             "card_event_kind": "completed",
@@ -152,7 +158,10 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
     # Assert
     assert json.loads((tmp_path / "hermes-fresh-next-task.json").read_text()) == {
         "card_id": "task-20260917",
+        "delivery_id": "delivery-1",
+        "owner": "agent",
         "reason": "task-completed",
+        "was_active": True,
     }
 
 
@@ -177,6 +186,7 @@ def test_foreign_completion_never_becomes_active_card(tmp_path) -> None:
     # Arrange
     event = {
         "kind": "card-event",
+        "from_agent": "scitex-cards",
         "extra": {
             "card_id": "foreign-card",
             "card_event_kind": "completed",
@@ -186,7 +196,56 @@ def test_foreign_completion_never_becomes_active_card(tmp_path) -> None:
     # Act
     record_inbound_task_event(tmp_path, "agent", event)
     # Assert
-    assert list(tmp_path.iterdir()) == []
+    assert (
+        (tmp_path / "hermes-fresh-next-task.json").exists(),
+        (tmp_path / "hermes-active-card.json").exists(),
+    ) == (False, False)
+
+
+def test_untrusted_peer_cannot_forge_a_completion_boundary(tmp_path) -> None:
+    # Arrange
+    event = {
+        "kind": "message",
+        "from_agent": "peer-agent",
+        "extra": {
+            "card_id": "victim-card",
+            "card_event_kind": "completed",
+            "card_event_owner": "agent",
+        },
+    }
+    # Act
+    record_inbound_task_event(tmp_path, "agent", event)
+    # Assert
+    assert (
+        (tmp_path / "hermes-fresh-next-task.json").exists(),
+        (tmp_path / "hermes-active-card.json").exists(),
+    ) == (False, False)
+
+
+def test_new_assignment_invalidates_unconsumed_completion(tmp_path) -> None:
+    # Arrange
+    (tmp_path / "hermes-fresh-next-task.json").write_text(
+        '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
+        '"reason":"task-completed",'
+        '"was_active":true}',
+        encoding="utf-8",
+    )
+    event = {
+        "kind": "card-event",
+        "from_agent": "scitex-cards",
+        "extra": {
+            "card_id": "new-card",
+            "card_event_kind": "assigned",
+            "card_event_owner": "agent",
+        },
+    }
+    # Act
+    record_inbound_task_event(tmp_path, "agent", event)
+    # Assert
+    assert (
+        (tmp_path / "hermes-fresh-next-task.json").exists(),
+        json.loads((tmp_path / "hermes-active-card.json").read_text()),
+    ) == (False, {"card_id": "new-card"})
 
 
 def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> None:
@@ -202,6 +261,13 @@ def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> No
         "compression_failure_error": "summary failed",
     }
     facts = [WorktreeFact(workdir, "abc123", "fix/task", ())]
+    rotated = []
+
+    def rotate(*_args, **kwargs):
+        rotated.append(kwargs)
+        kwargs["pre_close_check"]()
+        return "stored-fresh"
+
     # Act
     replacement = context_gc.reconcile_context_lifecycle(
         state_dir=tmp_path,
@@ -216,20 +282,26 @@ def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> No
         handoff_facts_reader=lambda *_args, **_kwargs: ({"status": "passed"}, []),
         card_reader=lambda _state: {"id": "card-1", "task": "continue safely"},
         worktree_reader=lambda *_args, **_kwargs: facts,
-        rotate_session=lambda *_args, **kwargs: (
-            kwargs["pre_close_check"]() or "stored-fresh"
-        ),
+        rotate_session=rotate,
         transition_guard=lambda _state, _session: None,
         nonce_factory=lambda: "nonce-123",
     )
     # Assert
-    assert replacement == "stored-fresh"
+    handoff = json.loads(rotated[0]["handoff_path"].read_text(encoding="utf-8"))
+    assert (
+        replacement,
+        rotated[0]["old_session_id"],
+        handoff["tests"],
+    ) == ("stored-fresh", "live-old", "passed")
 
 
 def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
-        '{"card_id":"card-1","reason":"task-completed"}', encoding="utf-8"
+        '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
+        '"reason":"task-completed",'
+        '"was_active":true}',
+        encoding="utf-8",
     )
     closed = []
     # Act
@@ -244,6 +316,11 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
         },
         close_live=lambda _state, session_id: closed.append(session_id),
         transition_guard=lambda _state, _session: None,
+        card_by_id_reader=lambda _card_id: {
+            "id": "card-1",
+            "status": "done",
+            "owner": "agent",
+        },
         handoff_facts_reader=lambda *_args, **_kwargs: ({}, []),
         worktree_reader=lambda *_args, **_kwargs: [
             WorktreeFact(tmp_path, "abc123", "fix/task", ())
@@ -260,7 +337,10 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
 def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
-        '{"card_id":"card-1","reason":"task-completed"}', encoding="utf-8"
+        '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
+        '"reason":"task-completed",'
+        '"was_active":true}',
+        encoding="utf-8",
     )
     closed = []
 
@@ -272,6 +352,11 @@ def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None
             observed_session={"id": "live", "session_key": "stored", "status": "idle"},
             close_live=lambda _state, session_id: closed.append(session_id),
             transition_guard=lambda _state, _session: None,
+            card_by_id_reader=lambda _card_id: {
+                "id": "card-1",
+                "status": "done",
+                "owner": "agent",
+            },
             worktree_reader=lambda *_args, **_kwargs: [
                 WorktreeFact(tmp_path, "abc", "fix/task", (" M work.py",))
             ],
@@ -286,6 +371,69 @@ def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None
         error = ""
     # Assert
     assert ("dirty worktree" in error, closed) == (True, [])
+
+
+def test_completion_marker_refuses_a_newer_active_card(tmp_path) -> None:
+    # Arrange
+    (tmp_path / "hermes-fresh-next-task.json").write_text(
+        '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
+        '"reason":"task-completed",'
+        '"was_active":true}',
+        encoding="utf-8",
+    )
+    (tmp_path / "hermes-active-card.json").write_text(
+        '{"card_id":"new"}', encoding="utf-8"
+    )
+    closed = []
+    # Act
+    try:
+        context_gc.reconcile_context_lifecycle(
+            state_dir=tmp_path,
+            agent_name="agent",
+            workdir=tmp_path,
+            observed_session={"id": "live", "session_key": "stored", "status": "idle"},
+            close_live=lambda _state, session_id: closed.append(session_id),
+        )
+    except HermesContextGcRefused as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert ("newer active card" in error, closed) == (True, [])
+
+
+def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> None:
+    # Arrange
+    marker = {
+        "card_id": "card-1",
+        "delivery_id": "delivery-1",
+        "owner": "agent",
+        "reason": "task-completed",
+        "session_id": "old-live",
+        "was_active": True,
+    }
+    (tmp_path / "hermes-fresh-next-task.json").write_text(
+        json.dumps(marker), encoding="utf-8"
+    )
+    closed = []
+    # Act
+    replacement = context_gc.reconcile_context_lifecycle(
+        state_dir=tmp_path,
+        agent_name="agent",
+        workdir=tmp_path,
+        observed_session={"id": "new-live", "session_key": "new-stored", "status": "idle"},
+        close_live=lambda _state, session_id: closed.append(session_id),
+    )
+    consumed = json.loads(
+        (tmp_path / "hermes-consumed-completions.json").read_text(encoding="utf-8")
+    )
+    # Assert
+    assert (
+        replacement,
+        closed,
+        (tmp_path / "hermes-fresh-next-task.json").exists(),
+        consumed,
+    ) == (None, [], False, {"delivery_ids": ["delivery-1"]})
 
 
 def test_preclose_refuses_sha_drift_during_nonce_proof(tmp_path) -> None:
@@ -370,3 +518,33 @@ def test_clean_unpushed_subagent_commit_is_unaccounted(tmp_path) -> None:
         error = ""
     # Assert
     assert "not preserved on a remote ref" in error
+
+
+def test_current_subagent_worktree_requires_remote_preservation(tmp_path) -> None:
+    # Arrange: the current tree itself is a detached Hermes child checkout.
+    workdir = tmp_path / "subagent-current"
+    workdir.mkdir()
+    for args in (
+        ("init",),
+        ("config", "user.email", "test@example.invalid"),
+        ("config", "user.name", "Test"),
+    ):
+        subprocess.run(["git", "-C", str(workdir), *args], check=True, capture_output=True)
+    (workdir / "work.txt").write_text("preserve me", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(workdir), "add", "work.txt"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(workdir), "commit", "-m", "child work"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workdir), "branch", "-M", "hermes-subagent/test"],
+        check=True,
+        capture_output=True,
+    )
+    # Act
+    facts = context_gc.collect_worktree_facts(workdir, session_started_at=0)
+    # Assert
+    assert (len(facts), facts[0].accounted) == (1, False)
