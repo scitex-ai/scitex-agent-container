@@ -112,7 +112,10 @@ def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
     """
     module = staged / "tui_gateway" / "tool_progress.py"
     if not module.is_file():
-        return False
+        raise HermesSourceError(
+            "pinned Hermes tui_gateway/tool_progress.py is absent; refusing an "
+            "uninstrumented build"
+        )
     text = module.read_text(encoding="utf-8")
     replacements = {
         """    if not _connector_tool_lifecycle(name, args):

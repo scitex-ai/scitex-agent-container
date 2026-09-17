@@ -78,47 +78,53 @@ def _projection_text(
     payload: dict, key: str, *, allowed: set[str] | None = None
 ) -> str:
     value = payload.get(key)
-    if not isinstance(value, str) or (allowed is not None and value not in allowed):
+    if type(value) is not str or (allowed is not None and value not in allowed):
         raise HermesHeartbeatProjectionError(
             f"Hermes heartbeat event projection has invalid {key}: {value!r}"
         )
     return value
 
 
-def read_hermes_heartbeat_projection(
+def _projection_number(payload: dict, key: str) -> float:
+    value = payload.get(key)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise HermesHeartbeatProjectionError(
+            "Hermes heartbeat event projection has invalid observation time "
+            f"field {key}: {value!r}"
+        )
+    return float(value)
+
+
+def _validate_projection_payload(
+    payload: dict,
     state_dir: Path,
     agent_name: str,
     *,
-    previous: dict | None,
     max_age_s: float = PROJECTION_MAX_AGE_S,
     now_fn: Callable[[], float] = time.time,
 ) -> HermesHeartbeatObservation:
-    """Read the owner-maintained event cursor, rejecting stale incarnations."""
-    del previous
+    """Validate the complete canonical projection schema and identity."""
     state_dir = Path(state_dir)
-    payload = _read_projection_payload(state_dir)
+    _projection_text(payload, "writer", allowed={WRITER_HERMES_SESSION_EVENTS})
+    projected_agent = _projection_text(payload, "agent_name")
+    generation = _projection_text(payload, "hermes_gateway_generation")
     identity = _gateway_identity(state_dir)
-    if payload.get("hermes_gateway_generation") != identity.generation:
+    if generation != identity.generation:
         raise HermesHeartbeatProjectionError(
             "Hermes heartbeat event projection belongs to a previous gateway"
         )
-    if payload.get("agent_name") != agent_name:
+    if not projected_agent or projected_agent != agent_name:
         raise HermesHeartbeatProjectionError(
             "Hermes heartbeat event projection belongs to another agent"
         )
-    observed_at = payload.get("observed_at")
-    activity_at = payload.get("hermes_activity_at")
-    if (
-        isinstance(observed_at, bool)
-        or not isinstance(observed_at, (int, float))
-        or not math.isfinite(observed_at)
-        or observed_at < 0
-        or isinstance(activity_at, bool)
-        or not isinstance(activity_at, (int, float))
-        or not math.isfinite(activity_at)
-        or activity_at < 0
-        or activity_at > observed_at
-    ):
+    observed_at = _projection_number(payload, "observed_at")
+    activity_at = _projection_number(payload, "hermes_activity_at")
+    if activity_at > observed_at:
         raise HermesHeartbeatProjectionError(
             "Hermes heartbeat event projection has invalid observation time"
         )
@@ -140,8 +146,8 @@ def read_hermes_heartbeat_projection(
             "Hermes heartbeat event projection has invalid identity or state"
         )
     inflight = payload.get("hermes_tools_inflight")
-    if not isinstance(inflight, list) or not all(
-        isinstance(value, str) and value for value in inflight
+    if type(inflight) is not list or not all(
+        type(value) is str and value for value in inflight
     ):
         raise HermesHeartbeatProjectionError(
             "Hermes heartbeat event projection has invalid tool cursor"
@@ -214,6 +220,26 @@ def read_hermes_heartbeat_projection(
         inflight_tool_ids=tuple(sorted(set(inflight))),
         last_event_type=last_event,
         last_turn_status=last_status,
+    )
+
+
+def read_hermes_heartbeat_projection(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    previous: dict | None,
+    max_age_s: float = PROJECTION_MAX_AGE_S,
+    now_fn: Callable[[], float] = time.time,
+) -> HermesHeartbeatObservation:
+    """Read the owner-maintained event cursor, rejecting stale incarnations."""
+    del previous
+    payload = _read_projection_payload(Path(state_dir))
+    return _validate_projection_payload(
+        payload,
+        Path(state_dir),
+        agent_name,
+        max_age_s=max_age_s,
+        now_fn=now_fn,
     )
 
 
@@ -383,7 +409,23 @@ def refresh_hermes_heartbeat_projection(
                 raise HermesHeartbeatProjectionError(
                     "Hermes gateway incarnation changed before projection publication"
                 )
-            atomic_write_text(projection_path, json.dumps(payload))
+            try:
+                canonical_text = json.dumps(
+                    payload, allow_nan=False, sort_keys=True, separators=(",", ":")
+                )
+                canonical_payload = json.loads(canonical_text)
+            except (TypeError, ValueError) as exc:
+                raise HermesHeartbeatProjectionError(
+                    f"Hermes heartbeat event projection is not canonical JSON: {exc}"
+                ) from exc
+            _validate_projection_payload(
+                canonical_payload,
+                state_dir,
+                agent_name,
+                max_age_s=float("inf"),
+                now_fn=lambda: float(canonical_payload["observed_at"]),
+            )
+            atomic_write_text(projection_path, canonical_text)
         return observed
 
 

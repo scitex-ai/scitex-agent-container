@@ -13,6 +13,7 @@ from scitex_agent_container._lifecycle._tui_heartbeat_loop import _beat_one
 from scitex_agent_container._runners._session_state import write_heartbeat
 from scitex_agent_container.runtimes._hermes_heartbeat import (
     HermesHeartbeatObservation,
+    _parse_replay,
     observe_hermes_heartbeat,
 )
 from scitex_agent_container.runtimes._hermes_heartbeat_projection import (
@@ -120,6 +121,9 @@ def _valid_projection() -> dict:
     }
 
 
+REQUIRED_PROJECTION_FIELDS = tuple(_valid_projection())
+
+
 @pytest.mark.parametrize(
     ("updates", "reason"),
     [
@@ -168,6 +172,24 @@ def test_malformed_projection_is_rejected(tmp_path, updates, reason):
     # Assert
     with pytest.raises(HermesHeartbeatProjectionError, match=reason):
         action()
+
+
+@pytest.mark.parametrize("field", REQUIRED_PROJECTION_FIELDS)
+def test_projection_rejects_every_missing_required_field(tmp_path, field):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection.pop(field)
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+
+    # Act
+    # Assert
+    with pytest.raises(HermesHeartbeatProjectionError):
+        read_hermes_heartbeat_projection(
+            tmp_path, "scholar", previous=None, now_fn=lambda: 101.0
+        )
 
 
 def test_accepted_turn_is_counted_from_message_start(tmp_path):
@@ -435,6 +457,193 @@ def test_first_observation_after_replay_eviction_starts_an_explicit_counter_scop
     ) == (500, 0, False, 500)
 
 
+def test_orphan_terminal_after_truncated_baseline_does_not_poison_projection(
+    tmp_path,
+):
+    # Arrange — seq 500 may be in the middle of the turn that ends at seq 501.
+    _gateway(tmp_path)
+    baseline = _Socket(
+        epoch="epoch-1",
+        replays=[
+            {
+                "events": [_event(500, "thinking.delta")],
+                "latest_seq": 500,
+                "truncated": True,
+            }
+        ],
+        statuses=["working", "working"],
+    )
+    refresh_hermes_heartbeat_projection(
+        tmp_path,
+        "scholar",
+        connect_fn=lambda *_args, **_kwargs: baseline,
+        now_fn=lambda: 100.0,
+    )
+    terminal = _Socket(
+        epoch="epoch-1",
+        replays=[
+            {
+                "events": [_event(501, "message.complete", {"status": "complete"})],
+                "latest_seq": 501,
+            }
+        ],
+        statuses=["idle", "idle"],
+    )
+
+    # Act
+    refresh_hermes_heartbeat_projection(
+        tmp_path,
+        "scholar",
+        connect_fn=lambda *_args, **_kwargs: terminal,
+        now_fn=lambda: 101.0,
+    )
+    observed = read_hermes_heartbeat_projection(
+        tmp_path, "scholar", previous=None, now_fn=lambda: 102.0
+    )
+
+    # Assert — the unmatched completion is outside the known counter scope.
+    assert (
+        observed.event_seq,
+        observed.turns_accepted,
+        observed.turns_completed,
+        observed.event_history_complete,
+        observed.counter_scope_started_seq,
+    ) == (501, 0, 0, False, 500)
+
+
+def test_only_matched_lifecycles_count_after_a_truncated_baseline(tmp_path):
+    # Arrange
+    _gateway(tmp_path)
+    baseline = _Socket(
+        epoch="epoch-1",
+        replays=[{"events": [], "latest_seq": 500, "truncated": True}],
+        statuses=["working", "working"],
+    )
+    refresh_hermes_heartbeat_projection(
+        tmp_path,
+        "scholar",
+        connect_fn=lambda *_args, **_kwargs: baseline,
+        now_fn=lambda: 100.0,
+    )
+    replay = _Socket(
+        epoch="epoch-1",
+        replays=[
+            {
+                "events": [
+                    _event(501, "message.complete", {"status": "complete"}),
+                    _event(502, "tool.complete", {"tool_id": "orphan"}),
+                    _event(503, "message.start"),
+                    _event(504, "tool.start", {"tool_id": "matched"}),
+                    _event(505, "tool.complete", {"tool_id": "matched"}),
+                    _event(506, "message.complete", {"status": "complete"}),
+                ],
+                "latest_seq": 506,
+            }
+        ],
+        statuses=["working", "idle"],
+    )
+
+    # Act
+    refresh_hermes_heartbeat_projection(
+        tmp_path,
+        "scholar",
+        connect_fn=lambda *_args, **_kwargs: replay,
+        now_fn=lambda: 101.0,
+    )
+    observed = read_hermes_heartbeat_projection(
+        tmp_path, "scholar", previous=None, now_fn=lambda: 102.0
+    )
+
+    # Assert
+    assert (
+        observed.turns_accepted,
+        observed.turns_completed,
+        observed.tools_started,
+        observed.tools_completed,
+        observed.event_history_complete,
+    ) == (1, 1, 1, 1, False)
+
+
+@pytest.mark.parametrize("event_seq", [True, False, 1.0, "1", -1])
+def test_replay_event_sequence_requires_a_non_negative_exact_int(event_seq):
+    # Arrange
+    replay = {
+        "events": [{"seq": event_seq, "type": "thinking.delta", "payload": {}}],
+        "latest_seq": 1,
+        "epoch": "epoch-1",
+        "truncated": False,
+    }
+
+    # Act — type validation precedes equality-compatible continuity checks.
+    # Assert
+    with pytest.raises(HermesTuiRpcError, match="malformed event sequence"):
+        _parse_replay(replay, after_seq=0)
+
+
+@pytest.mark.parametrize("writer", [True, False, 1, 1.0, None, "other-writer"])
+def test_projection_writer_requires_the_exact_text_identity(tmp_path, writer):
+    # Arrange
+    _gateway(tmp_path)
+    projection = _valid_projection()
+    projection["writer"] = writer
+    (tmp_path / "hermes-heartbeat-events.json").write_text(
+        json.dumps(projection), encoding="utf-8"
+    )
+
+    # Act
+    # Assert
+    with pytest.raises(HermesHeartbeatProjectionError, match="invalid writer"):
+        read_hermes_heartbeat_projection(
+            tmp_path, "scholar", previous=None, now_fn=lambda: 101.0
+        )
+
+
+def test_invalid_observation_is_rejected_before_atomic_projection_publication(tmp_path):
+    # Arrange
+    _gateway(tmp_path)
+    impossible = HermesHeartbeatObservation(
+        observed_at=100.0,
+        activity_at=100.0,
+        state="ready",
+        engine_incarnation_id="generation-1:epoch-1:session-1",
+        gateway_generation="generation-1",
+        event_epoch="epoch-1",
+        event_seq=1,
+        event_history_complete=True,
+        counter_scope_started_seq=0,
+        session_id="session-1",
+        turns_accepted=0,
+        turns_completed=1,
+        tools_started=0,
+        tools_completed=0,
+        tools_inflight=0,
+        inflight_tool_ids=(),
+        last_event_type="message.complete",
+        last_turn_status="complete",
+    )
+    projection_path = tmp_path / "hermes-heartbeat-events.json"
+
+    # Act
+    try:
+        refresh_hermes_heartbeat_projection(
+            tmp_path,
+            "scholar",
+            observe_fn=lambda *_args, **_kwargs: impossible,
+            now_fn=lambda: 100.0,
+        )
+    except HermesHeartbeatProjectionError as exc:
+        error = exc
+    else:
+        error = None
+
+    # Assert
+    assert (
+        isinstance(error, HermesHeartbeatProjectionError),
+        "impossible turn counters" in str(error),
+        projection_path.exists(),
+    ) == (True, True, False)
+
+
 def test_owner_projection_persists_the_gap_free_event_cursor(tmp_path):
     # Arrange
     _gateway(tmp_path)
@@ -468,6 +677,50 @@ def test_owner_projection_persists_the_gap_free_event_cursor(tmp_path):
         2,
         1,
         100.0,
+    )
+
+
+def test_published_projection_is_canonical_json_and_round_trips(tmp_path):
+    # Arrange
+    _gateway(tmp_path)
+    socket = _Socket(
+        epoch="epoch-1",
+        replays=[
+            {
+                "events": [
+                    _event(1, "message.start"),
+                    _event(2, "message.complete", {"status": "complete"}),
+                ],
+                "latest_seq": 2,
+            }
+        ],
+        statuses=["working", "idle"],
+    )
+
+    # Act
+    refresh_hermes_heartbeat_projection(
+        tmp_path,
+        "scholar",
+        connect_fn=lambda *_args, **_kwargs: socket,
+        now_fn=lambda: 100.0,
+    )
+    raw = (tmp_path / "hermes-heartbeat-events.json").read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    observed = read_hermes_heartbeat_projection(
+        tmp_path, "scholar", previous=None, now_fn=lambda: 101.0
+    )
+
+    # Assert
+    assert (
+        raw,
+        observed.event_seq,
+        observed.turns_accepted,
+        observed.turns_completed,
+    ) == (
+        json.dumps(payload, allow_nan=False, sort_keys=True, separators=(",", ":")),
+        2,
+        1,
+        1,
     )
 
 
