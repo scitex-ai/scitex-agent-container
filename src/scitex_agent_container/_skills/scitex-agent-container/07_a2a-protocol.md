@@ -70,6 +70,16 @@ Disabled by default — the sidecar only starts when `spec.a2a` is present. Side
 
 A2A v1.0 renamed the well-known file from `agent.json` (v0.x) to `agent-card.json`. sac serves the v1 path only; the v0 path is **not** backed by a compatibility shim. See [ADR-0004](../../../../docs/adr/0004-a2a-v1-compliance.md).
 
+## Delivery is not understanding
+
+Receipt levels stay separate:
+
+- HTTP 2xx / `delivered_subscriber_count`, automatic `a2a_ack`, and 👀 prove only transport/injection (`delivered` / `reacted`). They never prove model understanding.
+- only the recipient model intentionally calling `a2a_agentic_ack` with the exact inbound `dispatch_id` advances the sender to `agentic_acked`. It includes bounded `understood`, `owner`, and concrete `next_checkpoint`; wrong/stale nonces are refused and exact replay is idempotent.
+- `a2a_progress` reports real `in_progress`, `completed`, or `failed` state plus optional blocker. `a2a_dispatch_status` reads verified state and timeout escalation.
+
+Thus `a2a_send` returns `dispatch_status: delivered_unacknowledged`, the nonce, and an understanding-unproven hint. Missing ACKs use a durable bounded nudge state machine: nonce reminder only (never the task), persisted attempts/last nudge/deadline, bounded backoff, stop on ACK/terminal state, then `scitex-notification` escalation. Controls: `SAC_AGENTIC_ACK_NUDGE_INITIAL_S`, `SAC_AGENTIC_ACK_NUDGE_MAX_S`, `SAC_AGENTIC_ACK_NUDGE_POLL_S`, `SAC_AGENTIC_ACK_DEADLINE_S`.
+
 ## SDK 1.x methods (gRPC-style names)
 
 Pure `a2a-sdk>=1.0.2` — no v0.3 compat. Method names are gRPC-style:
