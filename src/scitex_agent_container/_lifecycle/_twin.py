@@ -12,8 +12,8 @@ Two halves live here:
 
 * :func:`derive_twin_spec` / :func:`resolve_twin_name` — PURE spec-doc
   transforms the ``sac agents twin`` CLI + the ``agent_twin`` MCP tool run
-  BEFORE the spawn POST: parent spec verbatim (repo/workdir/image/binds/
-  model) with the name, ``session: continue``, lifetime, a fresh
+  BEFORE the spawn POST: parent runtime/image/binds/model with a detached
+  git worktree, unique overlay, ``session: continue``, lifetime, a fresh
   ``a2a.port``, and the IDENTITY-SPLIT env overridden.
 * :func:`seed_twin_from_parent` — the HOST-SIDE pre-start step (from
   ``_start.agent_start``, right after ``seed_pinned_session_id``): on FIRST
@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import copy
 import logging
+import subprocess
+from pathlib import Path
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -154,6 +156,35 @@ def build_twin_boot_kick(
     return "\n".join(lines)
 
 
+def _twin_isolation_paths(
+    parent_workdir: str,
+    parent_overlay: str,
+    twin_name: str,
+) -> tuple[str, str]:
+    """Return canonical host paths for a twin's worktree and overlay."""
+    parent_workdir = parent_workdir.strip()
+    if not parent_workdir:
+        raise TwinSeedError("parent spec.workdir is empty; cannot isolate a twin")
+    parent_path = Path(parent_workdir)
+    twin_workdir = parent_path.parent / ".sac-twins" / twin_name / "workdir"
+
+    parent_overlay = parent_overlay.strip()
+    if parent_overlay:
+        overlay_path = Path(parent_overlay)
+        if overlay_path.name == "overlay" and overlay_path.parent.parent.name == "agents":
+            twin_overlay = overlay_path.parent.parent / twin_name / "overlay"
+        else:
+            twin_overlay = (
+                overlay_path.parent
+                / ".sac-twins"
+                / twin_name
+                / overlay_path.name
+            )
+    else:
+        twin_overlay = Path("/scratch/sac/agents") / twin_name / "overlay"
+    return str(twin_workdir), str(twin_overlay)
+
+
 def derive_twin_spec(
     parent_doc: dict[str, Any],
     *,
@@ -167,14 +198,15 @@ def derive_twin_spec(
     """Return the twin's inline spec document derived from the parent's.
 
     Pure — deep-copies ``parent_doc`` and overrides only what a twin must
-    change, inheriting repo / workdir / image / binds / model verbatim:
+    change, inheriting image / binds / model while isolating mutable paths:
 
-      * ``spec.claude.session = "continue"`` and ``resume_id`` cleared — the
+      * the selected harness session is ``continue``; legacy
+        ``spec.claude.session`` / ``resume_id`` are changed only for Claude — the
         HOST seeds the twin's session marker from the parent's CURRENT uuid
         + copies that transcript at FIRST start (:func:`seed_twin_from_parent`),
         so it inherits the freshest context; on later restarts ``continue``
         resumes the twin's OWN diverged session (not a re-fork of the parent).
-      * ``spec.env`` — ``SCITEX_CARDS_AGENT_ID = <twin>`` (author = twin),
+      * ``spec.apptainer.env`` — ``SCITEX_CARDS_AGENT_ID = <twin>`` (author = twin),
         ``SAC_TWIN_PARENT = <parent>`` (owner-convention value + twin
         trigger); any inherited ``SAC_NAME`` is dropped (``listen_env_flags``
         injects it from the twin's own name), as is any inherited
@@ -188,6 +220,9 @@ def derive_twin_spec(
       * ``spec.startup_prompts`` — replaced with the twin boot-kick (the
         identity contract + optional ``task``).
       * ``metadata.labels.role`` — set when ``role`` is given.
+      * ``spec.workdir`` / ``spec.apptainer.overlay`` — unique twin-owned
+        paths; host-side inline-spec materialisation creates the detached git
+        worktree before the spawn request can start the child.
 
     The twin's NAME is NOT written into the document: the host materialises
     the inline spec at ``agents/<twin_name>/spec.yaml`` and the loader
@@ -206,8 +241,27 @@ def derive_twin_spec(
             "cannot derive a twin."
         )
 
-    claude = spec.setdefault("claude", {})
-    if isinstance(claude, dict):
+    selected_harness = str(spec.get("harness") or "").strip().lower()
+    harnesses = spec.get("available_harnesses")
+    selected_config = (
+        harnesses.get(selected_harness)
+        if isinstance(harnesses, dict)
+        and isinstance(harnesses.get(selected_harness), dict)
+        else None
+    )
+    if isinstance(selected_config, dict):
+        session = selected_config.setdefault("session", {})
+        if isinstance(session, dict):
+            session["mode"] = "continue"
+            session["max_age_minutes"] = None
+
+    # Legacy Claude-session fields are executable only for the Claude harness.
+    # Hermes/Codex specs retain their explicit placeholder block unchanged;
+    # mutating it can conflict with available_harnesses and invalidate the spec.
+    claude = spec.get("claude")
+    if selected_harness in {"", "anthropic", "claude", "claude-code"} and isinstance(
+        claude, dict
+    ):
         # ``continue`` (not ``resume``): the host seeds the twin's session_id
         # marker from the parent's live uuid on FIRST boot and copies that
         # transcript in, so ``continue`` resumes it. On every SUBSEQUENT boot
@@ -229,12 +283,28 @@ def derive_twin_spec(
                 c for c in channels if str(c).strip() != _TELEGRAMMER_CHANNEL
             ]
 
-    env = spec.setdefault("env", {})
-    if isinstance(env, dict):
-        env[CARDS_AGENT_ENV] = twin_name
-        env[TWIN_PARENT_ENV] = parent_name
-        env.pop(SELF_NAME_ENV, None)
-        env.pop(RETIRED_AGENT_ENV, None)
+    apptainer = spec.setdefault("apptainer", {})
+    if not isinstance(apptainer, dict):
+        raise TwinSeedError("parent spec.apptainer must be a mapping")
+    inherited_env = spec.pop("env", {})
+    env = apptainer.setdefault("env", {})
+    if not isinstance(env, dict):
+        raise TwinSeedError("parent spec.apptainer.env must be a mapping")
+    if isinstance(inherited_env, dict):
+        for key, value in inherited_env.items():
+            env.setdefault(key, value)
+    env[CARDS_AGENT_ENV] = twin_name
+    env[TWIN_PARENT_ENV] = parent_name
+    env.pop(SELF_NAME_ENV, None)
+    env.pop(RETIRED_AGENT_ENV, None)
+
+    twin_workdir, twin_overlay = _twin_isolation_paths(
+        str(spec.get("workdir") or ""),
+        str(apptainer.get("overlay") or ""),
+        twin_name,
+    )
+    spec["workdir"] = twin_workdir
+    apptainer["overlay"] = twin_overlay
 
     restart = spec.setdefault("restart", {})
     if isinstance(restart, dict):
@@ -281,6 +351,65 @@ def _resolve_parent_to_home(parent_path: str, parent_doc: dict) -> str | None:
     if not p.is_absolute():
         p = Path(parent_path).parent / p
     return str(p) if p.is_dir() else None
+
+
+def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
+    """Create or verify the isolated detached checkout named by a twin spec."""
+    parent = Path(parent_workdir).expanduser()
+    target = Path(twin_workdir).expanduser()
+    if target.exists():
+        target_probe = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--git-common-dir"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if target_probe.returncode != 0:
+            raise TwinSeedError(
+                f"twin workdir already exists but is not a git worktree: {target}"
+            )
+        parent_probe = subprocess.run(
+            ["git", "-C", str(parent), "rev-parse", "--git-common-dir"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if parent_probe.returncode != 0:
+            raise TwinSeedError(
+                f"parent workdir is not a git checkout; cannot isolate twin: {parent}"
+            )
+
+        def _common_dir(root: Path, raw: str) -> Path:
+            path = Path(raw.strip())
+            return (path if path.is_absolute() else root / path).resolve()
+
+        if _common_dir(target, target_probe.stdout) != _common_dir(
+            parent, parent_probe.stdout
+        ):
+            raise TwinSeedError(
+                f"twin workdir belongs to a different git repository: {target}"
+            )
+        return False
+    parent_probe = subprocess.run(
+        ["git", "-C", str(parent), "rev-parse", "--show-toplevel"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if parent_probe.returncode != 0:
+        raise TwinSeedError(
+            f"parent workdir is not a git checkout; cannot isolate twin: {parent}"
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    created = subprocess.run(
+        ["git", "-C", str(parent), "worktree", "add", "--detach", str(target), "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if created.returncode != 0:
+        raise TwinSeedError("could not create isolated twin git worktree")
+    return True
 
 
 def prepare_twin_spawn(
@@ -342,6 +471,14 @@ def prepare_twin_spawn(
         task=task,
         to_home=to_home,
     )
+    from ..config._validation import validate_raw
+
+    errors = validate_raw(copy.deepcopy(doc), f"<twin:{resolved_name}>")
+    if errors:
+        raise TwinSeedError(
+            f"derived twin spec for {resolved_name!r} is invalid: "
+            + " | ".join(error.splitlines()[0] for error in errors[:5])
+        )
     return resolved_name, doc
 
 

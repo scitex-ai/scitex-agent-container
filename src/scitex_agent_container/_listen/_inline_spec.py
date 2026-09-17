@@ -14,6 +14,122 @@ from pathlib import Path
 from starlette.responses import JSONResponse
 
 
+def _twin_parent_from_spec(spec: dict) -> str:
+    body = spec.get("spec")
+    if not isinstance(body, dict):
+        return ""
+    apptainer = body.get("apptainer")
+    if not isinstance(apptainer, dict):
+        return ""
+    env = apptainer.get("env")
+    if not isinstance(env, dict):
+        return ""
+    from .._lifecycle._twin import TWIN_PARENT_ENV
+
+    return str(env.get(TWIN_PARENT_ENV) or "").strip()
+
+
+def _prepare_twin_host_isolation(
+    name: str,
+    spec: dict,
+    *,
+    caller: str | None,
+    agents_root: Path,
+) -> JSONResponse | None:
+    """Validate a twin claim and create its worktree on the owning host."""
+    parent_name = _twin_parent_from_spec(spec)
+    if not parent_name:
+        return None
+    if not caller or caller != parent_name:
+        return JSONResponse(
+            {
+                "error": "twin parent identity must match the authenticated caller",
+                "kind": "twin_identity_mismatch",
+            },
+            status_code=400,
+        )
+
+    import copy
+
+    import yaml
+
+    from .._lifecycle._twin import (
+        TwinSeedError,
+        _ensure_twin_worktree,
+        _twin_isolation_paths,
+    )
+    from ..config._validation import validate_raw
+
+    errors = validate_raw(copy.deepcopy(spec), f"<inline-twin:{name}>")
+    if errors:
+        return JSONResponse(
+            {
+                "error": "derived twin spec failed v3 validation",
+                "kind": "spec_invalid",
+                "details": {"validation": errors[:5]},
+            },
+            status_code=400,
+        )
+
+    parent_path = agents_root / parent_name / "spec.yaml"
+    try:
+        parent_doc = yaml.safe_load(parent_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return JSONResponse(
+            {
+                "error": f"cannot read authoritative parent spec: {exc}",
+                "kind": "twin_parent_unavailable",
+            },
+            status_code=400,
+        )
+    parent_spec = parent_doc.get("spec") if isinstance(parent_doc, dict) else None
+    if not isinstance(parent_spec, dict):
+        return JSONResponse(
+            {
+                "error": "authoritative parent spec has no mapping spec block",
+                "kind": "twin_parent_unavailable",
+            },
+            status_code=400,
+        )
+    parent_apptainer = parent_spec.get("apptainer")
+    parent_apptainer = parent_apptainer if isinstance(parent_apptainer, dict) else {}
+    try:
+        expected_workdir, expected_overlay = _twin_isolation_paths(
+            str(parent_spec.get("workdir") or ""),
+            str(parent_apptainer.get("overlay") or ""),
+            name,
+        )
+    except TwinSeedError as exc:
+        return JSONResponse(
+            {"error": str(exc), "kind": "twin_parent_unavailable"},
+            status_code=400,
+        )
+
+    child_spec = spec.get("spec") or {}
+    child_apptainer = child_spec.get("apptainer") or {}
+    if (
+        str(child_spec.get("workdir") or "") != expected_workdir
+        or str(child_apptainer.get("overlay") or "") != expected_overlay
+    ):
+        return JSONResponse(
+            {
+                "error": "twin workdir/overlay do not match canonical host isolation paths",
+                "kind": "twin_isolation_mismatch",
+            },
+            status_code=400,
+        )
+    try:
+        _ensure_twin_worktree(
+            str(parent_spec.get("workdir") or ""), expected_workdir
+        )
+    except TwinSeedError as exc:
+        return JSONResponse(
+            {"error": str(exc), "kind": "twin_isolation_failed"},
+            status_code=400,
+        )
+    return None
+
+
 def _resolve_parent_binds(caller: str) -> list[str] | None:
     """Return the parent agent's persisted ``apptainer.binds`` or ``None``.
 
@@ -213,6 +329,14 @@ def materialize_inline_spec(
             },
             status_code=409,
         )
+    twin_error = _prepare_twin_host_isolation(
+        name,
+        spec,
+        caller=caller,
+        agents_root=primary.parent,
+    )
+    if twin_error is not None:
+        return twin_error
     try:
         primary.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
