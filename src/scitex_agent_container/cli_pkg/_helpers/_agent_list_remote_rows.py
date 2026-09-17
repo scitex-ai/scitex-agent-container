@@ -209,11 +209,13 @@ def remote_instance_rows(
             continue
         spec_path = specs.get(name)
         labels: dict[str, str] = {}
+        cfg = None
         # stx-allow: fallback (label filtering is best-effort; an unreadable
         # spec yields empty labels, never a crash of the list)
         try:
             if spec_path is not None:
-                labels = load_config(str(spec_path)).labels
+                cfg = load_config(str(spec_path))
+                labels = cfg.labels
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             labels = {}
         if machine and labels.get("machine") != machine:
@@ -232,6 +234,7 @@ def remote_instance_rows(
                 or port_claims.get(name),
                 "spec_path": spec_path,
                 "labels": labels,
+                "cfg": cfg,
             }
         )
 
@@ -247,6 +250,7 @@ def remote_instance_rows(
         name = cand["name"]
         host = cand["host"]
         spec_path = cand["spec_path"]
+        cfg = cand["cfg"]
         # Account from the on-disk spec — the SAME spec-derived label
         # ``defined_agent_rows`` uses. The remote agent's spec DOES live on the
         # master's disk (that is how it was ssh-dispatched), so this kills the
@@ -255,11 +259,11 @@ def remote_instance_rows(
         # value needs a DB column and is a separate follow-up.) Best-effort: an
         # unreadable spec yields "" so the list never crashes on it.
         account = ""
-        if spec_path is not None:
+        if cfg is not None:
             # stx-allow: fallback (a broken/unreadable spec must not crash the
             # list; "" is the honest empty, exactly as before this change)
             try:
-                account = _al._safe_account_for(load_config(str(spec_path)))
+                account = _al._safe_account_for(cfg)
             except Exception:  # stx-allow: fallback (reason: see inline comment)
                 account = ""
         row: dict = {
@@ -275,6 +279,10 @@ def remote_instance_rows(
             "path": str(spec_path or ""),
             "a2a_port": cand["a2a_port"],
             "account": account,
+            "runtime": str(getattr(cfg, "runtime", "") or ""),
+            "harness": str(getattr(cfg, "harness", "") or ""),
+            "engine": str(getattr(cfg, "engine_key", "") or ""),
+            "model": str(getattr(cfg, "model", "") or ""),
             "remote": True,
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))

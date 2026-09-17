@@ -288,7 +288,11 @@ def render_stored_table(
     # name in front of every single-host listing, and a column that always says
     # the same thing teaches the eye to skip the place where the answer lives.
     with_host = any(r.host for r in rows)
-    table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    table = Table(
+        title="Stored credentials — inventory, not necessarily active runtime",
+        title_justify="left",
+        show_lines=False,
+    )
     if with_host:
         table.add_column("Host", style="cyan")
     table.add_column("Provider")

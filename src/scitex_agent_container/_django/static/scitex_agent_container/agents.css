@@ -178,8 +178,6 @@
      Columns: 1 agent, 2 state, 3 runtime, 4 harness, 5 engine, 6 activity,
      7 host, 8 a2a, 9 actions. */
   .agents-table thead th:nth-child(3), .agents-table tbody td:nth-child(3) { display: none; }
-  .agents-table thead th:nth-child(4), .agents-table tbody td:nth-child(4) { display: none; }
-  .agents-table thead th:nth-child(5), .agents-table tbody td:nth-child(5) { display: none; }
   .agents-table thead th:nth-child(6), .agents-table tbody td:nth-child(6) { display: none; }
   .agents-table thead th:nth-child(7), .agents-table tbody td:nth-child(7) { display: none; }
   .agents-table thead th:nth-child(8), .agents-table tbody td:nth-child(8) { display: none; }

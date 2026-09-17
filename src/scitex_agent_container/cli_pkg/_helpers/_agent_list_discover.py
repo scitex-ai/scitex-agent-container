@@ -209,6 +209,10 @@ def defined_agent_rows(
             "path": str(spec_path),
             "a2a_port": port_claims.get(name),
             "account": "" if deferred else _al._safe_account_for(cfg),
+            "runtime": str(getattr(cfg, "runtime", "") or ""),
+            "harness": str(getattr(cfg, "harness", "") or ""),
+            "engine": str(getattr(cfg, "engine_key", "") or ""),
+            "model": str(getattr(cfg, "model", "") or ""),
         }
         movement = (
             dict(_al._MOVEMENT_DEFAULTS) if deferred else _al._movement_fields(name)

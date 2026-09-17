@@ -83,6 +83,10 @@ def build_agent_row(
     errors,
     liveness_unknown: bool,
     labels,
+    runtime: str = "",
+    harness: str = "",
+    engine: str = "",
+    model: str = "",
     probe_runtime: str | None = None,
     probe_error: str | None = None,
 ) -> dict:
@@ -109,6 +113,10 @@ def build_agent_row(
         "path": spec_path,
         "a2a_port": a2a_port,
         "account": account_label,
+        "runtime": runtime,
+        "harness": harness,
+        "engine": engine,
+        "model": model,
     }
     row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
     if errors:

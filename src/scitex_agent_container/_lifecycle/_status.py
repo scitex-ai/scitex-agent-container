@@ -195,6 +195,8 @@ def agent_status(
         "status": "running" if running else "stopped",
         "model": config.model if config else "unknown",
         "runtime": config.runtime if config else "unknown",
+        "harness": config.harness if config else "unknown",
+        "engine": config.engine_key if config else "unknown",
         # Which Anthropic account this agent authenticates as (operator
         # request 4581). Agents sharing one label share one server-side
         # rate limit. Resolved from the agent's effective auth source.
