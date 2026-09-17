@@ -344,13 +344,15 @@ def test_the_rendered_spec_declares_a_host(dry_run_result: dict) -> None:
 )
 def test_the_startup_task_round_trips_exactly(tmp_path: Path, task: str) -> None:
     """A task is data: it must survive the YAML text unchanged."""
-    # Arrange / Act
+    # Arrange
+    expected = task
+    # Act
     result = template_render_contributor_spec(
         name="round-trip", port=19991, task=task, output_dir=str(tmp_path), dry_run=False
     )
     # Assert
     doc = yaml.safe_load(result["yaml"])
-    assert doc["spec"]["startup_commands"][0]["command"] == task
+    assert doc["spec"]["startup_commands"][0]["command"] == expected
 
 
 @pytest.mark.parametrize(
@@ -363,9 +365,11 @@ def test_the_startup_task_round_trips_exactly(tmp_path: Path, task: str) -> None
 )
 def test_a_task_with_yaml_significant_characters_still_validates(tmp_path: Path, task: str) -> None:
     """The spec must LOAD — a task is allowed to contain ':' or a newline."""
-    # Arrange / Act
+    # Arrange
+    port = 19992
+    # Act
     result = template_render_contributor_spec(
-        name="yaml-task", port=19992, task=task, output_dir=str(tmp_path), dry_run=False
+        name="yaml-task", port=port, task=task, output_dir=str(tmp_path), dry_run=False
     )
     # Assert
     errors = validate_raw(yaml.safe_load(result["yaml"]), "<task-with-yaml-chars>")
@@ -374,10 +378,122 @@ def test_a_task_with_yaml_significant_characters_still_validates(tmp_path: Path,
 
 def test_a_project_name_with_yaml_characters_does_not_break_the_labels() -> None:
     """The labels block is text too: the same class of bug lives there."""
-    # Arrange / Act
+    # Arrange
+    repo = "repo: with colon"
+    # Act
     result = template_render_contributor_spec(
-        name="label-check", port=19993, task="ok", target_repo="repo: with colon"
+        name="label-check", port=19993, task="ok", target_repo=repo
     )
     # Assert
     doc = yaml.safe_load(result["yaml"])
     assert doc["metadata"]["labels"]["project"] == "repo: with colon"
+
+# ---------------------------------------------------------------------------
+# The name is an INPUT to a filesystem write, so it is validated, not trusted.
+#
+# Found by the independent review of 65b06d71 (2026-09-17), which reproduced it:
+# with output_dir=/tmp/out and name="../../escape" the tool wrote /tmp/escape.yaml
+# — outside the directory the caller asked for. This module is MCP-facing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "../../escape",
+        "..",
+        ".",
+        "/absolute/path",
+        "a/b",
+        "a\\b",
+        "line\nbreak",
+        "carriage\rreturn",
+        "tab\tseparated",
+        "",
+        "   ",
+        " leading-space",
+        "trailing-space ",
+        "-option-shaped",
+        "a..b",
+    ],
+)
+def test_a_hostile_agent_name_is_refused(tmp_path: Path, hostile: str) -> None:
+    """Every one of these is a path or a YAML hazard, not an agent name."""
+    # Arrange
+    output = str(tmp_path)
+    # Act
+    raised: Exception | None = None
+    try:
+        template_render_contributor_spec(
+            name=hostile, port=19994, task="t", output_dir=output, dry_run=False
+        )
+    except ValueError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, ValueError), f"{hostile!r} was accepted"
+
+
+def test_a_hostile_name_writes_nothing_outside_the_output_root(tmp_path: Path) -> None:
+    """The write either lands inside the requested root or does not happen."""
+    # Arrange
+    root = tmp_path / "out"
+    root.mkdir()
+    sibling = "escape.yaml"
+    # Act
+    try:
+        template_render_contributor_spec(
+            name=f"../{sibling}", port=19995, task="t", output_dir=str(root), dry_run=False
+        )
+    except ValueError:
+        pass
+    # Assert
+    assert not (tmp_path / sibling).exists()
+
+
+def test_a_hostile_name_is_refused_even_in_a_dry_run(tmp_path: Path) -> None:
+    """A dry run must not report a path it would refuse to write."""
+    # Arrange
+    output = str(tmp_path)
+    # Act
+    raised: Exception | None = None
+    try:
+        template_render_contributor_spec(name="../escape", port=19996, task="t", output_dir=output)
+    except ValueError as exc:
+        raised = exc
+    # Assert
+    assert isinstance(raised, ValueError)
+
+
+def test_an_ordinary_name_still_writes_inside_the_output_root(tmp_path: Path) -> None:
+    """The positive control: the guard must not refuse a legitimate name."""
+    # Arrange
+    root = tmp_path / "out"
+    # Act
+    result = template_render_contributor_spec(
+        name="ordinary-agent", port=19997, task="t", output_dir=str(root), dry_run=False
+    )
+    # Assert
+    assert Path(result["path"]).resolve().is_relative_to(root.resolve())
+
+
+def test_the_mcp_layer_uses_the_public_scaffold_and_not_the_private_dict() -> None:
+    """One field set: the reviewer's layering note, as an assertion."""
+    # Arrange
+    module = Path(__file__).resolve().parents[4] / "src/scitex_agent_container/_mcp/_tools/_template.py"
+    # Act
+    source = module.read_text(encoding="utf-8")
+    # Assert
+    assert "_TEMPLATES" not in source and "render_minimal_spec" in source
+
+
+def test_the_public_scaffold_renderer_is_the_canonical_template() -> None:
+    """`agents create` and the MCP layer must consume the SAME text."""
+    # Arrange
+    from scitex_agent_container.cli_pkg._create_templates import _TEMPLATES, render_minimal_spec
+
+    # Act
+    rendered = render_minimal_spec(name="x", host="h")
+    # Assert
+    assert rendered == _TEMPLATES["minimal"].format(
+        name="x", host="h", credentials_files="[]", overlay='""'
+    )

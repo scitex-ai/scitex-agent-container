@@ -13,6 +13,7 @@ specs programmatically without depending on a shell verb.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,40 @@ from ...config._validation import validate_raw
 # grammar by their own tests. One source, or a second one that goes stale.
 
 _DEFAULT_BRANCH_KIND = "feat"
+
+#: What an agent name may be. Deliberately strict: this module WRITES FILES, and
+#: the name reaches both a directory and a filename.
+_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validated_agent_name(name: str) -> str:
+    """The name, or a refusal that says which rule it broke.
+
+    This is an MCP-facing filesystem write primitive. Measured by an independent
+    reviewer 2026-09-17: with ``output_dir=/tmp/out`` and ``name="../../escape"``
+    the tool wrote ``/tmp/escape.yaml`` — outside the directory the caller asked
+    for. A name is not trusted input just because it is a string.
+
+    Rejected: empty/whitespace, surrounding whitespace, anything with a path
+    separator or a ``..`` segment, control characters / CR / LF / TAB (a newline
+    also splices the YAML comment that names the agent), a leading ``-`` (option
+    shape), and anything outside the slug pattern.
+    """
+    if not isinstance(name, str) or not name:
+        raise ValueError("agent name must be a non-empty string")
+    if name != name.strip():
+        raise ValueError(f"agent name must not have surrounding whitespace: {name!r}")
+    if name.startswith("-"):
+        raise ValueError(f"agent name must not start with '-' (option shape): {name!r}")
+    if ".." in name:
+        raise ValueError(f"agent name must not contain '..': {name!r}")
+    if any(ch in name for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in name):
+        raise ValueError(f"agent name must not contain separators or control characters: {name!r}")
+    if not _NAME_PATTERN.match(name):
+        raise ValueError(
+            f"agent name must match {_NAME_PATTERN.pattern!r} (letters, digits, '.', '_', '-'): {name!r}"
+        )
+    return name
 _AGENTS_DIR = Path.home() / ".scitex/agent-container/agents"
 
 
@@ -84,9 +119,27 @@ def template_render_contributor_spec(
     Returns ``{"name", "path", "yaml", "written"}``. ``written`` is
     ``False`` for dry runs.
     """
-    resolved_branch_short = branch_short or _derive_branch_short(name)
-    dest_dir = Path(output_dir).expanduser() if output_dir else _AGENTS_DIR / name
-    dest_file = dest_dir / f"{name}.yaml"
+    safe_name = _validated_agent_name(name)
+    resolved_branch_short = branch_short or _derive_branch_short(safe_name)
+
+    if output_dir:
+        dest_root = Path(output_dir).expanduser()
+        dest_dir = dest_root
+    else:
+        dest_root = _AGENTS_DIR
+        dest_dir = dest_root / safe_name
+    dest_file = dest_dir / f"{safe_name}.yaml"
+
+    # PROVE THE DESTINATION IS INSIDE ITS ROOT, do not assume it. The name check
+    # above already refuses separators and '..', so this is the second lock on the
+    # same door: it holds even if the pattern is ever loosened, and it is the
+    # assertion that would have caught the traversal the reviewer reproduced.
+    resolved_root = dest_root.resolve()
+    resolved_file = dest_file.resolve()
+    if not resolved_file.is_relative_to(resolved_root):
+        raise ValueError(
+            f"refusing to write outside the output root: {resolved_file} is not under {resolved_root}"
+        )
 
     rendered = _contributor_spec(
         name=name,
@@ -144,12 +197,12 @@ def _contributor_spec(
     """
     import yaml as _yaml
 
-    from ...cli_pkg import _create_templates
+    from ...cli_pkg._create_templates import render_minimal_spec
 
-    text = _create_templates._TEMPLATES["minimal"].format(
-        # The scaffold's own line 4 is a COMMENT naming the agent; a newline in
-        # the name would end the comment early and spill prose into the YAML.
-        name=name.replace("\n", " ").replace("\r", " "),
+    # The scaffold's own line 4 is a COMMENT naming the agent. The name is already
+    # refused if it carries a newline, so it cannot end that comment early.
+    text = render_minimal_spec(
+        name=name,
         host="${HOSTNAME}",
         credentials_files="[]",
         overlay='""',
