@@ -34,7 +34,13 @@ from django.views.decorators.http import require_GET, require_POST
 from ._authorization import can_control, resolve_identity, scope_rows
 from ._projection import project_detail, project_row
 from ._remote import RemoteFleet
-from ._timeline import STALE_AFTER_SECONDS, build_timeline
+from ._timeline import (
+    KINDS,
+    REFRESH_SECONDS,
+    STALE_AFTER_SECONDS,
+    build_timeline,
+    timeline_rows,
+)
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
@@ -122,6 +128,64 @@ def index(request: HttpRequest):
     )
     template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
     return render(request, template, context)
+
+
+@require_GET
+def timeline(request: HttpRequest):
+    """The rendered activity timeline (its JSON twin is ``timeline_api``).
+
+    Server-rendered so the surface works with JS disabled and is complete on
+    first paint; ``timeline.js`` then refreshes it in place, bounded and
+    deduped. Filters come from the query string and are applied by the SAME
+    server-side code the poll uses, so the two paths cannot diverge.
+    """
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+        comm_error = ""
+    except Exception as exc:  # stx-allow: fallback (reason: unreachable listener is a STATE to show)
+        rows, comm_error = [], str(exc)
+    names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    statuses = fleet.read_statuses(names)
+    agent_filter = request.GET.get("agent") or ""
+    kind_filter = request.GET.get("kind") or ""
+    entries = build_timeline(
+        statuses,
+        agent=agent_filter if isinstance(agent_filter, str) and agent_filter else None,
+        kind=kind_filter if isinstance(kind_filter, str) and kind_filter else None,
+    )
+    context, is_standalone = _app_context(
+        request,
+        "Agents · Activity",
+        view_path="timeline/",
+        entries=timeline_rows(entries),
+        summary=_timeline_summary(entries),
+        agent_names=sorted(names),
+        kinds=KINDS,
+        selected_agent=agent_filter,
+        selected_kind=kind_filter,
+        refresh_seconds=REFRESH_SECONDS,
+        stale_after_seconds=STALE_AFTER_SECONDS,
+        identity=identity,
+        listener=fleet.base_url,
+        comm_error=comm_error,
+        page="timeline",
+    )
+    template = (
+        "scitex_agent_container/timeline.html"
+        if is_standalone
+        else "scitex_agent_container/timeline_hub.html"
+    )
+    return render(request, template, context)
+
+
+def _timeline_summary(entries: list) -> dict:
+    summary = {"total": len(entries), "observed": 0, "stale": 0, "unreachable": 0, "unknown": 0}
+    for entry in entries:
+        if entry.state in summary:
+            summary[entry.state] += 1
+    return summary
 
 
 @require_GET

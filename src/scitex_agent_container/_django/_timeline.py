@@ -53,6 +53,11 @@ DEFAULT_WINDOW = 200
 #: Past this age an observation is no longer reported as current.
 STALE_AFTER_SECONDS = 300.0
 
+#: How often the browser re-asks. A FLOOR, not a rate: the poller schedules the
+#: next request only after the previous one settles, so a slow control plane
+#: (this fleet measures 5-60s per read) cannot stack requests.
+REFRESH_SECONDS = 15
+
 
 @dataclass(frozen=True)
 class TimelineEntry:
@@ -67,6 +72,52 @@ class TimelineEntry:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @property
+    def key(self) -> str:
+        """The client-visible dedup key.
+
+        ``timeline.js`` dedupes on EXACTLY this value, so the two layers agree
+        by construction; if they computed the key differently the page would
+        duplicate rows the API considers identical.
+        """
+        return "|".join(
+            (self.agent, self.kind, str(self.value), self.state, f"{self.at:.3f}")
+        )
+
+
+_STATE_LABELS = {
+    "observed": "observed",
+    "stale": "stale",
+    "unreachable": "unreachable",
+    "unknown": "unknown",
+}
+
+
+def timeline_rows(entries: list[TimelineEntry], *, now: float | None = None) -> list[dict]:
+    """Presentation rows for the template: adds key, label and relative time.
+
+    Formatting only — no value is added, changed or inferred here.
+    """
+    moment = time.time() if now is None else now
+    rows: list[dict] = []
+    for entry in entries:
+        age = max(0, int(moment - entry.at))
+        if age < 60:
+            relative = f"{age}s ago"
+        elif age < 3600:
+            relative = f"{age // 60}m ago"
+        else:
+            relative = f"{age // 3600}h ago"
+        row = entry.as_dict()
+        row["key"] = entry.key
+        row["state_label"] = _STATE_LABELS.get(entry.state, entry.state)
+        row["relative"] = relative
+        row["age_seconds"] = age
+        row["iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(entry.at))
+        rows.append(row)
+    return rows
+
 
 
 def _dedupe_key(entry: TimelineEntry) -> tuple:
@@ -172,8 +223,10 @@ def build_timeline(
 __all__ = [
     "DEFAULT_WINDOW",
     "KINDS",
+    "REFRESH_SECONDS",
     "STALE_AFTER_SECONDS",
     "TimelineEntry",
     "build_timeline",
     "dedupe_entries",
+    "timeline_rows",
 ]
