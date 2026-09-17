@@ -222,6 +222,13 @@ async def agents_start(request: Request) -> JSONResponse:
     child_env = dict(os.environ)
     child_env.pop("APPTAINER_CONTAINER", None)
     child_env.pop("SINGULARITY_CONTAINER", None)
+    # The listener's systemd/non-interactive environment may not carry the
+    # provider key named by this agent's selected engine. Resolve the canonical
+    # host pool and propagate ONLY that spec-declared variable. Missing stays
+    # missing so the child start refuses; there is no provider fallback.
+    from ._provider_env import provider_secret_env_for_agent
+
+    child_env.update(provider_secret_env_for_agent(name, child_env))
     # Consent-propagation fix (2026-07-05, paper-scitex-clew report): set
     # the env-var escape valve in ADDITION to the --yes flag below so the
     # inner subprocess's refuse-without-``--yes`` gate

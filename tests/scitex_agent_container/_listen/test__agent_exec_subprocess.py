@@ -158,6 +158,103 @@ def _install_env_recording_sac_shim(bin_dir: Path) -> Path:
     return env_log
 
 
+def _install_provider_env_sac_shim(bin_dir: Path) -> Path:
+    """Install a fake sac that succeeds only when the provider key arrives."""
+    import json
+    import sys
+
+    env_log = bin_dir / "sac.provider-env.jsonl"
+    script = bin_dir / "sac"
+    body = (
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "value = os.environ.get('OPENCODE_GO_API_KEY')\n"
+        f"with open({json.dumps(str(env_log))}, 'a') as fh:\n"
+        "    fh.write(json.dumps({'key': value}) + '\\n')\n"
+        "if not value:\n"
+        "    print('OPENCODE_GO_API_KEY missing', file=sys.stderr)\n"
+        "    sys.exit(41)\n"
+        "sys.exit(0)\n"
+    )
+    script.write_text(body)
+    script.chmod(0o755)
+    return env_log
+
+
+def _install_opencode_agent_spec(tmp_path: Path, env_save_restore) -> None:
+    """Install the repository's real OpenCode example as ``broker-child``."""
+    repo = Path(__file__).resolve().parents[3]
+    source = repo / "examples" / "providers" / "opencode-go-hermes.yaml"
+    registry = tmp_path / "agents"
+    target = registry / "broker-child" / "spec.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(source.read_text())
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(registry))
+
+
+def test_agents_start_propagates_declared_provider_key_from_approved_pool(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import json
+
+    _install_opencode_agent_spec(tmp_path, env_save_restore)
+    pool = tmp_path / "provider-secrets.src"
+    pool.write_text("OPENCODE_GO_API_KEY=test-only-provider-key\n")
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "provider-key-shim"
+    bin_dir.mkdir()
+    env_log = _install_provider_env_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+
+    # Assert
+    assert (response.status_code, recorded["key"]) == (
+        200,
+        "test-only-provider-key",
+    )
+
+
+def test_agents_start_keeps_missing_provider_key_fail_closed(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import json
+
+    _install_opencode_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.delete("SAC_SECRETS_ENVRC")
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "provider-key-missing-shim"
+    bin_dir.mkdir()
+    env_log = _install_provider_env_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+
+    # Assert
+    assert response.status_code == 502 and recorded["key"] is None
+
+
 def test_agents_start_strips_apptainer_container_env_from_child(
     isolated_listen_env, env_save_restore, tmp_path: Path
 ) -> None:
