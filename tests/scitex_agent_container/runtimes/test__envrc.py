@@ -319,6 +319,30 @@ def test_secret_preamble_shell_code_is_rejected_without_execution(
     assert error is not None and not canary.exists()
 
 
+def test_secret_preamble_bash_env_is_rejected_before_bash_can_execute_it(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — BASH_ENV is sourced by non-interactive bash even with
+    # --noprofile/--norc.  The payload and pool are both legitimate owner-only
+    # regular files, so only the variable-name policy can stop this execution.
+    canary = tmp_path / "bash-env-executed"
+    payload = tmp_path / "payload.sh"
+    payload.write_text(f"touch {canary}\n", encoding="utf-8")
+    payload.chmod(0o600)
+    secret = tmp_path / "secret.env"
+    secret.write_text(f"BASH_ENV={payload}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text("export ORDINARY_VALUE=still-safe\n", encoding="utf-8")
+
+    # Act
+    error = _envrc_error(lambda: eval_envrc(envrc))
+
+    # Assert
+    assert error is not None and not canary.exists()
+
+
 def test_empty_unresolved_reference_is_dropped(
     tmp_path: Path, secrets_envrc: None
 ) -> None:

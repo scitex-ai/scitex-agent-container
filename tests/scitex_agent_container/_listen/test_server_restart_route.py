@@ -36,12 +36,20 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen import _agent_restart as restart_handler_mod
 from scitex_agent_container._listen._agent_restart import _build_detached_restart_argv
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._state.state_store_nodes import record_comms_policy
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
+from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    QWEN_GATEWAY_TOKEN_ENV_ENV,
+    QWEN_GATEWAY_URL_ENV,
+)
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 HOST_TOKEN = "test-host-bearer"
 
@@ -395,7 +403,9 @@ def _install_provider_pool(root: Path, env_save_restore) -> None:
     env_save_restore.delete("OPENCODE_GO_API_KEY")
 
 
-def _install_env_recording_restart(root: Path) -> tuple[Path, Path]:
+def _install_env_recording_restart(
+    root: Path, env_name: str = "OPENCODE_GO_API_KEY"
+) -> tuple[Path, Path]:
     import sys
 
     log = root / "restart-env.json"
@@ -403,7 +413,7 @@ def _install_env_recording_restart(root: Path) -> tuple[Path, Path]:
     script.write_text(
         f"#!{sys.executable}\n"
         "import json, os\n"
-        f"open({str(log)!r}, 'w').write(json.dumps({{'key': os.environ.get('OPENCODE_GO_API_KEY')}}))\n",
+        f"open({str(log)!r}, 'w').write(json.dumps({{'key': os.environ.get({env_name!r})}}))\n",
         encoding="utf-8",
     )
     script.chmod(0o700)
@@ -455,6 +465,95 @@ def test_detached_self_restart_receives_pool_only_provider_key(
         response.status_code,
         recorder.calls[0][1].get("OPENCODE_GO_API_KEY"),
     ) == (202, "pool-only-restart-key")
+
+
+def _install_canonical_qwen_restart_agent(
+    root: Path, name: str, env_save_restore
+) -> None:
+    repo = Path(__file__).resolve().parents[3]
+    target = root / "home/.scitex/agent-container/agents" / name / "spec.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        yaml.safe_dump(
+            explicit_doc(
+                {"harness": "hermes", "runtime": "tui", "engine": "qwen38-27b"}
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    env_save_restore.set(
+        FLEET_ENGINES_ENV, str(repo / ".scitex/agent-container/engines.yaml")
+    )
+    env_save_restore.delete(QWEN_GATEWAY_URL_ENV)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+
+
+def _install_qwen_provider_pool(root: Path, env_save_restore) -> None:
+    pool = root / "qwen-provider-pool.src"
+    pool.write_text(
+        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=pool-only-qwen-restart-key\n",
+        encoding="utf-8",
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_sync_and_fresh_restart_load_tracked_qwen_and_receive_canonical_key(
+    client, isolated_env: Path, env_save_restore, fresh: bool
+) -> None:
+    # Arrange
+    name = f"canonical-qwen-sync-{fresh}"
+    _install_canonical_qwen_restart_agent(
+        isolated_env, name, env_save_restore
+    )
+    _install_qwen_provider_pool(isolated_env, env_save_restore)
+    script, log = _install_env_recording_restart(
+        isolated_env, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={"fresh": fresh},
+        )
+    observed = json.loads(log.read_text(encoding="utf-8"))
+
+    # Assert
+    assert (response.status_code, observed["key"]) == (
+        200,
+        "pool-only-qwen-restart-key",
+    )
+
+
+def test_detached_restart_loads_tracked_qwen_and_receives_canonical_key(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    name = "canonical-qwen-detached"
+    _install_canonical_qwen_restart_agent(
+        isolated_env, name, env_save_restore
+    )
+    _install_qwen_provider_pool(isolated_env, env_save_restore)
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls[0][1].get(DEFAULT_QWEN_GATEWAY_TOKEN_ENV),
+    ) == (202, "pool-only-qwen-restart-key")
 
 
 def test_missing_provider_key_refuses_before_self_restart_and_preserves_canary(

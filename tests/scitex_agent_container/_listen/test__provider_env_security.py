@@ -2,20 +2,34 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from scitex_agent_container._listen._provider_env import (
     ProviderPreflightError,
     provider_secret_env,
 )
-from scitex_agent_container.config import AgentConfig
+from scitex_agent_container.config import AgentConfig, load_config
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._provider_types import ProviderSpec
+from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    DEFAULT_QWEN_GATEWAY_URL,
+    QWEN_GATEWAY_TOKEN_ENV_ENV,
+    QWEN_GATEWAY_URL_ENV,
+)
 from scitex_agent_container.runtimes._secret_pool import PoolRead
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _APPROVED_ENGINE = "opencode-go-deepseek-v4.1-flash"
 _APPROVED_ENDPOINT = "https://opencode.ai/zen/go/v1"
 _APPROVED_ENV = "OPENCODE_GO_API_KEY"
 _QWEN_ENGINE = "qwen38-27b"
-_QWEN_ENDPOINT = "http://100.64.0.1:18772"
-_QWEN_ENV = "SCITEX_GENAI_GATEWAY_API_KEY"
+_QWEN_ENDPOINT = DEFAULT_QWEN_GATEWAY_URL
+_QWEN_ENV = DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TRACKED_FLEET_ENGINES = _REPO_ROOT / ".scitex/agent-container/engines.yaml"
 
 
 def _config(
@@ -74,6 +88,58 @@ def test_exact_approved_qwen_tuple_reads_only_its_gateway_key() -> None:
 
     # Assert
     assert overlay == {_QWEN_ENV: "approved-value"}
+
+
+def test_obsolete_qwen_ip_tuple_is_not_authorized() -> None:
+    # Arrange
+    config = _config(
+        engine=_QWEN_ENGINE,
+        endpoint="http://100.64.0.1:18772",
+        env=_QWEN_ENV,
+    )
+    pool = PoolRead(env={_QWEN_ENV: "must-not-escape"}, trusted=True)
+
+    # Act
+    category = _refusal_category(config, {}, pool)
+
+    # Assert
+    assert category == "provider_tuple_unauthorized"
+
+
+def test_tracked_fleet_qwen_loads_as_the_authorized_canonical_tuple(
+    tmp_path: Path, env_save_restore
+) -> None:
+    # Arrange — load a real agent pin through the real tracked fleet library and
+    # provider registry, with host overrides removed so this proves the shipped
+    # canonical tuple rather than a hand-built AgentConfig.
+    env_save_restore.set(FLEET_ENGINES_ENV, str(_TRACKED_FLEET_ENGINES))
+    env_save_restore.delete(QWEN_GATEWAY_URL_ENV)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    spec_path = tmp_path / "canonical-qwen" / "spec.yaml"
+    spec_path.parent.mkdir()
+    spec_path.write_text(
+        yaml.safe_dump(
+            explicit_doc(
+                {"harness": "hermes", "runtime": "tui", "engine": _QWEN_ENGINE}
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    pool = PoolRead(env={_QWEN_ENV: "approved-value"}, trusted=True)
+
+    # Act
+    config = load_config(spec_path)
+    overlay = provider_secret_env(config, {}, pool=pool)
+    provider = config.claude.provider
+
+    # Assert
+    assert provider is not None and (
+        config.engine_key,
+        provider.base_url,
+        provider.auth_token_env,
+        overlay,
+    ) == (_QWEN_ENGINE, _QWEN_ENDPOINT, _QWEN_ENV, {_QWEN_ENV: "approved-value"})
 
 
 def test_spec_controlled_arbitrary_env_is_refused() -> None:

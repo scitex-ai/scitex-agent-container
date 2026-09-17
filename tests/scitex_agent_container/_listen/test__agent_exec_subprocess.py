@@ -27,11 +27,19 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
+from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    QWEN_GATEWAY_TOKEN_ENV_ENV,
+    QWEN_GATEWAY_URL_ENV,
+)
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _TOKEN = "test-token-agent-exec"
 
@@ -158,8 +166,10 @@ def _install_env_recording_sac_shim(bin_dir: Path) -> Path:
     return env_log
 
 
-def _install_provider_env_sac_shim(bin_dir: Path) -> Path:
-    """Install a fake sac that succeeds only when the provider key arrives."""
+def _install_provider_env_sac_shim(
+    bin_dir: Path, env_name: str = "OPENCODE_GO_API_KEY"
+) -> Path:
+    """Install a fake sac that succeeds only when ``env_name`` arrives."""
     import json
     import sys
 
@@ -168,11 +178,11 @@ def _install_provider_env_sac_shim(bin_dir: Path) -> Path:
     body = (
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
-        "value = os.environ.get('OPENCODE_GO_API_KEY')\n"
+        f"value = os.environ.get({env_name!r})\n"
         f"with open({json.dumps(str(env_log))}, 'a') as fh:\n"
         "    fh.write(json.dumps({'key': value}) + '\\n')\n"
         "if not value:\n"
-        "    print('OPENCODE_GO_API_KEY missing', file=sys.stderr)\n"
+        f"    print({(env_name + ' missing')!r}, file=sys.stderr)\n"
         "    sys.exit(41)\n"
         "sys.exit(0)\n"
     )
@@ -225,6 +235,65 @@ def test_agents_start_propagates_declared_provider_key_from_approved_pool(
         200,
         "test-only-provider-key",
     )
+
+
+def _install_canonical_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None:
+    repo = Path(__file__).resolve().parents[3]
+    registry = tmp_path / "agents"
+    target = registry / "broker-qwen" / "spec.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        yaml.safe_dump(
+            explicit_doc(
+                {"harness": "hermes", "runtime": "tui", "engine": "qwen38-27b"}
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(registry))
+    env_save_restore.set(
+        FLEET_ENGINES_ENV, str(repo / ".scitex/agent-container/engines.yaml")
+    )
+    env_save_restore.delete(QWEN_GATEWAY_URL_ENV)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+
+
+def test_agents_start_loads_tracked_qwen_and_propagates_its_canonical_key(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import json
+
+    _install_canonical_qwen_agent_spec(tmp_path, env_save_restore)
+    pool = tmp_path / "qwen-provider-secrets.src"
+    pool.write_text(
+        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=test-only-qwen-key\n",
+        encoding="utf-8",
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "qwen-provider-key-shim"
+    bin_dir.mkdir()
+    env_log = _install_provider_env_sac_shim(
+        bin_dir, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-qwen"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+
+    # Assert
+    assert (response.status_code, recorded["key"]) == (200, "test-only-qwen-key")
 
 
 def test_agents_start_keeps_missing_provider_key_fail_closed(

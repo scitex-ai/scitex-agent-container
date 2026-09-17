@@ -104,6 +104,52 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# A secret file is data, but its parsed mapping is later passed to bash (and
+# provider/runtime children).  These names change how the next process starts
+# or what code it loads before its argv runs, so an owner-only file is not
+# sufficient authority to set them.  In particular, non-interactive bash
+# sources $BASH_ENV even under --noprofile/--norc, and the dynamic loader acts
+# on LD_* before Python can regain control.
+_PROCESS_CONTROL_NAMES = frozenset(
+    {
+        "BASH_ENV",
+        "ENV",
+        "PATH",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "CDPATH",
+        "GLOBIGNORE",
+        "BASH_XTRACEFD",
+        "BASH_LOADABLES_PATH",
+        "PS4",
+        "ZDOTDIR",
+        "KSH_ENV",
+        "FPATH",
+        "INPUTRC",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONINSPECT",
+        "PYTHONBREAKPOINT",
+        "PYTHONWARNINGS",
+        "PERL5OPT",
+        "PERL5LIB",
+        "RUBYOPT",
+        "RUBYLIB",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "GCONV_PATH",
+        "GLIBC_TUNABLES",
+    }
+)
+_PROCESS_CONTROL_PREFIXES = ("LD_", "DYLD_", "GIT_", "BASH_FUNC_")
+
+
+def _is_process_control_name(name: str) -> bool:
+    return name in _PROCESS_CONTROL_NAMES or name.startswith(
+        _PROCESS_CONTROL_PREFIXES
+    )
+
 
 class SecretPoolFileError(RuntimeError):
     """A value-free secret-file refusal safe to expose in logs/errors."""
@@ -132,6 +178,8 @@ def _parse_secret_file(content: str) -> dict[str, str]:
         key = key.strip()
         if not sep or not _ENV_KEY_RE.fullmatch(key):
             raise SecretPoolFileError("secret_file_syntax")
+        if _is_process_control_name(key):
+            raise SecretPoolFileError("secret_file_control_variable")
         value = value.strip()
         if any(marker in value for marker in ("$(", "${", "`", "\x00")):
             raise SecretPoolFileError("secret_file_shell_syntax")
@@ -170,8 +218,19 @@ def _read_secret_file_secure(path: Path) -> dict[str, str]:
         raise SecretPoolFileError("secret_file_unavailable") from exc
     if canonical != absolute:
         raise SecretPoolFileError("secret_file_symlink")
+    try:
+        expected = os.stat(canonical, follow_symlinks=False)
+    except OSError as exc:
+        raise SecretPoolFileError("secret_file_unavailable") from exc
+    if not stat.S_ISREG(expected.st_mode):
+        raise SecretPoolFileError("secret_file_not_regular")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         fd = _open_secret_fd(canonical, flags)
     except OSError as exc:
@@ -184,6 +243,12 @@ def _read_secret_file_secure(path: Path) -> dict[str, str]:
             raise SecretPoolFileError("secret_file_owner")
         if stat.S_IMODE(observed.st_mode) & 0o077:
             raise SecretPoolFileError("secret_file_permissions")
+        if (observed.st_dev, observed.st_ino) != (expected.st_dev, expected.st_ino):
+            raise SecretPoolFileError("secret_file_identity")
+        # O_NONBLOCK makes a late regular-file→FIFO swap safe at open time.  It
+        # has served its purpose once fstat has proved this descriptor is the
+        # expected regular inode; clear it before the stream read.
+        os.set_blocking(fd, True)
         with os.fdopen(
             fd, "r", encoding="utf-8", errors="strict", closefd=True
         ) as stream:

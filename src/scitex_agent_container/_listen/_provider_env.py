@@ -15,6 +15,10 @@ from collections.abc import Mapping
 from starlette.responses import JSONResponse
 
 from ..config import AgentConfig, load_config
+from ..config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    DEFAULT_QWEN_GATEWAY_URL,
+)
 from ..config._resolve import resolve_with_prefix
 from ..runtimes._secret_pool import PoolRead, read_pool
 
@@ -30,13 +34,13 @@ _AUTHORIZED_PROVIDER_SECRETS = frozenset(
             "https://opencode.ai/zen/go/v1",
             "OPENCODE_GO_API_KEY",
         ),
-        # Canonical fleet Qwen gateway. This is the provider-keyed restart
-        # incident's original target (Codex×Qwen); authorizing only DeepSeek
-        # would leave that sanctioned path permanently unable to restart.
+        # Canonical shipped fleet Qwen tuple.  The endpoint and token-name
+        # values come from the trusted provider registry constants rather than
+        # being copied here; obsolete host/IP spellings are not authorized.
         (
             "qwen38-27b",
-            "http://100.64.0.1:18772",
-            "SCITEX_GENAI_GATEWAY_API_KEY",
+            DEFAULT_QWEN_GATEWAY_URL,
+            DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
         ),
     }
 )

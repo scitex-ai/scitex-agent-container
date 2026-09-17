@@ -34,6 +34,8 @@ import pytest
 from scitex_agent_container.runtimes import _secret_pool as secret_pool_mod
 from scitex_agent_container.runtimes._secret_pool import (
     _SECRETS_ENVRC_VAR,
+    SecretPoolFileError,
+    _parse_secret_file,
     _pool_env,
     read_pool,
 )
@@ -186,6 +188,54 @@ def test_pool_env_still_returns_the_bare_mapping(
 # ---------------------------------------------------------------------------
 
 
+_PROCESS_CONTROL_NAMES = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PATH",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "GIT_EXEC_PATH",
+    "GIT_SSH_COMMAND",
+    "DYLD_INSERT_LIBRARIES",
+    "ZDOTDIR",
+]
+
+
+def _parse_error_category(content: str) -> str:
+    try:
+        _parse_secret_file(content)
+    except SecretPoolFileError as exc:
+        return exc.category
+    return "not_refused"
+
+
+@pytest.mark.parametrize("name", _PROCESS_CONTROL_NAMES)
+def test_process_control_variable_names_are_rejected(name: str) -> None:
+    # Arrange
+    content = f"{name}=attacker-controlled\n"
+
+    # Act
+    category = _parse_error_category(content)
+
+    # Assert
+    assert category == "secret_file_control_variable"
+
+
+def test_ordinary_secret_variable_names_still_parse() -> None:
+    # Arrange
+    content = "CCT_BOT_TOKEN_ZZ_ORDINARY=ordinary-value\n"
+
+    # Act
+    parsed = _parse_secret_file(content)
+
+    # Assert
+    assert parsed == {"CCT_BOT_TOKEN_ZZ_ORDINARY": "ordinary-value"}
+
+
 def test_symlink_pool_file_is_rejected(tmp_path: Path, secrets_envrc: None) -> None:
     # Arrange
     target = tmp_path / "outside.src"
@@ -279,6 +329,59 @@ def test_pool_replacement_with_symlink_at_open_is_rejected(
 
     # Assert
     assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_regular_pool_replaced_by_fifo_is_rejected_without_blocking_open(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — resolve_secret_files has already observed a regular file when
+    # the open seam substitutes a FIFO.  Refuse to call the real open unless
+    # the production flags make that adversarial open non-blocking.
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+
+    def swap_then_open(path, flags):
+        if not flags & os.O_NONBLOCK:
+            raise RuntimeError("FIFO substitution would block this open")
+        pool.unlink()
+        os.mkfifo(pool, 0o600)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_regular_pool_replacement_with_another_regular_inode_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — ownership, mode and file type all still look valid after the
+    # swap; only descriptor/path identity distinguishes the attacker file.
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    attacker = tmp_path / "attacker.src"
+    attacker.write_text("ZZ_ATTACKER=must-not-escape\n", encoding="utf-8")
+    attacker.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+
+    def swap_then_open(path, flags):
+        os.replace(attacker, pool)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_ATTACKER" not in read.env
 
 
 def test_shell_code_in_pool_is_rejected_and_not_executed(
