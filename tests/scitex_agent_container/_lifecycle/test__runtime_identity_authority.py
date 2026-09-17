@@ -201,6 +201,141 @@ def test_conflicting_marker_and_heartbeat_refuse_birth_authority() -> None:
     assert bound is None
 
 
+def test_stale_marker_cannot_override_current_process_handles() -> None:
+    # Arrange
+    rows = [
+        {
+            "id": "stale-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 111,
+            "screen": "stale-session",
+            "remote": False,
+        },
+        {
+            "id": "current-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 222,
+            "screen": "current-session",
+            "remote": False,
+        },
+    ]
+
+    # Act
+    bound = bind_active_instance(
+        "alpha",
+        rows,
+        local_host="node-a",
+        marker_id="stale-id",
+        pid=222,
+        session="current-session",
+        heartbeat=None,
+    )
+
+    # Assert
+    assert bound is None
+
+
+def test_stale_heartbeat_cannot_override_current_process_handles() -> None:
+    # Arrange
+    rows = [
+        {
+            "id": "stale-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 111,
+            "screen": "stale-session",
+            "remote": False,
+        },
+        {
+            "id": "current-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 222,
+            "screen": "current-session",
+            "remote": False,
+        },
+    ]
+
+    # Act
+    bound = bind_active_instance(
+        "alpha",
+        rows,
+        local_host="node-a",
+        marker_id=None,
+        pid=222,
+        session="current-session",
+        heartbeat={"incarnation_id": "stale-id"},
+    )
+
+    # Assert
+    assert bound is None
+
+
+def test_current_incarnation_cannot_override_stale_process_handles() -> None:
+    # Arrange
+    rows = [
+        {
+            "id": "stale-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 111,
+            "screen": "stale-session",
+            "remote": False,
+        },
+        {
+            "id": "current-id",
+            "name": "alpha",
+            "host": "node-a",
+            "pid": 222,
+            "screen": "current-session",
+            "remote": False,
+        },
+    ]
+
+    # Act
+    bound = bind_active_instance(
+        "alpha",
+        rows,
+        local_host="node-a",
+        marker_id="current-id",
+        pid=111,
+        session="stale-session",
+        heartbeat={"incarnation_id": "current-id"},
+    )
+
+    # Assert
+    assert bound is None
+
+
+def test_duplicate_rows_matching_every_evidence_set_remain_ambiguous() -> None:
+    # Arrange
+    row = {
+        "id": "same-id",
+        "name": "alpha",
+        "host": "node-a",
+        "pid": 111,
+        "screen": "same-session",
+        "remote": False,
+    }
+    rows = [dict(row), dict(row)]
+
+    # Act
+    bound = bind_active_instance(
+        "alpha",
+        rows,
+        local_host="node-a",
+        marker_id="same-id",
+        pid=111,
+        session="same-session",
+        heartbeat={"incarnation_id": "same-id"},
+    )
+
+    # Assert
+    assert bound is None
+
+
 def test_bound_births_use_one_batch_read_and_never_newest_name_host() -> None:
     # Arrange
     active = [

@@ -56,6 +56,7 @@ from ._account_list_format import (
     format_ttl_live,
     local_timezone,
 )
+from ._terminal_text import terminal_safe
 
 # ---------------------------------------------------------------------------
 # Row data model
@@ -303,20 +304,24 @@ def render_stored_table(
     table.add_column("Usage as of")
     for r in rows:
         cells = [
-            Text(str(r.provider)),
-            Text(str(r.name)),
+            Text(terminal_safe(r.provider)),
+            Text(terminal_safe(r.name)),
             Text(
-                _fmt_status(
-                    r.freshness_state,
-                    r.freshness_hours,
-                    pause_reason=r.pause_reason,
-                    pause_since=r.pause_since,
+                terminal_safe(
+                    _fmt_status(
+                        r.freshness_state,
+                        r.freshness_hours,
+                        pause_reason=r.pause_reason,
+                        pause_since=r.pause_since,
+                    )
                 )
             ),
-            Text(_fmt_identity_cell(r)),
-            Text(_fmt_last_update_cell(r.snapshot_as_of, now=now)),
+            Text(terminal_safe(_fmt_identity_cell(r))),
+            Text(terminal_safe(_fmt_last_update_cell(r.snapshot_as_of, now=now))),
         ]
-        table.add_row(*([Text(str(r.host or "—")), *cells] if with_host else cells))
+        table.add_row(
+            *([Text(terminal_safe(r.host or "—")), *cells] if with_host else cells)
+        )
     return table
 
 
