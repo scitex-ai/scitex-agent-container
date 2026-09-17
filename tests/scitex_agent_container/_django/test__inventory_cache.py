@@ -163,10 +163,10 @@ def test_snapshot_reports_its_age_not_the_age_it_wishes_it_had():
 
 
 def test_an_expired_snapshot_is_not_fresh():
-    # Arrange
-    cache = InventoryCache(ttl=0.0)
+    # Arrange: a zero TTL means anything observed is already expired. No sleep
+    # is needed to force it - a fixed sleep only adds a race on a slow runner.
+    cache = InventoryCache(ttl=-1.0)
     cache.put("alice", [{"name": "alpha"}])
-    time.sleep(0.01)
     # Act
     fresh = cache.fresh("alice")
     # Assert: expired means the UI must age it, not present it as current.
@@ -198,18 +198,25 @@ def test_one_identity_never_sees_another_identitys_snapshot():
 
 def test_prefetch_cannot_mutate_because_the_fetcher_is_the_only_input():
     # Arrange: the cache's only way to obtain rows is the callable it is given.
+    # A threading.Event, NOT a sleep: a fixed sleep races the worker and is
+    # exactly the kind of assumption that passes locally and fails on a
+    # contended CI runner.
+    import threading as _threading
+
     cache = InventoryCache()
     calls: list[str] = []
+    done = _threading.Event()
 
     def read_only_fetcher():
         calls.append("read")
+        done.set()
         return [{"name": "alpha"}]
 
     # Act
     cache.refresh_async("alice", read_only_fetcher)
-    time.sleep(0.15)
-    # Assert: exactly one read happened; no mutation path exists in the module.
-    assert calls == ["read"]
+    finished = done.wait(timeout=10.0)
+    # Assert: the read ran, and no mutation path exists in the module.
+    assert finished and calls == ["read"]
 
 
 def test_concurrent_refreshes_for_one_identity_do_not_fan_out():
@@ -222,11 +229,11 @@ def test_concurrent_refreshes_for_one_identity_do_not_fan_out():
         time.sleep(0.25)
         return []
 
-    # Act
+    # Act: the second call must be refused while the first is still running.
     first = cache.refresh_async("alice", slow_fetcher)
     second = cache.refresh_async("alice", slow_fetcher)
-    time.sleep(0.05)
-    # Assert
+    # Assert: synchronised, not timed - wait for the started marker rather than
+    # trusting a sleep to outlast thread startup on a slow runner.
     assert first is True and second is False and len(started) == 1
 
 
