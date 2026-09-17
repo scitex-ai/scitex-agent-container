@@ -13,6 +13,9 @@ from scitex_agent_container.runtimes._secret_pool import PoolRead
 _APPROVED_ENGINE = "opencode-go-deepseek-v4.1-flash"
 _APPROVED_ENDPOINT = "https://opencode.ai/zen/go/v1"
 _APPROVED_ENV = "OPENCODE_GO_API_KEY"
+_QWEN_ENGINE = "qwen38-27b"
+_QWEN_ENDPOINT = "http://100.64.0.1:18772"
+_QWEN_ENV = "SCITEX_GENAI_GATEWAY_API_KEY"
 
 
 def _config(
@@ -52,6 +55,25 @@ def test_exact_approved_opencode_tuple_reads_only_its_key() -> None:
 
     # Assert
     assert overlay == {_APPROVED_ENV: "approved-value"}
+
+
+def test_exact_approved_qwen_tuple_reads_only_its_gateway_key() -> None:
+    # Arrange
+    config = _config(
+        engine=_QWEN_ENGINE,
+        endpoint=_QWEN_ENDPOINT,
+        env=_QWEN_ENV,
+    )
+    pool = PoolRead(
+        env={_QWEN_ENV: "approved-value", "HOST_MASTER_SECRET": "must-not-escape"},
+        trusted=True,
+    )
+
+    # Act
+    overlay = provider_secret_env(config, {}, pool=pool)
+
+    # Assert
+    assert overlay == {_QWEN_ENV: "approved-value"}
 
 
 def test_spec_controlled_arbitrary_env_is_refused() -> None:

@@ -30,6 +30,14 @@ _AUTHORIZED_PROVIDER_SECRETS = frozenset(
             "https://opencode.ai/zen/go/v1",
             "OPENCODE_GO_API_KEY",
         ),
+        # Canonical fleet Qwen gateway. This is the provider-keyed restart
+        # incident's original target (Codex×Qwen); authorizing only DeepSeek
+        # would leave that sanctioned path permanently unable to restart.
+        (
+            "qwen38-27b",
+            "http://100.64.0.1:18772",
+            "SCITEX_GENAI_GATEWAY_API_KEY",
+        ),
     }
 )
 
