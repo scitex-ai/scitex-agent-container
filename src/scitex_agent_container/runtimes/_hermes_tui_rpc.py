@@ -177,7 +177,16 @@ def _gateway_connection(state_dir: Path) -> tuple[str, str]:
     return f"ws://127.0.0.1:{port}/api/ws?token={token}", token
 
 
-def _connect(url: str, timeout_s: float, connect_fn: Any | None) -> Any:
+_FORK_RPC_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _connect(
+    url: str,
+    timeout_s: float,
+    connect_fn: Any | None,
+    *,
+    max_size: int | None = None,
+) -> Any:
     if connect_fn is None:
         try:
             from websockets.sync.client import connect as connect_fn
@@ -185,7 +194,10 @@ def _connect(url: str, timeout_s: float, connect_fn: Any | None) -> Any:
             raise HermesTuiRpcError(
                 "websockets>=15 is required for Hermes TUI delivery"
             ) from exc
-    return connect_fn(url, open_timeout=timeout_s, close_timeout=1)
+    kwargs: dict[str, Any] = {"open_timeout": timeout_s, "close_timeout": 1}
+    if max_size is not None:
+        kwargs["max_size"] = max_size
+    return connect_fn(url, **kwargs)
 
 
 def branch_visible_history(
@@ -205,7 +217,12 @@ def branch_visible_history(
     """
     url, _token = _gateway_connection(state_dir)
     try:
-        with _connect(url, timeout_s, connect_fn) as socket:
+        with _connect(
+            url,
+            timeout_s,
+            connect_fn,
+            max_size=_FORK_RPC_MAX_BYTES,
+        ) as socket:
             listing = _rpc(socket, 1, "session.active_list", {})
             parent = _select_session_row(
                 listing.get("sessions"), parent_session_key
@@ -341,7 +358,12 @@ def import_fork_seed(
         raise HermesTuiRpcError("Hermes fork seed contains a non-visible message")
     url, _token = _gateway_connection(state_dir)
     try:
-        with _connect(url, timeout_s, connect_fn) as socket:
+        with _connect(
+            url,
+            timeout_s,
+            connect_fn,
+            max_size=_FORK_RPC_MAX_BYTES,
+        ) as socket:
             existing = _one_stored_session(
                 _rpc(socket, 1, "session.list", {"title": title}), title
             )
