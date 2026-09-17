@@ -14,6 +14,40 @@ from ..config import AgentConfig, load_config
 from ._runtime_select import _fallback_workdir, _get_runtime
 
 
+def _a2a_status(
+    name: str,
+    config: AgentConfig | None,
+    *,
+    port_reader: Callable[[str], int | None] | None = None,
+) -> dict[str, str | int | None]:
+    """Separate the configured A2A request from its durable live claim.
+
+    A static or ``auto`` spec value is intent, not evidence that a bridge
+    bound successfully. The resolved value therefore comes only from the
+    durable allocator claim used by ``agents send``; lookup failure remains
+    unknown rather than falling back to the configured value.
+    """
+    configured = (
+        getattr(getattr(config, "a2a", None), "port", None)
+        if config is not None
+        else None
+    )
+    resolved: int | None = None
+    try:
+        if port_reader is None:
+            from .._state.port_allocator import get_port
+
+            port_reader = get_port
+        resolved = port_reader(name)
+    except Exception:  # stx-allow: fallback (a status read must not infer or crash when the durable store is unavailable)
+        resolved = None
+    return {
+        "configured_port": configured,
+        "resolved_port": resolved,
+        "resolution_source": "durable_port_claim" if resolved is not None else "none",
+    }
+
+
 def _resolve_account(config: AgentConfig | None) -> str:
     """Resolve the agent's effective Anthropic-account label.
 
@@ -199,6 +233,7 @@ def agent_status(
         # request 4581). Agents sharing one label share one server-side
         # rate limit. Resolved from the agent's effective auth source.
         "account": _resolve_account(config),
+        "a2a": _a2a_status(name, config),
     }
 
     # Runtime-specific detection stays behind a neutral control-plane shape.
