@@ -388,10 +388,34 @@ def test_server_side_strict_base_protection_is_required(merge_step: dict) -> Non
     strict_at = script.index("protection/required_status_checks")
     merge_at = script.index("gh pr merge")
     # Assert
-    assert (strict_at < merge_at, '"$strict_base" != "true"' in script) == (
+    assert (
+        strict_at < merge_at,
+        '"$strict_base" != "true"' in script,
+        'GH_TOKEN="$PROTECTION_TOKEN" gh api' in script,
+        "SAC_BRANCH_PROTECTION_READ_TOKEN is absent" in script,
+    ) == (
+        True,
+        True,
         True,
         True,
     )
+
+
+def test_candidate_api_failures_make_the_sweep_red(merge_step: dict) -> None:
+    # Arrange
+    script = merge_step["run"]
+    messages = (
+        "could not resolve pull requests for check-suite head",
+        "could not list open develop pull requests",
+    )
+    # Act
+    guarded = tuple(
+        "::error::" in script[script.index(message) - 20 : script.index(message) + 180]
+        and "exit 1" in script[script.index(message) : script.index(message) + 220]
+        for message in messages
+    )
+    # Assert
+    assert guarded == (True, True)
 
 
 def test_attribution_is_exact_head_and_workflow_identity_scoped(

@@ -190,6 +190,10 @@ jobs:
       - name: merge green PRs targeting develop
         env:
           GH_TOKEN: ${{ github.token }}
+          # github.token cannot read branch-protection configuration. This
+          # separate read-only GitHub App/PAT credential needs Administration:
+          # read and no write scopes; absence fails the sweep closed.
+          PROTECTION_TOKEN: ${{ secrets.SAC_BRANCH_PROTECTION_READ_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.check_suite.head_sha }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -275,7 +279,11 @@ jobs:
           # lease. Strict required-check protection is therefore the server-side
           # atomic guard: if develop advances after our last read, GitHub must
           # reject the merge rather than land against an untested base.
-          strict_base=$(gh api \
+          if [ -z "$PROTECTION_TOKEN" ]; then
+            echo "::error::SAC_BRANCH_PROTECTION_READ_TOKEN is absent — cannot prove server-side strict develop protection"
+            exit 1
+          fi
+          strict_base=$(GH_TOKEN="$PROTECTION_TOKEN" gh api \
             "repos/$REPO/branches/develop/protection/required_status_checks" \
             --jq .strict 2>/dev/null || echo "")
           if [ "$strict_base" != "true" ]; then
@@ -330,8 +338,8 @@ jobs:
           if [ -n "${HEAD_SHA:-}" ]; then
             if ! prs=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/pulls?per_page=100" \
                   --jq '.[] | select(.state=="open") | .number' 2>/dev/null); then
-              echo "::warning::could not resolve pull requests for check-suite head $HEAD_SHA — merging nothing this tick"
-              exit 0
+              echo "::error::could not resolve pull requests for check-suite head $HEAD_SHA — drain state is unmeasured"
+              exit 1
             fi
           else
             # --limit is LOAD-BEARING: `gh pr list` silently defaults to 30 and
@@ -349,8 +357,8 @@ jobs:
             if ! prs=$(gh api --paginate --slurp \
                   "repos/$REPO/pulls?base=develop&state=open&per_page=100" \
                   --jq 'add | sort_by(.created_at) | .[].number' 2>/dev/null); then
-              echo "::warning::could not list open develop pull requests — merging nothing this tick"
-              exit 0
+              echo "::error::could not list open develop pull requests — drain state is unmeasured"
+              exit 1
             fi
           fi
           [ -z "${prs:-}" ] && { echo "no open PRs"; exit 0; }
