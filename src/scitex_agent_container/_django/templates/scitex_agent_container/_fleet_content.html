@@ -61,7 +61,7 @@ mounted) so the per-row links are correct in both modes.
         <td>{{ a.billing_mode }}</td>
         <td title="identity source: {{ a.runtime_identity_source }}">{{ a.auth_identity }}</td>
         <td>{{ a.harness }}</td>
-        <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span></td>
+        <td class="c-em">{{ a.engine }}<span class="dim"> / {{ a.model }}</span><span class="identity-source">{{ a.runtime_identity_source }}</span></td>
         <td class="c-activity">
           {% if a.activity.operation.state == "observed" %}{{ a.activity.operation.value }}{% else %}<span class="dim" title="{{ a.activity.operation.reason }}">unknown</span>{% endif %}
           {% if a.activity.phase.state == "observed" %}<span class="dim"> · {{ a.activity.phase.value }}</span>{% endif %}

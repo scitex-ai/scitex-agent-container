@@ -145,6 +145,20 @@ def _stamp_host(rows: list[dict], target: HostTarget) -> list[dict]:
         stamped = dict(row)
         stamped["host"] = host
         stamped["host_display"] = host
+        # This row is now a cross-host claim. Only the owning host's exact
+        # incarnation birth may assert its selected engine/model; a spec fallback
+        # is a declaration that can be stale after launch or bypassed by
+        # ``--engine``. Preserve birth-bound values, otherwise qualify the
+        # provenance and fail closed to unknown.
+        source = str(stamped.get("runtime_identity_source") or "unknown")
+        if source != "birth_certificate":
+            stamped["engine"] = "unknown"
+            stamped["model"] = "unknown"
+            stamped["runtime_identity_source"] = (
+                "owning_host_spec_only"
+                if source == "spec"
+                else "owning_host_status_unavailable"
+            )
         out.append(stamped)
     return out
 

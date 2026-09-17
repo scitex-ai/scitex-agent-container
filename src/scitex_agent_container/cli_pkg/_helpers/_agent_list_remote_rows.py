@@ -182,7 +182,6 @@ def remote_instance_rows(
     row shape uniform. Helpers resolve through the ``_agent_list`` module
     namespace so the suite's real-attribute seams keep working.
     """
-    from ..._lifecycle._runtime_identity import resolve_runtime_identity
     from ..._state.auth_state import verdict_for
     from ..._state.state_store import list_active_instances
     from ...config import load_config
@@ -268,11 +267,22 @@ def remote_instance_rows(
             except Exception:  # stx-allow: fallback (reason: see inline comment)
                 account = ""
         status = statuses.get(name, "unknown")
-        identity = resolve_runtime_identity(
-            cfg,
-            running=status == "running",
-            birth_record=None,
-        )
+        # The coordinator can prove remote LIVENESS through ssh, but it did not
+        # observe that host's launch selection.  Its local copy of spec.yaml may
+        # be stale and an explicit --engine never edits it, so dressing those
+        # values as the selected Engine/Model would be a false authority claim.
+        # Fleet fan-out rows do not take this path: the owning host builds those
+        # rows itself and returns birth-bound identity in the same bounded ssh
+        # request.  This fallback therefore stays explicit and unknown.
+        identity = {
+            "runtime": "unknown",
+            "harness": "unknown",
+            "engine": "unknown",
+            "model": "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "owning_host_status_unavailable",
+        }
         row: dict = {
             "name": name,
             # A probe that could not OBSERVE the peer is "unknown" (hidden from

@@ -47,6 +47,7 @@ from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from ._account_list_format import (
     format_as_of_short,
@@ -302,18 +303,20 @@ def render_stored_table(
     table.add_column("Usage as of")
     for r in rows:
         cells = [
-            r.provider,
-            r.name,
-            _fmt_status(
-                r.freshness_state,
-                r.freshness_hours,
-                pause_reason=r.pause_reason,
-                pause_since=r.pause_since,
+            Text(str(r.provider)),
+            Text(str(r.name)),
+            Text(
+                _fmt_status(
+                    r.freshness_state,
+                    r.freshness_hours,
+                    pause_reason=r.pause_reason,
+                    pause_since=r.pause_since,
+                )
             ),
-            _fmt_identity_cell(r),
-            _fmt_last_update_cell(r.snapshot_as_of, now=now),
+            Text(_fmt_identity_cell(r)),
+            Text(_fmt_last_update_cell(r.snapshot_as_of, now=now)),
         ]
-        table.add_row(*([r.host or "—", *cells] if with_host else cells))
+        table.add_row(*([Text(str(r.host or "—")), *cells] if with_host else cells))
     return table
 
 

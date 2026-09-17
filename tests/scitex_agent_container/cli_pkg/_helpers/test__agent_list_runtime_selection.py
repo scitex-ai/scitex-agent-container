@@ -89,6 +89,19 @@ def test_verbose_listing_shows_runtime_identity_provenance(capsys) -> None:
     assert "Identity source" in rendered and "birth_certificate" in rendered
 
 
+def test_compact_listing_visibly_qualifies_runtime_identity_provenance(capsys) -> None:
+    # Arrange
+    rows = [_row()]
+
+    # Act
+    with _console_width(240):
+        print_agent_list(None, rows=rows)
+    rendered = capsys.readouterr().out
+
+    # Assert
+    assert "Identity source" in rendered and "birth_certificate" in rendered
+
+
 def test_narrow_details_preserve_full_runtime_identity_and_started_value() -> None:
     # Arrange
     row = {
