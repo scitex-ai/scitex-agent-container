@@ -40,8 +40,10 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
+import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,7 @@ SELF_NAME_ENV = "SAC_NAME"
 # getUpdates long-poll slot (HTTP 409). The twin stays reachable via the a2a
 # bus (``server:sac``) instead.
 _TELEGRAMMER_CHANNEL = "server:claude-code-telegrammer"
+_AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 __all__ = [
     "TWIN_PARENT_ENV",
@@ -92,6 +95,16 @@ class TwinSeedError(RuntimeError):
     """
 
 
+def _validate_agent_component(name: str, *, role: str) -> str:
+    """Return a strict single-component agent name or fail closed."""
+    if not isinstance(name, str) or not _AGENT_NAME_RE.fullmatch(name):
+        raise TwinSeedError(
+            f"invalid {role} agent name {name!r}: use one lowercase path "
+            "component containing only letters, digits, '-' and '_'"
+        )
+    return name
+
+
 def resolve_twin_name(
     parent_name: str,
     requested: str | None,
@@ -104,10 +117,14 @@ def resolve_twin_name(
     used, bumped to ``<parent>-twin-2`` / ``-3`` / ... on the first free
     suffix so a parent can carry several live twins at once.
     """
+    parent_name = _validate_agent_component(parent_name, role="parent")
     if requested:
-        return requested
+        resolved = _validate_agent_component(requested, role="twin")
+        if resolved == parent_name:
+            raise TwinSeedError("twin agent name must differ from its parent")
+        return resolved
     taken = {str(n) for n in (existing or ())}
-    base = f"{parent_name}-twin"
+    base = f"{parent_name}-fork"
     if base not in taken:
         return base
     n = 2
@@ -156,6 +173,44 @@ def build_twin_boot_kick(
     return "\n".join(lines)
 
 
+def _resolve_host_repo_from_binds(
+    container_workdir: str, parent_binds: Iterable[Any]
+) -> Path:
+    """Reverse-map a container workdir through the parent's bind table."""
+    from .._listen._inline_spec_bind_translate import _parse_bind
+
+    raw_workdir = str(container_workdir or "").strip()
+    workdir = PurePosixPath(raw_workdir)
+    if not raw_workdir or not workdir.is_absolute() or ".." in workdir.parts:
+        raise TwinSeedError(
+            f"parent container workdir must be an absolute normalized path: {raw_workdir!r}"
+        )
+    matches: list[tuple[int, Path, PurePosixPath]] = []
+    for raw_bind in parent_binds:
+        parsed = _parse_bind(raw_bind)
+        if parsed is None:
+            continue
+        host_src, container_dst, _mode, _shape = parsed
+        dst = PurePosixPath(container_dst)
+        if not dst.is_absolute() or ".." in dst.parts:
+            continue
+        try:
+            tail = workdir.relative_to(dst)
+        except ValueError:
+            continue
+        host = Path(os.path.expandvars(os.path.expanduser(host_src)))
+        if not host.is_absolute():
+            continue
+        matches.append((len(dst.parts), host, tail))
+    if not matches:
+        raise TwinSeedError(
+            f"no parent apptainer bind maps container workdir {raw_workdir!r} "
+            "to a host repository"
+        )
+    _depth, host, tail = max(matches, key=lambda item: item[0])
+    return host.joinpath(*tail.parts)
+
+
 def _twin_isolation_paths(
     parent_workdir: str,
     parent_overlay: str,
@@ -183,6 +238,40 @@ def _twin_isolation_paths(
     else:
         twin_overlay = Path("/scratch/sac/agents") / twin_name / "overlay"
     return str(twin_workdir), str(twin_overlay)
+
+
+def _normalize_selected_harness_authority(spec: dict[str, Any]) -> str:
+    """Prune mixed harness declarations to the one selected canonical entry."""
+    from ..config._harness_lookup import canonical_harness
+    from ..config._harness_types import resolve_spec_harness
+
+    selected = resolve_spec_harness(spec)
+    family = canonical_harness(selected)
+    if family is None:
+        raise TwinSeedError(f"parent selects unknown harness {selected!r}")
+    public = {"anthropic": "claude-code", "openai": "openai-agents"}.get(
+        family, family
+    )
+    harnesses = spec.get("available_harnesses")
+    if not isinstance(harnesses, dict):
+        return family
+    selected_entry = None
+    for key, value in harnesses.items():
+        if canonical_harness(str(key)) == family and isinstance(value, dict):
+            selected_entry = copy.deepcopy(value)
+            break
+    if selected_entry is None:
+        raise TwinSeedError(
+            f"parent selects harness {public!r}, but available_harnesses has no matching entry"
+        )
+    spec["harness"] = public
+    spec.pop("provider", None)
+    spec["available_harnesses"] = {public: selected_entry}
+    # These are compatibility projections of the selected canonical entry, not
+    # independent authorities. The loader recreates them at its typed boundary.
+    spec.pop("claude", None)
+    spec.pop("watchdog", None)
+    return family
 
 
 def derive_twin_spec(
@@ -241,6 +330,13 @@ def derive_twin_spec(
             "cannot derive a twin."
         )
 
+    selected_family = _normalize_selected_harness_authority(spec)
+    if selected_family == "hermes":
+        raise TwinSeedError(
+            "Hermes context inheritance is unavailable: SAC has no proven safe "
+            "fork for Hermes state.db/session semantics, so refusing to create a "
+            "twin rather than claiming Claude JSONL inheritance applies"
+        )
     selected_harness = str(spec.get("harness") or "").strip().lower()
     harnesses = spec.get("available_harnesses")
     selected_config = (
@@ -298,12 +394,14 @@ def derive_twin_spec(
     env.pop(SELF_NAME_ENV, None)
     env.pop(RETIRED_AGENT_ENV, None)
 
-    twin_workdir, twin_overlay = _twin_isolation_paths(
+    _unused_client_guess, twin_overlay = _twin_isolation_paths(
         str(spec.get("workdir") or ""),
         str(apptainer.get("overlay") or ""),
         twin_name,
     )
-    spec["workdir"] = twin_workdir
+    # ``spec.workdir`` is a CONTAINER path. The host listen reverse-maps the
+    # authoritative parent's bind table, creates the detached host worktree,
+    # and injects ``host-worktree:container-workdir`` before persistence.
     apptainer["overlay"] = twin_overlay
 
     restart = spec.setdefault("restart", {})
@@ -353,62 +451,103 @@ def _resolve_parent_to_home(parent_path: str, parent_doc: dict) -> str | None:
     return str(p) if p.is_dir() else None
 
 
-def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
-    """Create or verify the isolated detached checkout named by a twin spec."""
-    parent = Path(parent_workdir).expanduser()
-    target = Path(twin_workdir).expanduser()
-    if target.exists():
-        target_probe = subprocess.run(
-            ["git", "-C", str(target), "rev-parse", "--git-common-dir"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if target_probe.returncode != 0:
+def _lexical_path(raw: str | Path) -> Path:
+    """Absolute normalized path without resolving symlinks."""
+    return Path(os.path.abspath(os.path.expanduser(str(raw))))
+
+
+def _reject_symlink_components(path: Path, *, label: str) -> None:
+    """Reject symlinks (including dangling ones) in every existing component."""
+    absolute = _lexical_path(path)
+    chain = list(reversed(absolute.parents)) + [absolute]
+    for component in chain:
+        if os.path.lexists(component) and component.is_symlink():
             raise TwinSeedError(
-                f"twin workdir already exists but is not a git worktree: {target}"
-            )
-        parent_probe = subprocess.run(
-            ["git", "-C", str(parent), "rev-parse", "--git-common-dir"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if parent_probe.returncode != 0:
-            raise TwinSeedError(
-                f"parent workdir is not a git checkout; cannot isolate twin: {parent}"
+                f"{label} contains a symlinked path component: {component}"
             )
 
-        def _common_dir(root: Path, raw: str) -> Path:
-            path = Path(raw.strip())
-            return (path if path.is_absolute() else root / path).resolve()
 
-        if _common_dir(target, target_probe.stdout) != _common_dir(
-            parent, parent_probe.stdout
-        ):
-            raise TwinSeedError(
-                f"twin workdir belongs to a different git repository: {target}"
-            )
-        return False
-    parent_probe = subprocess.run(
-        ["git", "-C", str(parent), "rev-parse", "--show-toplevel"],
+def _git_probe(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
         check=False,
         capture_output=True,
         text=True,
     )
-    if parent_probe.returncode != 0:
+
+
+def _git_common_dir(root: Path) -> Path:
+    probe = _git_probe(root, "rev-parse", "--git-common-dir")
+    if probe.returncode != 0:
+        raise TwinSeedError(f"path is not a git worktree: {root}")
+    common = Path(probe.stdout.strip())
+    return (common if common.is_absolute() else root / common).resolve(strict=True)
+
+
+def _validate_registered_detached_worktree(parent: Path, target: Path) -> None:
+    """Verify an existing target is the exact safe worktree we may reuse."""
+    if target == parent:
+        raise TwinSeedError("twin workdir must be distinct from the parent workdir")
+    if not target.is_dir():
+        raise TwinSeedError(
+            f"twin workdir already exists but is not a git worktree: {target}"
+        )
+    top = _git_probe(target, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        raise TwinSeedError(
+            f"twin workdir already exists but is not a git worktree: {target}"
+        )
+    if _lexical_path(top.stdout.strip()) != target:
+        raise TwinSeedError(
+            f"twin workdir must be the exact git top-level path: {target}"
+        )
+    if _git_common_dir(target) != _git_common_dir(parent):
+        raise TwinSeedError(
+            f"twin workdir belongs to a different git repository: {target}"
+        )
+    listed = _git_probe(parent, "worktree", "list", "--porcelain")
+    registered = {
+        _lexical_path(line.removeprefix("worktree "))
+        for line in listed.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    if listed.returncode != 0 or target not in registered:
+        raise TwinSeedError(
+            f"twin workdir is not registered with the parent repository: {target}"
+        )
+    if _git_probe(target, "symbolic-ref", "-q", "HEAD").returncode == 0:
+        raise TwinSeedError(f"twin workdir must use detached HEAD: {target}")
+    status = _git_probe(target, "status", "--porcelain")
+    if status.returncode != 0 or status.stdout:
+        raise TwinSeedError(f"twin workdir is not clean: {target}")
+
+
+def _ensure_twin_worktree(parent_workdir: str, twin_workdir: str) -> bool:
+    """Create or verify one exact, clean, detached same-repository worktree."""
+    parent = _lexical_path(parent_workdir)
+    target = _lexical_path(twin_workdir)
+    _reject_symlink_components(parent, label="parent workdir")
+    _reject_symlink_components(target, label="twin workdir")
+    parent_top = _git_probe(parent, "rev-parse", "--show-toplevel")
+    if parent_top.returncode != 0:
         raise TwinSeedError(
             f"parent workdir is not a git checkout; cannot isolate twin: {parent}"
         )
+    if _lexical_path(parent_top.stdout.strip()) != parent:
+        raise TwinSeedError(
+            f"parent workdir must be the exact git top-level path: {parent}"
+        )
+    if os.path.lexists(target):
+        _validate_registered_detached_worktree(parent, target)
+        return False
     target.parent.mkdir(parents=True, exist_ok=True)
-    created = subprocess.run(
-        ["git", "-C", str(parent), "worktree", "add", "--detach", str(target), "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    _reject_symlink_components(target.parent, label="twin workdir parent")
+    created = _git_probe(parent, "worktree", "add", "--detach", str(target), "HEAD")
     if created.returncode != 0:
-        raise TwinSeedError("could not create isolated twin git worktree")
+        raise TwinSeedError(
+            f"could not create isolated twin git worktree: {created.stderr.strip()}"
+        )
+    _validate_registered_detached_worktree(parent, target)
     return True
 
 
@@ -457,7 +596,7 @@ def prepare_twin_spawn(
     if twin_name and twin_name in set(existing):
         raise TwinSeedError(
             f"twin name {twin_name!r} is already taken; pick another name or "
-            "omit it to auto-bump <parent>-twin-N."
+            "omit it to auto-bump <parent>-fork-N."
         )
     resolved_name = resolve_twin_name(parent_name, twin_name, existing)
 
@@ -557,6 +696,17 @@ def seed_twin_from_parent(config: Any, runtime: Any) -> bool:
     parent_name = str(env.get(TWIN_PARENT_ENV, "") or "").strip()
     if not parent_name:
         return False
+    twin_name = _validate_agent_component(
+        str(getattr(config, "name", "") or ""), role="twin"
+    )
+    _validate_agent_component(parent_name, role="parent")
+    if twin_name == parent_name:
+        raise TwinSeedError("twin agent name must differ from its parent")
+    if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
+        raise TwinSeedError(
+            "Hermes context inheritance is unavailable: refusing Claude JSONL/session-id "
+            "seeding for a Hermes state.db session"
+        )
 
     from .._runners._session_state import read_session_id, write_session_id
 

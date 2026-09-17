@@ -56,22 +56,31 @@ def _body(resp) -> dict:
     return json.loads(bytes(resp.body).decode("utf-8"))
 
 
-def _twin_spec(*, workdir: Path, overlay: Path) -> dict:
+def _twin_spec(*, workdir: str | Path, overlay: Path, binds: list[str] | None = None) -> dict:
     doc = explicit_doc(
         {
             "runtime": "tui",
-            "harness": "hermes",
+            "harness": "claude-code",
             "workdir": str(workdir),
             "apptainer": {
                 "image": "sac-base",
                 "overlay": str(overlay),
+                "binds": list(binds or []),
                 "env": {
                     CARDS_AGENT_ENV: "parent-twin",
                     TWIN_PARENT_ENV: "parent",
                 },
             },
             "available_harnesses": {
-                "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+                "claude-code": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "approval_policy": "never",
+                    "watchdog": {
+                        "enabled": False,
+                        "interval": 1.5,
+                        "responses": {"y_n": "1", "y_y_n": "2", "waiting": "wait"},
+                    },
+                }
             },
         },
         metadata={"labels": {"role": "worker"}},
@@ -85,7 +94,8 @@ def _twin_spec(*, workdir: Path, overlay: Path) -> dict:
 def test_materialized_twin_creates_worktree_on_host(home_root: Path) -> None:
     # Arrange
     parent_repo = home_root / "parent-repo"
-    twin_workdir = home_root / ".sac-twins" / "parent-twin" / "workdir"
+    container_workdir = "/home/agent/proj/repo"
+    twin_workdir = parent_repo.parent / ".sac-twins" / "parent-twin" / "workdir"
     parent_repo.mkdir()
     subprocess.run(["git", "init", "-q", str(parent_repo)], check=True)
     subprocess.run(
@@ -102,8 +112,9 @@ def test_materialized_twin_creates_worktree_on_host(home_root: Path) -> None:
         ["git", "-C", str(parent_repo), "commit", "-qm", "seed"], check=True
     )
     parent_spec = _twin_spec(
-        workdir=parent_repo,
+        workdir=container_workdir,
         overlay=home_root / "runtime" / "parent" / "overlay",
+        binds=[f"{parent_repo}:{container_workdir}:rw"],
     )
     parent_spec["spec"]["apptainer"]["env"] = {CARDS_AGENT_ENV: "parent"}
     parent_dir = (
@@ -114,20 +125,115 @@ def test_materialized_twin_creates_worktree_on_host(home_root: Path) -> None:
         yaml.safe_dump(parent_spec, sort_keys=False), encoding="utf-8"
     )
     child_spec = _twin_spec(
-        workdir=twin_workdir,
+        workdir=container_workdir,
         overlay=home_root / "runtime" / "parent" / ".sac-twins" / "parent-twin" / "overlay",
+        binds=[f"{parent_repo}:{container_workdir}:rw"],
     )
 
     # Act
     result = materialize_inline_spec(
-        "parent-twin", child_spec, overwrite=False, caller="parent"
+        "parent-twin", child_spec, overwrite=False, authority="admin"
     )
 
     # Assert
+    persisted = yaml.safe_load(
+        (home_root / ".scitex" / "agent-container" / "agents" / "parent-twin" / "spec.yaml").read_text()
+    )
     assert (
         result,
         (twin_workdir / "tracked.txt").read_text(encoding="utf-8"),
-    ) == (None, "parent\n")
+        persisted["spec"]["workdir"],
+        persisted["spec"]["apptainer"]["binds"][0],
+    ) == (None, "parent\n", container_workdir, f"{twin_workdir}:{container_workdir}:rw")
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", "/absolute", ".", ".."])
+def test_materialized_twin_rejects_child_traversal(home_root: Path, name: str) -> None:
+    # Arrange
+    spec = _valid_spec()
+    # Act
+    result = materialize_inline_spec(name, spec, overwrite=False)
+    # Assert
+    assert (result.status_code, _body(result)["kind"]) == (400, "invalid_agent_name")
+
+
+def test_materialized_twin_rejects_parent_traversal(home_root: Path) -> None:
+    # Arrange
+    child = _twin_spec(
+        workdir="/home/agent/proj/repo",
+        overlay=home_root / "overlay",
+    )
+    child["spec"]["apptainer"]["env"][TWIN_PARENT_ENV] = "../parent"
+    # Act
+    result = materialize_inline_spec("child", child, overwrite=False, caller="../parent")
+    # Assert
+    assert (result.status_code, _body(result)["kind"]) == (400, "invalid_agent_name")
+
+
+def test_materialized_twin_rejects_same_name_overwrite(home_root: Path) -> None:
+    # Arrange
+    agents = home_root / ".scitex" / "agent-container" / "agents"
+    parent = agents / "parent"
+    parent.mkdir(parents=True)
+    original = b"parent-authority\n"
+    (parent / "spec.yaml").write_bytes(original)
+    child = _twin_spec(workdir="/work/repo", overlay=home_root / "overlay")
+    # Act
+    result = materialize_inline_spec(
+        "parent", child, overwrite=True, caller="parent"
+    )
+    # Assert
+    assert (result.status_code, (parent / "spec.yaml").read_bytes()) == (400, original)
+
+
+def test_materialized_twin_fails_closed_for_self_claimed_agent_caller(home_root: Path) -> None:
+    # Arrange
+    child = _twin_spec(workdir="/work/repo", overlay=home_root / "overlay")
+    # Act
+    result = materialize_inline_spec(
+        "parent-twin", child, overwrite=False, caller="parent"
+    )
+    # Assert
+    assert (result.status_code, _body(result)["kind"]) == (
+        403,
+        "twin_agent_auth_unavailable",
+    )
+
+
+def test_materialized_twin_rolls_back_worktree_when_spec_write_fails(home_root: Path) -> None:
+    # Arrange
+    repo = home_root / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], check=True)
+    (repo / "f").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "f"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "seed"], check=True)
+    workdir = "/work/repo"
+    agents = home_root / ".scitex" / "agent-container" / "agents"
+    parent = agents / "parent"
+    parent.mkdir(parents=True)
+    parent_doc = _twin_spec(
+        workdir=workdir,
+        overlay=home_root / "runtime" / "parent" / "overlay",
+        binds=[f"{repo}:{workdir}:rw"],
+    )
+    parent_doc["spec"]["apptainer"]["env"] = {CARDS_AGENT_ENV: "parent"}
+    (parent / "spec.yaml").write_text(yaml.safe_dump(parent_doc), encoding="utf-8")
+    child_dir = agents / "parent-twin"
+    (child_dir / "spec.yaml").mkdir(parents=True)
+    child = _twin_spec(
+        workdir=workdir,
+        overlay=home_root / "runtime" / "parent" / ".sac-twins" / "parent-twin" / "overlay",
+    )
+    target = repo.parent / ".sac-twins" / "parent-twin" / "workdir"
+    # Act
+    result = materialize_inline_spec(
+        "parent-twin", child, overwrite=True, authority="admin"
+    )
+    # Assert
+    assert (result.status_code, target.exists()) == (500, False)
 
 
 class TestMaterializeValidSpec:

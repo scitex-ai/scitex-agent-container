@@ -46,6 +46,7 @@ def agent_twin(
     optional. Returns ``{"status":"ok","twin":..,"result":{..}}`` else
     ``{"status":"error","reason":..}``.
     """
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
     from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
 
@@ -56,8 +57,21 @@ def agent_twin(
     except TwinSeedError as exc:
         return {"status": "error", "reason": str(exc)}
 
+    in_sif = is_in_sif()
+    base_url = None
+    if not in_sif:
+        from ..._listen._config import listen_base_url
+
+        base_url = listen_base_url()
     try:
-        result = request_spawn(twin_name, spec=doc, caller=caller, assume_yes=True)
+        result = request_spawn(
+            twin_name,
+            spec=doc,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
+            base_url=base_url,
+            assume_yes=True,
+        )
     except SpawnRequestError as exc:
         return {
             "status": "error",

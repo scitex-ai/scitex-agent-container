@@ -215,8 +215,10 @@ def fork(
     # POST to the host listen (brokers on both host + in-container paths).
     import os
 
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
+    in_sif = is_in_sif()
     base_url = (os.environ.get("SAC_LISTEN_BASE_URL", "") or "").strip() or None
     if base_url is None:
         # Bare-host invocation: env not set — fall back to the canonical
@@ -229,7 +231,8 @@ def fork(
         result = request_spawn(
             resolved_name,
             spec=doc,
-            caller=caller,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
             base_url=base_url,
             assume_yes=True,
         )
