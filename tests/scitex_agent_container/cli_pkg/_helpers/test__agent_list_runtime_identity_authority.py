@@ -70,7 +70,7 @@ def test_subscription_identity_is_provider_slash_account() -> None:
     )
 
 
-def test_api_auth_names_env_slot_without_claiming_usage_billing() -> None:
+def test_api_auth_is_opaque_without_claiming_usage_billing() -> None:
     # Arrange
     birth = _birth(
         claude={
@@ -88,7 +88,7 @@ def test_api_auth_names_env_slot_without_claiming_usage_billing() -> None:
     # Assert
     assert (identity["billing_mode"], identity["auth_identity"]) == (
         "unspecified",
-        "api-key:DEEPSEEK_API_KEY",
+        "api-key",
     )
 
 
@@ -109,7 +109,9 @@ def test_explicit_usage_billing_declaration_is_preserved() -> None:
 
 def test_claude_oauth_identity_names_actual_stored_account() -> None:
     # Arrange
-    birth = _birth(claude={"account": "team-max", "provider": None})
+    birth = _birth(
+        harness="anthropic", claude={"account": "team-max", "provider": None}
+    )
 
     # Act
     identity = resolve_runtime_identity(
@@ -125,9 +127,10 @@ def test_claude_oauth_identity_names_actual_stored_account() -> None:
     )
 
 
-def test_claude_oauth_pool_identity_uses_selected_credentials_file_slug() -> None:
+def test_claude_oauth_pool_path_does_not_invent_an_account_label() -> None:
     # Arrange
     birth = _birth(
+        harness="anthropic",
         claude={
             "account": "",
             "provider": None,
@@ -143,7 +146,7 @@ def test_claude_oauth_pool_identity_uses_selected_credentials_file_slug() -> Non
     )
 
     # Assert
-    assert identity["auth_identity"] == "claude-code:picked-max"
+    assert identity["auth_identity"] == "unknown"
 
 
 def test_spec_fallback_is_labelled_when_birth_is_unavailable() -> None:
@@ -161,7 +164,7 @@ def test_spec_fallback_is_labelled_when_birth_is_unavailable() -> None:
         identity["engine"],
         identity["auth_identity"],
         identity["runtime_identity_source"],
-    ) == ("declared", "api-key:SAFE_ENV_NAME", "spec")
+    ) == ("declared", "api-key", "spec")
 
 
 def test_unknown_identity_is_explicit_when_no_evidence_exists() -> None:
@@ -196,7 +199,7 @@ def test_identity_never_emits_secret_value() -> None:
     )
 
     # Assert
-    assert sensitive not in rendered and "TOKEN_ENV" in rendered
+    assert sensitive not in rendered and "TOKEN_ENV" not in rendered
 
 
 def test_incarnation_batch_reader_uses_one_bounded_search_not_per_id_gets() -> None:

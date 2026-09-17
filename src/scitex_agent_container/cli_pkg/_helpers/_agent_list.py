@@ -10,7 +10,10 @@ importers are unchanged.
 
 from __future__ import annotations
 
-from ..._lifecycle._runtime_identity import resolve_runtime_identity
+from ..._lifecycle._runtime_identity import (
+    resolve_bound_birth_records,
+    resolve_runtime_identity,
+)
 from ..._state.registry import Registry
 from ...config import load_config
 
@@ -317,35 +320,20 @@ def get_agent_list_data(
             "labels": labels,
             "cfg": cfg,
             "config_path": config_path,
+            "registry_entry": entry,
         }
         prepared.append(prep)
 
-    # Correlate active local instances to immutable birth certificates with one
-    # bounded store query. Missing evidence is a labelled spec fallback.
-    active_by_name: dict[str, dict] = {}
-    prepared_names = {prep["name"] for prep in prepared}
-    for instance in active_instances:
-        instance_name = str(instance.get("name") or "")
-        if (
-            instance_name in prepared_names
-            and not instance.get("remote")
-            and str(instance.get("host") or "") == local_host
-            and instance_name not in active_by_name
-        ):
-            active_by_name[instance_name] = instance
-    incarnation_ids = tuple(
-        str(instance.get("id") or "")
-        for instance in active_by_name.values()
-        if instance.get("id")
-    )
-    birth_by_id: dict[str, dict] = {}
-    if incarnation_ids:
-        try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
-            from ..._state.state_store_incarnations import get_incarnations
-
-            birth_by_id = get_incarnations(incarnation_ids)
-        except Exception:  # stx-allow: fallback (reason: see inline comment)
-            birth_by_id = {}
+    # Exact incarnation evidence (marker/heartbeat/PID/session) binds a live
+    # process to one row.  Name+host recency is never birth authority.
+    try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
+        births_by_name = resolve_bound_birth_records(
+            [prep["registry_entry"] for prep in prepared],
+            active_instances=active_instances,
+            local_host=local_host,
+        )
+    except Exception:  # stx-allow: fallback (reason: see inline comment)
+        births_by_name = {}
 
     # Second pass: parallel local liveness probes with per-probe
     # timeout. The thread pool keeps the wall-clock cost low when many
@@ -494,8 +482,7 @@ def get_agent_list_data(
         # Credential inventory is verbose-only and deliberately separate from
         # the actual auth identity resolved from launch evidence below.
         account_label = "" if deferred else _safe_account_for(cfg)
-        active = active_by_name.get(name)
-        birth = birth_by_id.get(str((active or {}).get("id") or ""))
+        birth = births_by_name.get(name)
         identity = resolve_runtime_identity(
             cfg,
             running=is_live_status(status_val),

@@ -97,6 +97,8 @@ TAIL_ALPHA = (
 class _Listener(BaseHTTPRequestHandler):
     """Serves the SAC control-plane contract with bearer auth (real HTTP)."""
 
+    request_paths: list[str] = []
+
     def log_message(self, *args: Any) -> None:
         return  # silence request logging in tests
 
@@ -111,12 +113,16 @@ class _Listener(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 (http.server API)
+        type(self).request_paths.append(self.path.split("?", 1)[0])
         if not self._bearer_ok():
             self._send(401, b'{"error": "missing bearer token"}')
             return
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/agents":
-            self._send(200, json.dumps({"agents": AGENTS}).encode())
+            # The real listener batches status/runtime identity into this row;
+            # the dashboard must not fan out to /status per agent.
+            agents = [{**row, **STATUS.get(str(row.get("name")), {})} for row in AGENTS]
+            self._send(200, json.dumps({"agents": agents}).encode())
         elif path.endswith("/status"):
             name = path.rsplit("/status", 1)[0].rsplit("/", 1)[-1]
             if name == "delta":
@@ -144,6 +150,7 @@ def loopback(env_save_restore):
     over real HTTP with no patching.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Listener)
+    _Listener.request_paths.clear()
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -155,6 +162,13 @@ def loopback(env_save_restore):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.fixture
+def listener_requests(loopback):
+    """Paths observed by the real loopback listener for fan-out assertions."""
+    _Listener.request_paths.clear()
+    return _Listener.request_paths
 
 
 @pytest.fixture

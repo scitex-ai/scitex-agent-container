@@ -53,7 +53,7 @@ def _fmt_age(seconds: int | None) -> str:
     return f"{int(seconds // 86400)}d"
 
 
-def _status_cell(row: dict) -> str:
+def _status_cell(row: dict) -> Text:
     """The Status cell — auth-aware, and honest about how old its evidence is.
 
     An ``auth-failed`` row is the entire point of the auth cache: that agent is
@@ -70,14 +70,14 @@ def _status_cell(row: dict) -> str:
     status = row.get("status") or "unknown"
     if status != STATUS_AUTH_FAILED:
         col = _CMAP.get(status, "white")
-        return f"[{col}]{status}[/{col}]"
+        return Text(str(status), style=col)
     age = _fmt_age(row.get("auth_check_age_s")) or "age unknown"
     if row.get("auth_check_stale"):
-        return f"[yellow]auth failed? ({age} ago)[/yellow]"
-    return f"[bold red]auth failed ({age} ago)[/bold red]"
+        return Text(f"auth failed? ({age} ago)", style="yellow")
+    return Text(f"auth failed ({age} ago)", style="bold red")
 
 
-def _auth_cell(row: dict) -> str:
+def _auth_cell(row: dict) -> Text:
     """The verbose-only Auth cell: the raw cached verdict + its age.
 
     Shown for EVERY row, not just failing ones, because "when was this agent last
@@ -86,15 +86,21 @@ def _auth_cell(row: dict) -> str:
     is unverified rather than healthy. That is worth being able to see.
     """
     if not row.get("auth_checked_at"):
-        return "[dim]never[/dim]"
+        return Text("never", style="dim")
     age = _fmt_age(row.get("auth_check_age_s"))
     stale = row.get("auth_check_stale")
     if row.get("auth_failed"):
         reason = row.get("auth_reason") or "unknown"
         remedy = row.get("auth_remedy") or "restart"
         body = f"failed {age} ({reason} → {remedy})"
-        return f"[yellow]{body}?[/yellow]" if stale else f"[bold red]{body}[/bold red]"
-    return f"[yellow]ok? {age}[/yellow]" if stale else f"[green]ok {age}[/green]"
+        return Text(
+            f"{body}?" if stale else body,
+            style="yellow" if stale else "bold red",
+        )
+    return Text(
+        f"ok? {age}" if stale else f"ok {age}",
+        style="yellow" if stale else "green",
+    )
 
 
 def _started_cell(row: dict) -> str:
@@ -114,6 +120,8 @@ def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
         f"  Harness: {row.get('harness') or '—'}",
         f"  Engine: {row.get('engine') or '—'}",
         f"  Model: {row.get('model') or '—'}",
+        "  Identity source: "
+        f"{row.get('runtime_identity_source') or 'unknown'}",
         f"  Started: {_started_cell(row)}",
     ]
     if verbose:
@@ -121,9 +129,7 @@ def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
             [
                 "  Stored credential: "
                 f"{row.get('stored_credential') or row.get('account') or '—'}",
-                "  Identity source: "
-                f"{row.get('runtime_identity_source') or 'unknown'}",
-                f"  Auth status: {Text.from_markup(_auth_cell(row)).plain}",
+                f"  Auth status: {_auth_cell(row).plain}",
                 f"  Path: {row.get('path') or '—'}",
             ]
         )
@@ -157,20 +163,28 @@ def _print_auth_footer(data: list[dict]) -> None:
     hint = "run `sac agents auth-status` (or put it on a timer)"
     if not ages:
         console.print(
-            f"[yellow]auth: never checked — a green agent is NOT verified "
-            f"working, only tmux-alive; {hint}[/yellow]"
+            Text(
+                "auth: never checked — a green agent is NOT verified "
+                f"working, only tmux-alive; {hint}",
+                style="yellow",
+            )
         )
         return
     freshest = min(ages)
     if freshest > STALE_AFTER_S:
         console.print(
-            f"[yellow]auth: last checked {_fmt_age(freshest)} ago (STALE) — "
-            f"green is no longer verified; {hint}[/yellow]"
+            Text(
+                f"auth: last checked {_fmt_age(freshest)} ago (STALE) — "
+                f"green is no longer verified; {hint}",
+                style="yellow",
+            )
         )
     else:
         unchecked = len(live) - len(ages)
         extra = f", {unchecked} unchecked" if unchecked else ""
-        console.print(f"[dim]auth: checked {_fmt_age(freshest)} ago{extra}[/dim]")
+        console.print(
+            Text(f"auth: checked {_fmt_age(freshest)} ago{extra}", style="dim")
+        )
     if failed:
         detail = ", ".join(
             f"{r['name']} ({r.get('auth_reason') or 'unknown'} → "
@@ -178,8 +192,10 @@ def _print_auth_footer(data: list[dict]) -> None:
             for r in failed
         )
         console.print(
-            f"[bold red]{len(failed)} agent(s) cannot authenticate: {detail}"
-            "[/bold red]"
+            Text(
+                f"{len(failed)} agent(s) cannot authenticate: {detail}",
+                style="bold red",
+            )
         )
 
 
@@ -359,13 +375,15 @@ def print_agent_list(
     table.add_column("Auth identity", overflow="fold")
     table.add_column("Harness")
     table.add_column("Engine / Model")
+    # Provenance is part of the compact claim: without it a spec declaration
+    # and a launch-bound selection look identical.
+    table.add_column("Identity source", overflow="fold")
     # Account labels (e.g. ``<name> (<email>)``) can be long; fold within
     # the cell rather than stealing width from the name column.
     # Account folds the long ``<name> (<email>)`` label to ~5 lines; show the
     # short account name only by default (no_wrap), full label in --verbose.
     if verbose:
         table.add_column("Stored credential", overflow="fold")
-        table.add_column("Identity source")
     # ``Auth`` (the cached verdict + its age, for EVERY row) answers "is this
     # green verified, or merely tmux-alive?" — but one extra column on the
     # default view is a cost the compact view should not pay, so it lives behind
@@ -383,12 +401,15 @@ def print_agent_list(
         # from ``host_display`` (set by get_agent_list_data), not the raw
         # ``"local"`` sentinel. Fall back to the raw host, then the sentinel.
         host = row.get("host_display") or row.get("host") or "local"
-        host_cell = f"[cyan]{host}[/cyan]"
+        host_cell = Text(str(host), style="cyan")
         errors = row.get("validation_errors") or []
         yaml_cell = (
-            f"[bold red]✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}[/bold red]"
+            Text(
+                f"✗ {', '.join(_extract_damaged_fields(errors)) or 'errors'}",
+                style="bold red",
+            )
             if errors
-            else "[green]✓[/green]"
+            else Text("✓", style="green")
         )
         # Started column: render the registry's raw ISO-8601 UTC stamp as a
         # pinned-tz ``YYYY-MM-DD HH:MM (JST)`` for readability (operator TG
@@ -401,23 +422,23 @@ def print_agent_list(
         if not verbose and " (" in account_cell:
             account_cell = account_cell.split(" (", 1)[0]
         cells = [
-            row["name"],
+            Text(str(row["name"])),
             _status_cell(row),
             yaml_cell,
             host_cell,
-            row.get("billing_mode") or "unspecified",
-            row.get("auth_identity") or "unknown",
-            row.get("harness") or "—",
-            f"{row.get('engine') or '—'} / {row.get('model') or '—'}",
+            Text(str(row.get("billing_mode") or "unspecified")),
+            Text(str(row.get("auth_identity") or "unknown")),
+            Text(str(row.get("harness") or "—")),
+            Text(f"{row.get('engine') or '—'} / {row.get('model') or '—'}"),
+            Text(str(row.get("runtime_identity_source") or "unknown")),
         ]
         if verbose:
-            cells.append(account_cell)
-            cells.append(row.get("runtime_identity_source") or "unknown")
+            cells.append(Text(str(account_cell)))
         if verbose:
             cells.append(_auth_cell(row))
         if verbose:
-            cells.append(row.get("path") or "—")
-        cells.append(started)
+            cells.append(Text(str(row.get("path") or "—")))
+        cells.append(Text(str(started)))
         table.add_row(*cells)
 
     console.print(table)
@@ -452,10 +473,10 @@ def print_agent_list(
         for row in data:
             if row.get("validation_errors"):
                 console.print(
-                    f"[bold red]✗ {row['name']}[/bold red] validation errors:"
+                    Text(f"✗ {row['name']} validation errors:", style="bold red")
                 )
                 for err in row["validation_errors"]:
-                    console.print(f"    [red]- {err}[/red]")
+                    console.print(Text(f"    - {err}", style="red"))
 
 
 def _extract_damaged_fields(errors: list[str]) -> list[str]:
