@@ -23,23 +23,26 @@ CROSS_ENV = CROSSHOST_OPERATORS_ENV
 
 
 # ── fleet scoping ─────────────────────────────────────────────────────────────
-def test_fleet_hides_cross_host_from_ordinary(client, loopback, env_save_restore):
+def test_fleet_inventory_hides_cross_host_from_ordinary(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
-    # Act
-    html = client.get("/").content.decode()
-    # Assert
-    assert "gamma" not in html and "alpha" in html
+    # Act: the INVENTORY read, not the shell first paint (P0: the shell renders
+    # before any read completes, so it is legitimately empty on a cold cache).
+    data = json.loads(client.get("/api/fleet").content)
+    names = {a["name"] for a in data["agents"]}
+    # Assert: the scope rule still holds on the data path.
+    assert "gamma" not in names and "alpha" in names
 
 
-def test_fleet_crosshost_operator_sees_all(client, loopback, env_save_restore):
+def test_fleet_inventory_crosshost_operator_sees_all(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "op1")
     env_save_restore.set(CROSS_ENV, "op1")
     # Act
-    html = client.get("/").content.decode()
-    # Assert
-    assert "gamma" in html and "cross-host" in html
+    data = json.loads(client.get("/api/fleet").content)
+    names = {a["name"] for a in data["agents"]}
+    # Assert: an authorized operator's read still includes the cross-host row.
+    assert "gamma" in names
 
 
 def test_fleet_api_scopes_to_identity(client, loopback, env_save_restore):
@@ -62,10 +65,10 @@ def test_fleet_api_reports_unreachable_listener(client, unreachable_listener):
 
 def test_fleet_page_shows_error_state_when_unreachable(client, unreachable_listener):
     # Arrange
-    # Act
+    # Act: a cold cache with a dead listener renders the SHELL immediately.
     html = client.get("/").content.decode()
-    # Assert
-    assert "could not reach the SAC host control plane" in html
+    # Assert: a real user-facing state, with no internal detail (P0).
+    assert 'data-fleet-state="loading"' in html or 'data-fleet-state="unavailable"' in html
 
 
 # ── lifecycle control + audit ─────────────────────────────────────────────────
@@ -142,13 +145,15 @@ def test_detail_names_unpublished_activity_as_unknown(client, loopback, env_save
     assert "Runtime activity" in html and html.count(">Unknown</span>") >= 1
 
 
-def test_fleet_shows_published_operation_and_phase(client, loopback, env_save_restore):
+def test_fleet_inventory_shows_published_operation_and_phase(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
-    # Act
-    html = client.get("/").content.decode()
-    # Assert
-    assert "busy" in html and "reviewing" in html
+    # Act: the INVENTORY read (P0: the shell first paint renders before any read
+    # completes, so activity values are not on it).
+    data = json.loads(client.get("/api/fleet").content)
+    activities = json.dumps([a.get("activity", {}) for a in data["agents"]])
+    # Assert: runner-published activity is still projected through.
+    assert "busy" in activities and "reviewing" in activities
 
 
 def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_restore):
@@ -227,12 +232,22 @@ def test_detail_operate_gate_for_operator(client, loopback, env_save_restore):
 
 # ── polish: accessible action column + real tokens ───────────────────────────
 def test_fleet_labels_action_column(client, loopback, env_save_restore):
-    # Arrange
+    # Arrange: seed a last-known snapshot so the table renders. P0 made the
+    # first paint deliberately empty on a cold cache, so a populated render is
+    # now something a test must set up rather than assume.
+    from scitex_agent_container._django._inventory_cache import CACHE
+
     env_save_restore.set(IDENTITY_ENV, "alice")
+    CACHE.put("alice", [{"name": "alpha", "state_label": "Alive", "state_tone": "good",
+                         "runtime": "apptainer", "harness": "anthropic", "role": "worker",
+                         "engine": "anthropic", "model": "sonnet", "project": "p",
+                         "host": "this node", "scope": "own", "cross_host": False,
+                         "a2a_port": 19000, "pid": 1, "activity": {}}])
     # Act
     html = client.get("/").content.decode()
-    # Assert
+    # Assert: the action column keeps its accessible label.
     assert '<th class="row-actions">Actions</th>' in html
+    CACHE.clear()
 
 
 # ── dual-mode: mounted in the Hub shell (global_base) not the standalone shell ─

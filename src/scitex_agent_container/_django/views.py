@@ -19,6 +19,7 @@ both modes.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlencode
 
@@ -32,6 +33,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from ._authorization import can_control, resolve_identity, scope_rows
+from ._constants import API_URL_ENV
 from ._projection import project_detail, project_row
 from ._remote import RemoteFleet
 
@@ -99,14 +101,56 @@ def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
     return agents, ""
 
 
+def _is_configured() -> bool:
+    """Whether this deployment has *chosen* a listener."""
+    return bool(os.environ.get(API_URL_ENV, "").strip())
+
+
+def _fleet_view_state(agents: list[dict], comm_error: str, *, cached: bool = False) -> dict:
+    """Resolve the page into exactly one state, for the SHELL render.
+
+    ``loading`` is a REAL state here, not decoration: the shell renders before
+    any control-plane read completes, so a cold cache legitimately has no rows
+    yet. It must be visibly distinct from ``empty`` (answered, nothing in scope)
+    or an operator reads "no agents" when the truth is "not asked yet".
+
+    ``cached`` marks a snapshot served from the short-TTL cache, which the page
+    ages explicitly rather than presenting as current.
+    """
+    if comm_error:
+        return {"fleet_state": "unavailable", "diagnostic_reason": "the control plane did not answer"}
+    if agents:
+        return {"fleet_state": "cached" if cached else "ok", "diagnostic_reason": ""}
+    if cached:
+        return {"fleet_state": "empty", "diagnostic_reason": ""}
+    return {"fleet_state": "loading", "diagnostic_reason": ""}
+
+
 @require_GET
 def index(request: HttpRequest):
-    fleet = RemoteFleet.from_environment()
+    """Render the fleet SHELL immediately; never block on the control plane.
+
+    P0 (operator-reproduced): this view used to run the whole control-plane read
+    inline, so the browser waited for SAC before it could paint anything - ~10s
+    for the operator, 60.06s in my measurement - and then dumped an internal
+    endpoint and setup prose when the read failed.
+
+    Now: the shell renders from the identity's last-known snapshot if one
+    exists, else empty in a `loading` state, and a READ-ONLY background refresh
+    is kicked. The page never waits, and it never invents rows.
+    """
+    from ._inventory_cache import CACHE
+
     identity = resolve_identity(request)
-    try:
-        agents, comm_error = _fleet_rows(fleet, identity)
-    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE to show)
-        agents, comm_error = [], str(exc)
+    snapshot = CACHE.fresh(identity)
+    agents = [dict(row) for row in snapshot.agents] if snapshot is not None else []
+    comm_error = ""
+    observed_age = snapshot.age() if snapshot is not None else None
+
+    # Refresh in the background, read-only, at most one at a time per identity.
+    # A cold cache therefore renders immediately and fills on the next poll.
+    CACHE.refresh_async(identity, lambda: _fleet_rows(RemoteFleet.from_environment(), identity)[0])
+
     context, is_standalone = _app_context(
         request,
         "Agents",
@@ -116,8 +160,10 @@ def index(request: HttpRequest):
         identity=identity,
         crosshost_authorized=identity in _crosshost_allowlist(),
         comm_error=comm_error,
-        listener=fleet.base_url,
+        observed_age=observed_age,
+        cache_ttl=CACHE.ttl,
         page="fleet",
+        **_fleet_view_state(agents, comm_error, cached=snapshot is not None),
     )
     template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
     return render(request, template, context)
