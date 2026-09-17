@@ -20,6 +20,7 @@ urlpatterns = [
     path("timeline/", views.timeline, name="timeline"),
     path("<str:name>/", views.detail, name="detail"),
     path("<str:name>/action", views.lifecycle_action, name="lifecycle_action"),
+    path("<str:name>/message", views.message_action, name="message_action"),
 ]
 
 __all__ = ["urlpatterns"]
