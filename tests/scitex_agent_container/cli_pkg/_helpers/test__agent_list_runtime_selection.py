@@ -115,8 +115,9 @@ def test_narrow_details_preserve_full_runtime_identity_and_started_value() -> No
 
     # Assert
     assert (
+        "Host: scitex-compute-03" in rendered,
         "Stored credential: credential-label" in rendered,
         "2026-07-13 06:36 (JST)" in rendered,
         "Engine: opencode-go-deepseek-v4.1-flash" in rendered,
         "Identity source: birth_certificate" in rendered,
-    ) == (True, True, True, True)
+    ) == (True, True, True, True, True)
