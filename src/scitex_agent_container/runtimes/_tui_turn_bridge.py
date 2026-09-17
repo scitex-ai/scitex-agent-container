@@ -981,7 +981,10 @@ def serve(  # pragma: no cover - integration entry: installs main-thread-only si
 # Subprocess entry point
 # ---------------------------------------------------------------------------
 def _build_on_turn(
-    config: AgentConfig, *, runtime: Any | None = None
+    config: AgentConfig,
+    *,
+    runtime: Any | None = None,
+    native_codex_send: Callable[[AgentConfig, str], object] | None = None,
 ) -> Callable[..., Any | None]:
     """Inject callback that drives one TUI turn through its runtime adapter.
 
@@ -1000,6 +1003,14 @@ def _build_on_turn(
         from .._lifecycle._runtime_select import _get_runtime
 
         runtime = _get_runtime(config)
+
+    from ..config._harness_registry import CODEX_TUI, resolve_harness_key
+
+    native_codex = resolve_harness_key(config) == CODEX_TUI
+    if native_codex and native_codex_send is None:
+        from ._codex_tui_native import deliver_native_codex_turn
+
+        native_codex_send = deliver_native_codex_turn
 
     def on_turn(
         text: str,
@@ -1045,22 +1056,29 @@ def _build_on_turn(
         # dispatches to live agents across four pane states produced zero
         # completed tasks, one over a 35-minute window with no restart in it.
         # Claude does queue them; the queue does not reliably drain.
-        visible_send = getattr(runtime, "send_visible_turn", None)
-        if visible_delivery_id and callable(visible_send):
-            marker = f"<!-- delivery:{visible_delivery_id} -->"
-            visible_text = text if marker in text else f"{text}\n{marker}"
+        marker = f"<!-- delivery:{visible_delivery_id} -->"
+        visible_text = text if not visible_delivery_id or marker in text else f"{text}\n{marker}"
+        if native_codex:
+            if native_codex_send is None:  # pragma: no cover - guarded above
+                raise RuntimeError("native Codex turn sender was not initialized")
+            # App-server acknowledgement is the admission boundary.  There is
+            # intentionally no pane fallback: a failed/ambiguous RPC must
+            # leave the durable source pending instead of risking a duplicate.
+            native_codex_send(config, visible_text)
+            delivered = True
+        else:
+            visible_send = getattr(runtime, "send_visible_turn", None)
+        if not native_codex and visible_delivery_id and callable(visible_send):
             delivered = visible_send(
                 config,
                 visible_text,
                 visible_delivery_id=visible_delivery_id,
                 delivery_mode=delivery_mode,
             )
-        else:
+        elif not native_codex:
             interactive_send = getattr(runtime, "send_interactive_turn", None)
             if callable(interactive_send):
-                delivered = interactive_send(
-                    config, text, delivery_mode=delivery_mode
-                )
+                delivered = interactive_send(config, text, delivery_mode=delivery_mode)
             elif delivery_mode == "queue":
                 raise RuntimeError(
                     "this runtime does not expose explicit queue delivery"
@@ -1117,7 +1135,7 @@ def _build_on_turn(
     # Read by the bridge handler to require responder-issued visibility IDs
     # for ordinary SAC turns.  A named capability is preferable to guessing
     # from a callback's return value after it may already have lost the input.
-    on_turn._sac_requires_visible_delivery = callable(  # type: ignore[attr-defined]
+    on_turn._sac_requires_visible_delivery = native_codex or callable(  # type: ignore[attr-defined]
         getattr(runtime, "send_visible_turn", None)
     )
     return on_turn

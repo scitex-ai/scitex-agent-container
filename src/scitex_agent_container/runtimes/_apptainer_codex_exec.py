@@ -28,7 +28,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
+import signal
+import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .._logging import get_logger
@@ -304,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
     paths: list[str] = []
     inline: list[str] = []
     hooks_from = ""
+    remote_endpoint_file = ""
     while args and args[0] != "--":
         flag = args.pop(0)
         if flag == "--mcp-config" and args:
@@ -312,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             inline.append(args.pop(0))
         elif flag == "--hooks-from" and args:
             hooks_from = args.pop(0)
+        elif flag == "--remote-endpoint-file" and args:
+            remote_endpoint_file = args.pop(0)
         else:
             _log.error("codex-exec: unexpected argument %r", flag)
             return 2
@@ -320,7 +328,10 @@ def main(argv: list[str] | None = None) -> int:
     binary = resolve_codex_binary()
     if hooks_from:
         write_hooks_from(hooks_from, os.environ.get("CODEX_HOME", ""))
-    codex_argv = [binary, *args, *mcp_overrides(_load_documents(paths, inline))]
+    overrides = mcp_overrides(_load_documents(paths, inline))
+    codex_argv = [binary, *args, *overrides]
+    if remote_endpoint_file:
+        return _run_remote_tui(binary, codex_argv, Path(remote_endpoint_file))
     try:
         os.execv(binary, codex_argv)
     except OSError as exc:
@@ -333,6 +344,120 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 127
     return 0  # pragma: no cover — execv does not return
+
+
+def _reserve_loopback_port() -> int:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+    finally:
+        probe.close()
+
+
+def _endpoint_accepts(endpoint: str) -> bool:
+    port = int(endpoint.rsplit(":", 1)[1])
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def _stop_child(child: subprocess.Popen) -> None:
+    if child.poll() is not None:
+        return
+    child.terminate()
+    try:
+        child.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=2)
+
+
+_REMOTE_TOKEN_ENV = "SAC_CODEX_REMOTE_TOKEN"
+
+
+def remote_tui_argv(binary: str, codex_argv: list[str], endpoint: str) -> list[str]:
+    """Attach the visible CLI to the exact app-server the bridge controls."""
+    return [
+        binary,
+        "--remote",
+        endpoint,
+        "--remote-auth-token-env",
+        _REMOTE_TOKEN_ENV,
+        *codex_argv[1:],
+    ]
+
+
+def _run_remote_tui(binary: str, codex_argv: list[str], endpoint_file: Path) -> int:
+    """Own one app-server and attach the visible TUI to it."""
+    endpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    if endpoint_file.exists():
+        endpoint_file.unlink()
+    token_file = endpoint_file.with_suffix(".token")
+    token = secrets.token_urlsafe(32)
+    token_file.write_text(token + "\n", encoding="utf-8")
+    token_file.chmod(0o600)
+    endpoint = f"ws://127.0.0.1:{_reserve_loopback_port()}"
+
+    server_log = endpoint_file.with_suffix(".log")
+    with server_log.open("ab") as stream:
+        server = subprocess.Popen(
+            [
+                binary,
+                "app-server",
+                "--listen",
+                endpoint,
+                "--ws-auth",
+                "capability-token",
+                "--ws-token-file",
+                str(token_file),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=stream,
+            stderr=stream,
+        )
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and server.poll() is None:
+            if _endpoint_accepts(endpoint):
+                break
+            time.sleep(0.1)
+        else:
+            _stop_child(server)
+            token_file.unlink(missing_ok=True)
+            _log.error(
+                "codex-exec: app-server did not bind %s; see %s",
+                endpoint,
+                server_log,
+            )
+            return 70
+
+        endpoint_file.write_text(endpoint + "\n", encoding="utf-8")
+        child_env = os.environ.copy()
+        child_env[_REMOTE_TOKEN_ENV] = token
+        tui = subprocess.Popen(
+            remote_tui_argv(binary, codex_argv, endpoint), env=child_env
+        )
+
+        def _forward(signum: int, _frame: object) -> None:
+            if tui.poll() is None:
+                tui.send_signal(signum)
+
+        previous = {
+            sig: signal.signal(sig, _forward) for sig in (signal.SIGTERM, signal.SIGINT)
+        }
+        try:
+            return tui.wait()
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            _stop_child(tui)
+            _stop_child(server)
+            if endpoint_file.exists():
+                endpoint_file.unlink()
+            if token_file.exists():
+                token_file.unlink()
 
 
 if __name__ == "__main__":

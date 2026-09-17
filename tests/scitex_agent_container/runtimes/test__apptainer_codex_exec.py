@@ -13,6 +13,7 @@ from scitex_agent_container.runtimes._apptainer_codex_exec import (
     adapt_hook_commands,
     inherited_env_names,
     mcp_overrides,
+    remote_tui_argv,
     resolve_codex_binary,
     split_env_placeholders,
     write_hooks_from,
@@ -289,3 +290,24 @@ def test_mcp_env_vars_include_the_inherited_pane_names():
     seen = _flags([document], {"SCITEX_STORE_DSN": "postgresql://example/db"})
     # Assert
     assert seen["mcp_servers.tg.env_vars"] == '["CCT_AGENT_ID", "SCITEX_STORE_DSN"]'
+
+
+def test_visible_tui_attaches_to_the_owned_app_server() -> None:
+    # Arrange
+    original = ["/opt/codex", "resume", "--last", "-c", 'model="gpt"']
+
+    # Act
+    argv = remote_tui_argv("/opt/codex", original, "ws://127.0.0.1:39001")
+
+    # Assert
+    assert argv == [
+        "/opt/codex",
+        "--remote",
+        "ws://127.0.0.1:39001",
+        "--remote-auth-token-env",
+        "SAC_CODEX_REMOTE_TOKEN",
+        "resume",
+        "--last",
+        "-c",
+        'model="gpt"',
+    ]

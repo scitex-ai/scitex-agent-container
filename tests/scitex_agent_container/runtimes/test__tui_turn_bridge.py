@@ -1331,6 +1331,26 @@ def test_build_on_turn_passes_text_and_wait_ready_false() -> None:
     assert seen == [("wake up", False)]
 
 
+def test_codex_tui_uses_native_app_server_instead_of_pane_keys() -> None:
+    # Arrange
+    seen: list[str] = []
+    config = SimpleNamespace(name="codex-agent", harness="codex", runtime="tui")
+    runtime = SimpleNamespace(
+        send_turn=lambda *_args, **_kwargs: pytest.fail("pane fallback was used")
+    )
+    on_turn = bridge._build_on_turn(
+        config,
+        runtime=runtime,
+        native_codex_send=lambda _config, text: seen.append(text),
+    )
+
+    # Act
+    on_turn("change course", visible_delivery_id="msg-41")
+
+    # Assert
+    assert seen == ["change course\n<!-- delivery:msg-41 -->"]
+
+
 def test_build_on_turn_preserves_native_visible_delivery_receipt() -> None:
     # Arrange
     receipt = SimpleNamespace(

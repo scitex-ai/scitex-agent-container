@@ -181,7 +181,15 @@ def codex_tui_argv(
     "empty hook command", and skip prompt/agent/async hook TYPES by their
     Claude names), so the fleet's hooks port by copy, not by rewrite.
     """
-    argv: list[str] = ["python3", "-m", CODEX_EXEC_MODULE]
+    from ._codex_tui_native import codex_app_server_container_endpoint_file
+
+    argv: list[str] = [
+        "python3",
+        "-m",
+        CODEX_EXEC_MODULE,
+        "--remote-endpoint-file",
+        str(codex_app_server_container_endpoint_file(config)),
+    ]
     if mcp_config:
         argv += ["--mcp-config", mcp_config]
     if channel_mcp:

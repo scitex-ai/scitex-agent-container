@@ -163,7 +163,7 @@ def test_argv_hands_the_mcp_files_to_the_shim():
         config, mcp_config="/home/agent/.mcp.json", channel_mcp='{"a":1}'
     )
     # Assert
-    assert argv[3:8] == [
+    assert argv[5:10] == [
         "--mcp-config",
         "/home/agent/.mcp.json",
         "--mcp-json",
@@ -208,7 +208,20 @@ def test_argv_hands_the_settings_to_the_shim_for_hooks():
     # Act
     argv = codex_tui_argv(config, settings="/home/agent/.claude/settings.json")
     # Assert
-    assert argv[3:5] == ["--hooks-from", "/home/agent/.claude/settings.json"]
+    assert argv[5:7] == ["--hooks-from", "/home/agent/.claude/settings.json"]
+
+
+def test_argv_requires_a_private_remote_app_server_socket() -> None:
+    # Arrange
+    config = _config()
+
+    # Act
+    argv = codex_tui_argv(config)
+
+    # Assert
+    assert argv[3] == "--remote-endpoint-file" and argv[4].endswith(
+        "/codex-app-server.endpoint"
+    )
 
 
 def test_overrides_trust_the_workdir_up_front():
