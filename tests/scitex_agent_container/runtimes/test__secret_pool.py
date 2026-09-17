@@ -31,6 +31,9 @@ from pathlib import Path
 
 import pytest
 
+from scitex_agent_container.config._provider_secret_registry import (
+    REGISTERED_PROVIDER_SECRET_NAMES,
+)
 from scitex_agent_container.runtimes import _secret_pool as secret_pool_mod
 from scitex_agent_container.runtimes._secret_pool import (
     _ALLOWED_SECRET_NAMES,
@@ -212,6 +215,21 @@ _DISALLOWED_SUBPROCESS_HOOKS = [
     "ZDOTDIR",
 ]
 
+_QWEN_OVERRIDE_EXECUTION_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
+
 
 @pytest.mark.parametrize("name", _DISALLOWED_SUBPROCESS_HOOKS)
 def test_subprocess_hook_variable_names_are_filtered(name: str) -> None:
@@ -223,6 +241,37 @@ def test_subprocess_hook_variable_names_are_filtered(name: str) -> None:
 
     # Assert
     assert parsed == {}
+
+
+@pytest.mark.parametrize("name", _QWEN_OVERRIDE_EXECUTION_HOOKS)
+def test_qwen_override_cannot_admit_execution_hook_to_pool_parser(
+    name: str, env_save_restore
+) -> None:
+    # Arrange — hostile host policy names the hook and the pool carries it.
+    env_save_restore.set("SAC_QWEN_GATEWAY_TOKEN_ENV", name)
+
+    # Act
+    parsed = _parse_secret_file(f"{name}=attacker-controlled\n")
+
+    # Assert — pool admission is fixed in code, never extended from the env.
+    assert parsed == {}
+
+
+def test_provider_secret_registry_contains_only_current_pool_consumers() -> None:
+    # Arrange
+    expected = frozenset(
+        {
+            "OPENCODE_GO_API_KEY",
+            "SAC_LOCAL_GPTOSS_KEY",
+            "SCITEX_GENAI_GATEWAY_API_KEY",
+        }
+    )
+
+    # Act
+    names = REGISTERED_PROVIDER_SECRET_NAMES
+
+    # Assert — speculative provider names require a real consumer first.
+    assert names == expected
 
 
 @pytest.mark.parametrize("name", sorted(_ALLOWED_SECRET_NAMES))

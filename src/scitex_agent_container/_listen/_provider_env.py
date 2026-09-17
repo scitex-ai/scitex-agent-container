@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 
 from ..config import AgentConfig, load_config
 from ..config._qwen_gateway import (
+    QwenGatewayTokenEnvError,
     qwen_gateway_token_env,
     qwen_gateway_url,
 )
@@ -40,8 +41,12 @@ _STATIC_AUTHORIZED_PROVIDER_SECRETS = frozenset(
 
 def _authorized_provider_secrets() -> frozenset[tuple[str, str, str]]:
     """Exact provider tuples authorized by host policy at call time."""
+    try:
+        qwen_token_env = qwen_gateway_token_env()
+    except QwenGatewayTokenEnvError as exc:
+        raise ProviderPreflightError("qwen_token_env_unregistered") from exc
     return _STATIC_AUTHORIZED_PROVIDER_SECRETS | {
-        ("qwen38-27b", qwen_gateway_url(), qwen_gateway_token_env())
+        ("qwen38-27b", qwen_gateway_url(), qwen_token_env)
     }
 
 
@@ -108,6 +113,8 @@ def provider_secret_env_for_agent(
     """
     try:
         config = load_config(resolve_with_prefix(name))
+    except QwenGatewayTokenEnvError as exc:
+        raise ProviderPreflightError("qwen_token_env_unregistered") from exc
     except (
         Exception
     ):  # stx-allow: fallback (the canonical child start reports spec failures)
@@ -119,7 +126,12 @@ def provider_preflight_refusal(
     name: str, error: ProviderPreflightError
 ) -> JSONResponse:
     """Render a safe refusal containing category only, never secret material."""
-    status = 403 if error.category == "provider_tuple_unauthorized" else 412
+    status = (
+        403
+        if error.category
+        in {"provider_tuple_unauthorized", "qwen_token_env_unregistered"}
+        else 412
+    )
     return JSONResponse(
         {
             "name": name,

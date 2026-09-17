@@ -133,6 +133,37 @@ def test_the_token_env_name_is_overridable_too(clean_env) -> None:
     assert name == "SAC_LOCAL_GPTOSS_KEY"
 
 
+_EXECUTION_HOOK_NAMES = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
+
+
+@pytest.mark.parametrize("unsafe_name", _EXECUTION_HOOK_NAMES)
+def test_token_env_override_rejects_every_unregistered_execution_hook(
+    clean_env, unsafe_name: str
+) -> None:
+    # Arrange — the override names a process hook, not an audited credential.
+    clean_env[QWEN_GATEWAY_TOKEN_ENV_ENV] = unsafe_name
+
+    # Act
+    resolve = qwen_gateway_token_env
+
+    # Assert — invalid host policy is loud; it never falls back.
+    with pytest.raises(ValueError, match="registered provider secret"):
+        resolve()
+
+
 def test_an_unregistered_provider_still_resolves_to_nothing() -> None:
     # Arrange — the dynamic entry must not make every name resolvable.
     unknown = "no-such-gateway"

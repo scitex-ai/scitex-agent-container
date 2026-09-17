@@ -23,6 +23,8 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..config._provider_secret_registry import REGISTERED_PROVIDER_SECRET_NAMES
+
 # The .envrc secrets-preamble env var (shared with :mod:`._envrc`).
 _SECRETS_ENVRC_VAR = "SAC_SECRETS_ENVRC"
 
@@ -110,27 +112,22 @@ _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # unbounded set of interpreter/loader/tool hooks that can execute code before a
 # child's argv runs (PYTHONUSERBASE, JAVA_TOOL_OPTIONS, SSH_ASKPASS, ...).
 #
-# Keep fixed names tied to the consumers below. The Qwen token name is host
-# policy and is therefore resolved dynamically by _is_allowed_secret_name;
-# SAC_QWEN_GATEWAY_TOKEN_ENV itself is deliberately not accepted from a pool.
+# Provider credential names come from one compile-time registry. Host policy may
+# select an entry from that registry, but can never enlarge pool admission.
 _ALLOWED_SECRET_NAMES = frozenset(
     {
         "GITHUB_TOKEN",  # runtimes._github_token
         "GH_TOKEN",  # runtimes._github_token alias
-        "OPENCODE_GO_API_KEY",  # listener provider authorization
-        "SCITEX_GENAI_GATEWAY_API_KEY",  # default Qwen gateway credential
     }
-)
+) | REGISTERED_PROVIDER_SECRET_NAMES
 _ALLOWED_SECRET_PREFIXES = ("CCT_BOT_TOKEN_",)
 
 
 def _is_allowed_secret_name(name: str) -> bool:
     """Whether ``name`` belongs to one audited secret-pool consumer."""
-    if name in _ALLOWED_SECRET_NAMES or name.startswith(_ALLOWED_SECRET_PREFIXES):
-        return True
-    from ..config._qwen_gateway import qwen_gateway_token_env
-
-    return name == qwen_gateway_token_env()
+    return name in _ALLOWED_SECRET_NAMES or name.startswith(
+        _ALLOWED_SECRET_PREFIXES
+    )
 
 
 class SecretPoolFileError(RuntimeError):

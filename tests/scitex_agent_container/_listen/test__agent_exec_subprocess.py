@@ -24,6 +24,7 @@ already uses.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     QWEN_GATEWAY_TOKEN_ENV_ENV,
     QWEN_GATEWAY_URL_ENV,
 )
@@ -43,6 +45,20 @@ from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 _TOKEN = "test-token-agent-exec"
 _HOST_QWEN_ENDPOINT = "https://trusted-qwen.internal/v1"
 _HOST_QWEN_ENV = "SAC_LOCAL_GPTOSS_KEY"
+_QWEN_OVERRIDE_EXECUTION_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
 
 
 @pytest.fixture
@@ -293,6 +309,188 @@ def test_agents_start_loads_tracked_qwen_with_trusted_host_overrides(
 
     # Assert
     assert (response.status_code, recorded["key"]) == (200, "test-only-qwen-key")
+
+
+def test_agents_start_accepts_default_registered_qwen_secret(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — no token-name override selects the compile-time default.
+    import json
+
+    _install_host_qwen_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    pool = tmp_path / "default-qwen-provider-secrets.src"
+    pool.write_text(
+        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=default-qwen-key\n", encoding="utf-8"
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "default-qwen-provider-key-shim"
+    bin_dir.mkdir()
+    env_log = _install_provider_env_sac_shim(
+        bin_dir, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-qwen"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+
+    # Assert
+    assert (response.status_code, recorded["key"]) == (200, "default-qwen-key")
+
+
+@pytest.mark.parametrize("hook_name", _QWEN_OVERRIDE_EXECUTION_HOOKS)
+def test_agents_start_refuses_unregistered_qwen_hook_before_spawn(
+    isolated_listen_env,
+    env_save_restore,
+    tmp_path: Path,
+    subprocess_shim,
+    hook_name: str,
+) -> None:
+    # Arrange — every named hook used to become an allowed pool key through the
+    # Qwen override. The child must never start, whether or not the pool has it.
+    _install_host_qwen_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, hook_name)
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    pool = tmp_path / f"{hook_name}-provider-pool.src"
+    pool.write_text(f"{hook_name}=attacker-controlled\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    subprocess_shim.install("sac", stdout="unexpected-spawn", exit=0)
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-qwen"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+
+    # Assert
+    assert response.status_code == 403 and subprocess_shim.argv_for("sac") is None
+
+
+def test_agents_start_blocks_real_bash_env_canary_before_spawn(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — non-interactive bash executes BASH_ENV before the shim body.
+    _install_host_qwen_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, "BASH_ENV")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    canary = tmp_path / "qwen-bash-env-executed"
+    payload = tmp_path / "qwen-bash-env-payload.sh"
+    payload.write_text(f"touch {canary}\n", encoding="utf-8")
+    payload.chmod(0o600)
+    pool = tmp_path / "qwen-bash-env-pool.src"
+    pool.write_text(f"BASH_ENV={payload}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    bin_dir = tmp_path / "qwen-bash-canary-bin"
+    bin_dir.mkdir()
+    spawn_marker = tmp_path / "qwen-bash-spawned"
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!/bin/bash\ntouch {spawn_marker}\nexit 0\n", encoding="utf-8"
+    )
+    script.chmod(0o700)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-qwen"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+
+    # Assert
+    assert (response.status_code, canary.exists(), spawn_marker.exists()) == (
+        403,
+        False,
+        False,
+    )
+
+
+_SYSTEM_PYTHON = Path("/usr/bin/python3")
+
+
+@pytest.mark.skipif(
+    not _SYSTEM_PYTHON.is_file(),
+    reason="a non-venv Python is required for the PYTHONUSERBASE canary",
+)
+def test_agents_start_blocks_real_pythonuserbase_canary_before_spawn(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange — a plain child Python executes import lines from user-site .pth.
+    _install_host_qwen_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, "PYTHONUSERBASE")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    canary = tmp_path / "qwen-pythonuserbase-executed"
+    version = subprocess.run(
+        [
+            str(_SYSTEM_PYTHON),
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    user_base = tmp_path / "qwen-python-userbase"
+    user_site = user_base / "lib" / f"python{version}" / "site-packages"
+    user_site.mkdir(parents=True)
+    (user_site / "attacker.pth").write_text(
+        f"import pathlib; pathlib.Path({str(canary)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    control_env = dict(os.environ)
+    control_env["PYTHONUSERBASE"] = str(user_base)
+    subprocess.run([str(_SYSTEM_PYTHON), "-c", "pass"], check=True, env=control_env)
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+    pool = tmp_path / "qwen-pythonuserbase-pool.src"
+    pool.write_text(f"PYTHONUSERBASE={user_base}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    bin_dir = tmp_path / "qwen-python-canary-bin"
+    bin_dir.mkdir()
+    spawn_marker = tmp_path / "qwen-python-spawned"
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!{_SYSTEM_PYTHON}\nfrom pathlib import Path\n"
+        f"Path({str(spawn_marker)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-qwen"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+
+    # Assert
+    assert (
+        control_executed,
+        response.status_code,
+        canary.exists(),
+        spawn_marker.exists(),
+    ) == (True, 403, False, False)
 
 
 def test_agents_start_keeps_missing_provider_key_fail_closed(

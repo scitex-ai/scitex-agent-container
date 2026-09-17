@@ -45,6 +45,7 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._state.state_store_nodes import record_comms_policy
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     QWEN_GATEWAY_TOKEN_ENV_ENV,
     QWEN_GATEWAY_URL_ENV,
 )
@@ -53,6 +54,20 @@ from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 HOST_TOKEN = "test-host-bearer"
 _HOST_QWEN_ENDPOINT = "https://trusted-qwen.internal/v1"
 _HOST_QWEN_ENV = "SAC_LOCAL_GPTOSS_KEY"
+_QWEN_OVERRIDE_EXECUTION_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
 
 
 @pytest.fixture
@@ -501,6 +516,25 @@ def _install_qwen_provider_pool(root: Path, env_save_restore) -> None:
     env_save_restore.delete(_HOST_QWEN_ENV)
 
 
+def _restart_body(restart_shape: str, name: str) -> dict:
+    return {
+        "plain": {},
+        "fresh": {"fresh": True},
+        "detached": _as_node(name),
+    }[restart_shape]
+
+
+def _observed_restart_key(
+    restart_shape: str,
+    recorder: _SpawnRecorder,
+    log: Path,
+    env_name: str,
+) -> str | None:
+    if restart_shape == "detached":
+        return recorder.calls[0][1].get(env_name)
+    return json.loads(log.read_text(encoding="utf-8"))["key"]
+
+
 @pytest.mark.parametrize("fresh", [False, True])
 def test_sync_and_fresh_restart_honor_tracked_qwen_host_policy(
     client, isolated_env: Path, env_save_restore, fresh: bool
@@ -551,6 +585,101 @@ def test_detached_self_restart_honors_tracked_qwen_host_policy(
         response.status_code,
         recorder.calls[0][1].get(_HOST_QWEN_ENV),
     ) == (202, "pool-only-qwen-restart-key")
+
+
+@pytest.mark.parametrize("restart_shape", ["plain", "fresh", "detached"])
+def test_every_restart_shape_accepts_default_registered_qwen_secret(
+    client,
+    isolated_env: Path,
+    env_save_restore,
+    restart_shape: str,
+) -> None:
+    # Arrange — delete the token-name override so Qwen selects its default.
+    name = f"default-qwen-{restart_shape}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    pool = isolated_env / f"default-qwen-{restart_shape}-pool.src"
+    pool.write_text(
+        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=default-qwen-restart-key\n",
+        encoding="utf-8",
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    recorder = _SpawnRecorder()
+    script, log = _install_env_recording_restart(
+        isolated_env, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+    body = _restart_body(restart_shape, name)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)), _swap(
+        "_spawn_detached", recorder
+    ):
+        response = client.post(
+            f"/agents/{name}/restart", headers=_host_headers(), json=body
+        )
+    observed_key = _observed_restart_key(
+        restart_shape, recorder, log, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+
+    # Assert
+    expected_status = {"plain": 200, "fresh": 200, "detached": 202}[
+        restart_shape
+    ]
+    assert (response.status_code, observed_key) == (
+        expected_status,
+        "default-qwen-restart-key",
+    )
+
+
+@pytest.mark.parametrize("hook_name", _QWEN_OVERRIDE_EXECUTION_HOOKS)
+@pytest.mark.parametrize("restart_shape", ["plain", "fresh", "detached"])
+def test_every_restart_shape_refuses_unregistered_qwen_hook_before_action(
+    client,
+    isolated_env: Path,
+    env_save_restore,
+    hook_name: str,
+    restart_shape: str,
+) -> None:
+    # Arrange — preserve a live-session canary and make every possible restart
+    # action observable. Invalid host policy must be rejected before any of it.
+    name = f"qwen-{restart_shape}-{hook_name.lower()}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, hook_name)
+    pool = isolated_env / f"{restart_shape}-{hook_name}-pool.src"
+    pool.write_text(f"{hook_name}=attacker-controlled\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    canary = isolated_env / "runtime" / name / "session-preservation.canary"
+    canary.parent.mkdir(parents=True, exist_ok=True)
+    canary.write_text("existing-session-remains-alive", encoding="utf-8")
+    script, action_log = _install_env_recording_restart(isolated_env)
+    recorder = _SpawnRecorder()
+    body = _restart_body(restart_shape, name)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)), _swap(
+        "_spawn_detached", recorder
+    ):
+        response = client.post(
+            f"/agents/{name}/restart", headers=_host_headers(), json=body
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        json.loads(response.content).get("kind"),
+        action_log.exists(),
+        recorder.calls,
+        canary.read_text(encoding="utf-8"),
+    ) == (
+        403,
+        "qwen_token_env_unregistered",
+        False,
+        [],
+        "existing-session-remains-alive",
+    )
 
 
 def test_missing_provider_key_refuses_before_self_restart_and_preserves_canary(
