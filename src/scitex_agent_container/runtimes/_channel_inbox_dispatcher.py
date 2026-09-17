@@ -36,6 +36,7 @@ async def consume(
     consume_cards_notifications: Callable[..., Awaitable[None]] = consume_cards,
     push_event: Callable[..., Awaitable[None]] = _push_channel_event,
     dispatch_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    state_dir: Path | None = None,
 ) -> None:
     """Consume declared durable rails and ACK only proven target admission.
 
@@ -48,6 +49,7 @@ async def consume(
     if not bearer:
         raise RuntimeError("SAC listen bearer is required for channel inbox delivery")
     sink = _NotificationSink()
+    state_dir = state_dir or Path("/state") / name
 
     async def default_dispatch(event: dict[str, Any]) -> None:
         event = dict(event)
@@ -67,6 +69,9 @@ async def consume(
         event = dict(event)
         event["_require_terminal_visibility"] = True
         await target_dispatch(event)
+        from ._hermes_context_gc import record_inbound_task_event
+
+        record_inbound_task_event(state_dir, name, event)
 
     async def deliver_cards(event: dict[str, Any], **_transport: Any) -> None:
         await on_event(event)
@@ -104,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-path", required=True, type=Path)
     parser.add_argument("--process-role", required=True)
     parser.add_argument("--incarnation-id", required=True)
+    parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--channel", action="append", dest="channels", default=[])
     args = parser.parse_args(argv)
     asyncio.run(
@@ -112,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             listen_url=args.listen_url,
             turn_url=args.turn_url,
             channels=tuple(args.channels),
+            state_dir=args.state_dir,
         )
     )
     return 0

@@ -73,7 +73,7 @@ spec:
 | `model` | alias or full ID | `opus` / `sonnet` (default) / `haiku` (+ `[1m]` for 1M context), or a full ID like `claude-opus-4-7`. May also sit at `spec.model` (top level). Abbreviated IDs missing version digits (`claude-opus[1m]`) are rejected at validate-time. |
 | `session` | enum | `fresh` (default — independent session, no `-c`) \| `continue` (resume latest for this cwd; TUI `claude -c`) \| `resume` (with `resume_id`). Aliases: `new-session`/`new`→`fresh`, `continue-or-new`→`continue`. An OMITTED field defaults to `fresh` EXCEPT coordinator roles (lead/head/worker/telegrammer/project-maintainer/…), which the loader maps to `continue`. Per-start override: `sac start --continue` / `--fresh`. |
 | `resume_id` | string | Explicit session UUID for `session: resume` |
-| `continue_max_age_minutes` | int | Only resume if `session.jsonl` is newer than N minutes |
+| `continue_max_age_minutes` | int | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]` | list | Extra flags appended to the `claude` invocation |
 | `channels[]` | list | MCP push channels (`server:<name>` / `plugin:<id>@<v>`) |
 | `auto_accept` | bool (default `true`) | Auto-confirm TUI permission prompts |
