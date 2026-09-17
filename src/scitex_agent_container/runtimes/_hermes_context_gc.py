@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import secrets
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -16,6 +18,8 @@ DEFAULT_MAX_SESSION_AGE_MINUTES = 3 * 24 * 60
 HANDOFF_DIRNAME = "hermes-context-handoffs"
 ACTIVE_CARD_FILE = "hermes-active-card.json"
 FRESH_NEXT_TASK_FILE = "hermes-fresh-next-task.json"
+LIFECYCLE_LOCK_FILE = "hermes-context-lifecycle.lock"
+CONSUMED_COMPLETIONS_FILE = "hermes-consumed-completions.json"
 _EXPLICIT_CARD_RE = re.compile(
     r"\b(?:card|part\s+of)\s+([a-z0-9]+(?:-[a-z0-9]+)+)", re.IGNORECASE
 )
@@ -53,14 +57,33 @@ def continuation_is_fresh_enough(
 
 
 def _write_handoff(path: Path, payload: dict) -> None:
+    parent_existed = path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not parent_existed:
+        parent_directory = os.open(path.parent.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_directory)
+        finally:
+            os.close(parent_directory)
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.write(descriptor, json.dumps(payload, sort_keys=True).encode("utf-8"))
+        remaining = memoryview(json.dumps(payload, sort_keys=True).encode("utf-8"))
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("short write while persisting Hermes context handoff")
+            remaining = remaining[written:]
         os.fsync(descriptor)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
     try:
         os.replace(temporary, path)
         os.chmod(path, 0o600)
@@ -74,10 +97,29 @@ def _write_handoff(path: Path, payload: dict) -> None:
         raise
 
 
+@contextmanager
+def _lifecycle_lock(state_dir: Path):
+    state_dir.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(state_dir / LIFECYCLE_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def record_inbound_task_event(
     state_dir: Path, agent_name: str, event: dict
 ) -> None:
     """Persist the current card identity or a completion-triggered fresh boundary."""
+    with _lifecycle_lock(state_dir):
+        _record_inbound_task_event(state_dir, agent_name, event)
+
+
+def _record_inbound_task_event(
+    state_dir: Path, agent_name: str, event: dict
+) -> None:
     extra = event.get("extra")
     extra = extra if isinstance(extra, dict) else {}
     card_id = str(extra.get("card_id") or "").strip()
@@ -88,24 +130,72 @@ def record_inbound_task_event(
         return
     kind = str(extra.get("card_event_kind") or "").strip()
     owner = str(extra.get("card_event_owner") or "").strip()
+    delivery_id = str(event.get("msg_id") or "").strip()
     active_path = state_dir / ACTIVE_CARD_FILE
+    fresh_path = state_dir / FRESH_NEXT_TASK_FILE
     try:
         active = json.loads(active_path.read_text(encoding="utf-8"))
         was_active = active.get("card_id") == card_id
     except (OSError, ValueError, TypeError):
         was_active = False
     is_card_event = str(event.get("kind") or "") == "card-event"
+    trusted_card_event = (
+        is_card_event
+        and str(event.get("from_agent") or "").strip() == "scitex-cards"
+    )
+    if kind and not trusted_card_event:
+        return
     if kind == "completed":
-        if owner == agent_name or was_active:
+        # The delivery is only a wake-up hint. Require it to match the active
+        # card already selected locally; reconciliation independently reads
+        # the exact authenticated Cards row before any session mutation.
+        consumed = _consumed_completion_ids(state_dir)
+        if was_active and delivery_id and delivery_id not in consumed:
             _write_handoff(
-                state_dir / FRESH_NEXT_TASK_FILE,
-                {"card_id": card_id, "reason": "task-completed"},
+                fresh_path,
+                {
+                    "card_id": card_id,
+                    "delivery_id": delivery_id,
+                    "owner": owner,
+                    "reason": "task-completed",
+                    "was_active": was_active,
+                },
             )
             active_path.unlink(missing_ok=True)
         return
-    if is_card_event and owner != agent_name:
+    if is_card_event and (not trusted_card_event or owner != agent_name):
         return
+    # A new assignment supersedes any unconsumed completion boundary. Removing
+    # it before publishing the active card makes stale completion fail closed.
+    try:
+        stale_marker = json.loads(fresh_path.read_text(encoding="utf-8"))
+        stale_delivery = str(stale_marker.get("delivery_id") or "").strip()
+    except (OSError, ValueError, TypeError):
+        stale_delivery = ""
+    if stale_delivery:
+        _mark_completion_consumed(state_dir, stale_delivery)
+    fresh_path.unlink(missing_ok=True)
     _write_handoff(active_path, {"card_id": card_id})
+
+
+def _consumed_completion_ids(state_dir: Path) -> set[str]:
+    try:
+        payload = json.loads(
+            (state_dir / CONSUMED_COMPLETIONS_FILE).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TypeError):
+        return set()
+    rows = payload.get("delivery_ids") if isinstance(payload, dict) else None
+    return {str(row) for row in rows if str(row).strip()} if isinstance(rows, list) else set()
+
+
+def _mark_completion_consumed(state_dir: Path, delivery_id: str) -> None:
+    consumed = _consumed_completion_ids(state_dir)
+    consumed.add(delivery_id)
+    _write_handoff(
+        state_dir / CONSUMED_COMPLETIONS_FILE,
+        {"delivery_ids": sorted(consumed)[-100:]},
+    )
 
 
 def _validate_worktrees(
@@ -198,6 +288,34 @@ def _git(workdir: Path, *args: str) -> str:
     return completed.stdout
 
 
+def _commit_is_on_live_remote(workdir: Path, sha: str) -> bool:
+    """Prove a commit is contained by a currently advertised remote head."""
+    candidates = _git(workdir, "branch", "-r", "--contains", sha).splitlines()
+    for candidate in candidates:
+        remote_ref = candidate.strip().lstrip("* ")
+        remote, separator, branch = remote_ref.partition("/")
+        if not separator or not branch or " -> " in remote_ref:
+            continue
+        advertised = _git(
+            workdir, "ls-remote", "--heads", remote, f"refs/heads/{branch}"
+        ).splitlines()
+        for row in advertised:
+            tip = row.split(maxsplit=1)[0] if row else ""
+            if not tip:
+                continue
+            if tip == sha:
+                return True
+            ancestor = subprocess.run(
+                ["git", "-C", str(workdir), "merge-base", "--is-ancestor", sha, tip],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if ancestor.returncode == 0:
+                return True
+    return False
+
+
 def collect_worktree_facts(
     workdir: Path, *, session_started_at: float
 ) -> list[WorktreeFact]:
@@ -214,24 +332,20 @@ def collect_worktree_facts(
             continue
         key, _, value = line.partition(" ")
         current[key] = value
-    selected: list[dict[str, str]] = []
     resolved = workdir.resolve()
-    for record in records:
-        path = Path(record.get("worktree", ""))
-        branch = record.get("branch", "")
-        include = path.resolve() == resolved
-        is_subagent = branch.startswith("refs/heads/hermes-subagent/") or any(
-            part.startswith("subagent-") for part in path.parts
-        )
-        if is_subagent:
-            include = True
-        if include:
-            selected.append(record)
-    if not selected:
+    if not any(Path(record.get("worktree", "")).resolve() == resolved for record in records):
         raise HermesContextGcRefused(f"current worktree is absent from git: {workdir}")
     facts = []
-    for record in selected:
+    for record in records:
         path = Path(record["worktree"])
+        branch_ref = record.get("branch", "")
+        sha = record.get("HEAD", "")
+        is_current_named_tree = (
+            path.resolve() == resolved
+            and bool(branch_ref)
+            and not branch_ref.startswith("refs/heads/hermes-subagent/")
+            and not any(part.startswith("subagent-") for part in path.parts)
+        )
         dirty = tuple(
             line
             for line in _git(path, "status", "--porcelain", "--untracked-files=all").splitlines()
@@ -240,35 +354,22 @@ def collect_worktree_facts(
         facts.append(
             WorktreeFact(
                 path=path,
-                sha=record.get("HEAD", ""),
-                branch=record.get("branch", "").removeprefix("refs/heads/"),
+                sha=sha,
+                branch=branch_ref.removeprefix("refs/heads/"),
                 dirty=dirty,
                 accounted=(
-                    path.resolve() == resolved
-                    or bool(
-                        _git(
-                            path,
-                            "branch",
-                            "-r",
-                            "--contains",
-                            record.get("HEAD", ""),
-                        ).strip()
-                    )
+                    is_current_named_tree or _commit_is_on_live_remote(path, sha)
                 ),
             )
         )
     return facts
 
 
-def load_active_card(state_dir: Path) -> dict:
-    """Read the tracked card id, then fetch that exact durable Cards row."""
-    try:
-        marker = json.loads((state_dir / ACTIVE_CARD_FILE).read_text(encoding="utf-8"))
-        card_id = str(marker.get("card_id") or "").strip()
-    except (OSError, ValueError, TypeError) as exc:
-        raise HermesContextGcRefused(f"active card identity is unavailable: {exc}") from exc
+def load_card(card_id: str) -> dict:
+    """Fetch one exact durable Cards row by id."""
+    card_id = str(card_id or "").strip()
     if not card_id:
-        raise HermesContextGcRefused("active card marker contains no card id")
+        raise HermesContextGcRefused("card lookup requires an exact id")
     env = os.environ.copy()
     env["SCITEX_DEV_CURRENCY_SEVERITY"] = "silent"
     completed = subprocess.run(
@@ -302,15 +403,101 @@ def load_active_card(state_dir: Path) -> dict:
     return exact[0]
 
 
+def load_active_card(state_dir: Path) -> dict:
+    """Read the tracked card id, then fetch that exact durable Cards row."""
+    try:
+        marker = json.loads((state_dir / ACTIVE_CARD_FILE).read_text(encoding="utf-8"))
+        card_id = str(marker.get("card_id") or "").strip()
+    except (OSError, ValueError, TypeError) as exc:
+        raise HermesContextGcRefused(f"active card identity is unavailable: {exc}") from exc
+    return load_card(card_id)
+
+
+def _consume_completion_boundary(
+    *,
+    state_dir: Path,
+    agent_name: str,
+    workdir: Path,
+    live_id: str,
+    card_by_id_reader: Callable[[str], dict],
+    worktree_reader: Callable[..., list[WorktreeFact]],
+    transition_guard: Callable[[Path, str], None],
+    close_live: Callable[[Path, str], None],
+) -> str | None:
+    """Validate and consume one completion boundary under the event-writer lock."""
+    fresh_marker = state_dir / FRESH_NEXT_TASK_FILE
+    with _lifecycle_lock(state_dir):
+        if not fresh_marker.exists():
+            return None
+        try:
+            marker = json.loads(fresh_marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise HermesContextGcRefused(
+                f"fresh-next-task marker is unreadable: {exc}"
+            ) from exc
+        if (
+            not isinstance(marker, dict)
+            or marker.get("reason") != "task-completed"
+            or not str(marker.get("card_id") or "").strip()
+            or not str(marker.get("delivery_id") or "").strip()
+            or marker.get("was_active") is not True
+        ):
+            raise HermesContextGcRefused("fresh-next-task marker is malformed")
+        if (state_dir / ACTIVE_CARD_FILE).exists():
+            raise HermesContextGcRefused(
+                "a newer active card exists; refusing stale completion boundary"
+            )
+        bound_session = str(marker.get("session_id") or "").strip()
+        if bound_session and bound_session != live_id:
+            _mark_completion_consumed(state_dir, str(marker["delivery_id"]))
+            fresh_marker.unlink(missing_ok=True)
+            return None
+        if not bound_session:
+            marker = {**marker, "session_id": live_id}
+            _write_handoff(fresh_marker, marker)
+        completed_card = card_by_id_reader(str(marker["card_id"]))
+        current_owner = str(
+            completed_card.get("owner")
+            or completed_card.get("assignee")
+            or completed_card.get("assigned_to")
+            or completed_card.get("agent")
+            or ""
+        ).strip()
+        if (
+            str(completed_card.get("id") or "") != marker["card_id"]
+            or str(completed_card.get("status") or "").lower() != "done"
+            or current_owner != agent_name
+        ):
+            raise HermesContextGcRefused(
+                "Cards no longer proves this exact completed ownership boundary"
+            )
+        transition_guard(state_dir, live_id)
+        completion_facts = worktree_reader(workdir, session_started_at=0)
+        _validate_worktrees(completion_facts, workdir)
+        marker_now = json.loads(fresh_marker.read_text(encoding="utf-8"))
+        if marker_now != marker or (state_dir / ACTIVE_CARD_FILE).exists():
+            raise HermesContextGcRefused(
+                "completion boundary was superseded before close"
+            )
+        transition_guard(state_dir, live_id)
+        close_live(state_dir, live_id)
+        _mark_completion_consumed(state_dir, str(marker["delivery_id"]))
+        fresh_marker.unlink(missing_ok=True)
+        return ""
+
+
 def reconcile_context_lifecycle(
     *,
     state_dir: Path,
     agent_name: str,
     workdir: Path,
     observed_session: dict,
+    engine_model: str = "",
+    engine_provider: str = "",
     stored_record_reader: Callable[[Path, str], dict] | None = None,
     handoff_facts_reader: Callable[..., tuple[dict, list[dict]]] | None = None,
     card_reader: Callable[[Path], dict] | None = None,
+    card_by_id_reader: Callable[[str], dict] | None = None,
     worktree_reader: Callable[..., list[WorktreeFact]] | None = None,
     rotate_session: Callable[..., str] | None = None,
     close_live: Callable[[Path, str], None] | None = None,
@@ -337,6 +524,7 @@ def reconcile_context_lifecycle(
     stored_record_reader = stored_record_reader or default_stored_record
     handoff_facts_reader = handoff_facts_reader or default_handoff_facts
     card_reader = card_reader or load_active_card
+    card_by_id_reader = card_by_id_reader or load_card
     worktree_reader = worktree_reader or collect_worktree_facts
     rotate_session = rotate_session or default_replace_session
     close_live = close_live or default_close_session
@@ -352,26 +540,17 @@ def reconcile_context_lifecycle(
         raise HermesContextGcRefused(
             f"Hermes session {live_id!r} is not idle; refusing lifecycle mutation"
         )
-    fresh_marker = state_dir / FRESH_NEXT_TASK_FILE
-    if fresh_marker.exists():
-        try:
-            marker = json.loads(fresh_marker.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError) as exc:
-            raise HermesContextGcRefused(
-                f"fresh-next-task marker is unreadable: {exc}"
-            ) from exc
-        if (
-            not isinstance(marker, dict)
-            or marker.get("reason") != "task-completed"
-            or not str(marker.get("card_id") or "").strip()
-        ):
-            raise HermesContextGcRefused("fresh-next-task marker is malformed")
-        transition_guard(state_dir, live_id)
-        completion_facts = worktree_reader(workdir, session_started_at=0)
-        _validate_worktrees(completion_facts, workdir)
-        close_live(state_dir, live_id)
-        fresh_marker.unlink(missing_ok=True)
-        return ""
+    if (state_dir / FRESH_NEXT_TASK_FILE).exists():
+        return _consume_completion_boundary(
+            state_dir=state_dir,
+            agent_name=agent_name,
+            workdir=workdir,
+            live_id=live_id,
+            card_by_id_reader=card_by_id_reader,
+            worktree_reader=worktree_reader,
+            transition_guard=transition_guard,
+            close_live=close_live,
+        )
     record = stored_record_reader(state_dir, stored_id)
     if not str(record.get("compression_failure_error") or "").strip():
         return None
@@ -424,15 +603,18 @@ def reconcile_context_lifecycle(
             raise HermesContextGcRefused(
                 "active card changed during fresh-session proof"
             )
+        transition_guard(state_dir, live_id)
 
     transition = handle_compression_failure(
         state_dir=state_dir,
         agent_name=agent_name,
         workdir=workdir,
-        session_record=record,
+        session_record={**record, "id": live_id},
         card=card,
         worktrees=worktrees,
-        verification={"tests": json.dumps(evidence, sort_keys=True)},
+        verification={
+            "tests": str(evidence.get("status") or evidence.get("result") or "unknown")
+        },
         next_nonce=nonce_factory,
         rotate=lambda handoff, nonce, old: rotate_session(
             state_dir,
@@ -441,6 +623,8 @@ def reconcile_context_lifecycle(
             handoff_path=handoff,
             nonce=nonce,
             old_session_id=old,
+            model=engine_model,
+            provider=engine_provider,
             pre_close_check=pre_close_check,
         ),
     )

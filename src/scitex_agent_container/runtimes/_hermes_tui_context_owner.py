@@ -142,13 +142,17 @@ def make_session_observer(
         except Exception:
             pass
         from ._hermes_context_gc import reconcile_context_lifecycle
+        from ._hermes_context_rpc import reconcile_pending_transition
 
         workdir = Path(command_value(command, "--in") or os.getcwd())
+        reconcile_pending_transition(state_dir)
         return reconcile_context_lifecycle(
             state_dir=state_dir,
             agent_name=state_dir.name,
             workdir=workdir,
             observed_session=session,
+            engine_model=command_value(command, "--model"),
+            engine_provider=command_value(command, "--provider"),
         )
 
     return observe
