@@ -71,10 +71,18 @@ def test_fleet_page_shows_error_state_when_unreachable(client, unreachable_liste
 
 
 def test_fleet_page_distinguishes_unavailable_from_setup(client, unreachable_listener):
-    # Arrange / Act: configured, listener silent.
+    # Arrange: configured, listener silent.
+    # Act
     html = client.get("/").content.decode()
     # Assert: not confusable with the setup-required state.
     assert 'data-fleet-state="unavailable"' in html
+
+
+def test_fleet_page_does_not_report_setup_required_when_configured(client, unreachable_listener):
+    # Arrange: a listener IS configured (it is just silent).
+    # Act
+    html = client.get("/").content.decode()
+    # Assert: an outage must not be mislabelled as a deploy gap.
     assert 'data-fleet-state="setup-required"' not in html
 
 
