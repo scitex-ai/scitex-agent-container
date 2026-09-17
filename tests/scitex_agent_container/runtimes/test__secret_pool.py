@@ -33,8 +33,9 @@ import pytest
 
 from scitex_agent_container.runtimes import _secret_pool as secret_pool_mod
 from scitex_agent_container.runtimes._secret_pool import (
+    _ALLOWED_SECRET_NAMES,
+    _ALLOWED_SECRET_PREFIXES,
     _SECRETS_ENVRC_VAR,
-    SecretPoolFileError,
     _parse_secret_file,
     _pool_env,
     read_pool,
@@ -188,7 +189,7 @@ def test_pool_env_still_returns_the_bare_mapping(
 # ---------------------------------------------------------------------------
 
 
-_PROCESS_CONTROL_NAMES = [
+_DISALLOWED_SUBPROCESS_HOOKS = [
     "BASH_ENV",
     "ENV",
     "LD_PRELOAD",
@@ -198,6 +199,13 @@ _PROCESS_CONTROL_NAMES = [
     "BASHOPTS",
     "PYTHONPATH",
     "PYTHONHOME",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
     "GIT_EXEC_PATH",
     "GIT_SSH_COMMAND",
     "DYLD_INSERT_LIBRARIES",
@@ -205,35 +213,54 @@ _PROCESS_CONTROL_NAMES = [
 ]
 
 
-def _parse_error_category(content: str) -> str:
-    try:
-        _parse_secret_file(content)
-    except SecretPoolFileError as exc:
-        return exc.category
-    return "not_refused"
-
-
-@pytest.mark.parametrize("name", _PROCESS_CONTROL_NAMES)
-def test_process_control_variable_names_are_rejected(name: str) -> None:
+@pytest.mark.parametrize("name", _DISALLOWED_SUBPROCESS_HOOKS)
+def test_subprocess_hook_variable_names_are_filtered(name: str) -> None:
     # Arrange
     content = f"{name}=attacker-controlled\n"
-
-    # Act
-    category = _parse_error_category(content)
-
-    # Assert
-    assert category == "secret_file_control_variable"
-
-
-def test_ordinary_secret_variable_names_still_parse() -> None:
-    # Arrange
-    content = "CCT_BOT_TOKEN_ZZ_ORDINARY=ordinary-value\n"
 
     # Act
     parsed = _parse_secret_file(content)
 
     # Assert
-    assert parsed == {"CCT_BOT_TOKEN_ZZ_ORDINARY": "ordinary-value"}
+    assert parsed == {}
+
+
+@pytest.mark.parametrize("name", sorted(_ALLOWED_SECRET_NAMES))
+def test_every_fixed_allowed_secret_name_still_parses(name: str) -> None:
+    # Arrange
+    content = f"{name}=ordinary-value\n"
+
+    # Act
+    parsed = _parse_secret_file(content)
+
+    # Assert
+    assert parsed == {name: "ordinary-value"}
+
+
+@pytest.mark.parametrize("prefix", _ALLOWED_SECRET_PREFIXES)
+def test_every_allowed_secret_prefix_still_parses(prefix: str) -> None:
+    # Arrange
+    name = f"{prefix}ZZ_POSITIVE"
+
+    # Act
+    parsed = _parse_secret_file(f"{name}=ordinary-value\n")
+
+    # Assert
+    assert parsed == {name: "ordinary-value"}
+
+
+def test_host_owned_qwen_token_name_is_an_allowed_secret(
+    env_save_restore,
+) -> None:
+    # Arrange — this name is host policy, not pool/spec data, and is resolved
+    # at read time so a long-lived listener honours its host configuration.
+    env_save_restore.set("SAC_QWEN_GATEWAY_TOKEN_ENV", "SAC_LOCAL_GPTOSS_KEY")
+
+    # Act
+    parsed = _parse_secret_file("SAC_LOCAL_GPTOSS_KEY=ordinary-value\n")
+
+    # Assert
+    assert parsed == {"SAC_LOCAL_GPTOSS_KEY": "ordinary-value"}
 
 
 def test_symlink_pool_file_is_rejected(tmp_path: Path, secrets_envrc: None) -> None:

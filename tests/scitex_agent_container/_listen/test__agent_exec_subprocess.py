@@ -35,13 +35,14 @@ from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._qwen_gateway import (
-    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     QWEN_GATEWAY_TOKEN_ENV_ENV,
     QWEN_GATEWAY_URL_ENV,
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _TOKEN = "test-token-agent-exec"
+_HOST_QWEN_ENDPOINT = "https://trusted-qwen.internal/v1"
+_HOST_QWEN_ENV = "SAC_LOCAL_GPTOSS_KEY"
 
 
 @pytest.fixture
@@ -237,7 +238,7 @@ def test_agents_start_propagates_declared_provider_key_from_approved_pool(
     )
 
 
-def _install_canonical_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None:
+def _install_host_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None:
     repo = Path(__file__).resolve().parents[3]
     registry = tmp_path / "agents"
     target = registry / "broker-qwen" / "spec.yaml"
@@ -255,31 +256,29 @@ def _install_canonical_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None
     env_save_restore.set(
         FLEET_ENGINES_ENV, str(repo / ".scitex/agent-container/engines.yaml")
     )
-    env_save_restore.delete(QWEN_GATEWAY_URL_ENV)
-    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    env_save_restore.set(QWEN_GATEWAY_URL_ENV, _HOST_QWEN_ENDPOINT)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, _HOST_QWEN_ENV)
 
 
-def test_agents_start_loads_tracked_qwen_and_propagates_its_canonical_key(
+def test_agents_start_loads_tracked_qwen_with_trusted_host_overrides(
     isolated_listen_env, env_save_restore, tmp_path: Path
 ) -> None:
     # Arrange
     import json
 
-    _install_canonical_qwen_agent_spec(tmp_path, env_save_restore)
+    _install_host_qwen_agent_spec(tmp_path, env_save_restore)
     pool = tmp_path / "qwen-provider-secrets.src"
     pool.write_text(
-        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=test-only-qwen-key\n",
+        f"{_HOST_QWEN_ENV}=test-only-qwen-key\n",
         encoding="utf-8",
     )
     pool.chmod(0o600)
     env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
-    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    env_save_restore.delete(_HOST_QWEN_ENV)
     env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
     bin_dir = tmp_path / "qwen-provider-key-shim"
     bin_dir.mkdir()
-    env_log = _install_provider_env_sac_shim(
-        bin_dir, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
-    )
+    env_log = _install_provider_env_sac_shim(bin_dir, _HOST_QWEN_ENV)
     env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     app = create_app(token=_TOKEN)
 

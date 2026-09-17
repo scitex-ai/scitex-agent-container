@@ -45,13 +45,14 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._state.state_store_nodes import record_comms_policy
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._qwen_gateway import (
-    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     QWEN_GATEWAY_TOKEN_ENV_ENV,
     QWEN_GATEWAY_URL_ENV,
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 HOST_TOKEN = "test-host-bearer"
+_HOST_QWEN_ENDPOINT = "https://trusted-qwen.internal/v1"
+_HOST_QWEN_ENV = "SAC_LOCAL_GPTOSS_KEY"
 
 
 @pytest.fixture
@@ -467,7 +468,7 @@ def test_detached_self_restart_receives_pool_only_provider_key(
     ) == (202, "pool-only-restart-key")
 
 
-def _install_canonical_qwen_restart_agent(
+def _install_host_qwen_restart_agent(
     root: Path, name: str, env_save_restore
 ) -> None:
     repo = Path(__file__).resolve().parents[3]
@@ -485,33 +486,31 @@ def _install_canonical_qwen_restart_agent(
     env_save_restore.set(
         FLEET_ENGINES_ENV, str(repo / ".scitex/agent-container/engines.yaml")
     )
-    env_save_restore.delete(QWEN_GATEWAY_URL_ENV)
-    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    env_save_restore.set(QWEN_GATEWAY_URL_ENV, _HOST_QWEN_ENDPOINT)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, _HOST_QWEN_ENV)
 
 
 def _install_qwen_provider_pool(root: Path, env_save_restore) -> None:
     pool = root / "qwen-provider-pool.src"
     pool.write_text(
-        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=pool-only-qwen-restart-key\n",
+        f"{_HOST_QWEN_ENV}=pool-only-qwen-restart-key\n",
         encoding="utf-8",
     )
     pool.chmod(0o600)
     env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
-    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    env_save_restore.delete(_HOST_QWEN_ENV)
 
 
 @pytest.mark.parametrize("fresh", [False, True])
-def test_sync_and_fresh_restart_load_tracked_qwen_and_receive_canonical_key(
+def test_sync_and_fresh_restart_honor_tracked_qwen_host_policy(
     client, isolated_env: Path, env_save_restore, fresh: bool
 ) -> None:
     # Arrange
-    name = f"canonical-qwen-sync-{fresh}"
-    _install_canonical_qwen_restart_agent(
-        isolated_env, name, env_save_restore
-    )
+    name = f"host-qwen-sync-{fresh}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
     _install_qwen_provider_pool(isolated_env, env_save_restore)
     script, log = _install_env_recording_restart(
-        isolated_env, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+        isolated_env, _HOST_QWEN_ENV
     )
 
     # Act
@@ -530,14 +529,12 @@ def test_sync_and_fresh_restart_load_tracked_qwen_and_receive_canonical_key(
     )
 
 
-def test_detached_restart_loads_tracked_qwen_and_receives_canonical_key(
+def test_detached_self_restart_honors_tracked_qwen_host_policy(
     client, isolated_env: Path, env_save_restore
 ) -> None:
     # Arrange
-    name = "canonical-qwen-detached"
-    _install_canonical_qwen_restart_agent(
-        isolated_env, name, env_save_restore
-    )
+    name = "host-qwen-detached"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
     _install_qwen_provider_pool(isolated_env, env_save_restore)
     recorder = _SpawnRecorder()
 
@@ -552,7 +549,7 @@ def test_detached_restart_loads_tracked_qwen_and_receives_canonical_key(
     # Assert
     assert (
         response.status_code,
-        recorder.calls[0][1].get(DEFAULT_QWEN_GATEWAY_TOKEN_ENV),
+        recorder.calls[0][1].get(_HOST_QWEN_ENV),
     ) == (202, "pool-only-qwen-restart-key")
 
 

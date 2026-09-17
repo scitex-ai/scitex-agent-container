@@ -16,8 +16,8 @@ from starlette.responses import JSONResponse
 
 from ..config import AgentConfig, load_config
 from ..config._qwen_gateway import (
-    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
-    DEFAULT_QWEN_GATEWAY_URL,
+    qwen_gateway_token_env,
+    qwen_gateway_url,
 )
 from ..config._resolve import resolve_with_prefix
 from ..runtimes._secret_pool import PoolRead, read_pool
@@ -27,23 +27,22 @@ from ..runtimes._secret_pool import PoolRead, read_pool
 # a shared-secret oracle.  Additions require a code/config deployment on the
 # host and a regression test; never derive this set from the submitted spec or
 # from whatever variable names happen to exist in the pool.
-_AUTHORIZED_PROVIDER_SECRETS = frozenset(
+_STATIC_AUTHORIZED_PROVIDER_SECRETS = frozenset(
     {
         (
             "opencode-go-deepseek-v4.1-flash",
             "https://opencode.ai/zen/go/v1",
             "OPENCODE_GO_API_KEY",
         ),
-        # Canonical shipped fleet Qwen tuple.  The endpoint and token-name
-        # values come from the trusted provider registry constants rather than
-        # being copied here; obsolete host/IP spellings are not authorized.
-        (
-            "qwen38-27b",
-            DEFAULT_QWEN_GATEWAY_URL,
-            DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
-        ),
     }
 )
+
+
+def _authorized_provider_secrets() -> frozenset[tuple[str, str, str]]:
+    """Exact provider tuples authorized by host policy at call time."""
+    return _STATIC_AUTHORIZED_PROVIDER_SECRETS | {
+        ("qwen38-27b", qwen_gateway_url(), qwen_gateway_token_env())
+    }
 
 
 class ProviderPreflightError(RuntimeError):
@@ -82,7 +81,7 @@ def provider_secret_env(
     selected = _provider_tuple(config)
     if selected is None:
         return {}
-    if selected not in _AUTHORIZED_PROVIDER_SECRETS:
+    if selected not in _authorized_provider_secrets():
         raise ProviderPreflightError("provider_tuple_unauthorized")
     env_name = selected[2]
     inherited = str(child_env.get(env_name) or "")

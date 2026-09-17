@@ -104,51 +104,33 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# A secret file is data, but its parsed mapping is later passed to bash (and
-# provider/runtime children).  These names change how the next process starts
-# or what code it loads before its argv runs, so an owner-only file is not
-# sufficient authority to set them.  In particular, non-interactive bash
-# sources $BASH_ENV even under --noprofile/--norc, and the dynamic loader acts
-# on LD_* before Python can regain control.
-_PROCESS_CONTROL_NAMES = frozenset(
+# Secret files are data, but their parsed mappings are passed to bash and to
+# provider/runtime children. Admit only names that an audited pool consumer
+# reads. Everything else is ignored, rather than trying to enumerate the
+# unbounded set of interpreter/loader/tool hooks that can execute code before a
+# child's argv runs (PYTHONUSERBASE, JAVA_TOOL_OPTIONS, SSH_ASKPASS, ...).
+#
+# Keep fixed names tied to the consumers below. The Qwen token name is host
+# policy and is therefore resolved dynamically by _is_allowed_secret_name;
+# SAC_QWEN_GATEWAY_TOKEN_ENV itself is deliberately not accepted from a pool.
+_ALLOWED_SECRET_NAMES = frozenset(
     {
-        "BASH_ENV",
-        "ENV",
-        "PATH",
-        "SHELLOPTS",
-        "BASHOPTS",
-        "CDPATH",
-        "GLOBIGNORE",
-        "BASH_XTRACEFD",
-        "BASH_LOADABLES_PATH",
-        "PS4",
-        "ZDOTDIR",
-        "KSH_ENV",
-        "FPATH",
-        "INPUTRC",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONSTARTUP",
-        "PYTHONINSPECT",
-        "PYTHONBREAKPOINT",
-        "PYTHONWARNINGS",
-        "PERL5OPT",
-        "PERL5LIB",
-        "RUBYOPT",
-        "RUBYLIB",
-        "NODE_OPTIONS",
-        "NODE_PATH",
-        "GCONV_PATH",
-        "GLIBC_TUNABLES",
+        "GITHUB_TOKEN",  # runtimes._github_token
+        "GH_TOKEN",  # runtimes._github_token alias
+        "OPENCODE_GO_API_KEY",  # listener provider authorization
+        "SCITEX_GENAI_GATEWAY_API_KEY",  # default Qwen gateway credential
     }
 )
-_PROCESS_CONTROL_PREFIXES = ("LD_", "DYLD_", "GIT_", "BASH_FUNC_")
+_ALLOWED_SECRET_PREFIXES = ("CCT_BOT_TOKEN_",)
 
 
-def _is_process_control_name(name: str) -> bool:
-    return name in _PROCESS_CONTROL_NAMES or name.startswith(
-        _PROCESS_CONTROL_PREFIXES
-    )
+def _is_allowed_secret_name(name: str) -> bool:
+    """Whether ``name`` belongs to one audited secret-pool consumer."""
+    if name in _ALLOWED_SECRET_NAMES or name.startswith(_ALLOWED_SECRET_PREFIXES):
+        return True
+    from ..config._qwen_gateway import qwen_gateway_token_env
+
+    return name == qwen_gateway_token_env()
 
 
 class SecretPoolFileError(RuntimeError):
@@ -178,8 +160,6 @@ def _parse_secret_file(content: str) -> dict[str, str]:
         key = key.strip()
         if not sep or not _ENV_KEY_RE.fullmatch(key):
             raise SecretPoolFileError("secret_file_syntax")
-        if _is_process_control_name(key):
-            raise SecretPoolFileError("secret_file_control_variable")
         value = value.strip()
         if any(marker in value for marker in ("$(", "${", "`", "\x00")):
             raise SecretPoolFileError("secret_file_shell_syntax")
@@ -192,7 +172,8 @@ def _parse_secret_file(content: str) -> dict[str, str]:
             char.isspace() or char in ";&|<>" for char in value
         ):
             raise SecretPoolFileError("secret_file_shell_syntax")
-        env[key] = value
+        if _is_allowed_secret_name(key):
+            env[key] = value
     return env
 
 
