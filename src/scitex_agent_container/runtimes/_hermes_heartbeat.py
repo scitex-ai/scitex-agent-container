@@ -157,7 +157,14 @@ def _parse_replay(
     if latest_seq < after_seq:
         raise HermesTuiRpcError("Hermes session event sequence moved backwards")
     expected = list(range(after_seq + 1, latest_seq + 1))
-    actual = [event.get("seq") if isinstance(event, dict) else None for event in events]
+    actual = []
+    for event in events:
+        seq = event.get("seq") if isinstance(event, dict) else None
+        if type(seq) is not int or seq < 0:
+            raise HermesTuiRpcError(
+                f"Hermes event replay contained malformed event sequence: {event!r}"
+            )
+        actual.append(seq)
     if actual != expected:
         raise HermesTuiRpcError(
             f"Hermes session event replay has a gap: expected {expected!r}, got {actual!r}"
@@ -218,7 +225,11 @@ def _reduce(
                 raise HermesTuiRpcError(
                     f"Hermes message.complete had malformed status: {event!r}"
                 )
-            completed += 1
+            # A bounded initial replay can begin in the middle of a turn. Its
+            # terminal event advances the cursor but cannot complete a turn in
+            # the exact counter scope unless a matching start is known.
+            if completed < accepted:
+                completed += 1
             last_status = str(status)
             inflight.clear()
         elif event_type in {"tool.start", "tool.complete"}:
@@ -230,7 +241,10 @@ def _reduce(
             if event_type == "tool.start":
                 tools_started += 1
                 inflight.add(tool_id)
-            else:
+            elif tool_id in inflight:
+                # As with turns, ignore an orphan terminal from before a
+                # truncated baseline rather than manufacture an impossible
+                # completed > started projection.
                 tools_completed += 1
                 inflight.discard(tool_id)
     return (
