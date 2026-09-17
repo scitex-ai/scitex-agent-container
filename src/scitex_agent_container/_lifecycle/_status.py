@@ -230,8 +230,6 @@ def agent_status(
     # evidence remains available beside the compatibility field.
     liveness = _liveness_block(name, config, runtime_factory)
     result["liveness"] = liveness
-    if liveness.get("verdict") == "alive":
-        result["status"] = "running"
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.
@@ -345,6 +343,15 @@ def agent_status(
             DefinitionState.VALID if config is not None else DefinitionState.INVALID
         ),
     )
+    # Legacy ``status`` follows the PROCESS dimension only. Communication is a
+    # separate fact: a stale inbox subscriber must never promote an unread or
+    # exited process to ``running``.
+    process_state = result["observation"]["process"]["state"]
+    result["status"] = {
+        "alive": "running",
+        "absent": "stopped",
+        "exited": "stopped",
+    }.get(process_state, "unknown")
 
     return result
 

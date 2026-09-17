@@ -468,9 +468,17 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     # alongside the ``healthy`` bool rather than replacing it — a bool cannot
     # say "I could not tell", and ``healthy`` gates this command's exit code.
     # See :mod:`._health_liveness`.
-    from ._health_liveness import liveness_payload, print_inbox, print_liveness
+    from ._health_liveness import (
+        health_summary,
+        liveness_payload,
+        print_inbox,
+        print_liveness,
+    )
 
     liveness = liveness_payload(name, config)
+    summary = health_summary(is_healthy, message, liveness)
+    health_state = summary["state"]
+    message = summary["message"]
 
     # Observation-only like ``liveness``: never flips ``healthy``.
     from ._health_overlay_masking import overlay_masking_payload, print_overlay_masking
@@ -492,6 +500,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                 {
                     "name": name,
                     "healthy": is_healthy,
+                    "health_state": health_state,
                     "message": message,
                     "inbox_subscribers": subscribers,
                     "inbox_reachable": reachable,
@@ -507,8 +516,10 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
             sys.exit(1)
         return
 
-    if is_healthy:
+    if health_state == "healthy":
         console.print(f"[green]{message}[/green]")
+    elif health_state in {"unknown", "alive-by-delivery-only"}:
+        console.print(f"[yellow]{message}[/yellow]")
     else:
         console.print(f"[red]{message}[/red]")
 

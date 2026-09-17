@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["liveness_payload", "print_inbox", "print_liveness"]
+__all__ = ["health_summary", "liveness_payload", "print_inbox", "print_liveness"]
 
 # wedged = present but NOT working — magenta, distinct from unknown's yellow so
 # a "known-stuck, needs a restart" reads apart from a "we could not tell". It is
@@ -37,6 +37,46 @@ _VERDICT_COLOUR = {
     "unknown": "yellow",
     "wedged": "magenta",
 }
+
+
+def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, str]:
+    """Name UNKNOWN and delivery-only evidence instead of guessing a pole."""
+    evidence = liveness.get("evidence") or []
+    process = next(
+        (item for item in evidence if item.get("source") == "process"), None
+    )
+    delivery = next(
+        (item for item in evidence if item.get("source") == "delivery"), None
+    )
+    process_verdict = (
+        str(process.get("verdict") or "unknown").lower()
+        if process is not None
+        else "unknown"
+    )
+    process_detail = (
+        str(process.get("detail") or "process not observed")
+        if process is not None
+        else "process not observed"
+    )
+    delivery_verdict = (
+        str(delivery.get("verdict") or "unknown").lower()
+        if delivery is not None
+        else "unknown"
+    )
+    if process_verdict == "unknown":
+        if delivery_verdict == "alive":
+            return {
+                "state": "alive-by-delivery-only",
+                "message": (
+                    "delivery reachable; process liveness unknown "
+                    f"({process_detail})"
+                ),
+            }
+        return {"state": "unknown", "message": f"health unknown: {process_detail}"}
+    return {
+        "state": "healthy" if is_healthy else "unhealthy",
+        "message": message,
+    }
 
 
 def liveness_payload(name: str, config: Any) -> dict:

@@ -152,7 +152,19 @@ def build_agent_observation(
     )
 
     liveness = status.get("liveness") or {}
-    verdict = str(liveness.get("verdict") or "unknown").lower()
+    process_signal = next(
+        (
+            item
+            for item in liveness.get("evidence", [])
+            if item.get("source") == "process"
+        ),
+        None,
+    )
+    verdict = (
+        str(process_signal.get("verdict") or "unknown").lower()
+        if process_signal is not None
+        else "unknown"
+    )
     process_map = {
         "alive": ProcessState.ALIVE,
         "dead": ProcessState.EXITED,
@@ -160,7 +172,12 @@ def build_agent_observation(
     }
     process = Dimension(
         state=process_map.get(verdict, ProcessState.UNKNOWN),
-        evidence=_evidence("liveness.verdict", verdict),
+        evidence=_evidence(
+            "liveness.process",
+            str(process_signal.get("detail") or verdict)
+            if process_signal is not None
+            else "no process observation",
+        ),
     )
 
     delivery = next(
