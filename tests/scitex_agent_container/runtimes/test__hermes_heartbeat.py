@@ -159,11 +159,15 @@ def test_malformed_projection_is_rejected(tmp_path, updates, reason):
         json.dumps(projection), encoding="utf-8"
     )
 
-    # Act / Assert
-    with pytest.raises(HermesHeartbeatProjectionError, match=reason):
+    # Act
+    def action():
         read_hermes_heartbeat_projection(
             tmp_path, "scholar", previous=None, now_fn=lambda: 101.0
         )
+
+    # Assert
+    with pytest.raises(HermesHeartbeatProjectionError, match=reason):
+        action()
 
 
 def test_accepted_turn_is_counted_from_message_start(tmp_path):
@@ -273,9 +277,7 @@ def test_gateway_crash_leaves_the_last_heartbeat_untouched(tmp_path):
     assert (written, heartbeat.read_bytes()) == (False, original)
 
 
-def test_live_session_rpc_failure_leaves_last_heartbeat_untouched(
-    tmp_path, monkeypatch
-):
+def test_live_session_rpc_failure_leaves_last_heartbeat_untouched(tmp_path):
     # Arrange
     _gateway(tmp_path)
     projection = _valid_projection()
@@ -306,16 +308,12 @@ def test_live_session_rpc_failure_leaves_last_heartbeat_untouched(
         def recv(self):
             raise OSError("gateway RPC failed")
 
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: BrokenSocket(),
-    )
-
     # Act
     written = _beat_one(
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=write_heartbeat,
+        hermes_connect_fn=lambda *_args, **_kwargs: BrokenSocket(),
     )
 
     # Assert
@@ -488,19 +486,27 @@ def test_replay_gap_preserves_previous_projection_byte_for_byte(tmp_path):
         statuses=["idle"],
     )
 
-    # Act / Assert
-    with pytest.raises(HermesTuiRpcError, match="replay has a gap"):
+    # Act
+    try:
         refresh_hermes_heartbeat_projection(
             tmp_path,
             "scholar",
             connect_fn=lambda *_args, **_kwargs: socket,
         )
-    assert projection_path.read_bytes() == original
+    except HermesTuiRpcError as exc:
+        error = exc
+    else:
+        error = None
+
+    # Assert
+    assert (
+        isinstance(error, HermesTuiRpcError),
+        "replay has a gap" in str(error),
+        projection_path.read_bytes(),
+    ) == (True, True, original)
 
 
-def test_overlapping_projection_refreshes_cannot_regress_event_sequence(
-    tmp_path, monkeypatch
-):
+def test_overlapping_projection_refreshes_cannot_regress_event_sequence(tmp_path):
     # Arrange
     _gateway(tmp_path)
     first_started = threading.Event()
@@ -536,18 +542,16 @@ def test_overlapping_projection_refreshes_cannot_regress_event_sequence(
             return observation(1)
         # Without serialization both owners read the empty baseline and this
         # newer owner publishes first. With serialization it sees seq=1.
-        assert previous is None or previous["hermes_event_seq"] == 1
+        if previous is not None and previous["hermes_event_seq"] != 1:
+            raise AssertionError("serialized owner did not observe sequence 1")
         newer_finished.set()
         return observation(2)
 
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat_projection.observe_hermes_heartbeat",
-        observe,
-    )
-
     def refresh():
         try:
-            refresh_hermes_heartbeat_projection(tmp_path, "scholar")
+            refresh_hermes_heartbeat_projection(
+                tmp_path, "scholar", observe_fn=observe
+            )
         except BaseException as exc:  # pragma: no cover - asserted below
             errors.append(exc)
 
@@ -556,7 +560,7 @@ def test_overlapping_projection_refreshes_cannot_regress_event_sequence(
 
     # Act
     stale.start()
-    assert first_started.wait(timeout=1)
+    first_started_seen = first_started.wait(timeout=1)
     newer.start()
     stale.join(timeout=2)
     newer.join(timeout=2)
@@ -565,9 +569,13 @@ def test_overlapping_projection_refreshes_cannot_regress_event_sequence(
     )
 
     # Assert
-    assert not errors
-    assert not stale.is_alive() and not newer.is_alive()
-    assert projection["hermes_event_seq"] == 2
+    assert (
+        first_started_seen,
+        errors,
+        stale.is_alive(),
+        newer.is_alive(),
+        projection["hermes_event_seq"],
+    ) == (True, [], False, False, 2)
 
 
 def test_idle_projection_refresh_preserves_last_event_activity_time(tmp_path):
@@ -640,9 +648,7 @@ def test_projection_from_a_replaced_gateway_is_rejected(tmp_path):
         action()
 
 
-def test_gateway_replacement_after_projection_read_prevents_heartbeat_write(
-    tmp_path, monkeypatch
-):
+def test_gateway_replacement_after_projection_read_prevents_heartbeat_write(tmp_path):
     # Arrange
     _gateway(tmp_path)
     projection = _valid_projection()
@@ -664,28 +670,22 @@ def test_gateway_replacement_after_projection_read_prevents_heartbeat_write(
         _gateway(tmp_path, generation="generation-2")
         return observed
 
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: _Socket(
-            epoch="epoch-1", replays=[], statuses=["idle"]
-        ),
-    )
-
     # Act
     written = _beat_one(
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=write_heartbeat,
         hermes_observe_fn=replace_after_read,
+        hermes_connect_fn=lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle"]
+        ),
     )
 
     # Assert
     assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
 
 
-def test_gateway_replacement_during_publication_retracts_stale_heartbeat(
-    tmp_path, monkeypatch
-):
+def test_gateway_replacement_during_publication_retracts_stale_heartbeat(tmp_path):
     # Arrange
     _gateway(tmp_path)
     projection = _valid_projection()
@@ -704,10 +704,6 @@ def test_gateway_replacement_during_publication_retracts_stale_heartbeat(
     socket = _Socket(
         epoch="epoch-1", replays=[], statuses=["idle", "idle"]
     )
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: socket,
-    )
 
     def replace_while_writing(*args, **kwargs):
         write_heartbeat(*args, **kwargs)
@@ -718,6 +714,7 @@ def test_gateway_replacement_during_publication_retracts_stale_heartbeat(
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=replace_while_writing,
+        hermes_connect_fn=lambda *_args, **_kwargs: socket,
     )
 
     # Assert
@@ -725,7 +722,7 @@ def test_gateway_replacement_during_publication_retracts_stale_heartbeat(
 
 
 def test_stale_same_generation_session_projection_cannot_overwrite_current_session(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     # Arrange
     _gateway(tmp_path)
@@ -749,9 +746,12 @@ def test_stale_same_generation_session_projection_cannot_overwrite_current_sessi
         "state_dir": tmp_path,
         "config": SimpleNamespace(harness="hermes"),
     }
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: _Socket(
+    # Act
+    written = _beat_one(
+        agent,
+        snapshot={"tui-scholar": 1_800_000_000},
+        write_fn=write_heartbeat,
+        hermes_connect_fn=lambda *_args, **_kwargs: _Socket(
             epoch="epoch-1",
             replays=[],
             statuses=["idle", "idle"],
@@ -759,20 +759,11 @@ def test_stale_same_generation_session_projection_cannot_overwrite_current_sessi
         ),
     )
 
-    # Act
-    written = _beat_one(
-        agent,
-        snapshot={"tui-scholar": 1_800_000_000},
-        write_fn=write_heartbeat,
-    )
-
     # Assert
     assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
 
 
-def test_same_engine_projection_cannot_regress_published_sequence(
-    tmp_path, monkeypatch
-):
+def test_same_engine_projection_cannot_regress_published_sequence(tmp_path):
     # Arrange
     _gateway(tmp_path)
     projection = _valid_projection()
@@ -788,12 +779,6 @@ def test_same_engine_projection_cannot_regress_published_sequence(
     }
     original = json.dumps(previous, separators=(",", ":")).encode()
     (tmp_path / "heartbeat.json").write_bytes(original)
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: _Socket(
-            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
-        ),
-    )
     agent = {
         "name": "scholar",
         "state_dir": tmp_path,
@@ -805,15 +790,16 @@ def test_same_engine_projection_cannot_regress_published_sequence(
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=write_heartbeat,
+        hermes_connect_fn=lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
     )
 
     # Assert
     assert (written, (tmp_path / "heartbeat.json").read_bytes()) == (False, original)
 
 
-def test_heartbeat_liveness_is_fresh_while_hermes_activity_remains_old(
-    tmp_path, monkeypatch
-):
+def test_heartbeat_liveness_is_fresh_while_hermes_activity_remains_old(tmp_path):
     # Arrange
     _gateway(tmp_path)
     now = time.time()
@@ -823,12 +809,6 @@ def test_heartbeat_liveness_is_fresh_while_hermes_activity_remains_old(
     (tmp_path / "hermes-heartbeat-events.json").write_text(
         json.dumps(projection), encoding="utf-8"
     )
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: _Socket(
-            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
-        ),
-    )
     agent = {
         "name": "scholar",
         "state_dir": tmp_path,
@@ -840,18 +820,23 @@ def test_heartbeat_liveness_is_fresh_while_hermes_activity_remains_old(
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=write_heartbeat,
+        hermes_connect_fn=lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
     )
     heartbeat = json.loads(
         (tmp_path / "heartbeat.json").read_text(encoding="utf-8")
     )
 
     # Assert
-    assert written is True
-    assert heartbeat["ts"] == now
-    assert heartbeat["hermes_activity_at"] == old_activity
+    assert (written, heartbeat["ts"], heartbeat["hermes_activity_at"]) == (
+        True,
+        now,
+        old_activity,
+    )
 
 
-def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path, monkeypatch):
+def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
     # Arrange
     _gateway(tmp_path)
     now = time.time()
@@ -874,12 +859,6 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path, 
         connect_fn=lambda *args, **kwargs: socket,
         now_fn=lambda: now,
     )
-    monkeypatch.setattr(
-        "scitex_agent_container.runtimes._hermes_heartbeat._connect",
-        lambda *_args, **_kwargs: _Socket(
-            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
-        ),
-    )
     agent = {
         "name": "scholar",
         "state_dir": tmp_path,
@@ -891,6 +870,9 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path, 
         agent,
         snapshot={"tui-scholar": 1_800_000_000},
         write_fn=write_heartbeat,
+        hermes_connect_fn=lambda *_args, **_kwargs: _Socket(
+            epoch="epoch-1", replays=[], statuses=["idle", "idle"]
+        ),
     )
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text(encoding="utf-8"))
 

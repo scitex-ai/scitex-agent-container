@@ -75,9 +75,11 @@ def complete(sid, name, args, payload):
 
     # Assert — display.tool_progress=off and /focus may hide UI chrome, but
     # heartbeat instrumentation must still receive every lifecycle event.
-    assert "_tool_progress_enabled(sid) or" not in patched
-    assert patched.count("SAC heartbeat instrumentation is display-independent") == 2
-    assert "SAC heartbeat instrumentation replay-only" in patched
+    assert (
+        "_tool_progress_enabled(sid) or" not in patched,
+        patched.count("SAC heartbeat instrumentation is display-independent"),
+        "SAC heartbeat instrumentation replay-only" in patched,
+    ) == (True, 2, True)
 
 
 def test_stage_exports_pinned_tree_without_git_metadata(tmp_path):

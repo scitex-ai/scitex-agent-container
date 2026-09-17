@@ -188,6 +188,7 @@ def _beat_one(
     snapshot: dict[str, int],
     write_fn: Callable[..., None],
     hermes_observe_fn: Any = None,
+    hermes_connect_fn: Any = None,
 ) -> bool:
     """Write one TUI agent's heartbeat from the ALREADY-FETCHED fleet snapshot.
 
@@ -227,6 +228,7 @@ def _beat_one(
                 name,
                 write_fn=write_fn,
                 observe_fn=hermes_observe_fn,
+                connect_fn=hermes_connect_fn,
             )
             return True
         # ``writer`` marks this as OBSERVER testimony (host-side proxy
@@ -256,6 +258,7 @@ async def tui_heartbeat_loop(
     tick_timeout_s: float | None = None,
     supervise_fn: Any = None,
     hermes_observe_fn: Any = None,
+    hermes_connect_fn: Any = None,
 ) -> None:
     """Long-running TUI heartbeat-writer task for the listen lifespan.
 
@@ -356,6 +359,7 @@ async def tui_heartbeat_loop(
                     snapshot=snapshot,
                     write_fn=write_fn,
                     hermes_observe_fn=hermes_observe_fn,
+                    hermes_connect_fn=hermes_connect_fn,
                 )
             # RE-ASSERT THE TURN BRIDGE (2026-08-11 incident: 14 of 15
             # host-side bridges were dead PIDs and nothing ever noticed — a

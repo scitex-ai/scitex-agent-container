@@ -221,8 +221,12 @@ def _assert_current_observation(
     state_dir: Path,
     agent_name: str,
     observed: HermesHeartbeatObservation,
+    *,
+    connect_fn: Any | None = None,
 ) -> None:
-    _assert_live_hermes_observation(state_dir, agent_name, observed)
+    _assert_live_hermes_observation(
+        state_dir, agent_name, observed, connect_fn=connect_fn
+    )
 
 
 def _heartbeat_is_observation(
@@ -287,6 +291,7 @@ def promote_hermes_heartbeat_projection(
     *,
     write_fn: Callable[..., None],
     observe_fn: Any = None,
+    connect_fn: Any | None = None,
 ) -> HermesHeartbeatObservation:
     """Publish one fenced projection or restore the prior heartbeat on a race."""
     from .._runners._session_state import read_heartbeat
@@ -304,7 +309,9 @@ def promote_hermes_heartbeat_projection(
         # checks on both sides also catch a crashed/adversarial writer that did
         # not cooperate with the lock.
         with _gateway_state_lock(state_dir):
-            _assert_current_observation(state_dir, agent_name, observed)
+            _assert_current_observation(
+                state_dir, agent_name, observed, connect_fn=connect_fn
+            )
             _assert_monotonic_publication(previous, observed)
             write_fn(
                 state_dir,
@@ -315,7 +322,9 @@ def promote_hermes_heartbeat_projection(
                 authoritative_fields=observed.heartbeat_fields(),
             )
             try:
-                _assert_current_observation(state_dir, agent_name, observed)
+                _assert_current_observation(
+                    state_dir, agent_name, observed, connect_fn=connect_fn
+                )
             except Exception:
                 _restore_heartbeat(heartbeat_path, previous_bytes, observed)
                 raise
@@ -329,6 +338,7 @@ def refresh_hermes_heartbeat_projection(
     timeout_s: float = 10.0,
     connect_fn: Any | None = None,
     now_fn: Callable[[], float] = time.time,
+    observe_fn: Any = None,
 ) -> HermesHeartbeatObservation:
     """Advance and atomically persist the owner-side Hermes event cursor."""
     state_dir = Path(state_dir)
@@ -350,7 +360,8 @@ def refresh_hermes_heartbeat_projection(
                 )
         else:
             previous = None
-        observed = observe_hermes_heartbeat(
+        observer = observe_fn or observe_hermes_heartbeat
+        observed = observer(
             state_dir,
             agent_name,
             previous=previous,
