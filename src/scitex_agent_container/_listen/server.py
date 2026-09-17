@@ -177,6 +177,9 @@ async def agent_status(request: Request) -> JSONResponse:
     from ._registry_endpoints import enrich_row
 
     body = enrich_row(body, identity_spec_path=spec_path)
+    from .._lifecycle._status import _a2a_status
+
+    body["a2a"] = _a2a_status(name, cfg)
     # …and the same inbox-subscriber OBSERVATION ``GET /agents`` carries, so
     # a single-agent status poll can also tell REGISTERED from REACHABLE. A
     # running session_id + a live pid say nothing about whether this agent's

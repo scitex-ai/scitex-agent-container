@@ -76,7 +76,11 @@ def _resolve_account(config: AgentConfig | None) -> str:
         return "unknown"
 
 
-def _remote_instance_status(name: str) -> dict | None:
+def _remote_instance_status(
+    name: str,
+    *,
+    instance_reader: Callable[[], list[dict]] | None = None,
+) -> dict | None:
     """Build a status dict from the active ``instances`` row for ``name``.
 
     Used when the LOCAL file registry has no entry — the case for a
@@ -92,9 +96,11 @@ def _remote_instance_status(name: str) -> dict | None:
     resolves rather than erroring.
     """
     try:
-        from .._state.state_store import list_active_instances
+        if instance_reader is None:
+            from .._state.state_store import list_active_instances
 
-        rows = [r for r in list_active_instances() if r.get("name") == name]
+            instance_reader = list_active_instances
+        rows = [r for r in instance_reader() if r.get("name") == name]
         if not rows:
             return None
         # list_active_instances orders started_at DESC → newest first.
@@ -119,6 +125,15 @@ def _remote_instance_status(name: str) -> dict | None:
             "host": row.get("host", "") or "",
             "a2a_port": row.get("a2a_port"),
             "bound_port": bound,
+            "a2a": {
+                # The remote active row records the observed endpoint but not
+                # the original spec intent.  Do not infer one from the other.
+                "configured_port": None,
+                "resolved_port": bound,
+                "resolution_source": (
+                    "active_instance_bound_port" if bound is not None else "none"
+                ),
+            },
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
@@ -211,15 +226,21 @@ def agent_status(
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     runtime_factory = runtime_factory or _get_runtime
-    # stx-allow: fallback (reason: YAML or runtime may be unavailable; status should degrade to stopped=False rather than raise)
+    # Config intent and runtime observation are independent evidence.  A failed
+    # runtime probe must not erase a successfully loaded configured A2A value.
     try:
         config = load_config(entry["config"])
-        runtime = runtime_factory(config)
-        running = runtime.is_running(config)
     except Exception:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         traceback.print_exc()
-        running = False
         config = None
+    running = False
+    runtime = None
+    if config is not None:
+        try:
+            runtime = runtime_factory(config)
+            running = runtime.is_running(config)
+        except Exception:  # stx-allow: fallback (reason: runtime observation is optional evidence; preserve successfully loaded config intent)
+            traceback.print_exc()
 
     result = {
         "name": name,
@@ -241,7 +262,7 @@ def agent_status(
     # circuit-breaker latch), which is distinct from liveness and idle state.
     if config is not None:
         try:
-            control = runtime.control_state(config)
+            control = runtime.control_state(config) if runtime is not None else None
         except Exception:  # stx-allow: fallback (reason: optional adapter observation must not break status)
             control = None
         if control is not None:
