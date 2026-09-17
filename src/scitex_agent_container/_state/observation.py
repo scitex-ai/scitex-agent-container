@@ -160,6 +160,21 @@ def build_agent_observation(
         ),
         None,
     )
+    # A fresh heartbeat is observer testimony that the process is present. It
+    # may repair an unread process probe, but it never overrides a direct
+    # process verdict (especially a confirmed exit).
+    if process_signal is None or str(process_signal.get("verdict")) == "unknown":
+        heartbeat_alive = next(
+            (
+                item
+                for item in liveness.get("evidence", [])
+                if item.get("source") == "heartbeat"
+                and item.get("verdict") == "alive"
+            ),
+            None,
+        )
+        if heartbeat_alive is not None:
+            process_signal = heartbeat_alive
     verdict = (
         str(process_signal.get("verdict") or "unknown").lower()
         if process_signal is not None
@@ -173,7 +188,7 @@ def build_agent_observation(
     process = Dimension(
         state=process_map.get(verdict, ProcessState.UNKNOWN),
         evidence=_evidence(
-            "liveness.process",
+            f"liveness.{process_signal.get('source') if process_signal else 'process'}",
             str(process_signal.get("detail") or verdict)
             if process_signal is not None
             else "no process observation",
