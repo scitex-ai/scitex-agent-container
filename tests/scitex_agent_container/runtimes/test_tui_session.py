@@ -60,6 +60,8 @@ class _MemorySession:
     # to True.
     pane_pid: int = 0
     pane_dead: bool = False
+    submitted: bool = False
+    literal_pending: bool = False
 
 
 class _MemoryMultiplexer:
@@ -135,8 +137,10 @@ class _MemoryMultiplexer:
         # rather than the path it means to test. Modelling an IDLE pane is the
         # honest default here; tests that want a busy one say so explicitly by
         # overriding capture_content (see the busy-pane tests below).
+        busy = "\nWorking…" if sess.submitted else ""
         return (
             "\n".join(sess.pane)
+            + busy
             + "\n? for shortcuts"
             + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
         )
@@ -155,7 +159,19 @@ class _MemoryMultiplexer:
         sess = cls._sessions.get(session_name)
         if sess is None:
             return
+        if "Enter" in keys and sess.literal_pending:
+            sess.submitted = True
+            sess.literal_pending = False
+            return
         sess.pane.extend(keys)
+
+    @classmethod
+    def send_text_literal(cls, session_name: str, text: str) -> None:
+        sess = cls._sessions.get(session_name)
+        if sess is None:
+            return
+        sess.pane.append(text)
+        sess.literal_pending = True
 
     @classmethod
     def send_text_and_submit(cls, session_name: str, text: str) -> None:
@@ -995,6 +1011,7 @@ def test_send_turn_refuses_when_the_pane_is_busy(
     when work does not progress" — an unobservable non-progress condition
     means that escalation can never trigger.
     """
+
     # Arrange — a live session whose pane is mid-turn.
     class _BusyMux(mux):  # type: ignore[misc, valid-type]
         @classmethod
