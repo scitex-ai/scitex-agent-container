@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from scitex_agent_container._lifecycle._startup_failed import read_marker
@@ -22,12 +23,13 @@ from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._runners._session_state import state_dir_for
 from scitex_agent_container._state import registry as _reg
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 _TOKEN = "test-token-agent-exec-declined"
 
 
 @pytest.fixture
-def isolated_listen_env(tmp_path: Path):
+def isolated_listen_env(tmp_path: Path, env_save_restore):
     """Isolated state.db + registry/runtime dirs (mirrors test__agent_exec_subprocess.py)."""
     db = tmp_path / "state.db"
     saved_env_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
@@ -38,6 +40,28 @@ def isolated_listen_env(tmp_path: Path):
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
+    agents = tmp_path / "agents"
+    for name in (
+        "declined-child",
+        "declined-body",
+        "declined-no-marker",
+        "crash-child",
+        "crash-body",
+        "crash-marker",
+        "crash-kind",
+    ):
+        spec = agents / name / "spec.yaml"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text(
+            yaml.safe_dump(
+                explicit_doc(
+                    {"harness": "anthropic", "runtime": "claude-agent-sdk"}
+                ),
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(agents))
     try:
         yield tmp_path
     finally:

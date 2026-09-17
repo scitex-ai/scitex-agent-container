@@ -41,6 +41,10 @@ from starlette.testclient import TestClient
 
 from scitex_agent_container._listen import _agent_restart as restart_handler_mod
 from scitex_agent_container._listen._agent_restart import _build_detached_restart_argv
+from scitex_agent_container._listen._provider_proof import (
+    BROKERED_LIFECYCLE_ENV,
+    EXPECTED_PROVIDER_PROOF_ENV,
+)
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._state.state_store_nodes import record_comms_policy
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
@@ -83,6 +87,15 @@ def isolated_env(tmp_path: Path, env_save_restore):
     env_save_restore.set("SCITEX_AGENT_CONTAINER_RUNTIME_DIR", str(runtime))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(yaml_dir))
     env_save_restore.set("SCITEX_AGENT_CONTAINER_STATE_DB", str(state_store_path))
+    alice_spec = yaml_dir / "alice" / "spec.yaml"
+    alice_spec.parent.mkdir(parents=True, exist_ok=True)
+    alice_spec.write_text(
+        yaml.safe_dump(
+            explicit_doc({"harness": "anthropic", "runtime": "tui"}),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     import importlib
 
     import scitex_agent_container._runners._session_state as ss
@@ -429,7 +442,10 @@ def _install_env_recording_restart(
     script.write_text(
         f"#!{sys.executable}\n"
         "import json, os\n"
-        f"open({str(log)!r}, 'w').write(json.dumps({{'key': os.environ.get({env_name!r})}}))\n",
+        f"open({str(log)!r}, 'w').write(json.dumps({{"
+        f"'key': os.environ.get({env_name!r}), "
+        f"'marker': os.environ.get({BROKERED_LIFECYCLE_ENV!r}), "
+        f"'proof': os.environ.get({EXPECTED_PROVIDER_PROOF_ENV!r})}}))\n",
         encoding="utf-8",
     )
     script.chmod(0o700)
@@ -456,7 +472,12 @@ def test_sync_restart_receives_pool_only_provider_key(
     observed = json.loads(log.read_text(encoding="utf-8"))
 
     # Assert
-    assert response.status_code == 200 and observed["key"] == "pool-only-restart-key"
+    assert (
+        response.status_code,
+        observed["key"],
+        observed["marker"],
+        str(observed["proof"]).startswith("v1:sha256:"),
+    ) == (200, "pool-only-restart-key", "1", True)
 
 
 def test_detached_self_restart_receives_pool_only_provider_key(
@@ -477,10 +498,13 @@ def test_detached_self_restart_receives_pool_only_provider_key(
         )
 
     # Assert
+    detached_env = recorder.calls[0][1]
     assert (
         response.status_code,
-        recorder.calls[0][1].get("OPENCODE_GO_API_KEY"),
-    ) == (202, "pool-only-restart-key")
+        detached_env.get("OPENCODE_GO_API_KEY"),
+        detached_env.get(BROKERED_LIFECYCLE_ENV),
+        str(detached_env.get(EXPECTED_PROVIDER_PROOF_ENV)).startswith("v1:sha256:"),
+    ) == (202, "pool-only-restart-key", "1", True)
 
 
 def _install_host_qwen_restart_agent(

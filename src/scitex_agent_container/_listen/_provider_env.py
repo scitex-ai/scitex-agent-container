@@ -105,21 +105,37 @@ def provider_secret_env_for_agent(
     name: str,
     child_env: Mapping[str, str],
 ) -> dict[str, str]:
-    """Resolve ``name`` and return its declared provider-key overlay.
+    """Resolve ``name`` and return its key plus immutable broker proof.
 
-    Spec lookup/load failures deliberately return no overlay: no pool lookup
-    occurs, so no secret can escape, and the child owns the canonical spec
-    diagnostic.  A successfully loaded provider spec is always preflighted.
+    A load failure cannot fall through to a child that may observe a newly
+    created/replaced spec.  The listener must either bind the exact config it
+    authorized or refuse before spawning anything.
     """
     try:
-        config = load_config(resolve_with_prefix(name))
+        config_path = resolve_with_prefix(name)
+        from ._provider_proof import provider_source_evidence
+
+        source_before_load = provider_source_evidence(config_path)
+        config = load_config(config_path)
     except QwenGatewayTokenEnvError as exc:
         raise ProviderPreflightError("qwen_token_env_unregistered") from exc
-    except (
-        Exception
-    ):  # stx-allow: fallback (the canonical child start reports spec failures)
-        return {}
-    return provider_secret_env(config, child_env)
+    except Exception as exc:  # stx-allow: fallback (fail closed with a value-free category; never carry exception text, paths, or YAML content into the response)
+        raise ProviderPreflightError("provider_spec_load_failed") from exc
+    overlay = provider_secret_env(config, child_env)
+    try:
+        from ._provider_proof import brokered_provider_proof_env
+
+        overlay.update(
+            brokered_provider_proof_env(
+                config, config_path, expected_source=source_before_load
+            )
+        )
+    except ProviderPreflightError:
+        raise
+    except Exception as exc:  # stx-allow: fallback (proof construction must fail closed and the category is the only safe diagnostic)
+        category = str(getattr(exc, "category", "provider_proof_failed"))
+        raise ProviderPreflightError(category) from exc
+    return overlay
 
 
 def provider_preflight_refusal(

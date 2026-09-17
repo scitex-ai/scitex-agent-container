@@ -28,6 +28,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,8 +40,10 @@ from scitex_agent_container.runtimes._secret_pool import (
     _ALLOWED_SECRET_NAMES,
     _ALLOWED_SECRET_PREFIXES,
     _SECRETS_ENVRC_VAR,
+    SecretPoolFileError,
     _parse_secret_file,
     _pool_env,
+    _read_secret_file_secure,
     read_pool,
 )
 
@@ -375,6 +378,187 @@ def test_pool_file_not_owned_by_effective_user_is_rejected(
 
     # Assert
     assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_world_writable_secret_ancestor_is_rejected_before_open(
+    tmp_path: Path,
+) -> None:
+    # Arrange — the final file is owner-only, but an attacker may replace it
+    # through this writable directory before the descriptor open.
+    unsafe = tmp_path / "unsafe-ancestor"
+    unsafe.mkdir()
+    unsafe.chmod(0o777)
+    pool = unsafe / "pool.src"
+    pool.write_text("GITHUB_TOKEN=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+
+    # Act
+    real_lstat = os.lstat
+
+    def trust_unrelated_test_host_ancestors(path: Path):
+        metadata = real_lstat(path)
+        if Path(path) == unsafe:
+            return metadata
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=secret_pool_mod._effective_uid(),
+        )
+
+    with _swap("_lstat_secret_path", trust_unrelated_test_host_ancestors):
+        with pytest.raises(SecretPoolFileError) as caught:
+            _read_secret_file_secure(pool)
+
+    # Assert
+    assert caught.value.category == "secret_file_ancestor_permissions"
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o722])
+def test_each_group_or_other_writable_ancestor_mode_is_rejected(
+    tmp_path: Path, mode: int
+) -> None:
+    # Arrange
+    unsafe = tmp_path / f"unsafe-{mode:o}"
+    unsafe.mkdir()
+    unsafe.chmod(mode)
+    pool = unsafe / "pool.src"
+    pool.write_text("GITHUB_TOKEN=opaque-canary\n", encoding="utf-8")
+    pool.chmod(0o600)
+    real_lstat = os.lstat
+
+    def controlled_lstat(path: Path):
+        metadata = real_lstat(path)
+        if Path(path) == unsafe:
+            return metadata
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=secret_pool_mod._effective_uid(),
+        )
+
+    # Act
+    with _swap("_lstat_secret_path", controlled_lstat):
+        with pytest.raises(SecretPoolFileError) as caught:
+            _read_secret_file_secure(pool)
+
+    # Assert
+    assert caught.value.category == "secret_file_ancestor_permissions"
+
+
+def test_secret_ancestor_owned_by_another_uid_is_rejected(tmp_path: Path) -> None:
+    # Arrange — inject hostile ownership because an unprivileged test process
+    # cannot chown a real directory to an unrelated uid.
+    hostile = tmp_path / "hostile-owner"
+    hostile.mkdir(mode=0o700)
+    pool = hostile / "pool.src"
+    pool.write_text("GITHUB_TOKEN=opaque-canary\n", encoding="utf-8")
+    pool.chmod(0o600)
+    real_lstat = os.lstat
+
+    def hostile_owner_lstat(path: Path):
+        metadata = real_lstat(path)
+        uid = (
+            secret_pool_mod._effective_uid() + 1
+            if Path(path) == hostile
+            else secret_pool_mod._effective_uid()
+        )
+        return SimpleNamespace(st_mode=metadata.st_mode & ~0o022, st_uid=uid)
+
+    # Act
+    with _swap("_lstat_secret_path", hostile_owner_lstat):
+        with pytest.raises(SecretPoolFileError) as caught:
+            _read_secret_file_secure(pool)
+
+    # Assert
+    assert caught.value.category == "secret_file_ancestor_owner"
+
+
+def test_symlink_secret_ancestor_is_rejected_by_the_walk(tmp_path: Path) -> None:
+    # Arrange
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir(mode=0o700)
+    pool = real_parent / "pool.src"
+    pool.write_text("GITHUB_TOKEN=opaque-canary\n", encoding="utf-8")
+    pool.chmod(0o600)
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    linked_pool = linked_parent / "pool.src"
+    real_lstat = os.lstat
+
+    def controlled_lstat(path: Path):
+        metadata = real_lstat(path)
+        if Path(path) == linked_parent:
+            return metadata
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=secret_pool_mod._effective_uid(),
+        )
+
+    # Act
+    with _swap("_lstat_secret_path", controlled_lstat):
+        with pytest.raises(SecretPoolFileError) as caught:
+            _read_secret_file_secure(linked_pool)
+
+    # Assert
+    assert caught.value.category == "secret_file_ancestor_symlink"
+
+
+def test_root_and_owner_only_ancestor_tree_is_accepted(tmp_path: Path) -> None:
+    # Arrange — normalize only environmental ancestors outside this fixture;
+    # the fixture's own tree remains a real owner-only hierarchy.
+    trusted_root = tmp_path / "trusted-root"
+    trusted_root.mkdir(mode=0o700)
+    trusted_parent = trusted_root / "owner-only"
+    trusted_parent.mkdir(mode=0o700)
+    pool = trusted_parent / "pool.src"
+    pool.write_text("GITHUB_TOKEN=accepted-value\n", encoding="utf-8")
+    pool.chmod(0o600)
+    real_lstat = os.lstat
+
+    def safe_host_lstat(path: Path):
+        metadata = real_lstat(path)
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=(
+                0
+                if Path(path) == Path(path.anchor)
+                else secret_pool_mod._effective_uid()
+            ),
+        )
+
+    # Act
+    with _swap("_lstat_secret_path", safe_host_lstat):
+        parsed = _read_secret_file_secure(pool)
+
+    # Assert
+    assert parsed == {"GITHUB_TOKEN": "accepted-value"}
+
+
+def test_ancestor_refusal_diagnostic_contains_no_secret_value(tmp_path: Path) -> None:
+    # Arrange
+    marker = "ANCESTOR-SECRET-MUST-NOT-APPEAR"
+    unsafe = tmp_path / "unsafe-diagnostic"
+    unsafe.mkdir()
+    unsafe.chmod(0o777)
+    pool = unsafe / "pool.src"
+    pool.write_text(f"GITHUB_TOKEN={marker}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    real_lstat = os.lstat
+
+    def controlled_lstat(path: Path):
+        metadata = real_lstat(path)
+        if Path(path) == unsafe:
+            return metadata
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=secret_pool_mod._effective_uid(),
+        )
+
+    # Act
+    with _swap("_lstat_secret_path", controlled_lstat):
+        with pytest.raises(SecretPoolFileError) as caught:
+            _read_secret_file_secure(pool)
+
+    # Assert
+    assert marker not in str(caught.value) and marker not in caught.value.category
 
 
 def test_pool_replacement_with_symlink_at_open_is_rejected(

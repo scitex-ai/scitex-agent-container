@@ -40,6 +40,10 @@ import sys
 
 import click
 
+from ..._listen._provider_proof import (
+    ProviderProofError,
+    verify_brokered_provider_proof_for_agent,
+)
 from .._helpers import agent_name_complete, console
 
 # The LOCAL leg (perform + verify + render) lives in ``_restart_local``;
@@ -102,6 +106,18 @@ def _restart_one(
     Never raises for an ordinary restart fault and never calls
     ``sys.exit`` — the caller aggregates the batch exit code.
     """
+    # A listen-brokered plain restart reaches this command before the local
+    # stop leg.  Verify the listener's immutable provider proof before even
+    # deciding a route, so a swapped/missing spec can never tear down the live
+    # process.  Direct host restarts carry no marker and this is a no-op.
+    try:
+        verify_brokered_provider_proof_for_agent(name)
+    except ProviderProofError as exc:
+        out = {"name": name, "error": exc.category, "restarted": False}
+        if not as_json:
+            console.print(f"[red]Error: {exc.category}[/red]")
+        return out, False
+
     broker = must_broker_to_host()
     site = "host-listen" if broker else "local"
     log_restart_decision(

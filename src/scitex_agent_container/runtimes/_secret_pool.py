@@ -184,12 +184,44 @@ def _open_secret_fd(path: Path, flags: int) -> int:
     return os.open(path, flags)
 
 
+def _lstat_secret_path(path: Path) -> os.stat_result:
+    """No-follow metadata seam for the trusted-ancestor walk."""
+    return os.lstat(path)
+
+
+def _validate_secret_ancestors(path: Path) -> None:
+    """Reject a secret path whose directory chain is attacker-replaceable.
+
+    Final-file ``O_NOFOLLOW`` and descriptor identity checks do not protect a
+    pathname when an attacker can rename a parent directory between lookup and
+    open.  Walk the lexical absolute path from the filesystem root through the
+    final parent before any file open.  Every component must be a real directory,
+    owned by root or this process's effective uid, with no group/other write bit.
+    """
+    parent = path.parent
+    ancestors = [parent, *parent.parents]
+    for component in reversed(ancestors):
+        try:
+            metadata = _lstat_secret_path(component)
+        except OSError as exc:
+            raise SecretPoolFileError("secret_file_ancestor_unavailable") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise SecretPoolFileError("secret_file_ancestor_symlink")
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise SecretPoolFileError("secret_file_ancestor_not_directory")
+        if metadata.st_uid not in {0, _effective_uid()}:
+            raise SecretPoolFileError("secret_file_ancestor_owner")
+        if stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise SecretPoolFileError("secret_file_ancestor_permissions")
+
+
 def _read_secret_file_secure(path: Path) -> dict[str, str]:
     """Read one canonical owner-only regular file through its verified fd."""
     candidate = path.expanduser()
     if not candidate.is_absolute():
         raise SecretPoolFileError("secret_file_noncanonical")
     absolute = Path(os.path.abspath(candidate))
+    _validate_secret_ancestors(absolute)
     try:
         canonical = candidate.resolve(strict=True)
     except OSError as exc:

@@ -399,10 +399,16 @@ def _get(port: int, path: str) -> tuple[int, dict]:
         return exc.code, json.loads(exc.read() or b"{}")
 
 
-def _wait_exchange(port: int, exchange_id: str) -> dict:
+def _wait_exchange(
+    port: int, exchange_id: str, *, expected_code: int | None = None
+) -> dict:
     for _ in range(100):
         _status, body = _get(port, f"/v1/exchanges/{exchange_id}")
-        if body["status_code"]["code"] != 202:
+        code = body["status_code"]["code"]
+        if expected_code is not None:
+            if code == expected_code:
+                return body
+        elif code != 202:
             return body
         time.sleep(0.001)
     return body
@@ -949,6 +955,9 @@ def test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit(
         calls["count"] += 1
         if calls["count"] < 3:
             raise RuntimeError("gateway projection did not show the marker yet")
+        # Make the third worker finish after the first GET deterministically.
+        # The exchange remains retryable (102) until this final proof lands.
+        time.sleep(0.03)
         return SimpleNamespace(
             status="already_visible",
             visibility="session.messages[4]",
@@ -966,7 +975,7 @@ def test_visible_delivery_retries_one_exchange_then_finishes_without_resubmit(
     second_status, second = _post(port, "/v1/turn", payload)
     second_probe = _wait_exchange(port, second["exchange_id"])
     third_status, third = _post(port, "/v1/turn", payload)
-    final = _wait_exchange(port, third["exchange_id"])
+    final = _wait_exchange(port, third["exchange_id"], expected_code=200)
 
     # Assert
     assert (

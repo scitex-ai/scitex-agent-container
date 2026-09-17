@@ -31,6 +31,10 @@ import pytest
 import yaml
 from starlette.testclient import TestClient
 
+from scitex_agent_container._listen._provider_proof import (
+    BROKERED_LIFECYCLE_ENV,
+    EXPECTED_PROVIDER_PROOF_ENV,
+)
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._runners import _session_state as _ss
 from scitex_agent_container._state import registry as _reg
@@ -62,7 +66,7 @@ _QWEN_OVERRIDE_EXECUTION_HOOKS = [
 
 
 @pytest.fixture
-def isolated_listen_env(tmp_path: Path):
+def isolated_listen_env(tmp_path: Path, env_save_restore):
     """Isolated state.db + registry/runtime dirs (mirrors test__acl.py shape)."""
     db = tmp_path / "state.db"
     saved_env_db = os.environ.get("SCITEX_AGENT_CONTAINER_STATE_DB")
@@ -73,6 +77,18 @@ def isolated_listen_env(tmp_path: Path):
     os.environ["HOME"] = str(tmp_path)
     _reg.REGISTRY_DIR = tmp_path / "registry"
     _ss.DEFAULT_STATE_ROOT = tmp_path / "runtime"
+    registry = tmp_path / "agents"
+    for name in ("broker-child", "cohort-child", "back-compat-child", "crash-child"):
+        target = registry / name / "spec.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            yaml.safe_dump(
+                explicit_doc({"harness": "anthropic", "runtime": "claude-agent-sdk"}),
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(registry))
     try:
         yield tmp_path
     finally:
@@ -197,7 +213,11 @@ def _install_provider_env_sac_shim(
         "import json, os, sys\n"
         f"value = os.environ.get({env_name!r})\n"
         f"with open({json.dumps(str(env_log))}, 'a') as fh:\n"
-        "    fh.write(json.dumps({'key': value}) + '\\n')\n"
+        "    fh.write(json.dumps({\n"
+        "        'key': value,\n"
+        f"        'marker': os.environ.get({BROKERED_LIFECYCLE_ENV!r}),\n"
+        f"        'proof': os.environ.get({EXPECTED_PROVIDER_PROOF_ENV!r}),\n"
+        "    }) + '\\n')\n"
         "if not value:\n"
         f"    print({(env_name + ' missing')!r}, file=sys.stderr)\n"
         "    sys.exit(41)\n"
@@ -214,7 +234,7 @@ def _install_opencode_agent_spec(tmp_path: Path, env_save_restore) -> None:
     source = repo / "examples" / "providers" / "opencode-go-hermes.yaml"
     registry = tmp_path / "agents"
     target = registry / "broker-child" / "spec.yaml"
-    target.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source.read_text())
     env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(registry))
 
@@ -252,6 +272,39 @@ def test_agents_start_propagates_declared_provider_key_from_approved_pool(
         200,
         "test-only-provider-key",
     )
+
+
+def test_agents_start_passes_value_free_immutable_proof_to_child(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import json
+
+    _install_opencode_agent_spec(tmp_path, env_save_restore)
+    env_save_restore.set("OPENCODE_GO_API_KEY", "proof-secret-must-not-appear")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "provider-proof-shim"
+    bin_dir.mkdir()
+    env_log = _install_provider_env_sac_shim(bin_dir)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    recorded = json.loads(env_log.read_text().splitlines()[-1])
+
+    # Assert
+    assert (
+        response.status_code,
+        recorded["marker"],
+        str(recorded["proof"]).startswith("v1:sha256:"),
+        "proof-secret-must-not-appear" in str(recorded["proof"]),
+    ) == (200, "1", True, False)
 
 
 def _install_host_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None:
@@ -516,6 +569,36 @@ def test_agents_start_keeps_missing_provider_key_fail_closed(
         )
     # Assert
     assert response.status_code == 412 and not env_log.exists()
+
+
+def test_agents_start_load_failure_cannot_be_raced_by_later_spec_creation(
+    isolated_listen_env, env_save_restore, tmp_path: Path, subprocess_shim
+) -> None:
+    # Arrange — no spec exists when the listener preflights.  The old catch-all
+    # returned an empty overlay and launched anyway, allowing a spec created in
+    # that gap to become the child's unreviewed authority.
+    name = "created-after-listener-load-failure"
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    subprocess_shim.install("sac", stdout="unexpected-spawn", exit=0)
+    app = create_app(token=_TOKEN)
+
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": name},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    registry = tmp_path / "agents" / name / "spec.yaml"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text("created only after the refusal\n", encoding="utf-8")
+
+    # Assert
+    assert (
+        response.status_code,
+        response.json().get("kind"),
+        subprocess_shim.argv_for("sac"),
+    ) == (412, "provider_spec_load_failed", None)
 
 
 def _inline_opencode_spec(*, endpoint: str, env_name: str) -> dict:

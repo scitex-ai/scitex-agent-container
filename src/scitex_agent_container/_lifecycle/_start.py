@@ -140,7 +140,9 @@ def agent_start(
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
-    config = load_config(config_path)
+    from .._listen._provider_proof import load_and_verify_brokered_provider_proof
+
+    config = load_and_verify_brokered_provider_proof(config_path, load_config)
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on

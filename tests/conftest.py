@@ -18,9 +18,38 @@ import itertools
 import os
 import sysconfig
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def trusted_secret_pool_test_ancestors() -> Iterator[None]:
+    """Model a conventional trusted root around pytest's temporary files.
+
+    The shared agent sandbox deliberately has group-writable ``/`` and ``/tmp``.
+    Production must reject that ancestry, but positive secret-pool tests need to
+    exercise the files they create rather than this runner's host policy.  The
+    dedicated adversarial tests replace the seam with real/injected metadata for
+    the component under test.
+    """
+    from scitex_agent_container.runtimes import _secret_pool as secret_pool
+
+    saved = secret_pool._lstat_secret_path
+
+    def trusted_lstat(path: Path):
+        metadata = os.lstat(path)
+        return SimpleNamespace(
+            st_mode=metadata.st_mode & ~0o022,
+            st_uid=(0 if Path(path) == Path(path.anchor) else os.geteuid()),
+        )
+
+    secret_pool._lstat_secret_path = trusted_lstat
+    try:
+        yield
+    finally:
+        secret_pool._lstat_secret_path = saved
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
