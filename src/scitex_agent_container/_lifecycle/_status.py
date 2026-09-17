@@ -15,17 +15,21 @@ from ._runtime_select import _fallback_workdir, _get_runtime
 
 
 def _resolve_account(config: AgentConfig | None) -> str:
-    """Resolve the agent's effective Anthropic-account label.
+    """Resolve stored Claude Code credential inventory for Anthropic only.
 
-    Surfaces which account the agent authenticates as (operator request
-    4581) so the operator can see which agents share one account — and
-    thus one server-side rate limit. Mirrors the runtime auth precedence
-    (agent ``spec.env`` override → host shared OAuth → fallback). See
-    ``_account.agent_account.resolve_agent_account_label``.
+    Hermes and Codex specs retain legacy ``claude`` fields, but those harnesses
+    do not authenticate through Claude Code OAuth. They return ``"unknown"``
+    rather than publishing unrelated account metadata.
 
     Tolerant: a missing config or any resolver hiccup maps to
     ``"unknown"`` so status never fails on account lookup.
     """
+    if (
+        config is None
+        or str(getattr(config, "harness", "") or "").strip().lower()
+        != "anthropic"
+    ):
+        return "unknown"
     # stx-allow: fallback (reason: status output must never crash on an
     # account-resolution hiccup; ``"unknown"`` is the right degraded UX.)
     try:
@@ -40,6 +44,45 @@ def _resolve_account(config: AgentConfig | None) -> str:
         return resolve_agent_account_label(env, assigned_account=assigned)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return "unknown"
+
+
+def _runtime_identity(
+    name: str,
+    config: AgentConfig | None,
+    running: bool,
+    *,
+    registry_entry: dict | None = None,
+    active_instances: list[dict] | None = None,
+    local_host: str | None = None,
+    birth_reader=None,
+    evidence_reader=None,
+) -> dict:
+    """Runtime selection/auth facts, preferring this incarnation's birth."""
+    birth = None
+    if running:
+        try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
+            from .._state.state_store import _resolve_host, list_active_instances
+            from ._runtime_identity import resolve_bound_birth_records
+
+            host = local_host or _resolve_host(None)
+            snapshot = (
+                active_instances
+                if active_instances is not None
+                else list_active_instances(host=None)
+            )
+            births = resolve_bound_birth_records(
+                [registry_entry or {"name": name}],
+                active_instances=snapshot,
+                local_host=host,
+                evidence_reader=evidence_reader,
+                birth_reader=birth_reader,
+            )
+            birth = births.get(name)
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            birth = None
+    from ._runtime_identity import resolve_runtime_identity
+
+    return resolve_runtime_identity(config, running=running, birth_record=birth)
 
 
 def _remote_instance_status(name: str) -> dict | None:
@@ -79,8 +122,14 @@ def _remote_instance_status(name: str) -> dict | None:
             "status": "running",
             "model": "unknown",
             "runtime": "unknown",
+            "harness": "unknown",
+            "engine": "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "unknown",
             # Cross-host agent: its credentials live on the remote host,
-            # not resolvable from here. Keep the key for shape parity.
+            # not resolvable from here. Keep compatibility alias explicit.
+            "stored_credential": "unknown",
             "account": "unknown",
             "host": row.get("host", "") or "",
             "a2a_port": row.get("a2a_port"),
@@ -193,13 +242,10 @@ def agent_status(
         "screen": entry.get("screen", ""),
         "started_at": entry.get("started_at", ""),
         "status": "running" if running else "stopped",
-        "model": config.model if config else "unknown",
-        "runtime": config.runtime if config else "unknown",
-        # Which Anthropic account this agent authenticates as (operator
-        # request 4581). Agents sharing one label share one server-side
-        # rate limit. Resolved from the agent's effective auth source.
-        "account": _resolve_account(config),
+        # Stored credential inventory is not actual runtime auth identity.
+        "stored_credential": _resolve_account(config),
     }
+    result["account"] = result["stored_credential"]  # deprecated inventory alias
 
     # Runtime-specific detection stays behind a neutral control-plane shape.
     # A live process can still be unable to admit turns (for example a
@@ -232,6 +278,14 @@ def agent_status(
     result["liveness"] = liveness
     if liveness.get("verdict") == "alive":
         result["status"] = "running"
+    result.update(
+        _runtime_identity(
+            name,
+            config,
+            result["status"] == "running",
+            registry_entry=entry,
+        )
+    )
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.
