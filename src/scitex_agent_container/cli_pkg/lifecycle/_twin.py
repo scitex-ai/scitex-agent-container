@@ -104,14 +104,14 @@ def _schedule_ttl_stop(twin_name: str, ttl_seconds: int) -> str:
     return f"auto-stop scheduled in {ttl_seconds}s (detached timer)"
 
 
-@click.command(name="twin")
+@click.command(name="fork")
 @click.argument("parent", type=str, shell_complete=agent_name_complete)
 @click.option(
     "--name",
     "twin_name",
     type=str,
     default=None,
-    help="Twin agent name (default: <parent>-twin, bumped to -2/-3 if taken).",
+    help="Fork agent name (default: <parent>-fork, bumped to -2/-3 if taken).",
 )
 @click.option(
     "--task",
@@ -164,7 +164,7 @@ def twin(
     caller: str | None,
     as_json: bool,
 ) -> None:
-    """Spawn a context-inheriting TWIN of PARENT.
+    """Spawn a context-inheriting FORK of PARENT.
 
     The twin inherits PARENT's live conversation at birth (a fork of its
     session) and then diverges. PARENT is never touched. Repo / workdir /
@@ -215,8 +215,10 @@ def twin(
     # POST to the host listen (brokers on both host + in-container paths).
     import os
 
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
+    in_sif = is_in_sif()
     base_url = (os.environ.get("SAC_LISTEN_BASE_URL", "") or "").strip() or None
     if base_url is None:
         # Bare-host invocation: env not set — fall back to the canonical
@@ -229,7 +231,8 @@ def twin(
         result = request_spawn(
             resolved_name,
             spec=doc,
-            caller=caller,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
             base_url=base_url,
             assume_yes=True,
         )
@@ -244,7 +247,7 @@ def twin(
     if as_json:
         click.echo(json.dumps({
             "status": "ok" if rc == 0 else "error",
-            "twin": resolved_name,
+            "fork": resolved_name,
             "parent": parent,
             "persist": persist,
             "ttl_seconds": ttl_seconds,
@@ -256,7 +259,7 @@ def twin(
         if rc == 0:
             lifetime = "persistent" if persist else "ephemeral"
             console.print(
-                f"[green]spawned twin[/green] {resolved_name} "
+                f"[green]spawned fork[/green] {resolved_name} "
                 f"({lifetime}, inheriting {parent}'s session)"
             )
             if ttl_note:

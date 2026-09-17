@@ -28,7 +28,7 @@ from ._agent_exec_liveness import (
     post_ack_timeout_from_env,
 )
 from ._agent_exec_send import _find_claude_binary, agent_exchange, agent_send
-from ._inline_spec import materialize_inline_spec
+from ._inline_spec import InlineSpecHandoff, materialize_inline_spec
 
 __all__ = [
     "_find_claude_binary",
@@ -78,12 +78,35 @@ async def agents_start(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "missing or empty 'name' string"}, status_code=400
         )
+    from .._lifecycle._twin import TwinSeedError, _validate_agent_component
+
+    try:
+        _validate_agent_component(name, role="target")
+    except TwinSeedError as exc:
+        return JSONResponse(
+            {"error": str(exc), "kind": "invalid_agent_name"}, status_code=400
+        )
 
     # WI-2 spawn-permission gate.
     caller = body.get("caller")
     if caller is not None and not isinstance(caller, str):
         return JSONResponse(
             {"error": "'caller' must be a string if present"}, status_code=400
+        )
+    authority = body.get("authority")
+    if authority not in (None, "admin"):
+        return JSONResponse(
+            {"error": "'authority' must be 'admin' if present"}, status_code=400
+        )
+    if authority == "admin" and caller:
+        return JSONResponse(
+            {"error": "admin authority cannot also claim an agent caller"},
+            status_code=400,
+        )
+    canary = body.get("canary", False)
+    if not isinstance(canary, bool):
+        return JSONResponse(
+            {"error": "'canary' must be a boolean if present"}, status_code=400
         )
 
     # PR-α (lead msg d96a468c 2026-06-06): cohort one-shot diagnostic.
@@ -152,20 +175,33 @@ async def agents_start(request: Request) -> JSONResponse:
         return deny_response(reason or "spawn denied")
 
     inline_spec = body.get("spec")
+    handoff = InlineSpecHandoff()
     if inline_spec is not None:
-        # PR-2 — pass ``caller`` through so the bind translate can
-        # look up the parent agent's host-side bind map and rewrite
-        # in-SIF ``/work/...`` sources before the PR-1 preflight
-        # runs. Caller absent → translate disabled, preflight
-        # enforces directly (the operator/admin path).
         err = materialize_inline_spec(
             name,
             inline_spec,
             overwrite=bool(body.get("overwrite")),
             caller=caller,
+            authority=authority,
+            handoff=handoff,
         )
         if err is not None:
             return err
+    if canary:
+        if inline_spec is None:
+            return JSONResponse(
+                {"error": "canary requires an inline spec"}, status_code=400
+            )
+        handoff.rollback()
+        return JSONResponse(
+            {
+                "name": name,
+                "canary": True,
+                "materialized": True,
+                "started": False,
+            },
+            status_code=200,
+        )
 
     # Record lineage on allowed-spawn so the new child inherits the
     # caller's group. ``caller=None`` → no lineage record (admin /
@@ -176,13 +212,15 @@ async def agents_start(request: Request) -> JSONResponse:
         try:
             _record_lineage(child=name, parent=caller)
         except ValueError as exc:
-            # Idempotent same-parent re-record is fine; a re-parent
-            # to a different caller is loudly rejected.
+            # The start handoff has not happened; undo this request's spec and
+            # newly-created detached worktree before reporting the conflict.
+            handoff.rollback()
             return JSONResponse({"error": str(exc)}, status_code=409)
 
     try:
         sac_bin = sac_binary()
     except SacBinaryNotFoundError as exc:
+        handoff.rollback()
         # Resolution-time failure (bug root cause, see _sac_binary.py):
         # surface a structured, diagnosable error instead of building an
         # unresolvable argv that would later die deep inside a subprocess
@@ -300,6 +338,7 @@ async def agents_start(request: Request) -> JSONResponse:
             status_code=202,
         )
     except OSError as exc:
+        handoff.rollback()
         # Launch-time failure (e.g. the resolved sac_bin vanished between
         # resolution and exec, or any other subprocess-creation error).
         # Never let this propagate as an unhandled exception → opaque

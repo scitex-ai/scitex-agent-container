@@ -1,9 +1,17 @@
-# 0019 — Twin spawning: context inheritance + identity split
+# 0019 — Fork spawning: context inheritance + identity split
 
 - Status: Accepted (operator-designed + approved 2026-07-10, Telegram)
 - Deciders: ywatanabe (operator), sac-fcs1-impl
 - Builds on ADR-0010 (agent-spawn family tree + ACL) — twins reuse the
   server-mediated spawn substrate, they do not add a new spawn mechanism.
+
+> **Terminology and safety amendment:** the user-facing operation is **fork**
+> (``sac agents fork``). ``twin`` remains only as an internal compatibility
+> name and in the existing ``SAC_TWIN_PARENT`` wire key. Context inheritance is
+> currently proven only for Claude's JSONL/session-id store. Hermes uses
+> ``~/.hermes/state.db`` and different session semantics, so Hermes forks fail
+> closed before persistence/start until an atomic Hermes-native context fork is
+> implemented and tested.
 
 ## Context
 
@@ -38,7 +46,7 @@ default of any kind**. So author=twin is env-enforceable, but owner=parent is
 
 ### Twin = derived spec + host-side session-fork
 
-`sac agents twin <parent>` (and the `agent_twin` MCP tool) derive the twin's
+`sac agents fork <parent>` (with the legacy hidden `twin` alias) derives the fork's
 inline spec from the parent's on-disk spec — inheriting repo / workdir /
 image / binds / model / `to_home` verbatim — and POST it to the host
 `sac listen` via the **existing** ADR-0010 spawn substrate

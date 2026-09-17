@@ -1,30 +1,32 @@
 ---
 description: |
-  [TOPIC] Twin spawning — fork a context-inheriting twin of a running agent
-  [DETAILS] `sac agents twin <parent>` (+ the `agent_twin` MCP tool) spawns a NEW agent that inherits the parent's LIVE conversation transcript at birth, then diverges — the parent never stops. Covers what a twin is, the three use cases (inherit-context-without-sharing-future-context / split parallel work / don't-block-the-parent), ephemeral vs persistent lifetime, the safety-critical identity split (writes authored as the twin, cards OWNED by the parent — and WHY), the transcript-inheritance mechanism, and when a plain Task subagent is the cheaper choice instead. Use when an agent needs a second self that carries its context.
-tags: [scitex-agent-container-twin-spawning, twin, fork-session, claude-session, sac, identity-split, ephemeral, persistent]
+  [TOPIC] Fork spawning — fork context from a running agent
+  [DETAILS] `sac agents fork <parent>` creates a new isolated agent from the parent's selected harness/spec. Claude context inheritance is supported; Hermes forks fail closed until a Hermes-native state.db fork exists. Remote agent-authenticated forks also fail closed while listen has only a host-wide bearer. Use from the bare-host admin path.
+tags: [scitex-agent-container-twin-spawning, fork, fork-session, claude-session, sac, identity-split, ephemeral, persistent]
 ---
 
-# Twin spawning
+# Fork spawning
 
-A **twin** is a NEW agent forked from a running **parent**: it inherits the
-parent's conversation transcript *at birth* (a fork of the parent's live
-session), then diverges on its own. **The parent is never touched** — twin
-spawning is how an agent splits off context-carrying work without pausing
-its own main loop.
+A **fork** is a new isolated agent derived from a running **parent**. For the
+Claude harness it inherits the conversation at birth and then diverges. The
+parent is never touched.
+
+> **Current safety boundary:** Hermes stores context in
+> `~/.hermes/state.db`; copying Claude JSONL/session IDs is not valid for it.
+> Hermes therefore fails closed. In-container fork requests also fail closed
+> because the current host-wide listen bearer cannot bind a JSON `caller` to an
+> agent identity cryptographically. Use the explicit bare-host admin path.
 
 ```bash
-# ephemeral triage twin — inherits context, auto-stops after 30m
-sac agents twin neurovista --task "audit the failing figures" --ttl 30m
+# ephemeral Claude fork
+sac agents fork neurovista --task "audit the failing figures" --ttl 30m
 
-# persistent writer companion sitting beside the parent
-sac agents twin neurovista --name neurovista-writer --persist \
+# persistent Claude companion
+sac agents fork neurovista --name neurovista-writer --persist \
     --task "draft the results section"
 ```
 
-An agent can spawn **its own** twin from inside its container via the MCP
-tool `agent_twin(parent="<self>", task="...", persist=False)` — it brokers
-to the host exactly like `agent_spawn`.
+The old `sac agents twin` spelling remains a hidden compatibility alias.
 
 ## What you get
 

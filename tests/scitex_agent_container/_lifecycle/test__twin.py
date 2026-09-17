@@ -24,6 +24,8 @@ from scitex_agent_container._lifecycle._twin import (
     TWIN_PARENT_ENV,
     TwinSeedError,
     _ensure_twin_worktree,
+    _reject_symlink_components,
+    _resolve_host_repo_from_binds,
     build_twin_boot_kick,
     derive_twin_spec,
     prepare_twin_spawn,
@@ -79,7 +81,7 @@ def _current_v3_parent_doc() -> dict:
     doc = explicit_doc(
         {
             "runtime": "tui",
-            "harness": "hermes",
+            "harness": "claude-code",
             "workdir": "/scratch/ywatanabe/parent-workdir",
             "apptainer": {
                 "image": "sac-base",
@@ -87,7 +89,15 @@ def _current_v3_parent_doc() -> dict:
                 "env": {CARDS_AGENT_ENV: "parent", "KEEP": "yes"},
             },
             "available_harnesses": {
-                "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+                "claude-code": {
+                    "session": {"mode": "continue", "max_age_minutes": None},
+                    "approval_policy": "never",
+                    "watchdog": {
+                        "enabled": False,
+                        "interval": 1.5,
+                        "responses": {"y_n": "1", "y_y_n": "2", "waiting": "wait"},
+                    },
+                }
             },
         },
         metadata={"labels": {"role": "worker"}},
@@ -109,16 +119,16 @@ def test_resolve_twin_name_defaults_to_parent_twin():
     # Act
     name = resolve_twin_name(parent, None, [])
     # Assert
-    assert name == "neurovista-twin"
+    assert name == "neurovista-fork"
 
 
 def test_resolve_twin_name_bumps_when_default_taken():
     # Arrange
-    existing = ["neurovista-twin"]
+    existing = ["neurovista-fork"]
     # Act
     name = resolve_twin_name("neurovista", None, existing)
     # Assert
-    assert name == "neurovista-twin-2"
+    assert name == "neurovista-fork-2"
 
 
 def test_resolve_twin_name_honours_explicit_request():
@@ -128,6 +138,32 @@ def test_resolve_twin_name_honours_explicit_request():
     name = resolve_twin_name("neurovista", requested, ["neurovista-writer"])
     # Assert
     assert name == "neurovista-writer"
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ".", "..", "/absolute", "UPPER"])
+def test_resolve_twin_name_rejects_non_component_parent(name: str) -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="invalid parent agent name"):
+        resolve_twin_name(name, None, [])
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ".", "..", "/absolute", "UPPER"])
+def test_resolve_twin_name_rejects_non_component_child(name: str) -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="invalid twin agent name"):
+        resolve_twin_name("parent", name, [])
+
+
+def test_resolve_twin_name_rejects_parent_as_child() -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="must differ"):
+        resolve_twin_name("parent", "parent", [])
 
 
 # ─── derive_twin_spec: current-v3 isolation contract ──────────────────────
@@ -149,7 +185,7 @@ def test_current_v3_twin_validates_and_uses_apptainer_env() -> None:
     ) == ([], False, "parent-twin", "parent")
 
 
-def test_current_v3_twin_has_unique_workdir_and_overlay() -> None:
+def test_current_v3_twin_keeps_container_workdir_and_isolates_overlay() -> None:
     # Arrange
     parent = _current_v3_parent_doc()
     # Act
@@ -158,15 +194,15 @@ def test_current_v3_twin_has_unique_workdir_and_overlay() -> None:
     )
     # Assert
     assert (
-        twin["spec"]["workdir"] != parent["spec"]["workdir"],
+        twin["spec"]["workdir"] == parent["spec"]["workdir"],
         twin["spec"]["apptainer"]["overlay"]
         != parent["spec"]["apptainer"]["overlay"],
-        "parent-twin" in twin["spec"]["workdir"],
+        "parent-twin" not in twin["spec"]["workdir"],
         "parent-twin" in twin["spec"]["apptainer"]["overlay"],
     ) == (True, True, True, True)
 
 
-def test_current_v3_hermes_twin_does_not_inject_legacy_claude_block() -> None:
+def test_current_v3_claude_twin_sets_selected_session_continue() -> None:
     # Arrange
     parent = _current_v3_parent_doc()
     # Act
@@ -176,8 +212,136 @@ def test_current_v3_hermes_twin_does_not_inject_legacy_claude_block() -> None:
     # Assert
     assert (
         twin["spec"].get("claude"),
-        twin["spec"]["available_harnesses"]["hermes"]["session"]["mode"],
+        twin["spec"]["available_harnesses"]["claude-code"]["session"]["mode"],
     ) == (parent["spec"].get("claude"), "continue")
+
+
+def test_hermes_twin_fails_closed_without_context_fork_support() -> None:
+    # Arrange
+    parent = _current_v3_parent_doc()
+    parent["spec"]["harness"] = "hermes"
+    parent["spec"]["available_harnesses"] = {
+        "hermes": {"session": {"mode": "continue", "max_age_minutes": None}}
+    }
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
+        derive_twin_spec(
+            parent, twin_name="parent-twin", parent_name="parent", persist=False
+        )
+
+
+def test_scitex_hub_gui_shape_normalizes_to_selected_harness_authority() -> None:
+    # Arrange — concrete failing parent shape: mixed harness library, legacy
+    # claude compatibility block, and legacy top-level env.
+    parent = _current_v3_parent_doc()
+    parent["spec"]["engine"] = "qwen"
+    parent["spec"]["available_engines"] = {
+        "qwen": {"provider": "anthropic", "model": "qwen3-coder"}
+    }
+    parent["spec"]["available_harnesses"]["hermes"] = {
+        "session": {"mode": "continue", "max_age_minutes": None}
+    }
+    parent["spec"]["claude"] = {
+        "model": "",
+        "channels": ["server:sac", "server:scitex-cards"],
+        "flags": [],
+        "raw_options": {},
+        "session": "continue",
+        "continue_max_age_minutes": None,
+        "resume_id": "",
+        "auto_accept": True,
+        "account": "",
+        "credentials_file": "",
+        "credentials_files": [],
+        "provider": None,
+    }
+    parent["spec"]["env"] = {"HUB_MODE": "gui"}
+    # Act
+    twin = derive_twin_spec(
+        parent,
+        twin_name="scitex-hub-auth-gui",
+        parent_name="scitex-hub-gui",
+        persist=False,
+    )
+    # Assert
+    assert (
+        tuple(twin["spec"]["available_harnesses"]),
+        "claude" in twin["spec"],
+        "env" in twin["spec"],
+        twin["spec"]["engine"],
+        twin["spec"]["available_engines"]["qwen"]["model"],
+        twin["spec"]["workdir"],
+        twin["spec"]["apptainer"]["binds"],
+        twin["spec"]["available_harnesses"]["claude-code"]["session"]["mode"],
+        twin["spec"]["apptainer"]["env"]["HUB_MODE"],
+        twin["spec"]["apptainer"]["env"][CARDS_AGENT_ENV],
+        twin["spec"]["apptainer"]["env"][TWIN_PARENT_ENV],
+    ) == (
+        ("claude-code",),
+        False,
+        False,
+        "qwen",
+        "qwen3-coder",
+        "/scratch/ywatanabe/parent-workdir",
+        parent["spec"]["apptainer"]["binds"],
+        "continue",
+        "gui",
+        "scitex-hub-auth-gui",
+        "scitex-hub-gui",
+    )
+
+
+def test_actual_scitex_hub_gui_hermes_parent_fails_closed() -> None:
+    # Arrange — sanitized compute-03 authority shape; no secret values.
+    parent = _current_v3_parent_doc()
+    parent["spec"]["harness"] = "hermes"
+    parent["spec"]["engine"] = "opencode-go-deepseek-v4.1-flash"
+    parent["spec"]["workdir"] = "/home/ywatanabe/proj/scitex-hub"
+    parent["spec"]["apptainer"]["binds"] = [
+        "/scratch:/scratch:rw",
+        "/home/ywatanabe:/home/ywatanabe:rw",
+        "/home/ywatanabe/.ssh:/home/agent/.ssh:ro",
+        "/home/ywatanabe/.config/gh:/home/agent/.config/gh:ro",
+    ]
+    parent["spec"]["available_harnesses"] = {
+        "claude-code": parent["spec"]["available_harnesses"]["claude-code"],
+        "codex": {
+            "session": {"mode": "continue", "max_age_minutes": None},
+            "approval_policy": "never",
+            "sandbox_mode": "danger-full-access",
+        },
+        "hermes": {"session": {"mode": "continue", "max_age_minutes": None}},
+    }
+    parent["spec"]["env"] = {"NON_SECRET_IDENTITY": "scitex-hub-gui"}
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
+        derive_twin_spec(
+            parent,
+            twin_name="scitex-hub-auth-gui",
+            parent_name="scitex-hub-gui",
+            persist=False,
+        )
+
+
+def test_parent_container_workdir_maps_to_host_bind_source(tmp_path: Path) -> None:
+    # Arrange
+    repo = tmp_path / "host-repo"
+    repo.mkdir()
+    binds = [f"{tmp_path}:/home/agent/proj:rw"]
+    # Act
+    mapped = _resolve_host_repo_from_binds("/home/agent/proj/host-repo", binds)
+    # Assert
+    assert mapped == repo
+
+
+def test_parent_container_workdir_requires_matching_bind(tmp_path: Path) -> None:
+    # Arrange
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="no parent apptainer bind maps"):
+        _resolve_host_repo_from_binds("/home/agent/proj/repo", [f"{tmp_path}:/other"])
 
 
 def test_current_v3_twin_does_not_mutate_parent() -> None:
@@ -238,6 +402,7 @@ def test_ensure_twin_worktree_rejects_existing_non_worktree(tmp_path: Path) -> N
     parent = tmp_path / "parent"
     twin = tmp_path / "occupied"
     parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
     twin.mkdir()
 
     # Act
@@ -261,6 +426,67 @@ def test_ensure_twin_worktree_rejects_unrelated_git_checkout(tmp_path: Path) -> 
     # Assert
     with raises_ctx:
         _ensure_twin_worktree(str(parent), str(occupied))
+
+
+def test_ensure_twin_worktree_rejects_attached_existing_worktree(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    twin = tmp_path / "twin"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True)
+    subprocess.run(["git", "-C", str(parent), "config", "user.name", "T"], check=True)
+    (parent / "f").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "add", "f"], check=True)
+    subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
+    subprocess.run(["git", "-C", str(parent), "worktree", "add", "-q", "-b", "child", str(twin)], check=True)
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="detached HEAD"):
+        _ensure_twin_worktree(str(parent), str(twin))
+
+
+def test_ensure_twin_worktree_rejects_dirty_existing_worktree(tmp_path: Path) -> None:
+    # Arrange
+    parent = tmp_path / "parent"
+    twin = tmp_path / "twin"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    subprocess.run(["git", "-C", str(parent), "config", "user.email", "t@invalid"], check=True)
+    subprocess.run(["git", "-C", str(parent), "config", "user.name", "T"], check=True)
+    (parent / "f").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent), "add", "f"], check=True)
+    subprocess.run(["git", "-C", str(parent), "commit", "-qm", "seed"], check=True)
+    subprocess.run(["git", "-C", str(parent), "worktree", "add", "-q", "--detach", str(twin)], check=True)
+    (twin / "f").write_text("dirty", encoding="utf-8")
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="not clean"):
+        _ensure_twin_worktree(str(parent), str(twin))
+
+
+def test_ensure_twin_worktree_rejects_symlinked_parent_component(tmp_path: Path) -> None:
+    # Arrange
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="symlinked path component"):
+        _ensure_twin_worktree(str(alias), str(tmp_path / "twin"))
+
+
+def test_twin_overlay_rejects_symlinked_component(tmp_path: Path) -> None:
+    # Arrange
+    real = tmp_path / "real-overlay-root"
+    real.mkdir()
+    alias = tmp_path / "overlay-alias"
+    alias.symlink_to(real, target_is_directory=True)
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="symlinked path component"):
+        _reject_symlink_components(alias / "child" / "overlay", label="twin overlay")
 
 
 def test_prepare_current_v3_twin_validates_without_mutating_parent_checkout(
@@ -298,18 +524,17 @@ def test_prepare_current_v3_twin_validates_without_mutating_parent_checkout(
     name, twin = prepare_twin_spawn("parent", twin_name="parent-twin")
 
     # Assert
-    twin_workdir = Path(twin["spec"]["workdir"])
     assert (
         name,
         validate_raw(twin, "<twin>"),
-        twin_workdir.exists(),
+        twin["spec"]["workdir"],
         subprocess.run(
             ["git", "-C", str(parent), "status", "--porcelain"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout,
-    ) == ("parent-twin", [], False, "")
+    ) == ("parent-twin", [], str(parent), "")
 
 
 # ─── derive_twin_spec: identity split (safety-critical) ───────────────────
@@ -445,13 +670,13 @@ def test_derive_drops_telegrammer_from_neutral_channels():
 # ─── derive_twin_spec: inheritance / role / to_home / boot-kick ───────────
 
 
-def test_derive_assigns_unique_twin_workdir():
+def test_derive_preserves_container_workdir_for_host_bind_handoff():
     # Arrange
     doc = _parent_doc()
     # Act
     out = derive_twin_spec(doc, twin_name="parent-twin", parent_name="parent", persist=False)
     # Assert
-    assert out["spec"]["workdir"] == "/home/agent/proj/.sac-twins/parent-twin/workdir"
+    assert out["spec"]["workdir"] == "/home/agent/proj/x"
 
 
 def test_derive_inherits_image_verbatim():
@@ -620,6 +845,20 @@ def test_seed_noop_for_non_twin(tmp_path):
     seeded = seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))
     # Assert
     assert seeded is False
+
+
+def test_seed_fails_closed_for_forged_hermes_twin(tmp_path: Path) -> None:
+    # Arrange
+    cfg = AgentConfig(
+        name="forged-hermes-twin",
+        runtime="tui",
+        harness="hermes",
+        env={TWIN_PARENT_ENV: "parent"},
+    )
+    # Act
+    # Assert
+    with pytest.raises(TwinSeedError, match="Hermes context inheritance is unavailable"):
+        seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))
 
 
 def test_seed_returns_true_for_twin(_twin_env):
