@@ -96,6 +96,39 @@ def _auth_cell(row: dict) -> str:
     return f"[yellow]ok? {age}[/yellow]" if stale else f"[green]ok {age}[/green]"
 
 
+def _started_cell(row: dict) -> str:
+    """Render one raw registry start timestamp for operator display."""
+    raw_started = row["started_at"]
+    if raw_started in ("-", "?"):
+        return "—"
+    return format_dt_display_tz(raw_started)
+
+
+def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
+    """Keep identity and start evidence readable when a table cannot fit."""
+    lines = [
+        f"{row['name']} identity:",
+        f"  Billing: {row.get('billing_mode') or 'unspecified'}",
+        f"  Auth identity: {row.get('auth_identity') or 'unknown'}",
+        f"  Harness: {row.get('harness') or '—'}",
+        f"  Engine: {row.get('engine') or '—'}",
+        f"  Model: {row.get('model') or '—'}",
+        f"  Started: {_started_cell(row)}",
+    ]
+    if verbose:
+        lines.extend(
+            [
+                "  Stored credential: "
+                f"{row.get('stored_credential') or row.get('account') or '—'}",
+                "  Identity source: "
+                f"{row.get('runtime_identity_source') or 'unknown'}",
+                f"  Auth status: {_auth_cell(row)}",
+                f"  Path: {row.get('path') or '—'}",
+            ]
+        )
+    return lines
+
+
 def _print_auth_footer(data: list[dict]) -> None:
     """One line telling the operator what his green is actually worth.
 
@@ -360,11 +393,7 @@ def print_agent_list(
         # pinned-tz ``YYYY-MM-DD HH:MM (JST)`` for readability (operator TG
         # 2026-07-13); the ``--json`` path keeps the raw ISO. Sentinels
         # ("-"/"?") stay an em-dash.
-        raw_started = row["started_at"]
-        if raw_started in ("-", "?"):
-            started = "—"
-        else:
-            started = format_dt_display_tz(raw_started)
+        started = _started_cell(row)
         account_cell = row.get("stored_credential") or row.get("account") or "—"
         # Drop the ``(email)`` parenthetical in the default (compact) view so
         # the row stays one line; --verbose keeps the full ``name (email)``.
@@ -391,6 +420,15 @@ def print_agent_list(
         table.add_row(*cells)
 
     console.print(table)
+
+    # Thirteen verbose columns collapse to unreadable one-character cells on a
+    # narrow terminal.  Preserve every operator-facing identity/start value in
+    # plain follow-up lines instead of silently ellipsising it.  ``click.echo``
+    # bypasses Rich's width crop; the terminal may wrap, but no value is lost.
+    if console.width < 160:
+        for row in data:
+            for line in _narrow_detail_lines(row, verbose=verbose):
+                click.echo(line)
 
     # How much is the green above actually worth? Say it out loud — an unrefreshed
     # cache means every ``running`` here proves only that tmux is up.

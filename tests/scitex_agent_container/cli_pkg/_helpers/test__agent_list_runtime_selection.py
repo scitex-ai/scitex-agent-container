@@ -6,6 +6,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from scitex_agent_container.cli_pkg._helpers._agent_list import print_agent_list
+from scitex_agent_container.cli_pkg._helpers._agent_list_render import (
+    _narrow_detail_lines,
+)
 from scitex_agent_container.cli_pkg._helpers._console import console
 
 
@@ -84,3 +87,23 @@ def test_verbose_listing_shows_runtime_identity_provenance(capsys) -> None:
 
     # Assert
     assert "Identity source" in rendered and "birth_certificate" in rendered
+
+
+def test_narrow_details_preserve_full_runtime_identity_and_started_value() -> None:
+    # Arrange
+    row = {
+        **_row(),
+        "started_at": "2026-07-12T21:36:30Z",
+        "stored_credential": "credential-label",
+    }
+
+    # Act
+    rendered = "\n".join(_narrow_detail_lines(row, verbose=True))
+
+    # Assert
+    assert (
+        "Stored credential: credential-label" in rendered,
+        "2026-07-13 06:36 (JST)" in rendered,
+        "Engine: opencode-go-deepseek-v4.1-flash" in rendered,
+        "Identity source: birth_certificate" in rendered,
+    ) == (True, True, True, True)
