@@ -18,6 +18,10 @@ silently fall back to Anthropic at runtime, which we refuse to allow.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from ._provider_types import is_credential_header
+
 
 def validate_provider(provider_block: object) -> list[str]:
     """Validate ``spec.claude.provider`` (vendor backend override).
@@ -77,6 +81,48 @@ def validate_provider(provider_block: object) -> list[str]:
                     errors.append(
                         f"spec.claude.provider.allowed_tools[{idx}] must be a "
                         f"non-empty string, got {item!r}"
+                    )
+    if "extra_headers" in provider_block:
+        raw_headers = provider_block.get("extra_headers")
+        if not isinstance(raw_headers, Mapping):
+            errors.append(
+                "spec.claude.provider.extra_headers must be a mapping of "
+                f"header names to strings, got {type(raw_headers).__name__}"
+            )
+        else:
+            seen_names: set[str] = set()
+            for name, value in raw_headers.items():
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or any(character in name for character in "\r\n:")
+                ):
+                    errors.append(
+                        "spec.claude.provider.extra_headers contains invalid "
+                        f"header name {name!r}"
+                    )
+                    continue
+                folded = name.casefold()
+                if is_credential_header(name):
+                    errors.append(
+                        "spec.claude.provider.extra_headers must not contain "
+                        f"credential header {name!r}; use auth_token_env"
+                    )
+                if folded in seen_names:
+                    errors.append(
+                        "spec.claude.provider.extra_headers repeats "
+                        f"case-insensitive header {name!r}"
+                    )
+                seen_names.add(folded)
+                if (
+                    not isinstance(value, str)
+                    or not value
+                    or "\r" in value
+                    or "\n" in value
+                ):
+                    errors.append(
+                        f"spec.claude.provider.extra_headers.{name} must be a "
+                        "non-empty string without newlines"
                     )
     return errors
 

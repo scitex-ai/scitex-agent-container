@@ -26,9 +26,11 @@ RAISING ``HTTPError`` rather than returning a response.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -36,6 +38,7 @@ import pytest
 
 from scitex_agent_container.cli_pkg._provider_auth_probe import (
     INDISCRIMINATE,
+    MODEL_MISMATCH,
     OK,
     REJECTED,
     UNREACHABLE,
@@ -79,6 +82,83 @@ def _serve(*, accept_everything: bool):
         server.server_close()
 
 
+def _serve_recording_user_agent():
+    observed: list[str] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            observed.append(self.headers.get("User-Agent") or "")
+            presented = (self.headers.get("Authorization") or "").removeprefix(
+                "Bearer "
+            )
+            self.send_response(200 if presented == _GOOD_KEY else 401)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", observed
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@contextmanager
+def _serve_hermes_chat(*, actual_model: str | None = None, accept_all=False):
+    observed: list[dict] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"data": []}')
+
+        def do_POST(self) -> None:  # noqa: N802
+            size = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(size))
+            presented = (self.headers.get("Authorization") or "").removeprefix(
+                "Bearer "
+            )
+            observed.append(
+                {
+                    "path": self.path,
+                    "key": presented,
+                    "model": payload.get("model"),
+                    "max_tokens": payload.get("max_tokens"),
+                    "input": payload.get("input"),
+                    "max_output_tokens": payload.get("max_output_tokens"),
+                    "user_agent": self.headers.get("User-Agent"),
+                    "session": self.headers.get("x-opencode-session"),
+                    "x_api_key": self.headers.get("x-api-key"),
+                }
+            )
+            if not accept_all and presented != _GOOD_KEY:
+                self.send_response(401)
+                self.end_headers()
+                self.wfile.write(b'{"error": "invalid key"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            resolved = actual_model or str(payload.get("model") or "")
+            self.wfile.write(json.dumps({"model": resolved, "choices": []}).encode())
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", observed
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 @pytest.fixture()
 def discriminating_backend():
     """A backend that accepts only ``_GOOD_KEY`` — the normal gateway shape."""
@@ -89,6 +169,11 @@ def discriminating_backend():
 def permissive_backend():
     """A backend that answers 200 to anything — the control's target."""
     yield from _serve(accept_everything=True)
+
+
+@pytest.fixture()
+def user_agent_backend():
+    yield from _serve_recording_user_agent()
 
 
 @pytest.fixture()
@@ -125,6 +210,17 @@ def _config(base_url: str) -> SimpleNamespace:
     )
 
 
+def _hermes_config(base_url: str, *, model="deepseek-v4.1-flash"):
+    config = _config(base_url)
+    config.harness = "hermes"
+    config.model = model
+    config.claude.provider.extra_headers = {
+        "User-Agent": "scitex-agent-container/hermes",
+        "x-opencode-session": "${sac:session_id}"
+    }
+    return config
+
+
 def _closed_port() -> int:
     """A port the OS confirmed free, released before returning."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -141,6 +237,157 @@ def test_a_key_the_backend_ACCEPTS_passes(discriminating_backend, provider_key):
 
     # Assert
     assert verdict.state == OK, verdict.detail
+
+
+def test_probe_identifies_itself_for_providers_that_reject_generic_clients(
+    user_agent_backend, provider_key
+):
+    # Arrange
+    base_url, observed = user_agent_backend
+    provider_key(_GOOD_KEY)
+
+    # Act
+    verdict = probe_provider_auth(_config(base_url), timeout=5)
+
+    # Assert
+    assert (verdict.state, observed) == (
+        OK,
+        [
+            "scitex-agent-container/preflight",
+            "scitex-agent-container/preflight",
+        ],
+    ), verdict.detail
+
+
+def test_hermes_probe_uses_actual_chat_path_and_discriminates_keys(provider_key):
+    # Arrange — GET /models is deliberately public, matching observed Go behavior.
+    provider_key(_GOOD_KEY)
+
+    # Act
+    with _serve_hermes_chat() as (base_url, observed):
+        verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
+
+    # Assert
+    assert (verdict.state, verdict.actual_model, observed) == (
+        OK,
+        "deepseek-v4.1-flash",
+        [
+            {
+                "path": "/v1/chat/completions",
+                "key": _GOOD_KEY,
+                "model": "deepseek-v4.1-flash",
+                "max_tokens": 1,
+                "input": None,
+                "max_output_tokens": None,
+                "user_agent": "scitex-agent-container/hermes",
+                "session": "sac-preflight:probe-subject",
+                "x_api_key": None,
+            },
+            {
+                "path": "/v1/chat/completions",
+                "key": "sac-preflight-control-not-a-valid-key",
+                "model": "deepseek-v4.1-flash",
+                "max_tokens": 1,
+                "input": None,
+                "max_output_tokens": None,
+                "user_agent": "scitex-agent-container/hermes",
+                "session": "sac-preflight:probe-subject",
+                "x_api_key": None,
+            },
+        ],
+    ), verdict.detail
+
+
+def test_hermes_responses_probe_uses_exact_path_and_discriminates_keys(
+    provider_key,
+):
+    # Arrange
+    provider_key(_GOOD_KEY)
+
+    # Act
+    with _serve_hermes_chat() as (base_url, observed):
+        config = _hermes_config(
+            f"{base_url}/v1/responses", model="gpt-5.6-sol"
+        )
+        verdict = probe_provider_auth(config, timeout=5)
+
+    # Assert
+    expected_common = {
+        "path": "/v1/responses",
+        "model": "gpt-5.6-sol",
+        "max_tokens": None,
+        "input": "Reply OK.",
+        "max_output_tokens": None,
+        "user_agent": "scitex-agent-container/hermes",
+        "session": "sac-preflight:probe-subject",
+        "x_api_key": None,
+    }
+    assert (verdict.state, verdict.actual_model, observed) == (
+        OK,
+        "gpt-5.6-sol",
+        [
+            {**expected_common, "key": _GOOD_KEY},
+            {
+                **expected_common,
+                "key": "sac-preflight-control-not-a-valid-key",
+            },
+        ],
+    ), verdict.detail
+
+
+def test_hermes_probe_fails_loud_when_real_key_is_rejected(provider_key):
+    # Arrange
+    provider_key(_PLACEHOLDER)
+
+    # Act
+    with _serve_hermes_chat() as (base_url, _observed):
+        verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
+
+    # Assert
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        _ENV_NAME in verdict.detail,
+        "deepseek-v4.1-flash" in verdict.detail,
+        "/v1/chat/completions" in verdict.detail,
+    ) == (REJECTED, True, True, True, True)
+
+
+def test_hermes_probe_fails_loud_on_returned_model_mismatch(provider_key):
+    # Arrange
+    provider_key(_GOOD_KEY)
+
+    # Act
+    with _serve_hermes_chat(actual_model="substituted-model") as (
+        base_url,
+        _observed,
+    ):
+        verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
+
+    # Assert
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        verdict.actual_model,
+        "substituted-model" in verdict.detail,
+        "deepseek-v4.1-flash" in verdict.detail,
+    ) == (MODEL_MISMATCH, True, "substituted-model", True, True)
+
+
+def test_hermes_probe_fails_when_chat_path_accepts_invalid_control(provider_key):
+    # Arrange
+    provider_key(_GOOD_KEY)
+
+    # Act
+    with _serve_hermes_chat(accept_all=True) as (base_url, _observed):
+        verdict = probe_provider_auth(_hermes_config(base_url), timeout=5)
+
+    # Assert
+    assert (
+        verdict.state,
+        verdict.is_failure,
+        "actual inference path" in verdict.detail,
+    ) == (INDISCRIMINATE, True, True)
 
 
 def test_a_PLACEHOLDER_the_backend_rejects_is_caught(

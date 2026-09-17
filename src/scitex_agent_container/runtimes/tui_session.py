@@ -177,6 +177,8 @@ class TuiSessionRuntime(
         turn_bridge_stop: Any | None = None,
         inbox_dispatcher_start: Any | None = None,
         inbox_dispatcher_stop: Any | None = None,
+        cct_poller_start: Any | None = None,
+        cct_poller_stop: Any | None = None,
     ) -> None:
         # Injection seams (tests pass in-memory fakes — real Protocol impls,
         # no mocks): ``multiplexer`` (MultiplexerProtocol; default TmuxManager),
@@ -190,6 +192,32 @@ class TuiSessionRuntime(
         self._turn_bridge_stop = turn_bridge_stop
         self._inbox_dispatcher_start = inbox_dispatcher_start
         self._inbox_dispatcher_stop = inbox_dispatcher_stop
+        self._cct_poller_start = cct_poller_start
+        self._cct_poller_stop = cct_poller_stop
+
+    @staticmethod
+    def _owns_external_cct_poller(config: AgentConfig) -> bool:
+        """Whether this base runtime owns CCT for the selected TUI harness.
+
+        Hermes keeps its established subclass lifecycle.  Codex uses this
+        harness-neutral base lifecycle so inbound transport is tied to the
+        exact SAC-managed ``/v1/turn`` session rather than an MCP launch.
+        """
+        return str(getattr(config, "harness", "") or "").lower() == "codex"
+
+    def _start_cct_poller(self, config: AgentConfig) -> None:
+        start = self._cct_poller_start
+        if start is None:
+            from ._tui_cct_poller import start_cct_poller as start
+
+        start(config)
+
+    def _stop_cct_poller(self, config: AgentConfig) -> None:
+        stop = self._cct_poller_stop
+        if stop is None:
+            from ._tui_cct_poller import stop_cct_poller as stop
+
+        stop(config)
 
     def _start_inbox(self, config: AgentConfig) -> None:
         """Start the harness-neutral durable inbox dispatcher."""
@@ -333,6 +361,10 @@ class TuiSessionRuntime(
             )
             if not dry_run:
                 return True
+        if not dry_run and self._owns_external_cct_poller(config):
+            from ._apptainer_codex_env import preflight_subscription
+
+            preflight_subscription(config, state_dir_for_config(config))
         if force and self._mux.exists(name):
             self._mux.stop(name)
         self.materialize_workspace(config)
@@ -479,6 +511,19 @@ class TuiSessionRuntime(
                     name,
                 )
                 return False
+            if self._owns_external_cct_poller(config):
+                try:
+                    self._start_cct_poller(config)
+                except Exception:
+                    # CCT is part of the requested managed session contract.
+                    # Never leave a TUI advertised as live after its sole
+                    # inbound owner failed to start, and never fall back to an
+                    # MCP-owned second poller.
+                    self._stop_cct_poller(config)
+                    self._stop_inbox(config)
+                    self._maybe_stop_turn_bridge(config)
+                    self._mux.stop(name)
+                    raise
             # Hermes autonomy is armed by its detached monitor after that
             # monitor positively observes an idle footer and empty composer.
             # Never stage SAC control text over the initial model turn here.
@@ -490,8 +535,9 @@ class TuiSessionRuntime(
         Returns True iff a session existed AND was terminated (no-op on absent
         session, so the supervisor's ``stop()->start()`` cycle stays idempotent).
         """
-        # Tear down the A2A turn bridge first so it stops accepting wake POSTs
-        # before the tmux session it injects into goes away.
+        # Stop inbound owners before the A2A sink and pane disappear.
+        if self._owns_external_cct_poller(config):
+            self._stop_cct_poller(config)
         if str(getattr(config, "harness", "") or "").lower() != "hermes":
             self._stop_inbox(config)
         self._maybe_stop_turn_bridge(config)

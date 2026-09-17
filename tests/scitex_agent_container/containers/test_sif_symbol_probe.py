@@ -95,6 +95,15 @@ def test_probe_imports_scitex_cards() -> None:
     assert "scitex_cards" in imported
 
 
+def test_probe_imports_the_clean_start_psutil_symbol() -> None:
+    # Arrange
+    source = _probe_source()
+    # Act
+    from_imports = _from_imports(source)
+    # Assert
+    assert ("psutil", "process_iter") in from_imports
+
+
 def test_probe_avoids_the_deleted_shim() -> None:
     # Arrange — INVERTED 2026-08-16. This asserted the probe imported scitex_todo,
     # which was right while that name was a shim onto scitex_cards. scitex-cards
@@ -355,3 +364,13 @@ def test_every_probe_copy_carries_cards_1003_symbols(path) -> None:
     }
     # Assert
     assert not missing, f"{path.name} lacks Cards #1003 symbols: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("path", EMBEDS, ids=lambda p: p.name)
+def test_every_probe_copy_carries_the_clean_start_psutil_symbol(path) -> None:
+    # Arrange
+    source = path.read_text(encoding="utf-8")
+    # Act
+    present = "from psutil import process_iter" in source
+    # Assert
+    assert present, f"{path.name} can publish an image without runtime psutil"

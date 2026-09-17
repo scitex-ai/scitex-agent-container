@@ -164,7 +164,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         # because a claim that names its sink is not this gate's business at
         # any line number.
         "scitex_agent_container/_lifecycle/_listen_client_resolve.py:178",
-        "scitex_agent_container/_lifecycle/_orphan_mcp_cleanup.py:227",
         "scitex_agent_container/_lifecycle/_prune_runtime.py:80",
         "scitex_agent_container/_lifecycle/_relocate_transcript.py:172",
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:188",
@@ -218,12 +217,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:157",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:186",
         "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",
-        # MOVED 316 -> 368 on 2026-09-07 by the provider-key preflight check,
-        # which inserted 52 lines above it. The claim itself is byte-identical
-        # and was neither fixed nor reviewed here — only its line number
-        # changed, which is the failure mode the docstring above predicts for a
-        # line-keyed freeze.
-        "scitex_agent_container/cli_pkg/build_cmds.py:368",
         "scitex_agent_container/cli_pkg/hook_cmds.py:46",
         # _tui_outbound.py and _tui_turn_bridge.py LEFT THIS SET 2026-08-20 —
         # both reasons now name their sink. MEASURED before writing it, because

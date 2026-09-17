@@ -644,6 +644,37 @@ def test_build_run_argv_tui_wires_telegrammer_wake_env(
     )
 
 
+def test_build_run_argv_codex_cct_declares_external_poller_owner(
+    tmp_path, listen_bearer_token
+) -> None:
+    # Arrange — the Codex MCP server may be launched lazily by the TUI, but
+    # SAC's session lifecycle is the sole inbound poller owner.
+    text = _SPEC_WITH_TELEGRAMMER_AND_PORT.replace(
+        "  runtime: tui\n", "  runtime: tui\n  harness: codex\n"
+    ).replace(
+        "  claude:\n",
+        "  claude:\n"
+        "    provider:\n"
+        "      base_url: http://127.0.0.1:18772/\n"
+        "      auth_token_env: TEST_CODEX_GATEWAY_KEY\n",
+    )
+    spec = _write_spec(tmp_path, text)
+    config = load_config(str(spec))
+    state_dir = tmp_path / "state"
+    (state_dir / "home").mkdir(parents=True)
+    # Act
+    argv = build_run_argv(
+        config, state_dir=state_dir, sif_path=Path("/img/sac.sif"), tui=True
+    )
+    # Assert
+    assert (
+        "--env CLAUDE_CODE_TELEGRAMMER_TURN_URL=http://127.0.0.1:19007/v1/turn"
+        in " ".join(argv),
+        "--env CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER=1" in " ".join(argv),
+        "--env CCT_HARNESS=codex" in " ".join(argv),
+    ) == (True, True, True)
+
+
 def test_build_run_argv_tui_injects_channel_subscriber_mcp(
     tmp_path, listen_bearer_token
 ) -> None:
