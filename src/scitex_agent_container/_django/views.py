@@ -287,7 +287,7 @@ def timeline_api(request: HttpRequest) -> JsonResponse:
     identity = resolve_identity(request)
     try:
         rows = scope_rows(fleet.list_all(), identity)
-    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE, reported as JSON)
+    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE the caller sees as the 502 JSON body)
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
     names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
     statuses = fleet.read_statuses(names)

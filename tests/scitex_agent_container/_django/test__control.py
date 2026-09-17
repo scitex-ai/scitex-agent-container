@@ -99,10 +99,15 @@ def bridge(env_save_restore):
 
 @pytest.fixture
 def dead_bridge():
-    """A bridge that is not listening: a closed loopback port."""
+    """A bridge that is not listening: a closed loopback port.
+
+    Yields (not returns) because it acquires a socket — a resource-acquiring
+    fixture must let pytest tear it down.
+    """
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
-        return f"http://127.0.0.1:{s.getsockname()[1]}"
+        port = s.getsockname()[1]
+    yield f"http://127.0.0.1:{port}"
 
 
 # ── idempotency: the property that protects a live session ───────────────────
@@ -114,8 +119,19 @@ def test_repeated_submit_delivers_once(bridge):
     # Act
     first = send_message(f"{bridge}/v1/turn", text="hello", dispatch_id=dispatch)
     second = send_message(f"{bridge}/v1/turn", text="hello", dispatch_id=dispatch)
-    # Assert: the agent's session must NOT receive the text twice.
+    # Assert: the first submit lands and the repeat is reported as a replay.
     assert first.state == "delivered" and second.state == "replay"
+
+
+def test_repeated_submit_reaches_the_agent_only_once(bridge):
+    # Arrange: a FRESH id — the replay store is process-global by design, so a
+    # literal shared id would inherit another test's replay state and test the
+    # fixture rather than the guard.
+    dispatch = new_dispatch_id()
+    # Act: the SAME id twice — a double-click must not inject twice.
+    send_message(f"{bridge}/v1/turn", text="please continue", dispatch_id=dispatch)
+    send_message(f"{bridge}/v1/turn", text="please continue", dispatch_id=dispatch)
+    # Assert
     assert len([r for r in _Bridge.received if r["route"] == "turn"]) == 1
 
 
@@ -129,7 +145,8 @@ def test_replay_is_reported_as_delivered_not_failed(bridge):
 
 
 def test_distinct_dispatch_ids_both_deliver(bridge):
-    # Arrange / Act: two deliberate sends must both land.
+    # Arrange: two distinct dispatch ids
+    # Act: two deliberate sends
     send_message(f"{bridge}/v1/turn", text="a", dispatch_id="d-a")
     send_message(f"{bridge}/v1/turn", text="b", dispatch_id="d-b")
     # Assert
@@ -137,11 +154,21 @@ def test_distinct_dispatch_ids_both_deliver(bridge):
 
 
 def test_control_key_repeat_is_also_idempotent(bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     first = send_control_key(f"{bridge}/v1/turn", key="Enter", dispatch_id="k1")
     second = send_control_key(f"{bridge}/v1/turn", key="Enter", dispatch_id="k1")
-    # Assert: Enter twice would submit twice in a live TUI.
+    # Assert
     assert first.state == "delivered" and second.state == "replay"
+
+
+def test_control_key_repeat_reaches_the_agent_only_once(bridge):
+    # Arrange: a FRESH id, for the same process-global replay-store reason.
+    dispatch = new_dispatch_id()
+    # Act: Enter twice would submit twice in a live TUI.
+    send_control_key(f"{bridge}/v1/turn", key="Enter", dispatch_id=dispatch)
+    send_control_key(f"{bridge}/v1/turn", key="Enter", dispatch_id=dispatch)
+    # Assert
     assert len([r for r in _Bridge.received if r["route"] == "control"]) == 1
 
 
@@ -159,21 +186,25 @@ def test_a_failed_delivery_is_not_remembered_as_delivered(bridge):
 
 
 def test_exactly_the_three_sac_control_keys_are_offered():
-    # Arrange / Act / Assert: the bridge 400s anything else, so a fourth button
+    # Arrange
+    # Act
+    # Assert: the bridge 400s anything else, so a fourth button
     # would be a control the backend can never honour.
     assert set(CONTROL_KEYS) == {"Enter", "Escape", "C-c"}
 
 
 @pytest.mark.parametrize("key", ["Enter", "Escape", "C-c"])
 def test_each_real_control_key_is_delivered(bridge, key):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_control_key(f"{bridge}/v1/turn", key=key)
     # Assert
     assert result.delivered and result.mode == "control"
 
 
 def test_invented_control_key_is_refused_without_contacting_the_bridge(bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_control_key(f"{bridge}/v1/turn", key="C-d")
     # Assert: refused locally, and nothing reached the agent.
     assert result.state == "refused" and _Bridge.received == []
@@ -192,28 +223,32 @@ def test_control_key_is_refused_when_the_runtime_has_no_control_surface(bridge):
 
 
 def test_empty_message_is_refused(bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_message(f"{bridge}/v1/turn", text="   ")
     # Assert
     assert result.state == "refused" and _Bridge.received == []
 
 
 def test_overlong_message_is_refused(bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_message(f"{bridge}/v1/turn", text="x" * (MAX_MESSAGE_CHARS + 1))
     # Assert
     assert result.state == "refused" and _Bridge.received == []
 
 
 def test_agent_without_a_turn_endpoint_is_refused(dead_bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_message("", text="hello")
     # Assert
     assert result.state == "refused"
 
 
 def test_unreachable_bridge_is_reported_as_failed_not_delivered(dead_bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_message(f"{dead_bridge}/v1/turn", text="hello")
     # Assert
     assert result.delivered is False and result.state == "failed"
@@ -223,32 +258,44 @@ def test_unreachable_bridge_is_reported_as_failed_not_delivered(dead_bridge):
 
 
 def test_redaction_scrubs_credentials():
-    # Arrange / Act
+    # Arrange
+    # Act
     scrubbed = redact("failed for Bearer abcdefghijklmnop1234 and sk-abcdefghijklmnop123")
     # Assert
     assert "abcdefghijklmnop1234" not in scrubbed and "[REDACTED]" in scrubbed
 
 
 def test_delivery_result_never_carries_the_message_text(bridge):
-    # Arrange / Act
+    # Arrange
+    # Act
     result = send_message(f"{bridge}/v1/turn", text="secret-value sk-abcdefghijklmnop123")
     # Assert: the confirmation echoed to a browser must not become a transcript.
     assert "sk-abcdefghijklmnop123" not in json.dumps(result.as_dict())
 
 
 def test_dispatch_ids_are_unique():
-    # Arrange / Act
+    # Arrange
+    # Act
     ids = {new_dispatch_id() for _ in range(200)}
     # Assert
     assert len(ids) == 200
 
 
-def test_exactly_one_guard_rejects_both_and_neither():
-    # Arrange / Act / Assert: the form guard for mutually exclusive actions.
-    assert exactly_one_of("go", "") is True
-    assert exactly_one_of("", "go") is True
-    assert exactly_one_of("go", "stop") is False
-    assert exactly_one_of("", "") is False
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ("go", "", True),
+        ("", "go", True),
+        ("go", "stop", False),
+        ("", "", False),
+    ],
+)
+def test_exactly_one_guard_enforces_mutual_exclusion(first, second, expected):
+    # Arrange
+    # Act
+    outcome = exactly_one_of(first, second)
+    # Assert: the form guard for mutually exclusive actions.
+    assert outcome is expected
 
 
 # ── the view that fronts these surfaces ──────────────────────────────────────
@@ -300,8 +347,20 @@ def test_message_route_audits_an_authorized_delivery(client, loopback, env_save_
     env_save_restore.set(OPERATORS_ENV, "alice")
     # Act
     response = client.post("/alpha/message", {"message": "please continue"})
-    # Assert
+    # Assert: authorized and redirected (the delivery itself fails against a
+    # listener with no turn bridge, which is not what this test is about).
     assert response.status_code == 302
+
+
+def test_message_route_writes_an_audit_line(client, loopback, env_save_restore, audit_log):
+    # Arrange
+    from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    env_save_restore.set(OPERATORS_ENV, "alice")
+    # Act
+    client.post("/alpha/message", {"message": "please continue"})
+    # Assert: the attempt is audited, not silently dropped.
     assert audit_log.exists() and "message_action" in audit_log.read_text(encoding="utf-8")
 
 
@@ -313,6 +372,17 @@ def test_detail_page_renders_the_control_surfaces_for_an_operator(client, loopba
     env_save_restore.set(OPERATORS_ENV, "alice")
     # Act
     html = client.get("/alpha/").content.decode()
-    # Assert: exactly the three real keys, and a message form.
+    # Assert: exactly the three real keys are offered.
     assert "Enter" in html and "Escape" in html and "C-c" in html
+
+
+def test_detail_page_renders_the_message_form_for_an_operator(client, loopback, env_save_restore):
+    # Arrange
+    from scitex_agent_container._django._constants import IDENTITY_ENV, OPERATORS_ENV
+
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    env_save_restore.set(OPERATORS_ENV, "alice")
+    # Act
+    html = client.get("/alpha/").content.decode()
+    # Assert: the message surface posts to this agent's own endpoint.
     assert "/alpha/message" in html and 'name="message"' in html

@@ -186,15 +186,22 @@ def test_filter_matching_nothing_returns_empty_not_everything():
 # ── the API surface ──────────────────────────────────────────────────────────
 
 
-def test_timeline_endpoint_requires_no_secrets_and_shapes_json(client, loopback, env_save_restore):
+def test_timeline_endpoint_returns_ok(client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
     # Act
     response = client.get("/api/timeline")
-    payload = json.loads(response.content)
     # Assert
-    assert response.status_code == 200 and payload["ok"] is True
-    assert "entries" in payload and isinstance(payload["entries"], list)
+    assert response.status_code == 200
+
+
+def test_timeline_endpoint_shapes_json_with_an_entries_list(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    payload = json.loads(client.get("/api/timeline").content)
+    # Assert
+    assert payload["ok"] is True and isinstance(payload["entries"], list)
 
 
 def test_timeline_never_leaks_a_secret(client, loopback, env_save_restore):
