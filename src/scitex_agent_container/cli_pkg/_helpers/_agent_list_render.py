@@ -115,6 +115,7 @@ def _narrow_detail_lines(row: dict, *, verbose: bool) -> list[str]:
     """Keep identity and start evidence readable when a table cannot fit."""
     lines = [
         f"{row['name']} identity:",
+        f"  Host: {row.get('host_display') or row.get('host') or 'local'}",
         f"  Billing: {row.get('billing_mode') or 'unspecified'}",
         f"  Auth identity: {row.get('auth_identity') or 'unknown'}",
         f"  Harness: {row.get('harness') or '—'}",
