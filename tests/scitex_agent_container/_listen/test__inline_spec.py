@@ -94,6 +94,52 @@ def _twin_spec(*, workdir: str | Path, overlay: Path, binds: list[str] | None = 
     return doc
 
 
+def test_materialized_fork_resolves_parent_from_relocated_authority(
+    home_root: Path, env_save_restore
+) -> None:
+    # Arrange
+    parent_repo = home_root / "parent-repo-relocated"
+    parent_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent_repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "config", "user.name", "Fork Test"],
+        check=True,
+    )
+    (parent_repo / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(parent_repo), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(parent_repo), "commit", "-qm", "seed"], check=True
+    )
+    container_workdir = "/home/agent/proj/repo"
+    authority = home_root / "relocated-authority"
+    parent_dir = authority / "parent"
+    parent_dir.mkdir(parents=True)
+    parent_spec = _twin_spec(
+        workdir=container_workdir,
+        overlay=home_root / "runtime" / "parent" / "overlay",
+        binds=[f"{parent_repo}:{container_workdir}:rw"],
+    )
+    parent_spec["spec"]["apptainer"]["env"] = {CARDS_AGENT_ENV: "parent"}
+    (parent_dir / "spec.yaml").write_text(
+        yaml.safe_dump(parent_spec, sort_keys=False), encoding="utf-8"
+    )
+    env_save_restore.set("SCITEX_AGENT_CONTAINER_YAML_DIRS", str(authority))
+    child = _twin_spec(
+        workdir=container_workdir,
+        overlay=home_root / "runtime" / "parent" / ".sac-twins" / "parent-fork" / "overlay",
+    )
+    # Act
+    result = materialize_inline_spec(
+        "parent-fork", child, overwrite=False, authority="admin"
+    )
+    # Assert
+    assert result is None
+
+
 def test_failed_start_handoff_removes_owner_only_fork_seed(tmp_path: Path) -> None:
     # Arrange
     seed = tmp_path / "runtime" / "child" / "hermes-fork-seed.json"
