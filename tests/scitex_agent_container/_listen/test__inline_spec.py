@@ -20,6 +20,7 @@ import yaml
 from scitex_agent_container._lifecycle._twin import CARDS_AGENT_ENV, TWIN_PARENT_ENV
 from scitex_agent_container._listen._inline_spec import (
     InlineSpecHandoff,
+    _write_hermes_fork_authority,
     materialize_inline_spec,
 )
 from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
@@ -92,6 +93,67 @@ def _twin_spec(*, workdir: str | Path, overlay: Path, binds: list[str] | None = 
         doc["spec"].pop(legacy, None)
     doc["spec"]["comms"]["channels"] = ["server:sac", "server:scitex-cards"]
     return doc
+
+
+def test_hermes_fork_spec_is_committed_in_immutable_authority_snapshot(
+    home_root: Path,
+) -> None:
+    # Arrange
+    authority_parent = home_root / "sac-authority"
+    staging = authority_parent / "staging"
+    staging.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(staging)], check=True)
+    subprocess.run(
+        ["git", "-C", str(staging), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(staging), "config", "user.name", "Authority Test"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(staging), "remote", "add", "origin", "https://example.invalid/dotfiles.git"],
+        check=True,
+    )
+    parent_rel = Path("src/.scitex/agent-container/agents/parent/spec.yaml")
+    parent_spec = staging / parent_rel
+    parent_spec.parent.mkdir(parents=True)
+    parent_spec.write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(staging), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(staging), "commit", "-qm", "parent"], check=True)
+    parent_head = subprocess.run(
+        ["git", "-C", str(staging), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    parent_repo = authority_parent / f"dotfiles-{parent_head}"
+    staging.rename(parent_repo)
+    subprocess.run(["git", "-C", str(parent_repo), "checkout", "-q", "--detach"], check=True)
+    parent_spec = parent_repo / parent_rel
+    child_doc = _twin_spec(
+        workdir="/work/repo", overlay=home_root / "runtime" / "child" / "overlay"
+    )
+    primary = home_root / ".scitex/agent-container/agents/child"
+    handoff = InlineSpecHandoff()
+    # Act
+    spec_path = _write_hermes_fork_authority(
+        name="child",
+        spec=child_doc,
+        parent_spec_path=parent_spec,
+        primary=primary,
+        handoff=handoff,
+    )
+    from scitex_agent_container._drift._authority import validate_spec_authority
+
+    authority = validate_spec_authority(spec_path)
+    # Assert
+    assert (
+        spec_path.is_symlink(),
+        yaml.safe_load(spec_path.read_text(encoding="utf-8")),
+        authority.kind,
+        handoff.authority_snapshot_created,
+    ) == (True, child_doc, "immutable-snapshot", True)
 
 
 def test_materialized_fork_resolves_parent_from_relocated_authority(

@@ -9,7 +9,9 @@ staging YAML on the sac host out-of-band.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,9 @@ class InlineSpecHandoff:
     worktree_path: Path | None = None
     worktree_created: bool = False
     seed_path: Path | None = None
+    authority_parent_spec: Path | None = None
+    authority_snapshot_path: Path | None = None
+    authority_snapshot_created: bool = False
     spec_path: Path | None = None
     spec_created: bool = False
     spec_previous: bytes | None = None
@@ -61,6 +66,8 @@ class InlineSpecHandoff:
                     pass
             elif self.spec_previous is not None:
                 self.spec_path.write_bytes(self.spec_previous)
+        if self.authority_snapshot_created and self.authority_snapshot_path is not None:
+            shutil.rmtree(self.authority_snapshot_path, ignore_errors=True)
         if (
             self.worktree_created
             and self.worktree_parent is not None
@@ -86,6 +93,96 @@ class InlineSpecHandoff:
                 capture_output=True,
                 text=True,
             )
+
+
+def _git_authority(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise OSError(f"git {' '.join(args)} failed: {detail}")
+    return completed.stdout.strip()
+
+
+def _write_hermes_fork_authority(
+    *,
+    name: str,
+    spec: dict,
+    parent_spec_path: Path,
+    primary: Path,
+    handoff: InlineSpecHandoff,
+) -> Path:
+    """Commit a fork spec in a new immutable authority snapshot and link it."""
+    import yaml
+
+    parent_spec = Path(parent_spec_path).resolve(strict=True)
+    parent_repo = Path(_git_authority(parent_spec.parent, "rev-parse", "--show-toplevel")).resolve()
+    parent_head = _git_authority(parent_repo, "rev-parse", "--verify", "HEAD")
+    origin = _git_authority(parent_repo, "remote", "get-url", "origin")
+    source = origin.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if source.endswith(".git"):
+        source = source[:-4]
+    # A snapshot origin may itself carry the pinned suffix; strip it so the
+    # next immutable snapshot keeps the original source identity.
+    import re
+
+    source = re.sub(r"-[0-9a-f]{40}$", "", source).lstrip(".")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", source):
+        raise OSError(f"invalid authority source identity {source!r}")
+    snapshot_parent = (
+        parent_repo.parent
+        if parent_repo.parent.name == "sac-authority"
+        else Path.home() / ".scitex" / "agent-container" / "sac-authority"
+    )
+    snapshot_parent.mkdir(parents=True, exist_ok=True)
+    stage = snapshot_parent / f".{source}-fork-{name}-{uuid.uuid4().hex}"
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--shared", str(parent_repo), str(stage)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        _git_authority(stage, "remote", "set-url", "origin", origin)
+        _git_authority(stage, "checkout", "--quiet", "--detach", parent_head)
+        parent_rel = parent_spec.relative_to(parent_repo)
+        child_rel = parent_rel.parent.parent / name / "spec.yaml"
+        child_path = stage / child_rel
+        child_path.parent.mkdir(parents=True, exist_ok=True)
+        child_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+        _git_authority(stage, "add", "--", child_rel.as_posix())
+        _git_authority(
+            stage,
+            "-c",
+            "user.name=SAC Fork Authority",
+            "-c",
+            "user.email=sac-fork@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            f"sac fork spec: {name}",
+        )
+        child_head = _git_authority(stage, "rev-parse", "--verify", "HEAD")
+        snapshot = snapshot_parent / f"{source}-{child_head}"
+        if os.path.lexists(snapshot):
+            raise OSError(f"fork authority snapshot already exists: {snapshot}")
+        os.replace(stage, snapshot)
+        handoff.authority_snapshot_path = snapshot
+        handoff.authority_snapshot_created = True
+        authoritative_spec = snapshot / child_rel
+        primary.mkdir(parents=True, exist_ok=True)
+        spec_path = primary / "spec.yaml"
+        spec_path.symlink_to(authoritative_spec)
+        handoff.spec_path = spec_path
+        handoff.spec_created = True
+        return spec_path
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
 
 
 def _inject_twin_workdir_bind(spec: dict, host_worktree: Path, container_workdir: str) -> dict:
@@ -256,6 +353,7 @@ def _prepare_twin_host_isolation(
     handoff.worktree_path = host_worktree
     handoff.worktree_created = created
     if parent_family == "hermes":
+        handoff.authority_parent_spec = parent_path
         from .._lifecycle._twin import _materialize_hermes_fork_seed
         from ..runtimes._hermes_tui_rpc import HermesTuiRpcError
 
@@ -484,15 +582,26 @@ def materialize_inline_spec(
 
     previous = spec_path.read_bytes() if spec_path.is_file() else None
     try:
-        primary.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
-    except OSError as exc:
+        if active_handoff.authority_parent_spec is not None:
+            _write_hermes_fork_authority(
+                name=name,
+                spec=spec,
+                parent_spec_path=active_handoff.authority_parent_spec,
+                primary=primary,
+                handoff=active_handoff,
+            )
+        else:
+            primary.mkdir(parents=True, exist_ok=True)
+            spec_path.write_text(
+                yaml.safe_dump(spec, sort_keys=False), encoding="utf-8"
+            )
+            active_handoff.spec_path = spec_path
+            active_handoff.spec_created = not spec_existed
+            active_handoff.spec_previous = previous
+    except (OSError, subprocess.SubprocessError) as exc:
         active_handoff.rollback()
         return JSONResponse(
             {"error": f"failed to write spec: {exc}", "kind": "spec_invalid"},
             status_code=500,
         )
-    active_handoff.spec_path = spec_path
-    active_handoff.spec_created = not spec_existed
-    active_handoff.spec_previous = previous
     return None
