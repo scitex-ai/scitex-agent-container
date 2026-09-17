@@ -148,7 +148,9 @@ def build_ssh_argv(
     code. ``via: [mba, spartan]`` becomes ``-J <mba.ssh>,<spartan.ssh>``.
 
     Conservative defaults pick: ``-o BatchMode=yes`` (no interactive
-    password / known-hosts prompts), ``-o ConnectTimeout=10``
+    password / known-hosts prompts), ``-o ClearAllForwardings=yes`` (a
+    control-plane command must not inherit unrelated user ``LocalForward``
+    entries whose bind collisions can consume the whole timeout), ``-o ConnectTimeout=10``
     (probe-friendly), and ``-o ServerAliveInterval=15`` (keepalive
     so a wedged middle-hop is detectable).
 
@@ -183,6 +185,8 @@ def build_ssh_argv(
     argv += [
         "-o",
         "BatchMode=yes",
+        "-o",
+        "ClearAllForwardings=yes",
         "-o",
         "ConnectTimeout=10",
         "-o",
