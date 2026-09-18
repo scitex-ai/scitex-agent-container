@@ -241,6 +241,7 @@ def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
         [request["method"] for request in socket.sent],
         (create_params["model"], create_params["provider"]),
         socket.sent[-1]["params"],
+        (tmp_path / "hermes-context-transition.json").exists(),
     ) == (
         "fresh-stored",
         [
@@ -253,6 +254,7 @@ def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
         ],
         ("qwen3-coder", "custom:sac-vllm"),
         {"session_id": "old-live"},
+        True,
     )
 
 

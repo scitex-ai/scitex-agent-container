@@ -443,7 +443,9 @@ def _supervise_tui(
                     sleep(poll_s)
                     continue
             if replacement is not None:
-                if not replacement:
+                if replacement:
+                    pending_recovery = replacement
+                else:
                     pending_fresh = True
                 _write_supervision(
                     state_dir,
