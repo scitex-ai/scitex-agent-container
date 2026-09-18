@@ -161,6 +161,7 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
         "card_id": "task-20260917",
         "delivery_id": "delivery-1",
         "owner": "agent",
+        "phase": "task-completed",
         "reason": "task-completed",
         "session_id": "live-old",
         "was_active": True,
@@ -238,7 +239,8 @@ def test_new_assignment_invalidates_unconsumed_completion(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
-        '"reason":"task-completed","session_id":"old-live",'
+        '"phase":"task-completed","reason":"task-completed",'
+        '"session_id":"old-live",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -311,7 +313,8 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
-        '"reason":"task-completed","session_id":"live-old",'
+        '"phase":"task-completed","reason":"task-completed",'
+        '"session_id":"live-old",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -338,19 +341,23 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
             WorktreeFact(tmp_path, "abc123", "fix/task", ())
         ],
     )
+    pending = json.loads(
+        (tmp_path / "hermes-fresh-next-task.json").read_text(encoding="utf-8")
+    )
     # Assert
     assert (
         replacement,
         closed,
-        (tmp_path / "hermes-fresh-next-task.json").exists(),
-    ) == ("", ["live-old"], False)
+        pending["phase"],
+    ) == ("", ["live-old"], "closed-awaiting-fresh")
 
 
 def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
-        '"reason":"task-completed","session_id":"live",'
+        '"phase":"task-completed","reason":"task-completed",'
+        '"session_id":"live",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -389,7 +396,8 @@ def test_completion_marker_refuses_a_newer_active_card(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
-        '"reason":"task-completed","session_id":"live",'
+        '"phase":"task-completed","reason":"task-completed",'
+        '"session_id":"live",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -420,6 +428,7 @@ def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> 
         "card_id": "card-1",
         "delivery_id": "delivery-1",
         "owner": "agent",
+        "phase": "closed-awaiting-fresh",
         "reason": "task-completed",
         "session_id": "old-live",
         "was_active": True,
@@ -427,25 +436,18 @@ def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> 
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         json.dumps(marker), encoding="utf-8"
     )
-    closed = []
     # Act
-    replacement = context_gc.reconcile_context_lifecycle(
-        state_dir=tmp_path,
-        agent_name="agent",
-        workdir=tmp_path,
-        observed_session={"id": "new-live", "session_key": "new-stored", "status": "idle"},
-        close_live=lambda _state, session_id: closed.append(session_id),
+    context_gc.complete_pending_completion(
+        tmp_path, {"id": "new-live", "session_key": "new-stored"}
     )
     consumed = json.loads(
         (tmp_path / "hermes-consumed-completions.json").read_text(encoding="utf-8")
     )
     # Assert
     assert (
-        replacement,
-        closed,
         (tmp_path / "hermes-fresh-next-task.json").exists(),
         consumed,
-    ) == (None, [], False, {"delivery_ids": ["delivery-1"]})
+    ) == (False, {"delivery_ids": ["delivery-1"]})
 
 
 def test_preclose_refuses_sha_drift_during_nonce_proof(tmp_path) -> None:

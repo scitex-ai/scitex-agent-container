@@ -108,6 +108,38 @@ def complete_pending_transition(state_dir: Path, session: dict) -> None:
     _clear_transition_journal(state_dir)
 
 
+def reconcile_pending_completion(
+    state_dir: Path,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> bool:
+    """Return whether startup must be fresh for a crash-interrupted completion."""
+    from ._hermes_context_gc import FRESH_NEXT_TASK_FILE, _write_handoff
+
+    path = state_dir / FRESH_NEXT_TASK_FILE
+    if not path.exists():
+        return False
+    try:
+        marker = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise HermesTuiRpcError(f"Hermes completion marker is unreadable: {exc}") from exc
+    phase = str(marker.get("phase") or "")
+    if phase == "closed-awaiting-fresh":
+        return True
+    if phase != "closing":
+        return False
+    old_id = str(marker.get("session_id") or "").strip()
+    if not old_id:
+        raise HermesTuiRpcError("Hermes closing completion marker has no live id")
+    url, _token = _gateway_connection(state_dir)
+    if _live_session_present(url, old_id, timeout_s=timeout_s, connect_fn=connect_fn):
+        _write_handoff(path, {**marker, "phase": "task-completed"})
+        return False
+    _write_handoff(path, {**marker, "phase": "closed-awaiting-fresh"})
+    return True
+
+
 def stored_session_for_title(
     state_dir: Path,
     title: str,
@@ -294,8 +326,22 @@ def close_session(
         with _connect(url, timeout_s, connect_fn) as socket:
             result = _rpc(socket, 1, "session.close", {"session_id": session_id})
     except HermesTuiRpcError:
+        if not _live_session_present(
+            url, session_id, timeout_s=timeout_s, connect_fn=connect_fn
+        ):
+            return
         raise
     except Exception as exc:
+        try:
+            if not _live_session_present(
+                url, session_id, timeout_s=timeout_s, connect_fn=connect_fn
+            ):
+                return
+        except Exception as reconcile_exc:
+            raise HermesTuiRpcError(
+                "Hermes session.close acknowledgement and reconciliation "
+                f"both failed: {reconcile_exc}"
+            ) from exc
         raise HermesTuiRpcError(
             f"Hermes session.close at {url.split('?')[0]} failed: {exc}"
         ) from exc
@@ -577,6 +623,7 @@ def _close_failed_candidate(
 __all__ = [
     "close_session",
     "complete_pending_transition",
+    "reconcile_pending_completion",
     "reconcile_pending_transition",
     "replace_session_from_handoff",
     "session_handoff_facts",
