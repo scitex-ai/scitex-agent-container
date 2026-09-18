@@ -440,6 +440,7 @@ def test_fresh_transition_replaces_only_tui_child_not_gateway_or_sidecars(tmp_pa
     gateway = _Process()
     spawned = []
     observations = 0
+    finalized = []
 
     def spawn(command, *, env):
         process = _Process()
@@ -471,9 +472,14 @@ def test_fresh_transition_replaces_only_tui_child_not_gateway_or_sidecars(tmp_pa
         gateway=gateway,
         spawn=spawn,
         active_list=lambda _state: [
-            {"id": "live", "title": "sac:ui", "session_key": "stored"}
+            {
+                "id": "live" if len(spawned) == 1 else "fresh-live",
+                "title": "sac:ui",
+                "session_key": "stored" if len(spawned) == 1 else "fresh-stored",
+            }
         ],
         on_session_observed=transition,
+        finalize_fresh=lambda _state, session: finalized.append(session["id"]),
         sleep=lambda _seconds: None,
         monotonic=lambda: 100.0,
         poll_s=0,
@@ -486,8 +492,17 @@ def test_fresh_transition_replaces_only_tui_child_not_gateway_or_sidecars(tmp_pa
         len(spawned),
         spawned[0][2].terminated,
         spawned[1][0],
+        finalized,
         gateway.terminated,
-    ) == (0, True, 2, True, ["hermes", "chat", "--tui"], False)
+    ) == (
+        0,
+        True,
+        2,
+        True,
+        ["hermes", "chat", "--tui"],
+        ["fresh-live"],
+        False,
+    )
 
 
 def test_context_transition_cannot_spawn_ports_pollers_or_inbox_sidecars() -> None:

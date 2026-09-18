@@ -98,6 +98,15 @@ def _write_handoff(path: Path, payload: dict) -> None:
         raise
 
 
+def _unlink_durable(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 @contextmanager
 def _lifecycle_lock(state_dir: Path):
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +175,7 @@ def _record_inbound_task_event(
                     "card_id": card_id,
                     "delivery_id": delivery_id,
                     "owner": owner,
+                    "phase": "task-completed",
                     "reason": "task-completed",
                     "session_id": delivery_session_id,
                     "was_active": was_active,
@@ -177,14 +187,16 @@ def _record_inbound_task_event(
         return
     # A new assignment supersedes any unconsumed completion boundary. Removing
     # it before publishing the active card makes stale completion fail closed.
+    stale_marker: dict = {}
     try:
         stale_marker = json.loads(fresh_path.read_text(encoding="utf-8"))
         stale_delivery = str(stale_marker.get("delivery_id") or "").strip()
     except (OSError, ValueError, TypeError):
         stale_delivery = ""
-    if stale_delivery:
+    stale_phase = str(stale_marker.get("phase") or "") if stale_delivery else ""
+    if stale_delivery and stale_phase not in {"closing", "closed-awaiting-fresh"}:
         _mark_completion_consumed(state_dir, stale_delivery)
-    fresh_path.unlink(missing_ok=True)
+        fresh_path.unlink(missing_ok=True)
     _write_handoff(active_path, {"card_id": card_id})
 
 
@@ -448,6 +460,7 @@ def _consume_completion_boundary(
         if (
             not isinstance(marker, dict)
             or marker.get("reason") != "task-completed"
+            or marker.get("phase") != "task-completed"
             or not str(marker.get("card_id") or "").strip()
             or not str(marker.get("delivery_id") or "").strip()
             or not str(marker.get("session_id") or "").strip()
@@ -488,10 +501,39 @@ def _consume_completion_boundary(
                 "completion boundary was superseded before close"
             )
         transition_guard(state_dir, live_id)
+        _write_handoff(fresh_marker, {**marker, "phase": "closing"})
         close_live(state_dir, live_id)
-        _mark_completion_consumed(state_dir, str(marker["delivery_id"]))
-        fresh_marker.unlink(missing_ok=True)
+        _write_handoff(
+            fresh_marker,
+            {**marker, "phase": "closed-awaiting-fresh"},
+        )
         return ""
+
+
+def complete_pending_completion(state_dir: Path, session: dict) -> None:
+    """Consume a completion cut only after a different fresh session attaches."""
+    marker_path = state_dir / FRESH_NEXT_TASK_FILE
+    with _lifecycle_lock(state_dir):
+        if not marker_path.exists():
+            return
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise HermesContextGcRefused(
+                f"completion boundary is unreadable during attachment: {exc}"
+            ) from exc
+        fresh_live_id = str(session.get("id") or "").strip()
+        old_live_id = str(marker.get("session_id") or "").strip()
+        if (
+            marker.get("phase") != "closed-awaiting-fresh"
+            or not fresh_live_id
+            or fresh_live_id == old_live_id
+        ):
+            raise HermesContextGcRefused(
+                "fresh session attachment does not complete the pending task boundary"
+            )
+        _mark_completion_consumed(state_dir, str(marker.get("delivery_id") or ""))
+        _unlink_durable(marker_path)
 
 
 def reconcile_context_lifecycle(

@@ -18,6 +18,7 @@ from typing import Any, Callable
 from ._hermes_tui_context_owner import (
     apply_session_age_policy,
     clear_session_heartbeat,
+    fresh_command,
     make_session_observer,
     reconcile_command,
     requested_session,
@@ -224,6 +225,8 @@ def _supervise_tui(
     on_session_observed: Callable[[dict], str | None] | None = None,
     recover_pending: Callable[[Path], str | None] | None = None,
     finalize_pending: Callable[[Path, dict], None] | None = None,
+    recover_fresh: Callable[[Path], bool] | None = None,
+    finalize_fresh: Callable[[Path, dict], None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
@@ -235,8 +238,13 @@ def _supervise_tui(
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
 
+    pending_fresh = recover_fresh(state_dir) if recover_fresh is not None else False
     pending_recovery = recover_pending(state_dir) if recover_pending is not None else None
-    if pending_recovery:
+    if pending_fresh and pending_recovery:
+        raise RuntimeError("Hermes has conflicting pending completion and rotation")
+    if pending_fresh:
+        command = fresh_command(command, preserve_query=False)
+    elif pending_recovery:
         command = resume_command(command, pending_recovery)
     session_mode, expected_identity = requested_session(command)
     tui = spawn(command, env=env)
@@ -302,6 +310,42 @@ def _supervise_tui(
                 sleep(poll_s)
                 continue
 
+        if recover_fresh is not None and not pending_fresh:
+            try:
+                recovered_fresh = recover_fresh(state_dir)
+            except Exception as exc:
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_recovery_unavailable",
+                    detail=str(exc),
+                    active_sessions=len(sessions),
+                    recoveries=len(recoveries),
+                )
+                sleep(poll_s)
+                continue
+            if recovered_fresh:
+                pending_fresh = True
+                (
+                    tui,
+                    command,
+                    session_mode,
+                    expected_identity,
+                    resume_key,
+                ) = transition_tui_child(
+                    tui=tui,
+                    command=command,
+                    replacement="",
+                    env=env,
+                    spawn=spawn,
+                    terminate=_terminate,
+                    on_spawn=on_spawn,
+                )
+                generation_started = monotonic()
+                absent_polls = 0
+                attached_session_prepared = False
+                sleep(poll_s)
+                continue
+
         try:
             owned_session = _select_owned_session(
                 sessions,
@@ -321,6 +365,20 @@ def _supervise_tui(
 
         if owned_session is not None:
             absent_polls = 0
+            if pending_fresh and finalize_fresh is not None:
+                try:
+                    finalize_fresh(state_dir, owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_recovery_unavailable",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+                pending_fresh = False
             if pending_recovery and finalize_pending is not None:
                 try:
                     finalize_pending(state_dir, owned_session)
@@ -385,6 +443,8 @@ def _supervise_tui(
                     sleep(poll_s)
                     continue
             if replacement is not None:
+                if not replacement:
+                    pending_fresh = True
                 _write_supervision(
                     state_dir,
                     state="context_gc_transition",
@@ -532,8 +592,10 @@ def main(argv: list[str] | None = None) -> int:
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
         )
+        from ._hermes_context_gc import complete_pending_completion
         from ._hermes_context_rpc import (
             complete_pending_transition,
+            reconcile_pending_completion,
             reconcile_pending_transition,
             stored_session_for_identity,
         )
@@ -557,6 +619,8 @@ def main(argv: list[str] | None = None) -> int:
             on_session_observed=make_session_observer(state_dir, command),
             recover_pending=reconcile_pending_transition,
             finalize_pending=complete_pending_transition,
+            recover_fresh=reconcile_pending_completion,
+            finalize_fresh=complete_pending_completion,
         )
         return result
     finally:
