@@ -142,8 +142,11 @@ async def drain_once(
 
         def _default_card_lease_writer(**kwargs: Any) -> None:
             state_dir = resolve_state_dir(str(kwargs.pop("agent")))
-            if state_dir is not None:
-                write_card_lease(state_dir, **kwargs)
+            if state_dir is None:
+                raise RuntimeError(
+                    "Cards lease cannot be confirmed: agent state directory is absent"
+                )
+            write_card_lease(state_dir, **kwargs)
 
         lease_writer = _default_card_lease_writer
 

@@ -491,37 +491,13 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     resident_state = None
     resident_heartbeat = None
     try:
-        from .._state.authoritative_heartbeat import classify_resident_state
-        from .._state.state_store import latest_authoritative_heartbeats
-
-        resident_heartbeat = next(
-            (
-                value
-                for value in latest_authoritative_heartbeats()
-                if value.get("agent_id") == name
-            ),
-            None,
-        )
-        if resident_heartbeat is not None:
-            process_evidence = resident_heartbeat.get("_process_alive")
-            process_alive = (
-                process_evidence
-                if isinstance(process_evidence, bool)
-                else is_healthy
-            )
-            resident_state = classify_resident_state(
-                resident_heartbeat,
-                now=time.time(),
-                process_alive=process_alive,
-                federation_connected=bool(
-                    resident_heartbeat.get("_federation_connected")
-                ),
-                progress_stale_s=120.0,
-            )
-            if resident_state in {"stalled", "disconnected", "dead"}:
-                is_healthy = False
-                message = f"unhealthy: authoritative heartbeat is {resident_state}"
-    except Exception:  # stx-allow: fallback (missing fleet lease leaves the existing runtime health verdict unchanged)
+        status_snapshot = agent_status(name, registry)
+        resident_state = status_snapshot.get("resident_state")
+        resident_heartbeat = status_snapshot.get("heartbeat")
+        if resident_state in {"stalled", "disconnected", "dead"}:
+            is_healthy = False
+            message = f"unhealthy: authoritative heartbeat is {resident_state}"
+    except Exception:  # stx-allow: fallback (status observation failure leaves the existing runtime health verdict unchanged)
         pass
 
     # REGISTERED IS NOT REACHABLE. ``health_check`` asks "is the process

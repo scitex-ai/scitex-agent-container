@@ -226,6 +226,58 @@ def test_confirmed_cards_notification_projects_bounded_reviewer_lease():
     )
 
 
+def test_card_lease_write_failure_prevents_cards_ack():
+    # Arrange
+    acked = []
+
+    def poll(_agent, **_kwargs):
+        return {
+            "store": "postgresql://cards-primary",
+            "unconfirmed": ["n-lease"],
+            "notifications": [
+                {
+                    "id": "n-lease",
+                    "event_type": "assigned",
+                    "actor": "scitex-cards",
+                    "body": "Develop card-1",
+                    "card_id": "card-1",
+                    "lease_role": "developer",
+                    "lease_expires_at": 200.0,
+                }
+            ],
+        }
+
+    async def deliver(_event, **_kwargs):
+        return None
+
+    def ack(*_args, **_kwargs):
+        acked.append(True)
+        return {}
+
+    def fail_lease(**_kwargs):
+        raise RuntimeError("state directory unavailable")
+
+    # Act
+    try:
+        asyncio.run(
+            ingress.drain_once(
+                name="scholar",
+                turn_url="direct://resident",
+                bearer="secret",
+                poll_notifications=poll,
+                ack_notifications=ack,
+                deliver=deliver,
+                card_lease_writer=fail_lease,
+            )
+        )
+    except RuntimeError as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert (error, acked) == ("state directory unavailable", [])
+
+
 def test_failed_terminal_delivery_leaves_cards_notification_unacked():
     # Arrange
     calls = []

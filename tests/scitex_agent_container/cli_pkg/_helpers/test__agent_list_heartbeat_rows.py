@@ -87,6 +87,25 @@ def test_registry_or_instance_row_keeps_precedence() -> None:
     assert rows == []
 
 
+def test_host_process_evidence_can_classify_dead() -> None:
+    # Arrange
+    beat = _beat(_process_alive=False, _federation_connected=True)
+    # Act
+    rows = heartbeat_lease_rows(
+        covered=set(),
+        display_host="display",
+        running_only=False,
+        host_display_for=lambda host, _display: host,
+        beats=[beat],
+        now=101.0,
+    )
+    # Assert
+    assert (rows[0]["status"], rows[0]["labels"]["resident_state"]) == (
+        "unknown",
+        "dead",
+    )
+
+
 def test_observer_only_hermes_row_stays_explicitly_unknown() -> None:
     # Arrange
     rows = [{"name": "scholar", "harness": "hermes", "status": "running"}]

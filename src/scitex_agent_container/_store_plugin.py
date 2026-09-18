@@ -303,6 +303,7 @@ INSTANCES = Schema.build(
         "heartbeat_boot_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "heartbeat_seq": _data(FieldKind.INTEGER, MergeRule.LAST_WRITER_WINS),
         "heartbeat_state": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
+        "heartbeat_agent_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "heartbeat_spec_id": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "heartbeat_runtime": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),
         "heartbeat_harness": _data(FieldKind.TEXT, MergeRule.LAST_WRITER_WINS),

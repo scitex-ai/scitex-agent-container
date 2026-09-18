@@ -46,8 +46,10 @@ def test_authoritative_lease_uses_store_hlc_not_publisher_wall_clock() -> None:
     # Arrange
     values = {
         "id": "instance-1",
-        "host": "compute-04",
-        "name": "scholar",
+        "host": "remote-host",
+        "pid": 999_999_999,
+        "name": "renamed-scholar",
+        "heartbeat_agent_id": "scholar",
         "heartbeat_spec_id": "sha256:spec",
         "heartbeat_runtime": "tui",
         "heartbeat_harness": "hermes",
@@ -67,7 +69,10 @@ def test_authoritative_lease_uses_store_hlc_not_publisher_wall_clock() -> None:
     }
     row = SimpleNamespace(
         values=values,
-        hlc=SimpleNamespace(wall_us=100_000_000),
+        # A later rename touched the ROW at t=1000; the heartbeat field itself
+        # remains stamped at t=100 and must not receive another lease.
+        hlc=SimpleNamespace(wall_us=1_000_000_000),
+        field_hlc={"heartbeat_seq": SimpleNamespace(wall_us=100_000_000)},
     )
     # Act
     heartbeat = _authoritative_heartbeats_from_rows([row], now=101.0)[0]
@@ -76,7 +81,9 @@ def test_authoritative_lease_uses_store_hlc_not_publisher_wall_clock() -> None:
         heartbeat["observed_at"],
         heartbeat["lease_expires_at"],
         heartbeat["_federation_connected"],
-    ) == (100.0, 190.0, True)
+        heartbeat["agent_id"],
+        heartbeat["_process_alive"],
+    ) == (100.0, 190.0, True, "scholar", None)
 
 
 def seed_instance(instance_id: str, **values) -> str:

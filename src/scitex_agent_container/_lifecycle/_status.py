@@ -501,18 +501,36 @@ def agent_status(
             local_heartbeat.get("authoritative_heartbeat"), dict
         ):
             from .._state.authoritative_heartbeat import classify_resident_state
+            from .._state.state_store import latest_authoritative_heartbeats
 
-            resident = dict(local_heartbeat["authoritative_heartbeat"])
-            result["heartbeat"] = resident
-            result["resident_state"] = classify_resident_state(
-                resident,
-                now=time.time(),
-                process_alive=result.get("status") == "running",
-                federation_connected=(
-                    float(resident.get("lease_expires_at") or 0) >= time.time()
+            local_resident = dict(local_heartbeat["authoritative_heartbeat"])
+            result["heartbeat"] = local_resident
+            result["resident_state"] = "disconnected"
+            shared = next(
+                (
+                    beat
+                    for beat in latest_authoritative_heartbeats()
+                    if beat.get("agent_id") == name
                 ),
-                progress_stale_s=120.0,
+                None,
             )
+            if shared is not None:
+                process_evidence = shared.get("_process_alive")
+                process_alive = (
+                    process_evidence
+                    if isinstance(process_evidence, bool)
+                    else result.get("status") == "running"
+                )
+                result["heartbeat"] = shared
+                result["resident_state"] = classify_resident_state(
+                    shared,
+                    now=time.time(),
+                    process_alive=process_alive,
+                    federation_connected=bool(
+                        shared.get("_federation_connected")
+                    ),
+                    progress_stale_s=120.0,
+                )
     except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
         pass
 

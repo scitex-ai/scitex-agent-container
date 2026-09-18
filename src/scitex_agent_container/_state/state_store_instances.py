@@ -90,6 +90,7 @@ __all__ = [
 ]
 
 _HEARTBEAT_COLUMNS = {
+    "agent_id": "heartbeat_agent_id",
     "spec_id": "heartbeat_spec_id",
     "runtime": "heartbeat_runtime",
     "harness": "heartbeat_harness",
@@ -113,7 +114,6 @@ def _heartbeat_from_instance(values: dict) -> dict[str, object] | None:
     if not values.get("heartbeat_boot_id"):
         return None
     heartbeat: dict[str, object] = {
-        "agent_id": str(values.get("name") or ""),
         "host": str(values.get("host") or ""),
     }
     for field, column in _HEARTBEAT_COLUMNS.items():
@@ -417,7 +417,6 @@ def _authoritative_heartbeats_from_rows(
         select_federated_heartbeats,
         validate_heartbeat,
     )
-    from .state_store_comms_nodes_store import hlc_seconds
 
     beats = []
     for row in rows:
@@ -426,7 +425,10 @@ def _authoritative_heartbeats_from_rows(
         heartbeat = _heartbeat_from_instance(dict(row.values))
         if heartbeat is None:
             continue
-        received_at = hlc_seconds(row)
+        heartbeat_stamp = row.field_hlc.get("heartbeat_seq")
+        if heartbeat_stamp is None:
+            continue
+        received_at = float(heartbeat_stamp.wall_us) / 1_000_000.0
         heartbeat["observed_at"] = received_at
         heartbeat["lease_expires_at"] = received_at + 90.0
         progress_at = heartbeat.get("progress_at")
@@ -441,8 +443,10 @@ def _authoritative_heartbeats_from_rows(
             now=now,
         )
         process_alive = None
-        if not os.environ.get("APPTAINER_CONTAINER") and not os.environ.get(
-            "SINGULARITY_CONTAINER"
+        if (
+            str(heartbeat.get("host") or "") == _resolve_host(None)
+            and not os.environ.get("APPTAINER_CONTAINER")
+            and not os.environ.get("SINGULARITY_CONTAINER")
         ):
             pid = row.values.get("pid")
             if type(pid) is int and pid > 0:
