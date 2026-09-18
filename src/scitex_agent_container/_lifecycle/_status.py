@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import time
 import traceback
 from typing import Any, Callable, Optional
 
@@ -49,17 +50,21 @@ def _a2a_status(
 
 
 def _resolve_account(config: AgentConfig | None) -> str:
-    """Resolve the agent's effective Anthropic-account label.
+    """Resolve stored Claude Code credential inventory for Anthropic only.
 
-    Surfaces which account the agent authenticates as (operator request
-    4581) so the operator can see which agents share one account — and
-    thus one server-side rate limit. Mirrors the runtime auth precedence
-    (agent ``spec.env`` override → host shared OAuth → fallback). See
-    ``_account.agent_account.resolve_agent_account_label``.
+    Hermes and Codex specs retain legacy ``claude`` fields, but those harnesses
+    do not authenticate through Claude Code OAuth. They return ``"unknown"``
+    rather than publishing unrelated account metadata.
 
     Tolerant: a missing config or any resolver hiccup maps to
     ``"unknown"`` so status never fails on account lookup.
     """
+    if (
+        config is None
+        or str(getattr(config, "harness", "") or "").strip().lower()
+        != "anthropic"
+    ):
+        return "unknown"
     # stx-allow: fallback (reason: status output must never crash on an
     # account-resolution hiccup; ``"unknown"`` is the right degraded UX.)
     try:
@@ -74,6 +79,45 @@ def _resolve_account(config: AgentConfig | None) -> str:
         return resolve_agent_account_label(env, assigned_account=assigned)
     except Exception:  # stx-allow: fallback (reason: see inline comment)
         return "unknown"
+
+
+def _runtime_identity(
+    name: str,
+    config: AgentConfig | None,
+    running: bool,
+    *,
+    registry_entry: dict | None = None,
+    active_instances: list[dict] | None = None,
+    local_host: str | None = None,
+    birth_reader=None,
+    evidence_reader=None,
+) -> dict:
+    """Runtime selection/auth facts, preferring this incarnation's birth."""
+    birth = None
+    if running:
+        try:  # stx-allow: fallback (unavailable birth -> labelled spec fallback)
+            from .._state.state_store import _resolve_host, list_active_instances
+            from ._runtime_identity import resolve_bound_birth_records
+
+            host = local_host or _resolve_host(None)
+            snapshot = (
+                active_instances
+                if active_instances is not None
+                else list_active_instances(host=None)
+            )
+            births = resolve_bound_birth_records(
+                [registry_entry or {"name": name}],
+                active_instances=snapshot,
+                local_host=host,
+                evidence_reader=evidence_reader,
+                birth_reader=birth_reader,
+            )
+            birth = births.get(name)
+        except Exception:  # stx-allow: fallback (reason: see inline comment)
+            birth = None
+    from ._runtime_identity import resolve_runtime_identity
+
+    return resolve_runtime_identity(config, running=running, birth_record=birth)
 
 
 def _remote_instance_status(
@@ -119,8 +163,14 @@ def _remote_instance_status(
             "status": "running",
             "model": "unknown",
             "runtime": "unknown",
+            "harness": "unknown",
+            "engine": "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "unknown",
             # Cross-host agent: its credentials live on the remote host,
-            # not resolvable from here. Keep the key for shape parity.
+            # not resolvable from here. Keep compatibility alias explicit.
+            "stored_credential": "unknown",
             "account": "unknown",
             "host": row.get("host", "") or "",
             "a2a_port": row.get("a2a_port"),
@@ -137,6 +187,45 @@ def _remote_instance_status(
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
+        try:
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            beat = next(
+                (
+                    value
+                    for value in latest_authoritative_heartbeats()
+                    if value.get("agent_id") == name
+                ),
+                None,
+            )
+        except Exception:  # stx-allow: fallback (optional lease enrichment must not discard an already-resolved remote instance)
+            beat = None
+        if beat is not None:
+            from .._state.authoritative_heartbeat import classify_resident_state
+
+            process_evidence = beat.get("_process_alive")
+            process_alive = (
+                process_evidence if isinstance(process_evidence, bool) else None
+            )
+            result.update(
+                {
+                    "model": beat.get("model") or "unknown",
+                    "runtime": beat.get("runtime") or "unknown",
+                    "harness": beat.get("harness") or "unknown",
+                    "engine": beat.get("engine") or "unknown",
+                    "host": beat.get("host") or result["host"],
+                    "heartbeat": beat,
+                    "resident_state": classify_resident_state(
+                        beat,
+                        now=time.time(),
+                        process_alive=process_alive,
+                        federation_connected=bool(
+                            beat.get("_federation_connected")
+                        ),
+                        progress_stale_s=120.0,
+                    ),
+                }
+            )
         from .._state.observation import DefinitionState, build_agent_observation
 
         result["liveness"] = {
@@ -154,6 +243,67 @@ def _remote_instance_status(
         )
         return result
     except Exception:  # stx-allow: fallback (reason: best-effort cross-host status — caller raises the normal "not found" error when None)
+        return None
+
+
+def _heartbeat_only_status(name: str) -> dict | None:
+    """Resolve a fleet-visible resident from its current host lease alone."""
+    try:
+        from .._state.authoritative_heartbeat import classify_resident_state
+        from .._state.state_store import latest_authoritative_heartbeats
+
+        beat = next(
+            (
+                value
+                for value in latest_authoritative_heartbeats()
+                if value.get("agent_id") == name
+            ),
+            None,
+        )
+        if beat is None:
+            return None
+        process_evidence = beat.get("_process_alive")
+        process_alive = (
+            process_evidence if isinstance(process_evidence, bool) else None
+        )
+        resident_state = classify_resident_state(
+            beat,
+            now=time.time(),
+            process_alive=process_alive,
+            federation_connected=bool(beat.get("_federation_connected")),
+            progress_stale_s=120.0,
+        )
+        running = resident_state in {"idle", "active", "blocked", "stalled"}
+        return {
+            "name": name,
+            "config": "",
+            "screen": "",
+            "started_at": "",
+            "status": "running" if running else "stopped",
+            "model": beat.get("model") or "unknown",
+            "runtime": beat.get("runtime") or "unknown",
+            "harness": beat.get("harness") or "unknown",
+            "engine": beat.get("engine") or "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "authoritative-heartbeat",
+            "stored_credential": "unknown",
+            "account": "unknown",
+            "host": beat.get("host") or "",
+            "resident_state": resident_state,
+            "heartbeat": beat,
+            "liveness": {
+                "verdict": "alive" if running else "unknown",
+                "evidence": [
+                    {
+                        "source": "authoritative-heartbeat",
+                        "verdict": resident_state,
+                        "detail": "host lease and resident progress projection",
+                    }
+                ],
+            },
+        }
+    except Exception:  # stx-allow: fallback (unavailable fleet lease is UNKNOWN and caller retains the normal not-found verdict)
         return None
 
 
@@ -223,6 +373,9 @@ def agent_status(
         remote_status = _remote_instance_status(name)
         if remote_status is not None:
             return remote_status
+        heartbeat_status = _heartbeat_only_status(name)
+        if heartbeat_status is not None:
+            return heartbeat_status
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     runtime_factory = runtime_factory or _get_runtime
@@ -248,14 +401,11 @@ def agent_status(
         "screen": entry.get("screen", ""),
         "started_at": entry.get("started_at", ""),
         "status": "running" if running else "stopped",
-        "model": config.model if config else "unknown",
-        "runtime": config.runtime if config else "unknown",
-        # Which Anthropic account this agent authenticates as (operator
-        # request 4581). Agents sharing one label share one server-side
-        # rate limit. Resolved from the agent's effective auth source.
-        "account": _resolve_account(config),
+        # Stored credential inventory is not actual runtime auth identity.
+        "stored_credential": _resolve_account(config),
         "a2a": _a2a_status(name, config),
     }
+    result["account"] = result["stored_credential"]  # deprecated inventory alias
 
     # Runtime-specific detection stays behind a neutral control-plane shape.
     # A live process can still be unable to admit turns (for example a
@@ -288,6 +438,14 @@ def agent_status(
     result["liveness"] = liveness
     if liveness.get("verdict") == "alive":
         result["status"] = "running"
+    result.update(
+        _runtime_identity(
+            name,
+            config,
+            result["status"] == "running",
+            registry_entry=entry,
+        )
+    )
     # ``config.remote`` was deleted in WI-6; spec.host (host pinning)
     # is the v3 equivalent and is recorded in state.db's ``instances``
     # table rather than echoed back through ``status``.
@@ -377,6 +535,7 @@ def agent_status(
     # never need a key-existence check.
     # stx-allow: fallback (reason: a state-dir read failure should never break
     # the status command — degrade to the explicit empty shape)
+    state_dir = None
     try:
         from ._session_movement import resolve_state_dir, status_movement_fields
 
@@ -392,6 +551,47 @@ def agent_status(
         # Don't overwrite a field that a prior enrich step already set —
         # the additive contract says NEW keys, not "always replaces".
         result.setdefault(k, v)
+
+    try:
+        from .._runners._session_state import read_heartbeat
+
+        local_heartbeat = read_heartbeat(state_dir) if state_dir is not None else None
+        if isinstance(local_heartbeat, dict) and isinstance(
+            local_heartbeat.get("authoritative_heartbeat"), dict
+        ):
+            from .._state.authoritative_heartbeat import classify_resident_state
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            local_resident = dict(local_heartbeat["authoritative_heartbeat"])
+            result["heartbeat"] = local_resident
+            result["resident_state"] = "disconnected"
+            shared = next(
+                (
+                    beat
+                    for beat in latest_authoritative_heartbeats()
+                    if beat.get("agent_id") == name
+                ),
+                None,
+            )
+            if shared is not None:
+                process_evidence = shared.get("_process_alive")
+                process_alive = (
+                    process_evidence
+                    if isinstance(process_evidence, bool)
+                    else result.get("status") == "running"
+                )
+                result["heartbeat"] = shared
+                result["resident_state"] = classify_resident_state(
+                    shared,
+                    now=time.time(),
+                    process_alive=process_alive,
+                    federation_connected=bool(
+                        shared.get("_federation_connected")
+                    ),
+                    progress_stale_s=120.0,
+                )
+    except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
+        pass
 
     from .._state.observation import DefinitionState, build_agent_observation
 

@@ -1,13 +1,10 @@
-"""The ``-l`` (literal) send contract for the containerized Ink/React TUI.
+"""Atomic literal-paste and separate-submit contract for interactive TUIs.
 
 Root fix for the boot startup-prompt Enter-drop (card
 sac-tui-startup-prompt-enter-drop): the containerized ``claude`` TUI silently
-DROPS non-literal ``send-keys`` — the source-verified recovery recipe
-(``_skills/scitex-agent-container/45_agent-to-agent-recovery-tmux.md``) is
-``send-keys -l`` for the TEXT, then a SEPARATE named ``Enter`` (NEVER ``-l``)
-to submit. These tests pin that exact argv shape via an injected recording
-runner (a real callable — no MagicMock, no monkeypatch: PA-306). STX-TQ002
-AAA-markers + STX-TQ007 one-assert.
+DROPS streamed key events. Text now enters through one bracketed tmux buffer
+paste, followed by a SEPARATE named ``Enter`` to submit. These tests pin that
+argv shape via an injected recording runner (a real callable, no mocks).
 """
 
 from __future__ import annotations
@@ -29,19 +26,22 @@ class _RunnerRecorder:
         self.argvs.append(list(argv))
 
 
-class TestSendTextLiteralUsesDashL:
-    """``send_text_literal`` pastes with ``-l`` and never submits."""
+class TestSendTextLiteralUsesBracketedPaste:
+    """``send_text_literal`` uses one tmux buffer paste and never submits."""
 
-    def test_text_sent_with_dash_l_flag(self) -> None:
+    def test_text_sent_with_bracketed_paste(self) -> None:
         # Arrange
         runner = _RunnerRecorder()
         # Act
         TmuxManager.send_text_literal("tui-x", "go work", runner=runner)
-        # Assert — one send-keys, ``-l`` immediately before the text, on the
-        # EXACT-match target (=name: — a bare -t prefix-matches and can land
-        # keys in a SIBLING's pane; incident 2026-08-14).
-        assert runner.argvs == [
-            ["tmux", "send-keys", "-t", "=tui-x:", "-l", "go work"]
+        # Assert
+        assert runner.argvs[1][0:4] + runner.argvs[1][-2:] == [
+            "tmux",
+            "paste-buffer",
+            "-p",
+            "-r",
+            "-t",
+            "=tui-x:",
         ]
 
     def test_literal_paste_sends_no_enter(self) -> None:
@@ -54,23 +54,23 @@ class TestSendTextLiteralUsesDashL:
 
 
 class TestSendTextAndSubmitLiteralThenEnter:
-    """``send_text_and_submit`` = literal text (``-l``) then a SEPARATE Enter."""
+    """``send_text_and_submit`` = bracketed paste then a SEPARATE Enter."""
 
-    def test_text_leg_uses_dash_l(self) -> None:
+    def test_text_leg_uses_bracketed_paste(self) -> None:
         # Arrange
         runner = _RunnerRecorder()
         # Act
         TmuxManager.send_text_and_submit(
             "tui-x", "mission", sleep_fn=_zero_sleep, runner=runner
         )
-        # Assert — first call pastes the text literally (exact =name: target).
-        assert runner.argvs[0] == [
+        # Assert
+        assert runner.argvs[1][0:4] + runner.argvs[1][-2:] == [
             "tmux",
-            "send-keys",
+            "paste-buffer",
+            "-p",
+            "-r",
             "-t",
             "=tui-x:",
-            "-l",
-            "mission",
         ]
 
     def test_enter_leg_is_named_key_without_dash_l(self) -> None:

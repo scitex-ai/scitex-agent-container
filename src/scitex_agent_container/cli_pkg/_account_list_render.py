@@ -47,6 +47,7 @@ from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from ._account_list_format import (
     format_as_of_short,
@@ -55,6 +56,7 @@ from ._account_list_format import (
     format_ttl_live,
     local_timezone,
 )
+from ._terminal_text import terminal_safe
 
 # ---------------------------------------------------------------------------
 # Row data model
@@ -288,7 +290,11 @@ def render_stored_table(
     # name in front of every single-host listing, and a column that always says
     # the same thing teaches the eye to skip the place where the answer lives.
     with_host = any(r.host for r in rows)
-    table = Table(title="Stored accounts", title_justify="left", show_lines=False)
+    table = Table(
+        title="Stored credentials — inventory, not necessarily active runtime",
+        title_justify="left",
+        show_lines=False,
+    )
     if with_host:
         table.add_column("Host", style="cyan")
     table.add_column("Provider")
@@ -298,18 +304,24 @@ def render_stored_table(
     table.add_column("Usage as of")
     for r in rows:
         cells = [
-            r.provider,
-            r.name,
-            _fmt_status(
-                r.freshness_state,
-                r.freshness_hours,
-                pause_reason=r.pause_reason,
-                pause_since=r.pause_since,
+            Text(terminal_safe(r.provider)),
+            Text(terminal_safe(r.name)),
+            Text(
+                terminal_safe(
+                    _fmt_status(
+                        r.freshness_state,
+                        r.freshness_hours,
+                        pause_reason=r.pause_reason,
+                        pause_since=r.pause_since,
+                    )
+                )
             ),
-            _fmt_identity_cell(r),
-            _fmt_last_update_cell(r.snapshot_as_of, now=now),
+            Text(terminal_safe(_fmt_identity_cell(r))),
+            Text(terminal_safe(_fmt_last_update_cell(r.snapshot_as_of, now=now))),
         ]
-        table.add_row(*([r.host or "—", *cells] if with_host else cells))
+        table.add_row(
+            *([Text(terminal_safe(r.host or "—")), *cells] if with_host else cells)
+        )
     return table
 
 
