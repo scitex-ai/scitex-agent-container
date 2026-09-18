@@ -649,7 +649,11 @@ def test_health_not_in_registry_json_emits_error_payload(tmp_registry):
     result = runner.invoke(health, ["ghost", "--json"])
     payload = json.loads(result.stdout)
     # Assert
-    assert "error" in payload
+    assert ("error" in payload, payload["health_state"], payload["healthy"]) == (
+        True,
+        "unknown",
+        False,
+    )
 
 
 def test_health_load_config_failure_json_exits_one(tmp_path, tmp_registry):

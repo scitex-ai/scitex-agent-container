@@ -5,7 +5,6 @@ from __future__ import annotations
 import json as json_mod
 import os
 import sys
-import time
 
 import click
 from rich.table import Table
@@ -431,55 +430,35 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     entry = registry.get(name)
     if entry is None:
         try:
-            from .._state.authoritative_heartbeat import classify_resident_state
-            from .._state.state_store import latest_authoritative_heartbeats
-
-            beat = next(
-                (
-                    value
-                    for value in latest_authoritative_heartbeats()
-                    if value.get("agent_id") == name
-                ),
-                None,
-            )
-            if beat is not None:
-                process_evidence = beat.get("_process_alive")
-                process_alive = (
-                    process_evidence if isinstance(process_evidence, bool) else None
-                )
-                resident_state = classify_resident_state(
-                    beat,
-                    now=time.time(),
-                    process_alive=process_alive,
-                    federation_connected=bool(beat.get("_federation_connected")),
-                    progress_stale_s=120.0,
-                )
-                from ._health_liveness import heartbeat_health_state
-
-                health_state = heartbeat_health_state(resident_state)
-                healthy = health_state == "healthy"
-                payload = {
-                    "name": name,
-                    "healthy": healthy,
-                    "health_state": health_state,
-                    "message": f"authoritative heartbeat: {resident_state}",
-                    "resident_state": resident_state,
-                    "heartbeat": beat,
-                }
-                if use_json:
-                    click.echo(json_mod.dumps(payload, indent=2))
-                else:
-                    console.print(payload["message"])
-                if not healthy:
-                    sys.exit(1)
-                return
-        except Exception:  # stx-allow: fallback (reason: an unavailable shared heartbeat store falls through to the existing explicit not-found verdict)
-            pass
-        if use_json:
-            click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
+            status_snapshot = agent_status(name, registry)
+        except Exception as exc:  # stx-allow: fallback (missing fleet evidence is typed UNKNOWN, never inferred DEAD)
+            payload = {
+                "name": name,
+                "healthy": False,
+                "health_state": "unknown",
+                "message": f"health unknown: {exc}",
+                "error": str(exc),
+            }
         else:
-            console.print(f"[red]Agent '{name}' not found in registry[/red]")
-        sys.exit(1)
+            from ._health_liveness import status_health_state
+
+            health_state = status_health_state(status_snapshot)
+            payload = {
+                "name": name,
+                "healthy": health_state == "healthy",
+                "health_state": health_state,
+                "message": f"process health: {health_state}",
+                "resident_state": status_snapshot.get("resident_state", "unknown"),
+                "heartbeat": status_snapshot.get("heartbeat"),
+                "liveness": status_snapshot.get("liveness", {}),
+            }
+        if use_json:
+            click.echo(json_mod.dumps(payload, indent=2))
+        else:
+            console.print(payload["message"])
+        if not payload["healthy"]:
+            sys.exit(1)
+        return
 
     # stx-allow: fallback (reason: config YAML may be corrupted or missing after registry entry was created; CLI exits with code 1 in both JSON and human output modes)
     try:
@@ -521,7 +500,7 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         status_snapshot = agent_status(name, registry)
         resident_state = status_snapshot.get("resident_state")
         resident_heartbeat = status_snapshot.get("heartbeat")
-        if resident_state in {"stalled", "disconnected", "dead"}:
+        if resident_state in {"stalled", "dead"}:
             is_healthy = False
             message = f"unhealthy: authoritative heartbeat is {resident_state}"
     except Exception:  # stx-allow: fallback (status observation failure leaves the existing runtime health verdict unchanged)

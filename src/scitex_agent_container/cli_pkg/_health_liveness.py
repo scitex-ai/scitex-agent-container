@@ -32,6 +32,7 @@ __all__ = [
     "liveness_payload",
     "print_inbox",
     "print_liveness",
+    "status_health_state",
 ]
 
 # wedged = present but NOT working — magenta, distinct from unknown's yellow so
@@ -50,6 +51,22 @@ def heartbeat_health_state(resident_state: str) -> str:
     if resident_state in {"idle", "active", "blocked"}:
         return "healthy"
     if resident_state in {"dead", "stalled"}:
+        return "unhealthy"
+    return "unknown"
+
+
+def status_health_state(status: dict) -> str:
+    """Project typed health from the process dimension of a status snapshot."""
+    resident_state = str(status.get("resident_state") or "unknown")
+    if resident_state == "stalled":
+        return "unhealthy"
+    process_state = str(
+        ((status.get("observation") or {}).get("process") or {}).get("state")
+        or "unknown"
+    )
+    if process_state == "alive":
+        return "healthy"
+    if process_state in {"absent", "exited"}:
         return "unhealthy"
     return "unknown"
 

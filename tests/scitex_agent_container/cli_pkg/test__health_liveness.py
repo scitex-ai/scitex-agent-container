@@ -5,6 +5,7 @@ from __future__ import annotations
 from scitex_agent_container.cli_pkg._health_liveness import (
     health_summary,
     heartbeat_health_state,
+    status_health_state,
 )
 
 
@@ -145,3 +146,24 @@ def test_dead_heartbeat_projects_typed_unhealthy_health() -> None:
     result = heartbeat_health_state(resident_state)
     # Assert
     assert result == "unhealthy"
+
+
+def test_direct_alive_process_projects_healthy_despite_disconnected_resident() -> None:
+    # Arrange
+    status = {
+        "resident_state": "disconnected",
+        "observation": {"process": {"state": "alive"}},
+    }
+    # Act
+    result = status_health_state(status)
+    # Assert
+    assert result == "healthy"
+
+
+def test_missing_process_observation_projects_unknown_health() -> None:
+    # Arrange
+    status = {"resident_state": "disconnected"}
+    # Act
+    result = status_health_state(status)
+    # Assert
+    assert result == "unknown"

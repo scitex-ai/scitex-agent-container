@@ -38,7 +38,12 @@ def heartbeat_lease_rows(
             federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
-        live = resident_state in {"idle", "active", "blocked", "stalled"}
+        live = process_alive is True or resident_state in {
+            "idle",
+            "active",
+            "blocked",
+            "stalled",
+        }
         dead = resident_state == "dead"
         if running_only and not live:
             continue
@@ -98,13 +103,13 @@ def overlay_authoritative_heartbeats(
         # A successful direct process observation outranks heartbeat presence.
         # Infer from the row only when its producer explicitly marked liveness
         # as known; legacy stopped/running strings alone are not evidence.
-        row_process_alive: bool | None = None
-        if process_alive is None and row.get("liveness_unknown") is False:
+        row_process_alive: bool | None = process_alive
+        if row_process_alive is None and row.get("liveness_unknown") is False:
             if row.get("status") == "running":
                 row_process_alive = True
             elif row.get("status") == "stopped":
                 row_process_alive = False
-            process_alive = row_process_alive
+        process_alive = row_process_alive
         resident_state = classify_resident_state(
             beat,
             now=observed_at,

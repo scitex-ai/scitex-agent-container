@@ -106,6 +106,25 @@ def test_host_process_evidence_can_classify_dead() -> None:
     )
 
 
+def test_host_process_alive_outranks_disconnected_heartbeat() -> None:
+    # Arrange
+    beat = _beat(_process_alive=True, _federation_connected=False)
+    # Act
+    rows = heartbeat_lease_rows(
+        covered=set(),
+        display_host="display",
+        running_only=True,
+        host_display_for=lambda host, _display: host,
+        beats=[beat],
+        now=101.0,
+    )
+    # Assert
+    assert (rows[0]["status"], rows[0]["labels"]["resident_state"]) == (
+        "running",
+        "disconnected",
+    )
+
+
 def test_observer_only_hermes_row_stays_explicitly_unknown() -> None:
     # Arrange
     rows = [{"name": "scholar", "harness": "hermes", "status": "running"}]

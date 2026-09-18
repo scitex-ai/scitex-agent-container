@@ -237,7 +237,7 @@ def _remote_instance_status(
             "dead"
             if process_alive is False
             else "alive"
-            if process_alive is True and heartbeat_alive
+            if process_alive is True
             else "unknown"
         )
         evidence = [
@@ -259,7 +259,14 @@ def _remote_instance_status(
                     "detail": f"authoritative heartbeat resident state: {resident_state}",
                 }
             )
-        result["liveness"] = {"verdict": process_verdict, "evidence": evidence}
+        liveness_verdict = (
+            process_verdict
+            if process_verdict != "unknown"
+            else "alive"
+            if heartbeat_alive
+            else "unknown"
+        )
+        result["liveness"] = {"verdict": liveness_verdict, "evidence": evidence}
         result["observation"] = build_agent_observation(
             result, definition_state=DefinitionState.MISSING
         )
@@ -274,16 +281,23 @@ def _remote_instance_status(
         return None
 
 
-def _heartbeat_only_status(name: str) -> dict | None:
+def _heartbeat_only_status(
+    name: str,
+    *,
+    heartbeat_reader: Callable[[], list[dict]] | None = None,
+) -> dict | None:
     """Resolve a fleet-visible resident from its current host lease alone."""
     try:
         from .._state.authoritative_heartbeat import classify_resident_state
-        from .._state.state_store import latest_authoritative_heartbeats
+        if heartbeat_reader is None:
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            heartbeat_reader = latest_authoritative_heartbeats
 
         beat = next(
             (
                 value
-                for value in latest_authoritative_heartbeats()
+                for value in heartbeat_reader()
                 if value.get("agent_id") == name
             ),
             None,
@@ -301,9 +315,24 @@ def _heartbeat_only_status(name: str) -> dict | None:
             federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
-        running = resident_state in {"idle", "active", "blocked", "stalled"}
-        dead = resident_state == "dead"
-        return {
+        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
+        running = process_alive is True or heartbeat_alive
+        dead = process_alive is False or resident_state == "dead"
+        process_verdict = (
+            "alive"
+            if process_alive is True
+            else "dead"
+            if process_alive is False
+            else "unknown"
+        )
+        liveness_verdict = (
+            process_verdict
+            if process_verdict != "unknown"
+            else "alive"
+            if heartbeat_alive
+            else "unknown"
+        )
+        result = {
             "name": name,
             "config": "",
             "screen": "",
@@ -322,16 +351,27 @@ def _heartbeat_only_status(name: str) -> dict | None:
             "resident_state": resident_state,
             "heartbeat": beat,
             "liveness": {
-                "verdict": "alive" if running else "dead" if dead else "unknown",
+                "verdict": liveness_verdict,
                 "evidence": [
                     {
-                        "source": "authoritative-heartbeat",
-                        "verdict": resident_state,
-                        "detail": "host lease and resident progress projection",
+                        "source": "process",
+                        "verdict": process_verdict,
+                        "detail": "host process evidence from authoritative projection",
+                    },
+                    {
+                        "source": "heartbeat",
+                        "verdict": "alive" if heartbeat_alive else "unknown",
+                        "detail": f"authoritative heartbeat resident state: {resident_state}",
                     }
                 ],
             },
         }
+        from .._state.observation import DefinitionState, build_agent_observation
+
+        result["observation"] = build_agent_observation(
+            result, definition_state=DefinitionState.MISSING
+        )
+        return result
     except Exception:  # stx-allow: fallback (unavailable fleet lease is UNKNOWN and caller retains the normal not-found verdict)
         return None
 
