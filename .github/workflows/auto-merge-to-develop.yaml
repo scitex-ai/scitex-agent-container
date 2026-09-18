@@ -194,6 +194,11 @@ jobs:
           # separate read-only GitHub App/PAT credential needs Administration:
           # read and no write scopes; absence fails the sweep closed.
           PROTECTION_TOKEN: ${{ secrets.SAC_BRANCH_PROTECTION_READ_TOKEN }}
+          # Organization-wide PR inventory is a different read boundary from
+          # branch protection. Missing authority makes pressure unreadable and
+          # therefore DRAIN, never BUILD.
+          FLEET_READ_TOKEN: ${{ secrets.SAC_FLEET_INVENTORY_READ_TOKEN }}
+          GREEN_TO_MERGE_P90_MINUTES: ${{ vars.GREEN_TO_MERGE_P90_MINUTES }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.check_suite.head_sha }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -250,20 +255,35 @@ jobs:
           # comment. Counted, not swallowed: it turns the run red at the end.
           attrib_failures=0
 
-          # Backpressure is derived from GitHub on every sweep. If the query is
-          # unreadable, fail safe to DRAIN: inability to measure downstream
-          # congestion must never be interpreted as permission to make more.
+          # Backpressure is derived from organization GitHub state on every
+          # sweep using the authorized pressure law. Any missing token/query/p90
+          # fails safe to DRAIN: unreadable congestion is never BUILD capacity.
           mode="DRAIN"
-          open_green=$(gh pr list --repo "$REPO" --base develop --state open \
-            --search "status:success" --limit 200 --json number --jq 'length' \
-            2>/dev/null || echo "")
-          case "$open_green" in
-            ""|*[!0-9]*)
-              echo "::warning::could not measure the open-green backlog — FLEET MODE remains DRAIN (fail-safe)" ;;
+          open_green=""
+          open_prs=""
+          p90_minutes="${GREEN_TO_MERGE_P90_MINUTES:-}"
+          if [ -n "$FLEET_READ_TOKEN" ]; then
+            org="${REPO%%/*}"
+            open_green=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
+              -f q="org:$org is:pr is:open status:success" --jq .total_count \
+              2>/dev/null || echo "")
+            open_prs=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
+              -f q="org:$org is:pr is:open" --jq .total_count \
+              2>/dev/null || echo "")
+          fi
+          case "$open_green:$open_prs:$p90_minutes" in
+            *[!0-9.:]*|:*|*::*|*:)
+              echo "::warning::fleet pressure unreadable (token/query/p90) — FLEET MODE remains DRAIN (fail-safe)" ;;
             *)
-              mode=$(python3 .github/ci/integration_policy.py mode "$open_green") ;;
+              if measured_mode=$(python3 .github/ci/integration_policy.py mode \
+                   "$open_green" "$open_prs" "$p90_minutes"); then
+                mode="$measured_mode"
+              else
+                echo "::warning::fleet pressure policy rejected its inputs — FLEET MODE remains DRAIN (fail-safe)"
+                mode="DRAIN"
+              fi ;;
           esac
-          echo "FLEET MODE: $mode (open-green=${open_green:-unreadable}; BUILD<=10, BALANCED=11..20, INTEGRATION_HEAVY=21..40, DRAIN>40)"
+          echo "FLEET MODE: $mode (open-green=${open_green:-unreadable}; open-prs=${open_prs:-unreadable}; p90-minutes=${p90_minutes:-unreadable})"
 
           # ---------------------------------------------------------------
           # GATE: develop must be SETTLED and GREEN before anything lands.

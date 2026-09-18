@@ -1,0 +1,100 @@
+name: fleet-work-dispatch
+
+# The repository-owned dispatch boundary. This workflow is the consumer of
+# fleet-dispatch-admission: the cross-repository repository_dispatch is reachable
+# only from a job that `needs` a successful admission job. Missing target/token,
+# malformed payload, or rejected pressure leaves no dispatch side effect.
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Stable fleet request id"
+        required: true
+        type: string
+      work_kind:
+        description: "Dispatch class"
+        required: true
+        type: choice
+        options:
+          - feature
+          - routine
+          - nice
+          - operator-P0
+          - security
+          - dependency-unblock
+          - bug-fix
+          - integration
+          - review
+      payload_json:
+        description: "JSON object delivered to the configured fleet dispatcher"
+        required: true
+        type: string
+  repository_dispatch:
+    types: [fleet-work-request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet-work-dispatch-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    uses: ./.github/workflows/fleet-dispatch-admission.yaml
+    with:
+      work_kind: ${{ inputs.work_kind || github.event.client_payload.work_kind || '' }}
+    secrets: inherit
+
+  dispatch:
+    needs: admission
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","Linux","X64","scitex-ci"]') }}
+    timeout-minutes: 5
+    env:
+      DISPATCH_REPO: ${{ vars.SAC_FLEET_DISPATCH_REPO }}
+      REQUEST_ID: ${{ inputs.request_id || github.event.client_payload.request_id || '' }}
+      WORK_KIND: ${{ inputs.work_kind || github.event.client_payload.work_kind || '' }}
+      PAYLOAD_JSON: ${{ inputs.payload_json || toJSON(github.event.client_payload.payload) || '' }}
+    steps:
+      - name: Dispatch admitted work to the configured fleet hub
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.SAC_FLEET_DISPATCH_TOKEN }}
+          script: |
+            const target = process.env.DISPATCH_REPO || "";
+            const requestId = process.env.REQUEST_ID || "";
+            const workKind = process.env.WORK_KIND || "";
+            const rawPayload = process.env.PAYLOAD_JSON || "";
+            if (!target.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)) {
+              core.setFailed("SAC_FLEET_DISPATCH_REPO is absent or invalid; nothing dispatched");
+              return;
+            }
+            if (!requestId || !workKind || !rawPayload) {
+              core.setFailed("request_id/work_kind/payload_json is incomplete; nothing dispatched");
+              return;
+            }
+            let payload;
+            try {
+              payload = JSON.parse(rawPayload);
+            } catch (error) {
+              core.setFailed(`payload_json is invalid JSON: ${error.message}`);
+              return;
+            }
+            if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+              core.setFailed("payload_json must be a JSON object; nothing dispatched");
+              return;
+            }
+            const [owner, repo] = target.split("/");
+            await github.request("POST /repos/{owner}/{repo}/dispatches", {
+              owner,
+              repo,
+              event_type: "fleet-work-admitted",
+              client_payload: {
+                request_id: requestId,
+                work_kind: workKind,
+                payload,
+                source_repository: context.repo.owner + "/" + context.repo.repo,
+                source_sha: context.sha,
+              },
+            });
+            core.info(`dispatched admitted request ${requestId} to ${target}`);

@@ -47,6 +47,103 @@ def test_backlog_above_forty_enters_drain(policy) -> None:
     assert mode == "DRAIN"
 
 
+def test_pressure_uses_the_largest_downstream_signal(policy) -> None:
+    # Arrange
+    signals = {"open_green": 12, "open_prs": 30, "p90_minutes": 60}
+    # Act
+    pressure = policy.integration_pressure(**signals)
+    # Assert
+    assert pressure == pytest.approx(1.2)
+
+
+@pytest.mark.parametrize(
+    ("pressure", "expected"),
+    [
+        (0.49, "BUILD"),
+        (0.5, "BALANCED"),
+        (1.0, "BALANCED"),
+        (1.01, "INTEGRATION_HEAVY"),
+        (2.0, "INTEGRATION_HEAVY"),
+        (2.01, "DRAIN"),
+    ],
+)
+def test_pressure_boundaries_select_capacity_mode(
+    policy, pressure: float, expected: str
+) -> None:
+    # Arrange
+    measured = pressure
+    # Act
+    mode = policy.pressure_mode(measured)
+    # Assert
+    assert mode == expected
+
+
+@pytest.mark.parametrize("mode", ["", "unknown", "drain"])
+def test_unknown_or_malformed_mode_rejects_dispatch(policy, mode: str) -> None:
+    # Arrange
+    work_kind = "operator_p0"
+    # Act
+    allowed = policy.dispatch_allowed(mode, work_kind)
+    # Assert
+    assert allowed is False
+
+
+@pytest.mark.parametrize("kind", ["", "feature-ish"])
+def test_unknown_work_kind_rejects_dispatch(policy, kind: str) -> None:
+    # Arrange
+    mode = "BUILD"
+    # Act
+    allowed = policy.dispatch_allowed(mode, kind)
+    # Assert
+    assert allowed is False
+
+
+@pytest.mark.parametrize("kind", ["feature", "routine", "nice_to_have"])
+def test_drain_rejects_routine_feature_dispatch(policy, kind: str) -> None:
+    # Arrange
+    mode = "DRAIN"
+    # Act
+    allowed = policy.dispatch_allowed(mode, kind)
+    # Assert
+    assert allowed is False
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["operator_p0", "security", "dependency_unblock", "bug_fix", "integration", "review"],
+)
+def test_drain_admits_only_explicit_exception_classes(policy, kind: str) -> None:
+    # Arrange
+    mode = "DRAIN"
+    # Act
+    allowed = policy.dispatch_allowed(mode, kind)
+    # Assert
+    assert allowed is True
+
+
+@pytest.mark.parametrize(
+    "kind", ["operator-P0", "dependency-unblock", "bug-fix"]
+)
+def test_drain_accepts_contract_spelling_for_exception_classes(
+    policy, kind: str
+) -> None:
+    # Arrange
+    mode = "DRAIN"
+    # Act
+    allowed = policy.dispatch_allowed(mode, kind)
+    # Assert
+    assert allowed is True
+
+
+def test_drain_rejects_contract_nice_spelling(policy) -> None:
+    # Arrange
+    mode = "DRAIN"
+    # Act
+    allowed = policy.dispatch_allowed(mode, "nice")
+    # Assert
+    assert allowed is False
+
+
 @pytest.mark.parametrize(
     ("open_green", "expected"),
     [
@@ -94,6 +191,11 @@ def test_backlog_boundaries_select_the_declared_mode(
         ".github/workflows/deploy-production.yml",
         "src/scitex_agent_container/runtimes/_to_home_deployers.py",
         ".github/workflows/release-production.yml",
+        ".github/workflows/lint.yml",
+        ".github/ci/integration_policy.py",
+        "policy/review-gate.yaml",
+        "policies/fleet-admission.yaml",
+        "__global__/fleet-policy.yaml",
     ],
 )
 def test_sensitive_paths_are_high_risk(policy, path: str) -> None:
@@ -110,7 +212,6 @@ def test_sensitive_paths_are_high_risk(policy, path: str) -> None:
     [
         ["docs/integration.md"],
         ["README.md", "tests/integration/test_policy.py"],
-        [".github/ci/ci-status.py", ".github/workflows/lint.yml"],
     ],
 )
 def test_documentation_tests_and_ci_only_changes_are_low_risk(
@@ -151,13 +252,64 @@ def test_one_sensitive_path_makes_a_mixed_change_high_risk(policy) -> None:
     assert risk == "HIGH"
 
 
+def test_renamed_control_plane_previous_filename_alias_is_high(policy) -> None:
+    # Arrange — workflow feeds both filename and previous_filename into this list.
+    changed_paths = ["docs/renamed.md", ".github/workflows/old-dispatch.yml"]
+    # Act
+    risk = policy.classify_risk(changed_paths)
+    # Assert
+    assert risk == "HIGH"
+
+
 def test_cli_reports_drain_for_current_backlog() -> None:
     # Arrange
-    command = [sys.executable, str(_POLICY), "mode", "61"]
+    command = [sys.executable, str(_POLICY), "mode", "30", "69", "120"]
     # Act
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     # Assert
     assert (completed.returncode, completed.stdout.strip()) == (0, "DRAIN")
+
+
+def test_cli_rejects_feature_dispatch_under_drain_pressure() -> None:
+    # Arrange
+    command = [
+        sys.executable,
+        str(_POLICY),
+        "admit",
+        "--open-green",
+        "30",
+        "--open-prs",
+        "69",
+        "--p90-minutes",
+        "120",
+        "--work-kind",
+        "feature",
+    ]
+    # Act
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    # Assert
+    assert (completed.returncode, completed.stdout.strip()) == (2, "REJECT DRAIN")
+
+
+def test_cli_fails_closed_when_pressure_input_is_unreadable() -> None:
+    # Arrange
+    command = [
+        sys.executable,
+        str(_POLICY),
+        "admit",
+        "--open-green",
+        "unreadable",
+        "--open-prs",
+        "69",
+        "--p90-minutes",
+        "120",
+        "--work-kind",
+        "operator_p0",
+    ]
+    # Act
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    # Assert
+    assert (completed.returncode, completed.stdout.strip()) == (2, "REJECT DRAIN")
 
 
 def test_cli_reads_complete_changed_path_set_from_stdin() -> None:
@@ -179,14 +331,18 @@ def test_cli_reads_complete_changed_path_set_from_stdin() -> None:
 def test_merge_sweep_measures_backlog_with_repository_policy(merge_step: dict) -> None:
     # Arrange
     script = merge_step["run"]
+    mode_call = script[script.index("integration_policy.py mode") :][:180]
     # Act
     contract = (
         "integration_policy.py mode" in script,
         "FLEET MODE" in script,
         "mode=\"DRAIN\"" in script,
+        "open_prs" in script,
+        "GREEN_TO_MERGE_P90_MINUTES" in str(merge_step.get("env", {})),
+        all(name in mode_call for name in ("$open_green", "$open_prs", "$p90_minutes")),
     )
     # Assert
-    assert contract == (True, True, True)
+    assert contract == (True, True, True, True, True, True)
 
 
 def test_merge_sweep_holds_high_risk_changed_paths(merge_step: dict) -> None:
