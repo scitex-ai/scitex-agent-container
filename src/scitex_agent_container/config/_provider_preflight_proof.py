@@ -81,13 +81,14 @@ def consume_provider_preflight_proof(
     config: AgentConfig,
     *,
     environ: MutableMapping[str, str] | None = None,
-) -> None:
+) -> str | None:
     """Verify and remove a broker proof; direct local starts need no proof."""
     target = os.environ if environ is None else environ
     expected = target.pop(PROVIDER_PREFLIGHT_PROOF_ENV, None)
     if expected is None:
-        return
+        return None
     assert_provider_preflight_proof(config, str(expected))
+    return str(expected)
 
 
 def assert_provider_preflight_proof(config: AgentConfig, expected: str) -> None:

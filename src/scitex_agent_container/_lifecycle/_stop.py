@@ -549,6 +549,9 @@ def agent_restart(
     assert_provider_preflight_proof(
         load_config(config_path), initial_config_proof
     )
+    from ._start_preflight import _check_spec_source_drift_at_launch
+
+    _check_spec_source_drift_at_launch(config_path, restart_config.name, None)
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for

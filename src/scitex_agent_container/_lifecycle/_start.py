@@ -143,9 +143,23 @@ def agent_start(
     config_path = resolve_config(config_path)
     registry = registry or Registry()
     config = config_override if config_override is not None else load_config(config_path)
-    from ..config._provider_preflight_proof import consume_provider_preflight_proof
+    from ..config._provider_preflight_proof import (
+        assert_provider_preflight_proof,
+        consume_provider_preflight_proof,
+    )
 
-    consume_provider_preflight_proof(config)
+    consumed_provider_proof = consume_provider_preflight_proof(config)
+
+    def recheck_provider_proof_before_stop() -> None:
+        if consumed_provider_proof is not None:
+            assert_provider_preflight_proof(
+                load_config(config_path), consumed_provider_proof
+            )
+            from ._start_preflight import _check_spec_source_drift_at_launch
+
+            _check_spec_source_drift_at_launch(
+                config_path, config.name, strict_drift
+            )
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
@@ -285,6 +299,7 @@ def agent_start(
 
             _auth_check = successor_auth_check or assert_successor_auth_usable
             _auth_check(config)
+            recheck_provider_proof_before_stop()
             agent_stop(
                 config.name,
                 registry=registry,
@@ -323,6 +338,7 @@ def agent_start(
             return NOOP_ALREADY_RUNNING
     elif force and registry.exists(config.name):
         # Registry says it exists but runtime says not running — stale entry.
+        recheck_provider_proof_before_stop()
         agent_stop(
             config.name,
             registry=registry,
