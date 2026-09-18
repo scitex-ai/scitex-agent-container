@@ -92,10 +92,12 @@ def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tu
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
+    # GET /agents is the batched fleet observation: listener-side enrichment
+    # attaches liveness + launch-bound runtime identity in one active-instance
+    # snapshot and one birth query.  Calling /status once per visible row was an
+    # HTTP N+1 and repeated those same store scans N times.
     rows = scope_rows(fleet.list_all(), identity)
-    named = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
-    statuses = fleet.read_statuses(named)
-    agents = [project_row(r, statuses.get(str(r.get("name")), {})) for r in rows]
+    agents = [project_row(row, row) for row in rows]
     return agents, ""
 
 

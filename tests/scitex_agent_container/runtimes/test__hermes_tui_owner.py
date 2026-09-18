@@ -346,6 +346,44 @@ def test_live_owned_session_is_left_untouched(tmp_path):
     assert (result, len(spawned), spawned[0].terminated) == (0, 1, False)
 
 
+def test_owner_observes_the_live_session_on_every_supervision_poll(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+    observed = []
+
+    def spawn(command, *, env):
+        del command, env
+        process = _Process()
+        spawned.append(process)
+        return process
+
+    def instrument(session):
+        observed.append(session["id"])
+        if len(observed) == 2:
+            spawned[0].returncode = 0
+
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=lambda _state_dir: [
+            {"id": "live-1", "title": "sac:ui", "session_key": "stored-1"}
+        ],
+        on_session_observed=instrument,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+
+    # Assert
+    assert (result, observed) == (0, ["live-1", "live-1"])
+
+
 def test_owner_clears_periodic_turn_before_declaring_session_attached(tmp_path):
     # Arrange
     gateway = _Process()
