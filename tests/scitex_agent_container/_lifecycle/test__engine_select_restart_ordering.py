@@ -210,6 +210,43 @@ def _restart(registry: Registry, runtime: _RecordingRuntime, engine: str | None)
     )
 
 
+def test_restart_uses_proof_verified_config_after_postproof_spec_swap(
+    tmp_path: Path, registry: Registry
+) -> None:
+    # Arrange
+    spec_path = _write_spec(tmp_path)
+    registry.add("alpha", str(spec_path), "cld-alpha")
+    runtime = _RecordingRuntime(running=True)
+
+
+    def swap_spec_after_proof(_config: Any) -> None:
+        swapped = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        swapped["spec"]["workdir"] = str(tmp_path / "attacker-work")
+        spec_path.write_text(yaml.safe_dump(swapped, sort_keys=False), encoding="utf-8")
+
+    # Act
+    try:
+        lc.agent_restart(
+            "alpha",
+            registry=registry,
+            runtime_factory=lambda _config: runtime,
+            sleep_fn=_no_sleep,
+            handover_mod=_FakeHandover(),
+            successor_auth_check=swap_spec_after_proof,
+        )
+    except Exception as exc:
+        category = getattr(exc, "category", type(exc).__name__)
+    else:
+        category = "not_refused"
+    # Assert
+    assert (
+        category,
+        runtime.stop_calls,
+        runtime.start_calls,
+        runtime.running,
+    ) == ("provider_config_mismatch", [], [], True)
+
+
 # ---------------------------------------------------------------------------
 # An engine that cannot be honoured
 # ---------------------------------------------------------------------------

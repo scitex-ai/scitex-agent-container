@@ -42,6 +42,7 @@ import math
 import os
 import shlex
 import subprocess
+import sys
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -106,12 +107,20 @@ def _build_detached_restart_argv(
         bounce.append("--fresh")
     bounce.append("--json")
     bounce_str = " ".join(shlex.quote(tok) for tok in bounce)
+    redactor = " ".join(
+        (
+            shlex.quote(sys.executable),
+            "-m",
+            "scitex_agent_container._listen._provider_output_redactor",
+        )
+    )
     marker = shlex.quote(
         f"=== sac self-restart name={name} fresh={fresh} delay={int(delay_s)}s ==="
     )
     inner = (
         f"sleep {int(delay_s)}; "
-        f"( echo {marker}; date -Is; {bounce_str} ) >> {shlex.quote(log_path)} 2>&1"
+        f"( echo {marker}; date -Is; {bounce_str} 2>&1 | {redactor} ) "
+        f">> {shlex.quote(log_path)} 2>&1"
     )
     return ["setsid", "sh", "-c", inner]
 
@@ -225,6 +234,27 @@ async def agent_restart(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    # Build and preflight the child environment BEFORE resolving/scheduling a
+    # restart command.  The command's first action may stop the live session;
+    # therefore an unavailable or unauthorized selected provider credential
+    # must refuse here while that session is still untouched.  This is the
+    # same helper used by POST /agents, so sync, fresh and detached restarts do
+    # not drift into different secret-resolution policies.
+    child_env = dict(os.environ)
+    child_env.pop("APPTAINER_CONTAINER", None)
+    child_env.pop("SINGULARITY_CONTAINER", None)
+    from ._provider_env import (
+        ProviderPreflightError,
+        provider_child_env_for_agent,
+        provider_preflight_refusal,
+        redact_provider_secrets,
+    )
+
+    try:
+        child_env = provider_child_env_for_agent(name, child_env)
+    except ProviderPreflightError as exc:
+        return provider_preflight_refusal(name, exc)
+
     try:
         sac_bin = sac_binary()
     except SacBinaryNotFoundError as exc:
@@ -243,9 +273,6 @@ async def agent_restart(request: Request) -> JSONResponse:
     # tool + cross-host dispatch already run. Strip the in-SIF env markers
     # so a listen running inside a parent SIF doesn't re-broker the child
     # restart back to itself (same recursion guard as ``agents_start``).
-    child_env = dict(os.environ)
-    child_env.pop("APPTAINER_CONTAINER", None)
-    child_env.pop("SINGULARITY_CONTAINER", None)
 
     # SELF-RESTART (resolved caller IS the target): a synchronous
     # ``sac agents restart <self>`` DEADLOCKS — the stop-half cannot complete
@@ -327,8 +354,12 @@ async def agent_restart(request: Request) -> JSONResponse:
             status_code=500,
         )
     out, err = await proc.communicate()
-    stdout = out.decode("utf-8", errors="replace") if out else ""
-    stderr = err.decode("utf-8", errors="replace") if err else ""
+    stdout = redact_provider_secrets(
+        out.decode("utf-8", errors="replace") if out else "", child_env
+    )
+    stderr = redact_provider_secrets(
+        err.decode("utf-8", errors="replace") if err else "", child_env
+    )
     returncode = proc.returncode if proc.returncode is not None else -1
 
     payload = {

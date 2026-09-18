@@ -46,11 +46,13 @@ session, so this exercises the actual asyncio shield/detach/probe path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NamedTuple
 
 import pytest
@@ -357,3 +359,38 @@ def test_a_logged_line_says_the_launch_started_nothing(
     verdicts = [m for m in result.log_messages if "STARTED NOTHING" in m]
     # Assert
     assert verdicts != []
+
+
+@pytest.mark.asyncio
+async def test_detached_failure_redacts_provider_value_from_marker_and_log(
+    isolated_listen_env, captured_detach_logs
+) -> None:
+    # Arrange
+    secret = "detached-provider-value"
+    name = "detached-provider-redaction"
+
+    async def finished_child():
+        return SimpleNamespace(
+            returncode=7,
+            stdout=f"stdout={secret}",
+            stderr=f"stderr={secret}",
+        )
+
+    task = asyncio.create_task(finished_child())
+    await task
+    # Act
+    _spawn_detach._on_launch_done(
+        task,
+        name=name,
+        started_at="2026-09-18T00:00:00Z",
+        redaction_values=(secret,),
+    )
+    marker = read_marker(state_dir_for(name)) or {}
+    joined_logs = "\n".join(captured_detach_logs.messages)
+    # Assert
+    assert (
+        secret in str(marker),
+        secret in joined_logs,
+        "[REDACTED]" in str(marker),
+        "[REDACTED]" in joined_logs,
+    ) == (False, False, True, True)

@@ -50,6 +50,7 @@ def run_prelaunch(
     probe_engine: bool | None,
     one_shot: bool,
     dry_run: bool,
+    spec_authority_verified: bool = False,
 ) -> None:
     """Run every pre-runtime gate for ``config``, raising on the first refusal.
 
@@ -67,7 +68,8 @@ def run_prelaunch(
     # ``--allow-undeclared-layers``, and the refusal itself is still gated
     # on the fleet migration (``_layers_preflight.ENFORCE_BY_DEFAULT``).
     # (2) is called HERE, once, not in the resolver a start invokes twice.
-    _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
+    if not spec_authority_verified:
+        _check_spec_source_drift_at_launch(config_path, config.name, strict_drift)
     check_to_home_layers_at_launch(config)
 
     # Launch-time BOARD IDENTITY check, same contract as the drift check

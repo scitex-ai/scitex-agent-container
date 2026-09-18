@@ -349,12 +349,18 @@ def preflight_from_config_path(config_path: str, *, opener: Any = None) -> None:
     stream): this is a dry probe; the REAL ``agent_start`` emits the operator-
     facing rotation line for the launch that actually happens.
     """
-    import io
-
     from ..config import load_config
-    from ._start_preflight import _rotate_to_healthy_account
 
     config = load_config(config_path)
+    preflight_from_config(config, opener=opener)
+
+
+def preflight_from_config(config: AgentConfig, *, opener: Any = None) -> None:
+    """Config-based pre-stop preflight for an immutable broker proof."""
+    import io
+
+    from ._start_preflight import _rotate_to_healthy_account
+
     # Resolve the SAME successor account the launch will pick. NoHealthyAccountError
     # propagates as an abort-before-stop (better than stop-then-fail today).
     _rotate_to_healthy_account(config, log_stream=io.StringIO())

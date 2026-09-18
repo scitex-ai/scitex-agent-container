@@ -34,8 +34,9 @@ log() { printf '%s\n' "$*" >&2; }
 # Compute the SAC_SECRETS_ENVRC value to bake into the listen unit.
 #   - Operator override: if SAC_SECRETS_ENVRC is already exported when the
 #     installer runs, use it verbatim.
-#   - Default: colon-join the operator's standardized scitex secret files,
-#     globbed from ~/.bash.d/secrets/010_scitex/*.src (sorted).
+#   - Default: colon-join the operator's standardized provider-key and scitex
+#     secret files (sorted). The listener propagates only the key env var the
+#     selected agent spec names; no secret value is logged.
 # Prints nothing when neither yields a path (caller then OMITS the line).
 secrets_envrc_value() {
   if [ -n "${SAC_SECRETS_ENVRC:-}" ]; then
@@ -48,7 +49,9 @@ secrets_envrc_value() {
   # expansion preserves each path as one word (no word-splitting), and
   # bash already returns matches sorted.
   shopt -s nullglob
-  for f in "$HOME"/.bash.d/secrets/010_scitex/*.src; do
+  for f in \
+    "$HOME"/.bash.d/secrets/000_ENV/api_keys/*.src \
+    "$HOME"/.bash.d/secrets/010_scitex/*.src; do
     if [ -z "$joined" ]; then
       joined="$f"
     else

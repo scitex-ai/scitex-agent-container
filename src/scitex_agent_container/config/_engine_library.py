@@ -147,11 +147,12 @@ def fleet_engines_path() -> Path:
     return agent_container_root() / FLEET_ENGINES_FILENAME
 
 
-# In-process memo keyed by (path, size, mtime_ns) — the same correctness
-# rule ``_spec_cache`` states: any doubt whatsoever is a MISS that falls
-# through to a real parse, so the cache can make a command faster and can
-# never make it answer differently.
-_MEMO: dict[tuple[str, int, int], FleetLibrary] = {}
+# In-process memo keyed by file identity plus dynamic provider host policy.
+# Named providers resolve while entries are parsed, so caching only by file
+# metadata would freeze the first Qwen host override seen by a long-lived
+# listener. Any policy change is a cache miss, preserving resolve-time
+# semantics without weakening the file cache.
+_MEMO: dict[tuple[str, int, int, str, str], FleetLibrary] = {}
 
 
 def _stat_key(path: Path) -> tuple[int, int] | None:
@@ -241,7 +242,14 @@ def load_fleet_library(path: Path | None = None) -> FleetLibrary:
     stat_key = _stat_key(target)
     if stat_key is None:
         return FleetLibrary(path=target)
-    memo_key = (str(target), *stat_key)
+    from ._qwen_gateway import qwen_gateway_token_env, qwen_gateway_url
+
+    memo_key = (
+        str(target),
+        *stat_key,
+        qwen_gateway_url(),
+        qwen_gateway_token_env(),
+    )
     cached = _MEMO.get(memo_key)
     if cached is not None:
         return cached

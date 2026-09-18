@@ -257,6 +257,7 @@ def ensure_previous_runtime_down(
     timeout_s: float,
     settle_s: float = _DEFAULT_SIGKILL_SETTLE_S,
     kill_fn: Callable[[int, int], None] = os.kill,
+    config_override: AgentConfig | None = None,
 ) -> None:
     """Guarantee the previous runtime is DOWN, or raise.
 
@@ -281,11 +282,14 @@ def ensure_previous_runtime_down(
         return
     # Load once: the config is stable across the gate, and re-loading per
     # poll would multiply YAML parsing on a busy host.
-    try:
-        config = load_config(config_path)
-    except Exception:  # stx-allow: fallback (reason: YAML may have been edited mid-restart; fall back to the legacy fixed sleep instead of blocking the restart on a transient parse error — the new container surfaces the real error when it boots)
-        sleep_fn(2)
-        return
+    if config_override is not None:
+        config = config_override
+    else:
+        try:
+            config = load_config(config_path)
+        except Exception:  # stx-allow: fallback (reason: YAML may have been edited mid-restart; fall back to the legacy fixed sleep instead of blocking the restart on a transient parse error — the new container surfaces the real error when it boots)
+            sleep_fn(2)
+            return
     factory = runtime_factory or _get_runtime
     runtime = factory(config)
 
