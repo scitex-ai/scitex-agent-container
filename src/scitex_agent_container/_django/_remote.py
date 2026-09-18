@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from socket import timeout as SocketTimeout
 from typing import Any
@@ -35,8 +34,7 @@ from ._constants import (
     TOKEN_FILE_ENV,
 )
 
-# Wall-clock ceiling for one HTTP exchange, and the per-agent share of it when a
-# read fans out over the fleet.
+# Wall-clock ceiling for one HTTP exchange.
 #
 # These are NOT arbitrary. Measured against the real control plane on
 # scitex-compute-03 (22 agents, 2026-09-17): ``GET /agents`` 200 in 5.11s /
@@ -47,10 +45,10 @@ from ._constants import (
 #
 # The ceiling now has to clear the COLD latency of a real fleet, because a cold
 # read is the normal case after a restart, and a bounded wait that reports
-# "unavailable" for a fleet that is merely slow is a false negative. Per-agent
-# reads stay tight so one wedged agent degrades only its own row.
+# "unavailable" for a fleet that is merely slow is a false negative. Fleet
+# status is now enriched by one batched ``GET /agents`` request rather than an
+# HTTP request per agent.
 DEFAULT_TIMEOUT_SECONDS = 60.0
-PER_AGENT_TIMEOUT_SECONDS = 12.0
 
 
 class RemoteOperationError(RuntimeError):
@@ -269,30 +267,15 @@ class RemoteFleet:
             raise FleetUnavailableError(self.base_url, str(exc)) from exc
 
     def read_statuses(self, names: list[str]) -> dict[str, dict[str, Any] | Exception]:
-        """Read independent agent observations concurrently.
-
-        Failures are returned per-name (never raised) so one dead agent degrades
-        to an explicit row without taking the whole fleet page down. Each read is
-        budgeted at ``PER_AGENT_TIMEOUT_SECONDS`` — the fleet is read together,
-        so no single agent may spend the whole page's budget. A read that runs
-        out of its budget arrives here as :class:`FleetUnavailableError` and
-        becomes that row's explicit state, exactly like an unreachable one.
-        """
-        if not names:
+        """Project requested statuses from one enriched ``GET /agents`` read."""
+        wanted = set(names)
+        if not wanted:
             return {}
-        budget = min(self.timeout, PER_AGENT_TIMEOUT_SECONDS)
-        results: dict[str, dict[str, Any] | Exception] = {}
-        with ThreadPoolExecutor(max_workers=min(16, len(names))) as pool:
-            futures = {
-                pool.submit(self.read_status, name, timeout=budget): name for name in names
-            }
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    results[name] = future.result()
-                except Exception as exc:  # surfaced as an explicit row by the view
-                    results[name] = exc
-        return results
+        return {
+            str(row["name"]): row
+            for row in self.list_all()
+            if isinstance(row.get("name"), str) and row["name"] in wanted
+        }
 
     # ── mutations (delegated to the authenticated listener) ─────────────────
     def lifecycle(self, name: str, action: str) -> dict[str, Any]:
@@ -310,7 +293,6 @@ class RemoteFleet:
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
-    "PER_AGENT_TIMEOUT_SECONDS",
     "FleetUnavailableError",
     "RemoteFleet",
     "RemoteOperationError",

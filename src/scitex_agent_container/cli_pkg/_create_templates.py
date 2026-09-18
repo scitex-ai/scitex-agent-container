@@ -421,4 +421,32 @@ _TEMPLATES = {
     "full": _FULL_TEMPLATE,
 }
 
-__all__ = ["_FULL_TEMPLATE", "_MINIMAL_TEMPLATE", "_TEMPLATES"]
+def render_minimal_spec(
+    *,
+    name: str,
+    host: str,
+    credentials_files: str = "[]",
+    overlay: str = '""',
+) -> str:
+    """The ``minimal`` v3 scaffold with the caller's values substituted, as TEXT.
+
+    PUBLIC ON PURPOSE. Two layers need this field set: ``sac agents create`` and the
+    MCP contributor-spec renderer. The MCP layer used to read ``_TEMPLATES`` (a
+    private dict) directly, and that coupling is exactly how a second field set goes
+    stale — measured 2026-09-17, the tool carried its own pre-v3 template and had
+    drifted 8 validator errors away from this one. Callers outside this module use
+    this function; ``tests/scitex_agent_container/_mcp/_tools/test__template.py``
+    asserts that no other module reads ``_TEMPLATES``.
+
+    Returned as text, not a parsed document, because the template's per-field
+    operator documentation is part of what a caller needs to read.
+    """
+    return _TEMPLATES["minimal"].format(
+        name=name,
+        host=host,
+        credentials_files=credentials_files,
+        overlay=overlay,
+    )
+
+
+__all__ = ["_FULL_TEMPLATE", "_MINIMAL_TEMPLATE", "_TEMPLATES", "render_minimal_spec"]

@@ -12,6 +12,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from django.template.loader import render_to_string
+
+from scitex_agent_container import __path__ as _package_paths
 from scitex_agent_container._django._constants import (
     CROSSHOST_OPERATORS_ENV,
     IDENTITY_ENV,
@@ -52,6 +55,19 @@ def test_fleet_api_scopes_to_identity(client, loopback, env_save_restore):
     data = json.loads(client.get("/api/fleet").content)
     # Assert
     assert {a["name"] for a in data["agents"]} == {"alpha", "beta", "delta"}
+
+
+def test_fleet_uses_one_batched_agents_request_and_zero_status_fanout(
+    client, listener_requests, env_save_restore
+):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    response = client.get("/api/fleet")
+
+    # Assert
+    assert response.status_code == 200 and listener_requests == ["/agents"]
 
 
 def test_fleet_api_reports_unreachable_listener(client, unreachable_listener):
@@ -154,6 +170,119 @@ def test_fleet_inventory_shows_published_operation_and_phase(client, loopback, e
     activities = json.dumps([a.get("activity", {}) for a in data["agents"]])
     # Assert: runner-published activity is still projected through.
     assert "busy" in activities and "reviewing" in activities
+
+
+def _render_fleet_inventory(client) -> str:
+    response = client.get("/api/fleet")
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["ok"] is True and data["agents"]
+    return render_to_string(
+        "scitex_agent_container/_fleet_content.html",
+        {
+            "agents": data["agents"],
+            "summary": data["summary"],
+            "identity": data["identity"],
+            "crosshost_authorized": False,
+            "comm_error": "",
+            "fleet_state": "ok",
+            "url_base": "",
+        },
+    )
+
+
+def test_fleet_shows_billing_auth_harness_engine_and_model(client, loopback, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    html = _render_fleet_inventory(client)
+
+    # Assert
+    assert (
+        "Billing" in html
+        and "Auth identity" in html
+        and "Harness" in html
+        and "Engine / Model" in html
+        and "subscription" in html
+        and "anthropic/team-max" in html
+        and "sonnet" in html
+    )
+
+
+def test_compact_fleet_visibly_qualifies_runtime_identity_source(
+    client, loopback, env_save_restore
+):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+
+    # Act
+    html = _render_fleet_inventory(client)
+
+    # Assert
+    assert '<span class="identity-source">birth_certificate</span>' in html
+
+
+def test_fleet_template_escapes_all_runtime_identity_cells() -> None:
+    # Arrange
+    hostile = '<script>alert("x")</script>'
+    agent = {
+        "name": hostile,
+        "state_tone": "good",
+        "state_detail": hostile,
+        "state_label": hostile,
+        "cross_host": False,
+        "runtime": hostile,
+        "billing_mode": hostile,
+        "auth_identity": hostile,
+        "runtime_identity_source": hostile,
+        "harness": hostile,
+        "engine": hostile,
+        "model": hostile,
+        "host": hostile,
+        "a2a_port": None,
+        "activity": {
+            "operation": {"state": "unknown", "reason": hostile},
+            "phase": {"state": "unknown", "reason": hostile},
+        },
+    }
+
+    # Act
+    html = render_to_string(
+        "scitex_agent_container/_fleet_content.html",
+        {
+            "agents": [agent],
+            "summary": {"total": 1, "alive": 1, "attention": 0, "cross_host": 0},
+            "listener": hostile,
+            "identity": hostile,
+            "url_base": "",
+            "comm_error": "",
+            "crosshost_authorized": False,
+        },
+    )
+
+    # Assert
+    assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_mobile_fleet_keeps_identity_and_runtime_columns_visible():
+    # Arrange
+    css_path = (
+        Path(next(iter(_package_paths)))
+        / "_django"
+        / "static"
+        / "scitex_agent_container"
+        / "agents.css"
+    )
+
+    # Act
+    css = css_path.read_text(encoding="utf-8")
+
+    # Assert
+    assert all(
+        f"nth-child({column}) {{ display: none; }}" not in css
+        for column in (4, 5, 6, 7)
+    )
 
 
 def test_detail_cross_agent_hidden_from_ordinary(client, loopback, env_save_restore):

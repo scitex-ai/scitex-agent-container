@@ -255,6 +255,15 @@ def _clear_session_heartbeat(state_dir: Path, session: dict) -> None:
     clear_heartbeat_for_session(state_dir, session_id)
 
 
+def _refresh_heartbeat_projection(state_dir: Path) -> None:
+    try:
+        from ._hermes_heartbeat_projection import refresh_hermes_heartbeat_projection
+        refresh_hermes_heartbeat_projection(state_dir, state_dir.name)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Hermes heartbeat projection failed: %s", exc)
+
+
 def _supervise_tui(
     command: list[str],
     *,
@@ -269,17 +278,14 @@ def _supervise_tui(
     startup_grace_s: float = STARTUP_GRACE_SECONDS,
     on_spawn: Callable[[Any], None] | None = None,
     on_session_attached: Callable[[dict], None] | None = None,
+    on_session_observed: Callable[[dict], None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
-    Hermes may detach a slow fanout peer without closing its websocket.  The
-    Ink client consequently cannot run its own close-triggered reconnect and
-    can display ``computing`` forever after the backend has completed.  This
-    owner watches ``session.active_list`` through a short-lived, non-viewer RPC
-    and relaunches only the TUI child when its configured session is absent.
-    An observed durable session id is resumed exactly.  Before any id has been
-    observed, the stable named continuation is reconciled with its startup
-    query removed, so recovery cannot replay a turn.
+    Hermes may detach a slow fanout peer without closing its websocket, leaving
+    Ink stuck on ``computing``. It relaunches only an absent TUI child; a
+    not-yet-observed continuation drops its startup query so recovery cannot
+    replay a turn.
     """
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
@@ -351,6 +357,8 @@ def _supervise_tui(
                     sleep(poll_s)
                     continue
                 attached_session_prepared = True
+            if on_session_observed is not None:
+                on_session_observed(owned_session)
             _write_supervision(
                 state_dir,
                 state="attached",
@@ -476,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
             on_session_attached=lambda session: _clear_session_heartbeat(
                 state_dir, session
             ),
+            on_session_observed=lambda _session: _refresh_heartbeat_projection(state_dir),
         )
         return result
     finally:
