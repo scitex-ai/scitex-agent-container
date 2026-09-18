@@ -79,10 +79,13 @@ async def consume(
                 (state_dir / OWNED_SESSION_FILE).read_text(encoding="utf-8")
             )
             live_session_id = str(owned.get("live_session_id") or "").strip()
+            stored_session_id = str(owned.get("stored_session_id") or "").strip()
         except (OSError, ValueError, TypeError):
             live_session_id = ""
-        if live_session_id:
+            stored_session_id = ""
+        if live_session_id and stored_session_id:
             event["_hermes_delivery_session_id"] = live_session_id
+            event["_hermes_delivery_stored_session_id"] = stored_session_id
         await target_dispatch(event)
         from ._hermes_context_gc import record_inbound_task_event
 
