@@ -131,3 +131,43 @@ def test_native_hermes_beat_overlays_progress_on_existing_row() -> None:
         rows[0]["heartbeat_progress_seq"],
         rows[0]["status"],
     ) == ("idle", True, "boot-1", 1, "running")
+
+
+def test_direct_dead_row_outranks_fresh_heartbeat_without_process_probe() -> None:
+    # Arrange
+    rows = [
+        {
+            "name": "scholar",
+            "harness": "hermes",
+            "status": "stopped",
+            "liveness_unknown": False,
+        }
+    ]
+    # Act
+    overlay_authoritative_heartbeats(rows, beats=[_beat()], now=101.0)
+    # Assert
+    assert (
+        rows[0]["status"],
+        rows[0]["resident_state"],
+        rows[0]["liveness_unknown"],
+    ) == ("stopped", "dead", False)
+
+
+def test_direct_alive_row_outranks_disconnected_heartbeat() -> None:
+    # Arrange
+    rows = [
+        {
+            "name": "scholar",
+            "harness": "hermes",
+            "status": "running",
+            "liveness_unknown": False,
+        }
+    ]
+    # Act
+    overlay_authoritative_heartbeats(
+        rows,
+        beats=[_beat(_federation_connected=False)],
+        now=101.0,
+    )
+    # Assert
+    assert (rows[0]["status"], rows[0]["liveness_unknown"]) == ("running", False)

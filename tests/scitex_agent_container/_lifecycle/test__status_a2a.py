@@ -118,8 +118,59 @@ def test_remote_instance_status_exposes_resolved_a2a_contract() -> None:
     )
 
     # Assert
-    assert result["a2a"] == {
-        "configured_port": None,
-        "resolved_port": 19_123,
-        "resolution_source": "active_instance_bound_port",
+    assert result is not None and (
+        result["a2a"],
+        result["status"],
+        result["observation"]["process"]["state"],
+    ) == (
+        {
+            "configured_port": None,
+            "resolved_port": 19_123,
+            "resolution_source": "active_instance_bound_port",
+        },
+        "unknown",
+        "unknown",
+    )
+
+
+def test_remote_instance_direct_dead_outranks_active_row() -> None:
+    # Arrange
+    import time
+
+    now = time.time()
+    beat = {
+        "agent_id": "remote-worker",
+        "spec_id": "sha256:spec",
+        "host": "node-7",
+        "runtime": "tui",
+        "harness": "hermes",
+        "engine": "vllm",
+        "model": "qwen",
+        "session_id": "session-1",
+        "boot_id": "boot-1",
+        "seq": 1,
+        "monotonic_ns": 1,
+        "observed_at": now,
+        "progress_at": now,
+        "progress_seq": 1,
+        "state": "idle",
+        "lease_expires_at": now + 30,
+        "card_id": "",
+        "card_role": "",
+        "_process_alive": False,
+        "_federation_connected": True,
     }
+    # Act
+    result = status_module._remote_instance_status(
+        "remote-worker",
+        instance_reader=lambda: [
+            {"name": "remote-worker", "host": "node-7", "remote": True}
+        ],
+        heartbeat_reader=lambda: [beat],
+    )
+
+    # Assert
+    assert result is not None and (
+        result["status"],
+        result["observation"]["process"]["state"],
+    ) == ("stopped", "exited")

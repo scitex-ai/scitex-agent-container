@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from scitex_agent_container.cli_pkg._health_liveness import health_summary
+from scitex_agent_container.cli_pkg._health_liveness import (
+    health_summary,
+    heartbeat_health_state,
+)
 
 
 def _liveness(
@@ -124,3 +127,21 @@ def test_fresh_alive_heartbeat_repairs_unknown_process_probe() -> None:
         "state": "healthy",
         "message": "healthy: fresh heartbeat proves process presence",
     }
+
+
+def test_disconnected_heartbeat_projects_typed_unknown_health() -> None:
+    # Arrange
+    resident_state = "disconnected"
+    # Act
+    result = heartbeat_health_state(resident_state)
+    # Assert
+    assert result == "unknown"
+
+
+def test_dead_heartbeat_projects_typed_unhealthy_health() -> None:
+    # Arrange
+    resident_state = "dead"
+    # Act
+    result = heartbeat_health_state(resident_state)
+    # Assert
+    assert result == "unhealthy"

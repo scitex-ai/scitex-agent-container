@@ -124,6 +124,7 @@ def _remote_instance_status(
     name: str,
     *,
     instance_reader: Callable[[], list[dict]] | None = None,
+    heartbeat_reader: Callable[[], list[dict]] | None = None,
 ) -> dict | None:
     """Build a status dict from the active ``instances`` row for ``name``.
 
@@ -157,10 +158,10 @@ def _remote_instance_status(
             "config": "",
             "screen": row.get("screen", "") or "",
             "started_at": row.get("started_at", "") or "",
-            # The instances row says the agent is active (ended_at IS
-            # NULL); reaching the remote runtime to confirm is the
-            # cross-host dispatcher's job, not this read-side resolver.
-            "status": "running",
+            # An unended instances row is ownership/placement evidence, not a
+            # live process observation.  Keep the process projection UNKNOWN
+            # until host evidence or a fresh heartbeat resolves it.
+            "status": "unknown",
             "model": "unknown",
             "runtime": "unknown",
             "harness": "unknown",
@@ -188,24 +189,35 @@ def _remote_instance_status(
             "spawned_by": row.get("spawned_by"),
         }
         try:
-            from .._state.state_store import latest_authoritative_heartbeats
+            if heartbeat_reader is None:
+                from .._state.state_store import latest_authoritative_heartbeats
 
+                heartbeat_reader = latest_authoritative_heartbeats
             beat = next(
                 (
                     value
-                    for value in latest_authoritative_heartbeats()
+                    for value in heartbeat_reader()
                     if value.get("agent_id") == name
                 ),
                 None,
             )
         except Exception:  # stx-allow: fallback (optional lease enrichment must not discard an already-resolved remote instance)
             beat = None
+        process_alive: bool | None = None
+        resident_state = "unknown"
         if beat is not None:
             from .._state.authoritative_heartbeat import classify_resident_state
 
             process_evidence = beat.get("_process_alive")
             process_alive = (
                 process_evidence if isinstance(process_evidence, bool) else None
+            )
+            resident_state = classify_resident_state(
+                beat,
+                now=time.time(),
+                process_alive=process_alive,
+                federation_connected=bool(beat.get("_federation_connected")),
+                progress_stale_s=120.0,
             )
             result.update(
                 {
@@ -215,32 +227,48 @@ def _remote_instance_status(
                     "engine": beat.get("engine") or "unknown",
                     "host": beat.get("host") or result["host"],
                     "heartbeat": beat,
-                    "resident_state": classify_resident_state(
-                        beat,
-                        now=time.time(),
-                        process_alive=process_alive,
-                        federation_connected=bool(
-                            beat.get("_federation_connected")
-                        ),
-                        progress_stale_s=120.0,
-                    ),
+                    "resident_state": resident_state,
                 }
             )
         from .._state.observation import DefinitionState, build_agent_observation
 
-        result["liveness"] = {
-            "verdict": "unknown",
-            "evidence": [
+        heartbeat_alive = resident_state in {"idle", "active", "blocked", "stalled"}
+        process_verdict = (
+            "dead"
+            if process_alive is False
+            else "alive"
+            if process_alive is True and heartbeat_alive
+            else "unknown"
+        )
+        evidence = [
+            {
+                "source": "process",
+                "verdict": process_verdict,
+                "detail": (
+                    "host process evidence"
+                    if process_alive is not None
+                    else "remote active row is not a live process observation"
+                ),
+            }
+        ]
+        if beat is not None:
+            evidence.append(
                 {
-                    "source": "registry",
-                    "verdict": "unknown",
-                    "detail": "remote active row is not a live process observation",
+                    "source": "heartbeat",
+                    "verdict": "alive" if heartbeat_alive else "unknown",
+                    "detail": f"authoritative heartbeat resident state: {resident_state}",
                 }
-            ],
-        }
+            )
+        result["liveness"] = {"verdict": process_verdict, "evidence": evidence}
         result["observation"] = build_agent_observation(
             result, definition_state=DefinitionState.MISSING
         )
+        process_state = result["observation"]["process"]["state"]
+        result["status"] = {
+            "alive": "running",
+            "absent": "stopped",
+            "exited": "stopped",
+        }.get(process_state, "unknown")
         return result
     except Exception:  # stx-allow: fallback (reason: best-effort cross-host status — caller raises the normal "not found" error when None)
         return None
@@ -571,9 +599,7 @@ def agent_status(
             if shared is not None:
                 process_evidence = shared.get("_process_alive")
                 process_alive = (
-                    process_evidence
-                    if isinstance(process_evidence, bool)
-                    else result.get("status") == "running"
+                    process_evidence if isinstance(process_evidence, bool) else None
                 )
                 result["heartbeat"] = shared
                 result["resident_state"] = classify_resident_state(

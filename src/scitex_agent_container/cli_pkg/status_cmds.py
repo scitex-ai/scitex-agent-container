@@ -454,10 +454,14 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     federation_connected=bool(beat.get("_federation_connected")),
                     progress_stale_s=120.0,
                 )
-                healthy = resident_state in {"idle", "active", "blocked"}
+                from ._health_liveness import heartbeat_health_state
+
+                health_state = heartbeat_health_state(resident_state)
+                healthy = health_state == "healthy"
                 payload = {
                     "name": name,
                     "healthy": healthy,
+                    "health_state": health_state,
                     "message": f"authoritative heartbeat: {resident_state}",
                     "resident_state": resident_state,
                     "heartbeat": beat,

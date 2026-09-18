@@ -26,7 +26,13 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["health_summary", "liveness_payload", "print_inbox", "print_liveness"]
+__all__ = [
+    "health_summary",
+    "heartbeat_health_state",
+    "liveness_payload",
+    "print_inbox",
+    "print_liveness",
+]
 
 # wedged = present but NOT working — magenta, distinct from unknown's yellow so
 # a "known-stuck, needs a restart" reads apart from a "we could not tell". It is
@@ -37,6 +43,15 @@ _VERDICT_COLOUR = {
     "unknown": "yellow",
     "wedged": "magenta",
 }
+
+
+def heartbeat_health_state(resident_state: str) -> str:
+    """Project resident evidence without collapsing disconnection to death."""
+    if resident_state in {"idle", "active", "blocked"}:
+        return "healthy"
+    if resident_state in {"dead", "stalled"}:
+        return "unhealthy"
+    return "unknown"
 
 
 def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, str]:

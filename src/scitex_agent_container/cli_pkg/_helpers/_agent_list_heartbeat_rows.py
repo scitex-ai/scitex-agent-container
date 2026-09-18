@@ -95,6 +95,16 @@ def overlay_authoritative_heartbeats(
         process_alive = (
             process_evidence if isinstance(process_evidence, bool) else None
         )
+        # A successful direct process observation outranks heartbeat presence.
+        # Infer from the row only when its producer explicitly marked liveness
+        # as known; legacy stopped/running strings alone are not evidence.
+        row_process_alive: bool | None = None
+        if process_alive is None and row.get("liveness_unknown") is False:
+            if row.get("status") == "running":
+                row_process_alive = True
+            elif row.get("status") == "stopped":
+                row_process_alive = False
+            process_alive = row_process_alive
         resident_state = classify_resident_state(
             beat,
             now=observed_at,
@@ -103,7 +113,13 @@ def overlay_authoritative_heartbeats(
             progress_stale_s=120.0,
         )
         row["resident_state"] = resident_state
-        if resident_state in {"idle", "active", "blocked", "stalled"}:
+        if row_process_alive is True:
+            row["status"] = "running"
+            row["liveness_unknown"] = False
+        elif row_process_alive is False:
+            row["status"] = "stopped"
+            row["liveness_unknown"] = False
+        elif resident_state in {"idle", "active", "blocked", "stalled"}:
             row["status"] = "running"
             row["liveness_unknown"] = False
         elif resident_state == "dead":
