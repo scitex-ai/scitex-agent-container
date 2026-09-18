@@ -81,6 +81,7 @@ def agent_start(
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
     config_override: AgentConfig | None = None,
     config_authority_verified: bool = False,
+    predecessor_already_stopped: bool = False,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -290,28 +291,29 @@ def agent_start(
         _announce_start_verdict(verdict)
     if really_running:
         if force:
-            # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
-            # 20260712): probe the already-rotated successor credential; a
-            # REJECTED grant raises RestartPreflightAbort BEFORE agent_stop so
-            # the live container is LEFT UP. Covers `start --force` (the PR #628
-            # self-restart bounce); `sac agents restart` is covered upstream.
-            from ._restart_preflight import assert_successor_auth_usable
+            if not predecessor_already_stopped:
+                # PRE-STOP auth pre-flight (INCIDENT self-restart-one-way-
+                # 20260712): probe the already-rotated successor credential; a
+                # REJECTED grant raises before agent_stop so the live container
+                # is LEFT UP. Plain agent_restart performs this before handing
+                # its already-stopped successor config into this function.
+                from ._restart_preflight import assert_successor_auth_usable
 
-            _auth_check = successor_auth_check or assert_successor_auth_usable
-            _auth_check(config)
-            recheck_provider_proof_before_stop()
-            agent_stop(
-                config.name,
-                registry=registry,
-                force=True,
-                runtime_factory=runtime_factory,
-                handover_mod=handover_mod,
-                config_override=config,
-            )
+                _auth_check = successor_auth_check or assert_successor_auth_usable
+                _auth_check(config)
+                recheck_provider_proof_before_stop()
+                agent_stop(
+                    config.name,
+                    registry=registry,
+                    force=True,
+                    runtime_factory=runtime_factory,
+                    handover_mod=handover_mod,
+                    config_override=config,
+                )
+                # Small grace period so the previous container is fully torn
+                # down before we try to create a new one with the same name.
+                sleep_fn(1)
             forced_stop = True
-            # Small grace period so the previous container is fully torn
-            # down before we try to create a new one with the same name.
-            sleep_fn(1)
         elif dry_run:
             # Dry-run inspects the planned workspace even while the live
             # agent is running — the prep does not touch the container.
@@ -342,19 +344,20 @@ def agent_start(
         # positively ALIVE branch before every destructive force path; registry
         # absence is not evidence that teardown is harmless because runtimes
         # such as TUI can discover and stop their live session directly.
-        from ._restart_preflight import assert_successor_auth_usable
+        if not predecessor_already_stopped:
+            from ._restart_preflight import assert_successor_auth_usable
 
-        _auth_check = successor_auth_check or assert_successor_auth_usable
-        _auth_check(config)
-        recheck_provider_proof_before_stop()
-        agent_stop(
-            config.name,
-            registry=registry,
-            force=True,
-            runtime_factory=runtime_factory,
-            handover_mod=handover_mod,
-            config_override=config,
-        )
+            _auth_check = successor_auth_check or assert_successor_auth_usable
+            _auth_check(config)
+            recheck_provider_proof_before_stop()
+            agent_stop(
+                config.name,
+                registry=registry,
+                force=True,
+                runtime_factory=runtime_factory,
+                handover_mod=handover_mod,
+                config_override=config,
+            )
         forced_stop = True
 
     # Re-establish the A2A port claim after a ``--force`` ``agent_stop``.

@@ -641,6 +641,7 @@ def agent_restart(
         runtime_factory=runtime_factory,
         config_override=restart_config,
         config_authority_verified=True,
+        predecessor_already_stopped=True,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,
         # Forwarded so a test can keep the health monitor from spawning a
