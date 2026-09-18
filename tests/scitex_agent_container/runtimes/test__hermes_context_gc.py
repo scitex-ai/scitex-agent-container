@@ -145,6 +145,7 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
     )
     event = {
         "msg_id": "delivery-1",
+        "_hermes_delivery_session_id": "live-old",
         "kind": "card-event",
         "from_agent": "scitex-cards",
         "extra": {
@@ -161,6 +162,7 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
         "delivery_id": "delivery-1",
         "owner": "agent",
         "reason": "task-completed",
+        "session_id": "live-old",
         "was_active": True,
     }
 
@@ -236,7 +238,7 @@ def test_new_assignment_invalidates_unconsumed_completion(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
-        '"reason":"task-completed",'
+        '"reason":"task-completed","session_id":"old-live",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -309,7 +311,7 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
-        '"reason":"task-completed",'
+        '"reason":"task-completed","session_id":"live-old",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -348,7 +350,7 @@ def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
-        '"reason":"task-completed",'
+        '"reason":"task-completed","session_id":"live",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -387,7 +389,7 @@ def test_completion_marker_refuses_a_newer_active_card(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
-        '"reason":"task-completed",'
+        '"reason":"task-completed","session_id":"live",'
         '"was_active":true}',
         encoding="utf-8",
     )

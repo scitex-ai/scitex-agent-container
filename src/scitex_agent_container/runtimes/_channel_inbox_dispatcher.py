@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
@@ -68,6 +69,20 @@ async def consume(
     async def on_event(event: dict[str, Any]) -> None:
         event = dict(event)
         event["_require_terminal_visibility"] = True
+        # Bind lifecycle metadata to the session selected BEFORE delivery. If
+        # ownership changes while the turn runs, the old id makes reconciliation
+        # discard the boundary rather than closing the replacement session.
+        from ._hermes_context_gc import OWNED_SESSION_FILE
+
+        try:
+            owned = json.loads(
+                (state_dir / OWNED_SESSION_FILE).read_text(encoding="utf-8")
+            )
+            live_session_id = str(owned.get("live_session_id") or "").strip()
+        except (OSError, ValueError, TypeError):
+            live_session_id = ""
+        if live_session_id:
+            event["_hermes_delivery_session_id"] = live_session_id
         await target_dispatch(event)
         from ._hermes_context_gc import record_inbound_task_event
 

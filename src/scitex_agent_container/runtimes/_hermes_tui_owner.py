@@ -222,6 +222,8 @@ def _supervise_tui(
     on_spawn: Callable[[Any], None] | None = None,
     on_session_attached: Callable[[dict], None] | None = None,
     on_session_observed: Callable[[dict], str | None] | None = None,
+    recover_pending: Callable[[Path], str | None] | None = None,
+    finalize_pending: Callable[[Path, dict], None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
@@ -233,6 +235,9 @@ def _supervise_tui(
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
 
+    pending_recovery = recover_pending(state_dir) if recover_pending is not None else None
+    if pending_recovery:
+        command = resume_command(command, pending_recovery)
     session_mode, expected_identity = requested_session(command)
     tui = spawn(command, env=env)
     if on_spawn is not None:
@@ -258,6 +263,45 @@ def _supervise_tui(
             sleep(poll_s)
             continue
 
+        if recover_pending is not None and not pending_recovery:
+            try:
+                recovered = recover_pending(state_dir)
+            except Exception as exc:
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_recovery_unavailable",
+                    detail=str(exc),
+                    active_sessions=len(sessions),
+                    recoveries=len(recoveries),
+                )
+                sleep(poll_s)
+                continue
+            if recovered is not None:
+                if recovered:
+                    pending_recovery = recovered
+                    (
+                        tui,
+                        command,
+                        session_mode,
+                        expected_identity,
+                        resume_key,
+                    ) = transition_tui_child(
+                        tui=tui,
+                        command=command,
+                        replacement=recovered,
+                        env=env,
+                        spawn=spawn,
+                        terminate=_terminate,
+                        on_spawn=on_spawn,
+                    )
+                    generation_started = monotonic()
+                    absent_polls = 0
+                    attached_session_prepared = False
+                # The active list predates journal reconciliation. Refresh it
+                # before ownership selection after either commit or rollback.
+                sleep(poll_s)
+                continue
+
         try:
             owned_session = _select_owned_session(
                 sessions,
@@ -277,6 +321,31 @@ def _supervise_tui(
 
         if owned_session is not None:
             absent_polls = 0
+            if pending_recovery and finalize_pending is not None:
+                try:
+                    finalize_pending(state_dir, owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_recovery_unavailable",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+                pending_recovery = None
+            from ._hermes_context_gc import OWNED_SESSION_FILE
+
+            _atomic_json(
+                state_dir / OWNED_SESSION_FILE,
+                {
+                    "live_session_id": str(owned_session.get("id") or ""),
+                    "stored_session_id": str(
+                        owned_session.get("session_key") or owned_session.get("id") or ""
+                    ),
+                },
+            )
             resume_key = str(
                 owned_session.get("session_key")
                 or owned_session.get("id")
@@ -463,7 +532,11 @@ def main(argv: list[str] | None = None) -> int:
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
         )
-        from ._hermes_context_rpc import stored_session_for_identity
+        from ._hermes_context_rpc import (
+            complete_pending_transition,
+            reconcile_pending_transition,
+            stored_session_for_identity,
+        )
 
         command = apply_session_age_policy(
             command,
@@ -482,9 +555,14 @@ def main(argv: list[str] | None = None) -> int:
                 state_dir, session
             ),
             on_session_observed=make_session_observer(state_dir, command),
+            recover_pending=reconcile_pending_transition,
+            finalize_pending=complete_pending_transition,
         )
         return result
     finally:
+        from ._hermes_context_gc import OWNED_SESSION_FILE
+
+        (state_dir / OWNED_SESSION_FILE).unlink(missing_ok=True)
         _remove_owned_gateway_state(state_dir, generation=generation)
         gateway_ready_path.unlink(missing_ok=True)
         _write_supervision(state_dir, state="stopped")

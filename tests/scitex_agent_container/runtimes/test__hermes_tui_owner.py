@@ -559,6 +559,59 @@ def test_owner_clears_periodic_turn_before_declaring_session_attached(tmp_path):
     ) == (0, 1, False, ["live-1", "live-1"], "attached", "disabled")
 
 
+def test_pending_committed_transition_recovers_before_identity_selection(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        del env
+        process = _Process()
+        spawned.append((list(command), process))
+        return process
+
+    active_calls = 0
+
+    def active_list(_state_dir):
+        nonlocal active_calls
+        active_calls += 1
+        if active_calls == 2:
+            spawned[-1][1].returncode = 0
+        return [
+            {
+                "id": "fresh-live",
+                "session_key": "fresh-stored",
+                "title": "sac:ui:handoff:nonce",
+            }
+        ]
+
+    recoveries = iter(("fresh-stored", None))
+    finalized = []
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=active_list,
+        recover_pending=lambda _state: next(recoveries),
+        finalize_pending=lambda _state, session: finalized.append(session["id"]),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+    # Assert
+    assert (
+        result,
+        len(spawned),
+        spawned[0][1].terminated,
+        spawned[0][0][-2:],
+        finalized,
+    ) == (0, 1, False, ["--resume", "fresh-stored"], ["fresh-live"])
+
+
 def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):
     # Arrange
     gateway = _Process()
