@@ -43,7 +43,7 @@ def parse_provider_value(block: object) -> ProviderSpec | None:
       to :func:`_provider_validation.validate_provider`, which owns the
       known-names list. Callers that must distinguish "no override"
       from "unknown name" read the RAW value, not this return.
-    * **dict** ``{base_url, auth_token_env, allowed_tools}`` — forwarded
+    * **dict** ``{base_url, auth_token_env, allowed_tools, extra_headers}`` — forwarded
       verbatim; the validator enforces the two required fields.
     * anything else (absent, null, list, ...) → ``None``.
     """
@@ -62,10 +62,22 @@ def parse_provider_value(block: object) -> ProviderSpec | None:
     allowed_tools: list[str] = []
     if isinstance(raw_allowed, list):
         allowed_tools = [t for t in raw_allowed if isinstance(t, str) and t]
+    raw_headers = block.get("extra_headers")
+    extra_headers: dict[str, str] = {}
+    if isinstance(raw_headers, Mapping):
+        extra_headers = {
+            name: value
+            for name, value in raw_headers.items()
+            if isinstance(name, str)
+            and name
+            and isinstance(value, str)
+            and value
+        }
     return ProviderSpec(
         base_url=str(block.get("base_url", "") or ""),
         auth_token_env=str(block.get("auth_token_env", "") or ""),
         allowed_tools=list(allowed_tools),
+        extra_headers=extra_headers,
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from ..config import AgentConfig
 from ._hermes_profile import materialize_hermes_tui_profile
@@ -95,6 +95,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         rpc_submit_visible: Callable[..., object] | None = None,
         gateway_health: Callable[[Path], dict] | None = None,
         control_state_reader: Callable[[Path], dict | None] = read_control_state,
+        pending_clarification_reader: Callable[..., Any] | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -110,6 +111,7 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         self._rpc_submit_visible = rpc_submit_visible
         self._gateway_health = gateway_health
         self._control_state_reader = control_state_reader
+        self._pending_clarification_reader = pending_clarification_reader
 
     def _read_gateway_health(self, state_dir: Path) -> dict:
         if self._gateway_health is not None:
@@ -165,13 +167,13 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
 
     @staticmethod
     def _start_cct(config: AgentConfig) -> None:
-        from ._hermes_cct_poller import start_cct_poller
+        from ._tui_cct_poller import start_cct_poller
 
         start_cct_poller(config)
 
     @staticmethod
     def _stop_cct(config: AgentConfig) -> None:
-        from ._hermes_cct_poller import stop_cct_poller
+        from ._tui_cct_poller import stop_cct_poller
 
         stop_cct_poller(config)
 
@@ -294,20 +296,70 @@ class HermesTuiSessionRuntime(TuiSessionRuntime):
         except HermesTuiRpcError as exc:
             readiness = {"status": "unavailable", "detail": str(exc)}
         state["gateway_readiness"] = readiness
+        reader = self._pending_clarification_reader
+        if reader is None:
+            from ._hermes_tui_rpc import observe_pending_clarification
+
+            reader = observe_pending_clarification
+        try:
+            pending = reader(state_dir, config.name)
+        except HermesTuiRpcError:
+            # Absence of this optional field means UNKNOWN. Never turn an RPC
+            # observation failure into "no input required".
+            pending = None
+        if pending is not None:
+            state["turn_admission"] = "waiting_for_choice"
+            state["pending_clarification"] = {
+                "state": "waiting_for_choice",
+                "request_id": pending.request_id,
+                "session_id": pending.session_id,
+                "questions": [
+                    {
+                        "qid": question.qid,
+                        "question": question.question,
+                        "choices": list(question.choices),
+                        "multi_select": question.multi_select,
+                    }
+                    for question in pending.questions
+                ],
+            }
         return state
 
-    def recover_turn_admission(self, config: AgentConfig) -> bool:
+    def recover_turn_admission(self, config: AgentConfig):
         """Use Hermes' supported same-session model switch."""
         from ._hermes_stale_recovery import recovery_command
+        from ._hermes_tui_rpc import execute_slash_command
 
-        return self.send_turn(config, recovery_command(config), wait_ready=False)
+        return execute_slash_command(
+            state_dir_for_config(config),
+            config.name,
+            recovery_command(config),
+        )
+
+    def observe_turn_progress(self, config: AgentConfig):
+        """Read non-attaching, monotonic evidence for the current Hermes turn."""
+        from ._hermes_tui_rpc import observe_turn_progress
+
+        return observe_turn_progress(state_dir_for_config(config), config.name)
+
+    def observe_turn_outcome(
+        self, config: AgentConfig, *, after_seq: int, expected_epoch: str
+    ):
+        """Read Hermes' typed terminal event without attaching a renderer."""
+        from ._hermes_tui_rpc import observe_turn_outcome
+
+        return observe_turn_outcome(
+            state_dir_for_config(config),
+            config.name,
+            after_seq=after_seq,
+            expected_epoch=expected_epoch,
+        )
 
     def disable_periodic_turns(self, config: AgentConfig) -> bool:
         """Remove model-calling heartbeat state through Hermes' control plane."""
         from ._hermes_tui_rpc import clear_heartbeat
 
-        return clear_heartbeat(
-            state_dir_for_config(config), config.name
-        ) == "absent"
+        return clear_heartbeat(state_dir_for_config(config), config.name) == "absent"
+
 
 __all__ = ["HermesTuiSessionRuntime"]

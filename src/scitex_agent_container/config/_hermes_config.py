@@ -12,6 +12,8 @@ from ._launch_plan import LaunchPlan
 
 AGENT_ID_HEADER = "X-SciTeX-Agent-ID"
 SESSION_ID_HEADER = "X-SciTeX-Session-ID"
+AGENT_ID_TEMPLATE = "${sac:agent_id}"
+SESSION_ID_TEMPLATE = "${sac:session_id}"
 
 
 def _api_root(endpoint_url: str, protocol: str) -> str:
@@ -28,8 +30,7 @@ def compile_hermes_config(
     plan: LaunchPlan,
     *,
     workdir: str,
-    max_turns: int = 50,
-    run_budget_seconds: int = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
+    run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS,
     approval_mode: str = "off",
     compression: HermesCompressionSpec | None = None,
     background_review: bool = False,
@@ -39,6 +40,8 @@ def compile_hermes_config(
         raise ValueError(f"Hermes compiler received harness {plan.harness!r}")
     if plan.agent_name is None:
         raise ValueError("Hermes compiler requires an agent-bound launch plan")
+    if plan.session_id is None:
+        raise ValueError("Hermes compiler requires a session-bound launch plan")
     if plan.launch_mode not in {"headless", "tui"}:
         raise ValueError("Hermes requires launch_mode 'headless' or 'tui'")
     if plan.endpoint.protocol not in {
@@ -52,9 +55,9 @@ def compile_hermes_config(
         key_env = ""
     else:
         key_env = plan.endpoint.auth_env
-    if type(max_turns) is not int or max_turns <= 0:
-        raise ValueError("max_turns must be a positive integer")
-    if type(run_budget_seconds) is not int or run_budget_seconds <= 0:
+    if run_budget_seconds is not None and (
+        type(run_budget_seconds) is not int or run_budget_seconds <= 0
+    ):
         raise ValueError("run_budget_seconds must be a positive integer")
     if approval_mode not in {"manual", "smart", "off"}:
         raise ValueError("approval_mode must be manual, smart, or off")
@@ -67,6 +70,19 @@ def compile_hermes_config(
 
     provider_key = f"sac-{plan.engine.key}"
     model = plan.engine.model_id
+    session_id = plan.session_id
+    extra_headers = {
+        name: value.replace(AGENT_ID_TEMPLATE, plan.agent_name).replace(
+            SESSION_ID_TEMPLATE, session_id
+        )
+        for name, value in plan.endpoint.extra_headers
+    }
+    extra_headers.update(
+        {
+            AGENT_ID_HEADER: plan.agent_name,
+            SESSION_ID_HEADER: session_id,
+        }
+    )
     api_mode = {
         "openai-chat-completions": "chat_completions",
         "openai-responses": "responses",
@@ -85,19 +101,19 @@ def compile_hermes_config(
         "model": model,
         "default_model": model,
         "models": {model: model_config},
-        "extra_headers": {
-            AGENT_ID_HEADER: plan.agent_name,
-            SESSION_ID_HEADER: f"sac:{plan.agent_name}",
-        },
+        "extra_headers": extra_headers,
     }
     agent: dict[str, Any] = {
-        "max_turns": max_turns,
-        "run_budget_seconds": run_budget_seconds,
+        # SAC's autonomous loop has its own independent safety cap.  Hermes'
+        # TUI defaults an omitted value to 500, so emit its unlimited sentinel.
+        "max_turns": "none",
         # Hermes subtracts disabled toolsets after expanding ``hermes-cli``.
         # Naming its one-tool ``delegation`` toolset removes delegate_task
         # completely instead of relying on prompt compliance.
         "disabled_toolsets": [] if plan.may_spawn else ["delegation"],
     }
+    if run_budget_seconds is not None:
+        agent["run_budget_seconds"] = run_budget_seconds
     if plan.engine.reasoning_effort is not None:
         agent["reasoning_effort"] = plan.engine.reasoning_effort
     return {
@@ -147,4 +163,10 @@ def compile_hermes_config(
     }
 
 
-__all__ = ["AGENT_ID_HEADER", "SESSION_ID_HEADER", "compile_hermes_config"]
+__all__ = [
+    "AGENT_ID_HEADER",
+    "AGENT_ID_TEMPLATE",
+    "SESSION_ID_HEADER",
+    "SESSION_ID_TEMPLATE",
+    "compile_hermes_config",
+]

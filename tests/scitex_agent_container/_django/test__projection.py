@@ -16,7 +16,9 @@ REMOTE = "remote-node-" + (LOCAL[:8] or "x")
 
 ALIVE = {"name": "alpha", "liveness": {"verdict": "ALIVE"}, "status": "running",
          "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
-         "model": "sonnet", "pid": 111, "session_id": "a" * 32,
+         "model": "sonnet", "billing_mode": "subscription",
+         "auth_identity": "anthropic/team-max", "runtime_identity_source": "birth_certificate",
+         "pid": 111, "session_id": "a" * 32,
          "a2a_port": 19000, "turn_url": f"http://{LOCAL}:19000/v1/turn", "inbox_reachable": "true"}
 DEAD = {"name": "beta", "liveness": {"verdict": "DEAD"}, "status": "stopped",
         "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
@@ -142,6 +144,52 @@ def test_row_carries_runtime_harness_model():
     projected = project_row(row, ALIVE)
     # Assert
     assert (projected["runtime"], projected["harness"], projected["model"]) == ("apptainer", "anthropic", "sonnet")
+
+
+def test_row_carries_billing_auth_and_identity_provenance():
+    # Arrange
+    row = {"name": "alpha"}
+
+    # Act
+    projected = project_row(row, ALIVE)
+
+    # Assert
+    assert (
+        projected["billing_mode"],
+        projected["auth_identity"],
+        projected["runtime_identity_source"],
+    ) == ("subscription", "anthropic/team-max", "birth_certificate")
+
+
+def test_status_birth_identity_outranks_stale_list_row():
+    # Arrange
+    stale_row = {
+        "name": "alpha",
+        "harness": "stale-harness",
+        "engine": "stale-engine",
+        "model": "stale-model",
+        "billing_mode": "unspecified",
+        "auth_identity": "unknown",
+        "runtime_identity_source": "spec",
+    }
+
+    # Act
+    projected = project_row(stale_row, ALIVE)
+
+    # Assert
+    assert (
+        projected["harness"],
+        projected["engine"],
+        projected["model"],
+        projected["auth_identity"],
+        projected["runtime_identity_source"],
+    ) == (
+        "anthropic",
+        "anthropic",
+        "sonnet",
+        "anthropic/team-max",
+        "birth_certificate",
+    )
 
 
 def test_row_projects_activity_and_keeps_unknown_explicit():

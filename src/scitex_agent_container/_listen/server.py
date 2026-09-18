@@ -72,6 +72,46 @@ from ._agents_list import (  # noqa: E402,F401
 )
 
 
+def _runtime_liveness(cfg, *, runtime_factory=None) -> tuple[bool, str, dict[str, Any]]:
+    """Observe runtime liveness before granting launch-record authority."""
+    try:
+        if runtime_factory is None:
+            from .._lifecycle._runtime_select import _get_runtime
+
+            runtime_factory = _get_runtime
+        running = bool(runtime_factory(cfg).is_running(cfg))
+    except Exception as exc:  # stx-allow: fallback (an unavailable probe is UNKNOWN, never running)
+        return (
+            False,
+            "unknown",
+            {
+                "verdict": "unknown",
+                "evidence": [
+                    {
+                        "source": "runtime",
+                        "verdict": "unknown",
+                        "detail": f"runtime liveness probe failed: {type(exc).__name__}: {exc}",
+                    }
+                ],
+            },
+        )
+    verdict = "alive" if running else "dead"
+    return (
+        running,
+        "running" if running else "stopped",
+        {
+            "verdict": verdict,
+            "evidence": [
+                {
+                    "source": "runtime",
+                    "verdict": verdict,
+                    "detail": "runtime adapter is_running observation",
+                }
+            ],
+        },
+    )
+
+
 async def agent_status(request: Request) -> JSONResponse:
     """GET /agents/<name>/status — the fleet's authoritative "does X exist".
 
@@ -133,13 +173,21 @@ async def agent_status(request: Request) -> JSONResponse:
         )
     sd = state_dir_for(name)
     sid = read_session_id(sd)
+    running, runtime_status, liveness = _runtime_liveness(cfg)
     body: dict[str, Any] = {
         "name": name,
         "spec_path": str(spec_path),
         "workdir": cfg.expanded_workdir,
         "session_id": sid,
         "state_dir": str(sd),
+        "status": runtime_status,
+        "liveness": liveness,
     }
+    # Selection/auth identity comes from the active incarnation's immutable
+    # birth certificate when available; the current spec is a labelled fallback.
+    from .._lifecycle._status import _runtime_identity
+
+    body.update(_runtime_identity(name, cfg, running=running))
     # Additive, harness-neutral turn-admission state. Runtime adapters own
     # their detection mechanism; this route and its GUI consumers do not.
     try:
@@ -177,6 +225,9 @@ async def agent_status(request: Request) -> JSONResponse:
     from ._registry_endpoints import enrich_row
 
     body = enrich_row(body, identity_spec_path=spec_path)
+    from .._lifecycle._status import _a2a_status
+
+    body["a2a"] = _a2a_status(name, cfg)
     # …and the same inbox-subscriber OBSERVATION ``GET /agents`` carries, so
     # a single-agent status poll can also tell REGISTERED from REACHABLE. A
     # running session_id + a live pid say nothing about whether this agent's

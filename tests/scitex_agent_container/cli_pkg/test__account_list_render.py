@@ -54,6 +54,24 @@ from scitex_agent_container.cli_pkg._account_list_render import (
 )
 from scitex_agent_container.cli_pkg.account_group import account
 
+
+def test_account_table_names_itself_as_credential_inventory_not_runtime_selection():
+    # Arrange
+    row = AccountRow(
+        name="stored-account",
+        freshness_state="VALID",
+        freshness_hours=1.0,
+        used_pct_5h=None,
+        used_pct_7d=None,
+        snapshot_as_of=None,
+    )
+
+    # Act
+    rendered = render_stored_table_to_str([row], width=120)
+
+    # Assert
+    assert "Stored credentials" in rendered and "not necessarily active" in rendered
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -288,11 +306,11 @@ def test_format_snapshot_age_future_clamps_to_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_format_as_of_short_day_hour(env_save_restore):
+def test_format_as_of_short_day_hour():
     # Arrange
-    env_save_restore.set("TZ", "UTC")
+    env = {"TZ": "UTC"}
     # Act — Sunday 2026-05-31, 21:00 UTC.
-    rendered = format_as_of_short("2026-05-31T21:00:00+00:00")
+    rendered = format_as_of_short("2026-05-31T21:00:00+00:00", env=env)
     # Assert — `Sun 21h` shape.
     assert rendered == "Sun 21h"
 

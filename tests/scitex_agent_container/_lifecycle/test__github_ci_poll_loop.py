@@ -153,9 +153,12 @@ async def test_loop_honours_cancellation_cleanly():
 async def test_tick_forwards_the_head_sha_it_already_has_to_the_conclusion_call():
     # Arrange — capture what the loop hands the conclusion seam.
     seen: list = []
+    called = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def conclusion_for(repo, pr, *, head_sha=""):
         seen.append(head_sha)
+        loop.call_soon_threadsafe(called.set)
         return "success"
 
     task = asyncio.create_task(
@@ -171,7 +174,7 @@ async def test_tick_forwards_the_head_sha_it_already_has_to_the_conclusion_call(
         )
     )
     # Act
-    await asyncio.sleep(0.08)
+    await asyncio.wait_for(called.wait(), timeout=2.0)
     task.cancel()
     try:
         await task

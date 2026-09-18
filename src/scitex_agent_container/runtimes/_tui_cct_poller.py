@@ -1,9 +1,9 @@
-"""Lifecycle-owned Telegram poller for the Hermes TUI.
+"""Lifecycle-owned Telegram poller for a SAC-managed TUI.
 
-Hermes can use the CCT MCP server for outbound tools, but an MCP server is not
-an inbound lifecycle primitive: Hermes may start it lazily, recycle it, or
-never invoke it.  SAC therefore starts CCT's standalone ``telegram-poller.ts``
-beside the host-side Hermes turn bridge and tears it down with the TUI.
+TUI harnesses can use the CCT MCP server for outbound tools, but an MCP server
+is not an inbound lifecycle primitive: it may start lazily, recycle, or never
+be invoked. SAC therefore starts CCT's standalone ``telegram-poller.ts``
+beside the host-side turn bridge and tears it down with the managed TUI.
 """
 
 from __future__ import annotations
@@ -20,15 +20,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..config import AgentConfig
-from ._hermes_cct import cct_requested
-from ._sdk_channels import _TELEGRAMMER_MCP_KEY
+from ._sdk_channels import _TELEGRAMMER_CHANNEL, _TELEGRAMMER_MCP_KEY
 from ._tui_turn_bridge_lifecycle import resolved_a2a_port
 from .tui_session import state_dir_for_config
 
 log = logging.getLogger(__name__)
 
-PID_FILENAME = "hermes-cct-poller.pid"
-LOG_FILENAME = "hermes-cct-poller.log"
+PID_FILENAME = "tui-cct-poller.pid"
+LOG_FILENAME = "tui-cct-poller.log"
 _POLLER_NAME = "telegram-poller.ts"
 _SERVER_NAME = "telegram-server.ts"
 _STOP_GRACE_S = 5.0
@@ -46,8 +45,14 @@ _STARTUP_HEALTH_CHECKS = frozenset(
 )
 
 
-class HermesCctPollerError(RuntimeError):
-    """The selected Hermes Telegram poller cannot be launched safely."""
+class TuiCctPollerError(RuntimeError):
+    """The selected SAC-managed Telegram poller cannot launch safely."""
+
+
+def cct_requested(config: AgentConfig) -> bool:
+    """Whether the harness-neutral CCT channel is selected for this agent."""
+    channels = getattr(config.claude, "channels", None) or ()
+    return _TELEGRAMMER_CHANNEL in {str(value).strip() for value in channels}
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -67,14 +72,14 @@ def _mcp_entry(home: Path) -> dict[str, Any]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise HermesCctPollerError(
-            f"cannot read Hermes CCT MCP entry at {path}: {exc}"
+        raise TuiCctPollerError(
+            f"cannot read managed CCT MCP entry at {path}: {exc}"
         ) from exc
     servers = document.get("mcpServers") if isinstance(document, dict) else None
     entry = servers.get(_TELEGRAMMER_MCP_KEY) if isinstance(servers, dict) else None
     if not isinstance(entry, dict):
-        raise HermesCctPollerError(
-            f"Hermes CCT channel is selected, but {path} has no "
+        raise TuiCctPollerError(
+            f"CCT channel is selected, but {path} has no "
             f"{_TELEGRAMMER_MCP_KEY!r} MCP entry"
         )
     return entry
@@ -86,18 +91,18 @@ def _poller_argv(entry: dict[str, Any]) -> list[str]:
     args = [str(value) for value in (entry.get("args") or ())]
     executable = command if Path(command).is_file() else shutil.which(command)
     if not executable:
-        raise HermesCctPollerError(f"CCT executable is unavailable: {command!r}")
+        raise TuiCctPollerError(f"CCT executable is unavailable: {command!r}")
     for index, value in enumerate(args):
         candidate = Path(value).expanduser()
         if candidate.name != _SERVER_NAME:
             continue
         poller = candidate.with_name(_POLLER_NAME)
         if not poller.is_file():
-            raise HermesCctPollerError(
+            raise TuiCctPollerError(
                 f"CCT standalone poller is absent beside declared server: {poller}"
             )
         return [str(executable), *args[:index], str(poller), *args[index + 1 :]]
-    raise HermesCctPollerError(
+    raise TuiCctPollerError(
         f"CCT MCP entry does not name {_SERVER_NAME}; cannot derive {_POLLER_NAME}"
     )
 
@@ -108,9 +113,9 @@ def _health_argv(entry: dict[str, Any]) -> list[str]:
     args = [str(value) for value in (entry.get("args") or ())]
     executable = command if Path(command).is_file() else shutil.which(command)
     if not executable:
-        raise HermesCctPollerError(f"CCT executable is unavailable: {command!r}")
+        raise TuiCctPollerError(f"CCT executable is unavailable: {command!r}")
     if not any(Path(value).name == _SERVER_NAME for value in args):
-        raise HermesCctPollerError(
+        raise TuiCctPollerError(
             f"CCT MCP entry does not name {_SERVER_NAME}; cannot run health preflight"
         )
     return [str(executable), *args, "health"]
@@ -134,13 +139,13 @@ def _preflight_cct(
     try:
         report = json.loads(str(getattr(result, "stdout", "") or ""))
     except ValueError as exc:
-        raise HermesCctPollerError(
+        raise TuiCctPollerError(
             "CCT health preflight returned no valid JSON; reinstall "
             "claude-code-telegrammer and retry the agent start"
         ) from exc
     checks = report.get("checks") if isinstance(report, dict) else None
     if not isinstance(checks, list):
-        raise HermesCctPollerError(
+        raise TuiCctPollerError(
             "CCT health preflight returned no checks; reinstall "
             "claude-code-telegrammer and retry the agent start"
         )
@@ -153,7 +158,7 @@ def _preflight_cct(
     ]
     if failed:
         role = str(env.get("PGUSER", "") or "<libpq default>")
-        raise HermesCctPollerError(
+        raise TuiCctPollerError(
             "CCT startup preflight failed "
             f"({', '.join(sorted(failed))}) for PGUSER={role!r}; run "
             "`claude-code-telegrammer health` under the generated agent "
@@ -185,21 +190,33 @@ def _poller_env(
         env[str(key)] = value
     token = str(env.get("CCT_BOT_TOKEN", "") or "").strip()
     if not token:
-        raise HermesCctPollerError("Hermes CCT poller has no resolved CCT_BOT_TOKEN")
+        raise TuiCctPollerError("managed CCT poller has no resolved CCT_BOT_TOKEN")
     port = resolved_a2a_port(config)
     if port is None:
-        raise HermesCctPollerError(
-            "Hermes CCT poller requires a resolved spec.a2a.port"
+        raise TuiCctPollerError(
+            "managed CCT poller requires a resolved spec.a2a.port"
         )
     turn_url = f"http://127.0.0.1:{port}/v1/turn"
     env["CCT_TURN_URL"] = turn_url
     env["CLAUDE_CODE_TELEGRAMMER_TURN_URL"] = turn_url
+    # The MCP server receives the same contract through wire_hermes_cct_rail.
+    # Keep it here as well so health/preflight and the authoritative child
+    # describe the ownership topology identically.
+    env["CLAUDE_CODE_TELEGRAMMER_EXTERNAL_POLLER"] = "1"
+    # CCT must choose a fallback the selected harness can semantically
+    # acknowledge. Codex does not execute Claude channel notifications.
+    from ..config._harness_registry import resolve_harness_key
+
+    env["CCT_HARNESS"] = resolve_harness_key(config)
     env["CCT_AGENT_ID"] = config.name
     env["SAC_NAME"] = config.name
     env["SCITEX_AGENT_CONTAINER_NAME"] = config.name
     env["CCT_AGENT_STATE_DIR"] = str(
         Path.home() / ".scitex" / "claude-code-telegrammer" / "runtime" / config.name
     )
+    from ._cct_env_contract import scrub_retired_cct_env
+
+    scrub_retired_cct_env(env)
     return env
 
 
@@ -249,7 +266,7 @@ def stop_cct_poller(
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Stop only the identity-proven poller recorded for this Hermes agent."""
+    """Stop only the identity-proven poller recorded for this SAC agent."""
     path = _pid_path(config, state_dir)
     try:
         recorded = int(path.read_text(encoding="utf-8").strip())
@@ -260,7 +277,7 @@ def stop_cct_poller(
         candidates.add(recorded)
     elif recorded > 0:
         log.warning(
-            "Hermes CCT PID %s is not owned by %s; not signalling",
+            "managed CCT PID %s is not owned by %s; not signalling",
             recorded,
             config.name,
         )
@@ -297,7 +314,7 @@ def start_cct_poller(
     preflight: Callable[[dict[str, Any], dict[str, str]], None] = _preflight_cct,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int | None:
-    """Start SAC's one managed Hermes poller, or no-op when CCT is unselected."""
+    """Start SAC's one managed TUI poller, or no-op when CCT is unselected."""
     if not cct_requested(config):
         return None
     state = state_dir or state_dir_for_config(config)
@@ -327,7 +344,7 @@ def start_cct_poller(
     pid = getattr(process, "pid", None)
     if not isinstance(pid, int) or pid <= 0:
         log_handle.close()
-        raise HermesCctPollerError("CCT poller spawn returned no positive PID")
+        raise TuiCctPollerError("CCT poller spawn returned no positive PID")
     path = _pid_path(config, state)
     path.write_text(f"{pid}\n", encoding="utf-8")
     path.chmod(0o600)
@@ -336,16 +353,16 @@ def start_cct_poller(
     if callable(poll) and poll() is not None:
         path.unlink(missing_ok=True)
         log_handle.close()
-        raise HermesCctPollerError(
+        raise TuiCctPollerError(
             f"CCT poller exited during startup; inspect {state / LOG_FILENAME}"
         )
     log_handle.close()
-    log.info("Hermes CCT poller started for %s (pid=%s)", config.name, pid)
+    log.info("managed CCT poller started for %s (pid=%s)", config.name, pid)
     return pid
 
 
 __all__ = [
-    "HermesCctPollerError",
+    "TuiCctPollerError",
     "LOG_FILENAME",
     "PID_FILENAME",
     "start_cct_poller",

@@ -1,4 +1,4 @@
-"""Bound one Hermes run so priority steering reaches a turn boundary."""
+"""Optional per-run Hermes budget for explicit bounded/eval workers."""
 
 from __future__ import annotations
 
@@ -7,15 +7,13 @@ from typing import Mapping
 from ._harness_lookup import canonical_harness
 from ._harness_types import resolve_spec_harness
 
-# Operator steering is queued by Hermes during a live autonomous run.  A
-# twenty-minute default therefore made an immediately delivered Telegram turn
-# wait behind one very long run.  Two minutes preserves useful autonomous work
-# while making the worst-case boundary explicit and reasonably short.
-DEFAULT_HERMES_RUN_BUDGET_SECONDS = 120
+# Agentic SAC sessions run until completion by default.  A positive value is
+# still accepted explicitly for one-shot/eval workers with an external ceiling.
+DEFAULT_HERMES_RUN_BUDGET_SECONDS: int | None = None
 
 
-def parse_selected_hermes_run_budget(spec: Mapping) -> int:
-    """Return the selected Hermes entry's positive run budget in seconds."""
+def parse_selected_hermes_run_budget(spec: Mapping) -> int | None:
+    """Return the selected Hermes entry's explicit run budget, if any."""
     if canonical_harness(resolve_spec_harness(spec)) != "hermes":
         return DEFAULT_HERMES_RUN_BUDGET_SECONDS
     harnesses = spec.get("available_harnesses")
@@ -23,9 +21,12 @@ def parse_selected_hermes_run_budget(spec: Mapping) -> int:
         return DEFAULT_HERMES_RUN_BUDGET_SECONDS
     for key, value in harnesses.items():
         if canonical_harness(str(key)) == "hermes" and isinstance(value, Mapping):
-            return int(
-                value.get("run_budget_seconds", DEFAULT_HERMES_RUN_BUDGET_SECONDS)
-            )
+            if "run_budget_seconds" not in value:
+                return DEFAULT_HERMES_RUN_BUDGET_SECONDS
+            budget = value["run_budget_seconds"]
+            if type(budget) is not int or budget <= 0:
+                raise ValueError("run_budget_seconds must be a positive integer")
+            return budget
     return DEFAULT_HERMES_RUN_BUDGET_SECONDS
 
 

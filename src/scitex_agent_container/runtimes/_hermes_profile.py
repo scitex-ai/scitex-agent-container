@@ -7,11 +7,13 @@ import os
 import secrets
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
 from ..config import AgentConfig
 from ..config._hermes_config import compile_hermes_config
+from ..config._hermes_session import hermes_session_key
 from ..config._launch_plan import (
     DelegationPolicy,
     Endpoint,
@@ -21,6 +23,7 @@ from ..config._launch_plan import (
 from ._apptainer_provider import resolve_provider_api_key
 from ._to_home import deploy_to_home
 from ._to_home_overlay import deploy_to_home_overlay, resolve_overlay_upper_home
+from .mcp_config import setup_mcp_config
 
 API_KEY_FILE = "hermes-api.key"
 API_PORT_FILE = "hermes-api.port"
@@ -156,34 +159,52 @@ def _launch_plan(config: AgentConfig, *, launch_mode: str = "headless") -> Launc
     base_url = str(provider.base_url or "").rstrip("/")
     if not base_url:
         raise RuntimeError("Hermes requires the selected engine provider.base_url")
-    api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+    model = str(config.model or "").strip()
+    engine_key = str(config.engine_key or "").strip()
+    if not model or not engine_key:
+        raise ValueError(
+            "Hermes requires a resolved engine model and key; refusing to "
+            "materialize a profile with implicit provider/session identity"
+        )
+    if urlsplit(base_url).path.rstrip("/").endswith("/responses"):
+        protocol = "openai-responses"
+        endpoint_url = base_url
+    else:
+        protocol = "openai-chat-completions"
+        api_root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+        endpoint_url = f"{api_root}/chat/completions"
     endpoint = Endpoint(
-        protocol="openai-chat-completions",
-        url=f"{api_root}/chat/completions",
+        protocol=protocol,
+        url=endpoint_url,
         auth_kind="bearer",
         auth_env=str(provider.auth_token_env or ""),
+        extra_headers=tuple((getattr(provider, "extra_headers", {}) or {}).items()),
     )
     engine = ResolvedEngine(
-        key=str(config.engine_key or config.model),
-        model_id=str(config.model),
+        key=engine_key,
+        model_id=model,
         endpoints=(endpoint,),
         context_window_tokens=config.max_context_tokens,
         reasoning_effort=str(config.reasoning_effort or "") or None,
         upstream_deadline_seconds=config.upstream_deadline_seconds,
         client_abandonment_seconds=config.client_abandonment_seconds,
     )
+    session_id = hermes_session_key(config.name, engine_key)
+    if str(config.claude.session or "").strip().lower() == "resume":
+        session_id = str(config.claude.resume_id or "").strip() or session_id
     return LaunchPlan(
-        "hermes",
-        launch_mode,
-        "apptainer",
-        engine,
-        endpoint,
+        harness="hermes",
+        launch_mode=launch_mode,
+        container_backend="apptainer",
+        engine=engine,
+        endpoint=endpoint,
         may_spawn=config.lineage.may_spawn,
         delegation=DelegationPolicy(
             max_concurrent_children=config.delegation.max_concurrent_children,
             worktree_isolation=config.delegation.worktree_isolation,
         ),
         agent_name=config.name,
+        session_id=session_id,
     )
 
 
@@ -363,15 +384,14 @@ def materialize_hermes_profile(
     home = state_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
     deploy_to_home(config, str(home))
+    setup_mcp_config(config, str(home))
     overlay_home = deploy_to_home_overlay(config)
     api_key = ensure_api_key(state_dir)
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config)
-    max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
-        max_turns=max_turns,
         run_budget_seconds=config.hermes_run_budget_seconds,
         approval_mode="off",
         compression=config.hermes_compression,
@@ -401,6 +421,7 @@ def materialize_hermes_profile(
     targets = [home]
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 
@@ -439,13 +460,12 @@ def materialize_hermes_tui_profile(
         overlay_home = deploy_to_home_overlay(config)
     else:
         overlay_home = resolve_overlay_upper_home(config)
+    setup_mcp_config(config, str(home))
     provider_key = resolve_provider_api_key(config)
     plan = _launch_plan(config, launch_mode="tui")
-    max_turns = max(1, int(getattr(config.autonomous, "max_turns", 50) or 50))
     rendered = compile_hermes_config(
         plan,
         workdir=str(config.workdir),
-        max_turns=max_turns,
         run_budget_seconds=config.hermes_run_budget_seconds,
         approval_mode="off",
         compression=config.hermes_compression,
@@ -466,6 +486,7 @@ def materialize_hermes_tui_profile(
     targets = [home]
     resolved_upper = resolve_overlay_upper_home(config)
     if overlay_home is not None and resolved_upper is not None:
+        setup_mcp_config(config, str(resolved_upper))
         targets.append(resolved_upper)
     from ._pg_identity_credentials import materialize_project_pgpass
 

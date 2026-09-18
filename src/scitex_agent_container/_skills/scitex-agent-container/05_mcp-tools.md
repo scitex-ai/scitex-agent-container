@@ -26,7 +26,7 @@ sac mcp doctor                             # verify
 ```bash
 sac mcp start                          # stdio (default)
 sac mcp start --http --port 8970       # HTTP transport
-sac mcp doctor                         # version + tool count + registration
+sac mcp doctor                         # image-frozen venv identity + version + tool registration
 sac mcp list-tools [--json]            # enumerate tools
 sac mcp install [--claude-code]        # config snippet
 ```

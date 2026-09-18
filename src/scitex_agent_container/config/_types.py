@@ -299,6 +299,8 @@ class AgentConfig:
     max_context_tokens: int | None = None
     upstream_deadline_seconds: int | None = None
     client_abandonment_seconds: int | None = None
+    subscription_provider: str = ""
+    subscription_account: str = ""
     # RESIDENCY: does the daemon outlive its work? "resident" (default)
     # parks awaiting more turns after a conversation completes;
     # "one-shot" exits cleanly (ExitRecord reason oneshot-complete) when
@@ -333,7 +335,7 @@ class AgentConfig:
     restart: RestartSpec = field(default_factory=RestartSpec)
     autonomous: AutonomousSpec = field(default_factory=AutonomousSpec)
     hermes_background_review: bool = False
-    hermes_run_budget_seconds: int = DEFAULT_HERMES_RUN_BUDGET_SECONDS
+    hermes_run_budget_seconds: int | None = DEFAULT_HERMES_RUN_BUDGET_SECONDS
     hermes_compression: HermesCompressionSpec = field(
         default_factory=HermesCompressionSpec
     )

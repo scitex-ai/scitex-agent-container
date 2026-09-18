@@ -68,13 +68,13 @@ def test_read_status_typed_error_carries_kind(loopback):
     assert raised
 
 
-def test_read_statuses_collects_concurrently(loopback):
+def test_read_statuses_uses_one_batched_agents_read(loopback, listener_requests):
     # Arrange
     fleet = RemoteFleet(f"http://127.0.0.1:{loopback}", TOKEN)
     # Act
     results = fleet.read_statuses(["alpha", "delta"])
     # Assert
-    assert isinstance(results["alpha"], dict) and isinstance(results["delta"], RemoteOperationError)
+    assert set(results) == {"alpha", "delta"} and listener_requests == ["/agents"]
 
 
 def test_read_tail_returns_sse_body(loopback):

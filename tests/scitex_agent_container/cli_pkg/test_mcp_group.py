@@ -240,6 +240,17 @@ def test_doctor_ok_reports_fastmcp_version_and_server_ready():
     )
 
 
+def test_doctor_reports_that_the_image_venv_is_frozen():
+    # Arrange
+    server = _FakeServer([_FakeTool("a")])
+    runner = CliRunner()
+    # Act
+    with _use_fastmcp_version("9.9.9"), _use_get_server(server):
+        result = runner.invoke(mcp, ["doctor"])
+    # Assert
+    assert "image-frozen" in result.output
+
+
 def test_doctor_missing_fastmcp_exits_nonzero_with_install_hint():
     # Arrange
     runner = CliRunner()

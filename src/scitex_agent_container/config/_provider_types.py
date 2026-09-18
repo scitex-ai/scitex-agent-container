@@ -22,6 +22,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+CREDENTIAL_HEADER_NAMES = frozenset(
+    {
+        "api-key",
+        "anthropic-api-key",
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "set-cookie",
+        "x-api-key",
+        "x-goog-api-key",
+    }
+)
+
+
+def is_credential_header(name: str) -> bool:
+    """Return whether an HTTP header must be sourced from auth env instead."""
+    return name.strip().casefold() in CREDENTIAL_HEADER_NAMES
+
 
 @dataclass
 class ProviderSpec:
@@ -96,4 +114,12 @@ class ProviderSpec:
     this field today; the per-registry ``allowed_tools`` plumbing is a
     follow-up. Operators on the string form fall back to the runner's
     old-stable default until the registry plumbing lands.
+    """
+
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    """Non-secret HTTP headers forwarded by compatible harness adapters.
+
+    Header values may use SAC-owned identity templates such as
+    ``${sac:agent_id}`` and ``${sac:session_id}``. Credentials do not belong
+    here; :attr:`auth_token_env` remains the only provider-secret source.
     """

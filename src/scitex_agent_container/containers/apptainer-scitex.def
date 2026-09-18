@@ -524,6 +524,11 @@ fatal build error.
 import importlib.metadata as md
 import sys
 
+# Clean starts require this exact psutil capability for inbox sidecar
+# reconciliation and Hermes stale-session recovery.  An unhandled ImportError
+# rejects the image before publication.
+from psutil import process_iter as _psutil_process_iter  # noqa: F401
+
 # Both imports ARE staleness probes: each raises ImportError (unhandled →
 # non-zero exit → dead build) on a stale bake, naming the missing symbol.
 

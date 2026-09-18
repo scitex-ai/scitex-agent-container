@@ -26,8 +26,6 @@ no-op'd at the runtime rather than relaunched over.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import os
 from pathlib import Path
 from typing import Iterator
@@ -52,6 +50,10 @@ from scitex_agent_container._lifecycle._verdict import (
     decide,
 )
 from scitex_agent_container._state.registry import Registry
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
+from tests.scitex_agent_container._helpers.spec_authority import (
+    establish_test_spec_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -127,25 +129,27 @@ def _write_spec(tmp_path: Path, name: str = "alpha") -> Path:
     agent_dir.mkdir(parents=True, exist_ok=True)
     spec = agent_dir / "spec.yaml"
     spec.write_text(
-        explicitize_yaml("apiVersion: scitex-agent-container/v3\n"
-        "kind: Agent\n"
-        "spec:\n"
-        "  runtime: apptainer\n"
-        "  host: ${HOSTNAME}\n"
-        f"  workdir: {tmp_path / 'work'}\n"
-        "  apptainer:\n"
-        "    image: /x.sif\n"
-        "    binds: []\n"
-        "  claude:\n"
-        "    model: sonnet\n"
-        "  health:\n"
-        "    enabled: false\n"
-        "    interval: 60\n"
-        "  restart:\n"
-        "    policy: never\n"
-        "    max_retries: 3\n")
+        explicitize_yaml(
+            "apiVersion: scitex-agent-container/v3\n"
+            "kind: Agent\n"
+            "spec:\n"
+            "  runtime: apptainer\n"
+            "  host: ${HOSTNAME}\n"
+            f"  workdir: {tmp_path / 'work'}\n"
+            "  apptainer:\n"
+            "    image: /x.sif\n"
+            "    binds: []\n"
+            "  claude:\n"
+            "    model: sonnet\n"
+            "  health:\n"
+            "    enabled: false\n"
+            "    interval: 60\n"
+            "  restart:\n"
+            "    policy: never\n"
+            "    max_retries: 3\n"
+        )
     )
-    return spec
+    return establish_test_spec_authority(spec)
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -202,7 +206,9 @@ def test_legacy_verifier_missing_registry_row_is_unknown(tmp_path, registry):
 # --------------------------------------------------------------------------
 
 
-def test_an_unknown_agent_is_started_rather_than_no_opped(pg_schema: str, tmp_path, registry):
+def test_an_unknown_agent_is_started_rather_than_no_opped(
+    pg_schema: str, tmp_path, registry
+):
     """THE unfalsifiable-row regression.
 
     The agent looks running to every proxy (registry row present, runtime says
@@ -347,8 +353,7 @@ def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry
 
 
 def test_an_alive_no_op_announces_agent_and_session_loudly(
-    pg_schema: str,
-    tmp_path, registry, caplog
+    pg_schema: str, tmp_path, registry, caplog
 ):
     """The no-op branch must EMIT what it found — never exit 0 in silence.
 

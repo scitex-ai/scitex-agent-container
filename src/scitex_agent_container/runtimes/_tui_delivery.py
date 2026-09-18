@@ -37,6 +37,7 @@ import logging
 from typing import Any, Callable
 
 from . import _pane_acceptance
+from ._tui_compose import verify_submit_by_advancement
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,11 @@ def send_turn_to_pane(
     wait_ready: bool = True,
     require_accepting: bool = True,
     ensure_ready: Callable[[], None] | None = None,
+    submission_poll_s: float = 0.2,
+    submission_appear_timeout_s: float = 2.0,
+    submission_idle_wait_s: float = 3.0,
+    submission_proof_stable_s: float = 0.6,
+    submission_max_resends: int = 3,
 ) -> bool:
     """Deliver one turn to ``name``'s pane; False when it was NOT delivered.
 
@@ -66,7 +72,7 @@ def send_turn_to_pane(
 
     Args:
         mux: multiplexer exposing ``exists`` / ``capture_content`` /
-            ``send_text_and_submit``.
+            ``send_text_literal`` / ``send_keys``.
         name: tmux session name.
         text: the turn.
         wait_ready: run the blocking modal drain first.
@@ -77,7 +83,8 @@ def send_turn_to_pane(
         ensure_ready: callable that drains any first-launch / mid-session modal.
 
     Returns:
-        True only when the keystrokes were sent to a pane that will run them.
+        True only after the pasted turn observably advanced out of the live
+        composer. Merely writing the text and an Enter is not delivery.
     """
     if not mux.exists(name):
         # No runtime to deliver to — distinct from "delivered", and the caller
@@ -99,8 +106,32 @@ def send_turn_to_pane(
             )
             return False
 
-    mux.send_text_and_submit(name, text)
-    return True
+    # Paste and submit are deliberately separate.  A live Codex incident on
+    # 2026-09-17 proved that tmux can accept both writes while the TUI drops
+    # Enter: the CI notification remained visibly parked in the composer, but
+    # the bridge returned success and Cards durably ACKed it.  The same false
+    # success also blocks later CCT turns behind the parked text.
+    mux.send_text_literal(name, text)
+    submitted = verify_submit_by_advancement(
+        name,
+        capture_fn=mux.capture_content,
+        send_keys_fn=lambda key: mux.send_keys(name, key),
+        pending_fragment=text,
+        max_resends=submission_max_resends,
+        poll_s=submission_poll_s,
+        appear_timeout_s=submission_appear_timeout_s,
+        idle_wait_s=submission_idle_wait_s,
+        escape_before_enter=True,
+        proof_stable_s=submission_proof_stable_s,
+        require_submission_proof=True,
+    )
+    if not submitted:
+        logger.error(
+            "send_turn FAILED for %s: payload stayed pasted-but-unsent; "
+            "upstream must retain and retry this message",
+            name,
+        )
+    return bool(submitted)
 
 
 def why_not_deliverable(mux: Any, name: str) -> str | None:

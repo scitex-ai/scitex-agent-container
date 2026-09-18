@@ -6,6 +6,8 @@ from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
+    HermesClarifyQuestion,
+    HermesPendingClarification,
     HermesTuiRpcError,
     HermesVisibleTurnReceipt,
 )
@@ -45,18 +47,21 @@ class _Mux:
         return pane
 
 
-def _config() -> AgentConfig:
-    return AgentConfig(name="scholar", harness="hermes", runtime="tui")
-
-
-def test_fresh_session_does_not_request_continuation():
-    # Arrange
+def _config(*, session: str | None = None) -> AgentConfig:
     config = AgentConfig(
         name="scholar",
         harness="hermes",
         runtime="tui",
-        claude=ClaudeSpec(session="fresh"),
+        claude=ClaudeSpec(session=session or "fresh"),
     )
+    config.engine_key = "qwen38-27b"
+    config.model = "qwen38-27b"
+    return config
+
+
+def test_fresh_session_does_not_request_continuation():
+    # Arrange
+    config = _config(session="fresh")
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
@@ -84,18 +89,13 @@ def test_tui_launches_through_single_gateway_owner():
 
 def test_continue_session_resumes_the_stable_agent_session_name():
     # Arrange
-    config = AgentConfig(
-        name="scholar",
-        harness="hermes",
-        runtime="tui",
-        claude=ClaudeSpec(session="continue"),
-    )
+    config = _config(session="continue")
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
     assert argv[argv.index("--continue") :] == [
         "--continue",
-        "sac:scholar",
+        "sac:scholar:qwen38-27b",
         "--create-if-missing",
     ]
 
@@ -221,9 +221,7 @@ def test_deliverability_requires_authenticated_gateway_readiness():
     def degraded(_state):
         raise HermesTuiRpcError("Hermes authenticated readiness is degraded")
 
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=_Mux(), gateway_health=degraded
-    )
+    runtime = HermesTuiSessionRuntime(multiplexer=_Mux(), gateway_health=degraded)
 
     # Act
     reason = runtime.why_not_deliverable(_config())
@@ -251,6 +249,46 @@ def test_control_state_surfaces_authenticated_readiness_json():
     assert state == {
         "turn_admission": "ready",
         "gateway_readiness": readiness,
+    }
+
+
+def test_control_state_surfaces_typed_pending_clarification():
+    # Arrange
+    pending = HermesPendingClarification(
+        request_id="req-1",
+        session_id="live-1",
+        questions=(
+            HermesClarifyQuestion(
+                qid="q0",
+                question="Fix the footer?",
+                choices=("Yes", "No"),
+                multi_select=False,
+            ),
+        ),
+    )
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(),
+        control_state_reader=lambda _state: {"turn_admission": "ready"},
+        gateway_health=lambda _state: {"status": "ok"},
+        pending_clarification_reader=lambda _state, _name: pending,
+    )
+
+    # Act
+    state = runtime.control_state(_config())
+
+    # Assert
+    assert state["pending_clarification"] == {
+        "state": "waiting_for_choice",
+        "request_id": "req-1",
+        "session_id": "live-1",
+        "questions": [
+            {
+                "qid": "q0",
+                "question": "Fix the footer?",
+                "choices": ["Yes", "No"],
+                "multi_select": False,
+            }
+        ],
     }
 
 
@@ -380,38 +418,6 @@ def test_hermes_auxiliary_failure_cleans_poller_before_session():
             "inbox:stop",
             "recovery:stop",
             "session:stop",
-        ],
-    )
-
-
-def test_recovery_uses_supported_same_session_controls_in_order():
-    # Arrange
-    config = _config()
-    config.model = "qwen38-27b"
-    config.engine_key = "qwen38-27b"
-    mux = _Mux()
-    calls = []
-    runtime = HermesTuiSessionRuntime(
-        multiplexer=mux,
-        rpc_submit=lambda state, name, text: calls.append(text) or "steered",
-    )
-    runtime.disable_periodic_turns = lambda _config: (
-        calls.append("heartbeat.clear") or True
-    )
-    # Act
-    disabled = runtime.disable_periodic_turns(config)
-    recovered = runtime.recover_turn_admission(config)
-    # Assert
-    assert (
-        disabled,
-        recovered,
-        calls,
-    ) == (
-        True,
-        True,
-        [
-            "heartbeat.clear",
-            "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
         ],
     )
 

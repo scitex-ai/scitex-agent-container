@@ -198,7 +198,7 @@ def _hermes_tui_inner_argv(
         "--pass-session-id",
     ]
     model = str(config.model or "").strip()
-    engine_key = str(config.engine_key or model).strip()
+    engine_key = str(config.engine_key or "").strip()
     if not model or not engine_key:
         raise ValueError(
             "Hermes TUI requires a resolved engine model and key; refusing "
@@ -207,9 +207,11 @@ def _hermes_tui_inner_argv(
     argv += ["--model", model, "--provider", f"custom:sac-{engine_key}"]
     session_mode = str(config.claude.session or "").strip().lower()
     if session_mode == "continue":
+        from ._hermes_session import hermes_session_key
+
         argv += [
             "--continue",
-            f"sac:{config.name}",
+            hermes_session_key(config.name, engine_key),
             "--create-if-missing",
         ]
     elif session_mode == "resume":
@@ -273,9 +275,38 @@ def _codex_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
     return codex_env_flags(config, state_dir)
 
 
+def _hermes_profile_env_argv(state_dir: "Path") -> list[str]:
+    """Expose the materialized owner-only Hermes env without argv secrets."""
+    profile_env = state_dir / "home" / ".hermes" / ".env"
+    if not profile_env.is_file():
+        raise RuntimeError(
+            "Hermes profile env is absent; materialize the Hermes workspace "
+            f"before building its container argv: {profile_env}"
+        )
+    mode = profile_env.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise RuntimeError(
+            f"Hermes profile env {profile_env} has unsafe mode {mode:#o}; "
+            "expected no group/world permissions"
+        )
+    return ["--env-file", str(profile_env)]
+
+
 def _hermes_env_and_binds(config: "AgentConfig", state_dir: "Path") -> list[str]:
-    """Expose the isolated Hermes profile and selected-engine provenance."""
-    del state_dir
+    """Expose the isolated Hermes profile, env, and engine provenance.
+
+    Hermes imports config-reading modules before its CLI-level dotenv loader.
+    A generated MCP entry containing ``${env:NAME}`` can therefore be parsed
+    while NAME is still absent, leaving the literal placeholder in the child
+    server environment for the entire session. Apptainer must load the same
+    owner-only profile env before the Hermes process starts. ``--env-file``
+    carries only a path in argv, so provider keys and the SAC listen bearer
+    remain absent from the world-readable process command line.
+    """
     from ..runtimes._apptainer_provider import engine_env_flags
 
-    return ["--env", "HERMES_HOME=/home/agent/.hermes"] + engine_env_flags(config)
+    return (
+        ["--env", "HERMES_HOME=/home/agent/.hermes"]
+        + _hermes_profile_env_argv(state_dir)
+        + engine_env_flags(config)
+    )

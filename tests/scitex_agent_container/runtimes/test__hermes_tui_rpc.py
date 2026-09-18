@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scitex_agent_container.runtimes import _hermes_tui_rpc as rpc_module
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
@@ -16,8 +17,11 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
     clear_heartbeat,
     clear_heartbeat_for_session,
     compress_session,
+    execute_slash_command,
     gateway_detailed_health,
     observe_turn_activity,
+    observe_turn_outcome,
+    observe_turn_progress,
     submit_turn,
     submit_visible_turn,
 )
@@ -25,9 +29,7 @@ from scitex_agent_container.runtimes._hermes_tui_rpc import (
 
 def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
     # Arrange
-    (tmp_path / GATEWAY_FILE).write_text(
-        json.dumps({"port": 43123}), encoding="utf-8"
-    )
+    (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": 43123}), encoding="utf-8")
     (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
     seen = []
 
@@ -54,9 +56,7 @@ def test_detailed_health_is_authenticated_and_returns_readiness_json(tmp_path):
 
 def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
     # Arrange
-    (tmp_path / GATEWAY_FILE).write_text(
-        json.dumps({"port": 43123}), encoding="utf-8"
-    )
+    (tmp_path / GATEWAY_FILE).write_text(json.dumps({"port": 43123}), encoding="utf-8")
     (tmp_path / "hermes-api.key").write_text("secret-token-1234", encoding="utf-8")
 
     def open_(_request, timeout):
@@ -71,7 +71,9 @@ def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
     # Act
     try:
         gateway_detailed_health(tmp_path, urlopen_fn=open_)
-    except HermesTuiRpcError as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
+    except (
+        HermesTuiRpcError
+    ) as exc:  # stx-allow: test-capture (reason: STX-TQ002 splits Act from Assert.)
         observed = str(exc)
     else:
         observed = ""
@@ -103,11 +105,20 @@ class _Socket:
                     {
                         "id": "live-1",
                         "title": "sac:hub",
+                        "message_count": 12,
+                        "last_active": 44.0,
                         **({"status": self.status} if self.status else {}),
                     }
                 ]
             },
             "session.activate": {"id": "live-1"},
+            "session.events.since": {
+                "events": [],
+                "latest_seq": 17,
+                "truncated": False,
+                "epoch": "epoch-1",
+                "open_requests": [],
+            },
             "prompt.submit": {"status": "steered"},
             "session.steer": {"status": "queued", "text": "act now"},
         }[method]
@@ -159,6 +170,203 @@ class _VisibleSocket:
         else:  # pragma: no cover - a new RPC is itself a test failure
             raise AssertionError(method)
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+class _ClarifySocket:
+    def __init__(self, *, pending=True, malformed=False):
+        self.sent = []
+        self.pending = pending
+        self.malformed = malformed
+        self.answers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def send(self, raw):
+        self.sent.append(json.loads(raw))
+
+    def recv(self):
+        request = self.sent[-1]
+        method = request["method"]
+        if method == "session.active_list":
+            result = {
+                "sessions": [
+                    {
+                        "id": "live-clarify",
+                        "title": "sac:hub",
+                        "status": "waiting" if self.pending else "idle",
+                    }
+                ]
+            }
+        elif method == "session.activate":
+            result = {"session_id": "live-clarify", "status": "waiting"}
+            if self.pending:
+                choices = "not-a-list" if self.malformed else ["Yes", "No"]
+                result["pending_clarify"] = {
+                    "request_id": "req-1",
+                    "questions": [
+                        {
+                            "qid": "q0",
+                            "question": "Fix the footer?",
+                            "choices": choices,
+                            "multi_select": False,
+                        },
+                        {
+                            "qid": "q1",
+                            "question": "How should auth be audited?",
+                            "choices": ["vault", "public", "route"],
+                            "multi_select": False,
+                        },
+                    ],
+                }
+        elif method == "clarify.respond":
+            params = request["params"]
+            self.answers[params["question_id"]] = params["answer"]
+            remaining = [qid for qid in ("q0", "q1") if qid not in self.answers]
+            if not remaining:
+                self.pending = False
+            result = {"status": "ok", "remaining": remaining}
+        else:  # pragma: no cover - a new RPC is itself a test failure
+            raise AssertionError(method)
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def test_observe_pending_clarification_returns_typed_questions(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    pending = rpc_module.observe_pending_clarification(
+        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+    )
+
+    # Assert
+    assert (
+        pending.request_id,
+        pending.session_id,
+        [(q.qid, q.question, q.choices, q.multi_select) for q in pending.questions],
+    ) == (
+        "req-1",
+        "live-clarify",
+        [
+            ("q0", "Fix the footer?", ("Yes", "No"), False),
+            ("q1", "How should auth be audited?", ("vault", "public", "route"), False),
+        ],
+    )
+
+
+def test_observe_pending_clarification_returns_none_when_session_is_not_waiting(
+    tmp_path,
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket(pending=False)
+
+    # Act
+    pending = rpc_module.observe_pending_clarification(
+        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+    )
+
+    # Assert
+    assert pending is None
+
+
+def test_observe_pending_clarification_rejects_malformed_question(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket(malformed=True)
+
+    # Act
+    caught = pytest.raises(HermesTuiRpcError, match="malformed")
+
+    # Assert
+    with caught:
+        rpc_module.observe_pending_clarification(
+            tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+        )
+
+
+def test_respond_to_pending_clarification_uses_native_rpc_and_proves_closure(
+    tmp_path,
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    receipt = rpc_module.respond_to_pending_clarification(
+        tmp_path,
+        "hub",
+        request_id="req-1",
+        answers={"q0": "Yes", "q1": "route"},
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+
+    # Assert
+    assert (
+        receipt.request_id,
+        receipt.session_id,
+        receipt.answered_qids,
+        [r["method"] for r in socket.sent],
+    ) == (
+        "req-1",
+        "live-clarify",
+        ("q0", "q1"),
+        [
+            "session.active_list",
+            "session.activate",
+            "clarify.respond",
+            "clarify.respond",
+            "session.activate",
+        ],
+    )
+
+
+def test_respond_to_pending_clarification_refuses_stale_request_id(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    caught = pytest.raises(HermesTuiRpcError, match="request changed")
+
+    # Assert
+    with caught:
+        rpc_module.respond_to_pending_clarification(
+            tmp_path,
+            "hub",
+            request_id="stale-request",
+            answers={"q0": "Yes", "q1": "route"},
+            connect_fn=lambda *args, **kwargs: socket,
+        )
+
+
+def test_stale_clarification_request_does_not_submit_any_answer(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    try:
+        rpc_module.respond_to_pending_clarification(
+            tmp_path,
+            "hub",
+            request_id="stale-request",
+            answers={"q0": "Yes", "q1": "route"},
+            connect_fn=lambda *args, **kwargs: socket,
+        )
+    except HermesTuiRpcError:
+        pass
+
+    # Assert
+    assert [r["method"] for r in socket.sent] == [
+        "session.active_list",
+        "session.activate",
+    ]
 
 
 class _SearchResponse:
@@ -227,9 +435,7 @@ class _CompressionSocket(_Socket):
         request = self.sent[-1]
         if request["method"] == "session.compress":
             result = self.result
-            return json.dumps(
-                {"jsonrpc": "2.0", "id": request["id"], "result": result}
-            )
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
         return super().recv()
 
 
@@ -298,6 +504,7 @@ def test_compress_session_fails_closed_without_proven_reduction(tmp_path, result
     # Arrange
     _gateway_files(tmp_path)
     socket = _CompressionSocket(result=result)
+
     # Act
     def action():
         compress_session(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
@@ -400,9 +607,7 @@ def test_clear_heartbeat_resolves_named_session_without_model_turn(tmp_path):
     socket = _ControlSocket(None)
 
     # Act
-    status = clear_heartbeat(
-        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
-    )
+    status = clear_heartbeat(tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket)
 
     # Assert
     assert (
@@ -423,9 +628,7 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
     socket = _Socket(status="working")
 
     # Act
-    receipt = submit_turn(
-        tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket
-    )
+    receipt = submit_turn(tmp_path, "hub", "act now", connect_fn=lambda *a, **k: socket)
 
     # Assert
     assert (
@@ -443,6 +646,125 @@ def test_submit_turn_targets_same_live_session_and_accepts_steer(tmp_path):
             "text": "act now",
         },
     )
+
+
+def test_execute_slash_command_uses_command_plane_not_prompt_submit(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class SlashSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "slash.exec":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"output": "Switched model."},
+                    }
+                )
+            return super().recv()
+
+    socket = SlashSocket(status="idle")
+
+    # Act
+    receipt = execute_slash_command(
+        tmp_path,
+        "hub",
+        "/model qwen38-27b --provider custom:sac-qwen38-27b --session",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+
+    # Assert
+    assert (
+        receipt.output,
+        receipt.progress.message_count,
+        [request["method"] for request in socket.sent],
+        socket.sent[-3]["params"],
+    ) == (
+        "Switched model.",
+        12,
+        [
+            "session.active_list",
+            "slash.exec",
+            "session.active_list",
+            "session.events.since",
+        ],
+        {
+            "session_id": "live-1",
+            "command": ("/model qwen38-27b --provider custom:sac-qwen38-27b --session"),
+        },
+    )
+
+
+def test_observe_turn_progress_uses_non_activating_live_registry(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _Socket(status="idle")
+    # Act
+    progress = observe_turn_progress(
+        tmp_path,
+        "hub",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    # Assert
+    assert (
+        progress.message_count,
+        progress.last_active,
+        progress.status,
+        [request["method"] for request in socket.sent],
+    ) == (
+        12,
+        44.0,
+        "idle",
+        ["session.active_list"],
+    )
+
+
+def test_observe_turn_outcome_reads_terminal_event_without_activation(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class OutcomeSocket(_Socket):
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] == "session.events.since":
+                return json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "events": [
+                                {
+                                    "type": "message.complete",
+                                    "seq": 18,
+                                    "payload": {"status": "error"},
+                                }
+                            ],
+                            "latest_seq": 18,
+                            "truncated": False,
+                            "epoch": "epoch-1",
+                            "open_requests": [],
+                        },
+                    }
+                )
+            return super().recv()
+
+    socket = OutcomeSocket(status="idle")
+    # Act
+    outcome = observe_turn_outcome(
+        tmp_path,
+        "hub",
+        after_seq=17,
+        expected_epoch="epoch-1",
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+    # Assert
+    assert (
+        outcome.terminal_status,
+        [request["method"] for request in socket.sent],
+        socket.sent[-1]["params"]["last_seen"],
+    ) == ("error", ["session.active_list", "session.events.since"], 17)
 
 
 def test_explicit_queue_uses_hermes_next_turn_queue_not_active_steer(tmp_path):
@@ -523,6 +845,7 @@ def test_active_default_never_accepts_hermes_next_turn_queue_as_steer(tmp_path):
         ["session.active_list", "session.steer"],
     )
 
+
 def test_session_selection_refuses_ambiguous_gateway():
     # Arrange
     rows = [{"id": "one", "title": "other"}, {"id": "two", "title": "another"}]
@@ -547,7 +870,14 @@ def test_active_sessions_is_observation_only(tmp_path):
 
     # Assert
     assert (rows, [row["method"] for row in socket.sent]) == (
-        [{"id": "live-1", "title": "sac:hub"}],
+        [
+            {
+                "id": "live-1",
+                "title": "sac:hub",
+                "message_count": 12,
+                "last_active": 44.0,
+            }
+        ],
         ["session.active_list"],
     )
 
@@ -667,7 +997,11 @@ def test_visible_busy_turn_is_proven_as_native_steer(tmp_path):
     )
 
     # Assert
-    assert (receipt.status, receipt.visibility, socket.sent[2]["params"]["render_user_message"]) == (
+    assert (
+        receipt.status,
+        receipt.visibility,
+        socket.sent[2]["params"]["render_user_message"],
+    ) == (
         "steered",
         "session.inflight.corrections",
         True,
