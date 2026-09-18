@@ -141,9 +141,13 @@ class _Env:
 
 
 @pytest.fixture
-def sdk_env():
-    """Yield an ``_Env`` helper; all mutations auto-revert on teardown."""
+def sdk_env(tmp_path):
+    """Yield an isolated env helper; all mutations auto-revert on teardown."""
     env = _Env()
+    # build_sdk_options externalises per-agent MCP configs below HOME. A shared
+    # runner HOME lets xdist workers using the same fixture agent name replace
+    # each other's returned config path after build (CI py3.13 #35285758037).
+    env.setenv("HOME", str(tmp_path / "home"))
     try:
         yield env
     finally:
