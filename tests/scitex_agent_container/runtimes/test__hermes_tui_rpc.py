@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scitex_agent_container.runtimes import _hermes_tui_rpc as rpc_module
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
@@ -169,6 +170,203 @@ class _VisibleSocket:
         else:  # pragma: no cover - a new RPC is itself a test failure
             raise AssertionError(method)
         return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+class _ClarifySocket:
+    def __init__(self, *, pending=True, malformed=False):
+        self.sent = []
+        self.pending = pending
+        self.malformed = malformed
+        self.answers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def send(self, raw):
+        self.sent.append(json.loads(raw))
+
+    def recv(self):
+        request = self.sent[-1]
+        method = request["method"]
+        if method == "session.active_list":
+            result = {
+                "sessions": [
+                    {
+                        "id": "live-clarify",
+                        "title": "sac:hub",
+                        "status": "waiting" if self.pending else "idle",
+                    }
+                ]
+            }
+        elif method == "session.activate":
+            result = {"session_id": "live-clarify", "status": "waiting"}
+            if self.pending:
+                choices = "not-a-list" if self.malformed else ["Yes", "No"]
+                result["pending_clarify"] = {
+                    "request_id": "req-1",
+                    "questions": [
+                        {
+                            "qid": "q0",
+                            "question": "Fix the footer?",
+                            "choices": choices,
+                            "multi_select": False,
+                        },
+                        {
+                            "qid": "q1",
+                            "question": "How should auth be audited?",
+                            "choices": ["vault", "public", "route"],
+                            "multi_select": False,
+                        },
+                    ],
+                }
+        elif method == "clarify.respond":
+            params = request["params"]
+            self.answers[params["question_id"]] = params["answer"]
+            remaining = [qid for qid in ("q0", "q1") if qid not in self.answers]
+            if not remaining:
+                self.pending = False
+            result = {"status": "ok", "remaining": remaining}
+        else:  # pragma: no cover - a new RPC is itself a test failure
+            raise AssertionError(method)
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def test_observe_pending_clarification_returns_typed_questions(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    pending = rpc_module.observe_pending_clarification(
+        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+    )
+
+    # Assert
+    assert (
+        pending.request_id,
+        pending.session_id,
+        [(q.qid, q.question, q.choices, q.multi_select) for q in pending.questions],
+    ) == (
+        "req-1",
+        "live-clarify",
+        [
+            ("q0", "Fix the footer?", ("Yes", "No"), False),
+            ("q1", "How should auth be audited?", ("vault", "public", "route"), False),
+        ],
+    )
+
+
+def test_observe_pending_clarification_returns_none_when_session_is_not_waiting(
+    tmp_path,
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket(pending=False)
+
+    # Act
+    pending = rpc_module.observe_pending_clarification(
+        tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+    )
+
+    # Assert
+    assert pending is None
+
+
+def test_observe_pending_clarification_rejects_malformed_question(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket(malformed=True)
+
+    # Act
+    caught = pytest.raises(HermesTuiRpcError, match="malformed")
+
+    # Assert
+    with caught:
+        rpc_module.observe_pending_clarification(
+            tmp_path, "hub", connect_fn=lambda *args, **kwargs: socket
+        )
+
+
+def test_respond_to_pending_clarification_uses_native_rpc_and_proves_closure(
+    tmp_path,
+):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    receipt = rpc_module.respond_to_pending_clarification(
+        tmp_path,
+        "hub",
+        request_id="req-1",
+        answers={"q0": "Yes", "q1": "route"},
+        connect_fn=lambda *args, **kwargs: socket,
+    )
+
+    # Assert
+    assert (
+        receipt.request_id,
+        receipt.session_id,
+        receipt.answered_qids,
+        [r["method"] for r in socket.sent],
+    ) == (
+        "req-1",
+        "live-clarify",
+        ("q0", "q1"),
+        [
+            "session.active_list",
+            "session.activate",
+            "clarify.respond",
+            "clarify.respond",
+            "session.activate",
+        ],
+    )
+
+
+def test_respond_to_pending_clarification_refuses_stale_request_id(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    caught = pytest.raises(HermesTuiRpcError, match="request changed")
+
+    # Assert
+    with caught:
+        rpc_module.respond_to_pending_clarification(
+            tmp_path,
+            "hub",
+            request_id="stale-request",
+            answers={"q0": "Yes", "q1": "route"},
+            connect_fn=lambda *args, **kwargs: socket,
+        )
+
+
+def test_stale_clarification_request_does_not_submit_any_answer(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    socket = _ClarifySocket()
+
+    # Act
+    try:
+        rpc_module.respond_to_pending_clarification(
+            tmp_path,
+            "hub",
+            request_id="stale-request",
+            answers={"q0": "Yes", "q1": "route"},
+            connect_fn=lambda *args, **kwargs: socket,
+        )
+    except HermesTuiRpcError:
+        pass
+
+    # Assert
+    assert [r["method"] for r in socket.sent] == [
+        "session.active_list",
+        "session.activate",
+    ]
 
 
 class _SearchResponse:

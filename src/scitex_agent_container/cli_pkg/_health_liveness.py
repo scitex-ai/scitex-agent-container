@@ -63,6 +63,11 @@ def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, 
         if delivery is not None
         else "unknown"
     )
+    if process_verdict == "dead":
+        return {
+            "state": "unhealthy",
+            "message": message if not is_healthy else f"unhealthy: {process_detail}",
+        }
     if process_verdict == "unknown":
         if delivery_verdict == "alive":
             return {

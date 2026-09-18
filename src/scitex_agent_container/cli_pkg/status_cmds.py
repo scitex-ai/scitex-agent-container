@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as json_mod
 import os
 import sys
+import time
 
 import click
 from rich.table import Table
@@ -429,6 +430,47 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
+        try:
+            from .._state.authoritative_heartbeat import classify_resident_state
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            beat = next(
+                (
+                    value
+                    for value in latest_authoritative_heartbeats()
+                    if value.get("agent_id") == name
+                ),
+                None,
+            )
+            if beat is not None:
+                process_evidence = beat.get("_process_alive")
+                process_alive = (
+                    process_evidence if isinstance(process_evidence, bool) else None
+                )
+                resident_state = classify_resident_state(
+                    beat,
+                    now=time.time(),
+                    process_alive=process_alive,
+                    federation_connected=bool(beat.get("_federation_connected")),
+                    progress_stale_s=120.0,
+                )
+                healthy = resident_state in {"idle", "active", "blocked"}
+                payload = {
+                    "name": name,
+                    "healthy": healthy,
+                    "message": f"authoritative heartbeat: {resident_state}",
+                    "resident_state": resident_state,
+                    "heartbeat": beat,
+                }
+                if use_json:
+                    click.echo(json_mod.dumps(payload, indent=2))
+                else:
+                    console.print(payload["message"])
+                if not healthy:
+                    sys.exit(1)
+                return
+        except Exception:  # stx-allow: fallback (reason: an unavailable shared heartbeat store falls through to the existing explicit not-found verdict)
+            pass
         if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:
@@ -440,12 +482,46 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         config = load_config(entry["config"])
     except Exception as exc:  # stx-allow: fallback (reason: catch-all safety net — see inline comment for context)
         if use_json:
-            click.echo(json_mod.dumps({"error": str(exc)}))
+            from ._health_liveness import health_summary
+
+            try:
+                status_snapshot = agent_status(name, registry)
+                liveness = status_snapshot.get("liveness") or {}
+            except Exception:  # stx-allow: fallback (reason: failed status observation is itself UNKNOWN, never DEAD)
+                liveness = {"evidence": []}
+            summary = health_summary(
+                False,
+                f"health unknown: config validation failed ({exc})",
+                liveness,
+            )
+            click.echo(
+                json_mod.dumps(
+                    {
+                        "name": name,
+                        "healthy": False,
+                        "health_state": summary["state"],
+                        "message": summary["message"],
+                        "error": str(exc),
+                        "liveness": liveness,
+                    }
+                )
+            )
         else:
             console.print(f"[red]Error loading config: {exc}[/red]")
         sys.exit(1)
 
     is_healthy, message = health_check(config)
+    resident_state = None
+    resident_heartbeat = None
+    try:
+        status_snapshot = agent_status(name, registry)
+        resident_state = status_snapshot.get("resident_state")
+        resident_heartbeat = status_snapshot.get("heartbeat")
+        if resident_state in {"stalled", "disconnected", "dead"}:
+            is_healthy = False
+            message = f"unhealthy: authoritative heartbeat is {resident_state}"
+    except Exception:  # stx-allow: fallback (status observation failure leaves the existing runtime health verdict unchanged)
+        pass
 
     # REGISTERED IS NOT REACHABLE. ``health_check`` asks "is the process
     # up?" — a deaf agent (one whose inbox adapter is not subscribed to the
@@ -508,6 +584,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "liveness": liveness,
                     "overlay_masking": overlay_masking,
                     "engine": engine,
+                    "resident_state": resident_state,
+                    "heartbeat": resident_heartbeat,
                 },
                 indent=2,
             )

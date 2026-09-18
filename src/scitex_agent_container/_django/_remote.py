@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -236,23 +235,15 @@ class RemoteFleet:
             raise FleetUnavailableError(self.base_url, str(exc)) from exc
 
     def read_statuses(self, names: list[str]) -> dict[str, dict[str, Any] | Exception]:
-        """Read independent agent observations concurrently.
-
-        Failures are returned per-name (never raised) so one dead agent degrades
-        to an explicit row without taking the whole fleet page down.
-        """
-        if not names:
+        """Project requested statuses from one enriched ``GET /agents`` read."""
+        wanted = set(names)
+        if not wanted:
             return {}
-        results: dict[str, dict[str, Any] | Exception] = {}
-        with ThreadPoolExecutor(max_workers=min(16, len(names))) as pool:
-            futures = {pool.submit(self.read_status, name): name for name in names}
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    results[name] = future.result()
-                except Exception as exc:  # surfaced as an explicit row by the view
-                    results[name] = exc
-        return results
+        return {
+            str(row["name"]): row
+            for row in self.list_all()
+            if isinstance(row.get("name"), str) and row["name"] in wanted
+        }
 
     # ── mutations (delegated to the authenticated listener) ─────────────────
     def lifecycle(self, name: str, action: str) -> dict[str, Any]:

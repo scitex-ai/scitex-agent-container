@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shlex
 import subprocess
 import time
@@ -59,6 +60,10 @@ class TuiKeystrokeDropError(RuntimeError):
     submitting an empty Enter (which the TUI would treat as "no input"
     and the operator would see as "agent ignored the prompt").
     """
+
+
+class TmuxPasteError(RuntimeError):
+    """Raised when tmux cannot load or atomically paste a text buffer."""
 
 
 class TmuxManager:
@@ -351,25 +356,57 @@ class TmuxManager:
         text: str,
         *,
         runner: Callable[..., object] = subprocess.run,
+        buffer_name: str | None = None,
     ) -> None:
-        """Paste ``text`` into the pane LITERALLY (``send-keys -l``), NO submit.
+        """Atomically bracket-paste ``text`` into the pane, without submitting.
 
-        The ``-l`` (literal) flag is REQUIRED for the containerized Ink/React
-        ``claude`` TUI: without it the TUI silently DROPS the keystrokes (the
-        pane stays byte-identical, nothing lands). Source-verified recovery
-        recipe: ``_skills/scitex-agent-container/45_agent-to-agent-recovery-
-        tmux.md`` — ``-l`` for TEXT, then a SEPARATE named ``Enter`` (never
-        ``-l``) to submit. Submit-free by design so the caller can send that
-        ``Enter`` ONLY once the pane is idle (see
-        :func:`runtimes._tui_compose.verify_submit_by_advancement`), never into
-        the BUSY boot window where the Ink TUI eats it. ``runner`` is an
-        injection seam (tests pass a recording callable — no mocks).
+        ``send-keys -l`` still emits one input event per character. A live
+        Codex redraw interleaved those events with its own input handling and
+        corrupted a 2.2 KiB task while tmux reported success. Loading the
+        payload through stdin keeps it out of argv/process listings; one
+        ``paste-buffer -p -r`` presents it as one bracketed-paste transaction
+        without translating embedded LF bytes. A unique named buffer prevents
+        concurrent deliveries from overwriting each other. Submission remains
+        a separate, verified Enter.
         """
-        runner(
-            ["tmux", "send-keys", "-t", exact_target(session_name), "-l", text],
+        name = buffer_name or f"sac-paste-{os.getpid()}-{secrets.token_hex(8)}"
+        loaded = runner(
+            ["tmux", "load-buffer", "-b", name, "-"],
+            input=text,
+            text=True,
             check=False,
             capture_output=True,
         )
+        if getattr(loaded, "returncode", 0) != 0:
+            runner(
+                ["tmux", "delete-buffer", "-b", name],
+                check=False,
+                capture_output=True,
+            )
+            raise TmuxPasteError("tmux could not load the TUI paste buffer")
+        try:
+            pasted = runner(
+                [
+                    "tmux",
+                    "paste-buffer",
+                    "-p",
+                    "-r",
+                    "-b",
+                    name,
+                    "-t",
+                    exact_target(session_name),
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if getattr(pasted, "returncode", 0) != 0:
+                raise TmuxPasteError("tmux could not bracket-paste into the TUI pane")
+        finally:
+            runner(
+                ["tmux", "delete-buffer", "-b", name],
+                check=False,
+                capture_output=True,
+            )
 
     @staticmethod
     def send_text_and_submit(
@@ -382,12 +419,10 @@ class TmuxManager:
     ) -> None:
         """Send message text LITERALLY, let the TUI settle, then press Enter.
 
-        Preferred over ``send_keys(session, text + "\\r")``: tmux treats a
-        trailing ``\\r`` as raw input and Claude Code's TUI drops it during an
-        active re-render ("text arrived but submit never fired"). Sends the text
-        first LITERALLY (``-l``, via :meth:`send_text_literal`, so the
-        containerized Ink TUI does not silently drop it), settles, then issues a
-        separate ``Enter`` keystroke (a named key, NEVER ``-l``).
+        Preferred over ``send_keys(session, text + "\\r")``: text is loaded
+        through stdin and atomically delivered with ``paste-buffer -p`` so a
+        TUI redraw cannot interleave with a long prompt. It then settles and
+        issues a separate named ``Enter`` keystroke.
 
         ``settle_s`` (``None`` → ``_DEFAULT_SUBMIT_SETTLE_S``,
         ``SAC_SUBMIT_SETTLE_S``-overridable) is the text→Enter gap; ``sleep_fn``

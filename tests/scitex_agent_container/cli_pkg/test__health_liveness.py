@@ -81,3 +81,15 @@ def test_observed_live_process_remains_healthy() -> None:
 
     # Assert
     assert result == {"state": "healthy", "message": "healthy"}
+
+
+def test_direct_dead_process_overrides_legacy_healthy_bool() -> None:
+    # Arrange
+    liveness = _liveness(overall="dead", process="dead", delivery="alive")
+    # Act
+    result = health_summary(True, "healthy", liveness)
+    # Assert
+    assert result == {
+        "state": "unhealthy",
+        "message": "unhealthy: process probe: dead",
+    }

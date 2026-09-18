@@ -678,9 +678,12 @@ def test_health_load_config_failure_json_mentions_validation(tmp_path, tmp_regis
     # Act
     result = runner.invoke(health, ["bad2", "--json"])
     payload = json.loads(result.stdout)
-    # Assert -- production catches the load_config exception and surfaces
-    # its message in the ``error`` field.
-    assert "validation failed" in payload["error"]
+    # Assert -- config failure is explicit UNKNOWN, not a guessed dead process.
+    assert (
+        "validation failed" in payload["error"],
+        payload["health_state"],
+        payload["healthy"],
+    ) == (True, "unknown", False)
 
 
 def test_health_unhealthy_json_exits_one(tmp_path, tmp_registry):
