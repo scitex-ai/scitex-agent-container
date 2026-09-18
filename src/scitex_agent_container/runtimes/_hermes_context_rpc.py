@@ -37,11 +37,11 @@ def reconcile_pending_transition(
     *,
     timeout_s: float = 10.0,
     connect_fn: Any | None = None,
-) -> None:
+) -> str | None:
     """Recover a crash-interrupted replacement without closing both sessions."""
     path = state_dir / _PENDING_TRANSITION_FILE
     if not path.exists():
-        return
+        return None
     try:
         journal = json.loads(path.read_text(encoding="utf-8"))
         old_id = str(journal.get("old_session_id") or "").strip()
@@ -58,7 +58,7 @@ def reconcile_pending_transition(
         raise HermesTuiRpcError("Hermes transition reconciliation returned malformed sessions")
     old_present = any(row.get("id") == old_id for row in rows)
     candidates = [
-        str(row.get("id") or "").strip()
+        row
         for row in rows
         if row.get("title") == title and row.get("id") != old_id
     ]
@@ -66,10 +66,45 @@ def reconcile_pending_transition(
         raise HermesTuiRpcError("Hermes transition journal resolved multiple fresh candidates")
     if old_present and candidates:
         _close_failed_candidate(
-            state_dir, candidates[0], timeout_s=timeout_s, connect_fn=connect_fn
+            state_dir,
+            str(candidates[0].get("id") or ""),
+            timeout_s=timeout_s,
+            connect_fn=connect_fn,
         )
-    # old+candidate means rollback completed; old absent means the cut committed.
-    # old-only/no-live means there is no candidate left to leak.
+    if old_present:
+        _clear_transition_journal(state_dir)
+        return ""
+    replacement = str(journal.get("fresh_stored_id") or "").strip()
+    if not replacement and candidates:
+        replacement = str(
+            candidates[0].get("session_key")
+            or candidates[0].get("resolved_id")
+            or ""
+        ).strip()
+    if not replacement:
+        raise HermesTuiRpcError(
+            "Hermes committed transition has no fresh stored-session identity"
+        )
+    return replacement
+
+
+def complete_pending_transition(state_dir: Path, session: dict) -> None:
+    """Clear a committed journal only after the owner attached its fresh session."""
+    path = state_dir / _PENDING_TRANSITION_FILE
+    if not path.exists():
+        return
+    try:
+        journal = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise HermesTuiRpcError(f"Hermes transition journal is unreadable: {exc}") from exc
+    expected = str(journal.get("fresh_stored_id") or "").strip()
+    actual = str(session.get("session_key") or session.get("resolved_id") or "").strip()
+    live_id = str(session.get("id") or "").strip()
+    old_id = str(journal.get("old_session_id") or "").strip()
+    if not expected or actual != expected or not live_id or live_id == old_id:
+        raise HermesTuiRpcError(
+            "Hermes owner did not attach the journaled fresh session"
+        )
     _clear_transition_journal(state_dir)
 
 
@@ -541,6 +576,7 @@ def _close_failed_candidate(
 
 __all__ = [
     "close_session",
+    "complete_pending_transition",
     "reconcile_pending_transition",
     "replace_session_from_handoff",
     "session_handoff_facts",

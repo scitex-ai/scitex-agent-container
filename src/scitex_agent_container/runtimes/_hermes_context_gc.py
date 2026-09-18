@@ -20,6 +20,7 @@ ACTIVE_CARD_FILE = "hermes-active-card.json"
 FRESH_NEXT_TASK_FILE = "hermes-fresh-next-task.json"
 LIFECYCLE_LOCK_FILE = "hermes-context-lifecycle.lock"
 CONSUMED_COMPLETIONS_FILE = "hermes-consumed-completions.json"
+OWNED_SESSION_FILE = "hermes-owned-session.json"
 _EXPLICIT_CARD_RE = re.compile(
     r"\b(?:card|part\s+of)\s+([a-z0-9]+(?:-[a-z0-9]+)+)", re.IGNORECASE
 )
@@ -133,6 +134,7 @@ def _record_inbound_task_event(
     kind = str(extra.get("card_event_kind") or "").strip()
     owner = str(extra.get("card_event_owner") or "").strip()
     delivery_id = str(event.get("msg_id") or "").strip()
+    delivery_session_id = str(event.get("_hermes_delivery_session_id") or "").strip()
     active_path = state_dir / ACTIVE_CARD_FILE
     fresh_path = state_dir / FRESH_NEXT_TASK_FILE
     try:
@@ -152,7 +154,12 @@ def _record_inbound_task_event(
         # card already selected locally; reconciliation independently reads
         # the exact authenticated Cards row before any session mutation.
         consumed = _consumed_completion_ids(state_dir)
-        if was_active and delivery_id and delivery_id not in consumed:
+        if (
+            was_active
+            and delivery_id
+            and delivery_session_id
+            and delivery_id not in consumed
+        ):
             _write_handoff(
                 fresh_path,
                 {
@@ -160,6 +167,7 @@ def _record_inbound_task_event(
                     "delivery_id": delivery_id,
                     "owner": owner,
                     "reason": "task-completed",
+                    "session_id": delivery_session_id,
                     "was_active": was_active,
                 },
             )
@@ -442,6 +450,7 @@ def _consume_completion_boundary(
             or marker.get("reason") != "task-completed"
             or not str(marker.get("card_id") or "").strip()
             or not str(marker.get("delivery_id") or "").strip()
+            or not str(marker.get("session_id") or "").strip()
             or marker.get("was_active") is not True
         ):
             raise HermesContextGcRefused("fresh-next-task marker is malformed")
@@ -450,13 +459,10 @@ def _consume_completion_boundary(
                 "a newer active card exists; refusing stale completion boundary"
             )
         bound_session = str(marker.get("session_id") or "").strip()
-        if bound_session and bound_session != live_id:
+        if bound_session != live_id:
             _mark_completion_consumed(state_dir, str(marker["delivery_id"]))
             fresh_marker.unlink(missing_ok=True)
             return None
-        if not bound_session:
-            marker = {**marker, "session_id": live_id}
-            _write_handoff(fresh_marker, marker)
         completed_card = card_by_id_reader(str(marker["card_id"]))
         current_owner = str(
             completed_card.get("owner")

@@ -11,6 +11,7 @@ import pytest
 
 from scitex_agent_container.runtimes import _hermes_tui_rpc as rpc_module
 from scitex_agent_container.runtimes._hermes_context_rpc import (
+    complete_pending_transition,
     reconcile_pending_transition,
     replace_session_from_handoff,
     stored_session_for_title,
@@ -374,14 +375,73 @@ def test_startup_reconciliation_rolls_back_fresh_when_old_is_live(tmp_path):
     close_socket = Socket({})
     sockets = iter((listing_socket, close_socket))
     # Act
-    reconcile_pending_transition(
+    replacement = reconcile_pending_transition(
         tmp_path, connect_fn=lambda *_args, **_kwargs: next(sockets)
     )
     # Assert
     assert (
         journal.exists(),
         close_socket.sent[-1]["params"],
-    ) == (False, {"session_id": "fresh-live"})
+        replacement,
+    ) == (False, {"session_id": "fresh-live"}, "")
+
+
+def test_startup_reconciliation_returns_committed_fresh_stored_id(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    journal = tmp_path / "hermes-context-transition.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "fresh_stored_id": "fresh-stored",
+                "fresh_title": "sac:hub:handoff:nonce123",
+                "old_session_id": "old-live",
+                "phase": "proven",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            result = {
+                "sessions": [
+                    {
+                        "id": "fresh-live",
+                        "session_key": "fresh-stored",
+                        "title": "sac:hub:handoff:nonce123",
+                    }
+                ]
+            }
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    # Act
+    replacement = reconcile_pending_transition(
+        tmp_path, connect_fn=lambda *_args, **_kwargs: Socket()
+    )
+    remained_until_attach = journal.exists()
+    complete_pending_transition(
+        tmp_path, {"id": "fresh-live", "session_key": "fresh-stored"}
+    )
+    # Assert
+    assert (replacement, remained_until_attach, journal.exists()) == (
+        "fresh-stored",
+        True,
+        False,
+    )
 
 
 def test_missing_nonce_proof_never_closes_old_session(tmp_path):
