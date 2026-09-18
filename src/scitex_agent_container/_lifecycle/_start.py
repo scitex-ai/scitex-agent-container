@@ -336,11 +336,12 @@ def agent_start(
 
             retract_marker_for(config.name)
             return NOOP_ALREADY_RUNNING
-    elif force and registry.exists(config.name):
-        # UNKNOWN/WEDGED may still hide a live process. Apply the same
-        # successor-auth protection as the positively ALIVE branch before any
-        # force-stop; a stale registry row is not evidence that teardown is
-        # harmless.
+    elif force and not dry_run:
+        # UNKNOWN/WEDGED may still hide a live process even when the registry
+        # row is absent. Apply the same successor-auth protection as the
+        # positively ALIVE branch before every destructive force path; registry
+        # absence is not evidence that teardown is harmless because runtimes
+        # such as TUI can discover and stop their live session directly.
         from ._restart_preflight import assert_successor_auth_usable
 
         _auth_check = successor_auth_check or assert_successor_auth_usable

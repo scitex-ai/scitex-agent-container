@@ -107,6 +107,11 @@ def agent_stop(
     """
     registry = registry or Registry()
     entry = registry.get(name)
+    if entry is None and config_override is not None:
+        entry = {
+            "name": name,
+            "config": str(getattr(config_override, "config_path", "") or ""),
+        }
     if entry is None:
         resolver = config_resolver
         if resolver is None:

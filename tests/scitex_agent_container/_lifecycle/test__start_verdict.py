@@ -408,6 +408,46 @@ def test_force_unknown_refuses_unusable_successor_before_stop(
     )
 
 
+def test_force_unknown_without_registry_refuses_successor_before_runtime_stop(
+    pg_schema: str, tmp_path, registry
+) -> None:
+    # Arrange — no registry row, but the TUI/runtime may still discover a live
+    # session and honour force=True destructively inside runtime.start.
+    spec = _write_spec(tmp_path)
+    runtime = _Runtime(running=True, start_result=True)
+    unknown = decide(
+        "alpha",
+        [Signal(SOURCE_PROCESS, UNKNOWN, "probe unreadable", INSTRUMENT_HOST_TMUX)],
+    )
+
+    def refuse_successor(_config) -> None:
+        raise RuntimeError("successor-auth-refused")
+
+    # Act
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            force=True,
+            runtime_factory=lambda _config: runtime,
+            handover_mod=_Handover(),
+            sleep_fn=_no_sleep,
+            verdict_override=unknown,
+            successor_auth_check=refuse_successor,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        message = "not_refused"
+    # Assert
+    assert (
+        message,
+        runtime.stop_calls,
+        runtime.start_calls,
+        runtime._running,
+    ) == ("successor-auth-refused", [], [], True)
+
+
 def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry):
     # Arrange
     spec = _write_spec(tmp_path)
