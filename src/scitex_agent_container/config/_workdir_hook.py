@@ -25,7 +25,7 @@ def _writable_host_workdir(workdir: str, binds: Iterable[str]) -> Path | None:
     later declaration wins an exact-prefix tie, matching the argv ordering.
     """
     normalized = PurePosixPath(workdir)
-    if not normalized.is_absolute():
+    if not normalized.is_absolute() or ".." in normalized.parts:
         return None
     candidates: list[tuple[int, int, Path]] = []
     for index, raw in enumerate(binds):
@@ -33,7 +33,7 @@ def _writable_host_workdir(workdir: str, binds: Iterable[str]) -> Path | None:
         if not source or not destination or "ro" in mode.split(","):
             continue
         target = PurePosixPath(destination)
-        if not target.is_absolute():
+        if not target.is_absolute() or ".." in target.parts:
             continue
         try:
             relative = normalized.relative_to(target)

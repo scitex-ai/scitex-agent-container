@@ -49,3 +49,21 @@ def test_host_hook_shell_quotes_the_mapped_path() -> None:
     hook = mapped_workdir_mkdir_hook("/work", binds)
     # Assert
     assert hook == "mkdir -p '/scratch/canary workdir/.claude'"
+
+
+def test_parent_segments_cannot_escape_the_declared_bind() -> None:
+    # Arrange
+    binds = ["/scratch/canary/workdir:/work:rw"]
+    # Act
+    hook = mapped_workdir_mkdir_hook("/work/../outside", binds)
+    # Assert
+    assert hook is None
+
+
+def test_parent_segments_in_a_bind_destination_are_refused() -> None:
+    # Arrange
+    binds = ["/scratch/canary/workdir:/work/../outside:rw"]
+    # Act
+    hook = mapped_workdir_mkdir_hook("/work/../outside", binds)
+    # Assert
+    assert hook is None
