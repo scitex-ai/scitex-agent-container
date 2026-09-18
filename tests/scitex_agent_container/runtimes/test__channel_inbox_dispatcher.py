@@ -124,7 +124,8 @@ def test_completed_owned_card_marks_fresh_next_task_after_delivery(tmp_path):
         '{"card_id":"card-7"}', encoding="utf-8"
     )
     (tmp_path / "hermes-owned-session.json").write_text(
-        '{"live_session_id":"live-old"}', encoding="utf-8"
+        '{"live_session_id":"live-old","stored_session_id":"stored-old"}',
+        encoding="utf-8",
     )
 
     async def dispatch(event):

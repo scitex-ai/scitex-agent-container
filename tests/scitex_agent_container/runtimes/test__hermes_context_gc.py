@@ -146,6 +146,7 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
     event = {
         "msg_id": "delivery-1",
         "_hermes_delivery_session_id": "live-old",
+        "_hermes_delivery_stored_session_id": "stored-old",
         "kind": "card-event",
         "from_agent": "scitex-cards",
         "extra": {
@@ -164,6 +165,7 @@ def test_completed_owned_card_requests_fresh_next_task(tmp_path) -> None:
         "phase": "task-completed",
         "reason": "task-completed",
         "session_id": "live-old",
+        "stored_session_id": "stored-old",
         "was_active": True,
     }
 
@@ -235,12 +237,12 @@ def test_untrusted_peer_cannot_forge_a_completion_boundary(tmp_path) -> None:
     ) == (False, False)
 
 
-def test_new_assignment_invalidates_unconsumed_completion(tmp_path) -> None:
+def test_new_assignment_preserves_unconsumed_completion(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
         '"phase":"task-completed","reason":"task-completed",'
-        '"session_id":"old-live",'
+        '"session_id":"old-live","stored_session_id":"old-stored",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -259,7 +261,7 @@ def test_new_assignment_invalidates_unconsumed_completion(tmp_path) -> None:
     assert (
         (tmp_path / "hermes-fresh-next-task.json").exists(),
         json.loads((tmp_path / "hermes-active-card.json").read_text()),
-    ) == (False, {"card_id": "new-card"})
+    ) == (True, {"card_id": "new-card"})
 
 
 def test_compression_failure_canary_reaches_fresh_nonce_rotation(tmp_path) -> None:
@@ -314,7 +316,7 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
         '"phase":"task-completed","reason":"task-completed",'
-        '"session_id":"live-old",'
+        '"session_id":"live-old","stored_session_id":"stored-old",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -352,12 +354,60 @@ def test_task_completion_marker_closes_old_and_selects_fresh(tmp_path):
     ) == ("", ["live-old"], "closed-awaiting-fresh")
 
 
+def test_completion_closes_reattached_live_id_for_same_stored_context(tmp_path):
+    # Arrange
+    marker = {
+        "card_id": "card-1",
+        "delivery_id": "delivery-1",
+        "owner": "agent",
+        "phase": "task-completed",
+        "reason": "task-completed",
+        "session_id": "old-live",
+        "stored_session_id": "old-stored",
+        "was_active": True,
+    }
+    (tmp_path / "hermes-fresh-next-task.json").write_text(
+        json.dumps(marker), encoding="utf-8"
+    )
+    closed = []
+    # Act
+    replacement = context_gc.reconcile_context_lifecycle(
+        state_dir=tmp_path,
+        agent_name="agent",
+        workdir=tmp_path,
+        observed_session={
+            "id": "reattached-live",
+            "session_key": "old-stored",
+            "status": "idle",
+        },
+        close_live=lambda _state, session_id: closed.append(session_id),
+        transition_guard=lambda _state, _session: None,
+        card_by_id_reader=lambda _card_id: {
+            "id": "card-1",
+            "status": "done",
+            "owner": "agent",
+        },
+        worktree_reader=lambda *_args, **_kwargs: [
+            WorktreeFact(tmp_path, "abc", "fix/task", ())
+        ],
+    )
+    phase = json.loads(
+        (tmp_path / "hermes-fresh-next-task.json").read_text(encoding="utf-8")
+    )["phase"]
+    # Assert
+    assert (replacement, closed, phase) == (
+        "",
+        ["reattached-live"],
+        "closed-awaiting-fresh",
+    )
+
+
 def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"card-1","delivery_id":"delivery-1","owner":"agent",'
         '"phase":"task-completed","reason":"task-completed",'
-        '"session_id":"live",'
+        '"session_id":"live","stored_session_id":"stored",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -392,12 +442,12 @@ def test_completion_marker_refuses_dirty_worktree_before_close(tmp_path) -> None
     assert ("dirty worktree" in error, closed) == (True, [])
 
 
-def test_completion_marker_refuses_a_newer_active_card(tmp_path) -> None:
+def test_completion_boundary_survives_a_newer_active_card(tmp_path) -> None:
     # Arrange
     (tmp_path / "hermes-fresh-next-task.json").write_text(
         '{"card_id":"old","delivery_id":"delivery-old","owner":"agent",'
         '"phase":"task-completed","reason":"task-completed",'
-        '"session_id":"live",'
+        '"session_id":"live","stored_session_id":"stored",'
         '"was_active":true}',
         encoding="utf-8",
     )
@@ -406,20 +456,31 @@ def test_completion_marker_refuses_a_newer_active_card(tmp_path) -> None:
     )
     closed = []
     # Act
-    try:
-        context_gc.reconcile_context_lifecycle(
-            state_dir=tmp_path,
-            agent_name="agent",
-            workdir=tmp_path,
-            observed_session={"id": "live", "session_key": "stored", "status": "idle"},
-            close_live=lambda _state, session_id: closed.append(session_id),
-        )
-    except HermesContextGcRefused as exc:
-        error = str(exc)
-    else:
-        error = ""
+    replacement = context_gc.reconcile_context_lifecycle(
+        state_dir=tmp_path,
+        agent_name="agent",
+        workdir=tmp_path,
+        observed_session={"id": "live", "session_key": "stored", "status": "idle"},
+        close_live=lambda _state, session_id: closed.append(session_id),
+        transition_guard=lambda _state, _session: None,
+        card_by_id_reader=lambda _card_id: {
+            "id": "old",
+            "status": "done",
+            "owner": "agent",
+        },
+        worktree_reader=lambda *_args, **_kwargs: [
+            WorktreeFact(tmp_path, "abc", "fix/task", ())
+        ],
+    )
+    phase = json.loads(
+        (tmp_path / "hermes-fresh-next-task.json").read_text(encoding="utf-8")
+    )["phase"]
     # Assert
-    assert ("newer active card" in error, closed) == (True, [])
+    assert (replacement, closed, phase) == (
+        "",
+        ["live"],
+        "closed-awaiting-fresh",
+    )
 
 
 def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> None:
@@ -431,6 +492,7 @@ def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> 
         "phase": "closed-awaiting-fresh",
         "reason": "task-completed",
         "session_id": "old-live",
+        "stored_session_id": "old-stored",
         "was_active": True,
     }
     (tmp_path / "hermes-fresh-next-task.json").write_text(
@@ -448,6 +510,34 @@ def test_replayed_completion_bound_to_old_session_cannot_close_new(tmp_path) -> 
         (tmp_path / "hermes-fresh-next-task.json").exists(),
         consumed,
     ) == (False, {"delivery_ids": ["delivery-1"]})
+
+
+def test_reattached_same_stored_context_cannot_finalize_completion(tmp_path) -> None:
+    # Arrange
+    marker = {
+        "card_id": "card-1",
+        "delivery_id": "delivery-1",
+        "owner": "agent",
+        "phase": "closed-awaiting-fresh",
+        "reason": "task-completed",
+        "session_id": "old-live",
+        "stored_session_id": "old-stored",
+        "was_active": True,
+    }
+    marker_path = tmp_path / "hermes-fresh-next-task.json"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    # Act
+    try:
+        context_gc.complete_pending_completion(
+            tmp_path,
+            {"id": "reattached-live", "session_key": "old-stored"},
+        )
+    except HermesContextGcRefused as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert ("does not complete" in error, marker_path.exists()) == (True, True)
 
 
 def test_preclose_refuses_sha_drift_during_nonce_proof(tmp_path) -> None:

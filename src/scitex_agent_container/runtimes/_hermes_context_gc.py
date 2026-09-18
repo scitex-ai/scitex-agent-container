@@ -144,6 +144,9 @@ def _record_inbound_task_event(
     owner = str(extra.get("card_event_owner") or "").strip()
     delivery_id = str(event.get("msg_id") or "").strip()
     delivery_session_id = str(event.get("_hermes_delivery_session_id") or "").strip()
+    delivery_stored_id = str(
+        event.get("_hermes_delivery_stored_session_id") or ""
+    ).strip()
     active_path = state_dir / ACTIVE_CARD_FILE
     fresh_path = state_dir / FRESH_NEXT_TASK_FILE
     try:
@@ -167,6 +170,7 @@ def _record_inbound_task_event(
             was_active
             and delivery_id
             and delivery_session_id
+            and delivery_stored_id
             and delivery_id not in consumed
         ):
             _write_handoff(
@@ -178,6 +182,7 @@ def _record_inbound_task_event(
                     "phase": "task-completed",
                     "reason": "task-completed",
                     "session_id": delivery_session_id,
+                    "stored_session_id": delivery_stored_id,
                     "was_active": was_active,
                 },
             )
@@ -185,18 +190,8 @@ def _record_inbound_task_event(
         return
     if is_card_event and (not trusted_card_event or owner != agent_name):
         return
-    # A new assignment supersedes any unconsumed completion boundary. Removing
-    # it before publishing the active card makes stale completion fail closed.
-    stale_marker: dict = {}
-    try:
-        stale_marker = json.loads(fresh_path.read_text(encoding="utf-8"))
-        stale_delivery = str(stale_marker.get("delivery_id") or "").strip()
-    except (OSError, ValueError, TypeError):
-        stale_delivery = ""
-    stale_phase = str(stale_marker.get("phase") or "") if stale_delivery else ""
-    if stale_delivery and stale_phase not in {"closing", "closed-awaiting-fresh"}:
-        _mark_completion_consumed(state_dir, stale_delivery)
-        fresh_path.unlink(missing_ok=True)
+    # A later assignment never erases an unconsumed completion cut. The active
+    # card may advance, but the owner must still prove a fresh stored session.
     _write_handoff(active_path, {"card_id": card_id})
 
 
@@ -441,6 +436,7 @@ def _consume_completion_boundary(
     agent_name: str,
     workdir: Path,
     live_id: str,
+    stored_id: str,
     card_by_id_reader: Callable[[str], dict],
     worktree_reader: Callable[..., list[WorktreeFact]],
     transition_guard: Callable[[Path, str], None],
@@ -464,17 +460,14 @@ def _consume_completion_boundary(
             or not str(marker.get("card_id") or "").strip()
             or not str(marker.get("delivery_id") or "").strip()
             or not str(marker.get("session_id") or "").strip()
+            or not str(marker.get("stored_session_id") or "").strip()
             or marker.get("was_active") is not True
         ):
             raise HermesContextGcRefused("fresh-next-task marker is malformed")
-        if (state_dir / ACTIVE_CARD_FILE).exists():
-            raise HermesContextGcRefused(
-                "a newer active card exists; refusing stale completion boundary"
-            )
-        bound_session = str(marker.get("session_id") or "").strip()
-        if bound_session != live_id:
+        bound_stored = str(marker.get("stored_session_id") or "").strip()
+        if bound_stored != stored_id:
             _mark_completion_consumed(state_dir, str(marker["delivery_id"]))
-            fresh_marker.unlink(missing_ok=True)
+            _unlink_durable(fresh_marker)
             return None
         completed_card = card_by_id_reader(str(marker["card_id"]))
         current_owner = str(
@@ -496,7 +489,7 @@ def _consume_completion_boundary(
         completion_facts = worktree_reader(workdir, session_started_at=0)
         _validate_worktrees(completion_facts, workdir)
         marker_now = json.loads(fresh_marker.read_text(encoding="utf-8"))
-        if marker_now != marker or (state_dir / ACTIVE_CARD_FILE).exists():
+        if marker_now != marker:
             raise HermesContextGcRefused(
                 "completion boundary was superseded before close"
             )
@@ -523,11 +516,17 @@ def complete_pending_completion(state_dir: Path, session: dict) -> None:
                 f"completion boundary is unreadable during attachment: {exc}"
             ) from exc
         fresh_live_id = str(session.get("id") or "").strip()
+        fresh_stored_id = str(
+            session.get("session_key") or session.get("resolved_id") or ""
+        ).strip()
         old_live_id = str(marker.get("session_id") or "").strip()
+        old_stored_id = str(marker.get("stored_session_id") or "").strip()
         if (
             marker.get("phase") != "closed-awaiting-fresh"
             or not fresh_live_id
             or fresh_live_id == old_live_id
+            or not fresh_stored_id
+            or fresh_stored_id == old_stored_id
         ):
             raise HermesContextGcRefused(
                 "fresh session attachment does not complete the pending task boundary"
@@ -596,6 +595,7 @@ def reconcile_context_lifecycle(
             agent_name=agent_name,
             workdir=workdir,
             live_id=live_id,
+            stored_id=stored_id,
             card_by_id_reader=card_by_id_reader,
             worktree_reader=worktree_reader,
             transition_guard=transition_guard,
