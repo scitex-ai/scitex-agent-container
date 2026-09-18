@@ -328,6 +328,58 @@ def test_symlink_pool_file_is_rejected(tmp_path: Path, secrets_envrc: None) -> N
     assert read.trusted is False and "ZZ_SECRET" not in read.env
 
 
+def test_world_writable_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    unsafe = tmp_path / "unsafe-parent"
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
+    pool = unsafe / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_ANCESTOR=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_ANCESTOR" not in read.env
+
+
+def test_group_writable_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    unsafe = tmp_path / "unsafe-group-parent"
+    unsafe.mkdir(mode=0o770)
+    unsafe.chmod(0o770)
+    pool = unsafe / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_GROUP=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_GROUP" not in read.env
+
+
+def test_symlink_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir(mode=0o700)
+    pool = real_parent / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_LINK=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    link_parent = tmp_path / "linked-parent"
+    link_parent.symlink_to(real_parent, target_is_directory=True)
+    os.environ[_SECRETS_ENVRC_VAR] = str(link_parent / "pool.src")
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_LINK" not in read.env
+
+
 def test_world_writable_pool_file_is_rejected(
     tmp_path: Path, secrets_envrc: None
 ) -> None:

@@ -79,6 +79,7 @@ def agent_start(
     verdict_override: Any = None,
     in_sif_opener: Optional[Callable[..., Any]] = None,
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
+    config_override: AgentConfig | None = None,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -140,7 +141,10 @@ def agent_start(
     """
     config_path = resolve_config(config_path)
     registry = registry or Registry()
-    config = load_config(config_path)
+    config = config_override if config_override is not None else load_config(config_path)
+    from ..config._provider_preflight_proof import consume_provider_preflight_proof
+
+    consume_provider_preflight_proof(config)
 
     # SAC-from-SAC broker (operator-mandated 2026-06-01). When running
     # INSIDE an apptainer SIF, apptainer-in-apptainer is unsupported on
@@ -285,6 +289,7 @@ def agent_start(
                 force=True,
                 runtime_factory=runtime_factory,
                 handover_mod=handover_mod,
+                config_override=config,
             )
             forced_stop = True
             # Small grace period so the previous container is fully torn
@@ -322,6 +327,7 @@ def agent_start(
             force=True,
             runtime_factory=runtime_factory,
             handover_mod=handover_mod,
+            config_override=config,
         )
         forced_stop = True
 

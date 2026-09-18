@@ -63,6 +63,7 @@ from ..config._engine_types import (
 __all__ = [
     "EngineNotHonourableError",
     "check_engine_before_stop",
+    "check_engine_config_before_stop",
     "engine_probe_requested",
     "refusal_message",
     "select_engine_at_start",
@@ -295,6 +296,24 @@ def check_engine_before_stop(
     from ..config import load_config
 
     config = load_config(config_path)
+    check_engine_config_before_stop(
+        config,
+        requested,
+        probe=probe,
+        timeout_s=timeout_s,
+        log=log,
+    )
+
+
+def check_engine_config_before_stop(
+    config: Any,
+    requested: str | None = None,
+    *,
+    probe: bool | None = None,
+    timeout_s: float = PROBE_TIMEOUT_S,
+    log: bool = True,
+) -> None:
+    """Pre-stop engine check against an already proof-verified config."""
     select_engine_at_start(
         config, requested, probe=probe, timeout_s=timeout_s, log=log
     )

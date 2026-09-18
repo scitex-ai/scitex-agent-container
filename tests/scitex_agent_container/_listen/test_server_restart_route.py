@@ -246,6 +246,20 @@ def test_build_detached_argv_logs_to_file_not_devnull():
     assert _LOG in argv[-1] and "/dev/null" not in argv[-1]
 
 
+def test_build_detached_argv_redacts_child_output_before_log() -> None:
+    # Arrange
+    name = "agent-x"
+    # Act
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
+    # Assert
+    assert (
+        "agents start agent-x --force --json 2>&1 |" in argv[-1]
+        and "scitex_agent_container._listen._provider_output_redactor" in argv[-1]
+    )
+
+
 def test_build_detached_argv_names_the_agent_in_the_bounce():
     # Arrange
     name = "agent-x"
@@ -457,6 +471,46 @@ def test_sync_restart_receives_pool_only_provider_key(
 
     # Assert
     assert response.status_code == 200 and observed["key"] == "pool-only-restart-key"
+
+
+def test_sync_restart_redacts_provider_key_from_failed_child_output(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    import sys
+
+    name = "sync-provider-redaction"
+    secret = "pool-only-restart-key-redaction"
+    _install_approved_provider_agent(isolated_env, name)
+    pool = isolated_env / "provider-redaction-pool.src"
+    pool.write_text(f"OPENCODE_GO_API_KEY={secret}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    script = isolated_env / "fake-sac-redaction"
+    script.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "value = os.environ['OPENCODE_GO_API_KEY']\n"
+        "print(f'out={value}')\n"
+        "print(f'err={value}', file=sys.stderr)\n"
+        "sys.exit(7)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={},
+        )
+    payload = response.json()
+    # Assert
+    assert (
+        secret in response.text,
+        "[REDACTED]" in payload["stdout"],
+        "[REDACTED]" in payload["stderr"],
+    ) == (False, True, True)
 
 
 def test_detached_self_restart_receives_pool_only_provider_key(

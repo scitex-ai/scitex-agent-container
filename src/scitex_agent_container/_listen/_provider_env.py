@@ -15,6 +15,12 @@ from collections.abc import Mapping
 from starlette.responses import JSONResponse
 
 from ..config import AgentConfig, load_config
+from ..config._provider_preflight_proof import (
+    PROVIDER_PREFLIGHT_PROOF_ENV,
+    absent_provider_preflight_proof,
+    provider_preflight_proof,
+)
+from ..config._provider_secret_registry import REGISTERED_PROVIDER_SECRET_NAMES
 from ..config._qwen_gateway import (
     QwenGatewayTokenEnvError,
     qwen_gateway_token_env,
@@ -37,6 +43,66 @@ _STATIC_AUTHORIZED_PROVIDER_SECRETS = frozenset(
         ),
     }
 )
+
+# The listener is a privilege boundary, not a general-purpose environment
+# forwarder. Carry only operational context required by the child ``sac``
+# control process; provider credentials are added separately after exact tuple
+# authorization. This positive policy excludes the unbounded family of
+# interpreter/loader/tool hooks (BASH_ENV, PYTHONUSERBASE, LD_PRELOAD,
+# JAVA_TOOL_OPTIONS, SSH_ASKPASS, ...).
+_SAFE_CHILD_ENV_NAMES = frozenset(
+    {
+        "HOME",
+        "PATH",
+        "PWD",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "TERM",
+        "TMPDIR",
+        "TZ",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSH_AUTH_SOCK",
+        "CUDA_VISIBLE_DEVICES",
+        "ROCR_VISIBLE_DEVICES",
+        "SAC_SECRETS_ENVRC",
+        "SAC_ENGINES_FILE",
+        "SAC_QWEN_GATEWAY_URL",
+        "SAC_QWEN_GATEWAY_TOKEN_ENV",
+        "SAC_ENGINE_PROBE",
+        "SAC_ENGINE_MAX_CONTEXT_TOKENS",
+        "SAC_ENGINE_REASONING_EFFORT",
+        "SAC_ENGINE",
+        "SAC_NAME",
+        "SAC_INSTANCE_UUID",
+        "SAC_BUILD_NO_NICE",
+        "SAC_EVENT_LOG",
+        "SCITEX_AGENT_CONTAINER_YAML_DIRS",
+        "SCITEX_AGENT_CONTAINER_CONFIG",
+        "SCITEX_AGENT_CONTAINER_RUNTIME_DIR",
+        "SCITEX_AGENT_CONTAINER_REGISTRY_DIR",
+        "SCITEX_AGENT_CONTAINER_MODEL",
+        "SCITEX_DIR",
+        "SCITEX_STORE_DSN",
+        "SCITEX_CARDS_DB",
+        "PGPASSFILE",
+        "PGUSER",
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+    }
+)
+_SAFE_CHILD_ENV_PREFIXES = ("XDG_", "LC_", "SLURM_")
 
 
 def _authorized_provider_secrets() -> frozenset[tuple[str, str, str]]:
@@ -101,25 +167,77 @@ def provider_secret_env(
     return {env_name: value}
 
 
-def provider_secret_env_for_agent(
+def _operational_child_env(child_env: Mapping[str, str]) -> dict[str, str]:
+    """Return positive-policy control-plane env without provider credentials."""
+    return {
+        str(name): str(value)
+        for name, value in child_env.items()
+        if (
+            name in _SAFE_CHILD_ENV_NAMES
+            or name.startswith(_SAFE_CHILD_ENV_PREFIXES)
+        )
+        and name not in REGISTERED_PROVIDER_SECRET_NAMES
+        and name != PROVIDER_PREFLIGHT_PROOF_ENV
+    }
+
+
+def provider_child_env(
+    config: AgentConfig,
+    child_env: Mapping[str, str],
+    *,
+    pool: PoolRead | None = None,
+) -> dict[str, str]:
+    """Build broker child env from positive policy plus one selected secret."""
+    prepared = _operational_child_env(child_env)
+    prepared.update(provider_secret_env(config, child_env, pool=pool))
+    prepared[PROVIDER_PREFLIGHT_PROOF_ENV] = provider_preflight_proof(config)
+    return prepared
+
+
+def provider_secret_values(child_env: Mapping[str, str]) -> tuple[str, ...]:
+    """Return selected provider values only, longest first, for redaction."""
+    values = {
+        str(child_env.get(name) or "")
+        for name in REGISTERED_PROVIDER_SECRET_NAMES
+    }.difference({""})
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def redact_provider_secrets(text: str | None, child_env: Mapping[str, str]) -> str:
+    """Remove propagated provider values from child output before persistence."""
+    redacted = str(text or "")
+    for value in provider_secret_values(child_env):
+        redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
+
+
+def provider_child_env_for_agent(
     name: str,
     child_env: Mapping[str, str],
 ) -> dict[str, str]:
-    """Resolve ``name`` and return its declared provider-key overlay.
+    """Resolve ``name`` and return its complete preflighted child environment.
 
-    Spec lookup/load failures deliberately return no overlay: no pool lookup
-    occurs, so no secret can escape, and the child owns the canonical spec
-    diagnostic.  A successfully loaded provider spec is always preflighted.
+    A lookup/load failure carries an ABSENT proof and no provider credential.
+    If a spec is created or repaired before the child load, the child observes
+    a proof mismatch and refuses before lifecycle side effects.
     """
     try:
         config = load_config(resolve_with_prefix(name))
     except QwenGatewayTokenEnvError as exc:
         raise ProviderPreflightError("qwen_token_env_unregistered") from exc
-    except (
-        Exception
-    ):  # stx-allow: fallback (the canonical child start reports spec failures)
-        return {}
-    return provider_secret_env(config, child_env)
+    except Exception:  # stx-allow: fallback (an absent/invalid spec is bound as ABSENT; the child retains the canonical diagnostic if it remains unreadable)
+        prepared = _operational_child_env(child_env)
+        prepared[PROVIDER_PREFLIGHT_PROOF_ENV] = absent_provider_preflight_proof(name)
+        return prepared
+    return provider_child_env(config, child_env)
+
+
+def provider_secret_env_for_agent(
+    name: str,
+    child_env: Mapping[str, str],
+) -> dict[str, str]:
+    """Compatibility alias for the now-complete broker child environment."""
+    return provider_child_env_for_agent(name, child_env)
 
 
 def provider_preflight_refusal(
@@ -144,7 +262,11 @@ def provider_preflight_refusal(
 
 __all__ = [
     "ProviderPreflightError",
+    "provider_child_env",
+    "provider_child_env_for_agent",
     "provider_preflight_refusal",
+    "provider_secret_values",
+    "redact_provider_secrets",
     "provider_secret_env",
     "provider_secret_env_for_agent",
 ]

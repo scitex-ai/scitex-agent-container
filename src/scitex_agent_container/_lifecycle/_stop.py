@@ -73,6 +73,7 @@ def agent_stop(
     drain_timeout_s: float = 0.0,
     allow_active_turn_kill: bool | None = None,
     managed_turn_probe: Optional[Callable[[AgentConfig], Any]] = None,
+    config_override: AgentConfig | None = None,
 ) -> bool:
     """Stop a running agent by name.
 
@@ -122,23 +123,26 @@ def agent_stop(
             ) from exc
         entry = {"name": name, "config": config_path}
 
-    # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
-    try:
-        config = load_config(entry["config"])
-    except Exception as validation_error:  # stx-allow: fallback (reason: an upgraded validator must not strand an already-running process)
+    if config_override is not None:
+        config = config_override
+    else:
+        # stx-allow: fallback (reason: YAML file may have been deleted while the agent was registered; force-stop must succeed even without a config)
         try:
-            config = _load_config_for_teardown(entry["config"], name)
-        except Exception:  # stx-allow: fallback (reason: an absent/unparseable spec leaves no safe runtime target; force may release only the stale registry row)
-            if not force:
-                raise validation_error
-            registry.remove(name)
-            return True
-        logger.warning(
-            "Stopping %s from its registered v3 spec despite current launch "
-            "validation failure: %s",
-            name,
-            validation_error,
-        )
+            config = load_config(entry["config"])
+        except Exception as validation_error:  # stx-allow: fallback (reason: an upgraded validator must not strand an already-running process)
+            try:
+                config = _load_config_for_teardown(entry["config"], name)
+            except Exception:  # stx-allow: fallback (reason: an absent/unparseable spec leaves no safe runtime target; force may release only the stale registry row)
+                if not force:
+                    raise validation_error
+                registry.remove(name)
+                return True
+            logger.warning(
+                "Stopping %s from its registered v3 spec despite current launch "
+                "validation failure: %s",
+                name,
+                validation_error,
+            )
 
     runtime_factory = runtime_factory or _get_runtime
     runtime = runtime_factory(config)
@@ -358,7 +362,7 @@ def agent_restart(
     handover_mod: Any = None,
     config_resolver: Optional[Callable[[str], str]] = None,
     wait_for_stop_timeout_s: float = _DEFAULT_WAIT_FOR_STOP_TIMEOUT_S,
-    successor_auth_check: Optional[Callable[[str], None]] = None,
+    successor_auth_check: Optional[Callable[[AgentConfig], None]] = None,
     thread_factory: Callable[..., Any] = threading.Thread,
     engine_override: str | None = None,
     probe_engine: bool | None = None,
@@ -489,6 +493,15 @@ def agent_restart(
                 f"agent once via 'sac agents start' so a registry row exists."
             ) from exc
 
+    # Consume the listener's immutable proof before any stop side effect and
+    # retain this exact resolved config for the start leg.  Re-loading the path
+    # after teardown would re-open the preflight→stop→load race and could leave
+    # the old agent down on a mismatch.
+    restart_config = load_config(config_path)
+    from ..config._provider_preflight_proof import consume_provider_preflight_proof
+
+    consume_provider_preflight_proof(restart_config)
+
     # PRE-STOP auth pre-flight (INCIDENT
     # incident-agent-self-restart-one-way-20260712). Resolve + PROBE the
     # credential the SUCCESSOR container will launch on BEFORE stopping. A
@@ -505,10 +518,10 @@ def agent_restart(
     # restart (both shell ``sac agents restart`` → here); the self-restart
     # bounce (``sac agents start --force``, PR #628) is covered by the twin
     # check in ``agent_start``'s force branch. Injectable for tests.
-    from ._restart_preflight import preflight_from_config_path
+    from ._restart_preflight import preflight_from_config
 
-    _auth_check = successor_auth_check or preflight_from_config_path
-    _auth_check(config_path)
+    _auth_check = successor_auth_check or preflight_from_config
+    _auth_check(restart_config)
 
     # PRE-STOP ENGINE CHECK, and it belongs in this window for the SAME
     # reason the credential pre-flight above does. ``agent_start`` refuses
@@ -519,9 +532,11 @@ def agent_restart(
     # (one typo) would have bought exactly that. Refusing here leaves the
     # OLD process UP and re-startable, which is the whole point of the
     # one-way-trip guard this stands beside.
-    from ._engine_select import check_engine_before_stop
+    from ._engine_select import check_engine_config_before_stop
 
-    check_engine_before_stop(config_path, engine_override, probe=probe_engine)
+    check_engine_config_before_stop(
+        restart_config, engine_override, probe=probe_engine
+    )
 
     # force=True so a missing/stale registry row never blocks the kill —
     # this is what makes restart == the manual stop+start recipe even for
@@ -537,6 +552,7 @@ def agent_restart(
         # state; it is NOT operator consent to kill an active model turn.
         allow_active_turn_kill=False,
         managed_turn_probe=managed_turn_probe,
+        config_override=restart_config,
     )
     # Escalate (SIGKILL) or RAISE — never "proceed to start anyway" into a
     # collision this gate already knows is coming. See ._stop_escalate.
@@ -548,6 +564,7 @@ def agent_restart(
         runtime_factory=runtime_factory,
         sleep_fn=sleep_fn,
         timeout_s=wait_for_stop_timeout_s,
+        config_override=restart_config,
     )
     # ``assume_yes=True`` — a restart is an ALREADY-authorized action: the
     # ``sac agents restart`` CLI refuses without ``-y`` (see
@@ -602,6 +619,7 @@ def agent_restart(
         engine_override=engine_override,
         probe_engine=probe_engine,
         runtime_factory=runtime_factory,
+        config_override=restart_config,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,
         # Forwarded so a test can keep the health monitor from spawning a

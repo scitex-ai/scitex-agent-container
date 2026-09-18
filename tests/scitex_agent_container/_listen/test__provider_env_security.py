@@ -8,10 +8,16 @@ import yaml
 
 from scitex_agent_container._listen._provider_env import (
     ProviderPreflightError,
+    provider_child_env,
+    provider_child_env_for_agent,
     provider_secret_env,
+    redact_provider_secrets,
 )
 from scitex_agent_container.config import AgentConfig, load_config
 from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
+from scitex_agent_container.config._provider_preflight_proof import (
+    PROVIDER_PREFLIGHT_PROOF_ENV,
+)
 from scitex_agent_container.config._provider_types import ProviderSpec
 from scitex_agent_container.config._qwen_gateway import (
     DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
@@ -282,3 +288,59 @@ def test_untrusted_pool_cannot_supply_provider_key() -> None:
 
     # Assert
     assert category == "provider_pool_untrusted"
+
+
+def test_child_env_admits_only_operational_env_and_selected_provider_key() -> None:
+    # Arrange
+    child_env = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/agent",
+        "SCITEX_DIR": "/srv/scitex-state",
+        "SAC_BROKER_SELF_TEST_CANARY": "keep",
+        "SAC_LISTEN_BEARER": "must-not-cross",
+        "CCT_BOT_TOKEN": "must-not-cross",
+        "BASH_ENV": "/tmp/execute.sh",
+        "PYTHONUSERBASE": "/tmp/execute-python",
+        _APPROVED_ENV: "inherited-selected",
+        "SAC_LOCAL_GPTOSS_KEY": "unselected-qwen",
+        "SCITEX_GENAI_GATEWAY_API_KEY": "unselected-gateway",
+    }
+    pool = PoolRead(env={}, trusted=True)
+    # Act
+    prepared = provider_child_env(_config(), child_env, pool=pool)
+    # Assert
+    assert prepared == {
+        "PATH": "/usr/bin",
+        "HOME": "/home/agent",
+        "SCITEX_DIR": "/srv/scitex-state",
+        _APPROVED_ENV: "inherited-selected",
+        PROVIDER_PREFLIGHT_PROOF_ENV: prepared[PROVIDER_PREFLIGHT_PROOF_ENV],
+    }
+
+
+def test_absent_config_preflight_cannot_admit_later_process_control_env() -> None:
+    # Arrange
+    child_env = {"PATH": "/usr/bin", "BASH_ENV": "/tmp/execute.sh"}
+    # Act
+    prepared = provider_child_env_for_agent(
+        "provider-config-that-does-not-exist", child_env
+    )
+    # Assert
+    assert (
+        prepared.get("PATH"),
+        "BASH_ENV" in prepared,
+        prepared[PROVIDER_PREFLIGHT_PROOF_ENV].startswith("v1:absent:"),
+    ) == ("/usr/bin", False, True)
+
+
+def test_provider_secret_values_are_redacted_from_child_output() -> None:
+    # Arrange
+    text = "start failed key=high-entropy-provider-value"
+    child_env = {
+        _APPROVED_ENV: "high-entropy-provider-value",
+        "PATH": "/usr/bin",
+    }
+    # Act
+    redacted = redact_provider_secrets(text, child_env)
+    # Assert
+    assert redacted == "start failed key=[REDACTED]"

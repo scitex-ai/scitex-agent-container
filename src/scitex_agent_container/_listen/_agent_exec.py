@@ -228,12 +228,14 @@ async def agents_start(request: Request) -> JSONResponse:
     # missing so the child start refuses; there is no provider fallback.
     from ._provider_env import (
         ProviderPreflightError,
+        provider_child_env_for_agent,
         provider_preflight_refusal,
-        provider_secret_env_for_agent,
+        provider_secret_values,
+        redact_provider_secrets,
     )
 
     try:
-        child_env.update(provider_secret_env_for_agent(name, child_env))
+        child_env = provider_child_env_for_agent(name, child_env)
     except ProviderPreflightError as exc:
         return provider_preflight_refusal(name, exc)
     # Consent-propagation fix (2026-07-05, paper-scitex-clew report): set
@@ -308,7 +310,12 @@ async def agents_start(request: Request) -> JSONResponse:
     except asyncio.TimeoutError:
         # Still queued behind the boot gate, or the start subprocess is still
         # running. ACCEPTED, outcome unknown — never a failure code.
-        detach_launch(launch, name=name, started_at=started_at)
+        detach_launch(
+            launch,
+            name=name,
+            started_at=started_at,
+            redaction_values=provider_secret_values(child_env),
+        )
         return JSONResponse(
             accepted_payload(name, phase="launch", deadline_s=AGENT_START_DEADLINE_S),
             status_code=202,
@@ -323,6 +330,8 @@ async def agents_start(request: Request) -> JSONResponse:
             {"name": name, "error": f"{type(exc).__name__}: {exc}"},
             status_code=500,
         )
+    stdout = redact_provider_secrets(proc.stdout, child_env)
+    stderr = redact_provider_secrets(proc.stderr, child_env)
     if proc.returncode != 0:
         # PR-1 — stillborn agent observability. The subprocess can exit
         # non-zero for many reasons, including apptainer FATAL on a bind
@@ -347,8 +356,8 @@ async def agents_start(request: Request) -> JSONResponse:
                 started_at=started_at,
                 phase="container_creation",
                 exit_code=proc.returncode,
-                stdout=proc.stdout,
-                stderr=proc.stderr,
+                stdout=stdout,
+                stderr=stderr,
             )
         except Exception:  # stx-allow: fallback (reason: see inline comment)
             pass
@@ -367,19 +376,19 @@ async def agents_start(request: Request) -> JSONResponse:
         # ``declined`` is computed ONCE and passed in rather than being
         # re-derived inside the classifier, so the body's field and the
         # status code can never disagree about the same output.
-        declined = start_was_declined(proc.stdout, proc.stderr)
+        declined = start_was_declined(stdout, stderr)
         failure = classify_start_failure(
             returncode=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=stdout,
+            stderr=stderr,
             declined=declined,
         )
         return JSONResponse(
             {
                 "name": name,
                 "returncode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "stdout": stdout,
+                "stderr": stderr,
                 "declined": declined,
                 "kind": failure.kind,
                 "hint": failure.hint,
@@ -425,8 +434,8 @@ async def agents_start(request: Request) -> JSONResponse:
             {
                 "name": name,
                 "returncode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "stdout": stdout,
+                "stderr": stderr,
             },
             status_code=200,
         )
@@ -478,8 +487,8 @@ async def agents_start(request: Request) -> JSONResponse:
                 started_at=started_at,
                 phase="post_ack_liveness",
                 exit_code=0,
-                stdout=proc.stdout or "",
-                stderr=(proc.stderr or "")
+                stdout=stdout,
+                stderr=stderr
                 + f"\n\n[listen post-ack liveness probe] {kind}: {hint}\n",
                 kind_override=kind,
             )
@@ -489,8 +498,8 @@ async def agents_start(request: Request) -> JSONResponse:
             {
                 "name": name,
                 "returncode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "stdout": stdout,
+                "stderr": stderr,
                 "post_ack_liveness": {"kind": kind, "hint": hint},
             },
             status_code=502,
@@ -500,8 +509,8 @@ async def agents_start(request: Request) -> JSONResponse:
         {
             "name": name,
             "returncode": proc.returncode,
-            "stdout": proc.stdout,
-            "stderr": proc.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
         },
         status_code=200,
     )

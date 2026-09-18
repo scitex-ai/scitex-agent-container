@@ -152,7 +152,22 @@ def _tail(text: str, limit: int = 400) -> str:
     return "..." + flattened[-limit:]
 
 
-async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
+def _redact(text: str | None, values: tuple[str, ...]) -> str:
+    """Remove immutable provider values from detached diagnostics."""
+    redacted = str(text or "")
+    for value in values:
+        if value:
+            redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
+
+
+async def _verify_post_ack(
+    name: str,
+    *,
+    started_at: str,
+    proc: Any,
+    redaction_values: tuple[str, ...] = (),
+) -> None:
     """Run the SAME post-ack liveness probe the synchronous path runs.
 
     Reached only for a detached launch that exited 0. ``rc == 0`` from
@@ -232,8 +247,8 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
             started_at=started_at,
             phase="post_ack_liveness",
             exit_code=0,
-            stdout=getattr(proc, "stdout", "") or "",
-            stderr=(getattr(proc, "stderr", "") or "")
+            stdout=_redact(getattr(proc, "stdout", ""), redaction_values),
+            stderr=_redact(getattr(proc, "stderr", ""), redaction_values)
             + f"\n\n[listen post-ack liveness probe] {kind}: {hint}\n",
             kind_override=kind,
         )
@@ -243,7 +258,7 @@ async def _verify_post_ack(name: str, *, started_at: str, proc: Any) -> None:
             "launch's outcome is UNRECORDED; poll /agents/%s/status.",
             name,
             type(exc).__name__,
-            exc,
+            _redact(str(exc), redaction_values),
             name,
         )
 
@@ -254,7 +269,11 @@ def _on_verify_done(task: "asyncio.Task") -> None:
 
 
 def _schedule_post_ack_verification(
-    name: str, *, started_at: str, proc: Any
+    name: str,
+    *,
+    started_at: str,
+    proc: Any,
+    redaction_values: tuple[str, ...] = (),
 ) -> None:
     """Kick the blocking liveness probe OFF the done-callback's thread.
 
@@ -268,7 +287,12 @@ def _schedule_post_ack_verification(
     try:
         loop = asyncio.get_running_loop()
         task = loop.create_task(
-            _verify_post_ack(name, started_at=started_at, proc=proc)
+            _verify_post_ack(
+                name,
+                started_at=started_at,
+                proc=proc,
+                redaction_values=redaction_values,
+            )
         )
     except RuntimeError as exc:  # stx-allow: fallback (reason: the loop is gone or closing — e.g. the daemon is shutting down; nothing can be scheduled, and RAISING here would surface as an opaque "Exception in callback". The line below reaches the daemon's stderr, which systemd captures into `journalctl -u sac-listen` at WARNING instead.)
         logger.warning(
@@ -282,7 +306,13 @@ def _schedule_post_ack_verification(
     task.add_done_callback(_on_verify_done)
 
 
-def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None:
+def _on_launch_done(
+    task: "asyncio.Task",
+    *,
+    name: str,
+    started_at: str,
+    redaction_values: tuple[str, ...] = (),
+) -> None:
     """Done callback: drop the strong ref, then RECORD the outcome.
 
     Every terminal outcome now leaves a trace. A failing rc writes the marker as
@@ -304,41 +334,55 @@ def _on_launch_done(task: "asyncio.Task", *, name: str, started_at: str) -> None
         return
     exc = task.exception()
     if exc is not None:
+        redacted_exc = _redact(str(exc), redaction_values)
         logger.warning(
             "spawn_detach: the detached launch of %r raised %s: %s",
             name,
             type(exc).__name__,
-            exc,
+            redacted_exc,
         )
         _write_launch_marker(
             name,
             started_at=started_at,
             exit_code=-1,
             stdout="",
-            stderr=f"{type(exc).__name__}: {exc}",
+            stderr=f"{type(exc).__name__}: {redacted_exc}",
         )
         return
     proc: Any = task.result()
     returncode = getattr(proc, "returncode", None)
+    stdout = _redact(getattr(proc, "stdout", ""), redaction_values)
+    stderr = _redact(getattr(proc, "stderr", ""), redaction_values)
     logger.warning(
         "spawn_detach: detached launch of %r finished rc=%s (stderr tail: %s)",
         name,
         returncode,
-        _tail(getattr(proc, "stderr", "") or "") or "<empty>",
+        _tail(stderr) or "<empty>",
     )
     if returncode not in (0, None):
         _write_launch_marker(
             name,
             started_at=started_at,
             exit_code=int(returncode),
-            stdout=getattr(proc, "stdout", "") or "",
-            stderr=getattr(proc, "stderr", "") or "",
+            stdout=stdout,
+            stderr=stderr,
         )
         return
-    _schedule_post_ack_verification(name, started_at=started_at, proc=proc)
+    _schedule_post_ack_verification(
+        name,
+        started_at=started_at,
+        proc=proc,
+        redaction_values=redaction_values,
+    )
 
 
-def detach_launch(task: "asyncio.Task", *, name: str, started_at: str) -> None:
+def detach_launch(
+    task: "asyncio.Task",
+    *,
+    name: str,
+    started_at: str,
+    redaction_values: tuple[str, ...] = (),
+) -> None:
     """Adopt ``task`` so it survives the handler that started it.
 
     Called ONLY when the handler has already decided to answer 202. Holds a
@@ -358,5 +402,10 @@ def detach_launch(task: "asyncio.Task", *, name: str, started_at: str) -> None:
         len(_INFLIGHT),
     )
     task.add_done_callback(
-        lambda t: _on_launch_done(t, name=name, started_at=started_at)
+        lambda t: _on_launch_done(
+            t,
+            name=name,
+            started_at=started_at,
+            redaction_values=redaction_values,
+        )
     )

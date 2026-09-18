@@ -210,6 +210,37 @@ def _restart(registry: Registry, runtime: _RecordingRuntime, engine: str | None)
     )
 
 
+def test_restart_uses_proof_verified_config_after_postproof_spec_swap(
+    tmp_path: Path, registry: Registry, pg_schema: str
+) -> None:
+    # Arrange
+    spec_path = _write_spec(tmp_path)
+    registry.add("alpha", str(spec_path), "cld-alpha")
+    runtime = _RecordingRuntime(running=True)
+    original_workdir = str(tmp_path / "work")
+
+    def swap_spec_after_proof(_config: Any) -> None:
+        swapped = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        swapped["spec"]["workdir"] = str(tmp_path / "attacker-work")
+        spec_path.write_text(yaml.safe_dump(swapped, sort_keys=False), encoding="utf-8")
+
+    # Act
+    ok = lc.agent_restart(
+        "alpha",
+        registry=registry,
+        runtime_factory=lambda _config: runtime,
+        sleep_fn=_no_sleep,
+        handover_mod=_FakeHandover(),
+        successor_auth_check=swap_spec_after_proof,
+    )
+    observed = [
+        str(config.expanded_workdir)
+        for config in [*runtime.stop_calls, *runtime.start_calls]
+    ]
+    # Assert
+    assert (ok, observed) == (True, [original_workdir, original_workdir])
+
+
 # ---------------------------------------------------------------------------
 # An engine that cannot be honoured
 # ---------------------------------------------------------------------------

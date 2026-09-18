@@ -184,12 +184,41 @@ def _open_secret_fd(path: Path, flags: int) -> int:
     return os.open(path, flags)
 
 
+def _validate_secret_ancestors(path: Path) -> None:
+    """Require every replaceable ancestor to be trusted and non-writable.
+
+    Filesystem root is not replaceable and is excluded. A trusted-owner sticky
+    directory is the one narrow exception to the write-bit rule: sticky
+    semantics prevent another user from replacing this user's child entry and
+    are required by standard temporary roots used for atomic staging/tests.
+    """
+    trusted_uids = {_effective_uid(), 0}
+    current = path.parent
+    while current != current.parent:
+        try:
+            observed = os.lstat(current)
+        except OSError as exc:
+            raise SecretPoolFileError("secret_ancestor_unavailable") from exc
+        if stat.S_ISLNK(observed.st_mode):
+            raise SecretPoolFileError("secret_ancestor_symlink")
+        if not stat.S_ISDIR(observed.st_mode):
+            raise SecretPoolFileError("secret_ancestor_not_directory")
+        if observed.st_uid not in trusted_uids:
+            raise SecretPoolFileError("secret_ancestor_owner")
+        mode = stat.S_IMODE(observed.st_mode)
+        sticky_owner_boundary = bool(mode & stat.S_ISVTX)
+        if mode & 0o022 and not sticky_owner_boundary:
+            raise SecretPoolFileError("secret_ancestor_permissions")
+        current = current.parent
+
+
 def _read_secret_file_secure(path: Path) -> dict[str, str]:
     """Read one canonical owner-only regular file through its verified fd."""
     candidate = path.expanduser()
     if not candidate.is_absolute():
         raise SecretPoolFileError("secret_file_noncanonical")
     absolute = Path(os.path.abspath(candidate))
+    _validate_secret_ancestors(absolute)
     try:
         canonical = candidate.resolve(strict=True)
     except OSError as exc:

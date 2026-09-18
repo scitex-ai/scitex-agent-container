@@ -254,6 +254,106 @@ def test_agents_start_propagates_declared_provider_key_from_approved_pool(
     )
 
 
+def test_agents_start_preserves_relocated_scitex_dir_for_child_resolution(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import json
+    import sys
+
+    repo = Path(__file__).resolve().parents[3]
+    scitex_dir = tmp_path / "relocated-scitex"
+    spec = scitex_dir / "agent-container/agents/relocated-child/spec.yaml"
+    spec.parent.mkdir(parents=True)
+    scitex_dir.chmod(0o700)
+    spec.write_text(
+        (repo / "examples/providers/opencode-go-hermes.yaml").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    pool = scitex_dir / "provider-pool.src"
+    pool.write_text("OPENCODE_GO_API_KEY=relocated-provider-key\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SCITEX_DIR", str(scitex_dir))
+    env_save_restore.delete("SCITEX_AGENT_CONTAINER_YAML_DIRS")
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    env_save_restore.set("SAC_LISTEN_POST_ACK_LIVENESS_TIMEOUT_S", "0")
+    bin_dir = tmp_path / "relocated-bin"
+    bin_dir.mkdir()
+    env_log = bin_dir / "relocated-env.json"
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!{sys.executable}\nimport json, os\n"
+        f"open({str(env_log)!r}, 'w').write(json.dumps({{"
+        "'scitex_dir': os.environ.get('SCITEX_DIR'), "
+        "'provider': os.environ.get('OPENCODE_GO_API_KEY')}))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "relocated-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    observed = (
+        json.loads(env_log.read_text(encoding="utf-8"))
+        if env_log.exists()
+        else {"response": response.text}
+    )
+    # Assert
+    assert (response.status_code, observed) == (
+        200,
+        {"scitex_dir": str(scitex_dir), "provider": "relocated-provider-key"},
+    )
+
+
+def test_agents_start_redacts_provider_key_from_failed_child_output(
+    isolated_listen_env, env_save_restore, tmp_path: Path
+) -> None:
+    # Arrange
+    import sys
+
+    secret = "test-only-provider-key-redaction"
+    _install_opencode_agent_spec(tmp_path, env_save_restore)
+    pool = tmp_path / "provider-redaction.src"
+    pool.write_text(f"OPENCODE_GO_API_KEY={secret}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    bin_dir = tmp_path / "provider-redaction-bin"
+    bin_dir.mkdir()
+    script = bin_dir / "sac"
+    script.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "value = os.environ['OPENCODE_GO_API_KEY']\n"
+        "print(f'failed with {value}', file=sys.stderr)\n"
+        "sys.exit(41)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    env_save_restore.set("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    app = create_app(token=_TOKEN)
+    # Act
+    with TestClient(app) as client:
+        response = client.post(
+            "/agents",
+            json={"name": "broker-child"},
+            headers={"authorization": f"Bearer {_TOKEN}"},
+        )
+    payload = response.json()
+    # Assert
+    assert (secret in response.text, "[REDACTED]" in payload["stderr"]) == (
+        False,
+        True,
+    )
+
+
 def _install_host_qwen_agent_spec(tmp_path: Path, env_save_restore) -> None:
     repo = Path(__file__).resolve().parents[3]
     registry = tmp_path / "agents"
@@ -653,15 +753,13 @@ def test_agents_start_strips_singularity_container_env_from_child(
     assert recorded["SINGULARITY_CONTAINER"] is None
 
 
-def test_agents_start_preserves_unrelated_env_vars_to_child(
+def test_agents_start_drops_unrelated_env_vars_from_child(
     isolated_listen_env, env_save_restore, tmp_path: Path
 ) -> None:
-    """The strip MUST be surgical — only the two in-SIF markers.
+    """The broker boundary must not forward arbitrary process environment.
 
-    Stripping everything else would orphan downstream env-dependent
-    behavior (credentials, account routing, channel bearer, etc.).
-    Pin one canary unrelated var to guard against an over-broad
-    fix (e.g. accidentally passing env={} or os.environ.clear()).
+    Operational names use an explicit allowlist and the selected provider key
+    is added separately; an unrelated SAC-prefixed canary must not cross.
     """
     # Arrange
     import json
@@ -697,7 +795,7 @@ def test_agents_start_preserves_unrelated_env_vars_to_child(
         )
     recorded = json.loads(env_log.read_text().splitlines()[-1])
     # Assert
-    assert recorded["CANARY"] == "must-survive-strip"
+    assert recorded["CANARY"] is None
 
 
 # ---------------------------------------------------------------------------

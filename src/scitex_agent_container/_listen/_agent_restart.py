@@ -42,6 +42,7 @@ import math
 import os
 import shlex
 import subprocess
+import sys
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -106,12 +107,20 @@ def _build_detached_restart_argv(
         bounce.append("--fresh")
     bounce.append("--json")
     bounce_str = " ".join(shlex.quote(tok) for tok in bounce)
+    redactor = " ".join(
+        (
+            shlex.quote(sys.executable),
+            "-m",
+            "scitex_agent_container._listen._provider_output_redactor",
+        )
+    )
     marker = shlex.quote(
         f"=== sac self-restart name={name} fresh={fresh} delay={int(delay_s)}s ==="
     )
     inner = (
         f"sleep {int(delay_s)}; "
-        f"( echo {marker}; date -Is; {bounce_str} ) >> {shlex.quote(log_path)} 2>&1"
+        f"( echo {marker}; date -Is; {bounce_str} 2>&1 | {redactor} ) "
+        f">> {shlex.quote(log_path)} 2>&1"
     )
     return ["setsid", "sh", "-c", inner]
 
@@ -236,12 +245,13 @@ async def agent_restart(request: Request) -> JSONResponse:
     child_env.pop("SINGULARITY_CONTAINER", None)
     from ._provider_env import (
         ProviderPreflightError,
+        provider_child_env_for_agent,
         provider_preflight_refusal,
-        provider_secret_env_for_agent,
+        redact_provider_secrets,
     )
 
     try:
-        child_env.update(provider_secret_env_for_agent(name, child_env))
+        child_env = provider_child_env_for_agent(name, child_env)
     except ProviderPreflightError as exc:
         return provider_preflight_refusal(name, exc)
 
@@ -344,8 +354,12 @@ async def agent_restart(request: Request) -> JSONResponse:
             status_code=500,
         )
     out, err = await proc.communicate()
-    stdout = out.decode("utf-8", errors="replace") if out else ""
-    stderr = err.decode("utf-8", errors="replace") if err else ""
+    stdout = redact_provider_secrets(
+        out.decode("utf-8", errors="replace") if out else "", child_env
+    )
+    stderr = redact_provider_secrets(
+        err.decode("utf-8", errors="replace") if err else "", child_env
+    )
     returncode = proc.returncode if proc.returncode is not None else -1
 
     payload = {
