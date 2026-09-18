@@ -101,7 +101,7 @@ def test_host_process_evidence_can_classify_dead() -> None:
     )
     # Assert
     assert (rows[0]["status"], rows[0]["labels"]["resident_state"]) == (
-        "unknown",
+        "stopped",
         "dead",
     )
 

@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from ..._state.authoritative_heartbeat import classify_resident_state
-from ..._state.state_store import latest_heartbeats_per_name
+from ..._state.state_store import latest_authoritative_heartbeats
 from ._agent_list_row import build_agent_row
 
 
@@ -23,29 +23,30 @@ def heartbeat_lease_rows(
     """Build rows for leased residents absent from registry/instance sources."""
     rows: list[dict[str, Any]] = []
     observed_at = time.time() if now is None else float(now)
-    for beat in beats if beats is not None else latest_heartbeats_per_name():
+    for beat in beats if beats is not None else latest_authoritative_heartbeats():
         name = str(beat.get("agent_id") or "")
         if not name or name in covered:
             continue
+        process_evidence = beat.get("_process_alive")
+        process_alive = (
+            process_evidence if isinstance(process_evidence, bool) else None
+        )
         resident_state = classify_resident_state(
             beat,
             now=observed_at,
-            process_alive=(
-                beat.get("_process_alive")
-                if beat.get("_process_alive") in {True, False, None}
-                else None
-            ),
+            process_alive=process_alive,
             federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
         live = resident_state in {"idle", "active", "blocked", "stalled"}
+        dead = resident_state == "dead"
         if running_only and not live:
             continue
         host = str(beat.get("host") or "")
         rows.append(
             build_agent_row(
                 name=name,
-                status_val="running" if live else "unknown",
+                status_val="running" if live else "stopped" if dead else "unknown",
                 screen_name="",
                 multiplexer=str(beat.get("runtime") or ""),
                 started="",
@@ -56,7 +57,7 @@ def heartbeat_lease_rows(
                 account_label="",
                 deferred=False,
                 errors=[],
-                liveness_unknown=not live,
+                liveness_unknown=not live and not dead,
                 runtime=str(beat.get("runtime") or "unknown"),
                 harness=str(beat.get("harness") or "unknown"),
                 engine=str(beat.get("engine") or "unknown"),
@@ -90,14 +91,14 @@ def overlay_authoritative_heartbeats(
                 row["resident_state"] = "unknown"
                 row["heartbeat_authoritative"] = False
             continue
+        process_evidence = beat.get("_process_alive")
+        process_alive = (
+            process_evidence if isinstance(process_evidence, bool) else None
+        )
         resident_state = classify_resident_state(
             beat,
             now=observed_at,
-            process_alive=(
-                beat.get("_process_alive")
-                if beat.get("_process_alive") in {True, False, None}
-                else None
-            ),
+            process_alive=process_alive,
             federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )

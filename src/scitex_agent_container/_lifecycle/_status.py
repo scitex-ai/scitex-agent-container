@@ -274,12 +274,13 @@ def _heartbeat_only_status(name: str) -> dict | None:
             progress_stale_s=120.0,
         )
         running = resident_state in {"idle", "active", "blocked", "stalled"}
+        dead = resident_state == "dead"
         return {
             "name": name,
             "config": "",
             "screen": "",
             "started_at": "",
-            "status": "running" if running else "stopped",
+            "status": "running" if running else "stopped" if dead else "unknown",
             "model": beat.get("model") or "unknown",
             "runtime": beat.get("runtime") or "unknown",
             "harness": beat.get("harness") or "unknown",
@@ -293,7 +294,7 @@ def _heartbeat_only_status(name: str) -> dict | None:
             "resident_state": resident_state,
             "heartbeat": beat,
             "liveness": {
-                "verdict": "alive" if running else "unknown",
+                "verdict": "alive" if running else "dead" if dead else "unknown",
                 "evidence": [
                     {
                         "source": "authoritative-heartbeat",

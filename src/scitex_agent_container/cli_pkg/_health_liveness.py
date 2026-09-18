@@ -48,6 +48,9 @@ def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, 
     delivery = next(
         (item for item in evidence if item.get("source") == "delivery"), None
     )
+    heartbeat = next(
+        (item for item in evidence if item.get("source") == "heartbeat"), None
+    )
     process_verdict = (
         str(process.get("verdict") or "unknown").lower()
         if process is not None
@@ -63,12 +66,22 @@ def health_summary(is_healthy: bool, message: str, liveness: dict) -> dict[str, 
         if delivery is not None
         else "unknown"
     )
+    heartbeat_verdict = (
+        str(heartbeat.get("verdict") or "unknown").lower()
+        if heartbeat is not None
+        else "unknown"
+    )
     if process_verdict == "dead":
         return {
             "state": "unhealthy",
             "message": message if not is_healthy else f"unhealthy: {process_detail}",
         }
     if process_verdict == "unknown":
+        if heartbeat_verdict == "alive":
+            return {
+                "state": "healthy",
+                "message": "healthy: fresh heartbeat proves process presence",
+            }
         if delivery_verdict == "alive":
             return {
                 "state": "alive-by-delivery-only",

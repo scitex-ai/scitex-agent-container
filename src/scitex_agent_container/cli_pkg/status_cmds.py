@@ -555,8 +555,10 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     summary = health_summary(is_healthy, message, liveness)
     health_state = summary["state"]
     message = summary["message"]
+    is_healthy = health_state == "healthy"
 
-    # Observation-only like ``liveness``: never flips ``healthy``.
+    # Overlay masking is observation-only; health_state above is authoritative
+    # for the compatibility bool and exit code.
     from ._health_overlay_masking import overlay_masking_payload, print_overlay_masking
 
     overlay_masking = overlay_masking_payload(name, config)

@@ -5,7 +5,13 @@ from __future__ import annotations
 from scitex_agent_container.cli_pkg._health_liveness import health_summary
 
 
-def _liveness(*, overall: str, process: str | None, delivery: str | None) -> dict:
+def _liveness(
+    *,
+    overall: str,
+    process: str | None,
+    delivery: str | None,
+    heartbeat: str | None = None,
+) -> dict:
     evidence = []
     if process is not None:
         evidence.append(
@@ -21,6 +27,14 @@ def _liveness(*, overall: str, process: str | None, delivery: str | None) -> dic
                 "source": "delivery",
                 "verdict": delivery,
                 "detail": f"delivery probe: {delivery}",
+            }
+        )
+    if heartbeat is not None:
+        evidence.append(
+            {
+                "source": "heartbeat",
+                "verdict": heartbeat,
+                "detail": f"heartbeat probe: {heartbeat}",
             }
         )
     return {
@@ -92,4 +106,21 @@ def test_direct_dead_process_overrides_legacy_healthy_bool() -> None:
     assert result == {
         "state": "unhealthy",
         "message": "unhealthy: process probe: dead",
+    }
+
+
+def test_fresh_alive_heartbeat_repairs_unknown_process_probe() -> None:
+    # Arrange
+    liveness = _liveness(
+        overall="alive",
+        process="unknown",
+        delivery="unknown",
+        heartbeat="alive",
+    )
+    # Act
+    result = health_summary(False, "unhealthy: process not running", liveness)
+    # Assert
+    assert result == {
+        "state": "healthy",
+        "message": "healthy: fresh heartbeat proves process presence",
     }
