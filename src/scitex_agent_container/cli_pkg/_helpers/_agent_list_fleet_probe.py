@@ -145,6 +145,28 @@ def _stamp_host(rows: list[dict], target: HostTarget) -> list[dict]:
         stamped = dict(row)
         stamped["host"] = host
         stamped["host_display"] = host
+        # This row is now a cross-host claim. Only the owning host's exact
+        # incarnation birth may assert its selected engine/model; a spec fallback
+        # is a declaration that can be stale after launch or bypassed by
+        # ``--engine``. Preserve birth-bound values, otherwise qualify the
+        # provenance and fail closed to unknown.
+        source = str(stamped.get("runtime_identity_source") or "unknown")
+        if source != "birth_certificate":
+            stamped.update(
+                {
+                    "runtime": "unknown",
+                    "harness": "unknown",
+                    "engine": "unknown",
+                    "model": "unknown",
+                    "billing_mode": "unspecified",
+                    "auth_identity": "unknown",
+                }
+            )
+            stamped["runtime_identity_source"] = (
+                "owning_host_spec_only"
+                if source == "spec"
+                else "owning_host_status_unavailable"
+            )
         out.append(stamped)
     return out
 
@@ -154,7 +176,8 @@ def local_probe(
 ) -> tuple[HostReport, list[dict]]:
     """Read THIS host in-process. Reported, never assumed."""
     started = time.monotonic()
-    # stx-allow: fallback (reason: even the LOCAL host is reported rather than
+    # stx-allow: fallback (reason: even the LOCAL host is returned in
+    # HostReport.detail and rendered by `sac agents/accounts list` rather than
     # assumed — a local read that blew up must not render as "no agents here".)
     try:
         rows = list(local_lister())
@@ -183,8 +206,9 @@ def local_probe(
 
 
 def _peers_or_report(target: HostTarget):
-    # stx-allow: fallback (reason: an unreadable peer topology is reported as an
-    # unreachable host, not as an exception that kills the whole listing.)
+    # stx-allow: fallback (reason: unreadable topology is returned in
+    # HostReport.detail and rendered by `sac agents/accounts list` as an
+    # unreachable host, not raised to kill the whole listing.)
     try:
         from ..._state._peer_resolve import peers_with_registry
         from ..._state.host_config import load as _load_host_config
@@ -269,8 +293,9 @@ def ssh_json_probe(
     guard = True
     while True:
         argv = full_argv if guard else [a for a in full_argv if a != guard_flag]
-        # stx-allow: fallback (reason: every transport failure is a REPORTED
-        # host state — an exception here would drop the host from the listing.)
+        # stx-allow: fallback (reason: every transport failure is returned in
+        # HostReport.detail and rendered by `sac agents/accounts list`; raising
+        # here would drop the host from that operator-visible listing.)
         try:
             proc = runner(
                 build_ssh_argv(
