@@ -576,7 +576,6 @@ def replace_session_from_handoff(
                     f"Hermes old session did not close after nonce proof: {closed!r}"
                 )
             old_closed = True
-            _clear_transition_journal(state_dir)
     except HermesTuiRpcError:
         if fresh_live and not old_closed:
             _close_failed_candidate(
