@@ -32,6 +32,12 @@ class _FailPasteRunner(_RunnerRecorder):
         return _Result(1 if argv[1] == "paste-buffer" else 0)
 
 
+class _FailLoadRunner(_RunnerRecorder):
+    def __call__(self, argv: list[str], **kwargs: object) -> _Result:
+        super().__call__(argv, **kwargs)
+        return _Result(1 if argv[1] == "load-buffer" else 0)
+
+
 class _RealBufferProbe:
     def __init__(self) -> None:
         self.loaded = ""
@@ -127,6 +133,32 @@ def test_failed_paste_raises_and_still_deletes_buffer() -> None:
     ) == (
         True,
         ["load-buffer", "paste-buffer", "delete-buffer"],
+    )
+
+
+def test_failed_load_raises_and_still_deletes_any_partial_buffer() -> None:
+    # Arrange
+    runner = _FailLoadRunner()
+
+    # Act
+    try:
+        TmuxManager.send_text_literal(
+            "tui-handyman-01",
+            "secret payload",
+            runner=runner,
+            buffer_name="sac-test-buffer",
+        )
+        error = ""
+    except TmuxPasteError as exc:
+        error = str(exc)
+
+    # Assert
+    assert (
+        "load" in error,
+        [argv[1] for argv, _kwargs in runner.calls],
+    ) == (
+        True,
+        ["load-buffer", "delete-buffer"],
     )
 
 

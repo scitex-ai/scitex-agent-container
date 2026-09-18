@@ -378,6 +378,11 @@ class TmuxManager:
             capture_output=True,
         )
         if getattr(loaded, "returncode", 0) != 0:
+            runner(
+                ["tmux", "delete-buffer", "-b", name],
+                check=False,
+                capture_output=True,
+            )
             raise TmuxPasteError("tmux could not load the TUI paste buffer")
         try:
             pasted = runner(
