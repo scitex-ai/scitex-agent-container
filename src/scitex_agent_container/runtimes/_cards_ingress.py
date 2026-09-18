@@ -207,6 +207,9 @@ async def drain_once(
             )
             continue
 
+        lease = event.get("_card_lease")
+        if isinstance(lease, dict):
+            lease_writer(agent=name, **lease)
         receipt = await asyncio.to_thread(
             partial(ack_notifications, name, [notification_id], store=store)
         )
@@ -228,9 +231,6 @@ async def drain_once(
                 notification_id=notification_id,
             )
             continue
-        lease = event.get("_card_lease")
-        if isinstance(lease, dict):
-            lease_writer(agent=name, **lease)
         delivered_count += 1
     return delivered_count
 

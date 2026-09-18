@@ -395,8 +395,6 @@ def write_heartbeat(
     if name and host:
         db = _resolve_db_writer(db_writer)
         record = {"name": name, "host": host, "pid": pid, "state": state, "ts": payload["ts"]}
-        if resident_heartbeat is not None:
-            record["authoritative"] = resident_heartbeat
         db.record_heartbeat(**record)
         if resident_heartbeat is not None:
             from ._session_state import read_instance_id

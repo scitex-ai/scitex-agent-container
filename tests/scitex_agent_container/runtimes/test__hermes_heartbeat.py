@@ -1150,7 +1150,7 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         now,
         "scholar",
         "session-1",
-        "generation-1",
+        "generation-1:epoch-1:session-1",
         2,
         "idle",
     )

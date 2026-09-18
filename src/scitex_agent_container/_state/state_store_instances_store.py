@@ -135,6 +135,25 @@ OWNERSHIP_FIELDS = (
     "scope_unit",
     "scope_invocation_id",
 )
+HEARTBEAT_LEASE_FIELDS = (
+    "heartbeat_boot_id",
+    "heartbeat_seq",
+    "heartbeat_state",
+    "heartbeat_spec_id",
+    "heartbeat_runtime",
+    "heartbeat_harness",
+    "heartbeat_engine",
+    "heartbeat_model",
+    "heartbeat_session_id",
+    "heartbeat_monotonic_ns",
+    "heartbeat_observed_at",
+    "heartbeat_progress_at",
+    "heartbeat_progress_seq",
+    "heartbeat_card_id",
+    "heartbeat_card_role",
+    "lease_expires_at",
+)
+EVOLVING_FIELDS = OWNERSHIP_FIELDS + HEARTBEAT_LEASE_FIELDS
 
 
 class InstancesOwnershipSchemaError(RuntimeError):
@@ -320,6 +339,18 @@ def instances_schema() -> Any:
             "heartbeat_boot_id": data(FieldKind.TEXT, lww),
             "heartbeat_seq": data(FieldKind.INTEGER, lww),
             "heartbeat_state": data(FieldKind.TEXT, lww),
+            "heartbeat_spec_id": data(FieldKind.TEXT, lww),
+            "heartbeat_runtime": data(FieldKind.TEXT, lww),
+            "heartbeat_harness": data(FieldKind.TEXT, lww),
+            "heartbeat_engine": data(FieldKind.TEXT, lww),
+            "heartbeat_model": data(FieldKind.TEXT, lww),
+            "heartbeat_session_id": data(FieldKind.TEXT, lww),
+            "heartbeat_monotonic_ns": data(FieldKind.INTEGER, lww),
+            "heartbeat_observed_at": data(FieldKind.REAL, lww),
+            "heartbeat_progress_at": data(FieldKind.REAL, lww),
+            "heartbeat_progress_seq": data(FieldKind.INTEGER, lww),
+            "heartbeat_card_id": data(FieldKind.TEXT, lww),
+            "heartbeat_card_role": data(FieldKind.TEXT, lww),
             "lease_expires_at": data(FieldKind.REAL, lww),
             "iter_count": data(FieldKind.INTEGER, MergeRule.MAX),
             "input_tokens": data(FieldKind.INTEGER, MergeRule.MAX),
@@ -347,7 +378,7 @@ def _legacy_instances_schema() -> Any:
         fields={
             name: policy
             for name, policy in current.fields.items()
-            if name not in OWNERSHIP_FIELDS
+            if name not in EVOLVING_FIELDS
         },
     )
 
@@ -361,13 +392,13 @@ def ensure_instances_ownership_schema() -> None:
     except Exception as exc:
         raise InstancesOwnershipSchemaError(
             "central instances ownership schema is NOT READY; required nullable "
-            f"columns are {', '.join(OWNERSHIP_FIELDS)}. No TUI launch is "
+            f"columns are {', '.join(EVOLVING_FIELDS)}. No TUI launch is "
             "authorized until scitex-dev's declared-field evolution succeeds."
         ) from exc
     finally:
         if store is not None:
             store.close()
-    missing = sorted(set(OWNERSHIP_FIELDS) - set(result.observed))
+    missing = sorted(set(EVOLVING_FIELDS) - set(result.observed))
     if missing:
         raise InstancesOwnershipSchemaError(
             "central instances ownership schema is NOT READY after migration; "

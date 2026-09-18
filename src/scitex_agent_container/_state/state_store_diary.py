@@ -141,22 +141,6 @@ def _heartbeats_schema() -> Any:
             "ts": _ident(FieldKind.REAL),
             "pid": _fact(FieldKind.INTEGER),
             "state": _fact(FieldKind.TEXT),
-            "agent_id": _fact(FieldKind.TEXT),
-            "spec_id": _fact(FieldKind.TEXT),
-            "runtime": _fact(FieldKind.TEXT),
-            "harness": _fact(FieldKind.TEXT),
-            "engine": _fact(FieldKind.TEXT),
-            "model": _fact(FieldKind.TEXT),
-            "session_id": _fact(FieldKind.TEXT),
-            "boot_id": _fact(FieldKind.TEXT),
-            "seq": _fact(FieldKind.INTEGER),
-            "monotonic_ns": _fact(FieldKind.INTEGER),
-            "observed_at": _fact(FieldKind.REAL),
-            "progress_at": _fact(FieldKind.REAL),
-            "progress_seq": _fact(FieldKind.INTEGER),
-            "lease_expires_at": _fact(FieldKind.REAL),
-            "card_id": _fact(FieldKind.TEXT),
-            "card_role": _fact(FieldKind.TEXT),
         },
     )
 
@@ -302,7 +286,6 @@ def record_heartbeat(
     pid: int | None,
     state: str,
     ts: float | None = None,
-    authoritative: dict[str, object] | None = None,
 ) -> int:
     """Append one ``heartbeats`` record. Returns its sequence number.
 
@@ -314,32 +297,6 @@ def record_heartbeat(
     row_ts = float(ts) if ts is not None else time.time()
     store = _open(_heartbeats_schema())
     try:
-        authoritative_fields: dict[str, object] = {}
-        if authoritative is not None:
-            from .authoritative_heartbeat import validate_heartbeat
-
-            previous = None
-            for row in store.rows():
-                values = dict(row.values)
-                if (
-                    not row.hidden
-                    and values.get("name") == name
-                    and values.get("host") == host
-                    and values.get("boot_id")
-                    and (
-                        previous is None
-                        or float(values.get("observed_at") or 0)
-                        > float(previous.get("observed_at") or 0)
-                    )
-                ):
-                    previous = values
-            authoritative_fields = validate_heartbeat(
-                authoritative,
-                expected_agent=name,
-                expected_host=host,
-                now=time.time(),
-                previous=previous,
-            )
         seq = int(store.next_seq())
         store.put(
             {
@@ -348,7 +305,6 @@ def record_heartbeat(
                 "ts": row_ts,
                 "pid": pid,
                 "state": state,
-                **authoritative_fields,
             },
             expected_revision=NEW_RECORD,
         )
@@ -370,7 +326,6 @@ def latest_heartbeats_per_name() -> list[dict]:
     store = _open(_heartbeats_schema())
     try:
         latest: dict[str, dict] = {}
-        authoritative: list[dict] = []
         for row in store.rows():
             # ``row.values`` is the accessor, MEASURED not assumed. Row is a
             # dataclass whose ``key`` is a TUPLE of the identity values and
@@ -382,19 +337,14 @@ def latest_heartbeats_per_name() -> list[dict]:
                 # resurrects retired rows.
                 continue
             data = dict(row.values)
-            if data.get("agent_id"):
-                authoritative.append(data)
+
             key = str(data.get("name", ""))
             prev = latest.get(key)
             if prev is None or float(data.get("ts") or 0) > float(
                 prev.get("ts") or 0
             ):
                 latest[key] = data
-        if authoritative:
-            from .authoritative_heartbeat import select_federated_heartbeats
 
-            for data in select_federated_heartbeats(authoritative, now=time.time()):
-                latest[str(data["agent_id"])] = data
         return [latest[k] for k in sorted(latest)]
     finally:
         store.close()

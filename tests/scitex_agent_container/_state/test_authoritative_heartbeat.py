@@ -133,6 +133,26 @@ def test_restart_requires_new_boot_and_resets_sequence() -> None:
     assert (restarted["boot_id"], restarted["seq"]) == ("boot-2", 1)
 
 
+def test_stable_identity_cannot_change_inside_one_boot() -> None:
+    # Arrange
+    changed = _beat(model="other-model", seq=8, monotonic_ns=800, observed_at=102.0)
+    # Act
+    try:
+        validate_heartbeat(
+            changed,
+            expected_agent="scholar",
+            expected_host="compute-04",
+            now=102.0,
+            previous=_beat(),
+        )
+    except AuthoritativeHeartbeatError as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert "stable identity changed" in error
+
+
 @pytest.mark.parametrize(
     ("payload", "process_alive", "connected", "expected"),
     [

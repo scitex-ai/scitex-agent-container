@@ -27,8 +27,10 @@ skips where no cluster exists and FAILS where a configured one is broken.
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 from scitex_agent_container._state.state_store_instances import (
+    _authoritative_heartbeats_from_rows,
     end_instance,
     last_known_instance,
     last_local_instance_for_name,
@@ -38,6 +40,43 @@ from scitex_agent_container._state.state_store_instances import (
     record_instance_start,
     record_instance_stop,
 )
+
+
+def test_authoritative_lease_uses_store_hlc_not_publisher_wall_clock() -> None:
+    # Arrange
+    values = {
+        "id": "instance-1",
+        "host": "compute-04",
+        "name": "scholar",
+        "heartbeat_spec_id": "sha256:spec",
+        "heartbeat_runtime": "tui",
+        "heartbeat_harness": "hermes",
+        "heartbeat_engine": "vllm",
+        "heartbeat_model": "qwen",
+        "heartbeat_session_id": "session-1",
+        "heartbeat_boot_id": "boot-1",
+        "heartbeat_seq": 1,
+        "heartbeat_monotonic_ns": 10,
+        "heartbeat_observed_at": 10_000.0,
+        "heartbeat_progress_at": 99.0,
+        "heartbeat_progress_seq": 1,
+        "heartbeat_state": "active",
+        "lease_expires_at": 20_000.0,
+        "heartbeat_card_id": "",
+        "heartbeat_card_role": "",
+    }
+    row = SimpleNamespace(
+        values=values,
+        hlc=SimpleNamespace(wall_us=100_000_000),
+    )
+    # Act
+    heartbeat = _authoritative_heartbeats_from_rows([row], now=101.0)[0]
+    # Assert
+    assert (
+        heartbeat["observed_at"],
+        heartbeat["lease_expires_at"],
+        heartbeat["_federation_connected"],
+    ) == (100.0, 190.0, True)
 
 
 def seed_instance(instance_id: str, **values) -> str:

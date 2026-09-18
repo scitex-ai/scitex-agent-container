@@ -345,7 +345,7 @@ def promote_hermes_heartbeat_projection(
                 **observed.heartbeat_fields(),
                 **identity,
                 "session_id": observed.session_id,
-                "boot_id": observed.gateway_generation,
+                "boot_id": observed.engine_incarnation_id,
                 "progress_at": observed.activity_at,
                 "progress_seq": observed.event_seq,
             }

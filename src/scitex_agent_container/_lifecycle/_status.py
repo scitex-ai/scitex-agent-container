@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import time
 import traceback
 from typing import Any, Callable, Optional
 
@@ -137,17 +138,23 @@ def _remote_instance_status(name: str) -> dict | None:
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
-        from .._state.state_store import latest_heartbeats_per_name
+        from .._state.state_store import latest_authoritative_heartbeats
 
         beat = next(
             (
                 value
-                for value in latest_heartbeats_per_name()
-                if value.get("name") == name and value.get("agent_id") == name
+                for value in latest_authoritative_heartbeats()
+                if value.get("agent_id") == name
             ),
             None,
         )
         if beat is not None:
+            from .._state.authoritative_heartbeat import classify_resident_state
+
+            process_evidence = beat.get("_process_alive")
+            process_alive = (
+                process_evidence if isinstance(process_evidence, bool) else None
+            )
             result.update(
                 {
                     "model": beat.get("model") or "unknown",
@@ -156,6 +163,15 @@ def _remote_instance_status(name: str) -> dict | None:
                     "engine": beat.get("engine") or "unknown",
                     "host": beat.get("host") or result["host"],
                     "heartbeat": beat,
+                    "resident_state": classify_resident_state(
+                        beat,
+                        now=time.time(),
+                        process_alive=process_alive,
+                        federation_connected=bool(
+                            beat.get("_federation_connected")
+                        ),
+                        progress_stale_s=120.0,
+                    ),
                 }
             )
         from .._state.observation import DefinitionState, build_agent_observation
@@ -181,26 +197,28 @@ def _remote_instance_status(name: str) -> dict | None:
 def _heartbeat_only_status(name: str) -> dict | None:
     """Resolve a fleet-visible resident from its current host lease alone."""
     try:
-        import time
-
         from .._state.authoritative_heartbeat import classify_resident_state
-        from .._state.state_store import latest_heartbeats_per_name
+        from .._state.state_store import latest_authoritative_heartbeats
 
         beat = next(
             (
                 value
-                for value in latest_heartbeats_per_name()
-                if value.get("name") == name and value.get("agent_id") == name
+                for value in latest_authoritative_heartbeats()
+                if value.get("agent_id") == name
             ),
             None,
         )
         if beat is None:
             return None
+        process_evidence = beat.get("_process_alive")
+        process_alive = (
+            process_evidence if isinstance(process_evidence, bool) else None
+        )
         resident_state = classify_resident_state(
             beat,
             now=time.time(),
-            process_alive=None,
-            federation_connected=True,
+            process_alive=process_alive,
+            federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
         running = resident_state in {"idle", "active", "blocked", "stalled"}
@@ -482,7 +500,19 @@ def agent_status(
         if isinstance(local_heartbeat, dict) and isinstance(
             local_heartbeat.get("authoritative_heartbeat"), dict
         ):
-            result["heartbeat"] = dict(local_heartbeat["authoritative_heartbeat"])
+            from .._state.authoritative_heartbeat import classify_resident_state
+
+            resident = dict(local_heartbeat["authoritative_heartbeat"])
+            result["heartbeat"] = resident
+            result["resident_state"] = classify_resident_state(
+                resident,
+                now=time.time(),
+                process_alive=result.get("status") == "running",
+                federation_connected=(
+                    float(resident.get("lease_expires_at") or 0) >= time.time()
+                ),
+                progress_stale_s=120.0,
+            )
     except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
         pass
 

@@ -126,8 +126,11 @@ privacy-safe native projection: stable agent/spec/engine/model/session/boot
 identities, monotonic sequence/time, progress checkpoint, bounded host lease,
 and optional Cards `developer`/`reviewer` lease. It never carries prompts,
 responses, tool payloads, account names, or credentials. The owning host also
-publishes this record to the shared PostgreSQL heartbeat diary and advances the
-matching instance lease. Fleet readers reject future, duplicate, out-of-order,
+advances the matching record in the explicitly shared PostgreSQL instances
+store (`SCITEX_STORE_DSN` is mandatory); the append-only heartbeat diary remains
+terse and per-host. Lease age uses the Store HLC observed by readers, not the
+publisher's wall-clock expiry. Fleet
+readers reject future, duplicate, out-of-order,
 spoofed, and overlapping cross-host leases before classifying a resident as
 `idle`, `active`, `blocked`, `stalled`, `disconnected`, or `dead`.
 

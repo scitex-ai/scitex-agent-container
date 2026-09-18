@@ -175,6 +175,18 @@ def validate_heartbeat(
         if observed_at <= previous_observed:
             raise AuthoritativeHeartbeatError("heartbeat timestamp is duplicate/out-of-order")
         if previous_boot == _text(payload, "boot_id"):
+            for key in (
+                "spec_id",
+                "runtime",
+                "harness",
+                "engine",
+                "model",
+                "session_id",
+            ):
+                if _text(previous, key) != _text(payload, key):
+                    raise AuthoritativeHeartbeatError(
+                        f"heartbeat stable identity changed within boot: {key}"
+                    )
             if seq <= _integer(previous, "seq"):
                 raise AuthoritativeHeartbeatError("heartbeat sequence is duplicate/out-of-order")
             if monotonic_ns <= _integer(previous, "monotonic_ns"):

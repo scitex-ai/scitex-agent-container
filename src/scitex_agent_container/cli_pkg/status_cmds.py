@@ -432,22 +432,26 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     if entry is None:
         try:
             from .._state.authoritative_heartbeat import classify_resident_state
-            from .._state.state_store import latest_heartbeats_per_name
+            from .._state.state_store import latest_authoritative_heartbeats
 
             beat = next(
                 (
                     value
-                    for value in latest_heartbeats_per_name()
-                    if value.get("name") == name and value.get("agent_id") == name
+                    for value in latest_authoritative_heartbeats()
+                    if value.get("agent_id") == name
                 ),
                 None,
             )
             if beat is not None:
+                process_evidence = beat.get("_process_alive")
+                process_alive = (
+                    process_evidence if isinstance(process_evidence, bool) else None
+                )
                 resident_state = classify_resident_state(
                     beat,
                     now=time.time(),
-                    process_alive=None,
-                    federation_connected=True,
+                    process_alive=process_alive,
+                    federation_connected=bool(beat.get("_federation_connected")),
                     progress_stale_s=120.0,
                 )
                 healthy = resident_state in {"idle", "active", "blocked"}
@@ -484,6 +488,41 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
         sys.exit(1)
 
     is_healthy, message = health_check(config)
+    resident_state = None
+    resident_heartbeat = None
+    try:
+        from .._state.authoritative_heartbeat import classify_resident_state
+        from .._state.state_store import latest_authoritative_heartbeats
+
+        resident_heartbeat = next(
+            (
+                value
+                for value in latest_authoritative_heartbeats()
+                if value.get("agent_id") == name
+            ),
+            None,
+        )
+        if resident_heartbeat is not None:
+            process_evidence = resident_heartbeat.get("_process_alive")
+            process_alive = (
+                process_evidence
+                if isinstance(process_evidence, bool)
+                else is_healthy
+            )
+            resident_state = classify_resident_state(
+                resident_heartbeat,
+                now=time.time(),
+                process_alive=process_alive,
+                federation_connected=bool(
+                    resident_heartbeat.get("_federation_connected")
+                ),
+                progress_stale_s=120.0,
+            )
+            if resident_state in {"stalled", "disconnected", "dead"}:
+                is_healthy = False
+                message = f"unhealthy: authoritative heartbeat is {resident_state}"
+    except Exception:  # stx-allow: fallback (missing fleet lease leaves the existing runtime health verdict unchanged)
+        pass
 
     # REGISTERED IS NOT REACHABLE. ``health_check`` asks "is the process
     # up?" — a deaf agent (one whose inbox adapter is not subscribed to the
@@ -537,6 +576,8 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
                     "liveness": liveness,
                     "overlay_masking": overlay_masking,
                     "engine": engine,
+                    "resident_state": resident_state,
+                    "heartbeat": resident_heartbeat,
                 },
                 indent=2,
             )

@@ -169,6 +169,7 @@ def test_cards_notification_is_acked_only_after_positive_visible_delivery():
 def test_confirmed_cards_notification_projects_bounded_reviewer_lease():
     # Arrange
     leases = []
+    order = []
 
     def poll(_agent, **_kwargs):
         return {
@@ -191,7 +192,12 @@ def test_confirmed_cards_notification_projects_bounded_reviewer_lease():
         return None
 
     def ack(_agent, ids, **_kwargs):
+        order.append("ack")
         return {"confirmed": ids, "already_confirmed": [], "unknown": []}
+
+    def write_lease(**kwargs):
+        order.append("lease")
+        leases.append(kwargs)
 
     # Act
     delivered = asyncio.run(
@@ -202,12 +208,13 @@ def test_confirmed_cards_notification_projects_bounded_reviewer_lease():
             poll_notifications=poll,
             ack_notifications=ack,
             deliver=deliver,
-            card_lease_writer=lambda **kwargs: leases.append(kwargs),
+            card_lease_writer=write_lease,
         )
     )
     # Assert
-    assert (delivered, leases) == (
+    assert (delivered, order, leases) == (
         1,
+        ["lease", "ack"],
         [
             {
                 "agent": "scholar",

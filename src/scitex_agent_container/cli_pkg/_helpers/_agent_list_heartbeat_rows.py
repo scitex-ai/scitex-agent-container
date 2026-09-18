@@ -30,8 +30,12 @@ def heartbeat_lease_rows(
         resident_state = classify_resident_state(
             beat,
             now=observed_at,
-            process_alive=None,
-            federation_connected=True,
+            process_alive=(
+                beat.get("_process_alive")
+                if beat.get("_process_alive") in {True, False, None}
+                else None
+            ),
+            federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
         live = resident_state in {"idle", "active", "blocked", "stalled"}
@@ -89,8 +93,12 @@ def overlay_authoritative_heartbeats(
         row["resident_state"] = classify_resident_state(
             beat,
             now=observed_at,
-            process_alive=None,
-            federation_connected=True,
+            process_alive=(
+                beat.get("_process_alive")
+                if beat.get("_process_alive") in {True, False, None}
+                else None
+            ),
+            federation_connected=bool(beat.get("_federation_connected")),
             progress_stale_s=120.0,
         )
         row["heartbeat_authoritative"] = True

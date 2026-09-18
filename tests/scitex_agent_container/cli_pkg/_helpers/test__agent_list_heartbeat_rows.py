@@ -28,6 +28,8 @@ def _beat(**overrides):
         "lease_expires_at": 130.0,
         "card_id": "",
         "card_role": "",
+        "_process_alive": None,
+        "_federation_connected": True,
     }
     beat.update(overrides)
     return beat

@@ -541,13 +541,13 @@ def get_agent_list_data(
 
     if not any((capability, machine, group)):
         try:
-            from ..._state.state_store import latest_heartbeats_per_name
+            from ..._state.state_store import latest_authoritative_heartbeats
             from ._agent_list_heartbeat_rows import (
                 heartbeat_lease_rows,
                 overlay_authoritative_heartbeats,
             )
 
-            beats = latest_heartbeats_per_name()
+            beats = latest_authoritative_heartbeats()
             overlay_authoritative_heartbeats(results, beats=beats)
             results.extend(
                 heartbeat_lease_rows(
