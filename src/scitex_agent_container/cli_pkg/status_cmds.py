@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as json_mod
 import os
 import sys
+import time
 
 import click
 from rich.table import Table
@@ -429,6 +430,43 @@ def health(ctx: click.Context, name: str, as_json: bool) -> None:
     registry = Registry()
     entry = registry.get(name)
     if entry is None:
+        try:
+            from .._state.authoritative_heartbeat import classify_resident_state
+            from .._state.state_store import latest_heartbeats_per_name
+
+            beat = next(
+                (
+                    value
+                    for value in latest_heartbeats_per_name()
+                    if value.get("name") == name and value.get("agent_id") == name
+                ),
+                None,
+            )
+            if beat is not None:
+                resident_state = classify_resident_state(
+                    beat,
+                    now=time.time(),
+                    process_alive=None,
+                    federation_connected=True,
+                    progress_stale_s=120.0,
+                )
+                healthy = resident_state in {"idle", "active", "blocked"}
+                payload = {
+                    "name": name,
+                    "healthy": healthy,
+                    "message": f"authoritative heartbeat: {resident_state}",
+                    "resident_state": resident_state,
+                    "heartbeat": beat,
+                }
+                if use_json:
+                    click.echo(json_mod.dumps(payload, indent=2))
+                else:
+                    console.print(payload["message"])
+                if not healthy:
+                    sys.exit(1)
+                return
+        except Exception:  # stx-allow: fallback (reason: an unavailable shared heartbeat store falls through to the existing explicit not-found verdict)
+            pass
         if use_json:
             click.echo(json_mod.dumps({"error": f"Agent '{name}' not found"}))
         else:

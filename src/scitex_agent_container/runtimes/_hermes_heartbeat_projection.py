@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .._runners._atomic import atomic_write_text
 from ._hermes_heartbeat import (
@@ -318,6 +318,7 @@ def promote_hermes_heartbeat_projection(
     write_fn: Callable[..., None],
     observe_fn: Any = None,
     connect_fn: Any | None = None,
+    identity_fields: Mapping[str, object] | None = None,
 ) -> HermesHeartbeatObservation:
     """Publish one fenced projection or restore the prior heartbeat on a race."""
     from .._runners._session_state import read_heartbeat
@@ -339,13 +340,24 @@ def promote_hermes_heartbeat_projection(
                 state_dir, agent_name, observed, connect_fn=connect_fn
             )
             _assert_monotonic_publication(previous, observed)
+            identity = dict(identity_fields or {})
+            resident_fields = {
+                **observed.heartbeat_fields(),
+                **identity,
+                "session_id": observed.session_id,
+                "boot_id": observed.gateway_generation,
+                "progress_at": observed.activity_at,
+                "progress_seq": observed.event_seq,
+            }
             write_fn(
                 state_dir,
                 pid=0,
                 state=observed.state,
                 ts=observed.observed_at,
                 writer=WRITER_HERMES_SESSION_EVENTS,
-                authoritative_fields=observed.heartbeat_fields(),
+                name=str(identity.get("agent_id") or agent_name),
+                host=str(identity.get("host") or "") or None,
+                authoritative_fields=resident_fields,
             )
             try:
                 _assert_current_observation(

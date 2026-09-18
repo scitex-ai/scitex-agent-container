@@ -166,6 +166,59 @@ def test_cards_notification_is_acked_only_after_positive_visible_delivery():
     )
 
 
+def test_confirmed_cards_notification_projects_bounded_reviewer_lease():
+    # Arrange
+    leases = []
+
+    def poll(_agent, **_kwargs):
+        return {
+            "store": "postgresql://cards-primary",
+            "unconfirmed": ["n-lease"],
+            "notifications": [
+                {
+                    "id": "n-lease",
+                    "event_type": "review-assigned",
+                    "actor": "scitex-cards",
+                    "body": "Review card-1",
+                    "card_id": "card-1",
+                    "lease_role": "reviewer",
+                    "lease_expires_at": 200.0,
+                }
+            ],
+        }
+
+    async def deliver(_event, **_kwargs):
+        return None
+
+    def ack(_agent, ids, **_kwargs):
+        return {"confirmed": ids, "already_confirmed": [], "unknown": []}
+
+    # Act
+    delivered = asyncio.run(
+        ingress.drain_once(
+            name="scholar",
+            turn_url="direct://resident",
+            bearer="secret",
+            poll_notifications=poll,
+            ack_notifications=ack,
+            deliver=deliver,
+            card_lease_writer=lambda **kwargs: leases.append(kwargs),
+        )
+    )
+    # Assert
+    assert (delivered, leases) == (
+        1,
+        [
+            {
+                "agent": "scholar",
+                "card_id": "card-1",
+                "role": "reviewer",
+                "expires_at": 200.0,
+            }
+        ],
+    )
+
+
 def test_failed_terminal_delivery_leaves_cards_notification_unacked():
     # Arrange
     calls = []

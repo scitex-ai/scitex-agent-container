@@ -138,6 +138,14 @@ class _DefaultDBWriter:
 
         return self._best_effort("turn", _write)
 
+    def record_instance_heartbeat(self, instance_id: str, heartbeat: dict) -> None:
+        def _write():
+            from .._state.state_store_instances import record_instance_heartbeat
+
+            return record_instance_heartbeat(instance_id, heartbeat)
+
+        self._best_effort("instance-heartbeat", _write)
+
     def record_error(self, **kwargs):
         def _write():
             from .._state.state_store_diary import record_error
@@ -290,9 +298,10 @@ def write_heartbeat(
     payload = {"ts": beat_ts, "pid": pid, "state": state}
     from ._incarnation import incarnation_beat_fields
 
+    previous_heartbeat = read_heartbeat(state_dir)
     payload.update(
         incarnation_beat_fields(
-            state_dir, prev_beat=read_heartbeat(state_dir), writer=writer
+            state_dir, prev_beat=previous_heartbeat, writer=writer
         )
     )
     payload.update(_heartbeat_usage_fields(state_dir, now))
@@ -325,10 +334,77 @@ def write_heartbeat(
                 f"{sorted(overlap)!r}"
             )
         payload.update(authoritative_fields)
+    resident_heartbeat = None
+    if writer == "hermes-session-events" and authoritative_fields:
+        required = (
+            "agent_id",
+            "spec_id",
+            "host",
+            "runtime",
+            "harness",
+            "engine",
+            "model",
+            "session_id",
+            "boot_id",
+            "progress_at",
+            "progress_seq",
+        )
+        if all(authoritative_fields.get(key) not in {None, ""} for key in required):
+            resident_state = "active" if state == STATE_BUSY else "idle"
+            if str(payload.get("current_phase") or "").lower() == "blocked":
+                resident_state = "blocked"
+            resident_heartbeat = {
+                key: authoritative_fields[key] for key in required
+            }
+            prior_resident = (
+                previous_heartbeat.get("authoritative_heartbeat")
+                if isinstance(previous_heartbeat, dict)
+                else None
+            )
+            publication_seq = 1
+            if (
+                isinstance(prior_resident, dict)
+                and prior_resident.get("boot_id") == resident_heartbeat["boot_id"]
+                and type(prior_resident.get("seq")) is int
+            ):
+                publication_seq = int(prior_resident["seq"]) + 1
+            resident_heartbeat.update(
+                {
+                    "seq": publication_seq,
+                    "monotonic_ns": time.monotonic_ns(),
+                    "observed_at": beat_ts,
+                    "state": resident_state,
+                    "lease_expires_at": beat_ts + 90.0,
+                    "card_id": str(authoritative_fields.get("card_id") or ""),
+                    "card_role": str(authoritative_fields.get("card_role") or ""),
+                }
+            )
+            from .._state.authoritative_heartbeat import validate_heartbeat
+
+            resident_heartbeat = validate_heartbeat(
+                resident_heartbeat,
+                expected_agent=str(resident_heartbeat["agent_id"]),
+                expected_host=str(resident_heartbeat["host"]),
+                now=now,
+                previous=(
+                    prior_resident if isinstance(prior_resident, dict) else None
+                ),
+            )
+            payload["authoritative_heartbeat"] = resident_heartbeat
     atomic_write_text(state_dir / "heartbeat.json", json.dumps(payload))
     if name and host:
         db = _resolve_db_writer(db_writer)
-        db.record_heartbeat(name=name, host=host, pid=pid, state=state, ts=payload["ts"])
+        record = {"name": name, "host": host, "pid": pid, "state": state, "ts": payload["ts"]}
+        if resident_heartbeat is not None:
+            record["authoritative"] = resident_heartbeat
+        db.record_heartbeat(**record)
+        if resident_heartbeat is not None:
+            from ._session_state import read_instance_id
+
+            instance_id = read_instance_id(state_dir)
+            instance_writer = getattr(db, "record_instance_heartbeat", None)
+            if instance_id and callable(instance_writer):
+                instance_writer(instance_id, resident_heartbeat)
 
 
 def report_sdk_error(

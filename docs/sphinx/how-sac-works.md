@@ -121,6 +121,16 @@ The runner supervisor checks `spec.health` probes and applies `spec.restart`
 policy (never / on-failure / always) with exponential backoff.
 Heartbeat state is written to `runtime/<name>/heartbeat.json` every tick.
 
+For resident Hermes agents, `heartbeat.json.authoritative_heartbeat` is the
+privacy-safe native projection: stable agent/spec/engine/model/session/boot
+identities, monotonic sequence/time, progress checkpoint, bounded host lease,
+and optional Cards `developer`/`reviewer` lease. It never carries prompts,
+responses, tool payloads, account names, or credentials. The owning host also
+publishes this record to the shared PostgreSQL heartbeat diary and advances the
+matching instance lease. Fleet readers reject future, duplicate, out-of-order,
+spoofed, and overlapping cross-host leases before classifying a resident as
+`idle`, `active`, `blocked`, `stalled`, `disconnected`, or `dead`.
+
 ## See also
 
 - [spec-reference.md](spec-reference.md) — full field reference

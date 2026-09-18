@@ -90,6 +90,7 @@ from .state_store_instances import (  # noqa: E402,F401
     last_known_instance,
     last_local_instance_for_name,
     list_active_instances,
+    record_instance_heartbeat,
     record_instance_start,
     record_instance_stop,
 )

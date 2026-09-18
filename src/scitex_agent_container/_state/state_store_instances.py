@@ -81,6 +81,7 @@ __all__ = [
     "live_instance_for_name",
     "read_instance",
     "record_instance_start",
+    "record_instance_heartbeat",
     "record_instance_stop",
     "scan_instances",
 ]
@@ -238,6 +239,59 @@ def record_instance_stop(instance_id: str, *, exit_reason: str = "stopped") -> b
     from .state_store import now_iso
 
     return end_instance(instance_id, exit_reason=exit_reason, ended_at=now_iso())
+
+
+def record_instance_heartbeat(
+    instance_id: str, heartbeat: dict[str, object]
+) -> bool:
+    """Advance one active instance's host-owned lease; never insert or revive."""
+    import time
+    from datetime import datetime, timezone
+
+    from .authoritative_heartbeat import AuthoritativeHeartbeatError, validate_heartbeat
+
+    def _record(store: "Store") -> bool:
+        row = find_by_id(store, instance_id)
+        if row is None or row.values.get("ended_at") is not None:
+            return False
+        values = row.values
+        validated = validate_heartbeat(
+            heartbeat,
+            expected_agent=str(values.get("name") or ""),
+            expected_host=str(values.get("host") or ""),
+            now=time.time(),
+        )
+        new_seq = validated["seq"]
+        observed_at = validated["observed_at"]
+        if type(new_seq) is not int or not isinstance(observed_at, (int, float)):
+            raise AuthoritativeHeartbeatError("validated heartbeat lost numeric fields")
+        old_boot = str(values.get("heartbeat_boot_id") or "")
+        old_seq = values.get("heartbeat_seq")
+        if old_boot == validated["boot_id"] and type(old_seq) is int:
+            if new_seq <= old_seq:
+                raise AuthoritativeHeartbeatError(
+                    "instance heartbeat sequence is duplicate/out-of-order"
+                )
+        observed = datetime.fromtimestamp(
+            float(observed_at), tz=timezone.utc
+        ).isoformat()
+        key = instance_key(values)
+        revision = store.revision(key)
+        store.put(
+            {
+                **key,
+                "last_heartbeat_at": observed,
+                "heartbeat_boot_id": validated["boot_id"],
+                "heartbeat_seq": new_seq,
+                "heartbeat_state": validated["state"],
+                "lease_expires_at": validated["lease_expires_at"],
+            },
+            expected_revision=revision,
+            actor=ACTOR,
+        )
+        return True
+
+    return bool(run_with_reconnect(_record))
 
 
 # ``record_instance_activity`` lived here between the store port and the

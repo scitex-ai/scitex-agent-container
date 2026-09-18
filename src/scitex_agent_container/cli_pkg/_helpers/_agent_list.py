@@ -539,6 +539,28 @@ def get_agent_list_data(
     results.extend(remote_rows)
     covered = reg_names | {r["name"] for r in remote_rows}
 
+    if not any((capability, machine, group)):
+        try:
+            from ..._state.state_store import latest_heartbeats_per_name
+            from ._agent_list_heartbeat_rows import (
+                heartbeat_lease_rows,
+                overlay_authoritative_heartbeats,
+            )
+
+            beats = latest_heartbeats_per_name()
+            overlay_authoritative_heartbeats(results, beats=beats)
+            results.extend(
+                heartbeat_lease_rows(
+                    covered=covered,
+                    display_host=display_host,
+                    running_only=running_only,
+                    host_display_for=_host_display_for,
+                    beats=beats,
+                )
+            )
+        except Exception:  # stx-allow: fallback (an unavailable shared heartbeat store must not break local list output)
+            pass
+
     # Then the agents DEFINED on disk but absent from BOTH registries. Their
     # discovery + row-build live together in the sibling ``_agent_list_discover``
     # (512-line cap split); this stays the orchestrator that merges the sources.
