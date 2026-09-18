@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from scitex_agent_container.cli_pkg import _explain as explain_module
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
     _channel_lines,
@@ -91,6 +92,25 @@ def test_delegation_line_exposes_effective_deny_and_bound() -> None:
             "max children: 1",
             "Git worktree isolation: off",
         )
+    )
+
+
+def test_a2a_line_separates_configured_auto_from_durable_resolved_port(
+) -> None:
+    # Arrange
+    config = AgentConfig(name="worker", harness="hermes", runtime="tui")
+    config.a2a.port = "auto"
+
+    def port_reader(name: str) -> int | None:
+        return 19_556 if name == "worker" else None
+
+    # Act
+    line = explain_module._a2a_line(config, port_reader=port_reader)
+
+    # Assert
+    assert line == (
+        "A2A port: configured=auto; resolved=19556; "
+        "source=durable_port_claim"
     )
 
 

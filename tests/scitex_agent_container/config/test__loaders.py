@@ -498,7 +498,7 @@ def test_load_config_warns_when_pinned_account_snapshot_absent(
     p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
     # Act
     with caplog.at_level(scitex_logging.WARNING):
-        load_config(p)
+        load_config(p, advise=True)
     # Assert
     assert "ghost" in caplog.text
 
@@ -514,6 +514,44 @@ def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
     cfg = load_config(p)
     # Assert
     assert cfg.claude.account == "ghost"
+
+
+def test_load_config_list_read_is_silent_about_missing_account(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange — plain config reads power broad fleet listings; a stopped legacy
+    # definition must not print an auth warning above the runtime table.
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
+
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p)
+
+    # Assert
+    assert "saved-account snapshot" not in caplog.text
+
+
+def test_load_config_does_not_warn_about_claude_account_for_hermes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange — the legacy/manual Claude account field is not the credential
+    # used by a Hermes runtime selection.
+    p = _v3_yaml(
+        tmp_path,
+        "hermes",
+        {
+            "runtime": "tui",
+            "harness": "hermes",
+            "claude": {"account": "ghost"},
+        },
+    )
+
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p, advise=True)
+
+    # Assert
+    assert "saved-account snapshot" not in caplog.text
 
 
 def test_load_config_warns_when_startup_prompt_is_long(

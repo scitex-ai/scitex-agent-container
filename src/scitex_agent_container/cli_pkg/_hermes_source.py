@@ -102,6 +102,61 @@ def resolve_hermes_repo() -> Path:
     return cache
 
 
+def _patch_hermes_lifecycle_instrumentation(staged: Path) -> bool:
+    """Make heartbeat lifecycle events independent of optional UI chrome.
+
+    Hermes' pinned source suppresses ``tool.start`` / ``tool.complete`` when
+    ``display.tool_progress=off`` (including focus mode). SAC consumes those
+    events as an authoritative instrument, so the staging step removes only
+    those two display gates and fails closed if the pinned anchors drift.
+    """
+    module = staged / "tui_gateway" / "tool_progress.py"
+    if not module.is_file():
+        raise HermesSourceError(
+            "pinned Hermes tui_gateway/tool_progress.py is absent; refusing an "
+            "uninstrumented build"
+        )
+    text = module.read_text(encoding="utf-8")
+    replacements = {
+        """    if not _connector_tool_lifecycle(name, args):
+        return _emit(event, sid, payload)""": """    if not _connector_tool_lifecycle(name, args):
+        visible = (
+            _tool_progress_enabled(sid)
+            or _tool_lifecycle_required_for_ui(name)
+            or (
+                event == "tool.complete"
+                and (payload.get("inline_diff") or name in _TODO_TOOL_NAMES)
+            )
+        )
+        if visible:
+            return _emit(event, sid, payload)
+        # SAC heartbeat instrumentation replay-only: preserve optional UI
+        # chrome while recording every authoritative tool lifecycle event.
+        from tui_gateway.event_replay import _stamp_event
+
+        frame = _event_frame(event, sid, payload)
+        _stamp_event(frame)
+        return None""",
+        """    if (_tool_progress_enabled(sid) or _tool_lifecycle_required_for_ui(name)
+            or _connector_tool_lifecycle(name, args)):""": (
+            "    if True:  # SAC heartbeat instrumentation is display-independent"
+        ),
+        """    if (_tool_progress_enabled(sid) or payload.get("inline_diff") or _tool_lifecycle_required_for_ui(name)
+            or name in _TODO_TOOL_NAMES or _connector_tool_lifecycle(name, args)):""": (
+            "    if True:  # SAC heartbeat instrumentation is display-independent"
+        ),
+    }
+    for old, new in replacements.items():
+        if text.count(old) != 1:
+            raise HermesSourceError(
+                "pinned Hermes tool lifecycle gate drifted; refusing an "
+                "uninstrumented build"
+            )
+        text = text.replace(old, new)
+    module.write_text(text, encoding="utf-8")
+    return True
+
+
 def stage_hermes_source(dest_dir: Path) -> Path:
     """Export only tracked bytes at the pinned commit into the build context."""
     repo = resolve_hermes_repo()
@@ -123,6 +178,10 @@ def stage_hermes_source(dest_dir: Path) -> Path:
             archive.extractall(destination, filter="data")
     finally:
         archive_path.unlink(missing_ok=True)
+    if _patch_hermes_lifecycle_instrumentation(destination):
+        (destination / "SAC_LOCAL_PATCHES").write_text(
+            "heartbeat-tool-lifecycle-display-independent\n", encoding="utf-8"
+        )
     (destination / "SAC_UPSTREAM_COMMIT").write_text(
         f"{HERMES_COMMIT}\n", encoding="utf-8"
     )

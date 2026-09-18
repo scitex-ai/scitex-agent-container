@@ -33,9 +33,11 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen.server import create_app
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
 
 _TOKEN = "test-token-status-typed"
 
@@ -159,3 +161,38 @@ def test_every_failure_carries_a_machine_readable_kind(client) -> None:
     body = _get(client, name).json()
     # Assert
     assert isinstance(body.get("kind"), str)
+
+
+def test_status_route_exposes_configured_and_resolved_a2a_contract(
+    client, tmp_path: Path
+) -> None:
+    # Arrange
+    name = "status-a2a-agent"
+    spec_dir = tmp_path / ".scitex" / "agent-container" / "agents" / name
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": explicit_spec(
+                    {
+                        "runtime": "tui",
+                        "host": "${HOSTNAME}",
+                        "workdir": str(tmp_path),
+                        "apptainer": {"image": "/x.sif", "binds": []},
+                        "claude": {"model": "claude-sonnet-4-5"},
+                        "health": {"enabled": True, "interval": 60},
+                        "restart": {"policy": "on-failure", "max_retries": 3},
+                    }
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Act
+    body = _get(client, name).json()
+
+    # Assert
+    assert body["a2a"]["configured_port"] == "auto"

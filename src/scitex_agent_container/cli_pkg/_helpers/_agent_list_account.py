@@ -24,16 +24,22 @@ from __future__ import annotations
 def _safe_account_for(cfg) -> str:
     """Resolve the agent's effective Anthropic-account label.
 
-    Surfaces which account the agent authenticates as (operator request
-    4581) so the operator can spot agents sharing one account — and thus
-    one server-side rate limit. Resolution mirrors the runtime auth
-    precedence: agent ``spec.env`` override → host shared OAuth identity
-    → ``default``/``unknown`` fallback. See
-    ``_account.agent_account.resolve_agent_account_label`` for the rule.
+    Surfaces stored Claude Code credential inventory only for the Anthropic
+    harness. Hermes/Codex configs retain a legacy ``claude`` block for schema
+    compatibility, but it is not authentication configuration for those
+    harnesses and must never leak into their identity/inventory cells.
+    Resolution mirrors the Claude runtime auth precedence: agent ``spec.env``
+    override → host shared OAuth identity → ``default``/``unknown`` fallback.
+    See ``_account.agent_account.resolve_agent_account_label`` for the rule.
 
     Tolerant: a missing config or any resolver hiccup maps to
     ``"unknown"`` so the list command never crashes on account lookup.
     """
+    if (
+        cfg is None
+        or str(getattr(cfg, "harness", "") or "").strip().lower() != "anthropic"
+    ):
+        return "unknown"
     # stx-allow: fallback (reason: list output must never crash on an
     # account-resolution hiccup; ``"unknown"`` cell is the right UX.)
     try:

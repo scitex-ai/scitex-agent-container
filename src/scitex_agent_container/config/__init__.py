@@ -127,10 +127,8 @@ def load_config(path: str | Path, *, advise: bool = False) -> AgentConfig:
         )
 
     config = load_v3(raw, path)
-    # NOT gated: a missing assigned account is a CORRECTNESS problem that makes
-    # the agent fail to start, so it belongs on every load.
-    _warn_if_assigned_account_missing(config)
     if advise:
+        _warn_if_assigned_account_missing(config)
         _warn_if_startup_prompt_long(config)
     return config
 
@@ -152,14 +150,17 @@ def _config_logger():
 
 
 def _warn_if_assigned_account_missing(config: AgentConfig) -> None:
-    """Soft-WARN (never fail) when ``spec.claude.account`` names an
-    account whose snapshot dir is absent at load time.
+    """Warn only when the selected Claude Code harness lacks its account.
 
-    Accounts may be created later or live on another host, so a missing
-    snapshot is not a hard error — but surfacing it at load time catches
-    typos before the agent silently falls back to the host live file at
-    start. Best-effort: any resolution hiccup is swallowed.
+    ``spec.claude.account`` remains in many migrated Hermes/Codex specs as
+    legacy/manual-choice metadata. Those harnesses do not authenticate with a
+    Claude Code OAuth snapshot, so warning about that inventory falsely claims
+    the stored account is active. Accounts may also live on another host, so a
+    missing snapshot is advisory rather than fatal. Best-effort: any resolution
+    hiccup is swallowed.
     """
+    if str(getattr(config, "harness", "") or "").strip().lower() != "anthropic":
+        return
     acct = getattr(getattr(config, "claude", None), "account", "") or ""
     if not acct:
         return

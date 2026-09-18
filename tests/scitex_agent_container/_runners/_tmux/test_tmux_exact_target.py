@@ -136,9 +136,9 @@ def test_send_text_literal_targets_the_exact_session_form() -> None:
     runner = _RunnerRecorder()
     # Act
     TmuxManager.send_text_literal("tui-x", "hello", runner=runner)
-    # Assert — the argv carries "=tui-x:", so a prefix can never land the
-    # text in a sibling's pane.
-    assert runner.argvs[0][:4] == ["tmux", "send-keys", "-t", "=tui-x:"]
+    # Assert — the paste argv carries "=tui-x:", so a prefix can never land
+    # the text in a sibling's pane.
+    assert runner.argvs[1][-2:] == ["-t", "=tui-x:"]
 
 
 # ---------------------------------------------------------------------------

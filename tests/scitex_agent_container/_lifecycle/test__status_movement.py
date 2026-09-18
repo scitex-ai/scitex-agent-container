@@ -127,6 +127,29 @@ def test_status_payload_includes_heartbeat_at_key(
     assert "heartbeat_at" in result
 
 
+def test_status_payload_includes_configured_and_resolved_a2a_block(
+    tmp_path: Path, isolated_runtime: Path, isolated_registry
+):
+    # Arrange
+    from scitex_agent_container._lifecycle._status import agent_status
+
+    spec = _write_valid_spec(tmp_path, "alpha")
+    spec.write_text(
+        spec.read_text().replace("spec:\n", "spec:\n  host: ${HOSTNAME}\n", 1)
+    )
+    isolated_registry.add("alpha", str(spec), "cld-alpha")
+
+    # Act
+    result = agent_status("alpha", registry=isolated_registry)
+
+    # Assert
+    assert result["a2a"] == {
+        "configured_port": "auto",
+        "resolved_port": None,
+        "resolution_source": "none",
+    }
+
+
 def test_status_payload_session_jsonl_bytes_zero_when_no_state_dir(
     tmp_path: Path, isolated_runtime: Path, isolated_registry
 ):

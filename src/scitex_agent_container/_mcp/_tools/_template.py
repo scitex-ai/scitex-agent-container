@@ -13,62 +13,64 @@ specs programmatically without depending on a shell verb.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
+
+from ...config._validation import validate_raw
 
 # Built-in contributor template (v3). String-level ``{{ var }}`` interpolation
 # only — no Jinja2 dependency. Kept tiny and inspectable; matches the
 # canonical chunk-A variable surface (project, branch_kind, branch_short,
 # a2a_port, startup_command).
-_CONTRIBUTOR_TEMPLATE = """\
-# THIS IS A DESIGN DOCUMENT — the contract for an agent not yet started.
-# The state of a RUNNING agent lives in the database, never in this file.
-
-apiVersion: scitex-agent-container/v3
-kind: Agent
-metadata:
-  labels:
-    role: contributor-{{ project }}
-    trigger: pr-driven
-    project: {{ project }}
-    branch_kind: {{ branch_kind }}
-    branch_short: {{ branch_short }}
-    capabilities: fork,clone,branch,commit,push,open-pr
-spec:
-  runtime: apptainer
-  image: scitex-agent-container.sif
-  model: sonnet
-  multiplexer: tmux
-  a2a:
-    port: {{ a2a_port }}
-    handler: claude_cli
-    host: 127.0.0.1
-  claude:
-    flags:
-    - --dangerously-skip-permissions
-    session: continue-or-new
-  skills:
-    required:
-    - scitex
-    - scitex-agent-container
-  health:
-    enabled: true
-    interval: 60
-    timeout: 5
-    method: multiplexer-alive
-  restart:
-    policy: on-failure
-    max_retries: 3
-    backoff:
-      initial: 30
-      max: 300
-      multiplier: 2
-  startup_commands:
-  - delay: 5
-    command: {{ startup_command }}
-"""
+# The field set is NOT defined here. It comes from the canonical scaffold in
+# ``cli_pkg/_create_templates.py``, the same one ``sac agents create`` uses.
+#
+# WHY, measured 2026-09-17: this module used to carry its own embedded template,
+# written before the v3 realignment, and the two drifted. The embedded one still
+# wrote top-level ``image`` / ``model`` / ``skills``, a ``multiplexer`` key and
+# ``health.method: multiplexer-alive``, declared no ``host``, and omitted 65
+# required fields — so the validator rejected every spec this tool rendered (8
+# errors, the missing set dominating), 28 agents in the fleet inventory carry
+# that shape, and a twin inherits its parent's spec verbatim. The canonical
+# scaffolds render clean (0 errors) because they are kept in step with the
+# grammar by their own tests. One source, or a second one that goes stale.
 
 _DEFAULT_BRANCH_KIND = "feat"
+
+#: What an agent name may be. Deliberately strict: this module WRITES FILES, and
+#: the name reaches both a directory and a filename.
+_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validated_agent_name(name: str) -> str:
+    """The name, or a refusal that says which rule it broke.
+
+    This is an MCP-facing filesystem write primitive. Measured by an independent
+    reviewer 2026-09-17: with ``output_dir=/tmp/out`` and ``name="../../escape"``
+    the tool wrote ``/tmp/escape.yaml`` — outside the directory the caller asked
+    for. A name is not trusted input just because it is a string.
+
+    Rejected: empty/whitespace, surrounding whitespace, anything with a path
+    separator or a ``..`` segment, control characters / CR / LF / TAB (a newline
+    also splices the YAML comment that names the agent), a leading ``-`` (option
+    shape), and anything outside the slug pattern.
+    """
+    if not isinstance(name, str) or not name:
+        raise ValueError("agent name must be a non-empty string")
+    if name != name.strip():
+        raise ValueError(f"agent name must not have surrounding whitespace: {name!r}")
+    if name.startswith("-"):
+        raise ValueError(f"agent name must not start with '-' (option shape): {name!r}")
+    if ".." in name:
+        raise ValueError(f"agent name must not contain '..': {name!r}")
+    if any(ch in name for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in name):
+        raise ValueError(f"agent name must not contain separators or control characters: {name!r}")
+    if not _NAME_PATTERN.match(name):
+        raise ValueError(
+            f"agent name must match {_NAME_PATTERN.pattern!r} (letters, digits, '.', '_', '-'): {name!r}"
+        )
+    return name
 _AGENTS_DIR = Path.home() / ".scitex/agent-container/agents"
 
 
@@ -117,18 +119,37 @@ def template_render_contributor_spec(
     Returns ``{"name", "path", "yaml", "written"}``. ``written`` is
     ``False`` for dry runs.
     """
-    resolved_branch_short = branch_short or _derive_branch_short(name)
-    mapping = {
-        "project": target_repo,
-        "branch_kind": branch_kind,
-        "branch_short": resolved_branch_short,
-        "a2a_port": str(int(port)),
-        "startup_command": task,
-    }
-    rendered = _render(_CONTRIBUTOR_TEMPLATE, mapping)
+    safe_name = _validated_agent_name(name)
+    resolved_branch_short = branch_short or _derive_branch_short(safe_name)
 
-    dest_dir = Path(output_dir).expanduser() if output_dir else _AGENTS_DIR / name
-    dest_file = dest_dir / f"{name}.yaml"
+    if output_dir:
+        dest_root = Path(output_dir).expanduser()
+        dest_dir = dest_root
+    else:
+        dest_root = _AGENTS_DIR
+        dest_dir = dest_root / safe_name
+    dest_file = dest_dir / f"{safe_name}.yaml"
+
+    # PROVE THE DESTINATION IS INSIDE ITS ROOT, do not assume it. The name check
+    # above already refuses separators and '..', so this is the second lock on the
+    # same door: it holds even if the pattern is ever loosened, and it is the
+    # assertion that would have caught the traversal the reviewer reproduced.
+    resolved_root = dest_root.resolve()
+    resolved_file = dest_file.resolve()
+    if not resolved_file.is_relative_to(resolved_root):
+        raise ValueError(
+            f"refusing to write outside the output root: {resolved_file} is not under {resolved_root}"
+        )
+
+    rendered = _contributor_spec(
+        name=name,
+        port=int(port),
+        task=task,
+        target_repo=target_repo,
+        branch_kind=branch_kind,
+        branch_short=resolved_branch_short,
+        path=str(dest_file),
+    )
 
     if dry_run:
         return {
@@ -146,6 +167,92 @@ def template_render_contributor_spec(
         "yaml": rendered,
         "written": True,
     }
+
+
+_CONTRIBUTOR_LABELS = ("role", "trigger", "project", "branch_kind", "branch_short", "capabilities")
+
+
+def _contributor_spec(
+    *,
+    name: str,
+    port: int,
+    task: str,
+    target_repo: str,
+    branch_kind: str,
+    branch_short: str,
+    path: str,
+) -> str:
+    """The canonical v3 scaffold, decorated with the contributor pattern.
+
+    TEXT-LEVEL DECORATION, deliberately. The scaffold carries the operator-facing
+    documentation for every field (the red-start ruling, the two axes, which
+    values are portable), and a parse-and-redump would silently drop all of it —
+    a caller would receive a valid spec and no explanation of a single line in
+    it. So the three contributor-specific facts are written into the text, the
+    result is PARSED AND VALIDATED, and the text is what is returned.
+
+    ``host: ${HOSTNAME}`` is the portable-fixture form the validator names
+    itself: a template is materialised on whichever host claims it, so pinning a
+    hostname here would be a lie the moment it is copied.
+    """
+    import yaml as _yaml
+
+    from ...cli_pkg._create_templates import render_minimal_spec
+
+    # The scaffold's own line 4 is a COMMENT naming the agent. The name is already
+    # refused if it carries a newline, so it cannot end that comment early.
+    text = render_minimal_spec(
+        name=name,
+        host="${HOSTNAME}",
+        credentials_files="[]",
+        overlay='""',
+    )
+
+    # EVERY value below is data, and the file is YAML. Interpolated bare, a value
+    # containing ": " or a newline makes the document unparseable and a value
+    # containing " #" makes it VALID AND WRONG — "run task #42" loaded as
+    # "run task", with no error to notice. json.dumps produces a double-quoted
+    # YAML scalar with escapes, so the text is safe whatever the value is.
+    import json as _json
+
+    labels = (
+        "metadata:\n"
+        "  labels:\n"
+        f"    role: {_json.dumps(f'contributor-{target_repo}')}\n"
+        f"    trigger: {_json.dumps('pr-driven')}\n"
+        f"    project: {_json.dumps(target_repo)}\n"
+        f"    branch_kind: {_json.dumps(branch_kind)}\n"
+        f"    branch_short: {_json.dumps(branch_short)}\n"
+        f"    capabilities: {_json.dumps('fork,clone,branch,commit,push,open-pr')}\n"
+    )
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    for line in lines:
+        if line.rstrip("\n") == "kind: Agent":
+            out.append(line)
+            out.append(labels)
+            continue
+        if line.strip() == "port: auto":
+            out.append(line.replace("auto", str(port), 1))  # the agent's own a2a port
+            continue
+        if line.strip() == "startup_commands: []":
+            out.append("  startup_commands:\n")
+            out.append("  - delay: 5\n")
+            out.append(f"    command: {_json.dumps(task)}\n")
+            continue
+        out.append(line)
+    rendered = "".join(out)
+
+    errors = validate_raw(_yaml.safe_load(rendered), path)
+    if errors:
+        # FAIL CLOSED. Emitting an invalid spec is how 28 agents in this fleet
+        # came to be unloadable; a generator that cannot refuse is not a gate.
+        raise ValueError(
+            f"refusing to render an invalid contributor spec for {name!r} "
+            f"({len(errors)} error(s)): "
+            + " | ".join(e.split("\n")[0] for e in errors[:5])
+        )
+    return rendered
 
 
 def register_template_tools(mcp) -> None:

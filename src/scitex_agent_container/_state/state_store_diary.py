@@ -337,12 +337,14 @@ def latest_heartbeats_per_name() -> list[dict]:
                 # resurrects retired rows.
                 continue
             data = dict(row.values)
+
             key = str(data.get("name", ""))
             prev = latest.get(key)
             if prev is None or float(data.get("ts") or 0) > float(
                 prev.get("ts") or 0
             ):
                 latest[key] = data
+
         return [latest[k] for k in sorted(latest)]
     finally:
         store.close()

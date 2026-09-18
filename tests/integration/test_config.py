@@ -54,7 +54,7 @@ FULL_CONFIG = {
         },
         "apptainer": {
             "image": "/opt/sac/scitex.sif",
-            "binds": [],
+            "binds": ["/tmp/test-workdir:/tmp/test-workdir:rw"],
             "env": {"MY_VAR": "my_value"},
         },
         "screen": {"name": "full-agent"},
@@ -327,7 +327,7 @@ class TestLoadFullConfig:
         # Arrange
         config = full_loaded_config
         # Act
-        has_mkdir = any("mkdir -p" in h for h in config.hooks["pre_start"])
+        has_mkdir = "mkdir -p /tmp/test-workdir/.claude" in config.hooks["pre_start"]
         # Assert
         assert has_mkdir is True
 

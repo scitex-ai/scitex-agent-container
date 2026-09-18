@@ -6,6 +6,8 @@ from scitex_agent_container.config import AgentConfig
 from scitex_agent_container.config._claude_spec import ClaudeSpec
 from scitex_agent_container.config._harness_callables import _hermes_tui_inner_argv
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
+    HermesClarifyQuestion,
+    HermesPendingClarification,
     HermesTuiRpcError,
     HermesVisibleTurnReceipt,
 )
@@ -247,6 +249,46 @@ def test_control_state_surfaces_authenticated_readiness_json():
     assert state == {
         "turn_admission": "ready",
         "gateway_readiness": readiness,
+    }
+
+
+def test_control_state_surfaces_typed_pending_clarification():
+    # Arrange
+    pending = HermesPendingClarification(
+        request_id="req-1",
+        session_id="live-1",
+        questions=(
+            HermesClarifyQuestion(
+                qid="q0",
+                question="Fix the footer?",
+                choices=("Yes", "No"),
+                multi_select=False,
+            ),
+        ),
+    )
+    runtime = HermesTuiSessionRuntime(
+        multiplexer=_Mux(),
+        control_state_reader=lambda _state: {"turn_admission": "ready"},
+        gateway_health=lambda _state: {"status": "ok"},
+        pending_clarification_reader=lambda _state, _name: pending,
+    )
+
+    # Act
+    state = runtime.control_state(_config())
+
+    # Assert
+    assert state["pending_clarification"] == {
+        "state": "waiting_for_choice",
+        "request_id": "req-1",
+        "session_id": "live-1",
+        "questions": [
+            {
+                "qid": "q0",
+                "question": "Fix the footer?",
+                "choices": ["Yes", "No"],
+                "multi_select": False,
+            }
+        ],
     }
 
 

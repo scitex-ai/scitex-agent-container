@@ -163,3 +163,28 @@ def test_absent_without_identity(identified_as_nobody: None) -> None:
     row = build_agent_row(name=name, **_ROW_KWARGS)
     # Assert
     assert "is_self" not in row
+
+
+def test_row_carries_runtime_selection_independently_of_stored_credentials(
+    identified_as_nobody: None,
+) -> None:
+    # Arrange
+    selection = (
+        "tui",
+        "hermes",
+        "opencode-go-deepseek-v4.1-flash",
+        "deepseek-v4.1-flash",
+    )
+
+    # Act
+    row = build_agent_row(
+        name=_ME,
+        **_ROW_KWARGS,
+        runtime=selection[0],
+        harness=selection[1],
+        engine=selection[2],
+        model=selection[3],
+    )
+
+    # Assert
+    assert (row["runtime"], row["harness"], row["engine"], row["model"]) == selection

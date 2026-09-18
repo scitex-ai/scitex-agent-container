@@ -1,0 +1,125 @@
+"""A2A port observability in per-agent status."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+from scitex_agent_container._lifecycle import _status as status_module
+from scitex_agent_container._state.registry import Registry
+from scitex_agent_container.config import AgentConfig
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_spec
+
+
+def _config() -> AgentConfig:
+    config = AgentConfig(name="worker", harness="hermes", runtime="tui")
+    config.a2a.port = "auto"
+    return config
+
+
+def test_a2a_status_separates_configured_and_durable_resolved_port() -> None:
+    # Arrange
+    def port_reader(name: str) -> int | None:
+        return 19_555 if name == "worker" else None
+
+    # Act
+    result = status_module._a2a_status(
+        "worker", _config(), port_reader=port_reader
+    )
+
+    # Assert
+    assert result == {
+        "configured_port": "auto",
+        "resolved_port": 19_555,
+        "resolution_source": "durable_port_claim",
+    }
+
+
+def test_a2a_status_does_not_infer_resolved_port_without_durable_claim() -> None:
+    # Arrange
+    def port_reader(_name: str) -> None:
+        return None
+
+    # Act
+    result = status_module._a2a_status(
+        "worker", _config(), port_reader=port_reader
+    )
+
+    # Assert
+    assert result == {
+        "configured_port": "auto",
+        "resolved_port": None,
+        "resolution_source": "none",
+    }
+
+
+def _write_spec(parent: Path, name: str) -> Path:
+    spec_dir = parent / name
+    spec_dir.mkdir(parents=True)
+    path = spec_dir / "spec.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "spec": explicit_spec(
+                    {
+                        "runtime": "tui",
+                        "host": "${HOSTNAME}",
+                        "workdir": str(parent),
+                        "apptainer": {"image": "/x.sif", "binds": []},
+                        "claude": {"model": "claude-sonnet-4-5"},
+                        "health": {"enabled": True, "interval": 60},
+                        "restart": {"policy": "on-failure", "max_retries": 3},
+                    }
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_agent_status_preserves_configured_intent_when_runtime_probe_fails(
+    tmp_path: Path,
+) -> None:
+    # Arrange
+    registry = Registry(registry_dir=tmp_path / "registry")
+    registry.add("worker", str(_write_spec(tmp_path, "worker")), "tui-worker")
+
+    def broken_runtime(_config: AgentConfig):
+        raise RuntimeError("runtime probe unavailable")
+
+    # Act
+    result = status_module.agent_status(
+        "worker", registry=registry, runtime_factory=broken_runtime
+    )
+
+    # Assert
+    assert result["a2a"]["configured_port"] == "auto"
+
+
+def test_remote_instance_status_exposes_resolved_a2a_contract() -> None:
+    # Arrange
+    def rows():
+        return [
+            {
+                "name": "remote-worker",
+                "host": "node-7",
+                "bound_port": 19_123,
+                "remote": True,
+            }
+        ]
+
+    # Act
+    result = status_module._remote_instance_status(
+        "remote-worker", instance_reader=rows
+    )
+
+    # Assert
+    assert result["a2a"] == {
+        "configured_port": None,
+        "resolved_port": 19_123,
+        "resolution_source": "active_instance_bound_port",
+    }

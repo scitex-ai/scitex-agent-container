@@ -52,6 +52,7 @@ from ._parsers import (
 )
 from ._residency_types import resolve_spec_residency
 from ._types import AgentConfig, HostsSpec
+from ._workdir_hook import mapped_workdir_mkdir_hook
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -346,11 +347,13 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
-    # Auto-derive hooks: prepend mkdir for workdir
+    # Auto-derive hooks: the lifecycle runs these on the HOST, whereas
+    # spec.workdir is an IN-CONTAINER path.  Resolve it only through the
+    # explicit writable bind that supplies the container path.
     hooks = parse_hooks(spec)
     expanded = str(Path(workdir).expanduser())
-    mkdir_cmd = f"mkdir -p {expanded}/.claude"
-    if mkdir_cmd not in hooks.get("pre_start", []):
+    mkdir_cmd = mapped_workdir_mkdir_hook(expanded, apptainer_spec.binds)
+    if mkdir_cmd and mkdir_cmd not in hooks.get("pre_start", []):
         hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
 
     # Parse mcp_servers with metadata interpolation (uses effective name)

@@ -349,6 +349,20 @@ def _delegation_line(config: AgentConfig) -> str:
     )
 
 
+def _a2a_line(config: AgentConfig, *, port_reader=None) -> str:
+    """Render configured intent beside the durable resolved bridge port."""
+    from .._lifecycle._status import _a2a_status
+
+    status = _a2a_status(config.name, config, port_reader=port_reader)
+    configured = status["configured_port"]
+    resolved = status["resolved_port"]
+    return (
+        f"A2A port: configured={configured if configured is not None else 'none'}; "
+        f"resolved={resolved if resolved is not None else 'none'}; "
+        f"source={status['resolution_source']}"
+    )
+
+
 def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Short variant of :func:`render_plan` for ``sac agents start``'s
     refuse-without-``--yes`` preview.
@@ -372,6 +386,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_a2a_line(config))
     lines.append(_delegation_line(config))
     return "\n".join(lines)
 
@@ -417,6 +432,7 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     channels = getattr(getattr(config, "comms", None), "channels", []) or []
     lines.append("")
     lines.append(f"Model: {model}")
+    lines.append(_a2a_line(config))
     lines.append(_delegation_line(config))
     if flags:
         lines.append(f"Flags: {' '.join(flags)}")

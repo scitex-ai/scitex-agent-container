@@ -88,6 +88,20 @@ def _remote_command(argv: list[str]) -> str:
     return " ".join(argv[argv.index("--") + 1 :])
 
 
+@pytest.mark.parametrize("peer_name", [_PREAMBLE_PEER, _BARE_PEER])
+def test_noninteractive_dispatch_ignores_user_configured_forwardings(
+    peers, peer_name: str
+) -> None:
+    # Arrange
+    command = ["sac", "agents", "list", "--json"]
+
+    # Act
+    argv = build_ssh_argv(peer_name, command, peers)
+
+    # Assert
+    assert ("-o", "ClearAllForwardings=yes") in tuple(zip(argv, argv[1:]))
+
+
 # ---------------------------------------------------------------------------
 # The regression: a pre-quoted element survives BOTH peer kinds intact.
 # ---------------------------------------------------------------------------

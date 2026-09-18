@@ -54,6 +54,24 @@ from scitex_agent_container.cli_pkg._account_list_render import (
 )
 from scitex_agent_container.cli_pkg.account_group import account
 
+
+def test_account_table_names_itself_as_credential_inventory_not_runtime_selection():
+    # Arrange
+    row = AccountRow(
+        name="stored-account",
+        freshness_state="VALID",
+        freshness_hours=1.0,
+        used_pct_5h=None,
+        used_pct_7d=None,
+        snapshot_as_of=None,
+    )
+
+    # Act
+    rendered = render_stored_table_to_str([row], width=120)
+
+    # Assert
+    assert "Stored credentials" in rendered and "not necessarily active" in rendered
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

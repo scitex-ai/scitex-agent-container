@@ -39,8 +39,8 @@ class StartupPromptInjectorMixin:
         NOT raise so the supervisor restart cycle never oscillates.
 
         Enter-drop fix (card sac-tui-startup-prompt-enter-drop): the
-        containerized Ink/React ``claude`` TUI silently drops non-literal
-        ``send-keys`` (so the paste MUST be ``-l`` — see
+        interactive TUI can drop or interleave streamed ``send-keys`` (so the
+        text MUST use one bracketed buffer paste — see
         :meth:`TmuxManager.send_text_literal`) and drops ``Enter`` fired into
         its BUSY/initialising window. The OLD path pasted non-literally, then
         fired a blind fixed-sleep ``Enter`` (inside ``send_text_and_submit``) +

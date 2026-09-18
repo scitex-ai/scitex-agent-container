@@ -47,7 +47,8 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 └── runtime/                   ← regenerable per-host state; gitignored
     ├── <agent-name>/           per-agent runner state
     │   ├── pid                  (runner PID)
-    │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
+    │   ├── heartbeat.json       (liveness plus privacy-safe native Hermes lease)
+    │   ├── card-lease.json      (optional bounded developer/reviewer Card lease)
     │   ├── session_id           (persisted SDK session id, resume marker)
     │   ├── session.jsonl        (one JSON object per turn event)
     │   └── quota.json           (accumulated per-turn token totals)

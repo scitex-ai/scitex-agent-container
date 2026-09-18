@@ -53,6 +53,26 @@ If `before.txt` and `after.txt` are identical, the keystrokes did not
 land — the usual cause is a forgotten `-l` on step 2, or the wrong
 session name. Re-check `tmux ls`, then retry.
 
+### Long or multiline text: use one bracketed buffer paste
+
+Do **not** use `send-keys -l` for a long prompt. It still emits one input
+event per character, so a TUI redraw can interleave with the stream and
+corrupt it. Load the exact bytes through stdin, paste once with bracketed-paste
+and LF preservation, then delete the per-delivery buffer:
+
+```bash
+buf="sac-manual-$$"
+tmux load-buffer -b "$buf" - < /path/to/prompt.txt
+tmux paste-buffer -p -r -b "$buf" -t '=tui-<name>:'
+tmux delete-buffer -b "$buf"
+# Verify the composer contains the intact prompt, then submit separately:
+tmux send-keys -t '=tui-<name>:' Enter
+```
+
+`TmuxManager.send_text_literal` uses this path automatically. The payload is
+stdin data, never an argv value; the unique buffer name prevents concurrent
+deliveries from overwriting each other.
+
 ## MCP reconnect via tmux
 
 When a peer's MCP server has dropped (its tools error out mid-session),
