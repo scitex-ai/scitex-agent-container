@@ -337,7 +337,14 @@ def agent_start(
             retract_marker_for(config.name)
             return NOOP_ALREADY_RUNNING
     elif force and registry.exists(config.name):
-        # Registry says it exists but runtime says not running — stale entry.
+        # UNKNOWN/WEDGED may still hide a live process. Apply the same
+        # successor-auth protection as the positively ALIVE branch before any
+        # force-stop; a stale registry row is not evidence that teardown is
+        # harmless.
+        from ._restart_preflight import assert_successor_auth_usable
+
+        _auth_check = successor_auth_check or assert_successor_auth_usable
+        _auth_check(config)
         recheck_provider_proof_before_stop()
         agent_stop(
             config.name,

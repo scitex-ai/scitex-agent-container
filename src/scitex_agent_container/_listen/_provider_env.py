@@ -96,7 +96,6 @@ _SAFE_CHILD_ENV_NAMES = frozenset(
         "SCITEX_STORE_DSN",
         "SCITEX_CARDS_DB",
         "PGPASSFILE",
-        "PGUSER",
         "PGHOST",
         "PGPORT",
         "PGDATABASE",
