@@ -31,6 +31,34 @@ class HermesTurnActivity:
 
 
 @dataclass(frozen=True)
+class HermesClarifyQuestion:
+    """One typed question from Hermes' pending clarify projection."""
+
+    qid: str
+    question: str
+    choices: tuple[str, ...]
+    multi_select: bool
+
+
+@dataclass(frozen=True)
+class HermesPendingClarification:
+    """A live clarify request that is blocking one Hermes session."""
+
+    request_id: str
+    session_id: str
+    questions: tuple[HermesClarifyQuestion, ...]
+
+
+@dataclass(frozen=True)
+class HermesClarifyReceipt:
+    """Proof that answers closed one exact native clarify request."""
+
+    request_id: str
+    session_id: str
+    answered_qids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class HermesVisibleTurnReceipt:
     """Native acceptance plus the Hermes-owned visibility proof."""
 
@@ -456,6 +484,179 @@ def observe_turn_activity(
     status = str(row.get("status") or "").strip().lower()
     state = _session_activity(row)
     return HermesTurnActivity(state=state, session_status=status, session_id=session_id)
+
+
+def _parse_pending_clarification(
+    payload: dict,
+    *,
+    session_id: str,
+) -> HermesPendingClarification | None:
+    pending = payload.get("pending_clarify")
+    if pending is None:
+        return None
+    if not isinstance(pending, dict):
+        raise HermesTuiRpcError("Hermes pending_clarify returned malformed result")
+    request_id = pending.get("request_id")
+    raw_questions = pending.get("questions")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise HermesTuiRpcError("Hermes pending_clarify returned malformed request_id")
+    if not isinstance(raw_questions, list) or not raw_questions:
+        raise HermesTuiRpcError("Hermes pending_clarify returned malformed questions")
+    questions: list[HermesClarifyQuestion] = []
+    seen: set[str] = set()
+    for raw in raw_questions:
+        if not isinstance(raw, dict):
+            raise HermesTuiRpcError("Hermes pending_clarify contained malformed question")
+        qid = raw.get("qid")
+        question = raw.get("question")
+        choices = raw.get("choices")
+        multi_select = raw.get("multi_select")
+        if (
+            not isinstance(qid, str)
+            or not qid.strip()
+            or qid in seen
+            or not isinstance(question, str)
+            or not question.strip()
+            or not isinstance(choices, list)
+            or not all(isinstance(choice, str) and choice for choice in choices)
+            or type(multi_select) is not bool
+        ):
+            raise HermesTuiRpcError(
+                f"Hermes pending_clarify contained malformed question: {raw!r}"
+            )
+        seen.add(qid)
+        questions.append(
+            HermesClarifyQuestion(
+                qid=qid,
+                question=question,
+                choices=tuple(choices),
+                multi_select=multi_select,
+            )
+        )
+    return HermesPendingClarification(
+        request_id=request_id,
+        session_id=session_id,
+        questions=tuple(questions),
+    )
+
+
+def observe_pending_clarification(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesPendingClarification | None:
+    """Read a live clarify request without attaching to or mutating the TUI."""
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
+            session_id = str(session["id"])
+            payload = _rpc(
+                socket,
+                2,
+                "session.activate",
+                {"session_id": session_id, "omit_messages": True},
+            )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    return _parse_pending_clarification(payload, session_id=session_id)
+
+
+def respond_to_pending_clarification(
+    state_dir: Path,
+    agent_name: str,
+    *,
+    request_id: str,
+    answers: dict[str, str | list[str]],
+    timeout_s: float = 10.0,
+    connect_fn: Any | None = None,
+) -> HermesClarifyReceipt:
+    """Answer one exact pending request through native ``clarify.respond`` RPC."""
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        raise ValueError("clarify response requires request_id")
+    url, _token = _gateway_connection(state_dir)
+    try:
+        with _connect(url, timeout_s, connect_fn) as socket:
+            listing = _rpc(socket, 1, "session.active_list", {})
+            session = _select_session_row(listing.get("sessions"), f"sac:{agent_name}")
+            session_id = str(session["id"])
+            projection = _rpc(
+                socket,
+                2,
+                "session.activate",
+                {"session_id": session_id, "omit_messages": True},
+            )
+            pending = _parse_pending_clarification(
+                projection,
+                session_id=session_id,
+            )
+            if pending is None or pending.request_id != request_id:
+                observed = pending.request_id if pending is not None else "absent"
+                raise HermesTuiRpcError(
+                    f"Hermes clarify request changed: expected {request_id!r}, "
+                    f"observed {observed!r}"
+                )
+            qids = tuple(question.qid for question in pending.questions)
+            if set(answers) != set(qids):
+                raise HermesTuiRpcError(
+                    f"Hermes clarify answers must cover exactly {qids!r}"
+                )
+            request_number = 3
+            for question in pending.questions:
+                answer = answers[question.qid]
+                if question.multi_select:
+                    valid = isinstance(answer, list) and all(
+                        isinstance(value, str) and value for value in answer
+                    )
+                else:
+                    valid = isinstance(answer, str) and bool(answer)
+                if not valid:
+                    raise HermesTuiRpcError(
+                        f"Hermes clarify answer has wrong shape for {question.qid!r}"
+                    )
+                result = _rpc(
+                    socket,
+                    request_number,
+                    "clarify.respond",
+                    {
+                        "request_id": request_id,
+                        "question_id": question.qid,
+                        "answer": answer,
+                    },
+                )
+                if result.get("status") != "ok" or not isinstance(
+                    result.get("remaining", []), list
+                ):
+                    raise HermesTuiRpcError(
+                        f"Hermes clarify.respond returned malformed result: {result!r}"
+                    )
+                request_number += 1
+            after = _rpc(
+                socket,
+                request_number,
+                "session.activate",
+                {"session_id": session_id, "omit_messages": True},
+            )
+            remaining = _parse_pending_clarification(after, session_id=session_id)
+            if remaining is not None and remaining.request_id == request_id:
+                raise HermesTuiRpcError(
+                    f"Hermes clarify request {request_id!r} remained open after response"
+                )
+    except HermesTuiRpcError:
+        raise
+    except Exception as exc:
+        raise HermesTuiRpcError(
+            f"Hermes TUI gateway at {url.split('?')[0]} is unreachable: {exc}"
+        ) from exc
+    return HermesClarifyReceipt(request_id, session_id, qids)
 
 
 def submit_turn(
@@ -964,6 +1165,9 @@ def submit_visible_turn(
 
 
 __all__ = [
+    "HermesClarifyQuestion",
+    "HermesClarifyReceipt",
+    "HermesPendingClarification",
     "HermesTuiRpcError",
     "HermesCompressionReceipt",
     "HermesTurnActivity",
@@ -974,8 +1178,10 @@ __all__ = [
     "compress_session",
     "gateway_detailed_health",
     "observe_turn_activity",
+    "observe_pending_clarification",
     "clear_heartbeat_for_session",
     "clear_heartbeat",
     "submit_turn",
     "submit_visible_turn",
+    "respond_to_pending_clarification",
 ]
