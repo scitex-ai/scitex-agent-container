@@ -1128,6 +1128,7 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         ),
     )
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text(encoding="utf-8"))
+    resident = heartbeat["authoritative_heartbeat"]
 
     # Assert
     assert (
@@ -1136,7 +1137,23 @@ def test_tui_writer_promotes_the_owner_projection_into_heartbeat_json(tmp_path):
         heartbeat["turns_completed"],
         heartbeat["engine_incarnation_id"],
         heartbeat["ts"],
-    ) == (True, "hermes-session-events", 1, "generation-1:epoch-1:session-1", now)
+        resident["agent_id"],
+        resident["session_id"],
+        resident["boot_id"],
+        resident["progress_seq"],
+        resident["state"],
+    ) == (
+        True,
+        "hermes-session-events",
+        1,
+        "generation-1:epoch-1:session-1",
+        now,
+        "scholar",
+        "session-1",
+        "generation-1:epoch-1:session-1",
+        2,
+        "idle",
+    )
 
 
 def test_stale_heartbeat_from_previous_gateway_is_not_a_counter_baseline(tmp_path):

@@ -6,6 +6,7 @@ Extracted from the former monolithic ``lifecycle.py`` (split for the
 
 from __future__ import annotations
 
+import time
 import traceback
 from typing import Any, Callable, Optional
 
@@ -137,6 +138,45 @@ def _remote_instance_status(name: str) -> dict | None:
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
+        try:
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            beat = next(
+                (
+                    value
+                    for value in latest_authoritative_heartbeats()
+                    if value.get("agent_id") == name
+                ),
+                None,
+            )
+        except Exception:  # stx-allow: fallback (optional lease enrichment must not discard an already-resolved remote instance)
+            beat = None
+        if beat is not None:
+            from .._state.authoritative_heartbeat import classify_resident_state
+
+            process_evidence = beat.get("_process_alive")
+            process_alive = (
+                process_evidence if isinstance(process_evidence, bool) else None
+            )
+            result.update(
+                {
+                    "model": beat.get("model") or "unknown",
+                    "runtime": beat.get("runtime") or "unknown",
+                    "harness": beat.get("harness") or "unknown",
+                    "engine": beat.get("engine") or "unknown",
+                    "host": beat.get("host") or result["host"],
+                    "heartbeat": beat,
+                    "resident_state": classify_resident_state(
+                        beat,
+                        now=time.time(),
+                        process_alive=process_alive,
+                        federation_connected=bool(
+                            beat.get("_federation_connected")
+                        ),
+                        progress_stale_s=120.0,
+                    ),
+                }
+            )
         from .._state.observation import DefinitionState, build_agent_observation
 
         result["liveness"] = {
@@ -154,6 +194,67 @@ def _remote_instance_status(name: str) -> dict | None:
         )
         return result
     except Exception:  # stx-allow: fallback (reason: best-effort cross-host status — caller raises the normal "not found" error when None)
+        return None
+
+
+def _heartbeat_only_status(name: str) -> dict | None:
+    """Resolve a fleet-visible resident from its current host lease alone."""
+    try:
+        from .._state.authoritative_heartbeat import classify_resident_state
+        from .._state.state_store import latest_authoritative_heartbeats
+
+        beat = next(
+            (
+                value
+                for value in latest_authoritative_heartbeats()
+                if value.get("agent_id") == name
+            ),
+            None,
+        )
+        if beat is None:
+            return None
+        process_evidence = beat.get("_process_alive")
+        process_alive = (
+            process_evidence if isinstance(process_evidence, bool) else None
+        )
+        resident_state = classify_resident_state(
+            beat,
+            now=time.time(),
+            process_alive=process_alive,
+            federation_connected=bool(beat.get("_federation_connected")),
+            progress_stale_s=120.0,
+        )
+        running = resident_state in {"idle", "active", "blocked", "stalled"}
+        return {
+            "name": name,
+            "config": "",
+            "screen": "",
+            "started_at": "",
+            "status": "running" if running else "stopped",
+            "model": beat.get("model") or "unknown",
+            "runtime": beat.get("runtime") or "unknown",
+            "harness": beat.get("harness") or "unknown",
+            "engine": beat.get("engine") or "unknown",
+            "billing_mode": "unspecified",
+            "auth_identity": "unknown",
+            "runtime_identity_source": "authoritative-heartbeat",
+            "stored_credential": "unknown",
+            "account": "unknown",
+            "host": beat.get("host") or "",
+            "resident_state": resident_state,
+            "heartbeat": beat,
+            "liveness": {
+                "verdict": "alive" if running else "unknown",
+                "evidence": [
+                    {
+                        "source": "authoritative-heartbeat",
+                        "verdict": resident_state,
+                        "detail": "host lease and resident progress projection",
+                    }
+                ],
+            },
+        }
+    except Exception:  # stx-allow: fallback (unavailable fleet lease is UNKNOWN and caller retains the normal not-found verdict)
         return None
 
 
@@ -223,6 +324,9 @@ def agent_status(
         remote_status = _remote_instance_status(name)
         if remote_status is not None:
             return remote_status
+        heartbeat_status = _heartbeat_only_status(name)
+        if heartbeat_status is not None:
+            return heartbeat_status
         raise RuntimeError(f"Agent '{name}' not found in registry")
 
     runtime_factory = runtime_factory or _get_runtime
@@ -375,6 +479,7 @@ def agent_status(
     # never need a key-existence check.
     # stx-allow: fallback (reason: a state-dir read failure should never break
     # the status command — degrade to the explicit empty shape)
+    state_dir = None
     try:
         from ._session_movement import resolve_state_dir, status_movement_fields
 
@@ -390,6 +495,47 @@ def agent_status(
         # Don't overwrite a field that a prior enrich step already set —
         # the additive contract says NEW keys, not "always replaces".
         result.setdefault(k, v)
+
+    try:
+        from .._runners._session_state import read_heartbeat
+
+        local_heartbeat = read_heartbeat(state_dir) if state_dir is not None else None
+        if isinstance(local_heartbeat, dict) and isinstance(
+            local_heartbeat.get("authoritative_heartbeat"), dict
+        ):
+            from .._state.authoritative_heartbeat import classify_resident_state
+            from .._state.state_store import latest_authoritative_heartbeats
+
+            local_resident = dict(local_heartbeat["authoritative_heartbeat"])
+            result["heartbeat"] = local_resident
+            result["resident_state"] = "disconnected"
+            shared = next(
+                (
+                    beat
+                    for beat in latest_authoritative_heartbeats()
+                    if beat.get("agent_id") == name
+                ),
+                None,
+            )
+            if shared is not None:
+                process_evidence = shared.get("_process_alive")
+                process_alive = (
+                    process_evidence
+                    if isinstance(process_evidence, bool)
+                    else result.get("status") == "running"
+                )
+                result["heartbeat"] = shared
+                result["resident_state"] = classify_resident_state(
+                    shared,
+                    now=time.time(),
+                    process_alive=process_alive,
+                    federation_connected=bool(
+                        shared.get("_federation_connected")
+                    ),
+                    progress_stale_s=120.0,
+                )
+    except Exception:  # stx-allow: fallback (reason: heartbeat enrichment is optional and must not break status)
+        pass
 
     from .._state.observation import DefinitionState, build_agent_observation
 

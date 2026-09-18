@@ -73,6 +73,7 @@ deterministically without tmux / a real registry / state-dir IO.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
@@ -159,7 +160,14 @@ def list_tui_agents() -> list[dict]:
         # bridge without a SECOND ``load_config`` (we already paid for it
         # above) — mirroring the record shape ``_sdk_heartbeat_loop`` already
         # uses to hand its own tick a real config.
-        out.append({"name": name, "state_dir": state_dir, "config": cfg})
+        out.append(
+            {
+                "name": name,
+                "state_dir": state_dir,
+                "config": cfg,
+                "config_path": config_path,
+            }
+        )
 
     try:
         for row in Registry().list_all():
@@ -219,16 +227,35 @@ def _beat_one(
     try:
         config = agent.get("config")
         if str(getattr(config, "harness", "") or "").strip().lower() == "hermes":
+            from .._state.authoritative_heartbeat import read_card_lease
+            from .._state.state_store_hostname import resolve_host
             from ..runtimes._hermes_heartbeat_projection import (
                 promote_hermes_heartbeat_projection,
             )
 
+            config_path = str(agent.get("config_path") or "")
+            try:
+                spec_digest = hashlib.sha256(Path(config_path).read_bytes()).hexdigest()
+            except OSError:
+                spec_digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+            card_id, card_role = read_card_lease(Path(state_dir))
             promote_hermes_heartbeat_projection(
                 Path(state_dir),
                 name,
                 write_fn=write_fn,
                 observe_fn=hermes_observe_fn,
                 connect_fn=hermes_connect_fn,
+                identity_fields={
+                    "agent_id": name,
+                    "spec_id": f"sha256:{spec_digest}",
+                    "host": resolve_host(None),
+                    "runtime": str(getattr(config, "runtime", "") or "tui"),
+                    "harness": "hermes",
+                    "engine": str(getattr(config, "engine_key", "") or "unknown"),
+                    "model": str(getattr(config, "model", "") or "unknown"),
+                    "card_id": card_id,
+                    "card_role": card_role,
+                },
             )
             return True
         # ``writer`` marks this as OBSERVER testimony (host-side proxy

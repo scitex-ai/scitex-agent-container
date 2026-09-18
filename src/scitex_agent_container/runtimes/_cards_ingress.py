@@ -73,7 +73,7 @@ def event_from_notification(record: dict[str, Any]) -> dict[str, Any]:
     source = str(record.get("actor") or "scitex-cards")
     card_id = str(record.get("card_id") or "")
     notification_id = str(record.get("id") or "")
-    event = {
+    event: dict[str, Any] = {
         "msg_id": str(record.get("msg_id") or notification_id),
         "cards_notification_id": notification_id,
         "kind": "message",
@@ -84,6 +84,14 @@ def event_from_notification(record: dict[str, Any]) -> dict[str, Any]:
         event["conversation_id"] = card_id
     if card_id:
         event["card_id"] = card_id
+    lease_role = str(record.get("lease_role") or "").strip()
+    lease_expires_at = record.get("lease_expires_at")
+    if card_id and lease_role and isinstance(lease_expires_at, (int, float)):
+        event["_card_lease"] = {
+            "card_id": card_id,
+            "role": lease_role,
+            "expires_at": float(lease_expires_at),
+        }
     exchange_id = record.get("exchange_id")
     if isinstance(exchange_id, str) and exchange_id:
         # Newer Cards producers mint this at the persistence boundary. Carry
@@ -120,12 +128,27 @@ async def drain_once(
     poll_notifications: Callable[..., dict] | None = None,
     ack_notifications: Callable[..., dict] | None = None,
     deliver: Callable[..., Awaitable[None]] = _wake_turn,
+    card_lease_writer: Callable[..., None] | None = None,
 ) -> int:
     """Deliver and confirm a batch; never ACK before target visibility."""
     if poll_notifications is None or ack_notifications is None:
         default_poll, default_ack, _default_watch = _cards_api()
         poll_notifications = poll_notifications or default_poll
         ack_notifications = ack_notifications or default_ack
+    lease_writer = card_lease_writer
+    if lease_writer is None:
+        from .._lifecycle._session_movement import resolve_state_dir
+        from .._state.authoritative_heartbeat import write_card_lease
+
+        def _default_card_lease_writer(**kwargs: Any) -> None:
+            state_dir = resolve_state_dir(str(kwargs.pop("agent")))
+            if state_dir is None:
+                raise RuntimeError(
+                    "Cards lease cannot be confirmed: agent state directory is absent"
+                )
+            write_card_lease(state_dir, **kwargs)
+
+        lease_writer = _default_card_lease_writer
 
     payload = await asyncio.to_thread(
         # Read the full view and select ``unconfirmed`` below.  Cards' legacy
@@ -187,6 +210,9 @@ async def drain_once(
             )
             continue
 
+        lease = event.get("_card_lease")
+        if isinstance(lease, dict):
+            lease_writer(agent=name, **lease)
         receipt = await asyncio.to_thread(
             partial(ack_notifications, name, [notification_id], store=store)
         )
