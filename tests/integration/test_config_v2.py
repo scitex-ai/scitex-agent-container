@@ -250,14 +250,14 @@ class TestV2AutoDerivedEnv:
 
 
 class TestV2AutoMkdirHook:
-    def test_v2_pre_start_includes_mkdir_for_head_test(self, v2_loaded_config):
+    def test_v2_does_not_invent_a_host_path_without_a_bind(self, v2_loaded_config):
         # Arrange
         config = v2_loaded_config
         # Act
         pre_start = config.hooks.get("pre_start", [])
         has_mkdir = any("mkdir -p" in h and "head-test" in h for h in pre_start)
         # Assert
-        assert has_mkdir is True
+        assert has_mkdir is False
 
 
 class TestV2UserOverrides:

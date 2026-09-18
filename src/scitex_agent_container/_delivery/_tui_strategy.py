@@ -11,9 +11,9 @@ and a bare Enter into that pane started it working immediately. The repo had
 already root-caused this once on the boot path (card ``sac-tui-enter-drop-on-boot``)
 and the answer is BOTH suspected causes at once:
 
-1. the Ink/React TUI silently DROPS non-literal ``send-keys``, so the text must go
-   in with ``-l`` and the submit must be a SEPARATE named ``Enter`` — never ``-l``,
-   which would type the five characters "Enter" into the box; and
+1. streamed ``send-keys`` can be dropped or interleaved with a TUI redraw, so
+   text must arrive in one bracketed ``paste-buffer`` transaction and submit
+   must remain a SEPARATE named ``Enter``; and
 2. the TUI EATS an ``Enter`` fired while the pane is BUSY (spinner up, MCP
    reconnecting, a hook running), and a ``UserPromptSubmit`` hook alone can hold
    that window for 30 seconds.
@@ -93,7 +93,7 @@ def default_capture(session: str) -> Optional[str]:
 
 
 def default_paste(session: str, text: str) -> None:
-    """Literal paste, NO submit. The ``-l`` is not optional — see the docstring."""
+    """Atomic bracketed paste, NO submit; submission is verified separately."""
     from .._runners._tmux.tmux import TmuxManager
 
     TmuxManager.send_text_literal(session, text)

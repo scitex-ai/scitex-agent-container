@@ -8,9 +8,9 @@ and was simply never composed into a single answerable question:
 * :mod:`..runtimes._tui_compose` — ``verify_submit_by_advancement``, the
   idle-gated Enter with bounded retry that is the ALREADY-DIAGNOSED fix for the
   unsubmitted-composer mode;
-* :mod:`.._runners._tmux.tmux` — ``send_text_literal``, whose ``-l`` flag is
-  REQUIRED because the containerized Ink/React TUI silently drops non-literal
-  ``send-keys``;
+* :mod:`.._runners._tmux.tmux` — ``send_text_literal``, which uses one
+  bracketed ``paste-buffer`` transaction so a redraw cannot interleave with a
+  streamed long prompt;
 * :mod:`..cli_pkg._auth_status` — ``_capture``, which returns ``None`` on any
   error so "uncapturable" stays distinct from "clean pane";
 * :mod:`..cli_pkg._send` — the existing send path, preferred whenever it applies.
