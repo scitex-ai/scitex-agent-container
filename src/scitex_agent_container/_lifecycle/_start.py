@@ -80,6 +80,7 @@ def agent_start(
     in_sif_opener: Optional[Callable[..., Any]] = None,
     successor_auth_check: Callable[[AgentConfig], None] | None = None,
     config_override: AgentConfig | None = None,
+    config_authority_verified: bool = False,
 ) -> bool:
     """Start an agent from its config YAML.
 
@@ -212,6 +213,7 @@ def agent_start(
         probe_engine=probe_engine,
         one_shot=one_shot,
         dry_run=dry_run,
+        spec_authority_verified=config_authority_verified,
     )
 
     uses_production_runtime = runtime_factory is None

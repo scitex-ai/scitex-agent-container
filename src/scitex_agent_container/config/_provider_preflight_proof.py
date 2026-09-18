@@ -87,14 +87,20 @@ def consume_provider_preflight_proof(
     expected = target.pop(PROVIDER_PREFLIGHT_PROOF_ENV, None)
     if expected is None:
         return
+    assert_provider_preflight_proof(config, str(expected))
+
+
+def assert_provider_preflight_proof(config: AgentConfig, expected: str) -> None:
+    """Refuse when ``config`` differs from one immutable listener proof."""
     observed = provider_preflight_proof(config)
-    if not hmac.compare_digest(str(expected), observed):
+    if not hmac.compare_digest(expected, observed):
         raise ProviderPreflightProofError("provider_config_mismatch")
 
 
 __all__ = [
     "PROVIDER_PREFLIGHT_PROOF_ENV",
     "ProviderPreflightProofError",
+    "assert_provider_preflight_proof",
     "absent_provider_preflight_proof",
     "consume_provider_preflight_proof",
     "provider_preflight_proof",

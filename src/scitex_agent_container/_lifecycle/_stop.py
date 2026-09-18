@@ -498,8 +498,13 @@ def agent_restart(
     # after teardown would re-open the preflight→stop→load race and could leave
     # the old agent down on a mismatch.
     restart_config = load_config(config_path)
-    from ..config._provider_preflight_proof import consume_provider_preflight_proof
+    from ..config._provider_preflight_proof import (
+        assert_provider_preflight_proof,
+        consume_provider_preflight_proof,
+        provider_preflight_proof,
+    )
 
+    initial_config_proof = provider_preflight_proof(restart_config)
     consume_provider_preflight_proof(restart_config)
 
     # PRE-STOP auth pre-flight (INCIDENT
@@ -536,6 +541,13 @@ def agent_restart(
 
     check_engine_config_before_stop(
         restart_config, engine_override, probe=probe_engine
+    )
+    # Re-read once after every potentially blocking pre-stop check. A swap that
+    # occurred after listener proof consumption refuses while the old process
+    # is still up. After this point every lifecycle operation receives
+    # ``restart_config`` directly and never consults the mutable path again.
+    assert_provider_preflight_proof(
+        load_config(config_path), initial_config_proof
     )
 
     # force=True so a missing/stale registry row never blocks the kill —
@@ -620,6 +632,7 @@ def agent_restart(
         probe_engine=probe_engine,
         runtime_factory=runtime_factory,
         config_override=restart_config,
+        config_authority_verified=True,
         sleep_fn=sleep_fn,
         handover_mod=handover_mod,
         # Forwarded so a test can keep the health monitor from spawning a

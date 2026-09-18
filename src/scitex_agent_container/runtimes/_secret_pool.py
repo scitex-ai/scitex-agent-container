@@ -192,7 +192,8 @@ def _validate_secret_ancestors(path: Path) -> None:
     semantics prevent another user from replacing this user's child entry and
     are required by standard temporary roots used for atomic staging/tests.
     """
-    trusted_uids = {_effective_uid(), 0}
+    effective_uid = _effective_uid()
+    trusted_uids = {effective_uid, 0}
     current = path.parent
     while current != current.parent:
         try:
@@ -209,6 +210,14 @@ def _validate_secret_ancestors(path: Path) -> None:
         sticky_owner_boundary = bool(mode & stat.S_ISVTX)
         if mode & 0o022 and not sticky_owner_boundary:
             raise SecretPoolFileError("secret_ancestor_permissions")
+        # An effective-user-owned, non-writable directory is an immutable trust
+        # anchor: a writer above it can move/delete the entry (DoS) but cannot
+        # replace it with another directory owned by this uid. Final-file
+        # owner/inode/fd checks below reject any attacker-owned substitution.
+        # Stopping here keeps private test/runtime roots valid even when their
+        # outer scratch mount is collaborative.
+        if observed.st_uid == effective_uid and not mode & 0o022:
+            return
         current = current.parent
 
 
