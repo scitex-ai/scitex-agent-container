@@ -31,6 +31,7 @@ from scitex_agent_container.config._engine_honour import (
     probe_verdict,
     static_verdict,
 )
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
 from scitex_agent_container.config._engine_types import (
     UnknownEngineError,
     parse_engines,
@@ -261,8 +262,11 @@ def _engine_key_after_unknown_request(config) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_a_legacy_spec_with_no_engine_requested_selects_nothing(tmp_path):
+def test_a_legacy_spec_with_no_engine_requested_selects_nothing(
+    tmp_path, env_save_restore
+):
     # Arrange
+    env_save_restore.set(FLEET_ENGINES_ENV, str(tmp_path / "absent-engines.yaml"))
     config = load_config(_write(tmp_path, "legacy-start"))
     # Act
     selected = select_engine_at_start(config, None, log=False)
