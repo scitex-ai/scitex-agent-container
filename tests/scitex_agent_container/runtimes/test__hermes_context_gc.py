@@ -182,6 +182,16 @@ def test_direct_assignment_tracks_explicit_parent_card_id(tmp_path) -> None:
     }
 
 
+def test_non_task_event_never_touches_the_state_directory() -> None:
+    # Arrange: /proc cannot host an agent state directory.
+    state_dir = Path("/proc/sac-hermes-context-test")
+    event = {"msg_id": "plain-1", "content": "ordinary steer"}
+    # Act
+    record_inbound_task_event(state_dir, "agent", event)
+    # Assert
+    assert state_dir.exists() is False
+
+
 def test_foreign_completion_never_becomes_active_card(tmp_path) -> None:
     # Arrange
     event = {

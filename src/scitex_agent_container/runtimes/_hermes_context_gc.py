@@ -113,13 +113,6 @@ def record_inbound_task_event(
     state_dir: Path, agent_name: str, event: dict
 ) -> None:
     """Persist the current card identity or a completion-triggered fresh boundary."""
-    with _lifecycle_lock(state_dir):
-        _record_inbound_task_event(state_dir, agent_name, event)
-
-
-def _record_inbound_task_event(
-    state_dir: Path, agent_name: str, event: dict
-) -> None:
     extra = event.get("extra")
     extra = extra if isinstance(extra, dict) else {}
     card_id = str(extra.get("card_id") or "").strip()
@@ -128,6 +121,15 @@ def _record_inbound_task_event(
         card_id = match.group(1) if match else ""
     if not card_id:
         return
+    with _lifecycle_lock(state_dir):
+        _record_inbound_task_event(state_dir, agent_name, event, card_id=card_id)
+
+
+def _record_inbound_task_event(
+    state_dir: Path, agent_name: str, event: dict, *, card_id: str
+) -> None:
+    extra = event.get("extra")
+    extra = extra if isinstance(extra, dict) else {}
     kind = str(extra.get("card_event_kind") or "").strip()
     owner = str(extra.get("card_event_owner") or "").strip()
     delivery_id = str(event.get("msg_id") or "").strip()
