@@ -233,6 +233,10 @@ jobs:
             lint.yml
             import-smoke-on-ubuntu-py3-12.yml
             no-hosted-runners-guard-on-self-hosted.yml
+          REQUIRED_CONTEXTS: >-
+            pytest-matrix-on-ubuntu-py3.11
+            pytest-matrix-on-ubuntu-py3.13
+            ci-verdict-to-pushing-agent
         run: |
           set -uo pipefail
 
@@ -251,6 +255,7 @@ jobs:
           # PRs targeting main are therefore LISTED LOUDLY (so they cannot rot
           # unseen the way the last 8 days did) and NOT merged.
           merges=0
+          would_merge=0
           # PRs that were green and unheld but could not be given an attribution
           # comment. Counted, not swallowed: it turns the run red at the end.
           attrib_failures=0
@@ -264,12 +269,18 @@ jobs:
           p90_minutes="${GREEN_TO_MERGE_P90_MINUTES:-}"
           if [ -n "$FLEET_READ_TOKEN" ]; then
             org="${REPO%%/*}"
-            open_green=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
-              -f q="org:$org is:pr is:open status:success" --jq .total_count \
-              2>/dev/null || echo "")
-            open_prs=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
-              -f q="org:$org is:pr is:open" --jq .total_count \
-              2>/dev/null || echo "")
+            green_search=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
+              -f q="org:$org is:pr is:open status:success" 2>/dev/null || echo "")
+            open_search=$(GH_TOKEN="$FLEET_READ_TOKEN" gh api -X GET search/issues \
+              -f q="org:$org is:pr is:open" 2>/dev/null || echo "")
+            if [ -n "$green_search" ]; then
+              open_green=$(printf '%s' "$green_search" | \
+                python3 .github/ci/integration_policy.py search-count 2>/dev/null || echo "")
+            fi
+            if [ -n "$open_search" ]; then
+              open_prs=$(printf '%s' "$open_search" | \
+                python3 .github/ci/integration_policy.py search-count 2>/dev/null || echo "")
+            fi
           fi
           case "$open_green:$open_prs:$p90_minutes" in
             *[!0-9.:]*|:*|*::*|*:)
@@ -303,35 +314,58 @@ jobs:
             echo "::error::SAC_BRANCH_PROTECTION_READ_TOKEN is absent — cannot prove server-side strict develop protection"
             exit 1
           fi
-          strict_base=$(GH_TOKEN="$PROTECTION_TOKEN" gh api \
-            "repos/$REPO/branches/develop/protection/required_status_checks" \
-            --jq .strict 2>/dev/null || echo "")
-          if [ "$strict_base" != "true" ]; then
-            echo "::error::develop required-status protection is not strict (observed ${strict_base:-unreadable}). Refusing all automatic merges until the server enforces up-to-date heads."
+          if ! protection_payload=$(GH_TOKEN="$PROTECTION_TOKEN" gh api \
+                "repos/$REPO/branches/develop/protection/required_status_checks" \
+                2>/dev/null); then
+            echo "::error::develop required-status protection is unreadable. Refusing all automatic merges."
+            exit 1
+          fi
+          if ! protection_result=$(printf '%s' "$protection_payload" | \
+                python3 .github/ci/integration_policy.py protection \
+                $REQUIRED_CONTEXTS 2>/dev/null); then
+            echo "::error::develop protection is not strict or omits required contexts ($protection_result). Refusing all automatic merges until the server covers the workflow's full required set."
             exit 1
           fi
 
-          dev_bad=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
-            [ .check_runs[]
-              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-              | select(.status == "completed")
-              | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")
-            ] | length' 2>/dev/null || echo "")
-          dev_busy=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
-            [ .check_runs[]
-              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-              | select(.status != "completed")
-            ] | length' 2>/dev/null || echo "")
-          dev_total=$(gh api "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" --jq '
-            [ .check_runs[]
-              | select(((.name // "") | ascii_downcase | test("codecov|readthedocs")) | not)
-            ] | length' 2>/dev/null || echo "")
+          # The pull-request merge command leases the head SHA but has no
+          # expected-base lease.
+          # A retarget from develop to MAIN in the last network round trip must
+          # therefore be rejected by the server, not merely noticed by our last
+          # read. main is the self-modifying/release SECURITY boundary named in
+          # this workflow's header. Other non-develop bases are checked before
+          # and after attribution, but GitHub exposes no atomic base lease; do
+          # not claim this actor restriction proves an atomic develop-only merge.
+          # github.token is the github-actions App, so require main's push
+          # restriction to exclude that App. An absent/unreadable restriction is
+          # not evidence of main safety and fails the whole sweep closed.
+          if ! main_allowed_apps=$(GH_TOKEN="$PROTECTION_TOKEN" gh api \
+                "repos/$REPO/branches/main/protection/restrictions/apps" \
+                --jq '.[].slug' 2>/dev/null); then
+            echo "::error::main actor restrictions are unreadable — refusing automatic merges because a last-inch retarget could cross the main security boundary"
+            exit 1
+          fi
+          case " $main_allowed_apps " in
+            *github-actions*)
+              echo "::error::main permits the github-actions App to push — refusing automatic merges because a last-inch retarget could merge into main"
+              exit 1 ;;
+          esac
+
+          dev_snapshot=$(gh api \
+            "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" \
+            2>/dev/null || echo "")
+          dev_counts=""
+          if [ -n "$dev_snapshot" ]; then
+            dev_counts=$(printf '%s' "$dev_snapshot" | \
+              python3 .github/ci/integration_policy.py check-counts \
+              2>/dev/null || echo "")
+          fi
+          read -r dev_bad dev_busy dev_total <<< "$dev_counts"
 
           # THREE STATES, NOT TWO. "I could not read develop's health" is NOT
           # "develop is green" — collapsing an unknown into a pole is the
           # `reference-binary-where-ternary-was-needed` bug. An unreadable gate
           # merges nothing and says so.
-          if [ -z "$dev_bad" ] || [ -z "$dev_busy" ] || [ -z "$dev_total" ]; then
+          if [ -z "${dev_bad:-}" ] || [ -z "${dev_busy:-}" ] || [ -z "${dev_total:-}" ]; then
             echo "::warning::could not read develop's check state — merging nothing this tick (fail-safe)"
             exit 0
           fi
@@ -384,7 +418,8 @@ jobs:
           [ -z "${prs:-}" ] && { echo "no open PRs"; exit 0; }
 
           for pr in $prs; do
-            if [ "$merges" -ge "$MAX_MERGES" ]; then
+            spent=$((merges + would_merge))
+            if [ "$spent" -ge "$MAX_MERGES" ]; then
               echo "budget spent (MAX_MERGES=$MAX_MERGES) — remaining PRs wait for the next tick. This is the pacing, not a failure."
               break
             fi
@@ -441,16 +476,33 @@ jobs:
             # The classifier defaults ordinary source to NORMAL and fails safe:
             # an unreadable/empty file set is HIGH. HIGH never reaches the
             # merge path; LOW needs no review; NORMAL is handled below.
-            pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
-              --jq .headRefOid 2>/dev/null || echo "")
+            pr_meta=$(gh pr view "$pr" --repo "$REPO" \
+              --json headRefOid,changedFiles \
+              --jq '[.headRefOid, .changedFiles] | @tsv' 2>/dev/null || echo "")
+            tab=$'\t'
+            pr_sha="${pr_meta%%"$tab"*}"
+            changed_files="${pr_meta#*"$tab"}"
+            case "$changed_files" in
+              ""|*[!0-9]*)
+                echo "::warning::#$pr head SHA/changed_files is unreadable — risk cannot be bound to a complete exact-head file set. Not merging."
+                continue ;;
+            esac
             if [ -z "$pr_sha" ]; then
               echo "::warning::#$pr head SHA is unreadable — risk cannot be bound to an exact head. Not merging."
               continue
             fi
-            if ! changed_paths=$(gh api --paginate \
-                  "repos/$REPO/pulls/$pr/files?per_page=100" \
-                  --jq '.[] | .filename, (.previous_filename // empty)' 2>/dev/null); then
+            if ! files_pages=$(gh api --paginate --slurp \
+                  "repos/$REPO/pulls/$pr/files?per_page=100" 2>/dev/null); then
               echo "::warning::#$pr HIGH risk — changed files are unreadable, so protected paths cannot be ruled out. Held for human/security review."
+              continue
+            fi
+            # ``paths`` validates the changedFiles count, then emits both each
+            # .filename and its .previous_filename so a rename cannot launder a
+            # HIGH control-plane path into a harmless destination.
+            if ! changed_paths=$(printf '%s' "$files_pages" | \
+                  python3 .github/ci/integration_policy.py paths "$changed_files" \
+                  2>/dev/null); then
+              echo "::warning::#$pr HIGH risk — changed-files API was truncated or inconsistent with changedFiles=$changed_files. Held for human/security review."
               continue
             fi
             risk=$(printf '%s\n' "$changed_paths" | \
@@ -550,6 +602,7 @@ jobs:
             n_fail=0
             n_unknown=0
             n_total=0
+            successful_contexts=""
             # DO NOT PARSE THIS WITH `IFS=$'\t' read -r a b c d`. Tab is an IFS
             # *whitespace* character, so bash collapses runs of tabs into ONE
             # separator and strips leading ones — which silently shifts every
@@ -641,7 +694,8 @@ jobs:
               fi
 
               case "$phase" in
-                pass) n_pass=$((n_pass + 1)) ;;
+                pass) n_pass=$((n_pass + 1))
+                      [ "$verdict" = "SUCCESS" ] && successful_contexts="$successful_contexts $c_name" ;;
                 fail) n_fail=$((n_fail + 1))
                       echo "  #$pr FAILING       $c_name ($detail)" ;;
                 *)    n_unknown=$((n_unknown + 1))
@@ -668,6 +722,19 @@ jobs:
 
             if [ "$n_fail" -gt 0 ] || [ "$n_unknown" -gt 0 ]; then
               echo "PR #$pr is not green — skip ($n_fail failing, $n_unknown not yet known). NOT-YET-KNOWN IS A REFUSAL, NOT A PASS: a queued check has tested nothing."
+              continue
+            fi
+
+            missing_required=0
+            for required in $REQUIRED_CONTEXTS; do
+              case " $successful_contexts " in
+                *" $required "*) ;;
+                *)
+                  echo "::warning::#$pr required context '$required' is absent or not passing on exact head $pr_sha — refusing attribution and merge"
+                  missing_required=$((missing_required + 1)) ;;
+              esac
+            done
+            if [ "$missing_required" -gt 0 ]; then
               continue
             fi
 
@@ -736,26 +803,97 @@ jobs:
               *) ;;
             esac
 
-            # Re-read both moving refs after every API decision above. A push
-            # during the sweep invalidates the checks/review we just read; an
-            # external develop merge invalidates the ancestry proof. Neither
-            # race is allowed to fall through to the merge command.
-            current_pr_sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid \
-              --jq .headRefOid 2>/dev/null || echo "")
-            current_dev_sha=$(gh api "repos/$REPO/commits/develop" \
-              --jq .sha 2>/dev/null || echo "")
-            if [ "$current_pr_sha" != "$pr_sha" ] || [ -z "$current_pr_sha" ]; then
-              echo "::warning::#$pr head moved from $pr_sha to ${current_pr_sha:-unreadable} during the sweep — prior CI/review verdicts are superseded. Not merging."
-              continue
-            fi
-            if [ "$current_dev_sha" != "$dev_sha" ] || [ -z "$current_dev_sha" ]; then
-              echo "develop moved from $dev_sha to ${current_dev_sha:-unreadable} during the sweep — #$pr must update/re-CI against the new base. Not merging."
+            revalidate_candidate() {
+              phase="$1"
+              latest=$(gh pr view "$pr" --repo "$REPO" \
+                --json baseRefName,headRefOid,isDraft,labels \
+                --jq '[.baseRefName, .headRefOid, (.isDraft | tostring), ([.labels[].name | ascii_downcase] | join(" "))] | @tsv' \
+                2>/dev/null || echo "")
+              tab=$'\t'
+              latest_base="${latest%%"$tab"*}"
+              rest="${latest#*"$tab"}"
+              latest_head="${rest%%"$tab"*}"
+              rest="${rest#*"$tab"}"
+              latest_draft="${rest%%"$tab"*}"
+              latest_labels="${rest#*"$tab"}"
+              if [ "$latest_base" != "develop" ] || [ "$latest_head" != "$pr_sha" ] || [ "$latest_draft" != "false" ]; then
+                echo "::warning::#$pr identity/base/draft changed $phase — refusing merge"
+                return 1
+              fi
+              for latest_want in $HOLD_LABELS; do
+                case " $latest_labels " in
+                  *" $latest_want "*)
+                    echo "::warning::#$pr acquired hold label '$latest_want' $phase — refusing merge"
+                    return 1 ;;
+                esac
+              done
+
+              if ! latest_rollup=$(gh pr view "$pr" --repo "$REPO" \
+                    --json headRefOid,statusCheckRollup 2>/dev/null); then
+                echo "::warning::#$pr full check rollup is unreadable $phase — refusing merge"
+                return 1
+              fi
+              if ! latest_counts=$(printf '%s' "$latest_rollup" | \
+                    python3 .github/ci/integration_policy.py rollup-counts \
+                    --expected-head "$pr_sha" 2>/dev/null); then
+                echo "::warning::#$pr full check rollup is invalid $phase — refusing merge"
+                return 1
+              fi
+              read -r latest_pass latest_fail latest_unknown latest_total <<< "$latest_counts"
+              if [ -z "${latest_total:-}" ] || [ "$latest_total" -eq 0 ] || \
+                 [ "$latest_fail" -gt 0 ] || [ "$latest_unknown" -gt 0 ]; then
+                echo "::warning::#$pr is no longer fully green $phase — refusing merge"
+                return 1
+              fi
+              if ! latest_required=$(printf '%s' "$latest_rollup" | \
+                    python3 .github/ci/integration_policy.py required-contexts \
+                    $REQUIRED_CONTEXTS 2>/dev/null); then
+                echo "::warning::#$pr required contexts changed $phase ($latest_required) — refusing merge"
+                return 1
+              fi
+
+              latest_dev=$(gh api "repos/$REPO/commits/develop" --jq .sha 2>/dev/null || echo "")
+              if [ "$latest_dev" != "$dev_sha" ] || [ -z "$latest_dev" ]; then
+                echo "::warning::develop advanced $phase — #$pr must update/re-CI"
+                return 1
+              fi
+              latest_dev_snapshot=$(gh api \
+                "repos/$REPO/commits/$dev_sha/check-runs?per_page=100" \
+                2>/dev/null || echo "")
+              if ! latest_dev_counts=$(printf '%s' "$latest_dev_snapshot" | \
+                    python3 .github/ci/integration_policy.py check-counts 2>/dev/null); then
+                echo "::warning::develop check snapshot is unreadable $phase — refusing merge"
+                return 1
+              fi
+              read -r latest_dev_bad latest_dev_busy latest_dev_total <<< "$latest_dev_counts"
+              if [ "$latest_dev_bad" -gt 0 ] || [ "$latest_dev_busy" -gt 0 ]; then
+                echo "::warning::develop is no longer settled and green $phase — refusing merge"
+                return 1
+              fi
+
+              if [ "$risk" = "NORMAL" ]; then
+                if ! latest_reviews=$(gh api --paginate --slurp \
+                      "repos/$REPO/pulls/$pr/reviews?per_page=100" 2>/dev/null); then
+                  echo "::warning::#$pr reviews are unreadable $phase — refusing merge"
+                  return 1
+                fi
+                latest_review_verdict=$(printf '%s' "$latest_reviews" | \
+                  python3 .github/ci/integration_policy.py review "$pr_sha" 2>/dev/null || echo "")
+                if [ "$latest_review_verdict" != "APPROVED" ]; then
+                  echo "::warning::#$pr exact-head approval changed $phase — refusing merge"
+                  return 1
+                fi
+              fi
+              return 0
+            }
+
+            if ! revalidate_candidate "before attribution"; then
               continue
             fi
 
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN: would post the automation-attribution comment on #$pr and merge it -> develop (mergeStateStatus=$merge_state)"
-              merges=$((merges + 1))
+              would_merge=$((would_merge + 1))
               continue
             fi
 
@@ -851,6 +989,9 @@ jobs:
             # LAST-INCH RACE GATE: attribution is an API round trip and may take
             # long enough for the PR to be retargeted, its head to move, or
             # develop to advance. Re-read all three immediately before merge.
+            if ! revalidate_candidate "after attribution"; then
+              continue
+            fi
             last_pr=$(gh pr view "$pr" --repo "$REPO" \
               --json baseRefName,headRefOid \
               --jq '[.baseRefName, .headRefOid] | @tsv' 2>/dev/null || echo "")
@@ -870,6 +1011,29 @@ jobs:
               echo "develop advanced after attribution — #$pr must update/re-CI; refusing merge"
               continue
             fi
+            if ! last_rollup=$(gh pr view "$pr" --repo "$REPO" \
+                  --json headRefOid,statusCheckRollup 2>/dev/null); then
+              echo "::warning::#$pr required contexts are unreadable after attribution — refusing merge"
+              continue
+            fi
+            if ! last_counts=$(printf '%s' "$last_rollup" | \
+                  python3 .github/ci/integration_policy.py rollup-counts \
+                  --expected-head "$pr_sha" 2>/dev/null); then
+              echo "::warning::#$pr full check rollup/head binding changed after attribution — refusing merge"
+              continue
+            fi
+            read -r last_pass last_fail last_unknown last_total <<< "$last_counts"
+            if [ -z "${last_total:-}" ] || [ "$last_total" -eq 0 ] || \
+               [ "$last_fail" -gt 0 ] || [ "$last_unknown" -gt 0 ]; then
+              echo "::warning::#$pr is no longer fully green at the final merge boundary — refusing merge"
+              continue
+            fi
+            if ! last_required=$(printf '%s' "$last_rollup" | \
+                  python3 .github/ci/integration_policy.py required-contexts \
+                  $REQUIRED_CONTEXTS 2>/dev/null); then
+              echo "::warning::#$pr required context gate changed after attribution ($last_required) — refusing merge"
+              continue
+            fi
             if gh pr merge "$pr" --repo "$REPO" --merge --delete-branch \
                  --match-head-commit "$pr_sha"; then
               echo "MERGED #$pr -> develop (attribution comment posted first; merged WITHOUT --admin, so branch protection agreed)"
@@ -879,7 +1043,7 @@ jobs:
             fi
           done
 
-          echo "sweep complete: $merges merge(s) this run"
+          echo "sweep complete: $merges actual merge(s), $would_merge would-merge candidate(s) this run"
 
           # Collected so BOTH failure kinds get reported before the run exits;
           # an early `exit 1` here would hide the post-merge dispatch result,
@@ -893,7 +1057,8 @@ jobs:
           # github.token pushes fire no workflows — dispatch the gates once per tick.
           if [ "$merges" -gt 0 ]; then
             if [ "$DRY_RUN" = "true" ]; then
-              echo "DRY RUN: would dispatch post-merge gates on develop: $POST_MERGE_GATES"
+              echo "::error::dry run recorded an actual merge; refusing post-merge dispatch"
+              rc=1
             else
               dispatch_failures=0
               for wf in $POST_MERGE_GATES; do
@@ -911,6 +1076,8 @@ jobs:
                 echo "post-merge gates dispatched on develop"
               fi
             fi
+          elif [ "$DRY_RUN" = "true" ] && [ "$would_merge" -gt 0 ]; then
+            echo "DRY RUN: would dispatch post-merge gates on develop: $POST_MERGE_GATES"
           fi
 
           exit "$rc"

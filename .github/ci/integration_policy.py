@@ -88,14 +88,8 @@ _DRAIN_ALLOWED = frozenset(
 
 
 def fleet_mode(open_green: int) -> str:
-    """Return the deterministic fleet mode for an open-green backlog."""
-    if open_green > 40:
-        return "DRAIN"
-    if open_green > 20:
-        return "INTEGRATION_HEAVY"
-    if open_green > 10:
-        return "BALANCED"
-    return "BUILD"
+    """Compatibility projection using the authorized pressure thresholds."""
+    return pressure_mode(integration_pressure(open_green, 0, 0))
 
 
 def integration_pressure(
@@ -131,6 +125,134 @@ def dispatch_allowed(mode: str, work_kind: str) -> bool:
     if mode == "DRAIN":
         return normalized_kind in _DRAIN_ALLOWED
     return True
+
+
+def changed_paths_from_pages(expected_count: int, pages: list[list[dict]]) -> list[str]:
+    """Flatten GitHub files pages only when all ``changed_files`` arrived."""
+    if isinstance(expected_count, bool) or not isinstance(expected_count, int):
+        raise ValueError("changed-files expected count is invalid")
+    files = [item for page in pages for item in page]
+    if len(files) != expected_count:
+        raise ValueError(
+            f"changed-files API was truncated: expected {expected_count}, got {len(files)}"
+        )
+    paths: list[str] = []
+    for item in files:
+        filename = str(item.get("filename") or "").strip()
+        previous = str(item.get("previous_filename") or "").strip()
+        if filename:
+            paths.append(filename)
+        if previous:
+            paths.append(previous)
+    return paths
+
+
+def complete_search_count(payload: dict) -> int:
+    """Return total_count only for a complete GitHub Search response."""
+    if payload.get("incomplete_results") is not False:
+        raise ValueError("GitHub Search result is incomplete")
+    count = payload.get("total_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("GitHub Search total_count is invalid")
+    return count
+
+
+def check_counts(payload: dict) -> tuple[int, int, int]:
+    """Classify one atomic check-runs response as failing/busy/total."""
+    runs = payload.get("check_runs")
+    if not isinstance(runs, list):
+        raise ValueError("check-runs payload is invalid")
+    reported_total = payload.get("total_count")
+    if (
+        isinstance(reported_total, bool)
+        or not isinstance(reported_total, int)
+        or reported_total != len(runs)
+    ):
+        raise ValueError("check-runs snapshot is truncated or missing total_count")
+    included = [
+        run
+        for run in runs
+        if not re.search("codecov|readthedocs", str(run.get("name") or ""), re.I)
+    ]
+    failing = sum(
+        str(run.get("status") or "") == "completed"
+        and str(run.get("conclusion") or "")
+        not in {"success", "neutral", "skipped"}
+        for run in included
+    )
+    busy = sum(str(run.get("status") or "") != "completed" for run in included)
+    return failing, busy, len(included)
+
+
+def rollup_counts(
+    payload: dict, *, expected_head: str | None = None
+) -> tuple[int, int, int, int]:
+    """Classify a PR statusCheckRollup as pass/fail/unknown/total."""
+    if expected_head is not None and payload.get("headRefOid") != expected_head:
+        raise ValueError("statusCheckRollup head does not match expected head")
+    rollup = payload.get("statusCheckRollup")
+    if not isinstance(rollup, list):
+        raise ValueError("statusCheckRollup payload is invalid")
+    passing = failing = unknown = 0
+    for item in rollup:
+        name = str(item.get("name") or item.get("context") or "")
+        if re.search("codecov|readthedocs", name, re.I):
+            continue
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("conclusion") or item.get("state") or "").upper()
+        if status not in {"", "COMPLETED"}:
+            unknown += 1
+        elif verdict in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+            passing += 1
+        elif verdict in {
+            "FAILURE",
+            "ERROR",
+            "TIMED_OUT",
+            "ACTION_REQUIRED",
+            "STARTUP_FAILURE",
+        }:
+            failing += 1
+        else:
+            unknown += 1
+    return passing, failing, unknown, passing + failing + unknown
+
+
+def missing_protected_contexts(
+    payload: dict, required: tuple[str, ...]
+) -> list[str]:
+    """Require strict develop protection containing every workflow context."""
+    if payload.get("strict") is not True:
+        raise ValueError("required status protection is not strict")
+    contexts = payload.get("contexts")
+    checks = payload.get("checks", [])
+    if not isinstance(contexts, list) or not isinstance(checks, list):
+        raise ValueError("required status protection payload is invalid")
+    protected = {str(context) for context in contexts}
+    protected.update(
+        str(check.get("context") or "") for check in checks if isinstance(check, dict)
+    )
+    return [name for name in required if name not in protected]
+
+
+def missing_required_contexts(payload: dict, required: tuple[str, ...]) -> list[str]:
+    """Return required context names lacking an exact SUCCESS verdict."""
+    rollup = payload.get("statusCheckRollup")
+    if not isinstance(rollup, list):
+        raise ValueError("statusCheckRollup payload is invalid")
+    verdicts: dict[str, list[bool]] = {}
+    for item in rollup:
+        name = str(item.get("name") or item.get("context") or "")
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("conclusion") or item.get("state") or "").upper()
+        if name:
+            verdicts.setdefault(name, []).append(
+                status in {"", "COMPLETED"} and verdict == "SUCCESS"
+            )
+    return [
+        name
+        for name in required
+        if verdicts.get(name) != [True]
+    ]
 
 
 def _normalize_path(path: str) -> str:
@@ -190,8 +312,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     mode_parser = subparsers.add_parser("mode")
-    mode_parser.add_argument("metrics", nargs="+")
+    mode_parser.add_argument("open_green")
+    mode_parser.add_argument("open_prs")
+    mode_parser.add_argument("p90_minutes")
     subparsers.add_parser("risk")
+    paths_parser = subparsers.add_parser("paths")
+    paths_parser.add_argument("expected_count", type=int)
+    subparsers.add_parser("search-count")
+    subparsers.add_parser("check-counts")
+    rollup_parser = subparsers.add_parser("rollup-counts")
+    rollup_parser.add_argument("--expected-head")
+    protection_parser = subparsers.add_parser("protection")
+    protection_parser.add_argument("contexts", nargs="+")
+    required_parser = subparsers.add_parser("required-contexts")
+    required_parser.add_argument("contexts", nargs="+")
     review_parser = subparsers.add_parser("review")
     review_parser.add_argument("head_sha")
     admit_parser = subparsers.add_parser("admit")
@@ -203,20 +337,41 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "mode":
-        if len(args.metrics) == 1:
-            print(fleet_mode(int(args.metrics[0])))
-        elif len(args.metrics) == 3:
-            print(
-                pressure_mode(
-                    integration_pressure(
-                        args.metrics[0], args.metrics[1], args.metrics[2]
-                    )
+        print(
+            pressure_mode(
+                integration_pressure(
+                    args.open_green, args.open_prs, args.p90_minutes
                 )
             )
-        else:
-            parser.error("mode requires open_green or open_green open_prs p90_minutes")
+        )
     elif args.command == "risk":
         print(classify_risk([line.rstrip("\n") for line in sys.stdin if line.strip()]))
+    elif args.command == "paths":
+        pages = json.load(sys.stdin)
+        for path in changed_paths_from_pages(args.expected_count, pages):
+            print(path)
+    elif args.command == "search-count":
+        print(complete_search_count(json.load(sys.stdin)))
+    elif args.command == "check-counts":
+        print(*check_counts(json.load(sys.stdin)))
+    elif args.command == "rollup-counts":
+        print(
+            *rollup_counts(
+                json.load(sys.stdin), expected_head=args.expected_head
+            )
+        )
+    elif args.command == "protection":
+        missing = missing_protected_contexts(json.load(sys.stdin), tuple(args.contexts))
+        if missing:
+            print("MISSING " + " ".join(missing))
+            return 2
+        print("OK")
+    elif args.command == "required-contexts":
+        missing = missing_required_contexts(json.load(sys.stdin), tuple(args.contexts))
+        if missing:
+            print("MISSING " + " ".join(missing))
+            return 2
+        print("OK")
     elif args.command == "review":
         payload = json.load(sys.stdin)
         reviews = [review for page in payload for review in page]
