@@ -30,6 +30,7 @@ import importlib
 from types import SimpleNamespace
 
 from scitex_agent_container._state.state_store_instances import (
+    _assert_heartbeat_host_authority,
     _authoritative_heartbeats_from_rows,
     end_instance,
     last_known_instance,
@@ -40,6 +41,19 @@ from scitex_agent_container._state.state_store_instances import (
     record_instance_start,
     record_instance_stop,
 )
+
+
+def test_peer_cannot_renew_another_hosts_instance_lease() -> None:
+    # Arrange
+    # Act
+    try:
+        _assert_heartbeat_host_authority("compute-03", "compute-04")
+    except ValueError as exc:
+        error = str(exc)
+    else:
+        error = ""
+    # Assert
+    assert "cannot renew another host" in error
 
 
 def test_authoritative_lease_uses_store_hlc_not_publisher_wall_clock() -> None:

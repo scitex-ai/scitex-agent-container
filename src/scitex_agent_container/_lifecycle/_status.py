@@ -138,16 +138,19 @@ def _remote_instance_status(name: str) -> dict | None:
             "remote": bool(row.get("remote")),
             "spawned_by": row.get("spawned_by"),
         }
-        from .._state.state_store import latest_authoritative_heartbeats
+        try:
+            from .._state.state_store import latest_authoritative_heartbeats
 
-        beat = next(
-            (
-                value
-                for value in latest_authoritative_heartbeats()
-                if value.get("agent_id") == name
-            ),
-            None,
-        )
+            beat = next(
+                (
+                    value
+                    for value in latest_authoritative_heartbeats()
+                    if value.get("agent_id") == name
+                ),
+                None,
+            )
+        except Exception:  # stx-allow: fallback (optional lease enrichment must not discard an already-resolved remote instance)
+            beat = None
         if beat is not None:
             from .._state.authoritative_heartbeat import classify_resident_state
 

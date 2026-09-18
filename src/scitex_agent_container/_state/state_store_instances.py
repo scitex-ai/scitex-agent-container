@@ -124,6 +124,15 @@ def _heartbeat_from_instance(values: dict) -> dict[str, object] | None:
     return heartbeat
 
 
+def _assert_heartbeat_host_authority(row_host: str, canonical_host: str) -> None:
+    from .authoritative_heartbeat import AuthoritativeHeartbeatError
+
+    if row_host != canonical_host:
+        raise AuthoritativeHeartbeatError(
+            "host authority mismatch: this process cannot renew another host's lease"
+        )
+
+
 def scan_instances(store: "Store") -> list["Row"]:
     """Every record. The store offers no WHERE, so filtering is ours."""
     return store.rows()
@@ -297,11 +306,14 @@ def record_instance_heartbeat(
         if row is None or row.values.get("ended_at") is not None:
             return False
         values = row.values
+        row_host = str(values.get("host") or "")
+        canonical_host = _resolve_host(None)
+        _assert_heartbeat_host_authority(row_host, canonical_host)
         previous = _heartbeat_from_instance(dict(values))
         validated = validate_heartbeat(
             heartbeat,
             expected_agent=str(values.get("name") or ""),
-            expected_host=str(values.get("host") or ""),
+            expected_host=row_host,
             now=time.time(),
             previous=previous,
         )
