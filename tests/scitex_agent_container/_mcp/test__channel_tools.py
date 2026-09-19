@@ -237,13 +237,13 @@ def _clear_recent_ring():
 
 
 @pytest.mark.asyncio
-async def test_list_tools_returns_five_tools(registered_tools: _ToolRecorder):
+async def test_list_tools_returns_eight_tools(registered_tools: _ToolRecorder):
     # Arrange
     list_fn = registered_tools.list_tools_fn
     # Act
     tools = await list_fn()
     # Assert
-    assert len(tools) == 5
+    assert len(tools) == 8
 
 
 @pytest.mark.asyncio
