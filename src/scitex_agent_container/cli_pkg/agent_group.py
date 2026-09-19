@@ -113,10 +113,11 @@ def agent_group() -> None:
 # --project <p>`.
 agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
-# `twin` — spawn a context-inheriting twin of a running agent (forks the
+# `fork` — spawn a context-inheriting child of a running agent (forks the
 # parent's live session, then diverges; parent never stops). See the
-# twin-spawning skill + docs/adr/0019.
-agent_group.add_command(_rebind(_twin_impl, "twin"))
+# fork-spawning skill + docs/adr/0019. The verb is `fork`; the noun "twin" is
+# retired (operator, 2026-09-19: a noun must not name a command).
+agent_group.add_command(_rebind(_twin_impl, "fork"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the

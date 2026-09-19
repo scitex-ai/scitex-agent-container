@@ -104,7 +104,7 @@ def _schedule_ttl_stop(twin_name: str, ttl_seconds: int) -> str:
     return f"auto-stop scheduled in {ttl_seconds}s (detached timer)"
 
 
-@click.command(name="twin")
+@click.command(name="fork")
 @click.argument("parent", type=str, shell_complete=agent_name_complete)
 @click.option(
     "--name",
