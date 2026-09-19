@@ -446,13 +446,13 @@ def full_physical_refresh_cap():
         raise RuntimeError("physical-cap fixture was refused before reaching its cap")
     if not _await(lambda: len(started) >= cap):
         raise RuntimeError("physical-cap fixture did not start every worker")
-    yield cache, cap, gate, started
+    yield cache, cap, gate, started, blocked_fetcher
     gate.set()
 
 
 def test_physical_refresh_cap_fixture_occupies_every_slot(full_physical_refresh_cap):
     # Arrange
-    cache, cap, _gate, started = full_physical_refresh_cap
+    cache, cap, _gate, started, _blocked_fetcher = full_physical_refresh_cap
     # Act
     occupancy = (len(started), len(cache._inflight))
     # Assert
@@ -464,19 +464,20 @@ def test_stale_reclaim_does_not_start_a_ninth_refresh_or_hide_a_blocked_worker(
 ):
     # Arrange: age every marker past the stale horizon so all of them look
     # abandoned while every physical worker is still reading.
-    cache, cap, _gate, started = full_physical_refresh_cap
+    cache, cap, _gate, started, blocked_fetcher = full_physical_refresh_cap
     with cache._lock:
         for key, (run_id, _started_at) in list(cache._inflight.items()):
             cache._inflight[key] = (run_id, time.monotonic() - (REFRESH_STALE_SECONDS + 1.0))
     # Act: a NINTH distinct identity asks for a refresh while the cap is full.
-    allowed = cache.refresh_async("user-9", lambda: [])
+    allowed = cache.refresh_async("user-9", blocked_fetcher)
     _await(lambda: len(started) > cap, timeout=1.0)
     # Assert: no ninth worker beyond the cap. The cap counts PHYSICAL workers.
     assert allowed is False and len(started) == cap and len(cache._inflight) == cap
 
 
-def test_granted_crosshost_scope_dispatches_refresh(env_save_restore):
-    # Arrange
+@pytest.fixture
+def granted_crosshost_refresh(env_save_restore):
+    """A granted cross-host refresh paused while its authorization is revoked."""
     from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
 
     cache = InventoryCache()
@@ -485,30 +486,33 @@ def test_granted_crosshost_scope_dispatches_refresh(env_save_restore):
 
     def gated_fetcher():
         release.wait(timeout=10.0)
-        return []
-
-    # Act
-    dispatched = cache.refresh_async("op", gated_fetcher)
-    release.set()
-    _await(lambda: not cache._inflight)
-    # Assert
-    assert dispatched is True
-
-
-def test_dispatch_time_scope_is_not_recomputed_at_put_after_revocation(env_save_restore):
-    # Arrange: the cross-host grant is LIVE when the refresh is dispatched, so
-    # the read is authorized to carry the cross-host row.
-    from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
-
-    cache = InventoryCache()
-    env_save_restore.set(CROSSHOST_OPERATORS_ENV, "op")
-    release = threading.Event()
-
-    def crosshost_fetcher():
-        release.wait(timeout=10.0)
         return [{"name": "gamma", "cross_host": True}]
 
-    cache.refresh_async("op", crosshost_fetcher)
+    if not cache.refresh_async("op", gated_fetcher):
+        raise RuntimeError("granted-scope fixture could not dispatch its refresh")
+    yield cache, release
+    release.set()
+
+
+def test_granted_crosshost_scope_fixture_has_an_inflight_refresh(
+    granted_crosshost_refresh,
+):
+    # Arrange
+    cache, _release = granted_crosshost_refresh
+    # Act
+    has_inflight_refresh = bool(cache._inflight)
+    # Assert
+    assert has_inflight_refresh
+
+
+def test_dispatch_time_scope_is_not_recomputed_at_put_after_revocation(
+    env_save_restore,
+    granted_crosshost_refresh,
+):
+    # Arrange: the fixture dispatched while the cross-host grant was live.
+    from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
+
+    cache, release = granted_crosshost_refresh
     # Act: the grant is revoked while the fetch is in flight; it then lands.
     env_save_restore.delete(CROSSHOST_OPERATORS_ENV)
     release.set()
@@ -543,7 +547,7 @@ def test_same_key_stale_supersede_does_not_admit_a_ninth_physical_worker(
     full_physical_refresh_cap,
 ):
     # Arrange: age one occupied key past the stale horizon while its worker lives.
-    cache, cap, _gate, started = full_physical_refresh_cap
+    cache, cap, _gate, started, blocked_fetcher = full_physical_refresh_cap
     with cache._lock:
         run_id, _started_at = cache._inflight[cache._key("user-0")]
         cache._inflight[cache._key("user-0")] = (
@@ -551,7 +555,7 @@ def test_same_key_stale_supersede_does_not_admit_a_ninth_physical_worker(
             time.monotonic() - (REFRESH_STALE_SECONDS + 1.0),
         )
     # Act: the same key asks again while every physical slot remains occupied.
-    admitted = cache.refresh_async("user-0", lambda: [])
+    admitted = cache.refresh_async("user-0", blocked_fetcher)
     _await(lambda: len(started) > cap, timeout=1.0)
     # Assert: a superseded worker still counts until it physically exits.
     assert admitted is False and len(started) == cap
