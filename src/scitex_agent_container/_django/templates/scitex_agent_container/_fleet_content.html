@@ -5,11 +5,11 @@ Shared Agents fleet content. Included by:
 `url_base` is the app's mount prefix ("" at root, "/apps/agents" when
 mounted) so the per-row links are correct in both modes.
 {% endcomment %}
-<div class="agents-app" data-page="fleet">
+<div class="agents-app" data-page="fleet" data-fleet-state="{{ fleet_state|default:'loading' }}">
   <header class="agents-head">
     <div class="agents-title">
       <h1><i class="fas fa-robot"></i> Agents</h1>
-      <span class="agents-sub">Scoped fleet — {{ listener }}</span>
+      <span class="agents-sub">{% if observed_age is not None %}Last known {{ observed_age|floatformat:0 }}s ago{% else %}Fleet{% endif %}</span>
     </div>
     <div class="agents-summary">
       <div class="sum-card"><span class="sum-num">{{ summary.total }}</span><span class="sum-label">visible</span></div>
@@ -21,13 +21,39 @@ mounted) so the per-row links are correct in both modes.
     </div>
   </header>
 
-  {% if comm_error %}
+  {% comment %}
+  P0: this banner used to print the raw listener URL, the env-var names and a
+  bearer-token instruction into the BROWSER. A browser must never receive an
+  internal endpoint, a config key name, or deployment prose - that is operator
+  information, and on a shared host it is an information leak. The user-facing
+  copy is now state + Retry only; the diagnostic detail stays server-side.
+  {% endcomment %}
+  {% if fleet_state == "loading" %}
+  <div class="agents-loading" role="status" aria-live="polite">
+    <span class="agents-sr-only">Loading the agent fleet</span>
+    <div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div>
+    <p class="dim timeline-note">Reading the fleet…</p>
+  </div>
+  {% endif %}
+
+  {% if fleet_state == "unavailable" %}
   <div class="agents-bannor err" role="alert">
     <i class="fas fa-triangle-exclamation"></i>
-    <span>{{ comm_error }}</span>
-    <small>The dashboard could not reach the SAC host control plane. Set
-    <code>SCITEX_AGENT_CONTAINER_API_URL</code> and the bearer token
-    (<code>SCITEX_AGENT_CONTAINER_API_TOKEN[_FILE]</code>), then retry.</small>
+    <span>The fleet is not available right now.</span>
+    <small>Your agents are unaffected — this is the console failing to reach its
+    data source, not your fleet going away.</small>
+    <small class="diag">
+      <button type="button" class="btn btn-retry" data-action="retry"
+              onclick="window.location.reload()"><i class="fas fa-rotate"></i> Retry</button>
+    </small>
+  </div>
+  {% endif %}
+
+  {% if fleet_state == "cached" %}
+  <div class="agents-bannor" role="status">
+    <i class="fas fa-clock-rotate-left"></i>
+    <span>Showing the last known inventory{% if observed_age is not None %} from {{ observed_age|floatformat:0 }}s ago{% endif %}.</span>
+    <small>This may be out of date; it refreshes automatically.</small>
   </div>
   {% endif %}
 
@@ -75,9 +101,27 @@ mounted) so the per-row links are correct in both modes.
   </table>
   </div>
   {% else %}
-  {% if not comm_error %}
+  {% if fleet_state == "empty" %}
   <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
     <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
   {% endif %}
+  {% endif %}
+
+  {% comment %}
+  B1: a cold shell renders as `loading`. This READ-ONLY poll warms the server's
+  last-known snapshot via /api/fleet, then a single reload shows the true state
+  (the inventory, or unavailable + Retry). It only fires while loading, stops
+  after the one authoritative response, and issues only a GET - it never blocks
+  first paint and never loops. (The Retry button above does the same reload.)
+  {% endcomment %}
+  {% if fleet_state == "loading" %}
+  <script>
+  (function () {
+    var base = "{{ url_base }}";
+    fetch(base + "/api/fleet", { method: "GET", credentials: "same-origin" })
+      .then(function () { window.location.reload(); })
+      .catch(function () { /* console itself unreachable: stay in loading, do not loop */ });
+  })();
+  </script>
   {% endif %}
 </div>
