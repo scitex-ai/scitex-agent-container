@@ -51,6 +51,16 @@ def test_resolve_provider_returns_local_codex_gateway():
     }
 
 
+def test_resolve_codex_subscription_has_no_endpoint_or_key_override():
+    # Arrange
+    name = "codex-subscription"
+    # Act
+    entry = resolve_provider(name)
+
+    # Assert
+    assert entry == {"base_url": None, "auth_token_env": None}
+
+
 def test_resolve_provider_returns_none_for_unknown_name():
     # Arrange
     name = "this-provider-does-not-exist"

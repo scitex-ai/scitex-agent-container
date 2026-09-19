@@ -17,6 +17,7 @@ from .base import RuntimeBase
 
 __all__ = [
     "ClaudeSessionRuntime",
+    "CodexSessionRuntime",
     "RuntimeBase",
 ]
 
@@ -26,5 +27,9 @@ def __getattr__(name: str):
         from .claude_session import ClaudeSessionRuntime
 
         return ClaudeSessionRuntime
+    if name == "CodexSessionRuntime":
+        from .codex_session import CodexSessionRuntime
+
+        return CodexSessionRuntime
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
