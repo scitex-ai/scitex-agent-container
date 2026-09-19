@@ -9,9 +9,368 @@ staging YAML on the sac host out-of-band.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from starlette.responses import JSONResponse
+
+
+def _twin_parent_from_spec(spec: dict) -> str:
+    body = spec.get("spec")
+    if not isinstance(body, dict):
+        return ""
+    apptainer = body.get("apptainer")
+    if not isinstance(apptainer, dict):
+        return ""
+    env = apptainer.get("env")
+    if not isinstance(env, dict):
+        return ""
+    from .._lifecycle._twin import TWIN_PARENT_ENV
+
+    return str(env.get(TWIN_PARENT_ENV) or "").strip()
+
+
+@dataclass
+class InlineSpecHandoff:
+    """Rollback metadata for writes performed before the start handoff."""
+
+    worktree_parent: Path | None = None
+    worktree_path: Path | None = None
+    worktree_created: bool = False
+    seed_path: Path | None = None
+    authority_parent_spec: Path | None = None
+    authority_snapshot_path: Path | None = None
+    authority_snapshot_created: bool = False
+    spec_path: Path | None = None
+    spec_created: bool = False
+    spec_previous: bytes | None = None
+
+    def rollback(self) -> None:
+        """Remove only artifacts created by this request."""
+        if self.seed_path is not None:
+            self.seed_path.unlink(missing_ok=True)
+            try:
+                self.seed_path.parent.rmdir()
+            except OSError:
+                pass
+        if self.spec_path is not None:
+            if self.spec_created:
+                self.spec_path.unlink(missing_ok=True)
+                try:
+                    self.spec_path.parent.rmdir()
+                except OSError:
+                    pass
+            elif self.spec_previous is not None:
+                self.spec_path.write_bytes(self.spec_previous)
+        if self.authority_snapshot_created and self.authority_snapshot_path is not None:
+            shutil.rmtree(self.authority_snapshot_path, ignore_errors=True)
+        if (
+            self.worktree_created
+            and self.worktree_parent is not None
+            and self.worktree_path is not None
+        ):
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self.worktree_parent),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(self.worktree_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(self.worktree_parent), "worktree", "prune"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+
+def _git_authority(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise OSError(f"git {' '.join(args)} failed: {detail}")
+    return completed.stdout.strip()
+
+
+def _write_hermes_fork_authority(
+    *,
+    name: str,
+    spec: dict,
+    parent_spec_path: Path,
+    primary: Path,
+    handoff: InlineSpecHandoff,
+) -> Path:
+    """Commit a fork spec in a new immutable authority snapshot and link it."""
+    import yaml
+
+    parent_spec = Path(parent_spec_path).resolve(strict=True)
+    parent_repo = Path(_git_authority(parent_spec.parent, "rev-parse", "--show-toplevel")).resolve()
+    parent_head = _git_authority(parent_repo, "rev-parse", "--verify", "HEAD")
+    origin = _git_authority(parent_repo, "remote", "get-url", "origin")
+    source = origin.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if source.endswith(".git"):
+        source = source[:-4]
+    # A snapshot origin may itself carry the pinned suffix; strip it so the
+    # next immutable snapshot keeps the original source identity.
+    import re
+
+    source = re.sub(r"-[0-9a-f]{40}$", "", source).lstrip(".")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", source):
+        raise OSError(f"invalid authority source identity {source!r}")
+    snapshot_parent = (
+        parent_repo.parent
+        if parent_repo.parent.name == "sac-authority"
+        else Path.home() / ".scitex" / "agent-container" / "sac-authority"
+    )
+    snapshot_parent.mkdir(parents=True, exist_ok=True)
+    stage = snapshot_parent / f".{source}-fork-{name}-{uuid.uuid4().hex}"
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--shared", str(parent_repo), str(stage)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        _git_authority(stage, "remote", "set-url", "origin", origin)
+        _git_authority(stage, "checkout", "--quiet", "--detach", parent_head)
+        parent_rel = parent_spec.relative_to(parent_repo)
+        child_rel = parent_rel.parent.parent / name / "spec.yaml"
+        child_path = stage / child_rel
+        child_path.parent.mkdir(parents=True, exist_ok=True)
+        child_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+        _git_authority(stage, "add", "--", child_rel.as_posix())
+        _git_authority(
+            stage,
+            "-c",
+            "user.name=SAC Fork Authority",
+            "-c",
+            "user.email=sac-fork@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            f"sac fork spec: {name}",
+        )
+        child_head = _git_authority(stage, "rev-parse", "--verify", "HEAD")
+        snapshot = snapshot_parent / f"{source}-{child_head}"
+        if os.path.lexists(snapshot):
+            raise OSError(f"fork authority snapshot already exists: {snapshot}")
+        os.replace(stage, snapshot)
+        handoff.authority_snapshot_path = snapshot
+        handoff.authority_snapshot_created = True
+        authoritative_spec = snapshot / child_rel
+        primary.mkdir(parents=True, exist_ok=True)
+        spec_path = primary / "spec.yaml"
+        spec_path.symlink_to(authoritative_spec)
+        handoff.spec_path = spec_path
+        handoff.spec_created = True
+        return spec_path
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+
+
+def _inject_twin_workdir_bind(spec: dict, host_worktree: Path, container_workdir: str) -> dict:
+    """Replace any exact workdir bind with the detached child worktree."""
+    import copy
+
+    from ._inline_spec_bind_translate import _parse_bind
+
+    out = copy.deepcopy(spec)
+    body = out["spec"]
+    apptainer = body["apptainer"]
+    binds = apptainer.get("binds")
+    binds = binds if isinstance(binds, list) else []
+    retained: list[Any] = []
+    for bind in binds:
+        parsed = _parse_bind(bind)
+        if parsed is not None and parsed[1] == container_workdir:
+            continue
+        retained.append(bind)
+    apptainer["binds"] = [
+        f"{host_worktree}:{container_workdir}:rw",
+        *retained,
+    ]
+    return out
+
+
+def _prepare_twin_host_isolation(
+    name: str,
+    spec: dict,
+    *,
+    caller: str | None,
+    authority: str | None,
+    agents_root: Path,
+    handoff: InlineSpecHandoff,
+) -> tuple[dict, JSONResponse | None]:
+    """Validate a twin claim, create its host worktree, and inject its bind."""
+    parent_name = _twin_parent_from_spec(spec)
+    if not parent_name:
+        return spec, None
+
+    import yaml
+
+    from .._lifecycle._twin import (
+        TwinSeedError,
+        _ensure_twin_worktree,
+        _reject_symlink_components,
+        _resolve_host_repo_from_binds,
+        _twin_isolation_paths,
+        _validate_agent_component,
+    )
+
+    try:
+        _validate_agent_component(parent_name, role="parent")
+    except TwinSeedError as exc:
+        return spec, JSONResponse(
+            {"error": str(exc), "kind": "invalid_agent_name"}, status_code=400
+        )
+    if name == parent_name:
+        return spec, JSONResponse(
+            {"error": "fork agent name must differ from its parent", "kind": "twin_identity_mismatch"},
+            status_code=400,
+        )
+    if authority == "admin" and caller is None:
+        pass
+    elif caller:
+        return spec, JSONResponse(
+            {
+                "error": (
+                    "agent-authenticated fork spawning is unavailable: the current "
+                    "host-wide bearer does not cryptographically bind caller identity"
+                ),
+                "kind": "twin_agent_auth_unavailable",
+            },
+            status_code=403,
+        )
+    else:
+        return spec, JSONResponse(
+            {
+                "error": "fork spawn requires explicit admin authority",
+                "kind": "twin_authority_required",
+            },
+            status_code=403,
+        )
+
+    from ..config import resolve_config
+
+    try:
+        parent_path = Path(resolve_config(parent_name))
+        parent_doc = yaml.safe_load(parent_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return spec, JSONResponse(
+            {
+                "error": f"cannot read authoritative parent spec: {exc}",
+                "kind": "twin_parent_unavailable",
+            },
+            status_code=400,
+        )
+    parent_spec = parent_doc.get("spec") if isinstance(parent_doc, dict) else None
+    if not isinstance(parent_spec, dict):
+        return spec, JSONResponse(
+            {
+                "error": "authoritative parent spec has no mapping spec block",
+                "kind": "twin_parent_unavailable",
+            },
+            status_code=400,
+        )
+    from ..config._harness_lookup import canonical_harness
+    from ..config._harness_types import resolve_spec_harness
+
+    parent_family = canonical_harness(resolve_spec_harness(parent_spec))
+    parent_apptainer = parent_spec.get("apptainer")
+    parent_apptainer = parent_apptainer if isinstance(parent_apptainer, dict) else {}
+    container_workdir = str(parent_spec.get("workdir") or "")
+    parent_binds = parent_apptainer.get("binds")
+    parent_binds = parent_binds if isinstance(parent_binds, list) else []
+    try:
+        host_parent = _resolve_host_repo_from_binds(container_workdir, parent_binds)
+        expected_worktree, expected_overlay = _twin_isolation_paths(
+            str(host_parent),
+            str(parent_apptainer.get("overlay") or ""),
+            name,
+        )
+        host_worktree = Path(expected_worktree)
+        _reject_symlink_components(
+            Path(expected_overlay), label="fork overlay"
+        )
+    except TwinSeedError as exc:
+        return spec, JSONResponse(
+            {"error": str(exc), "kind": "twin_parent_unavailable"},
+            status_code=400,
+        )
+
+    child_spec = spec.get("spec") or {}
+    child_apptainer = child_spec.get("apptainer") or {}
+    if (
+        str(child_spec.get("workdir") or "") != container_workdir
+        or str(child_apptainer.get("overlay") or "") != expected_overlay
+    ):
+        return spec, JSONResponse(
+            {
+                "error": "fork workdir/overlay do not match canonical isolation paths",
+                "kind": "twin_isolation_mismatch",
+            },
+            status_code=400,
+        )
+    try:
+        import copy
+
+        from ..config._validation import validate_raw
+
+        errors = validate_raw(copy.deepcopy(spec), f"<inline-twin:{name}>")
+        if errors:
+            return spec, JSONResponse(
+                {
+                    "error": "derived fork spec failed v3 validation",
+                    "kind": "spec_invalid",
+                    "details": {"validation": errors[:5]},
+                },
+                status_code=400,
+            )
+        created = _ensure_twin_worktree(str(host_parent), str(host_worktree))
+    except TwinSeedError as exc:
+        return spec, JSONResponse(
+            {"error": str(exc), "kind": "twin_isolation_failed"},
+            status_code=400,
+        )
+    handoff.worktree_parent = host_parent
+    handoff.worktree_path = host_worktree
+    handoff.worktree_created = created
+    if parent_family == "hermes":
+        handoff.authority_parent_spec = parent_path
+        from .._lifecycle._twin import _materialize_hermes_fork_seed
+        from ..runtimes._hermes_tui_rpc import HermesTuiRpcError
+
+        try:
+            handoff.seed_path = _materialize_hermes_fork_seed(
+                parent_name=parent_name,
+                child_name=name,
+                parent_spec=parent_spec,
+                child_spec=child_spec,
+            )
+        except (TwinSeedError, HermesTuiRpcError, OSError) as exc:
+            handoff.rollback()
+            return spec, JSONResponse(
+                {"error": str(exc), "kind": "twin_context_failed"},
+                status_code=400,
+            )
+    return _inject_twin_workdir_bind(spec, host_worktree, container_workdir), None
 
 
 def _resolve_parent_binds(caller: str) -> list[str] | None:
@@ -58,6 +417,8 @@ def materialize_inline_spec(
     *,
     overwrite: bool,
     caller: str | None = None,
+    authority: str | None = None,
+    handoff: InlineSpecHandoff | None = None,
 ) -> JSONResponse | None:
     """Write ``spec`` to ``~/.scitex/agent-container/agents/<name>/spec.yaml``.
 
@@ -108,6 +469,28 @@ def materialize_inline_spec(
     """
     import yaml
 
+    from .._lifecycle._twin import TwinSeedError, _validate_agent_component
+
+    try:
+        _validate_agent_component(name, role="target")
+    except TwinSeedError as exc:
+        return JSONResponse(
+            {"error": str(exc), "kind": "invalid_agent_name"}, status_code=400
+        )
+    agents_dir = (
+        Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "agents"
+    )
+    primary = agents_dir / name
+    try:
+        primary.relative_to(agents_dir)
+    except ValueError:
+        return JSONResponse(
+            {"error": f"target escapes agents root: {name!r}", "kind": "invalid_agent_name"},
+            status_code=400,
+        )
+    spec_path = primary / "spec.yaml"
+    active_handoff = handoff if handoff is not None else InlineSpecHandoff()
+
     if not isinstance(spec, dict):
         return JSONResponse(
             {
@@ -135,61 +518,12 @@ def materialize_inline_spec(
             status_code=400,
         )
 
-    # PR-2 — bind translate. Run BEFORE the PR-1 preflight so the
-    # common SAC-from-SAC case (parent launcher posts a child spec
-    # whose bind sources are the parent's in-SIF view, e.g.
-    # ``/work/data/X``) no longer requires the launcher to
-    # pre-translate paths. Read-only, best-effort: any failure to
-    # resolve the caller's parent record collapses to a no-op and
-    # PR-1 catches the leak. The translated spec is the one PR-1
-    # validates and (on success) the handler persists to disk.
     from ._inline_spec_bind_translate import translate_binds_in_spec
 
     spec = translate_binds_in_spec(
         spec, caller, parent_binds_lookup=_resolve_parent_binds
     )[0]
 
-    # PR-1 — fail-loud bind-source preflight. Done BEFORE writing the
-    # spec to disk so a rejected spawn leaves zero artifacts (no spec
-    # dir, no lineage record, no runtime dir). The clew capsule-0201225
-    # incident on 2026-06-02 took 50 minutes to diagnose because the
-    # apptainer FATAL was silent at the HTTP layer; this turns it into
-    # a structured 400 the caller can branch on by ``kind``.
-    from ._inline_spec_preflight import (
-        preflight_bind_sources,
-        preflight_failure_response_body,
-    )
-
-    preflight = preflight_bind_sources(spec)
-    if not preflight.ok:
-        return JSONResponse(preflight_failure_response_body(preflight), status_code=400)
-
-    # Follow-up to PR-1/2/3 — startup_commands first-token lint. The
-    # clew launcher #70 incident on 2026-06-03 put the agent's CLAUDE
-    # mission prompt into spec.startup_commands by mistake; the first
-    # line ``"You: ..."`` ran as a shell command and bash logged
-    # ``You: command not found``. The bind preflight above does not
-    # cover startup_commands, so this sibling preflight catches the
-    # class. Done AFTER bind preflight so the cheap-to-expensive order
-    # holds (shlex+which is cheap but the bind stat() chain is even
-    # cheaper). Wire shape: ``kind="spec_invalid"`` (re-using the
-    # existing enum already used by apiVersion/kind validation above)
-    # with per-entry ``reason`` sub-shade enum.
-    from ._inline_spec_startup_lint import (
-        preflight_failure_response_body as startup_lint_failure_body,
-    )
-    from ._inline_spec_startup_lint import (
-        preflight_startup_commands,
-    )
-
-    startup_lint = preflight_startup_commands(spec)
-    if not startup_lint.ok:
-        return JSONResponse(startup_lint_failure_body(startup_lint), status_code=400)
-
-    primary = (
-        Path(os.path.expanduser("~")) / ".scitex" / "agent-container" / "agents" / name
-    )
-    spec_path = primary / "spec.yaml"
     if primary.is_symlink() or spec_path.is_symlink():
         return JSONResponse(
             {
@@ -202,7 +536,8 @@ def materialize_inline_spec(
             },
             status_code=409,
         )
-    if spec_path.exists() and not overwrite:
+    spec_existed = spec_path.exists()
+    if spec_existed and not overwrite:
         return JSONResponse(
             {
                 "error": (
@@ -213,10 +548,58 @@ def materialize_inline_spec(
             },
             status_code=409,
         )
+
+    spec, twin_error = _prepare_twin_host_isolation(
+        name,
+        spec,
+        caller=caller,
+        authority=authority,
+        agents_root=agents_dir,
+        handoff=active_handoff,
+    )
+    if twin_error is not None:
+        return twin_error
+
+    from ._inline_spec_preflight import (
+        preflight_bind_sources,
+        preflight_failure_response_body,
+    )
+
+    preflight = preflight_bind_sources(spec)
+    if not preflight.ok:
+        active_handoff.rollback()
+        return JSONResponse(preflight_failure_response_body(preflight), status_code=400)
+
+    from ._inline_spec_startup_lint import (
+        preflight_failure_response_body as startup_lint_failure_body,
+    )
+    from ._inline_spec_startup_lint import preflight_startup_commands
+
+    startup_lint = preflight_startup_commands(spec)
+    if not startup_lint.ok:
+        active_handoff.rollback()
+        return JSONResponse(startup_lint_failure_body(startup_lint), status_code=400)
+
+    previous = spec_path.read_bytes() if spec_path.is_file() else None
     try:
-        primary.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
-    except OSError as exc:
+        if active_handoff.authority_parent_spec is not None:
+            _write_hermes_fork_authority(
+                name=name,
+                spec=spec,
+                parent_spec_path=active_handoff.authority_parent_spec,
+                primary=primary,
+                handoff=active_handoff,
+            )
+        else:
+            primary.mkdir(parents=True, exist_ok=True)
+            spec_path.write_text(
+                yaml.safe_dump(spec, sort_keys=False), encoding="utf-8"
+            )
+            active_handoff.spec_path = spec_path
+            active_handoff.spec_created = not spec_existed
+            active_handoff.spec_previous = previous
+    except (OSError, subprocess.SubprocessError) as exc:
+        active_handoff.rollback()
         return JSONResponse(
             {"error": f"failed to write spec: {exc}", "kind": "spec_invalid"},
             status_code=500,

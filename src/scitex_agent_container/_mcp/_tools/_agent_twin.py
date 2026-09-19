@@ -24,28 +24,29 @@ def agent_twin(
     role: str | None = None,
     caller: str | None = None,
 ) -> dict[str, Any]:
-    """Spawn a context-inheriting TWIN of a running agent (e.g. your own).
+    """Spawn a context-inheriting FORK of a running agent (e.g. your own).
 
-    A TWIN forks PARENT's live session — inherits its transcript at birth
+    A FORK inherits PARENT's live session transcript at birth
     then diverges; PARENT is never touched. Same host-broker path as
     ``agent_spawn``; repo/workdir/image/binds/model inherited verbatim; own
-    name + fresh a2a port + ``session: continue``; host seeds the twin's
+    name + fresh a2a port + ``session: continue``; host seeds the fork's
     session from the parent's transcript at first boot. (Use one to inherit context
     without sharing future context, split parallel work, or run heavy work
     off your main loop; a plain Task subagent is cheaper otherwise.)
 
-    IDENTITY CONTRACT (safety-critical; the twin's boot-kick repeats it):
-    AUTHOR = twin (``SCITEX_CARDS_AGENT_ID`` = twin — its scitex-cards writes
+    IDENTITY CONTRACT (safety-critical; the fork's boot-kick repeats it):
+    AUTHOR = fork (``SCITEX_CARDS_AGENT_ID`` = fork — its scitex-cards writes
     attribute to it). OWNER = parent, but scitex-cards cannot default the card
-    owner from env, so the twin MUST pass ``assignee=<parent>`` (==
+    owner from env, so the fork MUST pass ``assignee=<parent>`` (==
     ``$SAC_TWIN_PARENT``) on every card write — a hard rule, not an env
-    guarantee; an ephemeral twin that owns cards then exits orphans them.
+    guarantee; an ephemeral fork that owns cards then exits orphans them.
 
-    ``name`` defaults to ``<parent>-twin`` (bumped if taken); ``persist``
+    ``name`` defaults to ``<parent>-fork`` (bumped if taken); ``persist``
     makes it long-lived (default ephemeral); ``task``/``role``/``caller``
-    optional. Returns ``{"status":"ok","twin":..,"result":{..}}`` else
+    optional. Returns ``{"status":"ok","fork":..,"result":{..}}`` else
     ``{"status":"error","reason":..}``.
     """
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
     from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
 
@@ -56,8 +57,21 @@ def agent_twin(
     except TwinSeedError as exc:
         return {"status": "error", "reason": str(exc)}
 
+    in_sif = is_in_sif()
+    base_url = None
+    if not in_sif:
+        from ..._listen._config import listen_base_url
+
+        base_url = listen_base_url()
     try:
-        result = request_spawn(twin_name, spec=doc, caller=caller, assume_yes=True)
+        result = request_spawn(
+            twin_name,
+            spec=doc,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
+            base_url=base_url,
+            assume_yes=True,
+        )
     except SpawnRequestError as exc:
         return {
             "status": "error",
@@ -65,7 +79,13 @@ def agent_twin(
             "http_status": exc.status,
             "body": exc.body,
         }
-    return {"status": "ok", "twin": twin_name, "parent": parent, "result": result}
+    return {
+        "status": "ok",
+        "fork": twin_name,
+        "twin": twin_name,  # legacy API compatibility; user-facing name is fork
+        "parent": parent,
+        "result": result,
+    }
 
 
 __all__ = ["agent_twin"]

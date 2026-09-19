@@ -35,7 +35,7 @@ from .status_cmds import health as _health_impl
 from .status_cmds import status as _status_impl
 
 
-def _rebind(cmd: click.Command, new_name: str) -> click.Command:
+def _rebind(cmd: click.Command, new_name: str, *, hidden: bool = False) -> click.Command:
     return click.Command(
         name=new_name,
         callback=cmd.callback,
@@ -43,6 +43,7 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
         help=cmd.help,
         short_help=cmd.short_help,
         epilog=cmd.epilog,
+        hidden=hidden,
     )
 
 
@@ -56,7 +57,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             [
                 "create",
                 "start",
-                "twin",
+                "fork",
                 "stop",
                 "restart",
                 "reconcile",
@@ -113,10 +114,10 @@ def agent_group() -> None:
 # --project <p>`.
 agent_group.add_command(_rebind(_create_impl, "create"))
 agent_group.add_command(_rebind(_start_impl, "start"))
-# `twin` — spawn a context-inheriting twin of a running agent (forks the
-# parent's live session, then diverges; parent never stops). See the
-# twin-spawning skill + docs/adr/0019.
-agent_group.add_command(_rebind(_twin_impl, "twin"))
+# `fork` is the user-facing context split. `twin` remains a hidden command
+# alias for compatibility with PR #1510-era automation.
+agent_group.add_command(_rebind(_twin_impl, "fork"))
+agent_group.add_command(_rebind(_twin_impl, "twin", hidden=True))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the

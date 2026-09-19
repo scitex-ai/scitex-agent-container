@@ -143,6 +143,8 @@ def request_spawn(
     one_shot: bool = False,
     assume_yes: bool = False,
     force: bool = False,
+    admin: bool = False,
+    canary: bool = False,
 ) -> dict:
     """POST a spawn request to the host listen server; FAIL LOUD on error.
 
@@ -257,8 +259,16 @@ def request_spawn(
     base = _resolve_base_url(base_url)
     tok = _resolve_bearer(bearer)
     resolved_caller = _resolve_caller(caller)
+    if admin and resolved_caller:
+        raise SpawnRequestError(
+            "admin spawn cannot claim an agent caller; choose exactly one authority path"
+        )
 
     body: dict[str, Any] = {"name": child_name}
+    if admin:
+        body["authority"] = "admin"
+    if canary:
+        body["canary"] = True
     if resolved_caller:
         body["caller"] = resolved_caller
     if spec is not None:

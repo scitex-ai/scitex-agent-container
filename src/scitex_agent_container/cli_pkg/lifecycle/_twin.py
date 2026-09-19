@@ -104,48 +104,48 @@ def _schedule_ttl_stop(twin_name: str, ttl_seconds: int) -> str:
     return f"auto-stop scheduled in {ttl_seconds}s (detached timer)"
 
 
-@click.command(name="twin")
+@click.command(name="fork")
 @click.argument("parent", type=str, shell_complete=agent_name_complete)
 @click.option(
     "--name",
     "twin_name",
     type=str,
     default=None,
-    help="Twin agent name (default: <parent>-twin, bumped to -2/-3 if taken).",
+    help="Fork agent name (default: <parent>-fork, bumped to -2/-3 if taken).",
 )
 @click.option(
     "--task",
     type=str,
     default=None,
-    help="Boot-kick prompt fed to the twin after it resumes the parent's "
-    "session (its divergence mission). Omit to have the twin stand by.",
+    help="Boot-kick prompt fed to the fork after it resumes the parent's "
+    "session (its divergence mission). Omit to have the fork stand by.",
 )
 @click.option(
     "--persist",
     is_flag=True,
     default=False,
-    help="Long-lived companion twin (restart.policy: always). Default is "
+    help="Long-lived companion fork (restart.policy: always). Default is "
     "ephemeral (restart.policy: never). Mutually exclusive with --ttl.",
 )
 @click.option(
     "--ttl",
     type=str,
     default=None,
-    help="Auto-stop the (ephemeral) twin after this duration "
+    help="Auto-stop the (ephemeral) fork after this duration "
     "(e.g. 90s, 30m, 2h, 1d). Mutually exclusive with --persist.",
 )
 @click.option(
     "--role",
     type=str,
     default=None,
-    help="Override metadata.labels.role on the twin (else inherits parent's).",
+    help="Override metadata.labels.role on the fork (else inherits parent's).",
 )
 @click.option(
     "--caller",
     type=str,
     default=None,
     help="Override the spawn caller identity for the lineage/ACL gate. "
-    "Defaults to SAC_NAME (the parent when an agent spawns its own twin).",
+    "Defaults to SAC_NAME (the parent when an agent spawns its own fork).",
 )
 @click.option(
     "--json",
@@ -164,28 +164,28 @@ def twin(
     caller: str | None,
     as_json: bool,
 ) -> None:
-    """Spawn a context-inheriting TWIN of PARENT.
+    """Spawn a context-inheriting FORK of PARENT.
 
-    The twin inherits PARENT's live conversation at birth (a fork of its
-    session) and then diverges. PARENT is never touched. Repo / workdir /
-    image / binds / model are inherited verbatim; the twin gets its own
+    The fork inherits PARENT's live conversation at birth and then diverges.
+    PARENT is never touched. Repo / workdir / image / binds / model are
+    inherited verbatim; the fork gets its own
     name, a fresh a2a port, ``session: continue`` (seeded from the parent at
-    first boot), and the identity-split env (``SCITEX_CARDS_AGENT_ID`` = twin,
+    first boot), and the identity-split env (``SCITEX_CARDS_AGENT_ID`` = fork,
     ``SAC_TWIN_PARENT`` = parent).
 
     \b
     Examples:
-      # ephemeral triage twin, inherits context, auto-stops in 30m
-      sac agents twin neurovista --task "audit the failing figures" --ttl 30m
+      # ephemeral triage fork, inherits context, auto-stops in 30m
+      sac agents fork neurovista --task "audit the failing figures" --ttl 30m
 
       # persistent writer companion sitting beside the parent
-      sac agents twin neurovista --name neurovista-writer --persist \\
+      sac agents fork neurovista --name neurovista-writer --persist \\
           --task "draft the results section"
 
-    Identity contract (enforced by the boot-kick + the twin skill): the
-    twin AUTHORS scitex-todo writes under its own name, but card OWNERSHIP
-    stays with PARENT — the twin passes assignee=$SAC_TWIN_PARENT on every
-    card write. scitex-todo cannot default owner=parent from env, so this
+    Identity contract (enforced by the boot-kick): the fork AUTHORS
+    scitex-cards writes under its own name, but card OWNERSHIP stays with
+    PARENT — the fork passes assignee=$SAC_TWIN_PARENT on every
+    card write. scitex-cards cannot default owner=parent from env, so this
     is a hard rule, not an env guarantee.
     """
     from ..._lifecycle._twin import TwinSeedError, prepare_twin_spawn
@@ -198,7 +198,7 @@ def twin(
         sys.exit(code)
 
     if persist and ttl:
-        _fail("--persist and --ttl are mutually exclusive (a persistent twin "
+        _fail("--persist and --ttl are mutually exclusive (a persistent fork "
               "has no TTL).")
     ttl_seconds = _parse_ttl(ttl) if ttl else None
 
@@ -215,8 +215,10 @@ def twin(
     # POST to the host listen (brokers on both host + in-container paths).
     import os
 
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
+    in_sif = is_in_sif()
     base_url = (os.environ.get("SAC_LISTEN_BASE_URL", "") or "").strip() or None
     if base_url is None:
         # Bare-host invocation: env not set — fall back to the canonical
@@ -229,12 +231,13 @@ def twin(
         result = request_spawn(
             resolved_name,
             spec=doc,
-            caller=caller,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
             base_url=base_url,
             assume_yes=True,
         )
     except SpawnRequestError as exc:
-        _fail(f"spawn of twin {resolved_name!r} failed: {exc}", code=1)
+        _fail(f"spawn of fork {resolved_name!r} failed: {exc}", code=1)
 
     rc = result.get("returncode") if isinstance(result, dict) else None
     ttl_note = ""
@@ -244,7 +247,7 @@ def twin(
     if as_json:
         click.echo(json.dumps({
             "status": "ok" if rc == 0 else "error",
-            "twin": resolved_name,
+            "fork": resolved_name,
             "parent": parent,
             "persist": persist,
             "ttl_seconds": ttl_seconds,
@@ -256,7 +259,7 @@ def twin(
         if rc == 0:
             lifetime = "persistent" if persist else "ephemeral"
             console.print(
-                f"[green]spawned twin[/green] {resolved_name} "
+                f"[green]spawned fork[/green] {resolved_name} "
                 f"({lifetime}, inheriting {parent}'s session)"
             )
             if ttl_note:
