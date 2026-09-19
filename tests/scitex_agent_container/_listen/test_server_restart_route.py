@@ -36,14 +36,38 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import yaml
 from starlette.testclient import TestClient
 
 from scitex_agent_container._listen import _agent_restart as restart_handler_mod
 from scitex_agent_container._listen._agent_restart import _build_detached_restart_argv
 from scitex_agent_container._listen.server import create_app
 from scitex_agent_container._state.state_store_nodes import record_comms_policy
+from scitex_agent_container.config._engine_library import FLEET_ENGINES_ENV
+from scitex_agent_container.config._qwen_gateway import (
+    DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
+    QWEN_GATEWAY_TOKEN_ENV_ENV,
+    QWEN_GATEWAY_URL_ENV,
+)
+from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 
 HOST_TOKEN = "test-host-bearer"
+_HOST_QWEN_ENDPOINT = "https://trusted-qwen.internal/v1"
+_HOST_QWEN_ENV = "SAC_LOCAL_GPTOSS_KEY"
+_QWEN_OVERRIDE_EXECUTION_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
 
 
 @pytest.fixture
@@ -222,6 +246,20 @@ def test_build_detached_argv_logs_to_file_not_devnull():
     assert _LOG in argv[-1] and "/dev/null" not in argv[-1]
 
 
+def test_build_detached_argv_redacts_child_output_before_log() -> None:
+    # Arrange
+    name = "agent-x"
+    # Act
+    argv = _build_detached_restart_argv(
+        _SAC, name, fresh=False, delay_s=3, log_path=_LOG
+    )
+    # Assert
+    assert (
+        "agents start agent-x --force --json 2>&1 |" in argv[-1]
+        and "scitex_agent_container._listen._provider_output_redactor" in argv[-1]
+    )
+
+
 def test_build_detached_argv_names_the_agent_in_the_bounce():
     # Arrange
     name = "agent-x"
@@ -372,3 +410,356 @@ def test_node_caller_restarting_peer_does_not_self_schedule(pg_schema: str, clie
         )
     # Assert — an allowed cross-agent restart never self-schedules.
     assert recorder.calls == [] and response.status_code != 403
+
+
+# ---------------------------------------------------------------------------
+# Provider preflight — the same authorized pool overlay protects every restart
+# shape before any stop/schedule side effect.
+# ---------------------------------------------------------------------------
+
+
+def _install_approved_provider_agent(root: Path, name: str) -> None:
+    source = Path(__file__).resolve().parents[3] / "examples/providers/opencode-go-hermes.yaml"
+    target = root / "home/.scitex/agent-container/agents" / name / "spec.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _install_provider_pool(root: Path, env_save_restore) -> None:
+    pool = root / "provider-pool.src"
+    pool.write_text("OPENCODE_GO_API_KEY=pool-only-restart-key\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+
+
+def _install_env_recording_restart(
+    root: Path, env_name: str = "OPENCODE_GO_API_KEY"
+) -> tuple[Path, Path]:
+    import sys
+
+    log = root / "restart-env.json"
+    script = root / "fake-sac-restart"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(log)!r}, 'w').write(json.dumps({{'key': os.environ.get({env_name!r})}}))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    return script, log
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_sync_restart_receives_pool_only_provider_key(
+    client, isolated_env: Path, env_save_restore, fresh: bool
+) -> None:
+    # Arrange
+    name = f"sync-provider-{fresh}"
+    _install_approved_provider_agent(isolated_env, name)
+    _install_provider_pool(isolated_env, env_save_restore)
+    script, log = _install_env_recording_restart(isolated_env)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={"fresh": fresh},
+        )
+    observed = json.loads(log.read_text(encoding="utf-8"))
+
+    # Assert
+    assert response.status_code == 200 and observed["key"] == "pool-only-restart-key"
+
+
+def test_sync_restart_redacts_provider_key_from_failed_child_output(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    import sys
+
+    name = "sync-provider-redaction"
+    secret = "pool-only-restart-key-redaction"
+    _install_approved_provider_agent(isolated_env, name)
+    pool = isolated_env / "provider-redaction-pool.src"
+    pool.write_text(f"OPENCODE_GO_API_KEY={secret}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    script = isolated_env / "fake-sac-redaction"
+    script.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "value = os.environ['OPENCODE_GO_API_KEY']\n"
+        "print(f'out={value}')\n"
+        "print(f'err={value}', file=sys.stderr)\n"
+        "sys.exit(7)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={},
+        )
+    payload = response.json()
+    # Assert
+    assert (
+        secret in response.text,
+        "[REDACTED]" in payload["stdout"],
+        "[REDACTED]" in payload["stderr"],
+    ) == (False, True, True)
+
+
+def test_detached_self_restart_receives_pool_only_provider_key(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    name = "detached-provider"
+    _install_approved_provider_agent(isolated_env, name)
+    _install_provider_pool(isolated_env, env_save_restore)
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls[0][1].get("OPENCODE_GO_API_KEY"),
+    ) == (202, "pool-only-restart-key")
+
+
+def _install_host_qwen_restart_agent(
+    root: Path, name: str, env_save_restore
+) -> None:
+    repo = Path(__file__).resolve().parents[3]
+    target = root / "home/.scitex/agent-container/agents" / name / "spec.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        yaml.safe_dump(
+            explicit_doc(
+                {"harness": "hermes", "runtime": "tui", "engine": "qwen38-27b"}
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    env_save_restore.set(
+        FLEET_ENGINES_ENV, str(repo / ".scitex/agent-container/engines.yaml")
+    )
+    env_save_restore.set(QWEN_GATEWAY_URL_ENV, _HOST_QWEN_ENDPOINT)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, _HOST_QWEN_ENV)
+
+
+def _install_qwen_provider_pool(root: Path, env_save_restore) -> None:
+    pool = root / "qwen-provider-pool.src"
+    pool.write_text(
+        f"{_HOST_QWEN_ENV}=pool-only-qwen-restart-key\n",
+        encoding="utf-8",
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(_HOST_QWEN_ENV)
+
+
+def _restart_body(restart_shape: str, name: str) -> dict:
+    return {
+        "plain": {},
+        "fresh": {"fresh": True},
+        "detached": _as_node(name),
+    }[restart_shape]
+
+
+def _observed_restart_key(
+    restart_shape: str,
+    recorder: _SpawnRecorder,
+    log: Path,
+    env_name: str,
+) -> str | None:
+    if restart_shape == "detached":
+        return recorder.calls[0][1].get(env_name)
+    return json.loads(log.read_text(encoding="utf-8"))["key"]
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_sync_and_fresh_restart_honor_tracked_qwen_host_policy(
+    client, isolated_env: Path, env_save_restore, fresh: bool
+) -> None:
+    # Arrange
+    name = f"host-qwen-sync-{fresh}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    _install_qwen_provider_pool(isolated_env, env_save_restore)
+    script, log = _install_env_recording_restart(
+        isolated_env, _HOST_QWEN_ENV
+    )
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json={"fresh": fresh},
+        )
+    observed = json.loads(log.read_text(encoding="utf-8"))
+
+    # Assert
+    assert (response.status_code, observed["key"]) == (
+        200,
+        "pool-only-qwen-restart-key",
+    )
+
+
+def test_detached_self_restart_honors_tracked_qwen_host_policy(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange
+    name = "host-qwen-detached"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    _install_qwen_provider_pool(isolated_env, env_save_restore)
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls[0][1].get(_HOST_QWEN_ENV),
+    ) == (202, "pool-only-qwen-restart-key")
+
+
+@pytest.mark.parametrize("restart_shape", ["plain", "fresh", "detached"])
+def test_every_restart_shape_accepts_default_registered_qwen_secret(
+    client,
+    isolated_env: Path,
+    env_save_restore,
+    restart_shape: str,
+) -> None:
+    # Arrange — delete the token-name override so Qwen selects its default.
+    name = f"default-qwen-{restart_shape}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    env_save_restore.delete(QWEN_GATEWAY_TOKEN_ENV_ENV)
+    pool = isolated_env / f"default-qwen-{restart_shape}-pool.src"
+    pool.write_text(
+        f"{DEFAULT_QWEN_GATEWAY_TOKEN_ENV}=default-qwen-restart-key\n",
+        encoding="utf-8",
+    )
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    env_save_restore.delete(DEFAULT_QWEN_GATEWAY_TOKEN_ENV)
+    recorder = _SpawnRecorder()
+    script, log = _install_env_recording_restart(
+        isolated_env, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+    body = _restart_body(restart_shape, name)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)), _swap(
+        "_spawn_detached", recorder
+    ):
+        response = client.post(
+            f"/agents/{name}/restart", headers=_host_headers(), json=body
+        )
+    observed_key = _observed_restart_key(
+        restart_shape, recorder, log, DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    )
+
+    # Assert
+    expected_status = {"plain": 200, "fresh": 200, "detached": 202}[
+        restart_shape
+    ]
+    assert (response.status_code, observed_key) == (
+        expected_status,
+        "default-qwen-restart-key",
+    )
+
+
+@pytest.mark.parametrize("hook_name", _QWEN_OVERRIDE_EXECUTION_HOOKS)
+@pytest.mark.parametrize("restart_shape", ["plain", "fresh", "detached"])
+def test_every_restart_shape_refuses_unregistered_qwen_hook_before_action(
+    client,
+    isolated_env: Path,
+    env_save_restore,
+    hook_name: str,
+    restart_shape: str,
+) -> None:
+    # Arrange — preserve a live-session canary and make every possible restart
+    # action observable. Invalid host policy must be rejected before any of it.
+    name = f"qwen-{restart_shape}-{hook_name.lower()}"
+    _install_host_qwen_restart_agent(isolated_env, name, env_save_restore)
+    env_save_restore.set(QWEN_GATEWAY_TOKEN_ENV_ENV, hook_name)
+    pool = isolated_env / f"{restart_shape}-{hook_name}-pool.src"
+    pool.write_text(f"{hook_name}=attacker-controlled\n", encoding="utf-8")
+    pool.chmod(0o600)
+    env_save_restore.set("SAC_SECRETS_ENVRC", str(pool))
+    canary = isolated_env / "runtime" / name / "session-preservation.canary"
+    canary.parent.mkdir(parents=True, exist_ok=True)
+    canary.write_text("existing-session-remains-alive", encoding="utf-8")
+    script, action_log = _install_env_recording_restart(isolated_env)
+    recorder = _SpawnRecorder()
+    body = _restart_body(restart_shape, name)
+
+    # Act
+    with _swap("sac_binary", lambda: str(script)), _swap(
+        "_spawn_detached", recorder
+    ):
+        response = client.post(
+            f"/agents/{name}/restart", headers=_host_headers(), json=body
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        json.loads(response.content).get("kind"),
+        action_log.exists(),
+        recorder.calls,
+        canary.read_text(encoding="utf-8"),
+    ) == (
+        403,
+        "qwen_token_env_unregistered",
+        False,
+        [],
+        "existing-session-remains-alive",
+    )
+
+
+def test_missing_provider_key_refuses_before_self_restart_and_preserves_canary(
+    client, isolated_env: Path, env_save_restore
+) -> None:
+    # Arrange — the immutable canary stands for the already-live session state.
+    name = "preserved-provider-session"
+    _install_approved_provider_agent(isolated_env, name)
+    env_save_restore.delete("SAC_SECRETS_ENVRC")
+    env_save_restore.delete("OPENCODE_GO_API_KEY")
+    canary = isolated_env / "runtime" / name / "session-preservation.canary"
+    canary.parent.mkdir(parents=True, exist_ok=True)
+    canary.write_text("existing-session-remains-alive", encoding="utf-8")
+    recorder = _SpawnRecorder()
+
+    # Act
+    with _swap("sac_binary", lambda: "/fake/sac"), _swap("_spawn_detached", recorder):
+        response = client.post(
+            f"/agents/{name}/restart",
+            headers=_host_headers(),
+            json=_as_node(name),
+        )
+
+    # Assert
+    assert (
+        response.status_code,
+        recorder.calls,
+        canary.read_text(encoding="utf-8"),
+    ) == (412, [], "existing-session-remains-alive")

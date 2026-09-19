@@ -26,15 +26,33 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from scitex_agent_container.config._provider_secret_registry import (
+    REGISTERED_PROVIDER_SECRET_NAMES,
+)
+from scitex_agent_container.runtimes import _secret_pool as secret_pool_mod
 from scitex_agent_container.runtimes._secret_pool import (
+    _ALLOWED_SECRET_NAMES,
+    _ALLOWED_SECRET_PREFIXES,
     _SECRETS_ENVRC_VAR,
+    _parse_secret_file,
     _pool_env,
     read_pool,
 )
+
+
+@contextmanager
+def _swap(name: str, value):
+    saved = getattr(secret_pool_mod, name)
+    setattr(secret_pool_mod, name, value)
+    try:
+        yield
+    finally:
+        setattr(secret_pool_mod, name, saved)
 
 
 @pytest.fixture
@@ -54,6 +72,7 @@ def _real_pool_file(tmp_path: Path, body: str) -> None:
     """Write a REAL secrets file and point ``SAC_SECRETS_ENVRC`` at it."""
     pool = tmp_path / "pool.src"
     pool.write_text(body, encoding="utf-8")
+    pool.chmod(0o600)
     os.environ[_SECRETS_ENVRC_VAR] = str(pool)
 
 
@@ -166,3 +185,363 @@ def test_pool_env_still_returns_the_bare_mapping(
     env = _pool_env()
     # Assert
     assert env.get("CCT_BOT_TOKEN_ZZ_COMPAT") == "zz-value"
+
+
+# ---------------------------------------------------------------------------
+# hostile pool files fail closed without executing or disclosing content
+# ---------------------------------------------------------------------------
+
+
+_DISALLOWED_SUBPROCESS_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PATH",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_EXEC_PATH",
+    "GIT_SSH_COMMAND",
+    "DYLD_INSERT_LIBRARIES",
+    "ZDOTDIR",
+]
+
+_QWEN_OVERRIDE_EXECUTION_HOOKS = [
+    "BASH_ENV",
+    "ENV",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONUSERBASE",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "SSH_ASKPASS",
+    "PERL5DB",
+    "RUSTC_WRAPPER",
+    "GIT_SSH_COMMAND",
+]
+
+
+@pytest.mark.parametrize("name", _DISALLOWED_SUBPROCESS_HOOKS)
+def test_subprocess_hook_variable_names_are_filtered(name: str) -> None:
+    # Arrange
+    content = f"{name}=attacker-controlled\n"
+
+    # Act
+    parsed = _parse_secret_file(content)
+
+    # Assert
+    assert parsed == {}
+
+
+@pytest.mark.parametrize("name", _QWEN_OVERRIDE_EXECUTION_HOOKS)
+def test_qwen_override_cannot_admit_execution_hook_to_pool_parser(
+    name: str, env_save_restore
+) -> None:
+    # Arrange — hostile host policy names the hook and the pool carries it.
+    env_save_restore.set("SAC_QWEN_GATEWAY_TOKEN_ENV", name)
+
+    # Act
+    parsed = _parse_secret_file(f"{name}=attacker-controlled\n")
+
+    # Assert — pool admission is fixed in code, never extended from the env.
+    assert parsed == {}
+
+
+def test_provider_secret_registry_contains_only_current_pool_consumers() -> None:
+    # Arrange
+    expected = frozenset(
+        {
+            "COMMAND_CODE_API_KEY",
+            "OPENCODE_GO_API_KEY",
+            "SAC_LOCAL_GPTOSS_KEY",
+            "SCITEX_GENAI_GATEWAY_API_KEY",
+        }
+    )
+
+    # Act
+    names = REGISTERED_PROVIDER_SECRET_NAMES
+
+    # Assert — speculative provider names require a real consumer first.
+    assert names == expected
+
+
+@pytest.mark.parametrize("name", sorted(_ALLOWED_SECRET_NAMES))
+def test_every_fixed_allowed_secret_name_still_parses(name: str) -> None:
+    # Arrange
+    content = f"{name}=ordinary-value\n"
+
+    # Act
+    parsed = _parse_secret_file(content)
+
+    # Assert
+    assert parsed == {name: "ordinary-value"}
+
+
+@pytest.mark.parametrize("prefix", _ALLOWED_SECRET_PREFIXES)
+def test_every_allowed_secret_prefix_still_parses(prefix: str) -> None:
+    # Arrange
+    name = f"{prefix}ZZ_POSITIVE"
+
+    # Act
+    parsed = _parse_secret_file(f"{name}=ordinary-value\n")
+
+    # Assert
+    assert parsed == {name: "ordinary-value"}
+
+
+def test_host_owned_qwen_token_name_is_an_allowed_secret(
+    env_save_restore,
+) -> None:
+    # Arrange — this name is host policy, not pool/spec data, and is resolved
+    # at read time so a long-lived listener honours its host configuration.
+    env_save_restore.set("SAC_QWEN_GATEWAY_TOKEN_ENV", "SAC_LOCAL_GPTOSS_KEY")
+
+    # Act
+    parsed = _parse_secret_file("SAC_LOCAL_GPTOSS_KEY=ordinary-value\n")
+
+    # Assert
+    assert parsed == {"SAC_LOCAL_GPTOSS_KEY": "ordinary-value"}
+
+
+def test_symlink_pool_file_is_rejected(tmp_path: Path, secrets_envrc: None) -> None:
+    # Arrange
+    target = tmp_path / "outside.src"
+    target.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    target.chmod(0o600)
+    link = tmp_path / "pool.src"
+    link.symlink_to(target)
+    os.environ[_SECRETS_ENVRC_VAR] = str(link)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_world_writable_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    unsafe = tmp_path / "unsafe-parent"
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
+    pool = unsafe / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_ANCESTOR=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_ANCESTOR" not in read.env
+
+
+def test_group_writable_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    unsafe = tmp_path / "unsafe-group-parent"
+    unsafe.mkdir(mode=0o770)
+    unsafe.chmod(0o770)
+    pool = unsafe / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_GROUP=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_GROUP" not in read.env
+
+
+def test_symlink_secret_file_ancestor_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir(mode=0o700)
+    pool = real_parent / "pool.src"
+    pool.write_text("CCT_BOT_TOKEN_ZZ_LINK=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    link_parent = tmp_path / "linked-parent"
+    link_parent.symlink_to(real_parent, target_is_directory=True)
+    os.environ[_SECRETS_ENVRC_VAR] = str(link_parent / "pool.src")
+    # Act
+    read = read_pool()
+    # Assert
+    assert read.trusted is False and "CCT_BOT_TOKEN_ZZ_LINK" not in read.env
+
+
+def test_world_writable_pool_file_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o606)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_group_readable_pool_file_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o640)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_pool_file_not_owned_by_effective_user_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    with _swap("_effective_uid", lambda: pool.stat().st_uid + 1):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_pool_replacement_with_symlink_at_open_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    attacker = tmp_path / "attacker.src"
+    attacker.write_text("ZZ_SECRET=must-not-escape\n", encoding="utf-8")
+    attacker.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+    swapped = False
+
+    def swap_then_open(path, flags):
+        nonlocal swapped
+        if not swapped and Path(path) == pool:
+            swapped = True
+            pool.unlink()
+            pool.symlink_to(attacker)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_regular_pool_replaced_by_fifo_is_rejected_without_blocking_open(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — resolve_secret_files has already observed a regular file when
+    # the open seam substitutes a FIFO.  Refuse to call the real open unless
+    # the production flags make that adversarial open non-blocking.
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+
+    def swap_then_open(path, flags):
+        if not flags & os.O_NONBLOCK:
+            raise RuntimeError("FIFO substitution would block this open")
+        pool.unlink()
+        os.mkfifo(pool, 0o600)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_SECRET" not in read.env
+
+
+def test_regular_pool_replacement_with_another_regular_inode_is_rejected(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — ownership, mode and file type all still look valid after the
+    # swap; only descriptor/path identity distinguishes the attacker file.
+    pool = tmp_path / "pool.src"
+    pool.write_text("ZZ_SECRET=original\n", encoding="utf-8")
+    pool.chmod(0o600)
+    attacker = tmp_path / "attacker.src"
+    attacker.write_text("ZZ_ATTACKER=must-not-escape\n", encoding="utf-8")
+    attacker.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+    real_open = secret_pool_mod._open_secret_fd
+
+    def swap_then_open(path, flags):
+        os.replace(attacker, pool)
+        return real_open(path, flags)
+
+    # Act
+    with _swap("_open_secret_fd", swap_then_open):
+        read = read_pool()
+
+    # Assert
+    assert read.trusted is False and "ZZ_ATTACKER" not in read.env
+
+
+def test_shell_code_in_pool_is_rejected_and_not_executed(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    canary = tmp_path / "executed"
+    pool = tmp_path / "pool.src"
+    pool.write_text(f"ZZ_SECRET=safe; touch {canary}\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert read.trusted is False and not canary.exists()
+
+
+def test_pool_parse_error_never_discloses_secret_content(
+    tmp_path: Path, secrets_envrc: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange
+    marker = "RAW-SECRET-MUST-NOT-APPEAR"
+    pool = tmp_path / "pool.src"
+    pool.write_text(f"echo {marker} >&2\n", encoding="utf-8")
+    pool.chmod(0o600)
+    os.environ[_SECRETS_ENVRC_VAR] = str(pool)
+
+    # Act
+    read = read_pool()
+
+    # Assert
+    assert marker not in read.detail and marker not in caplog.text

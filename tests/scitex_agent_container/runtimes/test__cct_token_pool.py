@@ -71,6 +71,7 @@ def _pool_file(tmp_path: Path, lines: str) -> None:
     """Write a REAL temp secrets pool and point ``SAC_SECRETS_ENVRC`` at it."""
     pool = tmp_path / "pool.src"
     pool.write_text(lines, encoding="utf-8")
+    pool.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(pool)
 
 
@@ -228,7 +229,8 @@ def isolated_home(tmp_path: Path) -> Iterator[Path]:
     ``~/.bash.d/secrets`` — the test stays deterministic on every host.
     """
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
+    home.chmod(0o700)
     saved = os.environ.get("HOME")
     os.environ["HOME"] = str(home)
     try:
@@ -250,9 +252,17 @@ def test_pool_resolves_from_canonical_default_when_var_unset(
     os.environ.pop(_SECRETS_VAR, None)
     pooldir = isolated_home / ".bash.d" / "secrets" / "010_scitex"
     pooldir.mkdir(parents=True)
-    (pooldir / "01_cct.src").write_text(
+    for trusted_dir in (
+        isolated_home / ".bash.d",
+        isolated_home / ".bash.d" / "secrets",
+        pooldir,
+    ):
+        trusted_dir.chmod(0o700)
+    pool_file = pooldir / "01_cct.src"
+    pool_file.write_text(
         "export CCT_BOT_TOKEN_ZZ_DEFAULT=tok-default\n", encoding="utf-8"
     )
+    pool_file.chmod(0o600)
     dest = tmp_path / "workspace-home"
     dest.mkdir()
     # Act — no SAC_SECRETS_ENVRC set anywhere; only the default location has it.

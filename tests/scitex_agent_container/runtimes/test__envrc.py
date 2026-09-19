@@ -13,6 +13,10 @@ Named ``test__envrc.py`` for the PS-204 §2 orphan-test mirror against
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -28,6 +32,11 @@ from scitex_agent_container.runtimes._envrc import (
 )
 
 _SECRETS_VAR = "SAC_SECRETS_ENVRC"
+_SSH_KEYGEN = shutil.which("ssh-keygen")
+_SETSID = shutil.which("setsid")
+_PERL = shutil.which("perl")
+_CARGO = shutil.which("cargo")
+_SYSTEM_PYTHON = "/usr/bin/python3" if Path("/usr/bin/python3").is_file() else None
 
 
 def _seed_default_pool(home: Path, *names: str) -> list[Path]:
@@ -57,6 +66,26 @@ def test_resolve_secret_files_honours_explicit_var(tmp_path: Path) -> None:
     files = resolve_secret_files(environ=env, home=tmp_path)
     # Assert
     assert files == [explicit]
+
+
+def test_resolve_secret_files_default_includes_nested_provider_key_pool(
+    tmp_path: Path,
+) -> None:
+    # Arrange — provider API keys live under 000_ENV/api_keys, while the
+    # historical CCT/GitHub pool lives under 010_scitex.
+    provider = (
+        tmp_path
+        / ".bash.d/secrets/000_ENV/api_keys/10_llm_opencode.src"
+    )
+    provider.parent.mkdir(parents=True)
+    provider.write_text("OPENCODE_GO_API_KEY=test-only\n", encoding="utf-8")
+    standard = _seed_default_pool(tmp_path, "01_agent-container.src")[0]
+
+    # Act
+    files = resolve_secret_files(environ={}, home=tmp_path)
+
+    # Assert
+    assert files == [provider, standard]
 
 
 def test_resolve_secret_files_falls_back_to_canonical_default(tmp_path: Path) -> None:
@@ -100,6 +129,14 @@ def secrets_envrc() -> Iterator[None]:
             os.environ[_SECRETS_VAR] = saved
 
 
+def _envrc_error(action) -> EnvrcEvalError | None:
+    try:
+        action()
+    except EnvrcEvalError as exc:
+        return exc
+    return None
+
+
 def test_eval_envrc_captures_exported_var(tmp_path: Path) -> None:
     # Arrange
     envrc = tmp_path / ".envrc"
@@ -140,6 +177,19 @@ def test_eval_envrc_raises_on_nonzero_exit(tmp_path: Path) -> None:
     # Assert
     with pytest.raises(EnvrcEvalError):
         eval_envrc(envrc)
+
+
+def test_eval_envrc_error_does_not_expose_raw_stderr(tmp_path: Path) -> None:
+    # Arrange
+    marker = "RAW-STDERR-SECRET-MUST-NOT-APPEAR"
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(f"echo {marker} >&2\nexit 1\n", encoding="utf-8")
+
+    # Act
+    error = _envrc_error(lambda: eval_envrc(envrc))
+
+    # Assert
+    assert error is not None and marker not in str(error)
 
 
 def test_fold_envrc_writes_combined_env_file(tmp_path: Path) -> None:
@@ -230,12 +280,15 @@ def test_fold_envrc_cascade_writes_combined_env_file(tmp_path: Path) -> None:
 def test_secrets_preamble_resolves_referenced_secret(
     tmp_path: Path, secrets_envrc: None
 ) -> None:
-    # Arrange — a secret file in scope; the .envrc references its var.
+    # Arrange — a supported provider secret; the .envrc references its var.
     secret = tmp_path / "secret.env"
-    secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    secret.write_text("export SCITEX_GENAI_GATEWAY_API_KEY=abc123\n", encoding="utf-8")
+    secret.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(secret)
     envrc = tmp_path / ".envrc"
-    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+    envrc.write_text(
+        'export PUBLIC="$SCITEX_GENAI_GATEWAY_API_KEY"\n', encoding="utf-8"
+    )
     # Act
     out = eval_envrc(envrc)
     # Assert — the .envrc reference resolved to the real secret value.
@@ -247,14 +300,309 @@ def test_secrets_preamble_does_not_leak_source_secret(
 ) -> None:
     # Arrange — same setup as the resolve test.
     secret = tmp_path / "secret.env"
-    secret.write_text("export SECRET_TOK=abc123\n", encoding="utf-8")
+    secret.write_text("export SCITEX_GENAI_GATEWAY_API_KEY=abc123\n", encoding="utf-8")
+    secret.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(secret)
     envrc = tmp_path / ".envrc"
-    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+    envrc.write_text(
+        'export PUBLIC="$SCITEX_GENAI_GATEWAY_API_KEY"\n', encoding="utf-8"
+    )
     # Act
     out = eval_envrc(envrc)
     # Assert — the source secret var is NOT folded (cancels in the diff).
-    assert "SECRET_TOK" not in out
+    assert "SCITEX_GENAI_GATEWAY_API_KEY" not in out
+
+
+def test_secret_preamble_shell_code_is_rejected_without_execution(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange
+    canary = tmp_path / "secret-file-executed"
+    secret = tmp_path / "secret.env"
+    secret.write_text(f"SECRET_TOK=$(touch {canary})\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text('export PUBLIC="$SECRET_TOK"\n', encoding="utf-8")
+
+    # Act
+    error = _envrc_error(lambda: eval_envrc(envrc))
+
+    # Assert
+    assert error is not None and not canary.exists()
+
+
+def test_secret_preamble_bash_env_is_filtered_before_bash_can_execute_it(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — BASH_ENV is sourced by non-interactive bash even with
+    # --noprofile/--norc. The payload and pool are both legitimate owner-only
+    # regular files, so only the positive name policy can stop this execution.
+    canary = tmp_path / "bash-env-executed"
+    payload = tmp_path / "payload.sh"
+    payload.write_text(f"touch {canary}\n", encoding="utf-8")
+    payload.chmod(0o600)
+    secret = tmp_path / "secret.env"
+    secret.write_text(f"BASH_ENV={payload}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text("export ORDINARY_VALUE=still-safe\n", encoding="utf-8")
+
+    # Act
+    out = eval_envrc(envrc)
+
+    # Assert
+    assert out.get("ORDINARY_VALUE") == "still-safe" and not canary.exists()
+
+
+@pytest.mark.skipif(
+    _SYSTEM_PYTHON is None,
+    reason="a non-venv Python is required for the PYTHONUSERBASE canary",
+)
+def test_secret_preamble_pythonuserbase_cannot_execute_pth(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — a plain child Python automatically imports executable .pth
+    # lines from PYTHONUSERBASE. Exercise the interpreter, not just the parser.
+    canary = tmp_path / "python-userbase-executed"
+    system_version = subprocess.run(
+        [
+            str(_SYSTEM_PYTHON),
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    user_base = tmp_path / "python-userbase"
+    user_site = (
+        user_base
+        / "lib"
+        / f"python{system_version}"
+        / "site-packages"
+    )
+    user_site.mkdir(parents=True)
+    (user_site / "attacker.pth").write_text(
+        f"import pathlib; pathlib.Path({str(canary)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    secret = tmp_path / "python-hook.env"
+    secret.write_text(f"PYTHONUSERBASE={user_base}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(
+        f"{shlex.quote(str(_SYSTEM_PYTHON))} -c pass\nexport SAFE_RESULT=ok\n",
+        encoding="utf-8",
+    )
+    control_env = dict(os.environ)
+    control_env["PYTHONUSERBASE"] = str(user_base)
+    subprocess.run([str(_SYSTEM_PYTHON), "-c", "pass"], check=True, env=control_env)
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+
+    # Act
+    out = eval_envrc(envrc)
+
+    # Assert
+    assert (control_executed, canary.exists(), out.get("SAFE_RESULT")) == (
+        True,
+        False,
+        "ok",
+    )
+
+
+@pytest.mark.parametrize(
+    "hook_name", ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"]
+)
+def test_secret_preamble_java_option_hooks_never_reach_runtime_launcher(
+    tmp_path: Path, secrets_envrc: None, hook_name: str
+) -> None:
+    # Arrange — use a hermetic launcher so the test does not require a JRE.
+    # It consumes each documented JVM option variable at the child boundary.
+    canary = tmp_path / f"{hook_name}-executed"
+    launcher = tmp_path / "java"
+    launcher.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib\n"
+        f"value = os.environ.get({hook_name!r})\n"
+        "if value: pathlib.Path(value).touch()\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+    secret = tmp_path / "java-hook.env"
+    secret.write_text(f"{hook_name}={canary}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(f"{shlex.quote(str(launcher))}\n", encoding="utf-8")
+    control_env = dict(os.environ)
+    control_env[hook_name] = str(canary)
+    subprocess.run([str(launcher)], check=True, env=control_env)
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+
+    # Act
+    eval_envrc(envrc)
+
+    # Assert
+    assert (control_executed, canary.exists()) == (True, False)
+
+
+@pytest.mark.skipif(
+    _SSH_KEYGEN is None or _SETSID is None,
+    reason="OpenSSH and setsid are required for the execution canary",
+)
+def test_secret_preamble_ssh_askpass_cannot_execute_helper(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — ssh-keygen invokes SSH_ASKPASS for an encrypted key when no
+    # terminal is available. Exercise the real OpenSSH helper hook.
+    key = tmp_path / "encrypted-key"
+    subprocess.run(
+        [
+            str(_SSH_KEYGEN),
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "test-passphrase",
+            "-f",
+            str(key),
+        ],
+        check=True,
+    )
+    canary = tmp_path / "ssh-askpass-executed"
+    askpass = tmp_path / "askpass"
+    askpass.write_text(
+        f"#!/bin/sh\ntouch {shlex.quote(str(canary))}\nprintf '%s\\n' test-passphrase\n",
+        encoding="utf-8",
+    )
+    askpass.chmod(0o700)
+    secret = tmp_path / "ssh-hook.env"
+    secret.write_text(f"SSH_ASKPASS={askpass}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(
+        "export DISPLAY=:0\nexport SSH_ASKPASS_REQUIRE=force\n"
+        f"{shlex.quote(str(_SETSID))} {shlex.quote(str(_SSH_KEYGEN))} -y -f "
+        f"{shlex.quote(str(key))} >/dev/null\n",
+        encoding="utf-8",
+    )
+    control_env = dict(os.environ)
+    control_env.update(
+        {
+            "DISPLAY": ":0",
+            "SSH_ASKPASS_REQUIRE": "force",
+            "SSH_ASKPASS": str(askpass),
+        }
+    )
+    subprocess.run(
+        [str(_SETSID), str(_SSH_KEYGEN), "-y", "-f", str(key)],
+        check=True,
+        env=control_env,
+        stdout=subprocess.DEVNULL,
+    )
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+
+    # Act
+    eval_envrc(envrc)
+
+    # Assert
+    assert (control_executed, canary.exists()) == (True, False)
+
+
+@pytest.mark.skipif(_PERL is None, reason="Perl is required for the execution canary")
+def test_secret_preamble_perl5db_cannot_execute_debugger_hook(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — PERL5DB is executable Perl loaded by `perl -d` before user code.
+    canary = tmp_path / "perl5db-executed"
+    hook = (
+        f"BEGIN {{ open(my $fh, '>', {str(canary)!r}); close($fh); }} "
+        "package DB; sub DB {}"
+    )
+    secret = tmp_path / "perl-hook.env"
+    secret.write_text(f'PERL5DB="{hook}"\n', encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(
+        f"PERLDB_OPTS=NonStop=1 {shlex.quote(str(_PERL))} -d -e 0 >/dev/null 2>&1\n",
+        encoding="utf-8",
+    )
+    control_env = dict(os.environ)
+    control_env.update({"PERL5DB": hook, "PERLDB_OPTS": "NonStop=1"})
+    subprocess.run(
+        [str(_PERL), "-d", "-e", "0"],
+        check=True,
+        env=control_env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+
+    # Act
+    eval_envrc(envrc)
+
+    # Assert
+    assert (control_executed, canary.exists()) == (True, False)
+
+
+@pytest.mark.skipif(_CARGO is None, reason="Cargo is required for the execution canary")
+def test_secret_preamble_rustc_wrapper_cannot_execute_wrapper(
+    tmp_path: Path, secrets_envrc: None
+) -> None:
+    # Arrange — Cargo executes RUSTC_WRAPPER before invoking rustc.
+    canary = tmp_path / "rustc-wrapper-executed"
+    wrapper = tmp_path / "rustc-wrapper"
+    wrapper.write_text(
+        f"#!/bin/sh\ntouch {shlex.quote(str(canary))}\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    secret = tmp_path / "rust-hook.env"
+    secret.write_text(f"RUSTC_WRAPPER={wrapper}\n", encoding="utf-8")
+    secret.chmod(0o600)
+    os.environ[_SECRETS_VAR] = str(secret)
+    project = tmp_path / "rust-project"
+    (project / "src").mkdir(parents=True)
+    (project / "Cargo.toml").write_text(
+        '[package]\nname = "hook_canary"\nversion = "0.0.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (project / "src/main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    attack_target = tmp_path / "attack-target"
+    envrc = tmp_path / ".envrc"
+    envrc.write_text(
+        f"cd {shlex.quote(str(project))}\n"
+        f"CARGO_TARGET_DIR={shlex.quote(str(attack_target))} "
+        f"{shlex.quote(str(_CARGO))} check -q\n",
+        encoding="utf-8",
+    )
+    control_env = dict(os.environ)
+    control_env.update(
+        {
+            "RUSTC_WRAPPER": str(wrapper),
+            "CARGO_TARGET_DIR": str(tmp_path / "control-target"),
+        }
+    )
+    subprocess.run(
+        [str(_CARGO), "check", "-q"], check=True, cwd=project, env=control_env
+    )
+    control_executed = canary.exists()
+    canary.unlink(missing_ok=True)
+
+    # Act
+    eval_envrc(envrc)
+
+    # Assert
+    assert (control_executed, canary.exists()) == (True, False)
 
 
 def test_empty_unresolved_reference_is_dropped(

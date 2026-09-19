@@ -50,6 +50,11 @@ from scitex_agent_container._lifecycle._verdict import (
     decide,
 )
 from scitex_agent_container._state.registry import Registry
+from scitex_agent_container.config import load_config
+from scitex_agent_container.config._provider_preflight_proof import (
+    PROVIDER_PREFLIGHT_PROOF_ENV,
+    provider_preflight_proof,
+)
 from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 from tests.scitex_agent_container._helpers.spec_authority import (
     establish_test_spec_authority,
@@ -313,6 +318,134 @@ def test_an_alive_agent_still_no_ops(pg_schema: str, tmp_path, registry):
     )
     # Assert — never relaunched over a live agent.
     assert runtime.start_calls == []
+
+
+def test_force_start_refuses_postproof_swap_before_stop(
+    pg_schema: str, tmp_path, registry, env_save_restore
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    alive = decide(
+        "alpha",
+        [Signal(SOURCE_PROCESS, ALIVE, "live process", INSTRUMENT_HOST_TMUX)],
+    )
+    env_save_restore.set(
+        PROVIDER_PREFLIGHT_PROOF_ENV,
+        provider_preflight_proof(load_config(spec)),
+    )
+
+    def swap_spec(_config) -> None:
+        original = str(tmp_path / "work")
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace(
+                original, str(tmp_path / "attacker-work")
+            ),
+            encoding="utf-8",
+        )
+
+    # Act
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            force=True,
+            runtime_factory=lambda _config: runtime,
+            handover_mod=_Handover(),
+            sleep_fn=_no_sleep,
+            verdict_override=alive,
+            successor_auth_check=swap_spec,
+        )
+    except Exception as exc:
+        category = getattr(exc, "category", type(exc).__name__)
+    else:
+        category = "not_refused"
+    # Assert
+    assert (category, runtime.stop_calls, runtime._running) == (
+        "provider_config_mismatch",
+        [],
+        True,
+    )
+
+
+def test_force_unknown_refuses_unusable_successor_before_stop(
+    pg_schema: str, tmp_path, registry
+) -> None:
+    # Arrange
+    spec = _write_spec(tmp_path)
+    registry.add("alpha", str(spec), "cld-alpha")
+    runtime = _Runtime(running=True, start_result=True)
+    unknown = decide(
+        "alpha",
+        [Signal(SOURCE_PROCESS, UNKNOWN, "probe unreadable", INSTRUMENT_HOST_TMUX)],
+    )
+
+    def refuse_successor(_config) -> None:
+        raise RuntimeError("successor-auth-refused")
+
+    # Act
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            force=True,
+            runtime_factory=lambda _config: runtime,
+            handover_mod=_Handover(),
+            sleep_fn=_no_sleep,
+            verdict_override=unknown,
+            successor_auth_check=refuse_successor,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        message = "not_refused"
+    # Assert
+    assert (message, runtime.stop_calls, runtime._running) == (
+        "successor-auth-refused",
+        [],
+        True,
+    )
+
+
+def test_force_unknown_without_registry_refuses_successor_before_runtime_stop(
+    pg_schema: str, tmp_path, registry
+) -> None:
+    # Arrange — no registry row, but the TUI/runtime may still discover a live
+    # session and honour force=True destructively inside runtime.start.
+    spec = _write_spec(tmp_path)
+    runtime = _Runtime(running=True, start_result=True)
+    unknown = decide(
+        "alpha",
+        [Signal(SOURCE_PROCESS, UNKNOWN, "probe unreadable", INSTRUMENT_HOST_TMUX)],
+    )
+
+    def refuse_successor(_config) -> None:
+        raise RuntimeError("successor-auth-refused")
+
+    # Act
+    try:
+        lc.agent_start(
+            str(spec),
+            registry=registry,
+            force=True,
+            runtime_factory=lambda _config: runtime,
+            handover_mod=_Handover(),
+            sleep_fn=_no_sleep,
+            verdict_override=unknown,
+            successor_auth_check=refuse_successor,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        message = "not_refused"
+    # Assert
+    assert (
+        message,
+        runtime.stop_calls,
+        runtime.start_calls,
+        runtime._running,
+    ) == ("successor-auth-refused", [], [], True)
 
 
 def test_an_alive_agent_no_op_returns_success(pg_schema: str, tmp_path, registry):

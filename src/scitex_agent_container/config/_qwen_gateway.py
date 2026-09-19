@@ -56,6 +56,8 @@ from __future__ import annotations
 
 import os
 
+from ._provider_secret_registry import REGISTERED_PROVIDER_SECRET_NAMES
+
 __all__ = [
     "DEFAULT_QWEN_GATEWAY_TOKEN_ENV",
     "DEFAULT_QWEN_GATEWAY_URL",
@@ -65,6 +67,7 @@ __all__ = [
     "QWEN_GATEWAY_PROVIDER",
     "QWEN_GATEWAY_TOKEN_ENV_ENV",
     "QWEN_GATEWAY_URL_ENV",
+    "QwenGatewayTokenEnvError",
     "qwen_gateway_probe_url",
     "qwen_gateway_provider_entry",
     "qwen_gateway_token_env",
@@ -97,6 +100,10 @@ QWEN_GATEWAY_URL_ENV = "SAC_QWEN_GATEWAY_URL"
 #: itself a variable name, which is how ``handyman-08``'s divergent
 #: ``SAC_LOCAL_GPTOSS_KEY`` can be honoured on one host without editing specs.
 QWEN_GATEWAY_TOKEN_ENV_ENV = "SAC_QWEN_GATEWAY_TOKEN_ENV"
+
+
+class QwenGatewayTokenEnvError(ValueError):
+    """The host selected a credential name with no audited consumer."""
 
 
 def qwen_gateway_url() -> str:
@@ -143,10 +150,21 @@ def qwen_gateway_probe_url() -> str:
 
 
 def qwen_gateway_token_env() -> str:
-    """The NAME of the env var holding the gateway key, honouring the override."""
-    return (os.environ.get(QWEN_GATEWAY_TOKEN_ENV_ENV) or "").strip() or (
-        DEFAULT_QWEN_GATEWAY_TOKEN_ENV
-    )
+    """Return the registered gateway credential name selected for this host.
+
+    The URL remains freely overridable, but a credential-name override is an
+    authorization decision: it may select only a compile-time registered
+    provider secret.  An unregistered non-empty value fails loud and never
+    falls back to the default.
+    """
+    override = (os.environ.get(QWEN_GATEWAY_TOKEN_ENV_ENV) or "").strip()
+    selected = override or DEFAULT_QWEN_GATEWAY_TOKEN_ENV
+    if selected not in REGISTERED_PROVIDER_SECRET_NAMES:
+        raise QwenGatewayTokenEnvError(
+            f"{QWEN_GATEWAY_TOKEN_ENV_ENV} must name an exact registered "
+            "provider secret"
+        )
+    return selected
 
 
 def qwen_gateway_provider_entry() -> "dict[str, str | None]":

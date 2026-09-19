@@ -97,6 +97,7 @@ def _pool(tmp_path: Path, body: str) -> None:
     """A REAL secrets file, pointed at by SAC_SECRETS_ENVRC."""
     path = tmp_path / "zz-pool.src"
     path.write_text(body, encoding="utf-8")
+    path.chmod(0o600)
     os.environ[_SECRETS_VAR] = str(path)
 
 
