@@ -141,11 +141,8 @@ def _codex_sdk_inner_argv(
     Takes the SAME shared runner argv as the other two runner-hosted
     entries — the codex session CLI accepts every flag for real (it
     hands the process to ``run_session_daemon`` exactly like the
-    claude/openai runners do). The step-2 refusal
-    (``ensure_harness_matches_claude_launch``) still guards every LAUNCH
-    path, so nothing dispatches this argv until the canary step lifts
-    that guard; ``a2a.handler`` / a direct ``python -m`` is the working
-    entry today, mirroring the openai entry's position.
+    claude/openai runners do). ``harness: codex`` with ``runtime: headless``
+    selects this argv through the lifecycle registry.
     """
     return _session_runner_inner_argv(config, CODEX_SESSION_RUNNER, options)
 

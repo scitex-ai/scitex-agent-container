@@ -31,15 +31,13 @@ unmappable combination raises :class:`UnmappableHarnessError` naming
 both spec values and the card (the operator's errors-reach-the-caller
 directive).
 
-WHAT THIS STEP DOES NOT CHANGE (behavior-preserving by contract):
+CURRENT LIFECYCLE COVERAGE:
 
-  * The step-2 refusal (PR #1039) still owns wrong-vendor protection:
-    a ``harness: openai`` spec resolves to a real registry key here, but
-    the lifecycle launch path still cannot START it —
-    ``ensure_harness_matches_claude_launch`` refuses before any dispatch
-    site consults a descriptor. Step 7 moved the openai RUNNER onto the
-    shared session daemon; key-based LAUNCH of non-Anthropic harnesses
-    stays behind that refusal until the canary step proves the runner.
+  * ``harness: codex`` + ``runtime: headless`` launches the persistent
+    Codex app-server runner. The daemon accepts neutral SAC/Cards/CCT
+    envelopes and maps mid-turn arrivals to native ``turn/steer``.
+  * ``harness: openai`` resolves to a registry key but remains refused by
+    lifecycle selection until that runner receives its own launch adapter.
   * The ``SAC_PROVIDER`` ops-only env override keeps its own surface
     (``runtimes/_apptainer_provider.resolve_agent_harness``); this
     resolver reads the SPEC axes only.
@@ -339,13 +337,7 @@ HARNESS_DESCRIPTORS: dict[str, HarnessDescriptor] = {
         HarnessDescriptor(
             key=CODEX_SDK,
             spec_harness="codex",
-            # No longer the sole entry of its family (codex-tui above), and
-            # still without a lifecycle adapter: it claims NO runtime
-            # spelling, so an unset / "tui" ``runtime`` selects the pane and
-            # nothing on the runtime axis can select this headless runner
-            # until the adapter that launches it exists (a2a.handler /
-            # ``python -m`` remain its entry, as before).
-            spec_runtimes=frozenset(),
+            spec_runtimes=frozenset({"headless"}),
             runner_module=_CODEX_SESSION_RUNNER,
             inner_argv=_codex_sdk_inner_argv,
             # RUNNER, not "external" — and the distinction is subtler
