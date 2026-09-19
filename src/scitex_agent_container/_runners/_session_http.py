@@ -249,7 +249,11 @@ async def serve_inbound(
         try:
             turn = TurnRequest.model_validate(body)
         except ValidationError as exc:
-            errors = exc.errors(include_url=False, include_context=False)
+            errors = exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
             text_invalid = any(error.get("loc") == ("text",) for error in errors)
             return JSONResponse(
                 {
