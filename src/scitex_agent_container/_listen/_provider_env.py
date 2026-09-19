@@ -41,6 +41,11 @@ _STATIC_AUTHORIZED_PROVIDER_SECRETS = frozenset(
             "https://opencode.ai/zen/go/v1",
             "OPENCODE_GO_API_KEY",
         ),
+        (
+            "command-code-deepseek-v4.1-flash",
+            "https://api.commandcode.ai/provider/v1",
+            "COMMAND_CODE_API_KEY",
+        ),
     }
 )
 

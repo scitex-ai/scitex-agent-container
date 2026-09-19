@@ -13,6 +13,7 @@ from __future__ import annotations
 # child's argv runs.  Do not add speculative credentials without their consumer.
 REGISTERED_PROVIDER_SECRET_NAMES = frozenset(
     {
+        "COMMAND_CODE_API_KEY",  # generic Hermes CommandCode provider tuple
         "OPENCODE_GO_API_KEY",  # listener OpenCode provider tuple
         "SAC_LOCAL_GPTOSS_KEY",  # deployed Qwen host-name override
         "SCITEX_GENAI_GATEWAY_API_KEY",  # default Qwen/gateway credential

@@ -261,6 +261,7 @@ def test_provider_secret_registry_contains_only_current_pool_consumers() -> None
     # Arrange
     expected = frozenset(
         {
+            "COMMAND_CODE_API_KEY",
             "OPENCODE_GO_API_KEY",
             "SAC_LOCAL_GPTOSS_KEY",
             "SCITEX_GENAI_GATEWAY_API_KEY",

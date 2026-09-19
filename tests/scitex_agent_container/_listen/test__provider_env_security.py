@@ -31,6 +31,9 @@ from tests.scitex_agent_container._helpers.explicit_spec import explicit_doc
 _APPROVED_ENGINE = "opencode-go-deepseek-v4.1-flash"
 _APPROVED_ENDPOINT = "https://opencode.ai/zen/go/v1"
 _APPROVED_ENV = "OPENCODE_GO_API_KEY"
+_COMMAND_CODE_ENGINE = "command-code-deepseek-v4.1-flash"
+_COMMAND_CODE_ENDPOINT = "https://api.commandcode.ai/provider/v1"
+_COMMAND_CODE_ENV = "COMMAND_CODE_API_KEY"
 _QWEN_ENGINE = "qwen38-27b"
 _QWEN_ENDPOINT = DEFAULT_QWEN_GATEWAY_URL
 _QWEN_ENV = DEFAULT_QWEN_GATEWAY_TOKEN_ENV
@@ -75,6 +78,28 @@ def test_exact_approved_opencode_tuple_reads_only_its_key() -> None:
 
     # Assert
     assert overlay == {_APPROVED_ENV: "approved-value"}
+
+
+def test_exact_approved_command_code_tuple_reads_only_its_key() -> None:
+    # Arrange
+    config = _config(
+        engine=_COMMAND_CODE_ENGINE,
+        endpoint=_COMMAND_CODE_ENDPOINT,
+        env=_COMMAND_CODE_ENV,
+    )
+    pool = PoolRead(
+        env={
+            _COMMAND_CODE_ENV: "approved-value",
+            "HOST_MASTER_SECRET": "must-not-escape",
+        },
+        trusted=True,
+    )
+
+    # Act
+    overlay = provider_secret_env(config, {}, pool=pool)
+
+    # Assert
+    assert overlay == {_COMMAND_CODE_ENV: "approved-value"}
 
 
 def test_exact_approved_qwen_tuple_reads_only_its_gateway_key() -> None:
@@ -277,6 +302,22 @@ def test_missing_authorized_key_refuses_without_fallback() -> None:
     assert category == "provider_key_unavailable"
 
 
+def test_missing_command_code_key_refuses_without_fallback() -> None:
+    # Arrange
+    config = _config(
+        engine=_COMMAND_CODE_ENGINE,
+        endpoint=_COMMAND_CODE_ENDPOINT,
+        env=_COMMAND_CODE_ENV,
+    )
+    pool = PoolRead(env={"SOME_OTHER_KEY": "not-a-fallback"}, trusted=True)
+
+    # Act
+    category = _refusal_category(config, {}, pool)
+
+    # Assert
+    assert category == "provider_key_unavailable"
+
+
 def test_untrusted_pool_cannot_supply_provider_key() -> None:
     # Arrange
     pool = PoolRead(
@@ -342,5 +383,20 @@ def test_provider_secret_values_are_redacted_from_child_output() -> None:
     }
     # Act
     redacted = redact_provider_secrets(text, child_env)
+    # Assert
+    assert redacted == "start failed key=[REDACTED]"
+
+
+def test_command_code_secret_value_is_redacted_from_child_output() -> None:
+    # Arrange
+    text = "start failed key=high-entropy-command-code-value"
+    child_env = {
+        _COMMAND_CODE_ENV: "high-entropy-command-code-value",
+        "PATH": "/usr/bin",
+    }
+
+    # Act
+    redacted = redact_provider_secrets(text, child_env)
+
     # Assert
     assert redacted == "start failed key=[REDACTED]"
