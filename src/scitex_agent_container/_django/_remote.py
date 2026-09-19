@@ -69,6 +69,68 @@ class FleetUnavailableError(RuntimeError):
         self.reason = reason
 
 
+def safe_error_message(exc: Exception) -> str:
+    """A browser-safe message for a control-plane read failure.
+
+    The raw exception carries internal detail (the listener URL, an
+    environment-variable name, a transport reason) that must never reach the
+    browser - it is operator/deployment information. Map each failure to a fixed
+    operator-facing phrase and keep the raw text server-side (logs / audit).
+    """
+    if isinstance(exc, FleetUnavailableError):
+        return "the control plane did not answer"
+    if isinstance(exc, RemoteOperationError):
+        return "the control plane returned an error"
+    return "the request could not be completed"
+
+
+#: LEAST-DISCLOSURE PUBLIC TEXT for a typed listener error.
+#:
+#: A typed error carries TWO things: a CODE (``kind``) drawn from the listener's
+#: own committed vocabulary, and a free-form human message. Only the CODE is fit
+#: to publish - it is a member of a fixed set, so public text can be MAPPED from
+#: it. The message cannot be: an all-alphabetic message such as
+#: ``listener compute-fixture.internal`` or ``api key SYNTHETICONLYVALUE`` names
+#: an internal host or a credential while passing every grammar check, and
+#: punctuation/secret-word rules only mask the SHAPES someone happened to
+#: enumerate. So the message stays server-side (logs / audit) and the browser
+#: gets fixed text: this map for a known code, ``_REDACTED`` for anything else.
+_PUBLIC_DETAIL_BY_CODE: dict[str, str] = {
+    "spec_resolution_failed": "The agent's spec could not be validated.",
+    "ambiguous_registry": "More than one registry claims this agent's name.",
+    "unknown_agent": "The control plane does not know this agent.",
+    "spec_unreadable": "The agent's spec could not be read.",
+}
+
+#: The one phrase published when no trusted public text exists for the code -
+#: including when a caller passes raw prose where a code belongs.
+_REDACTED = "the control plane reported a typed error"
+
+
+def public_detail(code: str | None) -> str:
+    """The fixed public text for a TRUSTED typed-error code; never raw prose.
+
+    ``code`` must be a member of the listener's committed error vocabulary;
+    anything else resolves to ``_REDACTED``. There is deliberately no path from
+    free-form text to the browser: a message is not published because it looks
+    safe, only a code is, because it is KNOWN.
+    """
+    return _PUBLIC_DETAIL_BY_CODE.get(code or "", _REDACTED)
+
+
+def redact_detail(text: str) -> str:
+    """LEAST-DISCLOSURE projection of raw error text: none of it is published.
+
+    The single entry point for a caller that holds a raw message, and the
+    guarantee that no raw-text path exists. It returns ``_REDACTED``
+    unconditionally, because no grammar and no list of masked shapes can certify
+    prose as free of deployment or credential detail (see the note above
+    ``_PUBLIC_DETAIL_BY_CODE``). Nothing is echoed, so there is no residue to
+    mask and none to leak.
+    """
+    return _REDACTED
+
+
 def _home_roots() -> list[Path]:
     """Candidate home roots, most-likely first.
 
@@ -296,5 +358,8 @@ __all__ = [
     "FleetUnavailableError",
     "RemoteFleet",
     "RemoteOperationError",
+    "public_detail",
+    "redact_detail",
     "resolve_token",
+    "safe_error_message",
 ]

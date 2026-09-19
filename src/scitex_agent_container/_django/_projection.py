@@ -51,12 +51,20 @@ _KIND_PRESENTATION: dict[str, tuple[str, str]] = {
 
 
 def _error_state(status: Any) -> tuple[str, str, str] | None:
-    """(label, tone, detail) when the status read failed with a typed kind."""
-    from ._remote import RemoteOperationError
+    """(label, tone, detail) when the status read failed with a typed kind.
+
+    The label is the LISTENER's typed vocabulary (that is what makes a fixable
+    cause visible instead of a bare "Unknown"), and it is carried SEPARATELY
+    from the detail. The detail is FIXED TEXT mapped from the typed CODE, never
+    the listener's message: raw prose can name an endpoint, an internal host or
+    a credential whatever characters it uses, so it is not publishable and stays
+    server-side (B2). An unknown code falls back to a generic fixed phrase.
+    """
+    from ._remote import RemoteOperationError, public_detail
 
     if isinstance(status, RemoteOperationError) and status.kind:
         label, tone = _KIND_PRESENTATION.get(status.kind, (status.kind.replace("_", " ").title(), "warn"))
-        return label, tone, str(status)
+        return label, tone, public_detail(status.kind)
     return None
 
 
@@ -250,11 +258,16 @@ def project_row(row: dict[str, Any], status: Any) -> dict[str, Any]:
 
 def project_detail(row: dict[str, Any], status: Any) -> dict[str, Any]:
     """Project a single agent's detail (list row + status + optional spec)."""
+    from ._remote import safe_error_message
+
     base = project_row(row, status)
     if isinstance(status, Exception) or not isinstance(status, dict):
-        base["detail_error"] = str(getattr(status, "message", status) or status) if isinstance(
-            status, Exception
-        ) else ""
+        # B2: the status-endpoint banner is operator-facing; a raw transport
+        # error (listener URL, reason) must not reach the browser. Typed detail
+        # is already carried in state_label/state_detail by project_row.
+        base["detail_error"] = (
+            safe_error_message(status) if isinstance(status, Exception) else ""
+        )
         base["detail"] = {}
         base["session"] = "—"
     else:

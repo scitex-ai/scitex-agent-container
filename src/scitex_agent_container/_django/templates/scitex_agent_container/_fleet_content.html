@@ -101,9 +101,27 @@ mounted) so the per-row links are correct in both modes.
   </table>
   </div>
   {% else %}
-  {% if not comm_error %}
+  {% if fleet_state == "empty" %}
   <div class="agents-empty"><i class="fas fa-inbox"></i> No agents visible to
     <strong>{{ identity|default:"(unidentified)" }}</strong> in this scope.</div>
   {% endif %}
+  {% endif %}
+
+  {% comment %}
+  B1: a cold shell renders as `loading`. This READ-ONLY poll warms the server's
+  last-known snapshot via /api/fleet, then a single reload shows the true state
+  (the inventory, or unavailable + Retry). It only fires while loading, stops
+  after the one authoritative response, and issues only a GET - it never blocks
+  first paint and never loops. (The Retry button above does the same reload.)
+  {% endcomment %}
+  {% if fleet_state == "loading" %}
+  <script>
+  (function () {
+    var base = "{{ url_base }}";
+    fetch(base + "/api/fleet", { method: "GET", credentials: "same-origin" })
+      .then(function () { window.location.reload(); })
+      .catch(function () { /* console itself unreachable: stay in loading, do not loop */ });
+  })();
+  </script>
   {% endif %}
 </div>

@@ -392,6 +392,10 @@ def test_mounted_uses_hub_shell(hub_client, loopback, env_save_restore):
 def test_mounted_links_prefix_aware(hub_client, loopback, env_save_restore):
     # Arrange
     env_save_restore.set(IDENTITY_ENV, "alice")
+    # Warm the last-known snapshot via a live read: the shell renders the table
+    # from cache on the next paint; a cold first paint is legitimately `loading`
+    # (B6: this test must not rely on another test's leaked cache state).
+    hub_client.get("/apps/agents/api/fleet")
     # Act
     html = hub_client.get("/apps/agents/").content.decode()
     # Assert
@@ -433,3 +437,191 @@ def test_css_action_header_right_aligned():
     aligned = ".row-actions { text-align: right" in css.replace("  ", " ")
     # Assert
     assert aligned
+
+
+# ── B1: cold-shell transition + B3 scope + B2 redaction (six-blocker regressions) ──
+# Tracked RED-first regressions. They use only the loopback / unreachable
+# listeners and the public HTTP surface, so they run identically against the
+# baseline archive (RED) and the fix (GREEN).
+FORBIDDEN_DETAIL = ("127.0.0.1:1", "could not reach", "Errno", "urlopen", "Connection")
+
+
+def test_cold_shell_loading_does_not_claim_empty(client, unreachable_listener, env_save_restore):
+    # Arrange: cold cache, unreachable control plane.
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act: the first paint of the shell.
+    html = client.get("/").content.decode()
+    # Assert: loading is its own state and must not also say "no agents".
+    assert 'data-fleet-state="loading"' in html and "No agents visible" not in html
+
+
+def test_cold_shell_renders_a_readonly_inventory_poll(client, unreachable_listener, env_save_restore):
+    # Arrange: cold cache, unreachable control plane.
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act: the shell first paint carries the client-side transition.
+    html = client.get("/").content.decode()
+    # Assert: it polls the inventory endpoint (a GET) to leave the loading state.
+    assert "fetch" in html and "/api/fleet" in html and "window.location.reload" in html
+
+
+def test_completed_failure_transitions_to_unavailable_with_retry(client, unreachable_listener, env_save_restore):
+    # Arrange: a COMPLETED read failure is the last thing observed for this
+    # identity. Store it as an error snapshot; the background refresh also fails
+    # here, so on the fix the error is recorded (unavailable + Retry) instead of
+    # being dropped (perpetual loading).
+    from scitex_agent_container._django import _inventory_cache as _m
+
+    _m.CACHE.put("alice", [], error="the control plane did not answer")
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act: render the shell for the identity whose last observation was a failure.
+    html = client.get("/").content.decode()
+    # Assert: it shows unavailable with a Retry control, not a perpetual spinner.
+    assert 'data-fleet-state="unavailable"' in html and "Retry" in html
+
+
+def test_fleet_api_error_is_redacted(client, unreachable_listener, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    body = client.get("/api/fleet").content.decode()
+    # Assert: the operator-facing error carries no internal listener detail.
+    assert not any(token in body for token in FORBIDDEN_DETAIL)
+
+
+def test_detail_reveals_no_listener_detail_when_unreachable(client, unreachable_listener, env_save_restore):
+    # Arrange
+    env_save_restore.set(IDENTITY_ENV, "alice")
+    # Act
+    html = client.get("/alpha/").content.decode()
+    # Assert
+    assert "127.0.0.1:1" not in html and "could not reach" not in html
+
+
+def test_lifecycle_reveals_no_listener_detail_when_unreachable(client, unreachable_listener, env_save_restore, audit_log):
+    # Arrange: an authorized operator acts while the control plane is down.
+    env_save_restore.set(IDENTITY_ENV, "op1")
+    env_save_restore.set(OPS_ENV, "op1")
+    # Act: the POST returns a JSON 502 (list_all fails before any redirect).
+    resp = client.post("/alpha/action", {"action": "stop"})
+    # Assert: the JSON error is redacted (no internal detail reaches the browser).
+    assert resp.status_code == 502 and not any(
+        token in resp.content.decode() for token in FORBIDDEN_DETAIL
+    )
+
+
+def test_revoked_crosshost_scope_does_not_serve_a_cached_crosshost_row(client, loopback, env_save_restore):
+    # Arrange: while granted cross-host, a live read seeds the last-known
+    # snapshot for this identity (the view stores projected, scoped rows).
+    from scitex_agent_container._django import _inventory_cache as _m
+
+    env_save_restore.set(IDENTITY_ENV, "op")
+    env_save_restore.set(CROSS_ENV, "op")
+    granted = json.loads(client.get("/api/fleet").content)
+    assert "gamma" in {a["name"] for a in granted["agents"]}  # setup: grant is live
+    _m.CACHE.put("op", granted["agents"])  # model the view's last-known snapshot
+    # Act: the cross-host grant is revoked (config change); the same identity
+    # renders the shell from its last-known snapshot.
+    env_save_restore.delete(CROSS_ENV)
+    html = client.get("/").content.decode()
+    # Assert: the revoked cross-host row is NOT served from the granted-scope cache.
+    assert "gamma" not in html
+
+
+def test_typed_remote_error_raw_detail_does_not_reach_state_detail_or_template():
+    # Arrange: a TYPED listener error whose human message embeds internal
+    # deployment detail (the listener endpoint plus a transport reason). The
+    # typed label is operator-facing; the transport detail is not.
+    from scitex_agent_container._django._projection import project_row
+    from scitex_agent_container._django._remote import RemoteOperationError
+
+    exc = RemoteOperationError(
+        502,
+        "could not reach http://127.0.0.1:1 (urlopen error [Errno 111] Connection refused)",
+        kind="spec_resolution_failed",
+    )
+    # Act: the row the shell projects, and the template output that renders it.
+    projected = project_row({"name": "delta"}, exc)
+    html = render_to_string(
+        "scitex_agent_container/_fleet_content.html",
+        {
+            "agents": [projected],
+            "summary": {"total": 1, "alive": 0, "attention": 1, "cross_host": 0},
+            "listener": "",
+            "identity": "alice",
+            "url_base": "",
+            "comm_error": "",
+            "crosshost_authorized": False,
+        },
+    )
+    # Assert: the typed label survives; the raw deployment detail reaches neither
+    # state_detail nor the rendered template.
+    assert projected["state_label"] == "Spec invalid" and not any(
+        token in (projected["state_detail"] + html) for token in FORBIDDEN_DETAIL
+    )
+
+
+def test_typed_detail_redaction_publishes_no_raw_shape_at_all():
+    # Arrange: the deployment/credential shapes a typed listener message can
+    # embed - a Bearer marker, a bare host:port, a bracketed IPv6 literal.
+    from scitex_agent_container._django._remote import redact_detail
+
+    hostile = (
+        "Bearer SYNTHETIC_CREDENTIAL_MARKER",
+        "listener scitex-compute-fixture:7878",
+        "listener [fd00::123]:7878",
+    )
+    # Act
+    published = [redact_detail(text) for text in hostile]
+    # Assert: raw text is NEVER published - least disclosure, so every one of
+    # these maps to the one fixed phrase rather than being masked in place.
+    assert all(
+        out != src and "Bearer" not in out and ":" not in out and "[" not in out
+        for src, out in zip(hostile, published)
+    ) and len(set(published)) == 1
+
+
+def test_typed_detail_does_not_publish_an_alphabetic_internal_hostname():
+    # Arrange: a typed error whose message embeds an internal host. The message
+    # is wholly alphabetic prose, so any grammar-shaped gate publishes it
+    # verbatim - which is exactly how a hostname reaches the browser.
+    from scitex_agent_container._django._projection import project_row
+    from scitex_agent_container._django._remote import RemoteOperationError
+
+    exc = RemoteOperationError(400, "listener compute-fixture.internal", kind="spec_unreadable")
+    # Act
+    detail = project_row({"name": "delta"}, exc)["state_detail"]
+    # Assert: the browser gets the FIXED public text for the typed code, never
+    # the message, so the host cannot survive whatever its shape.
+    assert detail == "The agent's spec could not be read." and "internal" not in detail
+
+
+def test_typed_detail_does_not_publish_an_alphabetic_credential_phrase():
+    # Arrange: a credential-phrased message that is also wholly alphabetic, so
+    # no punctuation or secret-word rule would catch it either.
+    from scitex_agent_container._django._projection import project_row
+    from scitex_agent_container._django._remote import RemoteOperationError
+
+    exc = RemoteOperationError(400, "api key SYNTHETICONLYVALUE", kind="spec_resolution_failed")
+    # Act
+    detail = project_row({"name": "delta"}, exc)["state_detail"]
+    # Assert: the message is not published at all, phrased however it is.
+    assert (
+        detail == "The agent's spec could not be validated."
+        and "SYNTHETICONLYVALUE" not in detail
+    )
+
+
+def test_typed_detail_does_not_publish_the_prior_internal_or_local_hostname_shape():
+    # Arrange: the shape the earlier denylist masked (`*.internal` / `*.local`).
+    # Naming an internal host must not depend on how the host is punctuated.
+    from scitex_agent_container._django._projection import project_row
+    from scitex_agent_container._django._remote import RemoteOperationError
+
+    exc = RemoteOperationError(409, "listener compute-fixture.local", kind="ambiguous_registry")
+    # Act
+    detail = project_row({"name": "delta"}, exc)["state_detail"]
+    # Assert: least disclosure - the fixed text for the code, nothing of the host.
+    assert (
+        detail == "More than one registry claims this agent's name."
+        and "compute-fixture" not in detail
+    )

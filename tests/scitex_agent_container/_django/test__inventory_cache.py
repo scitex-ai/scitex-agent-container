@@ -26,7 +26,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from scitex_agent_container._django._constants import IDENTITY_ENV
-from scitex_agent_container._django._inventory_cache import InventoryCache
+from scitex_agent_container._django._inventory_cache import (
+    REFRESH_STALE_SECONDS,
+    InventoryCache,
+)
 
 # Anything the browser must never receive.
 FORBIDDEN = (
@@ -245,3 +248,314 @@ def test_cache_is_bounded():
         cache.put(f"user-{i}", [{"name": f"agent-{i}"}])
     # Assert: it does not grow without limit.
     assert len(cache._by_identity) <= cache._MAX_ENTRIES
+
+
+# ── B3: the key is identity + current authorization scope, not identity alone ──
+
+
+def test_scope_revoke_does_not_serve_a_granted_snapshot(env_save_restore):
+    # Arrange: an identity granted cross-host visibility caches rows while granted.
+    from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
+
+    cache = InventoryCache()
+    env_save_restore.set(CROSSHOST_OPERATORS_ENV, "alice")
+    cache.put("alice", [{"name": "alpha"}, {"name": "gamma", "cross_host": True}])
+    # Act: the cross-host grant is revoked; the same identity reads back.
+    env_save_restore.delete(CROSSHOST_OPERATORS_ENV)
+    snap = cache.get("alice")
+    # Assert: the revoked-scope key no longer resolves the granted-scope snapshot.
+    assert snap is None
+
+
+def test_granted_then_revoked_scope_is_a_distinct_key(env_save_restore):
+    # Arrange: two identities, one granted cross-host, one not.
+    from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
+
+    cache = InventoryCache()
+    env_save_restore.set(CROSSHOST_OPERATORS_ENV, "granted")
+    # Act: store for the granted identity, then read it back un-granted.
+    cache.put("granted", [{"name": "remote", "cross_host": True}])
+    env_save_restore.delete(CROSSHOST_OPERATORS_ENV)
+    # Assert: the granted-scope entry is not served under the revoked scope.
+    assert cache.get("granted") is None
+
+
+# ── B5: a stored snapshot is an independent copy, not a mutable alias ─────────
+
+
+def test_put_deep_copies_rows_so_the_producer_cannot_mutate_the_snapshot():
+    # Arrange: a producer hands the cache a row with nested mutable data.
+    cache = InventoryCache()
+    source = [{"name": "alpha", "activity": {"operation": {"value": "busy"}}}]
+    # Act: store it, then mutate the producer's dict after the fact.
+    cache.put("alice", source)
+    source[0]["name"] = "MUTATED"
+    source[0]["activity"]["operation"]["value"] = "MUTATED"
+    # Assert: the stored snapshot is an independent copy, untouched.
+    row = cache.get("alice").agents[0]
+    assert row["name"] == "alpha" and row["activity"]["operation"]["value"] == "busy"
+
+
+# ── B4: in-flight refreshes are bounded by PHYSICAL workers ──────────────────
+# The cap counts workers, not markers: a superseded worker keeps its slot until
+# its thread exits, so an abandoned-LOOKING marker is superseded only while a
+# slot is physically free and is never traded for one more read.
+
+
+def test_inflight_refreshes_are_bounded_globally_across_identities():
+    # Arrange: more distinct identities than the global in-flight cap (8).
+    cache = InventoryCache()
+    gate = threading.Event()
+    started: list[int] = []
+
+    def gated_fetcher():
+        started.append(1)
+        gate.wait(timeout=10.0)
+        return []
+
+    # Act: fire a burst of refreshes for 13 distinct identities.
+    results = [cache.refresh_async(f"user-{i}", gated_fetcher) for i in range(13)]
+    deadline = time.monotonic() + 5.0
+    while len(started) < 8 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    gate.set()
+    # Assert: the burst cannot fan out into unbounded concurrent refreshes.
+    assert sum(results) <= 8
+
+
+def test_stale_inflight_refresh_is_reclaimed_not_waited_on():
+    # Arrange: a marker older than REFRESH_STALE_SECONDS, with NO worker
+    # physically alive for it (the thread is gone; only bookkeeping remains).
+    # The cap counts physical workers, so this marker holds no slot and a new
+    # refresh for the key must be SUPERSEDED into place - not waited on, and
+    # not refused for the marker's sake.
+    import scitex_agent_container._django._inventory_cache as m
+
+    cache = m.InventoryCache()
+    started: list[int] = []
+
+    def quick():
+        started.append(1)
+        return []
+
+    key = cache._key("alice")
+    with cache._lock:
+        cache._inflight[key] = (12345, time.monotonic() - (m.REFRESH_STALE_SECONDS + 1.0))
+    # Act: a fresh refresh for the same key.
+    allowed = cache.refresh_async("alice", quick)
+    # Assert: the new refresh proceeded (nothing to wait on). It was admitted
+    # because the key had no LIVE worker, which the physical count records.
+    assert allowed is True and started == [1]
+
+
+# ── B1 support: a completed failure is recorded without clobbering a success ──
+
+
+def test_record_error_keeps_a_fresh_successful_snapshot():
+    # Arrange: a fresh success is within TTL.
+    cache = InventoryCache(ttl=60.0)
+    cache.put("alice", [{"name": "alpha"}])
+    # Act: a transient background failure is recorded.
+    snap = cache.record_error("alice")
+    # Assert: the fresh success is served, not the transient failure.
+    assert snap.error == "" and snap.agents[0]["name"] == "alpha"
+
+
+def test_record_error_surfaces_a_completed_failure_on_a_cold_cache():
+    # Arrange: nothing observed for this identity.
+    cache = InventoryCache(ttl=60.0)
+    # Act: record the completed read failure.
+    snap = cache.record_error("alice")
+    # Assert: the shell can now show unavailable + Retry, not a spinner.
+    assert snap.error == "the control plane did not answer"
+
+
+# ── Adversarial: the seams the first candidate left open ─────────────────────
+# Each of these fails against the rejected candidate and holds only when the
+# seam is closed. They are written against the module's own primitives (no
+# patch/mock): the fetch is gated by an Event, so the interleaving is forced
+# rather than hoped for.
+
+
+def _await(predicate, timeout: float = 10.0) -> bool:
+    """Wait for ``predicate``; never trust a fixed sleep to outlast a race."""
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_stale_fetch_does_not_publish_over_a_newer_snapshot():
+    # Arrange: a slow refresh is dispatched, then a NEWER observation lands while
+    # it is still in flight (the browser's synchronous /api/fleet read is the
+    # real case: B1's poll completes a fresh read while the shell's background
+    # refresh is still on the wire).
+    cache = InventoryCache()
+    fetched = threading.Event()
+    release = threading.Event()
+
+    def slow_fetcher():
+        fetched.set()
+        release.wait(timeout=10.0)
+        return [{"name": "stale"}]
+
+    cache.refresh_async("alice", slow_fetcher)
+    assert fetched.wait(timeout=10.0)
+    cache.put("alice", [{"name": "fresh"}])
+    # Act: the older fetch finally returns and tries to store its observation.
+    release.set()
+    _await(lambda: not cache._inflight)
+    # Assert: a superseded fetch must never overwrite the newer snapshot.
+    assert [a["name"] for a in cache.get("alice").agents] == ["fresh"]
+
+
+def test_stale_reclaim_does_not_start_a_ninth_refresh_or_hide_a_blocked_worker():
+    # Arrange: fill the global in-flight cap with BLOCKED workers, then age every
+    # marker past the stale horizon so all of them look abandoned - while every
+    # one of those workers is still physically reading.
+    cache = InventoryCache()
+    cap = InventoryCache._MAX_INFLIGHT
+    gate = threading.Event()
+    started: list[int] = []
+
+    def blocked_fetcher():
+        started.append(1)
+        gate.wait(timeout=10.0)
+        return []
+
+    for i in range(cap):
+        assert cache.refresh_async(f"user-{i}", blocked_fetcher) is True
+    assert _await(lambda: len(started) >= cap)
+    with cache._lock:
+        for key, (run_id, _started_at) in list(cache._inflight.items()):
+            cache._inflight[key] = (run_id, time.monotonic() - (REFRESH_STALE_SECONDS + 1.0))
+    try:
+        # Act: a NINTH distinct identity asks for a refresh while the cap is full.
+        allowed = cache.refresh_async("user-9", blocked_fetcher)
+        _await(lambda: len(started) > cap, timeout=1.0)
+        # Assert: no ninth worker beyond the cap. The cap counts PHYSICAL
+        # workers, so none of these eight can be traded for a ninth read while
+        # they are still alive - the markers' apparent staleness does not free a
+        # slot, and the live workers stay accounted for.
+        assert (
+            allowed is False
+            and len(started) == cap
+            and len(cache._inflight) == cap
+        )
+    finally:
+        gate.set()
+
+
+def test_dispatch_time_scope_is_not_recomputed_at_put_after_revocation(env_save_restore):
+    # Arrange: the cross-host grant is LIVE when the refresh is dispatched, so
+    # the read is authorized to carry the cross-host row.
+    from scitex_agent_container._django._constants import CROSSHOST_OPERATORS_ENV
+
+    cache = InventoryCache()
+    env_save_restore.set(CROSSHOST_OPERATORS_ENV, "op")
+    release = threading.Event()
+
+    def crosshost_fetcher():
+        release.wait(timeout=10.0)
+        return [{"name": "gamma", "cross_host": True}]
+
+    dispatched = cache.refresh_async("op", crosshost_fetcher)
+    assert dispatched is True
+    # Act: the grant is revoked while the fetch is in flight; it then lands.
+    env_save_restore.delete(CROSSHOST_OPERATORS_ENV)
+    release.set()
+    _await(lambda: not cache._inflight)
+    # Assert: the rows are filed under the DISPATCH-time scope, so the identity's
+    # now-current (own) scope cannot resolve them.
+    assert cache.get("op") is None
+
+
+def test_get_and_put_return_do_not_expose_mutable_nested_cache_data():
+    # Arrange: a row whose nested payload a caller could mutate in place.
+    cache = InventoryCache()
+    source = [{"name": "alpha", "activity": {"operation": {"value": "busy"}}}]
+    # Act: mutate the snapshot handed BACK by put, and the one handed OUT by get.
+    handed_back = cache.put("alice", source)
+    handed_back.agents[0]["name"] = "MUTATED"
+    handed_back.agents[0]["activity"]["operation"]["value"] = "MUTATED"
+    handed_out = cache.get("alice")
+    handed_out.agents[0]["activity"]["operation"]["value"] = "MUTATED"
+    # Assert: neither caller could reach into the cache's own copy.
+    row = cache.get("alice").agents[0]
+    assert row["name"] == "alpha" and row["activity"]["operation"]["value"] == "busy"
+
+
+# ── Follow-up review round: the three seams the reviewed candidate left open ──
+# Each drives the module's own primitives with Event gates (the subclass in the
+# atomicity test is the module under test, not a mock), so the interleaving is
+# forced rather than hoped for.
+
+
+def test_same_key_stale_supersede_does_not_admit_a_ninth_physical_worker():
+    # Arrange: fill the global cap with BLOCKED workers, then age the marker of
+    # ONE occupied key past the stale horizon. The marker looks abandoned, but
+    # its worker is still physically alive and still reading.
+    cache = InventoryCache()
+    cap = InventoryCache._MAX_INFLIGHT
+    gate = threading.Event()
+    started: list[int] = []
+
+    def blocked_fetcher():
+        started.append(1)
+        gate.wait(timeout=10.0)
+        return []
+
+    try:
+        for i in range(cap):
+            assert cache.refresh_async(f"user-{i}", blocked_fetcher) is True
+        assert _await(lambda: len(started) >= cap)
+        with cache._lock:
+            run_id, _started_at = cache._inflight[cache._key("user-0")]
+            cache._inflight[cache._key("user-0")] = (
+                run_id,
+                time.monotonic() - (REFRESH_STALE_SECONDS + 1.0),
+            )
+        # Act: the same key is asked for again, so its abandoned-looking marker
+        # would be superseded - while every one of the cap's workers is alive.
+        admitted = cache.refresh_async("user-0", blocked_fetcher)
+        _await(lambda: len(started) > cap, timeout=1.0)
+        # Assert: a superseded worker still counts until it physically exits, so
+        # a same-key supersede cannot admit a ninth concurrent read.
+        assert admitted is False and len(started) == cap
+    finally:
+        gate.set()
+
+
+class _PublicationBarrierCache(InventoryCache):
+    """A real cache whose BACKGROUND publication can be held open mid-flight.
+
+    Subclassing rather than patching keeps the code under test real: the only
+    change is that a background refresh's store reports it has ARRIVED and then
+    waits, which puts an intervening put strictly between the freshness decision
+    and the write. That is the window a check-then-put leaves open.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arrived = threading.Event()
+        self.resume = threading.Event()
+
+    def put(self, identity, agents, **kwargs):
+        if threading.current_thread().name.startswith("inventory-refresh-"):
+            self.arrived.set()
+            assert self.resume.wait(timeout=10.0)
+        return super().put(identity, agents, **kwargs)
+
+
+def test_background_publication_is_atomic_against_an_intervening_put():
+    # Arrange: a background refresh whose store is held open on its way in.
+    cache = _PublicationBarrierCache()
+    assert cache.refresh_async("alice", lambda: [{"name": "stale"}]) is True
+    assert cache.arrived.wait(timeout=10.0)
+    # Act: a NEWER observation lands while the older read is still publishing.
+    cache.put("alice", [{"name": "fresh"}])
+    cache.resume.set()
+    _await(lambda: not cache._inflight)
+    # Assert: fencing and the write are ONE step, so the intervening - newer -
+    # put cannot be overwritten by the older read's later publication.
+    assert [a["name"] for a in cache.get("alice").agents] == ["fresh"]
