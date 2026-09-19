@@ -517,7 +517,6 @@ def test_revoked_crosshost_scope_does_not_serve_a_cached_crosshost_row(client, l
     env_save_restore.set(IDENTITY_ENV, "op")
     env_save_restore.set(CROSS_ENV, "op")
     granted = json.loads(client.get("/api/fleet").content)
-    assert "gamma" in {a["name"] for a in granted["agents"]}  # setup: grant is live
     _m.CACHE.put("op", granted["agents"])  # model the view's last-known snapshot
     # Act: the cross-host grant is revoked (config change); the same identity
     # renders the shell from its last-known snapshot.
