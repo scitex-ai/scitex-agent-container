@@ -19,7 +19,7 @@ from ._rename import rename
 from ._restart import restart
 from ._start import start
 from ._stop import stop
-from ._twin import twin
+from ._fork import fork
 
 __all__ = [
     "start",
@@ -29,6 +29,6 @@ __all__ = [
     "forget",
     "cleanup",
     "attach",
-    "twin",
+    "fork",
     "rename",
 ]

@@ -28,7 +28,7 @@ from .lifecycle import rename as _rename_impl
 from .lifecycle import restart as _restart_impl
 from .lifecycle import start as _start_impl
 from .lifecycle import stop as _stop_impl
-from .lifecycle import twin as _twin_impl
+from .lifecycle import fork as _fork_impl
 from .recall_cmds import recall as _recall_impl
 from .send_cmds import send as _send_impl
 from .status_cmds import health as _health_impl
@@ -117,7 +117,7 @@ agent_group.add_command(_rebind(_start_impl, "start"))
 # parent's live session, then diverges; parent never stops). See the
 # fork-spawning skill + docs/adr/0019. The verb is `fork`; the noun "twin" is
 # retired (operator, 2026-09-19: a noun must not name a command).
-agent_group.add_command(_rebind(_twin_impl, "fork"))
+agent_group.add_command(_rebind(_fork_impl, "fork"))
 agent_group.add_command(_rebind(_stop_impl, "stop"))
 agent_group.add_command(_rebind(_restart_impl, "restart"))
 # `reconcile` — the ENFORCER of "should be running => is running", and the
