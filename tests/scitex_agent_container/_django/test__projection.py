@@ -309,10 +309,14 @@ def test_plain_exception_without_kind_is_unknown():
     assert projected["state_label"] == "Unknown" and projected["state_detail"] == ""
 
 
-def test_typed_state_detail_carries_message():
-    # Arrange
+def test_typed_state_detail_publishes_the_trusted_text_not_the_raw_message():
+    # Arrange: a typed listener error whose raw message names a spec path. Raw
+    # prose can embed deployment or credential detail whatever its shape, so it
+    # is not public. (This replaces the earlier expectation that the message
+    # itself be carried: that expectation contradicted least disclosure.)
     exc = RemoteOperationError(400, "Config validation failed for delta/spec.yaml", kind="spec_resolution_failed")
     # Act
     detail = project_row({"name": "delta"}, exc)["state_detail"]
-    # Assert
-    assert "Config validation failed" in detail
+    # Assert: the fixed public text for the typed CODE, and nothing of the raw
+    # message - while the typed LABEL is still carried separately.
+    assert detail == "The agent's spec could not be validated." and "delta/spec.yaml" not in detail
