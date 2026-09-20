@@ -38,7 +38,9 @@ Request JSON::
     {"agent": "<owner-agent-name>",   # required, non-empty
      "body": "<notification text>",   # required, non-empty
      "card_id": "<card id>",          # optional — rides on the envelope
-     "from_agent": "<sender>"}        # optional — defaults to "scitex-cards"
+     "from_agent": "<sender>",        # optional — defaults to "scitex-cards"
+     "kind": "card-event",            # optional — defaults to "message"
+     "extra": { ... }}                # optional structured lifecycle metadata
 
 Response ``200``::
 
@@ -180,6 +182,17 @@ async def notify(request: Request) -> Response:
             {"error": "field 'from_agent' must be a string when set"},
             status_code=400,
         )
+    kind = body_json.get("kind", "message")
+    if not isinstance(kind, str) or not kind.strip():
+        return JSONResponse(
+            {"error": "field 'kind' must be a non-empty string when set"},
+            status_code=400,
+        )
+    extra = body_json.get("extra")
+    if extra is not None and not isinstance(extra, dict):
+        return JSONResponse(
+            {"error": "field 'extra' must be an object when set"}, status_code=400
+        )
 
     broker: Broker = request.app.state.inbox
     try:
@@ -189,6 +202,8 @@ async def notify(request: Request) -> Response:
             body=text,
             from_agent=from_agent,
             card_id=card_id,
+            kind=kind.strip(),
+            extra=extra,
         )
     except Exception as exc:  # stx-allow: fallback (reason: a persist/publish failure must be a LOUD 500 with the reason, never a silent drop)
         logger.warning("notify: publish to %r failed: %s", agent, exc)

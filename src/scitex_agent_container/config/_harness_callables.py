@@ -177,6 +177,13 @@ def _hermes_tui_inner_argv(
     ``~/.hermes/config.yaml`` so fresh sessions do not fall into Setup Required.
     """
     del options
+    from ..runtimes._hermes_context_gc import DEFAULT_MAX_SESSION_AGE_MINUTES
+
+    configured_max_age = config.claude.continue_max_age_minutes
+    max_age = min(
+        configured_max_age or DEFAULT_MAX_SESSION_AGE_MINUTES,
+        DEFAULT_MAX_SESSION_AGE_MINUTES,
+    )
     argv = [
         "/usr/bin/tini",
         "-s",
@@ -186,6 +193,8 @@ def _hermes_tui_inner_argv(
         "scitex_agent_container.runtimes._hermes_tui_owner",
         "--state-dir",
         f"/state/{config.name}",
+        "--max-session-age-minutes",
+        str(max_age),
         "--",
         "hermes",
         "chat",

@@ -71,7 +71,7 @@ spec:
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
   available_harnesses:
     hermes:
-      session: { mode: continue, max_age_minutes: null }
+      session: { mode: continue, max_age_minutes: 4320 }
       background_review: false
       # run_budget_seconds: 900  # optional; one-shot/eval jobs only
       compression:
@@ -91,7 +91,7 @@ spec:
 
   startup_commands:                      # SHELL before claude starts (list of {delay, command} dicts)
     - { delay: 0, command: "echo hi" }
-  startup_prompts:  [...]                # TEXT fed to claude as first user msg
+  startup_prompts:  [...]                # TEXT fed to the selected harness as first user msg
   session: continue                      # top-level shortcut overriding spec.claude.session
 
   host:  gpu-box                         # mutually exclusive: singleton on one peer
@@ -162,7 +162,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
 | `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
+| `startup_prompts[]`  | list of strings            | Required explicitly; `[]` means no startup turn; no implicit prompt fallback |
 
 ### `spec.apptainer` — engine knobs
 
@@ -429,7 +429,7 @@ typo and for a dead host alike). The spelling that resolves fleet-wide is
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
-| `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
+| `continue_max_age_minutes`  | int                                   | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
