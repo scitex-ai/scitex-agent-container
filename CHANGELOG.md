@@ -14,6 +14,15 @@ versioning follows [SemVer](https://semver.org/).
   `--allow-stale-spec`/environment bypass is removed. Intentional detached
   `sac-authority/<source>-<commit>` snapshots remain supported only when their
   origin identity, HEAD, clean tree, and loaded spec blob match exactly.
+- **Prompt assembly is explicit, provenance-checked, and harness-neutral.**
+  Omitting `startup_prompts` no longer injects a Claude/scitex-todo prompt,
+  while an explicit empty list remains a true no-op. Declared
+  `to_home_layers` now control the files that are actually materialized, and
+  each home backing receives a SHA-256 manifest covering prompt sources,
+  projections, skills, commands, and startup turns. Hermes launch requires a
+  verified neutral root `AGENTS.md`, embeds those exact bytes through
+  `agent.system_prompt`, and fails with a migration hint instead of silently
+  translating a legacy `CLAUDE.md` or accepting divergent home projections.
 - **Remote image staging includes SAC's console bootstrap package.** The HPC
   bake context now copies `_scitex_agent_container_bootstrap` alongside the
   main package, matching the wheel manifest and preventing the image `%test`

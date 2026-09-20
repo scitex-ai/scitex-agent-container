@@ -6,20 +6,31 @@ from scitex_agent_container._state.observation import (
 )
 
 
-def _status(*, pane: str = "", verdict: str = "alive") -> dict:
+def _status(
+    *, pane: str = "", verdict: str = "alive", process_verdict: str | None = "alive"
+) -> dict:
+    evidence = [
+        {
+            "source": "delivery",
+            "verdict": "alive",
+            "detail": "one live subscriber",
+        }
+    ]
+    if process_verdict is not None:
+        evidence.append(
+            {
+                "source": "process",
+                "verdict": process_verdict,
+                "detail": f"process observation: {process_verdict}",
+            }
+        )
     return {
         "status": "running",
         "pane_text": pane,
         "pane_state": "running",
         "liveness": {
             "verdict": verdict,
-            "evidence": [
-                {
-                    "source": "delivery",
-                    "verdict": "alive",
-                    "detail": "one live subscriber",
-                }
-            ],
+            "evidence": evidence,
         },
     }
 
@@ -97,3 +108,35 @@ def test_runtime_phase_is_preferred_over_terminal_heuristic() -> None:
         observed["turn"]["state"],
         observed["turn"]["evidence"][0]["source"],
     ) == ("prefilling", "runtime_control.current_phase")
+
+
+def test_delivery_only_does_not_claim_the_process_is_alive() -> None:
+    # Arrange
+    status = _status(process_verdict=None)
+
+    # Act
+    observed = build_agent_observation(
+        status, definition_state=DefinitionState.VALID
+    )
+
+    # Assert
+    assert (
+        observed["process"]["state"],
+        observed["communication"]["state"],
+    ) == ("unknown", "reachable")
+
+
+def test_dead_process_is_not_overwritten_by_a_live_delivery_subscription() -> None:
+    # Arrange
+    status = _status(verdict="alive", process_verdict="dead")
+
+    # Act
+    observed = build_agent_observation(
+        status, definition_state=DefinitionState.VALID
+    )
+
+    # Assert
+    assert (
+        observed["process"]["state"],
+        observed["communication"]["state"],
+    ) == ("exited", "reachable")

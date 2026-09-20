@@ -15,7 +15,7 @@ version = "0.28.1"
 description = "Declarative YAML-based framework for defining, managing, and orchestrating AI coding agent instances"
 readme = "README.md"
 license = "AGPL-3.0-only"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Yusuke Watanabe", email = "ywatanabe@scitex.ai" },
 ]
@@ -33,7 +33,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -56,6 +55,9 @@ dependencies = [
     # bookkeeping).
     "ruamel.yaml>=0.18",
     "rich>=13.0",
+    # Fleet inventory crosses a process/version boundary (the in-container MCP
+    # client -> the host listen authority).  Keep that wire contract explicit
+    # and validated instead of accepting arbitrary JSON from a stale daemon.
     "pydantic>=2.10,<3",
     # Two distinct uses:
     #   1. `scitex_config._ecosystem.local_state` — canonical local-state

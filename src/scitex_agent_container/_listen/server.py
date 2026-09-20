@@ -512,6 +512,7 @@ def create_app(
     # a subscribed (containerized) agent receives it. Bearer-gated by the
     # ``BearerAuthMiddleware`` below (not in its ``PUBLIC_PATHS``).
     from ._notify import notify
+    from ._fleet_inventory import fleet_inventory
 
     routes: list[Route] = [
         Route("/v1/health", health, methods=["GET"]),
@@ -522,6 +523,7 @@ def create_app(
         Route("/v1/acl/grant", acl_grant, methods=["POST"]),
         Route("/v1/host_exec", host_exec, methods=["POST"]),
         Route("/v1/host_exec/inflight", host_exec_inflight, methods=["GET"]),
+        Route("/v1/fleet/inventory", fleet_inventory, methods=["GET"]),
     ]
     routes += _v1_agent_routes("/agents")
     # Q4 (lead a2a c8b64f298b8a...): on listen startup, persist every
