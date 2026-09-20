@@ -83,26 +83,39 @@ STATUS_DELIVERED = "delivered"
 # picked the event up): REACTED is the operator's "comm-miss detectable"
 # signal. See lead a2a 1781e82a (2026-06-14).
 STATUS_REACTED = "reacted"
+STATUS_AGENTIC_ACKED = "agentic_acked"
+STATUS_IN_PROGRESS = "in_progress"
+STATUS_COMPLETED = "completed"
+STATUS_CANCELLED = "cancelled"
 STATUS_TIMEOUT = "timeout"
 STATUS_FAILED = "failed"
 VALID_STATUSES = (
     STATUS_SENT,
     STATUS_DELIVERED,
     STATUS_REACTED,
+    STATUS_AGENTIC_ACKED,
+    STATUS_IN_PROGRESS,
+    STATUS_COMPLETED,
+    STATUS_CANCELLED,
     STATUS_TIMEOUT,
     STATUS_FAILED,
 )
 
 __all__ = [
     "IDENTITY_FIELDS",
+    "STATUS_AGENTIC_ACKED",
+    "STATUS_CANCELLED",
+    "STATUS_COMPLETED",
     "STATUS_DELIVERED",
     "STATUS_FAILED",
+    "STATUS_IN_PROGRESS",
     "STATUS_REACTED",
     "STATUS_SENT",
     "STATUS_TIMEOUT",
     "STORE_NAME",
     "VALID_STATUSES",
     "dispatch_store_target",
+    "get_dispatch",
     "init_ledger_schema",
     "list_dispatches",
     "list_unreacted_dispatches",
@@ -279,6 +292,18 @@ def update_dispatch_status(
         store.close()
 
 
+def get_dispatch(
+    dispatch_id: str, *, agent: str | None = None
+) -> dict | None:
+    """Return the exact dispatch row, or ``None`` for a stale/wrong nonce."""
+    store = open_dispatch_store()
+    try:
+        row = _find_row(store, dispatch_id, agent)
+        return dict(row.values) if row is not None else None
+    finally:
+        store.close()
+
+
 def mark_dispatch_reacted(dispatch_id: str, *, agent: str | None = None) -> bool:
     """Mark a dispatch REACTED (receiver injected, structural ack received).
 
@@ -291,6 +316,11 @@ def mark_dispatch_reacted(dispatch_id: str, *, agent: str | None = None) -> bool
     that the reaction landed for a dispatch this sender never minted
     (out-of-order replay, wrong sender, or stale ledger).
     """
+    row = get_dispatch(dispatch_id, agent=agent)
+    if row is None:
+        return False
+    if row.get("status") not in (STATUS_SENT, STATUS_DELIVERED, STATUS_REACTED):
+        return True
     return update_dispatch_status(dispatch_id, STATUS_REACTED, agent=agent)
 
 

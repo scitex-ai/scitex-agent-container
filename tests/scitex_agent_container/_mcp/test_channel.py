@@ -565,6 +565,9 @@ async def test_register_tools_wrapper_delegates_to_channel_tools(fake_listen):
         "a2a_send",
         "a2a_reply",
         "a2a_ack",
+        "a2a_agentic_ack",
+        "a2a_progress",
+        "a2a_dispatch_status",
         "a2a_peers",
         "a2a_inbox",
     }
