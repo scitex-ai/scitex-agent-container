@@ -67,7 +67,7 @@ DEAD = "dead"
 UNKNOWN = "unknown"
 
 #: The delimiter. Taken from the SAME constant the start path injects
-#: (``config._loaders.DEFAULT_STARTUP_PROMPT``) rather than a copied string, so
+#: from the pane rather than a framework-owned prompt constant, so
 #: a change to the boot kick cannot silently desynchronise the detector from the
 #: thing it anchors on. Only the stable leading sentence is matched: the rest of
 #: the prompt wraps across pane lines at a width we do not control.

@@ -38,7 +38,7 @@ def agent_twin(
     AUTHOR = twin (``SCITEX_CARDS_AGENT_ID`` = twin — its scitex-cards writes
     attribute to it). OWNER = parent, but scitex-cards cannot default the card
     owner from env, so the twin MUST pass ``assignee=<parent>`` (==
-    ``$SAC_TWIN_PARENT``) on every card write — a hard rule, not an env
+    ``$SAC_FORK_PARENT``) on every card write — a hard rule, not an env
     guarantee; an ephemeral twin that owns cards then exits orphans them.
 
     ``name`` defaults to ``<parent>-twin`` (bumped if taken); ``persist``

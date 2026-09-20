@@ -37,6 +37,7 @@ from ..config import AgentConfig
 from ..config._harness_registry import (
     CLAUDE_AGENT_SDK,
     CLAUDE_CODE_TUI,
+    CODEX_SDK,
     CODEX_TUI,
     HERMES_TUI,
     resolve_harness_key,
@@ -111,6 +112,10 @@ def _get_runtime(config: AgentConfig):
         from ..runtimes.hermes_tui import HermesTuiSessionRuntime
 
         return HermesTuiSessionRuntime()
+    if key == CODEX_SDK:
+        from ..runtimes.codex_session import CodexSessionRuntime
+
+        return CodexSessionRuntime()
     ensure_harness_matches_claude_launch(
         config,
         launching=(

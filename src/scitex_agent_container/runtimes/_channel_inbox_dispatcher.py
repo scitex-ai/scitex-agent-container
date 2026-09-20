@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
@@ -36,6 +37,7 @@ async def consume(
     consume_cards_notifications: Callable[..., Awaitable[None]] = consume_cards,
     push_event: Callable[..., Awaitable[None]] = _push_channel_event,
     dispatch_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    state_dir: Path | None = None,
 ) -> None:
     """Consume declared durable rails and ACK only proven target admission.
 
@@ -48,6 +50,7 @@ async def consume(
     if not bearer:
         raise RuntimeError("SAC listen bearer is required for channel inbox delivery")
     sink = _NotificationSink()
+    state_dir = state_dir or Path("/state") / name
 
     async def default_dispatch(event: dict[str, Any]) -> None:
         event = dict(event)
@@ -66,7 +69,27 @@ async def consume(
     async def on_event(event: dict[str, Any]) -> None:
         event = dict(event)
         event["_require_terminal_visibility"] = True
+        # Bind lifecycle metadata to the session selected BEFORE delivery. If
+        # ownership changes while the turn runs, the old id makes reconciliation
+        # discard the boundary rather than closing the replacement session.
+        from ._hermes_context_gc import OWNED_SESSION_FILE
+
+        try:
+            owned = json.loads(
+                (state_dir / OWNED_SESSION_FILE).read_text(encoding="utf-8")
+            )
+            live_session_id = str(owned.get("live_session_id") or "").strip()
+            stored_session_id = str(owned.get("stored_session_id") or "").strip()
+        except (OSError, ValueError, TypeError):
+            live_session_id = ""
+            stored_session_id = ""
+        if live_session_id and stored_session_id:
+            event["_hermes_delivery_session_id"] = live_session_id
+            event["_hermes_delivery_stored_session_id"] = stored_session_id
         await target_dispatch(event)
+        from ._hermes_context_gc import record_inbound_task_event
+
+        record_inbound_task_event(state_dir, name, event)
 
     async def deliver_cards(event: dict[str, Any], **_transport: Any) -> None:
         await on_event(event)
@@ -104,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-path", required=True, type=Path)
     parser.add_argument("--process-role", required=True)
     parser.add_argument("--incarnation-id", required=True)
+    parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--channel", action="append", dest="channels", default=[])
     args = parser.parse_args(argv)
     asyncio.run(
@@ -112,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             listen_url=args.listen_url,
             turn_url=args.turn_url,
             channels=tuple(args.channels),
+            state_dir=args.state_dir,
         )
     )
     return 0

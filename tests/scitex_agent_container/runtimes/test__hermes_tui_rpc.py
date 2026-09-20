@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scitex_agent_container.runtimes import _hermes_tui_rpc as rpc_module
+from scitex_agent_container.runtimes._hermes_context_rpc import (
+    complete_pending_transition,
+    reconcile_pending_transition,
+    replace_session_from_handoff,
+    stored_session_for_title,
+)
 from scitex_agent_container.runtimes._hermes_tui_owner import GATEWAY_FILE
 from scitex_agent_container.runtimes._hermes_tui_rpc import (
     HermesTuiRpcError,
@@ -80,6 +87,453 @@ def test_detailed_health_rejects_http_200_without_session_store_shape(tmp_path):
 
     # Assert
     assert "malformed response" in observed
+
+
+def test_stored_session_lookup_joins_exact_title_to_management_record(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+
+    class ListSocket:
+        def __init__(self):
+            self.sent = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            if request["method"] != "session.list":
+                raise RuntimeError(request["method"])
+            result = {
+                "sessions": [
+                    {
+                        "id": "root-1",
+                        "resolved_id": "tip-2",
+                        "title": "sac:hub:qwen",
+                        "started_at": 100.0,
+                    }
+                ]
+            }
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = ListSocket()
+    seen = []
+
+    def open_(request, timeout):
+        seen.append((request.full_url, timeout))
+        return nullcontext(
+            SimpleNamespace(
+                status=200,
+                read=lambda *_args: json.dumps(
+                    {
+                        "id": "tip-2",
+                        "started_at": 100.0,
+                        "compression_failure_error": "summary timed out",
+                    }
+                ).encode(),
+            )
+        )
+
+    # Act
+    record = stored_session_for_title(
+        tmp_path,
+        "sac:hub:qwen",
+        connect_fn=lambda *args, **kwargs: socket,
+        urlopen_fn=open_,
+    )
+    # Assert
+    assert (
+        record,
+        seen[0][0].endswith("/api/sessions/tip-2"),
+        [request["method"] for request in socket.sent],
+    ) == (
+        {
+            "id": "tip-2",
+            "started_at": 100.0,
+            "compression_failure_error": "summary timed out",
+        },
+        True,
+        ["session.list"],
+    )
+
+
+def test_handoff_rotation_proves_nonce_before_closing_old_session(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text('{"task_id":"card"}', encoding="utf-8")
+
+    class RotationSocket:
+        def __init__(self):
+            self.sent = []
+            self.replays = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if method == "session.create":
+                result = {
+                    "session_id": "fresh-live",
+                    "stored_session_id": "fresh-stored",
+                }
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [
+                            {
+                                "type": "message.complete",
+                                "payload": {"status": "complete"},
+                            }
+                        ]
+                    ),
+                    "latest_seq": 5 + self.replays,
+                    "epoch": "epoch-1",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {
+                    "messages": [
+                        {"role": "assistant", "content": "HANDOFF_READY:nonce-123"}
+                    ]
+                }
+            elif method == "session.close":
+                result = {"closed": True}
+            else:  # pragma: no cover - any extra mutation is the failure
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = RotationSocket()
+    # Act
+    session_id = replace_session_from_handoff(
+        tmp_path,
+        agent_name="hub",
+        workdir=Path("/repo"),
+        handoff_path=handoff,
+        nonce="nonce-123",
+        old_session_id="old-live",
+        model="qwen3-coder",
+        provider="custom:sac-vllm",
+        connect_fn=lambda *args, **kwargs: socket,
+        sleep_fn=lambda _seconds: None,
+    )
+    # Assert
+    create_params = socket.sent[0]["params"]
+    assert (
+        session_id,
+        [request["method"] for request in socket.sent],
+        (create_params["model"], create_params["provider"]),
+        socket.sent[-1]["params"],
+        (tmp_path / "hermes-context-transition.json").exists(),
+    ) == (
+        "fresh-stored",
+        [
+            "session.create",
+            "session.events.since",
+            "prompt.submit",
+            "session.events.since",
+            "session.history",
+            "session.close",
+        ],
+        ("qwen3-coder", "custom:sac-vllm"),
+        {"session_id": "old-live"},
+        True,
+    )
+
+
+def test_lost_close_reply_reconciles_old_absent_and_keeps_fresh(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text("{}", encoding="utf-8")
+
+    class Socket:
+        def __init__(self, reconcile=False):
+            self.sent = []
+            self.replays = 0
+            self.reconcile = reconcile
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if self.reconcile:
+                if method != "session.active_list":
+                    raise AssertionError(method)
+                result = {"sessions": [{"id": "fresh-live", "status": "idle"}]}
+            elif method == "session.create":
+                result = {"session_id": "fresh-live", "stored_session_id": "fresh-stored"}
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [{"type": "message.complete", "payload": {"status": "complete"}}]
+                    ),
+                    "latest_seq": self.replays,
+                    "epoch": "epoch",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {
+                    "messages": [
+                        {"role": "assistant", "content": "HANDOFF_READY:nonce-123"}
+                    ]
+                }
+            elif method == "session.close":
+                raise ConnectionError("reply lost after server-side close")
+            else:
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    sockets = iter((Socket(), Socket(reconcile=True)))
+    # Act
+    replacement = replace_session_from_handoff(
+        tmp_path,
+        agent_name="hub",
+        workdir=Path("/repo"),
+        handoff_path=handoff,
+        nonce="nonce-123",
+        old_session_id="old-live",
+        model="qwen3-coder",
+        provider="custom:sac-vllm",
+        connect_fn=lambda *_args, **_kwargs: next(sockets),
+        sleep_fn=lambda _seconds: None,
+    )
+    # Assert
+    assert replacement == "fresh-stored"
+
+
+def test_startup_reconciliation_rolls_back_fresh_when_old_is_live(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    journal = tmp_path / "hermes-context-transition.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "fresh_title": "sac:hub:handoff:nonce123",
+                "old_session_id": "old-live",
+                "phase": "proven",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Socket:
+        def __init__(self, listing):
+            self.sent = []
+            self.listing = listing
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            result = self.listing if request["method"] == "session.active_list" else {"closed": True}
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    listing_socket = Socket(
+        {
+            "sessions": [
+                {"id": "old-live", "title": "sac:hub"},
+                {"id": "fresh-live", "title": "sac:hub:handoff:nonce123"},
+            ]
+        }
+    )
+    close_socket = Socket({})
+    sockets = iter((listing_socket, close_socket))
+    # Act
+    replacement = reconcile_pending_transition(
+        tmp_path, connect_fn=lambda *_args, **_kwargs: next(sockets)
+    )
+    # Assert
+    assert (
+        journal.exists(),
+        close_socket.sent[-1]["params"],
+        replacement,
+    ) == (False, {"session_id": "fresh-live"}, "")
+
+
+def test_startup_reconciliation_returns_committed_fresh_stored_id(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    journal = tmp_path / "hermes-context-transition.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "fresh_stored_id": "fresh-stored",
+                "fresh_title": "sac:hub:handoff:nonce123",
+                "old_session_id": "old-live",
+                "phase": "proven",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            result = {
+                "sessions": [
+                    {
+                        "id": "fresh-live",
+                        "session_key": "fresh-stored",
+                        "title": "sac:hub:handoff:nonce123",
+                    }
+                ]
+            }
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    # Act
+    replacement = reconcile_pending_transition(
+        tmp_path, connect_fn=lambda *_args, **_kwargs: Socket()
+    )
+    remained_until_attach = journal.exists()
+    complete_pending_transition(
+        tmp_path, {"id": "fresh-live", "session_key": "fresh-stored"}
+    )
+    # Assert
+    assert (replacement, remained_until_attach, journal.exists()) == (
+        "fresh-stored",
+        True,
+        False,
+    )
+
+
+def test_missing_nonce_proof_never_closes_old_session(tmp_path):
+    # Arrange
+    _gateway_files(tmp_path)
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text("{}", encoding="utf-8")
+
+    class MissingProofSocket:
+        def __init__(self):
+            self.sent = []
+            self.replays = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self):
+            request = self.sent[-1]
+            method = request["method"]
+            if method == "session.create":
+                result = {"session_id": "fresh", "stored_session_id": "stored"}
+            elif method == "session.events.since":
+                self.replays += 1
+                result = {
+                    "events": (
+                        []
+                        if self.replays == 1
+                        else [
+                            {
+                                "type": "message.complete",
+                                "payload": {"status": "complete"},
+                            }
+                        ]
+                    ),
+                    "latest_seq": self.replays,
+                    "epoch": "epoch",
+                }
+            elif method == "prompt.submit":
+                result = {"status": "streaming"}
+            elif method == "session.history":
+                result = {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "prefix HANDOFF_READY:nonce-123 suffix",
+                        }
+                    ]
+                }
+            elif method == "session.close":
+                result = {"closed": True}
+            else:
+                raise AssertionError(method)
+            return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    socket = MissingProofSocket()
+
+    def action():
+        return replace_session_from_handoff(
+            tmp_path,
+            agent_name="hub",
+            workdir=Path("/repo"),
+            handoff_path=handoff,
+            nonce="nonce-123",
+            old_session_id="old-live",
+            model="qwen3-coder",
+            provider="custom:sac-vllm",
+            connect_fn=lambda *args, **kwargs: socket,
+            sleep_fn=lambda _seconds: None,
+        )
+
+    # Act
+    try:
+        action()
+    except HermesTuiRpcError as exc:
+        error = str(exc)
+    else:
+        error = ""
+    closed = [
+        request["params"]["session_id"]
+        for request in socket.sent
+        if request["method"] == "session.close"
+    ]
+    # Assert
+    assert ("without the required nonce" in error, closed) == (True, ["fresh"])
 
 
 class _Socket:

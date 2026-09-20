@@ -21,18 +21,16 @@ re-exports these names, so existing imports keep resolving.
 from __future__ import annotations
 
 import json as _json
-import logging
 import shlex
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from ..._logging import get_logger
 from ..._state._remote_sac_hint import remote_sac_not_found_hint
 from ..._state.host_config import build_ssh_argv
 from ..._state.state_store import record_instance_start, record_instance_stop
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "_dispatch_remote_restart",
@@ -80,13 +78,14 @@ def log_restart_decision(**entry: Any) -> None:
     """
     entry.setdefault("ts", time.time())
     path = _decision_log_path()
-    logger.info("restart decision: %s", entry)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(_json.dumps(entry, sort_keys=True, default=str) + "\n")
     except Exception as exc:  # stx-allow: fallback (best-effort audit log; must never shadow the real restart result)
-        logger.warning("restart decision log append failed at %s: %s", path, exc)
+        get_logger(__name__).warning(
+            "restart decision log append failed at %s: %s", path, exc
+        )
 
 
 def remote_restart_argv(

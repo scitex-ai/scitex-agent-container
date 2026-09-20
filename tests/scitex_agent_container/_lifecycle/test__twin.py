@@ -399,7 +399,7 @@ def _twin_env(tmp_path, _set_yaml_dirs):
 
 
 def test_seed_noop_for_non_twin(tmp_path):
-    # Arrange — a config with no SAC_TWIN_PARENT is not a twin.
+    # Arrange — a config with no SAC_FORK_PARENT is not a twin.
     cfg = AgentConfig(name="plain", runtime="apptainer")
     # Act
     seeded = seed_twin_from_parent(cfg, _RuntimeStub(tmp_path))

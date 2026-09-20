@@ -65,6 +65,14 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": "http://127.0.0.1:18765",
         "auth_token_env": "SCITEX_GENAI_GATEWAY_API_KEY",
     },
+    # Native Codex harness using the Codex CLI's persisted subscription.
+    # No endpoint or API key override: auth.json and Codex's default provider
+    # remain authoritative. This is distinct from ``codex`` above, which is
+    # the local Anthropic-to-Codex inference gateway.
+    "codex-subscription": {
+        "base_url": None,
+        "auth_token_env": None,
+    },
     "deepseek": {
         # Back-compatible spelling. It deliberately resolves to the neutral
         # egress gateway: model selection in a harness is not an outbound

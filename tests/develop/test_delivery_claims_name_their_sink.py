@@ -205,7 +205,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_runners/_session_completion.py:183",
         "scitex_agent_container/_runners/_session_conversation.py:262",
         "scitex_agent_container/_runners/_session_hooks.py:225",
-        "scitex_agent_container/_runners/_session_http.py:244",
         "scitex_agent_container/_runners/_tmux/claude_code.py:516",
         "scitex_agent_container/_state/_acl_broker_client.py:130",
         "scitex_agent_container/_state/snapshot/_io.py:411",

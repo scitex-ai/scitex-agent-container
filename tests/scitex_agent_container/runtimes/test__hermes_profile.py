@@ -762,6 +762,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
         (profile, "deploy_to_home", lambda value, target: None),
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
+        (profile, "_verified_instruction_text", lambda config, targets: "rules"),
     ]
     expected_headers = {
         "X-SciTeX-Agent-ID": "scholar",
@@ -776,6 +777,7 @@ def test_tui_profile_contains_qwen_config_without_api_gateway(tmp_path):
     # Assert
     assert (
         "qwen-model" in rendered
+        and parsed["agent"]["system_prompt"] == "rules"
         and "reasoning_effort: low" in rendered
         and "mode: 'off'" in rendered
         and "api_server:" not in rendered
@@ -836,6 +838,7 @@ def test_tui_profile_materializes_selected_cct_mcp_token_and_turn_url(tmp_path):
         (profile, "deploy_to_home", deploy),
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
+        (profile, "_verified_instruction_text", lambda config, targets: "rules"),
     ]
 
     # Act
@@ -891,13 +894,7 @@ def test_tui_profile_refuses_selected_cct_rail_without_token(tmp_path):
     def deploy(_config, target):
         home = Path(target)
         (home / ".mcp.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "claude-code-telegrammer": {"command": "bun"}
-                    }
-                }
-            ),
+            json.dumps({"mcpServers": {"claude-code-telegrammer": {"command": "bun"}}}),
             encoding="utf-8",
         )
 
@@ -906,6 +903,7 @@ def test_tui_profile_refuses_selected_cct_rail_without_token(tmp_path):
         (profile, "deploy_to_home", deploy),
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
+        (profile, "_verified_instruction_text", lambda config, targets: "rules"),
     ]
 
     # Act
@@ -930,6 +928,7 @@ def test_tui_deepseek_profile_contains_only_neutral_gateway_credential(tmp_path)
         (profile, "deploy_to_home", lambda value, target: None),
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
+        (profile, "_verified_instruction_text", lambda config, targets: "rules"),
     ]
     # Act
     with _replace_attributes(replacements):
@@ -972,6 +971,7 @@ def test_tui_profile_disables_harness_approvals_even_without_autonomous_drive(
         (profile, "deploy_to_home", lambda value, target: None),
         (profile, "deploy_to_home_overlay", lambda value: None),
         (profile, "resolve_overlay_upper_home", lambda value: None),
+        (profile, "_verified_instruction_text", lambda config, targets: "rules"),
     ]
     # Act
     with _replace_attributes(replacements):

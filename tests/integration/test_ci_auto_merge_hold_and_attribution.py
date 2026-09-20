@@ -574,14 +574,18 @@ def test_the_attribution_marker_both_signs_and_matches():
     # Arrange
     script = _script()
 
-    # Act
-    references = script.count("ATTRIB_MARKER")
+    # Act — the env value is a prefix; the per-head marker must be derived once,
+    # then used to sign and match.
+    contract = (
+        script.count("ATTRIB_MARKER"),
+        script.count("attrib_marker"),
+        "$pr_sha" in script,
+    )
 
     # Assert
-    assert references >= 2, (
-        f"{WORKFLOW.name}: ATTRIB_MARKER is referenced {references} time(s) in "
-        "the merge script. It must both sign the comment body and be looked "
-        "for in the existing comments."
+    assert (contract[0] >= 1, contract[1] >= 3, contract[2]) == (True, True, True), (
+        f"{WORKFLOW.name}: exact-head marker contract is {contract!r}; the "
+        "derived marker must sign and match the same PR head."
     )
 
 

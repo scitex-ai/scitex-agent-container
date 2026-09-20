@@ -127,6 +127,21 @@ def test_default_agent_profile_leaves_hermes_turn_budgets_unset():
     ) == ("none", False)
 
 
+def test_compiler_embeds_explicit_verified_system_prompt():
+    # Arrange
+    plan = _plan()
+
+    # Act
+    result = compile_hermes_config(
+        plan,
+        workdir="/work",
+        system_prompt="authoritative instructions\n",
+    )
+
+    # Assert
+    assert result["agent"]["system_prompt"] == "authoritative instructions\n"
+
+
 def test_compiles_explicit_hermes_compression_controls():
     # Arrange
     compression = HermesCompressionSpec(
@@ -137,9 +152,7 @@ def test_compiles_explicit_hermes_compression_controls():
         in_place=False,
     )
     # Act
-    result = compile_hermes_config(
-        _plan(), workdir="/work", compression=compression
-    )
+    result = compile_hermes_config(_plan(), workdir="/work", compression=compression)
     # Assert
     assert result["compression"] == {
         "enabled": True,
@@ -203,17 +216,21 @@ def test_gateway_identity_is_stable_across_launch_modes_for_resume():
     raw["launch_mode"] = "tui"
     tui = compile_launch_plan(raw, agent_name="scitex-scholar")
     # Act
-    headless_headers = compile_hermes_config(headless, workdir="/work")[
-        "providers"
-    ]["sac-qwen"]["extra_headers"]
-    tui_headers = compile_hermes_config(tui, workdir="/work")["providers"][
+    headless_headers = compile_hermes_config(headless, workdir="/work")["providers"][
         "sac-qwen"
     ]["extra_headers"]
+    tui_headers = compile_hermes_config(tui, workdir="/work")["providers"]["sac-qwen"][
+        "extra_headers"
+    ]
     # Assert
-    assert headless_headers == tui_headers == {
-        "X-SciTeX-Agent-ID": "scitex-scholar",
-        "X-SciTeX-Session-ID": "sac:scitex-scholar",
-    }
+    assert (
+        headless_headers
+        == tui_headers
+        == {
+            "X-SciTeX-Agent-ID": "scitex-scholar",
+            "X-SciTeX-Session-ID": "sac:scitex-scholar",
+        }
+    )
 
 
 def test_refuses_non_hermes_plan():

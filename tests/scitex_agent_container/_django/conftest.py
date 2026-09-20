@@ -226,3 +226,23 @@ def hub_client(tmp_path, env_save_restore):
 @pytest.fixture
 def client():
     return Client()
+
+
+# ── B6: the shared global CACHE must not leak state between tests ────────────
+# The views read/write the process-wide ``_inventory_cache.CACHE``. A snapshot
+# (or a recorded error) left by one test is visible to the next, so a test can
+# PASS on state it did not create (or a permissive "loading-or-unavailable"
+# assertion can mask a real defect). The suite's own ``isolated_cache`` fixture
+# swapped the module global, but it is opt-in; an autouse floor is the B6 fix -
+# every _django test starts from a clean cache, exactly like the conftest floors
+# for the state root and the event log.
+@pytest.fixture(autouse=True)
+def _isolate_global_cache():
+    from scitex_agent_container._django import _inventory_cache as _module
+
+    original = _module.CACHE
+    _module.CACHE = _module.InventoryCache()
+    try:
+        yield _module.CACHE
+    finally:
+        _module.CACHE = original
