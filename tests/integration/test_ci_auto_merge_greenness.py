@@ -148,7 +148,7 @@ def _merge_lines() -> list[str]:
     return lines
 
 
-def _decide(rows, tmp_path) -> str:
+def _decide(rows, tmp_path, *, required_contexts: str = "") -> str:
     """Run the SHIPPED greenness decision under bash; return everything printed.
 
     ``rows`` are the TSV 4-tuples ``(status, conclusion, state, name)`` that the
@@ -167,6 +167,8 @@ def _decide(rows, tmp_path) -> str:
         [
             "set -uo pipefail",
             f"pr={PR_UNDER_TEST}",
+            'pr_sha="exact-head"',
+            f'REQUIRED_CONTEXTS="{required_contexts}"',
             'rollup="$(cat "$1")"',
             "for _once in 1; do",
             _greenness_block(),
@@ -425,6 +427,38 @@ def test_an_all_green_pull_request_still_merges(tmp_path):
         "NOT reach the merge. Refusing everything is not safety; this file "
         f"exists because 38 green PRs once sat unmerged for 8 days.\n{printed}"
     )
+
+
+@requires_bash
+def test_absent_required_context_blocks_green_rollup(tmp_path):
+    # Arrange
+    rows = [("COMPLETED", "SUCCESS", "", "pytest-matrix-on-ubuntu-py3.11")]
+    # Act
+    printed = _decide(
+        rows,
+        tmp_path,
+        required_contexts=(
+            "pytest-matrix-on-ubuntu-py3.11 "
+            "pytest-matrix-on-ubuntu-py3.13 ci-verdict-to-pushing-agent"
+        ),
+    )
+    # Assert
+    assert REACHED not in printed and "required context" in printed
+
+
+@requires_bash
+def test_all_required_contexts_must_pass_before_merge(tmp_path):
+    # Arrange
+    names = (
+        "pytest-matrix-on-ubuntu-py3.11",
+        "pytest-matrix-on-ubuntu-py3.13",
+        "ci-verdict-to-pushing-agent",
+    )
+    rows = [("COMPLETED", "SUCCESS", "", name) for name in names]
+    # Act
+    printed = _decide(rows, tmp_path, required_contexts=" ".join(names))
+    # Assert
+    assert REACHED in printed
 
 
 @requires_bash
