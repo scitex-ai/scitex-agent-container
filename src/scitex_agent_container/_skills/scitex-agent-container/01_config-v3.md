@@ -21,6 +21,7 @@ The current and only accepted apiVersion. The v3 loader **rejects**:
 └── <name>/
     ├── spec.yaml       # ← agent name comes from this directory
     └── to_home/        # optional; auto-discovered next to spec.yaml; mirrors $HOME
+        ├── AGENTS.md         # → $HOME/AGENTS.md   (exact projection)
         ├── CLAUDE.md         # → $HOME/CLAUDE.md   (marker-protected)
         ├── .mcp.json         # → $HOME/.mcp.json   (full overwrite)
         ├── .env              # → $HOME/.env        (mode 0600)
@@ -128,7 +129,8 @@ A sibling directory named `to_home/` (override path with
 `spec.to_home:`, default `./to_home`) is materialized into the agent's
 container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
-`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
+`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `AGENTS.md` is
+an exact projection; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and
 `${metadata.name}` are interpolated in text files. A shared baseline
 `to_home/` (`<agents_dir>/_shared/to_home`, override `$SAC_TO_HOME_BASELINE`)
@@ -137,6 +139,7 @@ is applied first; the per-agent `to_home/` overlays on top.
 | Source | Destination | Mode | Semantics |
 |---|---|---|---|
 | `to_home/CLAUDE.md` | `$HOME/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
+| `to_home/AGENTS.md` | `$HOME/AGENTS.md` | 0644 | Neutral instruction projection; Hermes consumes its verified bytes through `agent.system_prompt` |
 | `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Full overwrite |
 | `to_home/.env` | `$HOME/.env` | **0600** | Full overwrite; sourceable by spawned shells |
 | `to_home/state.md` | `$HOME/state.md` | 0644 | Marker-protected (handover snapshot) |
