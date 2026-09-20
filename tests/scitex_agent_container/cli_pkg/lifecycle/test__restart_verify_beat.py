@@ -232,16 +232,38 @@ def test_none_verdict_renders_cannot_verify(capsys) -> None:
     # Act
     _print_local_outcome("ag-r", True, None, verdict)
     # Assert: an abstention is named as one — never the binary label.
-    assert "CANNOT VERIFY" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "CANNOT VERIFY" in captured.err
+
+
+def test_none_verdict_renders_nothing_on_stdout(capsys) -> None:
+    # Arrange: the same abstention, rendered the same way.
+    verdict = RestartVerdict(None, "no evidence either way", None, None)
+    # Act
+    _print_local_outcome("ag-r", True, None, verdict)
+    # Assert: the verdict is stderr-only — stdout stays free for the table.
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 def test_none_verdict_never_renders_not_verified(capsys) -> None:
-    # Arrange
+    # Arrange: an abstention (no evidence either way).
     verdict = RestartVerdict(None, "no evidence either way", None, None)
     # Act
     _print_local_outcome("ag-r2", True, None, verdict)
     # Assert
-    assert "NOT verified" not in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "NOT verified" not in captured.err
+
+
+def test_none_verdict_never_writes_stdout(capsys) -> None:
+    # Arrange: the same abstention, second rendering.
+    verdict = RestartVerdict(None, "no evidence either way", None, None)
+    # Act
+    _print_local_outcome("ag-r2", True, None, verdict)
+    # Assert: the abstention path leaves stdout untouched too.
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 def test_true_verdict_still_renders_verified(capsys) -> None:
@@ -250,7 +272,18 @@ def test_true_verdict_still_renders_verified(capsys) -> None:
     # Act
     _print_local_outcome("ag-r3", True, None, verdict)
     # Assert
-    assert "verified" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "verified" in captured.err
+
+
+def test_true_verdict_renders_nothing_on_stdout(capsys) -> None:
+    # Arrange
+    verdict = RestartVerdict(True, "cycled, both witnesses agree", "a", "b")
+    # Act
+    _print_local_outcome("ag-r3", True, None, verdict)
+    # Assert
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 def test_refuted_cycle_renders_the_verdict_reason(capsys) -> None:
@@ -259,4 +292,15 @@ def test_refuted_cycle_renders_the_verdict_reason(capsys) -> None:
     # Act
     _print_local_outcome("ag-r4", False, _NOT_CYCLED, verdict)
     # Assert
-    assert "still the same run" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "still the same run" in captured.err
+
+
+def test_refuted_cycle_renders_nothing_on_stdout(capsys) -> None:
+    # Arrange: the postcondition refuted the cycle (restarted=False).
+    verdict = RestartVerdict(False, "still the same run", "a", "a")
+    # Act
+    _print_local_outcome("ag-r4", False, _NOT_CYCLED, verdict)
+    # Assert
+    captured = capsys.readouterr()
+    assert captured.out == ""
