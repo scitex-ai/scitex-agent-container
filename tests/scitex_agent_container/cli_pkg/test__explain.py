@@ -8,12 +8,18 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from scitex_agent_container._lifecycle._worktree_policy import (
+    WorktreePolicyError,
+    WorktreePolicyProof,
+)
+from scitex_agent_container.cli_pkg import _explain as explain_module
 from scitex_agent_container.cli_pkg._explain import (
     _argv_for,
     _channel_lines,
     _delegation_line,
     _pwd_is_backed,
     _redact,
+    _worktree_policy_lines,
     explain,
 )
 from scitex_agent_container.cli_pkg._explain_engine import engine_lines
@@ -91,6 +97,25 @@ def test_delegation_line_exposes_effective_deny_and_bound() -> None:
             "max children: 1",
             "Git worktree isolation: off",
         )
+    )
+
+
+def test_a2a_line_separates_configured_auto_from_durable_resolved_port(
+) -> None:
+    # Arrange
+    config = AgentConfig(name="worker", harness="hermes", runtime="tui")
+    config.a2a.port = "auto"
+
+    def port_reader(name: str) -> int | None:
+        return 19_556 if name == "worker" else None
+
+    # Act
+    line = explain_module._a2a_line(config, port_reader=port_reader)
+
+    # Assert
+    assert line == (
+        "A2A port: configured=auto; resolved=19556; "
+        "source=durable_port_claim"
     )
 
 
@@ -184,4 +209,52 @@ def test_argv_for_uses_the_selected_hermes_runtime(tmp_path) -> None:
     ) == (
         ["hermes", "gateway", "run"],
         ["resolve", "state", "build"],
+    )
+
+
+def test_explain_renders_resolved_worktree_and_policy_identity() -> None:
+    from scitex_agent_container._lifecycle import _worktree_policy
+
+    # Arrange
+    proof = WorktreePolicyProof(
+        policy_id="policy",
+        schema_version=1,
+        policy_sha256="1" * 64,
+        projection_sha256="2" * 64,
+        repo_root="/repo/.worktrees/sac-worker",
+        branch="feature/sac-worker",
+        surface="planned-linked-worktree",
+        authored_workdir="/repo",
+        resolved_workdir="/repo/.worktrees/sac-worker",
+        worktree_action="create",
+    )
+    # Act
+    with _replace_attribute(
+        _worktree_policy, "enforce_task_worktree_policy", lambda *_a, **_k: proof
+    ):
+        rendered = "\n".join(_worktree_policy_lines(AgentConfig(name="worker")))
+
+    # Assert
+    assert (
+        "Worktree policy: create" in rendered,
+        "resolved: /repo/.worktrees/sac-worker" in rendered,
+        f"projection_sha256: {'2' * 64}" in rendered,
+    ) == (True, True, True)
+
+
+def test_explain_names_fail_closed_launch() -> None:
+    from scitex_agent_container._lifecycle import _worktree_policy
+
+    # Arrange
+    def refuse(*_args, **_kwargs):
+        raise WorktreePolicyError("dirty authority")
+
+    # Act
+    with _replace_attribute(_worktree_policy, "enforce_task_worktree_policy", refuse):
+        rendered = "\n".join(_worktree_policy_lines(AgentConfig(name="worker")))
+
+    # Assert
+    assert ("START WILL REFUSE" in rendered, "dirty authority" in rendered) == (
+        True,
+        True,
     )

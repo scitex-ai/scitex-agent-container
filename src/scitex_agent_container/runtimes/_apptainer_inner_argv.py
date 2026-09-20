@@ -208,18 +208,20 @@ def build_inner_argv(
     elif kind == "AgentProxy":
         runner_tail = _TINI_PREFIX + [RUNNER_MODULE_PROXY] + _proxy_runner_argv(config)
     else:
-        # v4 step-2 loudness: refuse a wrong-vendor launch on the REAL
-        # field (the dead ``config.provider`` read used to sit here and
-        # silently fell through to the Claude runner). Post-guard the
-        # harness is Anthropic-family, so the SDK entry is the only
-        # runner-hosted candidate; key-based launch of other entries is
-        # migration step 7.
-        ensure_harness_matches_claude_launch(
-            config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
-        )
-        runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
-            config, {"one_shot": one_shot}
-        )
+        from ..config._harness_registry import CODEX_SDK, resolve_harness_key
+
+        harness_key = resolve_harness_key(config)
+        if harness_key == CODEX_SDK:
+            runner_tail = HARNESS_DESCRIPTORS[CODEX_SDK].inner_argv(
+                config, {"one_shot": one_shot}
+            )
+        else:
+            ensure_harness_matches_claude_launch(
+                config, launching=f"runner module {RUNNER_MODULE_AGENT!r}"
+            )
+            runner_tail = HARNESS_DESCRIPTORS[CLAUDE_AGENT_SDK].inner_argv(
+                config, {"one_shot": one_shot}
+            )
 
     startup_cmds = list(getattr(config, "startup_commands", []) or [])
     # Alias step is unconditional (every agent gets it); startup_cmds steps

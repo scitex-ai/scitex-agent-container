@@ -15,8 +15,6 @@ env-var isolation uses an explicit save/restore fixture.
 
 from __future__ import annotations
 
-from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
-
 import asyncio
 import json
 import os
@@ -34,6 +32,7 @@ from scitex_agent_container._runners._session_inbox import (
     TurnEnvelope,
     make_inbox,
 )
+from tests.scitex_agent_container._helpers.explicit_spec import explicitize_yaml
 
 # ---------------------------------------------------------------------------
 # Shared helpers — real collaborators, not mocks
@@ -193,6 +192,31 @@ class TestServeInbound:
         async def _client(p: int):
             return await asyncio.to_thread(
                 _http_post, f"http://127.0.0.1:{p}/v1/turn", b"{}"
+            )
+
+        # Act
+        status, _ = asyncio.run(_run_sidecar(port=port, client_coro=_client))
+        # Assert
+        assert status == 400
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b'{"text": 1e400}',
+            b'{"text": "hello", "exit_after": 1e400}',
+        ],
+        ids=["nonfinite_text", "nonfinite_exit_after"],
+    )
+    def test_post_v1_turn_with_nonfinite_validation_input_returns_400(
+        self, body: bytes
+    ) -> None:
+        """Non-finite validator input is rejected without crashing JSON output."""
+        # Arrange
+        port = _free_port()
+
+        async def _client(p: int):
+            return await asyncio.to_thread(
+                _http_post, f"http://127.0.0.1:{p}/v1/turn", body
             )
 
         # Act

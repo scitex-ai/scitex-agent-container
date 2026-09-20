@@ -98,6 +98,7 @@ _ACTOR = "scitex-agent-container"
 __all__ = [
     "STORE_NAME",
     "get_incarnation",
+    "get_incarnations",
     "incarnation_store_target",
     "init_incarnations_schema",
     "open_incarnation_store",
@@ -155,6 +156,8 @@ def _schema() -> Any:
             "host": fact(FieldKind.TEXT, required=True),
             "born_at": fact(FieldKind.TEXT, required=True),
             "compiled_spec_json": fact(FieldKind.TEXT, required=True),
+            "policy_sha256": fact(FieldKind.TEXT),
+            "projection_sha256": fact(FieldKind.TEXT),
             # --- death: absent until the incarnation ends ---
             "exit_reason": fact(FieldKind.TEXT),
             "exit_code": fact(FieldKind.INTEGER),
@@ -212,6 +215,8 @@ def record_incarnation_birth(
     spec_git_sha: str,
     host: str | None,
     compiled_spec_json: str,
+    policy_sha256: str | None = None,
+    projection_sha256: str | None = None,
 ) -> str:
     """Write the birth certificate for one incarnation. Returns the id.
 
@@ -238,6 +243,8 @@ def record_incarnation_birth(
                 "host": resolve_host(host),
                 "born_at": now_iso(),
                 "compiled_spec_json": compiled_spec_json,
+                "policy_sha256": policy_sha256,
+                "projection_sha256": projection_sha256,
             },
             expected_revision=ANY_REVISION,
         )
@@ -304,3 +311,34 @@ def get_incarnation(incarnation_id: str) -> dict | None:
     finally:
         store.close()
     return dict(row.values) if row is not None else None
+
+
+def get_incarnations(
+    incarnation_ids: list[str] | tuple[str, ...],
+    *,
+    store_factory: Any = None,
+) -> dict[str, dict]:
+    """Read a bounded set of birth records in one query, keyed by id.
+
+    Listing callers already know the active incarnation ids.  Querying exactly
+    that set avoids both an unbounded history scan and one ``get`` per agent.
+    Duplicate/blank ids are removed before the query and the result limit is
+    pinned to the number requested.
+    """
+    wanted = tuple(dict.fromkeys(str(value) for value in incarnation_ids if value))
+    if not wanted:
+        return {}
+
+    from scitex_dev.store import Query, either, eq
+
+    store = (store_factory or open_incarnation_store)()
+    try:
+        predicate = either(*(eq("incarnation_id", value) for value in wanted))
+        rows = store.search(Query().where(predicate).limited(len(wanted)))
+    finally:
+        store.close()
+    return {
+        str(row.values["incarnation_id"]): dict(row.values)
+        for row in rows
+        if str(row.values.get("incarnation_id") or "") in wanted
+    }

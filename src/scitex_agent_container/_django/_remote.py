@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from socket import timeout as SocketTimeout
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
@@ -33,6 +33,22 @@ from ._constants import (
     TOKEN_ENV,
     TOKEN_FILE_ENV,
 )
+
+# Wall-clock ceiling for one HTTP exchange.
+#
+# These are NOT arbitrary. Measured against the real control plane on
+# scitex-compute-03 (22 agents, 2026-09-17): ``GET /agents`` 200 in 5.11s /
+# 5.23s / 6.91s warm and 18.99s cold, with one spike at 117.8s. The former 8.0s
+# ceiling sat inside that band, so the fleet page rendered "listener
+# unreachable" while the listener was healthy and answering — every agent and
+# the whole lifecycle surface vanished behind one slow fan-out.
+#
+# The ceiling now has to clear the COLD latency of a real fleet, because a cold
+# read is the normal case after a restart, and a bounded wait that reports
+# "unavailable" for a fleet that is merely slow is a false negative. Fleet
+# status is now enriched by one batched ``GET /agents`` request rather than an
+# HTTP request per agent.
+DEFAULT_TIMEOUT_SECONDS = 60.0
 
 
 class RemoteOperationError(RuntimeError):
@@ -51,6 +67,68 @@ class FleetUnavailableError(RuntimeError):
         super().__init__(f"could not reach the SAC listener at {base_url}: {reason}")
         self.base_url = base_url
         self.reason = reason
+
+
+def safe_error_message(exc: Exception) -> str:
+    """A browser-safe message for a control-plane read failure.
+
+    The raw exception carries internal detail (the listener URL, an
+    environment-variable name, a transport reason) that must never reach the
+    browser - it is operator/deployment information. Map each failure to a fixed
+    operator-facing phrase and keep the raw text server-side (logs / audit).
+    """
+    if isinstance(exc, FleetUnavailableError):
+        return "the control plane did not answer"
+    if isinstance(exc, RemoteOperationError):
+        return "the control plane returned an error"
+    return "the request could not be completed"
+
+
+#: LEAST-DISCLOSURE PUBLIC TEXT for a typed listener error.
+#:
+#: A typed error carries TWO things: a CODE (``kind``) drawn from the listener's
+#: own committed vocabulary, and a free-form human message. Only the CODE is fit
+#: to publish - it is a member of a fixed set, so public text can be MAPPED from
+#: it. The message cannot be: an all-alphabetic message such as
+#: ``listener compute-fixture.internal`` or ``api key SYNTHETICONLYVALUE`` names
+#: an internal host or a credential while passing every grammar check, and
+#: punctuation/secret-word rules only mask the SHAPES someone happened to
+#: enumerate. So the message stays server-side (logs / audit) and the browser
+#: gets fixed text: this map for a known code, ``_REDACTED`` for anything else.
+_PUBLIC_DETAIL_BY_CODE: dict[str, str] = {
+    "spec_resolution_failed": "The agent's spec could not be validated.",
+    "ambiguous_registry": "More than one registry claims this agent's name.",
+    "unknown_agent": "The control plane does not know this agent.",
+    "spec_unreadable": "The agent's spec could not be read.",
+}
+
+#: The one phrase published when no trusted public text exists for the code -
+#: including when a caller passes raw prose where a code belongs.
+_REDACTED = "the control plane reported a typed error"
+
+
+def public_detail(code: str | None) -> str:
+    """The fixed public text for a TRUSTED typed-error code; never raw prose.
+
+    ``code`` must be a member of the listener's committed error vocabulary;
+    anything else resolves to ``_REDACTED``. There is deliberately no path from
+    free-form text to the browser: a message is not published because it looks
+    safe, only a code is, because it is KNOWN.
+    """
+    return _PUBLIC_DETAIL_BY_CODE.get(code or "", _REDACTED)
+
+
+def redact_detail(text: str) -> str:
+    """LEAST-DISCLOSURE projection of raw error text: none of it is published.
+
+    The single entry point for a caller that holds a raw message, and the
+    guarantee that no raw-text path exists. It returns ``_REDACTED``
+    unconditionally, because no grammar and no list of masked shapes can certify
+    prose as free of deployment or credential detail (see the note above
+    ``_PUBLIC_DETAIL_BY_CODE``). Nothing is echoed, so there is no residue to
+    mask and none to leak.
+    """
+    return _REDACTED
 
 
 def _home_roots() -> list[Path]:
@@ -143,7 +221,9 @@ def resolve_token(base_url: str) -> str:
 class RemoteFleet:
     """Small authenticated HTTP client matching the /agents row + status shape."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: float = 8.0) -> None:
+    def __init__(
+        self, base_url: str, token: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
@@ -173,8 +253,9 @@ class RemoteFleet:
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         req = Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        budget = self.timeout if timeout is None else timeout
         try:
-            with urlopen(req, timeout=timeout or self.timeout) as resp:
+            with urlopen(req, timeout=budget) as resp:
                 payload = json.load(resp)
         except HTTPError as exc:
             try:
@@ -185,6 +266,16 @@ class RemoteFleet:
             kind = payload.get("kind") if isinstance(payload, dict) else None
             raise RemoteOperationError(exc.code, str(message or exc.reason), kind) from exc
         except (OSError, json.JSONDecodeError) as exc:
+            # ``socket.timeout`` IS an OSError, and a read that ran out of its
+            # budget is precisely "the listener did not answer in time" — the
+            # SAME conclusion as an unreachable one. Classifying it here (rather
+            # than letting it escape as a bare socket error) is what lets a
+            # caller bound a fan-out per item and still tell the two apart from
+            # any other transport failure.
+            if isinstance(exc, SocketTimeout):
+                raise FleetUnavailableError(
+                    self.base_url, f"no response within {budget:g}s"
+                ) from exc
             raise FleetUnavailableError(self.base_url, str(exc)) from exc
         if not isinstance(payload, dict):
             raise FleetUnavailableError(self.base_url, "non-object JSON response")
@@ -198,8 +289,10 @@ class RemoteFleet:
             raise FleetUnavailableError(self.base_url, "'/agents' has no agents list")
         return [row for row in rows if isinstance(row, dict)]
 
-    def read_status(self, name: str) -> dict[str, Any]:
-        return self._request(f"/agents/{quote(name, safe='')}/status")
+    def read_status(self, name: str, *, timeout: float | None = None) -> dict[str, Any]:
+        return self._request(
+            f"/agents/{quote(name, safe='')}/status", timeout=timeout
+        )
 
     def read_tail(self, name: str, *, max_bytes: int = 262144) -> str:
         """Read the bounded ``follow=false`` SSE tail of an agent's session log.
@@ -236,23 +329,15 @@ class RemoteFleet:
             raise FleetUnavailableError(self.base_url, str(exc)) from exc
 
     def read_statuses(self, names: list[str]) -> dict[str, dict[str, Any] | Exception]:
-        """Read independent agent observations concurrently.
-
-        Failures are returned per-name (never raised) so one dead agent degrades
-        to an explicit row without taking the whole fleet page down.
-        """
-        if not names:
+        """Project requested statuses from one enriched ``GET /agents`` read."""
+        wanted = set(names)
+        if not wanted:
             return {}
-        results: dict[str, dict[str, Any] | Exception] = {}
-        with ThreadPoolExecutor(max_workers=min(16, len(names))) as pool:
-            futures = {pool.submit(self.read_status, name): name for name in names}
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    results[name] = future.result()
-                except Exception as exc:  # surfaced as an explicit row by the view
-                    results[name] = exc
-        return results
+        return {
+            str(row["name"]): row
+            for row in self.list_all()
+            if isinstance(row.get("name"), str) and row["name"] in wanted
+        }
 
     # ── mutations (delegated to the authenticated listener) ─────────────────
     def lifecycle(self, name: str, action: str) -> dict[str, Any]:
@@ -269,8 +354,12 @@ class RemoteFleet:
 
 
 __all__ = [
+    "DEFAULT_TIMEOUT_SECONDS",
     "FleetUnavailableError",
     "RemoteFleet",
     "RemoteOperationError",
+    "public_detail",
+    "redact_detail",
     "resolve_token",
+    "safe_error_message",
 ]

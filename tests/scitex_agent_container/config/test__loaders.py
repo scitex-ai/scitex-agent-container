@@ -22,7 +22,6 @@ import yaml
 from scitex_agent_container.config import load_config
 from scitex_agent_container.config._loaders import (
     DEFAULT_DIRENV_ALLOW_COMMAND,
-    DEFAULT_STARTUP_PROMPT,
     _parse_env_files,
     _resolve_python_venv,
     _resolve_venv,
@@ -498,7 +497,7 @@ def test_load_config_warns_when_pinned_account_snapshot_absent(
     p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
     # Act
     with caplog.at_level(scitex_logging.WARNING):
-        load_config(p)
+        load_config(p, advise=True)
     # Assert
     assert "ghost" in caplog.text
 
@@ -514,6 +513,44 @@ def test_load_config_pinned_account_still_loads_despite_missing_snapshot(
     cfg = load_config(p)
     # Assert
     assert cfg.claude.account == "ghost"
+
+
+def test_load_config_list_read_is_silent_about_missing_account(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange — plain config reads power broad fleet listings; a stopped legacy
+    # definition must not print an auth warning above the runtime table.
+    p = _v3_yaml(tmp_path, "pinned", {"claude": {"account": "ghost"}})
+
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p)
+
+    # Assert
+    assert "saved-account snapshot" not in caplog.text
+
+
+def test_load_config_does_not_warn_about_claude_account_for_hermes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    # Arrange — the legacy/manual Claude account field is not the credential
+    # used by a Hermes runtime selection.
+    p = _v3_yaml(
+        tmp_path,
+        "hermes",
+        {
+            "runtime": "tui",
+            "harness": "hermes",
+            "claude": {"account": "ghost"},
+        },
+    )
+
+    # Act
+    with caplog.at_level(scitex_logging.WARNING):
+        load_config(p, advise=True)
+
+    # Assert
+    assert "saved-account snapshot" not in caplog.text
 
 
 def test_load_config_warns_when_startup_prompt_is_long(
@@ -568,17 +605,17 @@ def test_load_config_is_silent_about_prompt_length_unless_asked(
     assert "startup_prompts" not in caplog.text
 
 
-def test_load_config_defaults_startup_prompt_when_omitted(tmp_path: Path):
-    # Arrange — a spec with NO startup_prompts inherits the generic sac default.
-    p = _v3_yaml(tmp_path, "nodefault", {})
+def test_load_config_preserves_explicit_empty_startup_prompts(tmp_path: Path):
+    # Arrange — [] is the recipe's explicit request for no boot turn.
+    p = _v3_yaml(tmp_path, "silent", {"startup_prompts": []})
     # Act
     cfg = load_config(p)
     # Assert
-    assert cfg.startup_prompts == [DEFAULT_STARTUP_PROMPT]
+    assert cfg.startup_prompts == []
 
 
-def test_load_config_keeps_explicit_startup_prompt_over_default(tmp_path: Path):
-    # Arrange — an explicit startup_prompts must NOT be replaced by the default.
+def test_load_config_keeps_explicit_startup_prompt_exactly(tmp_path: Path):
+    # Arrange — the standalone recipe is the only source of the startup turn.
     p = _v3_yaml(tmp_path, "explicit", {"startup_prompts": ["my own kick"]})
     # Act
     cfg = load_config(p)

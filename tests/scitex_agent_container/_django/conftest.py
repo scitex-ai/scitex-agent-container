@@ -60,7 +60,9 @@ AGENTS: list[dict[str, Any]] = [
 STATUS: dict[str, Any] = {
     "alpha": {"name": "alpha", "liveness": {"verdict": "ALIVE"}, "status": "running",
               "runtime": "apptainer", "harness": "anthropic", "engine": "anthropic",
-              "model": "sonnet", "pid": 4294967291, "session_id": "a" * 32,
+              "model": "sonnet", "billing_mode": "subscription",
+              "auth_identity": "anthropic/team-max", "runtime_identity_source": "birth_certificate",
+              "pid": 4294967291, "session_id": "a" * 32,
               "a2a_port": 19000, "turn_url": f"http://{LOCAL_NAME}:19000/v1/turn",
               "inbox_reachable": "true",
               "activity": {
@@ -95,6 +97,8 @@ TAIL_ALPHA = (
 class _Listener(BaseHTTPRequestHandler):
     """Serves the SAC control-plane contract with bearer auth (real HTTP)."""
 
+    request_paths: list[str] = []
+
     def log_message(self, *args: Any) -> None:
         return  # silence request logging in tests
 
@@ -109,12 +113,16 @@ class _Listener(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 (http.server API)
+        type(self).request_paths.append(self.path.split("?", 1)[0])
         if not self._bearer_ok():
             self._send(401, b'{"error": "missing bearer token"}')
             return
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/agents":
-            self._send(200, json.dumps({"agents": AGENTS}).encode())
+            # The real listener batches status/runtime identity into this row;
+            # the dashboard must not fan out to /status per agent.
+            agents = [{**row, **STATUS.get(str(row.get("name")), {})} for row in AGENTS]
+            self._send(200, json.dumps({"agents": agents}).encode())
         elif path.endswith("/status"):
             name = path.rsplit("/status", 1)[0].rsplit("/", 1)[-1]
             if name == "delta":
@@ -142,6 +150,7 @@ def loopback(env_save_restore):
     over real HTTP with no patching.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Listener)
+    _Listener.request_paths.clear()
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -153,6 +162,13 @@ def loopback(env_save_restore):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.fixture
+def listener_requests(loopback):
+    """Paths observed by the real loopback listener for fan-out assertions."""
+    _Listener.request_paths.clear()
+    return _Listener.request_paths
 
 
 @pytest.fixture
@@ -210,3 +226,23 @@ def hub_client(tmp_path, env_save_restore):
 @pytest.fixture
 def client():
     return Client()
+
+
+# ── B6: the shared global CACHE must not leak state between tests ────────────
+# The views read/write the process-wide ``_inventory_cache.CACHE``. A snapshot
+# (or a recorded error) left by one test is visible to the next, so a test can
+# PASS on state it did not create (or a permissive "loading-or-unavailable"
+# assertion can mask a real defect). The suite's own ``isolated_cache`` fixture
+# swapped the module global, but it is opt-in; an autouse floor is the B6 fix -
+# every _django test starts from a clean cache, exactly like the conftest floors
+# for the state root and the event log.
+@pytest.fixture(autouse=True)
+def _isolate_global_cache():
+    from scitex_agent_container._django import _inventory_cache as _module
+
+    original = _module.CACHE
+    _module.CACHE = _module.InventoryCache()
+    try:
+        yield _module.CACHE
+    finally:
+        _module.CACHE = original

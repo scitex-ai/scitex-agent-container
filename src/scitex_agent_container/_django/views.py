@@ -19,6 +19,7 @@ both modes.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlencode
 
@@ -31,9 +32,10 @@ from django.http import (
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from ._authorization import can_control, resolve_identity, scope_rows
+from ._authorization import can_control, fleet_visibility, resolve_identity, scope_rows
+from ._constants import API_URL_ENV
 from ._projection import project_detail, project_row
-from ._remote import RemoteFleet
+from ._remote import RemoteFleet, safe_error_message
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
@@ -92,21 +94,77 @@ def _app_context(request: HttpRequest, title: str, view_path: str, **data) -> tu
 
 
 def _fleet_rows(fleet: RemoteFleet, identity: str) -> tuple[list[dict], str]:
+    # GET /agents is the batched fleet observation: listener-side enrichment
+    # attaches liveness + launch-bound runtime identity in one active-instance
+    # snapshot and one birth query.  Calling /status once per visible row was an
+    # HTTP N+1 and repeated those same store scans N times.
     rows = scope_rows(fleet.list_all(), identity)
-    named = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
-    statuses = fleet.read_statuses(named)
-    agents = [project_row(r, statuses.get(str(r.get("name")), {})) for r in rows]
+    agents = [project_row(row, row) for row in rows]
     return agents, ""
+
+
+def _is_configured() -> bool:
+    """Whether this deployment has *chosen* a listener."""
+    return bool(os.environ.get(API_URL_ENV, "").strip())
 
 
 @require_GET
 def index(request: HttpRequest):
-    fleet = RemoteFleet.from_environment()
+    """Render the fleet SHELL immediately; never block on the control plane.
+
+    P0 (operator-reproduced): this view used to run the whole control-plane read
+    inline, so the browser waited for SAC before it could paint anything - ~10s
+    for the operator, 60.06s in my measurement - and then dumped an internal
+    endpoint and setup prose when the read failed.
+
+    Now: the shell renders from the identity's last-known snapshot if one exists,
+    else in a `loading` state, and a READ-ONLY background refresh is kicked. The
+    page never waits, and it never invents rows. A COMPLETED read failure is
+    stored on the snapshot, so the next render / `/api/fleet` poll shows
+    `unavailable` + Retry instead of a perpetual "loading". The browser-side
+    poll (see _fleet_content.html) drives loading -> inventory / unavailable.
+    """
+    from ._inventory_cache import CACHE
+
     identity = resolve_identity(request)
-    try:
-        agents, comm_error = _fleet_rows(fleet, identity)
-    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE to show)
-        agents, comm_error = [], str(exc)
+    snapshot = CACHE.get(identity)
+    if snapshot is None:
+        # Cold cache: not asked yet. A loading page must NOT also claim "no
+        # agents" (that is the false-empty defect) - it says it is reading.
+        agents, comm_error, fleet_state, observed_age = [], "", "loading", None
+    elif snapshot.error:
+        # A completed failure is the last thing observed for this identity:
+        # show unavailable + Retry, not a pending spinner, and not an empty fleet.
+        agents, comm_error, fleet_state, observed_age = [], snapshot.error, "unavailable", snapshot.age()
+    else:
+        agents = [dict(row) for row in snapshot.agents]
+        comm_error = ""
+        observed_age = snapshot.age()
+        if agents:
+            fleet_state = "ok" if snapshot.is_fresh(ttl=CACHE.ttl) else "cached"
+        else:
+            # An answered read with nothing in scope: empty, not loading.
+            fleet_state = "empty"
+
+    # Refresh in the background, read-only, at most one at a time per identity.
+    # A completed failure is recorded (redacted) so the next render / poll can
+    # surface unavailable + Retry; a success warms the snapshot. The
+    # authorization scope is read HERE, before the read starts (B3): a grant
+    # revoked while the refresh is on the wire must not file its rows under the
+    # scope the identity resolves afterwards.
+    fleet = RemoteFleet.from_environment()
+    scope = fleet_visibility(identity)
+
+    def _record_failure(exc: Exception) -> None:
+        """Store the COMPLETED failure (redacted) under the dispatch-time scope."""
+        CACHE.record_error(identity, error=safe_error_message(exc), scope=scope)
+
+    CACHE.refresh_async(
+        identity,
+        lambda: _fleet_rows(fleet, identity)[0],
+        on_error=_record_failure,
+    )
+
     context, is_standalone = _app_context(
         request,
         "Agents",
@@ -116,8 +174,11 @@ def index(request: HttpRequest):
         identity=identity,
         crosshost_authorized=identity in _crosshost_allowlist(),
         comm_error=comm_error,
-        listener=fleet.base_url,
+        observed_age=observed_age,
+        cache_ttl=CACHE.ttl,
         page="fleet",
+        fleet_state=fleet_state,
+        diagnostic_reason="the control plane did not answer" if fleet_state == "unavailable" else "",
     )
     template = "scitex_agent_container/fleet.html" if is_standalone else "scitex_agent_container/fleet_hub.html"
     return render(request, template, context)
@@ -125,13 +186,27 @@ def index(request: HttpRequest):
 
 @require_GET
 def fleet_api(request: HttpRequest) -> JsonResponse:
+    """Browser poll endpoint: a synchronous, scoped read that WARMS the cache.
+
+    On success it stores the projected rows so the next shell render shows the
+    inventory (the loading -> inventory transition). On failure it stores the
+    redacted error so the shell shows unavailable + Retry. The browser NEVER
+    receives internal listener/transport detail (B2) - only a fixed phrase.
+    """
+    from ._inventory_cache import CACHE
+
     fleet = RemoteFleet.from_environment()
     identity = resolve_identity(request)
+    # Dispatch-time authorization (B3): the scope this read is made under, not
+    # the scope the identity resolves once the read has returned.
+    scope = fleet_visibility(identity)
     try:
         agents, _ = _fleet_rows(fleet, identity)
+        CACHE.put(identity, agents, scope=scope)
         return JsonResponse({"ok": True, "identity": identity, "agents": agents, "summary": _summary(agents)})
     except Exception as exc:  # stx-allow: fallback (reason: surface the failure as JSON, not a 500 page)
-        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+        CACHE.record_error(identity, error=safe_error_message(exc), scope=scope)
+        return JsonResponse({"ok": False, "error": safe_error_message(exc)}, status=502)
 
 
 def _detail_extras(fleet: RemoteFleet, name: str, status: Any) -> dict:
@@ -159,9 +234,9 @@ def _detail_extras(fleet: RemoteFleet, name: str, status: Any) -> dict:
             # No session.jsonl yet — a legitimate state, not a fault.
             session_lines, session_error = [], ""
         else:
-            session_lines, session_error = [], str(exc)
+            session_lines, session_error = [], safe_error_message(exc)
     except Exception as exc:  # stx-allow: fallback (reason: a tail failure is a state, not fatal)
-        session_lines, session_error = [], str(exc)
+        session_lines, session_error = [], safe_error_message(exc)
     return {"session_lines": session_lines, "session_error": session_error, "resources": resources}
 
 
@@ -173,7 +248,7 @@ def detail(request: HttpRequest, name: str):
         rows = scope_rows(fleet.list_all(), identity)
         list_error = ""
     except Exception as exc:  # stx-allow: fallback (reason: listener unreachable is a state)
-        rows, list_error = [], str(exc)
+        rows, list_error = [], safe_error_message(exc)
     row = next((r for r in rows if r.get("name") == name), None)
     if row is None:
         # Not own-scope (hidden) or genuinely absent. We do not reveal which —
@@ -215,7 +290,7 @@ def lifecycle_action(request: HttpRequest, name: str):
     try:
         rows = scope_rows(fleet.list_all(), identity)
     except Exception as exc:  # stx-allow: fallback (reason: cannot authorize what cannot be listed)
-        return JsonResponse({"error": f"cannot reach listener: {exc}"}, status=502)
+        return JsonResponse({"error": safe_error_message(exc)}, status=502)
     row = next((r for r in rows if r.get("name") == name), None)
     cross_host = bool(row) and row.get("scope") == "cross-host"
     if row is None:
@@ -239,7 +314,8 @@ def lifecycle_action(request: HttpRequest, name: str):
         message = result.get("message") or result.get("status") or action
         state = "completed"
     except Exception as exc:  # stx-allow: fallback (reason: the failed delegate is reported to the operator in the gui-audit.log audit trail, not raised)
-        message = str(exc)
+        raw_message = str(exc)  # kept for the server-side audit only
+        message = safe_error_message(exc)  # browser-facing: no internal detail (B2)
         state = "failed"
     from ._authorization import record_audit
 
@@ -252,6 +328,7 @@ def lifecycle_action(request: HttpRequest, name: str):
             "cross_host": cross_host,
             "state": state,
             "message": str(message)[:240],
+            "raw_message": locals().get("raw_message", "")[:240],
             "path": request.path,
         }
     )

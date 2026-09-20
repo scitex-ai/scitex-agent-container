@@ -39,7 +39,7 @@ overridden:
 | `restart.policy` | `never` (ephemeral) / `always` (`--persist`) | lifetime, below |
 | `a2a.port` | `auto` | a fresh sidecar port — never the parent's |
 | `env.SCITEX_TODO_AGENT_ID` | the twin | writes authored as the twin |
-| `env.SAC_TWIN_PARENT` | the parent | the owner-convention value (below) |
+| `env.SAC_FORK_PARENT` | the parent | the owner-convention value (below) |
 | channels | telegrammer dropped, `server:sac` kept | two agents must not fight one bot's getUpdates slot |
 
 ## When to use a twin — the three cases
@@ -84,10 +84,10 @@ CANNOT be enforced from env.** Verified against `scitex_todo._store`:
 `SCITEX_TODO_AGENT_ID` feeds ONLY the author path — owner (`agent` /
 `assignee` / `scope`) has no env default at all. So:
 
-> **HARD RULE — the twin passes `assignee=<parent>` (== `$SAC_TWIN_PARENT`)
+> **HARD RULE — the twin passes `assignee=<parent>` (== `$SAC_FORK_PARENT`)
 > on EVERY `add_task` / `reassign`.** Never leave a card owned by the twin.
 
-`SAC_TWIN_PARENT` is injected into the twin's container precisely so this
+`SAC_FORK_PARENT` is injected into the twin's container precisely so this
 value is always available, and the twin's boot-kick states the rule. **Why
 it matters:** an ephemeral twin that owns cards and then exits strands them
 in an inbox nobody drains — this is exactly the ownership-drift incident

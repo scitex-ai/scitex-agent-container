@@ -94,6 +94,7 @@ def build_run_argv(
     # exactly the bug this guard retires: OPENAI_* auth env provisioned,
     # Claude runner launched, no error anywhere.
     from ..config._harness_registry import (
+        CODEX_SDK,
         CODEX_TUI,
         HERMES_TUI,
         resolve_harness_key,
@@ -103,7 +104,7 @@ def build_run_argv(
 
     harness_key = resolve_harness_key(config)
     codex_pane = bool(tui) and codex_harness_active(config)
-    if harness_key != HERMES_TUI:
+    if harness_key not in {HERMES_TUI, CODEX_SDK}:
         ensure_harness_matches_claude_launch(
             config,
             launching=(

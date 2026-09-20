@@ -143,6 +143,11 @@ def test_hermes_tui_profile_translates_explicit_mcp_server(tmp_path: Path) -> No
         (_hermes_profile, "deploy_to_home_overlay", lambda _config: None),
         (_hermes_profile, "resolve_overlay_upper_home", lambda _config: None),
         (
+            _hermes_profile,
+            "_verified_instruction_text",
+            lambda _config, _targets: "canonical test instructions",
+        ),
+        (
             _pg_identity_credentials,
             "materialize_project_pgpass",
             lambda _config, *, home_backings, servers: None,

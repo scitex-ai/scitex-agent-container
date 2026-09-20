@@ -171,9 +171,6 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_lifecycle/_sdk_heartbeat_loop.py:328",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:206",
         "scitex_agent_container/_lifecycle/_tui_bridge_supervisor.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:230",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:346",
-        "scitex_agent_container/_lifecycle/_tui_heartbeat_loop.py:375",
         "scitex_agent_container/_listen/_deploy_freshness.py:227",
         "scitex_agent_container/_listen/_liveness_tick.py:123",
         # _node_channel_forwarders.py LEFT THIS SET 2026-09-02 — the reason
@@ -208,15 +205,12 @@ FROZEN_UNNAMED_CLAIMS = frozenset(
         "scitex_agent_container/_runners/_session_completion.py:183",
         "scitex_agent_container/_runners/_session_conversation.py:262",
         "scitex_agent_container/_runners/_session_hooks.py:225",
-        "scitex_agent_container/_runners/_session_http.py:244",
         "scitex_agent_container/_runners/_tmux/claude_code.py:516",
         "scitex_agent_container/_state/_acl_broker_client.py:130",
         "scitex_agent_container/_state/snapshot/_io.py:411",
         "scitex_agent_container/a2a/executors/_base.py:97",
         "scitex_agent_container/cli_pkg/_account_refresh_push.py:99",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:157",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:186",
-        "scitex_agent_container/cli_pkg/_helpers/_agent_list_fleet_probe.py:272",
+
         "scitex_agent_container/cli_pkg/hook_cmds.py:46",
         # _tui_outbound.py and _tui_turn_bridge.py LEFT THIS SET 2026-08-20 —
         # both reasons now name their sink. MEASURED before writing it, because

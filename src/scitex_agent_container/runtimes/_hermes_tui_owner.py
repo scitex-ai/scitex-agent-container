@@ -15,6 +15,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
+from ._hermes_tui_context_owner import (
+    apply_session_age_policy,
+    clear_session_heartbeat,
+    fresh_command,
+    make_session_observer,
+    reconcile_command,
+    requested_session,
+    resume_command,
+    transition_tui_child,
+)
+
 GATEWAY_FILE = "hermes-tui-gateway.json"
 READY_FILE = "hermes-tui-gateway.ready.json"
 GATEWAY_LOCK_FILE = "hermes-tui-gateway.lock"
@@ -142,49 +153,6 @@ def _remove_owned_gateway_state(state_dir: Path, *, generation: str) -> None:
         _unlink_if_generation(state_dir / READY_FILE, generation)
 
 
-def _requested_session(command: list[str]) -> tuple[str, str]:
-    """Return SAC's requested Hermes session mode and stable identity."""
-    for index, value in enumerate(command[:-1]):
-        if value in {"--continue", "-c"}:
-            return "continue", str(command[index + 1]).strip()
-        if value in {"--resume", "-r"}:
-            return "resume", str(command[index + 1]).strip()
-    return "fresh", ""
-
-
-def _resume_command(command: list[str], stored_session_id: str) -> list[str]:
-    """Resume one exact transcript without replaying the startup task."""
-    rebuilt: list[str] = []
-    skip_value = False
-    value_flags = {"--continue", "-c", "--resume", "-r", "--query"}
-    for value in command:
-        if skip_value:
-            skip_value = False
-            continue
-        if value in value_flags:
-            skip_value = True
-            continue
-        if value == "--create-if-missing":
-            continue
-        rebuilt.append(value)
-    return rebuilt + ["--resume", stored_session_id]
-
-
-def _reconcile_command(command: list[str]) -> list[str]:
-    """Re-open the named session without replaying its startup turn."""
-    rebuilt: list[str] = []
-    skip_value = False
-    for value in command:
-        if skip_value:
-            skip_value = False
-            continue
-        if value in {"--query", "--query-file", "-q"}:
-            skip_value = True
-            continue
-        rebuilt.append(value)
-    return rebuilt
-
-
 def _select_owned_session(
     sessions: list[dict],
     *,
@@ -240,21 +208,6 @@ def _write_supervision(state_dir: Path, **fields: object) -> None:
     )
 
 
-def _clear_session_heartbeat(state_dir: Path, session: dict) -> None:
-    """Remove persisted periodic model wakeup for one proven live session.
-
-    SAC's durable Cards/CCT/SAC ingress owns wakeup.  A Hermes heartbeat does
-    a full-context model turn merely to discover whether work exists, so the
-    owner removes legacy heartbeat state before it declares the TUI attached.
-    """
-    session_id = str(session.get("id") or "").strip()
-    if not session_id:
-        raise RuntimeError("owned Hermes session has no id")
-    from ._hermes_tui_rpc import clear_heartbeat_for_session
-
-    clear_heartbeat_for_session(state_dir, session_id)
-
-
 def _supervise_tui(
     command: list[str],
     *,
@@ -269,22 +222,31 @@ def _supervise_tui(
     startup_grace_s: float = STARTUP_GRACE_SECONDS,
     on_spawn: Callable[[Any], None] | None = None,
     on_session_attached: Callable[[dict], None] | None = None,
+    on_session_observed: Callable[[dict], str | None] | None = None,
+    recover_pending: Callable[[Path], str | None] | None = None,
+    finalize_pending: Callable[[Path, dict], None] | None = None,
+    recover_fresh: Callable[[Path], bool] | None = None,
+    finalize_fresh: Callable[[Path, dict], None] | None = None,
 ) -> tuple[Any, int]:
     """Keep the official TUI attached to Hermes' authoritative live session.
 
-    Hermes may detach a slow fanout peer without closing its websocket.  The
-    Ink client consequently cannot run its own close-triggered reconnect and
-    can display ``computing`` forever after the backend has completed.  This
-    owner watches ``session.active_list`` through a short-lived, non-viewer RPC
-    and relaunches only the TUI child when its configured session is absent.
-    An observed durable session id is resumed exactly.  Before any id has been
-    observed, the stable named continuation is reconciled with its startup
-    query removed, so recovery cannot replay a turn.
+    Hermes may detach a slow fanout peer without closing its websocket, leaving
+    Ink stuck on ``computing``. It relaunches only an absent TUI child; a
+    not-yet-observed continuation drops its startup query so recovery cannot
+    replay a turn.
     """
     if active_list is None:
         from ._hermes_tui_rpc import active_sessions as active_list
 
-    session_mode, expected_identity = _requested_session(command)
+    pending_fresh = recover_fresh(state_dir) if recover_fresh is not None else False
+    pending_recovery = recover_pending(state_dir) if recover_pending is not None else None
+    if pending_fresh and pending_recovery:
+        raise RuntimeError("Hermes has conflicting pending completion and rotation")
+    if pending_fresh:
+        command = fresh_command(command, preserve_query=False)
+    elif pending_recovery:
+        command = resume_command(command, pending_recovery)
+    session_mode, expected_identity = requested_session(command)
     tui = spawn(command, env=env)
     if on_spawn is not None:
         on_spawn(tui)
@@ -309,6 +271,81 @@ def _supervise_tui(
             sleep(poll_s)
             continue
 
+        if recover_pending is not None and not pending_recovery:
+            try:
+                recovered = recover_pending(state_dir)
+            except Exception as exc:
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_recovery_unavailable",
+                    detail=str(exc),
+                    active_sessions=len(sessions),
+                    recoveries=len(recoveries),
+                )
+                sleep(poll_s)
+                continue
+            if recovered is not None:
+                if recovered:
+                    pending_recovery = recovered
+                    (
+                        tui,
+                        command,
+                        session_mode,
+                        expected_identity,
+                        resume_key,
+                    ) = transition_tui_child(
+                        tui=tui,
+                        command=command,
+                        replacement=recovered,
+                        env=env,
+                        spawn=spawn,
+                        terminate=_terminate,
+                        on_spawn=on_spawn,
+                    )
+                    generation_started = monotonic()
+                    absent_polls = 0
+                    attached_session_prepared = False
+                # The active list predates journal reconciliation. Refresh it
+                # before ownership selection after either commit or rollback.
+                sleep(poll_s)
+                continue
+
+        if recover_fresh is not None and not pending_fresh:
+            try:
+                recovered_fresh = recover_fresh(state_dir)
+            except Exception as exc:
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_recovery_unavailable",
+                    detail=str(exc),
+                    active_sessions=len(sessions),
+                    recoveries=len(recoveries),
+                )
+                sleep(poll_s)
+                continue
+            if recovered_fresh:
+                pending_fresh = True
+                (
+                    tui,
+                    command,
+                    session_mode,
+                    expected_identity,
+                    resume_key,
+                ) = transition_tui_child(
+                    tui=tui,
+                    command=command,
+                    replacement="",
+                    env=env,
+                    spawn=spawn,
+                    terminate=_terminate,
+                    on_spawn=on_spawn,
+                )
+                generation_started = monotonic()
+                absent_polls = 0
+                attached_session_prepared = False
+                sleep(poll_s)
+                continue
+
         try:
             owned_session = _select_owned_session(
                 sessions,
@@ -328,6 +365,45 @@ def _supervise_tui(
 
         if owned_session is not None:
             absent_polls = 0
+            if pending_fresh and finalize_fresh is not None:
+                try:
+                    finalize_fresh(state_dir, owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_recovery_unavailable",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+                pending_fresh = False
+            if pending_recovery and finalize_pending is not None:
+                try:
+                    finalize_pending(state_dir, owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_recovery_unavailable",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+                pending_recovery = None
+            from ._hermes_context_gc import OWNED_SESSION_FILE
+
+            _atomic_json(
+                state_dir / OWNED_SESSION_FILE,
+                {
+                    "live_session_id": str(owned_session.get("id") or ""),
+                    "stored_session_id": str(
+                        owned_session.get("session_key") or owned_session.get("id") or ""
+                    ),
+                },
+            )
             resume_key = str(
                 owned_session.get("session_key")
                 or owned_session.get("id")
@@ -351,6 +427,56 @@ def _supervise_tui(
                     sleep(poll_s)
                     continue
                 attached_session_prepared = True
+            replacement: str | None = None
+            if on_session_observed is not None:
+                try:
+                    replacement = on_session_observed(owned_session)
+                except Exception as exc:
+                    _write_supervision(
+                        state_dir,
+                        state="context_gc_refused",
+                        detail=str(exc),
+                        active_sessions=len(sessions),
+                        stored_session_id=resume_key,
+                        recoveries=len(recoveries),
+                    )
+                    sleep(poll_s)
+                    continue
+            if replacement is not None:
+                if replacement:
+                    pending_recovery = replacement
+                else:
+                    pending_fresh = True
+                _write_supervision(
+                    state_dir,
+                    state="context_gc_transition",
+                    detail=(
+                        "fresh session proven from durable handoff"
+                        if replacement
+                        else "task completed; starting next task fresh"
+                    ),
+                    recoveries=len(recoveries),
+                )
+                (
+                    tui,
+                    command,
+                    session_mode,
+                    expected_identity,
+                    resume_key,
+                ) = transition_tui_child(
+                    tui=tui,
+                    command=command,
+                    replacement=replacement,
+                    env=env,
+                    spawn=spawn,
+                    terminate=_terminate,
+                    on_spawn=on_spawn,
+                )
+                generation_started = monotonic()
+                absent_polls = 0
+                attached_session_prepared = False
+                sleep(poll_s)
+                continue
             _write_supervision(
                 state_dir,
                 state="attached",
@@ -401,9 +527,9 @@ def _supervise_tui(
         )
         _terminate(tui)
         recovery_command = (
-            _resume_command(command, resume_key)
+            resume_command(command, resume_key)
             if resume_key
-            else _reconcile_command(command)
+            else reconcile_command(command)
         )
         tui = spawn(recovery_command, env=env)
         if on_spawn is not None:
@@ -418,6 +544,7 @@ def _supervise_tui(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sac-hermes-tui-owner")
     parser.add_argument("--state-dir", required=True)
+    parser.add_argument("--max-session-age-minutes", type=int, default=4320)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = list(args.command)
@@ -467,18 +594,41 @@ def main(argv: list[str] | None = None) -> int:
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"
         )
+        from ._hermes_context_gc import complete_pending_completion
+        from ._hermes_context_rpc import (
+            complete_pending_transition,
+            reconcile_pending_completion,
+            reconcile_pending_transition,
+            stored_session_for_identity,
+        )
+
+        command = apply_session_age_policy(
+            command,
+            state_dir=state_dir,
+            max_age_minutes=args.max_session_age_minutes,
+            stored_lookup=stored_session_for_identity,
+        )
+
         tui, result = _supervise_tui(
             command,
             env=tui_env,
             state_dir=state_dir,
             gateway=gateway,
             on_spawn=remember_tui,
-            on_session_attached=lambda session: _clear_session_heartbeat(
+            on_session_attached=lambda session: clear_session_heartbeat(
                 state_dir, session
             ),
+            on_session_observed=make_session_observer(state_dir, command),
+            recover_pending=reconcile_pending_transition,
+            finalize_pending=complete_pending_transition,
+            recover_fresh=reconcile_pending_completion,
+            finalize_fresh=complete_pending_completion,
         )
         return result
     finally:
+        from ._hermes_context_gc import OWNED_SESSION_FILE
+
+        (state_dir / OWNED_SESSION_FILE).unlink(missing_ok=True)
         _remove_owned_gateway_state(state_dir, generation=generation)
         gateway_ready_path.unlink(missing_ok=True)
         _write_supervision(state_dir, state="stopped")

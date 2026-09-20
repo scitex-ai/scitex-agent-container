@@ -25,7 +25,8 @@ module's API.
 
 Semantics per entry (see :func:`materialize_to_home`):
 
-  - **CLAUDE.md** / **state.md** — marker-protected merge. Source is
+  - **CLAUDE.md** / **state.md** —
+    marker-protected merge. Source is
     wrapped between Start/End markers; any user tail after the End
     marker is preserved. Malformed existing markers hard-abort the
     deploy with :class:`WorkspaceCLAUDEMarkerError`.
@@ -71,6 +72,10 @@ from ._host_commands import (
     snapshot_drift,
 )
 from ._host_skills import deploy_host_skills
+from ._prompt_projection_integrity import (
+    capture_prompt_sources,
+    write_prompt_projection_manifest,
+)
 from ._symlink_resolve import DanglingToHomeSymlinkError, deref_copy_symlink
 from ._to_home_deployers import (
     _clear_readonly_dst,
@@ -87,8 +92,8 @@ from ._to_home_errors import (
     WorkspaceMcpMergeError,
 )
 from ._to_home_resolve import (
-    _spec_dir,
     _user_baseline_to_home_dir,
+    materialization_layer_dirs,
     resolve_baseline_to_home_dir,
     resolve_to_home_dir,
     settings_layer_dirs,
@@ -195,15 +200,10 @@ def materialize_to_home(spec_dir: Path, workspace_home: Path) -> None:
         _stale = workspace_home / _merge_name
         if _stale.is_file():
             _stale.unlink()
-    # Host ~/.claude/commands/*.md — the LOWEST baseline layer. Deploy FIRST so
-    # a same-name shared-baseline / per-agent command overwrites it below.
-    # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(workspace_home)
-    # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
-    # No-clobber: a per-agent / bundled same-name skill is left untouched.
     deploy_host_skills(workspace_home)
-    # Run-scoped, SHARED across both layers: marker-protected files (CLAUDE.md
-    # / state.md) compose onto the earlier layer instead of replacing it. The
+    # Run-scoped, SHARED across both layers: marker-protected instruction/state
+    # files compose onto the earlier layer instead of replacing it. The
     # baseline pass still resets the section, so nothing grows across runs.
     composed_dsts: set[Path] = set()
     if baseline is not None:
@@ -245,15 +245,18 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     runtime never auto-reads host state. No-op when neither the baseline
     nor the per-agent to_home resolves.
     """
-    root = resolve_to_home_dir(config)
-    baseline = resolve_baseline_to_home_dir(_spec_dir(config))
-    if root is None and baseline is None:
+    layers = materialization_layer_dirs(config)
+    contributing_layers = [(name, path) for name, path in layers if path is not None]
+    prompt_sources_before = capture_prompt_sources(config)
+    if not contributing_layers:
+        if getattr(config, "to_home_layers", None) is not None:
+            dest = Path(workspace_home)
+            dest.mkdir(parents=True, exist_ok=True)
+            write_prompt_projection_manifest(config, dest, prompt_sources_before)
         return
     # Credential-leak guard runs BEFORE any deploy (both layers).
-    if baseline is not None:
-        _scan_for_credential_leak(baseline)
-    if root is not None:
-        _scan_for_credential_leak(root)
+    for _, layer_root in contributing_layers:
+        _scan_for_credential_leak(layer_root)
     dest = Path(workspace_home)
     dest.mkdir(parents=True, exist_ok=True)
     # Idempotency: re-derive the deep-merged .mcp.json FRESH each deploy. Drop
@@ -266,35 +269,20 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
         _stale = dest / _merge_name
         if _stale.is_file():
             _stale.unlink()
-    # Host ~/.claude/commands/*.md — the LOWEST baseline layer. Deploy FIRST so
-    # a same-name shared-baseline / per-agent command overwrites it below.
-    # Skip-if-missing (no host commands dir → no-op).
     deploy_host_claude_commands(dest)
-    # Curated host ~/.claude/skills/<name> (ywatanabe, scitex) — symlinked in.
-    # No-clobber: a per-agent / bundled same-name skill is left untouched.
     deploy_host_skills(dest)
     # Run-scoped and SHARED across both layers — see materialize_to_home.
     composed_dsts: set[Path] = set()
-    if baseline is not None:
+    for _, layer_root in contributing_layers:
         _walk_and_apply(
-            baseline, baseline, dest, config=config, composed_dsts=composed_dsts
+            layer_root,
+            layer_root,
+            dest,
+            config=config,
+            composed_dsts=composed_dsts,
         )
-    if root is not None:
-        _walk_and_apply(root, root, dest, config=config, composed_dsts=composed_dsts)
-    # Launch-time snapshot drift (card sac-launch-compares-the-copied-
-    # commands-snapshot-to-the-dotfiles-ref-and-logs-divergence-20260905):
-    # the commands the agent will read from the runtime home may differ
-    # from the operator's live host (dotfiles) commands of the same name
-    # — the cop copies once at launch and nothing refreshes until a
-    # restart. Name each divergent file in the start log, through the
-    # log the launcher already uses; print NOTHING when there is no
-    # drift. No re-copy into a running session and no periodic check:
-    # a live rewrite under a session that already read the file is
-    # worse than a stale one — the honest fix is "restart to pick up",
-    # said out loud.
     for _drift_line in snapshot_drift(_command_source_pairs(dest)):
         logger.warning("to_home: %s", _drift_line)
-
     # .envrc CASCADE (lowest → highest precedence): user-level shared baseline
     # → the spec's _shared baseline → the agent's workdir (the project's OWN
     # .envrc, e.g. ~/proj/<project>/.envrc) → the per-agent to_home. Each
@@ -304,13 +292,29 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # no layer ships a .envrc.
     workdir = (getattr(config, "workdir", "") or "").strip()
     workdir_dir = Path(workdir).expanduser() if workdir else None
-    user_shared = _user_baseline_to_home_dir()
-    envrc_cascade = [
-        (user_shared / ".envrc") if user_shared is not None else None,
-        (baseline / ".envrc") if baseline is not None else None,
-        (workdir_dir / ".envrc") if workdir_dir is not None else None,
-        dest / ".envrc",
-    ]
+    if getattr(config, "to_home_layers", None) is None:
+        baseline = resolve_baseline_to_home_dir(Path(config.config_path).parent)
+        user_shared = _user_baseline_to_home_dir()
+        envrc_cascade = [
+            (user_shared / ".envrc") if user_shared is not None else None,
+            (baseline / ".envrc") if baseline is not None else None,
+            (workdir_dir / ".envrc") if workdir_dir is not None else None,
+            dest / ".envrc",
+        ]
+    else:
+        layer_map = dict(layers)
+        envrc_cascade = [
+            (layer_map["user-shared"] / ".envrc")
+            if layer_map.get("user-shared") is not None
+            else None,
+            (layer_map["project-shared"] / ".envrc")
+            if layer_map.get("project-shared") is not None
+            else None,
+            (workdir_dir / ".envrc") if workdir_dir is not None else None,
+            (layer_map["per-agent"] / ".envrc")
+            if layer_map.get("per-agent") is not None
+            else None,
+        ]
     fold_envrc_cascade_into_env(dest, envrc_cascade)
     # DETERMINISTIC CCT BOT-TOKEN INJECTION (card sac-fleet-ux-misc-2026-06-24,
     # last item): when the spec requests server:claude-code-telegrammer and the
@@ -367,6 +371,20 @@ def deploy_to_home(config: AgentConfig, workspace_home: str) -> None:
     # re-materializes from scratch and fails loud on residual drift — never
     # serves a stale/partial host view. See :mod:`_host_merge`.
     _apply_host_merge_with_drift_guard(config, dest)
+    write_prompt_projection_manifest(config, dest, prompt_sources_before)
+
+
+def _command_source_pairs(dest: Path) -> list[tuple[Path, Path]]:
+    """Return materialized/host pairs for launch-time command drift checks."""
+    cmd = dest / ".claude" / "commands"
+    host = host_claude_commands_dir()
+    if host is None or not cmd.is_dir():
+        return []
+    return [
+        (path, host / path.name)
+        for path in sorted(cmd.iterdir())
+        if path.suffix == ".md" and path.is_file() and (host / path.name).is_file()
+    ]
 
 
 def _apply_host_merge_with_drift_guard(config: AgentConfig, dest: Path) -> None:
@@ -389,27 +407,6 @@ def _apply_host_merge_with_drift_guard(config: AgentConfig, dest: Path) -> None:
             f"host deep-merge still drifted after re-materialize for agent "
             f"{config.name!r} at {dest}/.claude:\n  - {bullet}"
         )
-
-
-def _command_source_pairs(dest: Path) -> list[tuple[Path, Path]]:
-    """(snapshot, source) pairs for the launch-time snapshot-drift check.
-
-    Every ``*.md`` under the materialized ``.claude/commands/`` that has a
-    same-name file in the host ``~/.claude/commands/`` (the operator's live
-    dotfiles ref — the ``deploy_host_claude_commands`` source) yields one
-    pair. A command with no same-name host counterpart was copied from a
-    to_home layer and is byte-identical to that fresh copy, so it has no
-    host ref to name against and yields no pair.
-    """
-    cmd = dest / ".claude" / "commands"
-    host = host_claude_commands_dir()
-    if host is None or not cmd.is_dir():
-        return []
-    return [
-        (p, host / p.name)
-        for p in sorted(cmd.iterdir())
-        if p.suffix == ".md" and p.is_file() and (host / p.name).is_file()
-    ]
 
 
 # --- traversal -------------------------------------------------------------

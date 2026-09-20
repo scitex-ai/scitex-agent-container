@@ -459,10 +459,10 @@ def test_neutral_channels_project_identically_for_each_harness(
     assert normalized["spec"]["claude"]["channels"] == channels
 
 
-def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
+def test_hermes_continue_age_accepts_the_three_day_cap():
     # Arrange
     entry = _hermes_entry()
-    entry["session"]["max_age_minutes"] = 60
+    entry["session"]["max_age_minutes"] = 4320
     raw = {
         "spec": {
             "harness": "hermes",
@@ -474,7 +474,22 @@ def test_hermes_continue_age_is_rejected_until_the_runtime_enforces_it():
     # Act
     errors = validate_raw(raw, "/tmp/hermes/spec.yaml")
     # Assert
-    assert any(
-        "available_harnesses.hermes.session.max_age_minutes must be null" in error
-        for error in errors
-    )
+    assert not any("session.max_age_minutes" in error for error in errors)
+
+
+def test_hermes_continue_age_refuses_more_than_three_days():
+    # Arrange
+    entry = _hermes_entry()
+    entry["session"]["max_age_minutes"] = 4321
+    raw = {
+        "spec": {
+            "harness": "hermes",
+            "runtime": "tui",
+            "comms": _comms(),
+            "available_harnesses": {"hermes": entry},
+        }
+    }
+    # Act
+    errors = validate_raw(raw, "/tmp/hermes/spec.yaml")
+    # Assert
+    assert any("must not exceed 4320" in error for error in errors)

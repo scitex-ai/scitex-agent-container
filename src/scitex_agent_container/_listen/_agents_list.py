@@ -17,6 +17,8 @@ re-imports :func:`list_agents` so route registration and the historical
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -24,9 +26,112 @@ from starlette.responses import JSONResponse
 from .._state.registry import Registry
 from .._state.state_store_instances_store import INSTANCES_STORE
 
-__all__ = ["list_agents"]
+__all__ = ["annotate_runtime_rows", "list_agents"]
 
 log = logging.getLogger(__name__)
+
+
+def annotate_runtime_rows(
+    rows: list[dict],
+    *,
+    active_reader: Callable[..., list[dict]] | None = None,
+    birth_reader: Callable[[tuple[str, ...]], dict[str, dict]] | None = None,
+    config_loader: Callable[[str], Any] | None = None,
+    runtime_probe: Callable[[Any], bool] | None = None,
+    evidence_reader: Callable[[str, Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    local_host: str | None = None,
+) -> list[dict]:
+    """Attach liveness and launch identity with one instances/birth batch."""
+    from .._lifecycle._runtime_identity import (
+        resolve_bound_birth_records,
+        resolve_runtime_identity,
+    )
+    from .._state.state_store import _resolve_host, list_active_instances
+    from ..config import load_config
+
+    active_fn = active_reader or list_active_instances
+    load_fn = config_loader or load_config
+    host = local_host or _resolve_host(None)
+    try:
+        active = list(active_fn(host=None))
+    except Exception:  # stx-allow: fallback (store unavailable -> no birth authority)
+        active = []
+
+    def probe(config: Any) -> bool:
+        if runtime_probe is not None:
+            return bool(runtime_probe(config))
+        from .._lifecycle._runtime_select import _get_runtime
+
+        return bool(_get_runtime(config).is_running(config))
+
+    prepared: list[tuple[dict, Any, bool | None, bool]] = []
+    running_registry_rows: list[dict] = []
+    for row in rows:
+        cfg = None
+        running: bool | None = None
+        config_path = row.get("config")
+        if isinstance(config_path, str) and config_path:
+            try:
+                cfg = load_fn(config_path)
+                running = probe(cfg)
+            except Exception:  # stx-allow: fallback (unreadable config/probe is unknown)
+                cfg = None
+                running = None
+        if running is True:
+            running_registry_rows.append(row)
+        prepared.append((row, cfg, running, bool(config_path)))
+
+    try:
+        births = resolve_bound_birth_records(
+            running_registry_rows,
+            active_instances=active,
+            local_host=host,
+            evidence_reader=evidence_reader,
+            birth_reader=birth_reader,
+        )
+    except Exception:  # stx-allow: fallback (birth store unavailable -> spec/unknown)
+        births = {}
+
+    enriched: list[dict] = []
+    for row, cfg, running, had_config in prepared:
+        name = str(row.get("name") or "")
+        out = dict(row)
+        if cfg is None and running is None:
+            identity = resolve_runtime_identity(None, running=False, birth_record=None)
+        else:
+            identity = resolve_runtime_identity(
+                cfg,
+                running=running is True,
+                birth_record=births.get(name),
+            )
+        out.update(identity)
+        if running is not None:
+            verdict = "alive" if running else "dead"
+            out["status"] = "running" if running else "stopped"
+            out["liveness"] = {
+                "verdict": verdict,
+                "evidence": [
+                    {
+                        "source": "runtime",
+                        "verdict": verdict,
+                        "detail": "batched GET /agents runtime observation",
+                    }
+                ],
+            }
+        elif had_config:
+            out["status"] = "unknown"
+            out["liveness"] = {
+                "verdict": "unknown",
+                "evidence": [
+                    {
+                        "source": "runtime",
+                        "verdict": "unknown",
+                        "detail": "runtime observation unavailable",
+                    }
+                ],
+            }
+        enriched.append(out)
+    return enriched
 
 
 def _resolved_store() -> str:
@@ -108,6 +213,7 @@ async def list_agents(request: Request) -> JSONResponse:
     # Idempotent: self-peer rows that already carry a non-None value
     # keep theirs (the discovery layer is the authoritative source for
     # those).
+    from .._state.state_store import _resolve_host, list_active_instances
     from ._registry_endpoints import enrich_row, port_claims_map
 
     # ONE query for every port claim, instead of one state.db lookup per row.
@@ -115,10 +221,40 @@ async def list_agents(request: Request) -> JSONResponse:
     # 222.2ms of a ~635ms enrichment. This is FIX A#1 from the July card
     # `sac-agents-list-slowness-measured`, which landed in the CLI's row builder
     # and never reached this one. Best-effort — an empty map simply falls back
-    # to the per-row lookup, which also carries the cross-host instances-table
-    # fallback that the claims table alone does not.
+    # to the ONE active-instances snapshot below.  It never falls back to a
+    # per-row store read: that was the listener's remaining N+1.
     _ports = port_claims_map()
-    rows = [enrich_row(row, ports=_ports) for row in rows]
+    try:
+        _active = list_active_instances(host=None)
+    except Exception:  # stx-allow: fallback (store outage leaves endpoints/identity unknown)
+        _active = []
+    _local_host = _resolve_host(None)
+    _endpoints: dict[str, tuple[int | None, str | None]] = {}
+    for instance in _active:
+        name = instance.get("name")
+        if not isinstance(name, str) or not name or name in _endpoints:
+            continue
+        port = instance.get("bound_port")
+        if port is None:
+            port = instance.get("a2a_port")
+        _endpoints[name] = (
+            int(port) if port is not None else None,
+            str(instance.get("host") or "") or None,
+        )
+    rows = annotate_runtime_rows(
+        rows,
+        active_reader=lambda host=None: _active,
+        local_host=_local_host,
+    )
+    rows = [
+        enrich_row(
+            row,
+            ports=_ports,
+            instance_endpoints=_endpoints,
+            local_host=_local_host,
+        )
+        for row in rows
+    ]
     rows = await _annotate_reachability(request, rows)
     rows = _annotate_faults(rows)
 

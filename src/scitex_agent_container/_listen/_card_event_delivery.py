@@ -211,6 +211,8 @@ def _post_notify(
     agent: str,
     body: str,
     card_id: str | None,
+    event_kind: str,
+    card_owner: str,
 ) -> bool:
     """POST one ``/v1/notify`` to the local daemon. Return True on 2xx.
 
@@ -222,7 +224,16 @@ def _post_notify(
     # ``meta.source`` bracket the operator reads. Not a lookup key and not
     # ACL-bearing (this POST authenticates with a bearer), so the rename is a
     # straight flip with no transitional tolerance needed.
-    payload = {"agent": agent, "body": body, "from_agent": "scitex-cards"}
+    payload = {
+        "agent": agent,
+        "body": body,
+        "from_agent": "scitex-cards",
+        "kind": "card-event",
+        "extra": {
+            "card_event_kind": event_kind,
+            "card_event_owner": card_owner,
+        },
+    }
     if card_id:
         payload["card_id"] = card_id
     data = json.dumps(payload).encode("utf-8")
@@ -316,12 +327,24 @@ def deliver_card_event(event: Any) -> int:
         card_id = event.get("card_id") or event.get("card") or event.get("id")
         card_id = card_id if isinstance(card_id, str) and card_id.strip() else None
         body = _render_body(event, kind)
+        card_owner = ""
+        for key in ("owner", "assignee", "owner_agent", "agent"):
+            owners = _coerce_names(event.get(key))
+            if owners:
+                card_owner = owners[0]
+                break
 
         base_url = _resolve_base_url()
         bearer = _resolve_bearer()
 
         return _deliver_to_targets(
-            targets, base_url=base_url, bearer=bearer, body=body, card_id=card_id
+            targets,
+            base_url=base_url,
+            bearer=bearer,
+            body=body,
+            card_id=card_id,
+            event_kind=kind,
+            card_owner=card_owner,
         )
     except Exception as exc:  # stx-allow: fallback (reason: a consumer MUST NOT crash the producer's bus-dispatch loop — log loud and swallow)
         logger.warning(
@@ -339,11 +362,21 @@ def _deliver_to_targets(
     bearer: str | None,
     body: str,
     card_id: str | None,
+    event_kind: str,
+    card_owner: str,
 ) -> int:
     """POST to each target; tolerate per-target failure. Return success count."""
     delivered = 0
     for agent in targets:
-        if _post_notify(base_url, bearer, agent=agent, body=body, card_id=card_id):
+        if _post_notify(
+            base_url,
+            bearer,
+            agent=agent,
+            body=body,
+            card_id=card_id,
+            event_kind=event_kind,
+            card_owner=card_owner,
+        ):
             delivered += 1
     return delivered
 

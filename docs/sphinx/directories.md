@@ -12,8 +12,9 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 │   ├── spec.yaml              ← v3 Agent definition (the SSoT)
 │   └── to_home/               ← optional: mirrored into the agent $HOME at start.
 │                                Any path lands at the same relative path; the
-│                                entries below are the Claude Code harness's
-│                                filenames, shown as the worked example.
+│                                AGENTS.md is the neutral harness instruction
+│                                source; no legacy translation occurs.
+│       ├── AGENTS.md           (→ $HOME/AGENTS.md, exact projection; Hermes consumes this explicitly)
 │       ├── CLAUDE.md           (→ $HOME/CLAUDE.md, marker-protected)
 │       ├── .mcp.json           (→ $HOME/.mcp.json, full overwrite)
 │       ├── .env                (→ $HOME/.env, mode 0600)
@@ -46,7 +47,8 @@ Configuration is separated into user-scope and project-scope. Project-scope (`.s
 └── runtime/                   ← regenerable per-host state; gitignored
     ├── <agent-name>/           per-agent runner state
     │   ├── pid                  (runner PID)
-    │   ├── heartbeat.json       ({ts, pid, state}; refreshed every tick)
+    │   ├── heartbeat.json       (liveness plus privacy-safe native Hermes lease)
+    │   ├── card-lease.json      (optional bounded developer/reviewer Card lease)
     │   ├── session_id           (persisted SDK session id, resume marker)
     │   ├── session.jsonl        (one JSON object per turn event)
     │   └── quota.json           (accumulated per-turn token totals)

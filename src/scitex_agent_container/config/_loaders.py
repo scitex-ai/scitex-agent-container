@@ -17,14 +17,13 @@ from ._host import (
     substitute_hostnames,
 )
 
-# The two defaults ``load_v3`` injects into every agent — the guarded
-# direnv-allow startup command and the generic boot kick — live in the
+# The guarded direnv-allow startup command ``load_v3`` injects into every agent
+# lives in the
 # sibling ``_loader_startup_defaults`` module (extracted when this
 # orchestrator hit the per-file line cap). Re-imported here so every
 # existing consumer keeps its ``config._loaders`` import path.
 from ._loader_startup_defaults import (
     DEFAULT_DIRENV_ALLOW_COMMAND,  # noqa: F401 (re-export)
-    DEFAULT_STARTUP_PROMPT,
     _with_default_direnv_allow,
 )
 from ._parsers import (
@@ -52,6 +51,7 @@ from ._parsers import (
 )
 from ._residency_types import resolve_spec_residency
 from ._types import AgentConfig, HostsSpec
+from ._workdir_hook import mapped_workdir_mkdir_hook
 
 # Default workdir layout: sac's own state root. Per-agent runtime state
 # (CLAUDE.md, .mcp.json, .claude/) lives at
@@ -346,22 +346,21 @@ def load_v3(raw: dict, path: Path) -> AgentConfig:
 
     merged_env = {**auto_env, **(apptainer_spec.env or {})}
 
-    # Auto-derive hooks: prepend mkdir for workdir
+    # Auto-derive hooks: the lifecycle runs these on the HOST, whereas
+    # spec.workdir is an IN-CONTAINER path.  Resolve it only through the
+    # explicit writable bind that supplies the container path.
     hooks = parse_hooks(spec)
     expanded = str(Path(workdir).expanduser())
-    mkdir_cmd = f"mkdir -p {expanded}/.claude"
-    if mkdir_cmd not in hooks.get("pre_start", []):
+    mkdir_cmd = mapped_workdir_mkdir_hook(expanded, apptainer_spec.binds)
+    if mkdir_cmd and mkdir_cmd not in hooks.get("pre_start", []):
         hooks.setdefault("pre_start", []).insert(0, mkdir_cmd)
 
     # Parse mcp_servers with metadata interpolation (uses effective name)
     mcp_metadata = {**metadata, "name": name}
     mcp_servers = interpolate_mcp_servers(spec.get("mcp_servers", {}), mcp_metadata)
 
-    startup_prompts_raw = spec.get("startup_prompts", []) or []
+    startup_prompts_raw = spec["startup_prompts"]
     startup_prompts = [str(p) for p in startup_prompts_raw if p]
-    if not startup_prompts:
-        # DRY default: specs omit startup_prompts and inherit the generic kick.
-        startup_prompts = [DEFAULT_STARTUP_PROMPT]
     exclude_hooks = [str(h) for h in (spec.get("exclude_hooks", []) or []) if h]
     exclude_skills = [str(s) for s in (spec.get("exclude_skills", []) or []) if s]
 

@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 from ._tmux._process_group import ProcessIdentity, _identity
 
 _INVOCATION_ID = re.compile(r"^[0-9a-f]{32}$")
+_DEFAULT_SCOPE_STOP_TIMEOUT_S = 95.0
 
 
 @dataclass(frozen=True)
@@ -154,13 +155,17 @@ def _cgroup_pids(control_group: str) -> tuple[int, ...] | None:
     return tuple(sorted(pids))
 
 
-def _stop_scope(unit: str) -> bool:
+def _stop_scope(
+    unit: str,
+    *,
+    run_fn: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
     try:
-        result = subprocess.run(
-            ["systemctl", "--user", "stop", unit],
+        result = run_fn(
+            ["systemctl", "--user", "stop", "--no-block", unit],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -175,14 +180,18 @@ def ensure_owned_scope_down(
     cgroup_pids_fn: Callable[[str], tuple[int, ...] | None] = _cgroup_pids,
     stop_scope_fn: Callable[[str], bool] = _stop_scope,
     sleep_fn: Callable[[float], None] = time.sleep,
-    timeout_s: float = 5.0,
+    monotonic_fn: Callable[[], float] = time.monotonic,
+    timeout_s: float = _DEFAULT_SCOPE_STOP_TIMEOUT_S,
 ) -> bool:
     """Stop and verify exactly the scope recorded for one incarnation.
 
     Returns true only after both independent observations are terminal: the
     launch PID identity is gone and the recorded cgroup has no processes.
     Nothing is signalled until the live systemd unit matches both its recorded
-    ControlGroup and InvocationID.
+    ControlGroup and InvocationID.  The stop request is non-blocking because
+    systemd may spend up to its default 90-second ``TimeoutStopSec`` draining
+    a scope; this function owns the identity-safe observation window instead
+    of timing out the ``systemctl`` client while the stop job keeps running.
     """
     ownership = ownership_from_record(record)
     if ownership is None:
@@ -210,12 +219,12 @@ def ensure_owned_scope_down(
         return False
     if not stop_scope_fn(ownership.scope_unit):
         return False
-    deadline = time.monotonic() + timeout_s
+    deadline = monotonic_fn() + timeout_s
     while True:
         pids = cgroup_pids_fn(ownership.control_group)
         if pids == () and not _same_process(ownership, identity_fn):
             return True
-        if pids is None or time.monotonic() >= deadline:
+        if pids is None or monotonic_fn() >= deadline:
             return False
         sleep_fn(0.05)
 

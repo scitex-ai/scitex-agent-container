@@ -248,10 +248,9 @@ def canonical_surface_errors(raw: object) -> list[str]:
                 errors.append(
                     f"{path}.session.max_age_minutes must be null or a positive integer"
                 )
-            elif family == "hermes" and age is not None:
+            elif family == "hermes" and age is not None and age > 4320:
                 errors.append(
-                    f"{path}.session.max_age_minutes must be null because the "
-                    "Hermes TUI runtime does not implement age-gated continuation"
+                    f"{path}.session.max_age_minutes must not exceed 4320 for Hermes"
                 )
 
         if (

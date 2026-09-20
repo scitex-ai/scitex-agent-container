@@ -167,7 +167,13 @@ def port_claims_map() -> dict[str, int]:
         return {}
 
 
-def enrich_row_with_endpoint(row: dict, *, ports: dict[str, int] | None = None) -> dict:
+def enrich_row_with_endpoint(
+    row: dict,
+    *,
+    ports: dict[str, int] | None = None,
+    instance_endpoints: dict[str, tuple[int | None, str | None]] | None = None,
+    local_host: str | None = None,
+) -> dict:
     """Add ``a2a_port`` and ``turn_url`` to ``row`` (idempotent).
 
     Reads ``row["name"]`` and computes both fields via the helpers
@@ -177,12 +183,10 @@ def enrich_row_with_endpoint(row: dict, *, ports: dict[str, int] | None = None) 
     lead's own ``listen_url`` neighbour writes a turn_url at
     discovery time and the registry refresh must not clobber it).
 
-    ``ports`` is an optional pre-computed ``{name: port}`` from
-    :func:`port_claims_map`. A name ABSENT from it falls through to the
-    per-row :func:`resolve_a2a_port`, which also carries the cross-host
-    instances-table fallback — so a partial map degrades in speed only, never
-    in correctness. Omitting it preserves the original per-row behaviour
-    exactly, which is why every existing caller is unaffected.
+    ``ports`` and ``instance_endpoints`` are optional pre-computed snapshots.
+    Supplying either enters batch mode: a missing name stays unknown instead of
+    performing a hidden per-row store read.  Omitting both preserves the
+    historical single-row lookup behaviour used by the status endpoint.
     """
     name = row.get("name") if isinstance(row, dict) else None
     if not isinstance(name, str) or not name:
@@ -195,17 +199,23 @@ def enrich_row_with_endpoint(row: dict, *, ports: dict[str, int] | None = None) 
 
     existing_port = row.get("a2a_port")
     existing_url = row.get("turn_url")
+    endpoint = (instance_endpoints or {}).get(name, (None, None))
+    batched = ports is not None or instance_endpoints is not None
 
     if existing_port is not None:
         a2a_port = existing_port
     elif ports is not None and name in ports:
         a2a_port = ports[name]
+    elif endpoint[0] is not None:
+        a2a_port = endpoint[0]
+    elif batched:
+        a2a_port = None
     else:
         a2a_port = resolve_a2a_port(name)
     if existing_url is not None:
         turn_url = existing_url
     else:
-        host = resolve_a2a_host(name)
+        host = endpoint[1] or (local_host if batched else resolve_a2a_host(name))
         turn_url = derive_turn_url(host, a2a_port)
 
     out = dict(row)
@@ -343,6 +353,8 @@ def enrich_row(
     row: dict,
     *,
     ports: dict[str, int] | None = None,
+    instance_endpoints: dict[str, tuple[int | None, str | None]] | None = None,
+    local_host: str | None = None,
     identity_spec_path: str | None = None,
 ) -> dict:
     """Apply BOTH registry enrichments to ``row`` — the composed shape every
@@ -366,7 +378,13 @@ def enrich_row(
         return resolve_agent_identity(agent_name, spec_path=identity_spec_path)
 
     return enrich_row_with_role_owner(
-        enrich_row_with_endpoint(row, ports=ports), resolver=identity_resolver
+        enrich_row_with_endpoint(
+            row,
+            ports=ports,
+            instance_endpoints=instance_endpoints,
+            local_host=local_host,
+        ),
+        resolver=identity_resolver,
     )
 
 

@@ -30,7 +30,7 @@ The v3 loader derives the agent name from the parent directory, not from `metada
 ```bash
 mkdir -p ~/.scitex/agent-container/agents/my-agent
 cp examples/agent-templates/apptainer.yaml ~/.scitex/agent-container/agents/my-agent/spec.yaml
-# optional: add a to_home/ sibling for CLAUDE.md / .mcp.json / .env / .claude/{hooks,skills,commands}
+# optional: add a to_home/ sibling for AGENTS.md / .mcp.json / .env / harness-specific assets
 sac agents start my-agent
 ```
 

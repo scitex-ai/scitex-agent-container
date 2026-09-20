@@ -24,6 +24,7 @@ from scitex_agent_container._lifecycle._birth_certificate import (
     spec_git_sha,
     write_birth_certificate,
 )
+from scitex_agent_container._lifecycle._worktree_policy import WorktreePolicyProof
 from scitex_agent_container._state.state_store_incarnations import get_incarnation
 from scitex_agent_container.config import AgentConfig
 
@@ -100,6 +101,30 @@ def test_launch_snapshot_records_exact_storage_paths() -> None:
     snapshot = compiled_launch_snapshot(cfg, storage_identity=identity)
     # Assert
     assert snapshot["launch_artifacts"]["storage"] == identity
+
+
+def test_launch_snapshot_records_worktree_policy_identity() -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
+        policy_id="scitex.worktree.v1",
+        schema_version=1,
+        policy_sha256="a" * 64,
+        projection_sha256="b" * 64,
+        repo_root="/repo/.worktrees/feature-x",
+        branch="feature/x",
+        surface="linked-worktree",
+    )
+
+    # Act
+    snapshot = compiled_launch_snapshot(cfg)
+    policy = snapshot["launch_artifacts"]["worktree_policy"]
+
+    # Assert
+    assert (policy["policy_sha256"], policy["projection_sha256"]) == (
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +262,31 @@ def test_certificate_compiled_spec_carries_residency(
     stored = json.loads(get_incarnation("inc-b7")["compiled_spec_json"])
     # Assert
     assert stored["residency"] == ONE_SHOT
+
+
+def test_certificate_row_carries_policy_hashes(pg_schema: str) -> None:
+    # Arrange
+    cfg = AgentConfig(name="alpha")
+    cfg._worktree_policy_proof = WorktreePolicyProof(  # type: ignore[attr-defined]
+        policy_id="scitex.worktree.v1",
+        schema_version=1,
+        policy_sha256="a" * 64,
+        projection_sha256="b" * 64,
+        repo_root="/repo/.worktrees/feature-x",
+        branch="feature/x",
+        surface="linked-worktree",
+    )
+
+    # Act
+    written = write_birth_certificate(cfg, "inc-policy")
+    row = get_incarnation("inc-policy")
+
+    # Assert
+    assert (written, row["policy_sha256"], row["projection_sha256"]) == (
+        True,
+        "a" * 64,
+        "b" * 64,
+    )
 
 
 def test_certificate_failure_is_false_not_raise(pg_schema: str) -> None:
