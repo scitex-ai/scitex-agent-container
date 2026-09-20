@@ -57,13 +57,74 @@ def build_tool_list() -> list[Tool]:
         Tool(
             name="a2a_ack",
             description=(
-                "Acknowledge a received message without content. "
-                "Cheap 'got it' to a sender that set requires_reply=true."
+                "Emit the legacy contentless mechanical receipt for a received "
+                "message. It does NOT prove model understanding and can never "
+                "advance agentic_acked; use a2a_agentic_ack after understanding."
             ),
             inputSchema={
                 "type": "object",
                 "required": ["msg_id"],
                 "properties": {"msg_id": {"type": "string"}},
+            },
+        ),
+        Tool(
+            name="a2a_agentic_ack",
+            description=(
+                "After understanding an inbound request, intentionally acknowledge "
+                "its exact dispatch_id nonce with a bounded summary, owner, and "
+                "concrete next checkpoint. Mechanical delivery/ACK/reaction does "
+                "not call this tool and does not prove understanding."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["dispatch_id", "understood", "owner", "next_checkpoint"],
+                "properties": {
+                    "dispatch_id": {"type": "string", "minLength": 1},
+                    "understood": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "owner": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "next_checkpoint": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="a2a_progress",
+            description=(
+                "Report real progress for an agentically acknowledged dispatch_id. "
+                "Use in_progress periodically, or completed/failed terminally; "
+                "include a blocker only when one actually exists."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["dispatch_id", "status", "summary"],
+                "properties": {
+                    "dispatch_id": {"type": "string", "minLength": 1},
+                    "status": {
+                        "type": "string",
+                        "enum": ["in_progress", "completed", "failed"],
+                    },
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "blocker": {"type": "string", "minLength": 1, "maxLength": 500},
+                },
+            },
+        ),
+        Tool(
+            name="a2a_dispatch_status",
+            description=(
+                "Read one outbound dispatch's verified lifecycle and latest feedback. "
+                "Flags missing agentic acknowledgement after timeout so delivery or "
+                "reaction cannot be mistaken for understanding."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["dispatch_id"],
+                "properties": {
+                    "dispatch_id": {"type": "string", "minLength": 1},
+                    "agentic_ack_timeout_s": {"type": "number", "minimum": 0},
+                },
             },
         ),
         Tool(
