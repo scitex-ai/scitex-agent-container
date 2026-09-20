@@ -387,13 +387,13 @@ def test_agent_status_returns_requested_name(status_result: dict) -> None:
     assert status_result["name"] == "fake-agent"
 
 
-def test_agent_status_reports_stopped_when_config_unloadable(
+def test_agent_status_reports_unknown_when_config_unloadable(
     status_result: dict,
 ) -> None:
     # Arrange — fixture built status_result with /nonexistent config path.
     # Act — fixture already invoked agent_status.
     # Assert
-    assert status_result["status"] == "stopped"
+    assert status_result["status"] == "unknown"
 
 
 @pytest.mark.parametrize(

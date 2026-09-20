@@ -101,9 +101,9 @@ def build_agent_row(
     way (operator mandate, lead a2a 1781e82a) so a JSON consumer never has to
     test for their existence.
 
-    The optional keys (``validation_errors`` / ``liveness_unknown`` /
-    ``labels``) are attached only when they carry something, keeping an
-    ordinary row free of empty noise.
+    ``liveness_unknown`` is always explicit because heartbeat overlays must
+    distinguish a successful direct process verdict from a legacy status
+    string. Other optional keys are attached only when they carry something.
     """
     row: dict = {
         "name": name,
@@ -129,8 +129,7 @@ def build_agent_row(
     row.update(dict(_MOVEMENT_DEFAULTS) if deferred else _movement_fields(name))
     if errors:
         row["validation_errors"] = errors
-    if liveness_unknown:
-        row["liveness_unknown"] = True
+    row["liveness_unknown"] = bool(liveness_unknown)
     # HOW the status was reached. ``probe_runtime`` names the adapter that
     # actually answered, so ``status: "stopped"`` with
     # ``probe_runtime: "ClaudeSessionRuntime"`` on a ``tui`` agent IS the

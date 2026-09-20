@@ -2175,7 +2175,7 @@ def test_agent_status_includes_empty_listen_and_extensions(
     assert result["listen"] == [] and result["extensions"] == {}
 
 
-def test_agent_status_config_load_failure_degrades_to_stopped(
+def test_agent_status_config_load_failure_degrades_to_unknown(
     tmp_path: Path, registry: Registry
 ) -> None:
     # Arrange: register a path to a non-existent YAML so load_config raises.
@@ -2185,7 +2185,7 @@ def test_agent_status_config_load_failure_degrades_to_stopped(
         "alpha", registry=registry, runtime_factory=lambda _c: FakeRuntime()
     )
     # Assert
-    assert result["status"] == "stopped"
+    assert result["status"] == "unknown"
 
 
 def test_agent_status_config_load_failure_reports_unknown_model_and_runtime(
