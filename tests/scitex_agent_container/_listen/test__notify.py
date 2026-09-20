@@ -156,6 +156,36 @@ def test_notify_persists_event_for_replay(notify_env) -> None:
     )
 
 
+def test_notify_preserves_card_event_lifecycle_metadata(notify_env) -> None:
+    # Arrange
+    app = create_app(token=TOKEN, local_host="127.0.0.1")
+    headers = {"authorization": f"Bearer {TOKEN}"}
+    payload = {
+        "agent": "worker-y",
+        "body": "card completed",
+        "card_id": "card-7",
+        "kind": "card-event",
+        "extra": {
+            "card_event_kind": "completed",
+            "card_event_owner": "worker-y",
+        },
+    }
+    # Act
+    with TestClient(app) as client:
+        response = client.post("/v1/notify", json=payload, headers=headers)
+    event = list_undelivered(target="worker-y")[0]["event"]
+    # Assert
+    assert (response.status_code, event["kind"], event["extra"]) == (
+        200,
+        "card-event",
+        {
+            "card_id": "card-7",
+            "card_event_kind": "completed",
+            "card_event_owner": "worker-y",
+        },
+    )
+
+
 def test_notify_requires_bearer_token(notify_env) -> None:
     # Arrange — same control-plane bearer gate as the rest of 7878.
     app = create_app(token=TOKEN, local_host="127.0.0.1")

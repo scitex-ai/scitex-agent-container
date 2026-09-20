@@ -21,6 +21,7 @@ The current and only accepted apiVersion. The v3 loader **rejects**:
 └── <name>/
     ├── spec.yaml       # ← agent name comes from this directory
     └── to_home/        # optional; auto-discovered next to spec.yaml; mirrors $HOME
+        ├── AGENTS.md         # → $HOME/AGENTS.md   (exact projection)
         ├── CLAUDE.md         # → $HOME/CLAUDE.md   (marker-protected)
         ├── .mcp.json         # → $HOME/.mcp.json   (full overwrite)
         ├── .env              # → $HOME/.env        (mode 0600)
@@ -73,7 +74,7 @@ spec:
 | `model` | alias or full ID | `opus` / `sonnet` (default) / `haiku` (+ `[1m]` for 1M context), or a full ID like `claude-opus-4-7`. May also sit at `spec.model` (top level). Abbreviated IDs missing version digits (`claude-opus[1m]`) are rejected at validate-time. |
 | `session` | enum | `fresh` (default — independent session, no `-c`) \| `continue` (resume latest for this cwd; TUI `claude -c`) \| `resume` (with `resume_id`). Aliases: `new-session`/`new`→`fresh`, `continue-or-new`→`continue`. An OMITTED field defaults to `fresh` EXCEPT coordinator roles (lead/head/worker/telegrammer/project-maintainer/…), which the loader maps to `continue`. Per-start override: `sac start --continue` / `--fresh`. |
 | `resume_id` | string | Explicit session UUID for `session: resume` |
-| `continue_max_age_minutes` | int | Only resume if `session.jsonl` is newer than N minutes |
+| `continue_max_age_minutes` | int | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]` | list | Extra flags appended to the `claude` invocation |
 | `channels[]` | list | MCP push channels (`server:<name>` / `plugin:<id>@<v>`) |
 | `auto_accept` | bool (default `true`) | Auto-confirm TUI permission prompts |
@@ -128,7 +129,8 @@ A sibling directory named `to_home/` (override path with
 `spec.to_home:`, default `./to_home`) is materialized into the agent's
 container `$HOME` (= `runtime/<name>/home/`) at `sac agents start` time.
 Every path under `to_home/` lands at the same relative path under
-`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `.env`
+`$HOME`. `CLAUDE.md` / `state.md` get a marker-protected merge; `AGENTS.md` is
+an exact projection; `.env`
 gets mode 0600; everything else is a full overwrite. `${VAR}` and
 `${metadata.name}` are interpolated in text files. A shared baseline
 `to_home/` (`<agents_dir>/_shared/to_home`, override `$SAC_TO_HOME_BASELINE`)
@@ -137,6 +139,7 @@ is applied first; the per-agent `to_home/` overlays on top.
 | Source | Destination | Mode | Semantics |
 |---|---|---|---|
 | `to_home/CLAUDE.md` | `$HOME/CLAUDE.md` | 0644 | Marker-protected; preserves user tail past the End marker |
+| `to_home/AGENTS.md` | `$HOME/AGENTS.md` | 0644 | Neutral instruction projection; Hermes consumes its verified bytes through `agent.system_prompt` |
 | `to_home/.mcp.json` | `$HOME/.mcp.json` | 0644 | Full overwrite |
 | `to_home/.env` | `$HOME/.env` | **0600** | Full overwrite; sourceable by spawned shells |
 | `to_home/state.md` | `$HOME/state.md` | 0644 | Marker-protected (handover snapshot) |

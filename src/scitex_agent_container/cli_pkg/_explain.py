@@ -335,6 +335,29 @@ def _workdir_line(pwd: str, binds: list[tuple[str, str, str]]) -> str:
     return f"Workdir (--pwd): {pwd}   [{flag}]"
 
 
+def _worktree_policy_lines(config: AgentConfig) -> list[str]:
+    """Read-only resolution through the same executable gate as start."""
+    from .._lifecycle._worktree_policy import (
+        WorktreePolicyError,
+        enforce_task_worktree_policy,
+    )
+
+    try:
+        proof = enforce_task_worktree_policy(config, provision=False)
+    except WorktreePolicyError as exc:
+        return ["Worktree policy: START WILL REFUSE", f"  {exc}"]
+    if proof is None:
+        return ["Worktree policy: not applicable (AgentProxy)"]
+    return [
+        f"Worktree policy: {proof.worktree_action}",
+        f"  authored: {proof.authored_workdir}",
+        f"  resolved: {proof.resolved_workdir}",
+        f"  branch: {proof.branch}",
+        f"  policy_sha256: {proof.policy_sha256}",
+        f"  projection_sha256: {proof.projection_sha256}",
+    ]
+
+
 def _delegation_line(config: AgentConfig) -> str:
     """Effective spawn permission and child bound from the loaded spec."""
     allowed = bool(getattr(getattr(config, "lineage", None), "may_spawn", True))
@@ -373,6 +396,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     deep-merge. Use ``sac agents explain <name>`` (``render_plan``) for the
     full detail.
     """
+    policy_lines = _worktree_policy_lines(config)
     argv = _argv_for(config)
     binds = _binds(argv)
     pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
@@ -382,6 +406,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
     lines = _identity_lines(config, spec_path=spec_path, sif=sif, claude=claude)
     lines.append("")
     lines.append(_workdir_line(pwd, binds))
+    lines.extend(policy_lines)
 
     model = getattr(claude, "model", "") or getattr(config, "model", "")
     lines.append("")
@@ -393,6 +418,7 @@ def render_plan_summary(config: AgentConfig, *, spec_path: Path | None = None) -
 
 def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
     """Return the human-readable effective launch plan for ``config``."""
+    policy_lines = _worktree_policy_lines(config)
     argv = _argv_for(config)
     binds = _binds(argv)
     pwd = argv[argv.index("--pwd") + 1] if "--pwd" in argv else "(none)"
@@ -408,6 +434,7 @@ def render_plan(config: AgentConfig, *, spec_path: Path | None = None) -> str:
 
     lines.append("")
     lines.append(_workdir_line(pwd, binds))
+    lines.extend(policy_lines)
 
     lines.append("")
     lines.append("Mounts (apptainer.binds — the single source of truth):")

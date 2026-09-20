@@ -74,7 +74,7 @@ def test_tui_launches_through_single_gateway_owner():
     # Act
     argv = _hermes_tui_inner_argv(config)
     # Assert
-    assert argv[:9] == [
+    assert argv[:11] == [
         "/usr/bin/tini",
         "-s",
         "--",
@@ -83,8 +83,19 @@ def test_tui_launches_through_single_gateway_owner():
         "scitex_agent_container.runtimes._hermes_tui_owner",
         "--state-dir",
         "/state/scholar",
+        "--max-session-age-minutes",
+        "4320",
         "--",
     ]
+
+
+def test_hermes_owner_enforces_three_day_session_age_by_default():
+    # Arrange
+    config = _config(session="continue")
+    # Act
+    argv = _hermes_tui_inner_argv(config)
+    # Assert
+    assert argv[argv.index("--max-session-age-minutes") + 1] == "4320"
 
 
 def test_continue_session_resumes_the_stable_agent_session_name():

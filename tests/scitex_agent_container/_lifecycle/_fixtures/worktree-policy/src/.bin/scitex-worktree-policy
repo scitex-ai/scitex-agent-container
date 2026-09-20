@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Executable contract fixture for SAC's external policy adapter.
+
+This is intentionally not a policy implementation.  It exercises the real
+process/JSON/exit-code boundary while test-selected modes emulate outcomes.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+POLICY_SHA = "1" * 64
+PROJECTION_SHA = "2" * 64
+
+
+def emit(payload: object, code: int = 0) -> None:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(code)
+
+
+mode = os.environ.get("SCITEX_POLICY_FIXTURE_MODE", "allow")
+if mode == "invalid-json":
+    print("not-json")
+    raise SystemExit(0)
+
+operation = sys.argv[1] if len(sys.argv) > 1 else ""
+if operation == "check-projections":
+    if mode == "stale":
+        emit(
+            {
+                "allowed": False,
+                "decision": "stale",
+                "policy_sha256": POLICY_SHA,
+                "stale": ["AGENTS"],
+            },
+            3,
+        )
+    emit(
+        {
+            "allowed": True,
+            "decision": "current",
+            "policy_sha256": POLICY_SHA,
+            "projection_sha256": PROJECTION_SHA,
+        }
+    )
+
+if operation == "check-shell":
+    emit(
+        {
+            "allowed": True,
+            "decision": "allow",
+            "policy_sha256": POLICY_SHA,
+            "projection_sha256": PROJECTION_SHA,
+        }
+    )
+
+if operation not in {"inspect", "assert-context"}:
+    emit({"allowed": False, "decision": "error", "error": "bad operation"}, 3)
+
+repo = Path(sys.argv[sys.argv.index("--repo") + 1]).resolve()
+
+
+def git(*args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+root = Path(git("rev-parse", "--show-toplevel")).resolve()
+git_dir_raw = Path(git("rev-parse", "--git-dir"))
+common_raw = Path(git("rev-parse", "--git-common-dir"))
+git_dir = (repo / git_dir_raw).resolve() if not git_dir_raw.is_absolute() else git_dir_raw
+common = (repo / common_raw).resolve() if not common_raw.is_absolute() else common_raw
+surface = "authority" if git_dir == common else "linked-worktree"
+intent = sys.argv[sys.argv.index("--intent") + 1] if "--intent" in sys.argv else ""
+if mode == "deny" or (operation == "assert-context" and surface == "authority" and intent != "read"):
+    emit(
+        {
+            "allowed": False,
+            "decision": "deny",
+            "reason": "fixture denied authority checkout",
+        },
+        2,
+    )
+projection_sha = "3" * 64 if mode == "hash-drift" else PROJECTION_SHA
+emit(
+    {
+        "allowed": True,
+        "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+        "decision": "allow",
+        "policy_id": "scitex.worktree.fixture",
+        "policy_sha256": POLICY_SHA,
+        "projection_sha256": projection_sha,
+        "repo_root": str(root),
+        "git_common_dir": str(common),
+        "schema_version": 1,
+        "surface": surface,
+    }
+)

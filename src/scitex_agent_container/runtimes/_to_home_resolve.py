@@ -233,6 +233,26 @@ def settings_layer_dirs(config: AgentConfig) -> "list[tuple[str, Path | None]]":
     return [(name, path if name in wanted else None) for name, path in resolved]
 
 
+def materialization_layer_dirs(
+    config: AgentConfig,
+) -> "list[tuple[str, Path | None]]":
+    """Resolve the exact layer sequence used by the general ``to_home`` walk.
+
+    A declared recipe uses the same resolver as settings and prompt provenance,
+    so one field cannot describe one cascade while runtime executes another.
+    Undeclared legacy configs retain the historical project-shared/per-agent
+    sequence until the launch preflight rejects or migrates them.
+    """
+    if getattr(config, "to_home_layers", None) is not None:
+        return settings_layer_dirs(config)
+    return _collapse_duplicate_paths(
+        [
+            ("project-shared", resolve_baseline_to_home_dir(_spec_dir(config))),
+            ("per-agent", resolve_to_home_dir(config)),
+        ]
+    )
+
+
 def _spec_dir(config: AgentConfig) -> Path | None:
     if not getattr(config, "config_path", ""):
         return None
@@ -242,5 +262,6 @@ def _spec_dir(config: AgentConfig) -> Path | None:
 __all__ = [
     "resolve_to_home_dir",
     "resolve_baseline_to_home_dir",
+    "materialization_layer_dirs",
     "settings_layer_dirs",
 ]

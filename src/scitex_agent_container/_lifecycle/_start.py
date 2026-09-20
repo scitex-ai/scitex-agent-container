@@ -47,6 +47,7 @@ from ._start_preflight import (  # noqa: F401
 )
 from ._start_prelaunch import run_prelaunch
 from ._start_supervision import start_background_supervision
+from ._worktree_policy import enforce_task_worktree_policy
 
 
 def _should_clear_persisted_session(
@@ -262,10 +263,14 @@ def agent_start(
         )
     )
     really_running = verdict.is_alive
+    if uses_production_runtime and (dry_run or not really_running or force):
+        enforce_task_worktree_policy(config, provision=not dry_run)
     if really_running:
         from ._start_engine_noop import assert_explicit_engine_noop_safe
 
-        assert_explicit_engine_noop_safe(config, engine_override, force=force, dry_run=dry_run)
+        assert_explicit_engine_noop_safe(
+            config, engine_override, force=force, dry_run=dry_run
+        )
     if not really_running and not dry_run:
         _announce_start_verdict(verdict)
     if really_running:
@@ -379,6 +384,10 @@ def agent_start(
     _h = handover_mod if handover_mod is not None else _load_handover_module()
 
     launch_incarnation = _h.ensure_instance_uuid(config)
+    if uses_production_runtime:
+        from ._worktree_policy import refresh_task_worktree_owner
+
+        refresh_task_worktree_owner(config)
     try:
         _h.hydrate_from_hub(config)
     except Exception:
@@ -416,8 +425,7 @@ def agent_start(
         name=config.name,
         config_path=str(getattr(config, "config_path", "") or config_path),
         incarnation_id=(
-            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "")
-            or None
+            str(launch_incarnation or config.env.get("SAC_INSTANCE_UUID") or "") or None
         ),
         state_dir=state_dir_for_config(config),
     )
@@ -433,7 +441,7 @@ def agent_start(
     seed_pinned_session_id(config, runtime)
 
     # Twin context-inheritance (``sac agents twin``). When this spec carries
-    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # ``SAC_FORK_PARENT`` in its env it is a twin: resolve the parent's
     # CURRENT session uuid, pin this twin's resume to it, and copy the
     # parent's transcript into the twin's container-home projects store so
     # the resume finds it. Host-side (paths always resolve on the bare host)

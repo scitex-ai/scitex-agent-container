@@ -20,7 +20,7 @@ Two halves live here:
   boot it seeds the twin's session marker from the parent's current uuid +
   copies that transcript in, so the twin's ``continue`` resumes it. Host-
   side ⇒ paths resolve on the bare host whether ``twin`` ran on the host or
-  brokered from a container. Triggered by ``SAC_TWIN_PARENT`` in the twin's
+  brokered from a container. Triggered by ``SAC_FORK_PARENT`` in the twin's
   own env — a strict no-op for every non-twin start.
 
 IDENTITY SPLIT — safety-critical:
@@ -31,7 +31,7 @@ IDENTITY SPLIT — safety-critical:
     ``SCITEX_CARDS_AGENT_ID`` feeds ONLY the author path — verified against
     the card store). So owner=parent CANNOT be enforced from env; it is
     a HARD CONVENTION — the twin passes ``assignee=<parent>`` (==
-    ``$SAC_TWIN_PARENT``, injected here) on EVERY card write. WHY: an
+    ``$SAC_FORK_PARENT``, injected here) on EVERY card write. WHY: an
     ephemeral twin that owns cards then exits orphans them (the drift
     incident that stranded 75 cards). The boot-kick + skill state the rule.
 """
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # marks a spec as a twin (the sole trigger for :func:`seed_twin_from_parent`)
 # AND is the value the twin passes as ``assignee=`` to keep card ownership
 # with the parent.
-TWIN_PARENT_ENV = "SAC_TWIN_PARENT"
+TWIN_PARENT_ENV = "SAC_FORK_PARENT"
 # scitex-cards author-identity var — set to the TWIN so writes attribute to it.
 # CANONICAL name only: the retired ``SCITEX_TODO_AGENT_ID`` must never be
 # written into a spec sac generates (a spec that declares it is what keeps the
@@ -138,7 +138,7 @@ def build_twin_boot_kick(
         "is intended.",
         f"  - But card OWNERSHIP must stay with {parent_name}. On EVERY "
         f"add_task / reassign, pass assignee={parent_name} (also available as "
-        f"$SAC_TWIN_PARENT). NEVER leave a card owned by {twin_name}: if you "
+        f"$SAC_FORK_PARENT). NEVER leave a card owned by {twin_name}: if you "
         "exit, a card you own lands in an inbox nobody drains.",
         f"  - Coordinate results back to {parent_name} via a2a / a shared card "
         f"owned by {parent_name}, not by holding state only you can see.",
@@ -175,7 +175,7 @@ def derive_twin_spec(
         so it inherits the freshest context; on later restarts ``continue``
         resumes the twin's OWN diverged session (not a re-fork of the parent).
       * ``spec.env`` — ``SCITEX_CARDS_AGENT_ID = <twin>`` (author = twin),
-        ``SAC_TWIN_PARENT = <parent>`` (owner-convention value + twin
+        ``SAC_FORK_PARENT = <parent>`` (owner-convention value + twin
         trigger); any inherited ``SAC_NAME`` is dropped (``listen_env_flags``
         injects it from the twin's own name), as is any inherited
         ``SCITEX_TODO_AGENT_ID`` (retired, and carrying the PARENT's name).
