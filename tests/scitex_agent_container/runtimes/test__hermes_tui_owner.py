@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 
@@ -140,8 +142,8 @@ def test_gateway_owner_consumes_seed_before_tui_and_deletes_after_import(tmp_pat
     )
 
 
-def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
-    # Arrange
+def _write_fork_seed(state_dir: Path) -> Path:
+    """Land the fork seed exactly as the fork writer does: JSON, mode 0600."""
     seed = {
         "version": 1,
         "title": "sac:child:engine-a",
@@ -149,21 +151,46 @@ def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
         "cwd": "/work/repo",
         "messages": [{"role": "user", "text": "parent nonce"}],
     }
-    seed_path = tmp_path / "hermes-fork-seed.json"
+    seed_path = state_dir / "hermes-fork-seed.json"
     seed_path.write_text(json.dumps(seed), encoding="utf-8")
     seed_path.chmod(0o600)
+    return seed_path
+
+
+def test_gateway_owner_keeps_seed_when_native_import_fails(tmp_path):
+    # Arrange: the 0600 seed on disk, and a native import that raises.
+    seed_path = _write_fork_seed(tmp_path)
 
     def fail_import(_state_dir, _payload):
         raise HermesTuiRpcError("native import failed")
 
-    # Act / Assert
+    # Act: the owner consumes the seed through that failing import.
+    with contextlib.suppress(HermesTuiRpcError):
+        owner._consume_fork_seed(
+            tmp_path,
+            ["hermes", "chat", "--continue", "sac:child:engine-a"],
+            import_fn=fail_import,
+        )
+
+    # Assert: the unimported seed is still on disk for the next attempt.
+    assert seed_path.is_file()
+
+
+def test_native_import_failure_reaches_the_owner(tmp_path):
+    # Arrange: the same seed on disk, and the same failing import.
+    _write_fork_seed(tmp_path)
+
+    def fail_import(_state_dir, _payload):
+        raise HermesTuiRpcError("native import failed")
+
+    # Act: the owner consumes the seed — the native import is what fails.
+    # Assert: the failure surfaces to the caller; it is never swallowed.
     with pytest.raises(HermesTuiRpcError, match="native import failed"):
         owner._consume_fork_seed(
             tmp_path,
             ["hermes", "chat", "--continue", "sac:child:engine-a"],
             import_fn=fail_import,
         )
-    assert seed_path.is_file()
 
 
 def test_resume_command_keeps_context_but_never_replays_startup_query():
