@@ -434,6 +434,12 @@ def restart_and_record(
     bug the pin defended against cannot be reached from here — and the pin
     itself had stopped selecting anything once ``instances`` moved.
     """
+    from ._runtime_select import _get_runtime
+
+    if runtime_factory is _get_runtime:
+        from ._worktree_policy import enforce_task_worktree_policy
+
+        enforce_task_worktree_policy(config, provision=True)
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:
