@@ -433,7 +433,7 @@ def agent_start(
     seed_pinned_session_id(config, runtime)
 
     # Twin context-inheritance (``sac agents twin``). When this spec carries
-    # ``SAC_TWIN_PARENT`` in its env it is a twin: resolve the parent's
+    # ``SAC_FORK_PARENT`` in its env it is a twin: resolve the parent's
     # CURRENT session uuid, pin this twin's resume to it, and copy the
     # parent's transcript into the twin's container-home projects store so
     # the resume finds it. Host-side (paths always resolve on the bare host)
