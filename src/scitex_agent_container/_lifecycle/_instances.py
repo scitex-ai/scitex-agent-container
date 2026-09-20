@@ -20,12 +20,14 @@ without rescanning by name+host.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Callable
 
+from .._logging import get_logger
 from ..config import AgentConfig
 
-logger = logging.getLogger(__name__)
+
+def _logger():
+    return get_logger(__name__)
 
 
 def _spawned_by() -> str:
@@ -284,7 +286,7 @@ def record_local_instance(
                 # every cross-origin claim before consulting ``replace``.
                 replace=True,
             )
-            logger.info(
+            _logger().info(
                 "comms_nodes registration OWNED by live spec incarnation: "
                 "name=%r incarnation_id=%s endpoint=%s:%d result=%s",
                 config.name,
@@ -293,8 +295,8 @@ def record_local_instance(
                 int(a2a_port),
                 registration_result,
             )
-        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: logger.warning on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
-            logger.warning(
+        except CommsNodeConflictError as exc:  # stx-allow: fallback (reason: a name collision is the operator's to resolve, not a reason to refuse a start that already succeeded. SINK: scitex-logging warning, which reaches journald for a listen-brokered start and the caller's stderr for a direct CLI start)
+            _logger().warning(
                 "comms_nodes registration REFUSED for %r: %s. The agent IS "
                 "running; peers cannot resolve it by name until the "
                 "collision is resolved (`sac registry register --name %s "
@@ -305,7 +307,7 @@ def record_local_instance(
                 host,
                 int(a2a_port),
             )
-        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'comms_nodes registration'` is the check)
+        except Exception as exc:  # stx-allow: fallback (reason: never block agent start on a registry write — an unreachable PostgreSQL must not stop an agent from running. SINK: scitex-logging error, which reaches journald for a listen-brokered start and the caller's stderr for a direct CLI start)
             # NOT a bare pass. It was one until 2026-08-28, and it swallowed a
             # TypeError from a stale ``db_path=`` kwarg on EVERY spec-driven
             # start — invisibly, because the stop-side unregister still
@@ -313,7 +315,7 @@ def record_local_instance(
             # withdrawn in the directory with nothing logged anywhere. A
             # swallow that cannot be seen is indistinguishable from a call
             # that never ran.
-            logger.error(
+            _logger().error(
                 "comms_nodes registration FAILED for %r at %s:%d (%r). The "
                 "agent IS running but peers cannot resolve it by name; "
                 "`sac registry register` is the manual repair.",
@@ -362,7 +364,7 @@ def record_local_instance(
     try:
         image_identity = identity_reader() if callable(identity_reader) else None
     except OSError as exc:
-        logger.error(
+        _logger().error(
             "image identity NOT recorded for incarnation %s (agent %s): %s",
             instance_id,
             config.name,
@@ -373,7 +375,7 @@ def record_local_instance(
     try:
         storage_identity = storage_reader() if callable(storage_reader) else None
     except OSError as exc:
-        logger.error(
+        _logger().error(
             "storage identity NOT recorded for incarnation %s (agent %s): %s",
             instance_id,
             config.name,
@@ -434,6 +436,12 @@ def restart_and_record(
     bug the pin defended against cannot be reached from here — and the pin
     itself had stopped selecting anything once ``instances`` moved.
     """
+    from ._runtime_select import _get_runtime
+
+    if runtime_factory is _get_runtime:
+        from ._worktree_policy import enforce_task_worktree_policy
+
+        enforce_task_worktree_policy(config, provision=True)
     runtime = runtime_factory(config)
     started = runtime.start(config)
     if started:

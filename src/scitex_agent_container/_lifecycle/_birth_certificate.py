@@ -117,6 +117,11 @@ def compiled_launch_snapshot(
         artifacts["apptainer_image"] = dict(image_identity)
     if storage_identity is not None:
         artifacts["storage"] = dict(storage_identity)
+    from ._worktree_policy import worktree_policy_artifact
+
+    policy_identity = worktree_policy_artifact(config)
+    if policy_identity is not None:
+        artifacts["worktree_policy"] = policy_identity
     if artifacts:
         snapshot["launch_artifacts"] = artifacts
     return snapshot
@@ -173,6 +178,8 @@ def write_birth_certificate(
     "the certificate lands in that file" long after it stopped being true.
     """
     try:
+        from ._worktree_policy import worktree_policy_artifact
+
         spec_id = (
             getattr(config, "config_path", None)
             or getattr(config, "spec_path", None)
@@ -183,6 +190,7 @@ def write_birth_certificate(
             image_identity=image_identity,
             storage_identity=storage_identity,
         )
+        policy_identity = worktree_policy_artifact(config)
         payload = json.dumps(snapshot, ensure_ascii=False, default=str)
         from .._state.state_store_incarnations import record_incarnation_birth
 
@@ -193,6 +201,8 @@ def write_birth_certificate(
             spec_git_sha=spec_git_sha(spec_id),
             host=None,
             compiled_spec_json=payload,
+            policy_sha256=(policy_identity or {}).get("policy_sha256"),
+            projection_sha256=(policy_identity or {}).get("projection_sha256"),
         )
         return True
     except Exception as exc:  # stx-allow: fallback (reason: the certificate documents a launch that already succeeded; failing the launch over bookkeeping would destroy the run it documents. SINK, measured 2026-08-20: logger.error on this module's logger, which for a listen-brokered start reaches journald via sac-listen.service (StandardOutput=journal) and for a direct CLI start reaches the caller's stderr — `journalctl --user | grep 'birth certificate NOT recorded'` is the check)

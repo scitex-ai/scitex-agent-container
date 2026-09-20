@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import json
 
+from scitex_agent_container.runtimes import _hermes_tui_context_owner as context_owner
 from scitex_agent_container.runtimes import _hermes_tui_owner as owner
 from scitex_agent_container.runtimes._hermes_tui_rpc import HermesTuiRpcError
 
@@ -111,7 +113,7 @@ def test_resume_command_keeps_context_but_never_replays_startup_query():
     ]
 
     # Act
-    resumed = owner._resume_command(command, "stored-123")
+    resumed = context_owner.resume_command(command, "stored-123")
 
     # Assert
     assert resumed == [
@@ -121,6 +123,55 @@ def test_resume_command_keeps_context_but_never_replays_startup_query():
         "--resume",
         "stored-123",
     ]
+
+
+def test_three_day_old_continuation_becomes_fresh_but_keeps_new_task_query(
+    tmp_path,
+):
+    # Arrange
+    command = [
+        "hermes",
+        "chat",
+        "--tui",
+        "--continue",
+        "sac:ui",
+        "--create-if-missing",
+        "--query",
+        "new task",
+    ]
+    now = 2_000_000.0
+    record = {"started_at": now - 4320 * 60}
+    # Act
+    resolved = context_owner.apply_session_age_policy(
+        command,
+        state_dir=tmp_path,
+        max_age_minutes=4320,
+        stored_lookup=lambda _state, _title, _mode: record,
+        now=lambda: now,
+    )
+    # Assert
+    assert resolved == ["hermes", "chat", "--tui", "--query", "new task"]
+
+
+def test_three_day_old_explicit_resume_also_becomes_fresh(tmp_path):
+    # Arrange
+    now = 2_000_000.0
+    seen = []
+
+    def lookup(_state, identity, mode):
+        seen.append((identity, mode))
+        return {"started_at": now - 4320 * 60}
+
+    # Act
+    resolved = context_owner.apply_session_age_policy(
+        ["hermes", "chat", "--tui", "--resume", "stored-42"],
+        state_dir=tmp_path,
+        max_age_minutes=4320,
+        stored_lookup=lookup,
+        now=lambda: now,
+    )
+    # Assert
+    assert (resolved, seen) == (["hermes", "chat", "--tui"], [("stored-42", "resume")])
 
 
 def test_fresh_owner_adopts_its_only_isolated_gateway_session():
@@ -138,7 +189,7 @@ def test_resume_request_uses_the_explicit_session_as_owner_identity():
     # Arrange
     command = ["hermes", "chat", "--tui", "--resume", "session-42"]
     # Act
-    request = owner._requested_session(command)
+    request = context_owner.requested_session(command)
     # Assert
     assert request == ("resume", "session-42")
 
@@ -384,6 +435,96 @@ def test_owner_observes_the_live_session_on_every_supervision_poll(tmp_path):
     assert (result, observed) == (0, ["live-1", "live-1"])
 
 
+def test_fresh_transition_replaces_only_tui_child_not_gateway_or_sidecars(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+    observations = 0
+    finalized = []
+
+    def spawn(command, *, env):
+        process = _Process()
+        spawned.append((list(command), env, process))
+        return process
+
+    def transition(_session):
+        nonlocal observations
+        observations += 1
+        if observations == 1:
+            return ""
+        spawned[-1][2].returncode = 0
+        return None
+
+    # Act
+    process, result = owner._supervise_tui(
+        [
+            "hermes",
+            "chat",
+            "--tui",
+            "--continue",
+            "sac:ui",
+            "--create-if-missing",
+            "--query",
+            "completed task",
+        ],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=lambda _state: [
+            {
+                "id": "live" if len(spawned) == 1 else "fresh-live",
+                "title": "sac:ui",
+                "session_key": "stored" if len(spawned) == 1 else "fresh-stored",
+            }
+        ],
+        on_session_observed=transition,
+        finalize_fresh=lambda _state, session: finalized.append(session["id"]),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+    # Assert
+    assert (
+        result,
+        process is spawned[-1][2],
+        len(spawned),
+        spawned[0][2].terminated,
+        spawned[1][0],
+        finalized,
+        gateway.terminated,
+    ) == (
+        0,
+        True,
+        2,
+        True,
+        ["hermes", "chat", "--tui"],
+        ["fresh-live"],
+        False,
+    )
+
+
+def test_context_transition_cannot_spawn_ports_pollers_or_inbox_sidecars() -> None:
+    # Arrange
+    source = inspect.getsource(owner._supervise_tui)
+    # Act
+    forbidden = tuple(
+        name
+        for name in (
+            "_publish_gateway_state",
+            "_start_cct",
+            "start_cct_poller",
+            "_start_inbox",
+            "start_inbox_dispatcher",
+            "_start_recovery",
+        )
+        if name in source
+    )
+    # Assert
+    assert forbidden == ()
+
+
 def test_owner_clears_periodic_turn_before_declaring_session_attached(tmp_path):
     # Arrange
     gateway = _Process()
@@ -431,6 +572,59 @@ def test_owner_clears_periodic_turn_before_declaring_session_attached(tmp_path):
         supervision["state"],
         supervision["periodic_turns"],
     ) == (0, 1, False, ["live-1", "live-1"], "attached", "disabled")
+
+
+def test_pending_committed_transition_recovers_before_identity_selection(tmp_path):
+    # Arrange
+    gateway = _Process()
+    spawned = []
+
+    def spawn(command, *, env):
+        del env
+        process = _Process()
+        spawned.append((list(command), process))
+        return process
+
+    active_calls = 0
+
+    def active_list(_state_dir):
+        nonlocal active_calls
+        active_calls += 1
+        if active_calls == 2:
+            spawned[-1][1].returncode = 0
+        return [
+            {
+                "id": "fresh-live",
+                "session_key": "fresh-stored",
+                "title": "sac:ui:handoff:nonce",
+            }
+        ]
+
+    recoveries = iter(("fresh-stored", None))
+    finalized = []
+    # Act
+    _process, result = owner._supervise_tui(
+        ["hermes", "chat", "--tui", "--continue", "sac:ui"],
+        env={},
+        state_dir=tmp_path,
+        gateway=gateway,
+        spawn=spawn,
+        active_list=active_list,
+        recover_pending=lambda _state: next(recoveries),
+        finalize_pending=lambda _state, session: finalized.append(session["id"]),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 100.0,
+        poll_s=0,
+        startup_grace_s=0,
+    )
+    # Assert
+    assert (
+        result,
+        len(spawned),
+        spawned[0][1].terminated,
+        spawned[0][0][-2:],
+        finalized,
+    ) == (0, 1, False, ["--resume", "fresh-stored"], ["fresh-live"])
 
 
 def test_ambiguous_live_sessions_are_refused_without_restarting_tui(tmp_path):

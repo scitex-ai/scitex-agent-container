@@ -14,6 +14,15 @@ versioning follows [SemVer](https://semver.org/).
   `--allow-stale-spec`/environment bypass is removed. Intentional detached
   `sac-authority/<source>-<commit>` snapshots remain supported only when their
   origin identity, HEAD, clean tree, and loaded spec blob match exactly.
+- **Prompt assembly is explicit, provenance-checked, and harness-neutral.**
+  Omitting `startup_prompts` no longer injects a Claude/scitex-todo prompt,
+  while an explicit empty list remains a true no-op. Declared
+  `to_home_layers` now control the files that are actually materialized, and
+  each home backing receives a SHA-256 manifest covering prompt sources,
+  projections, skills, commands, and startup turns. Hermes launch requires a
+  verified neutral root `AGENTS.md`, embeds those exact bytes through
+  `agent.system_prompt`, and fails with a migration hint instead of silently
+  translating a legacy `CLAUDE.md` or accepting divergent home projections.
 - **Remote image staging includes SAC's console bootstrap package.** The HPC
   bake context now copies `_scitex_agent_container_bootstrap` alongside the
   main package, matching the wheel manifest and preventing the image `%test`
@@ -57,6 +66,15 @@ versioning follows [SemVer](https://semver.org/).
   and shipped-version changelog entries retain the old names as records.
 
 ### Added
+- **Write-capable agent tasks now pass the harness-neutral worktree policy
+  gate.** SAC invokes the operator-owned `scitex-worktree-policy` CLI before a
+  new Claude, Codex, or Hermes harness process starts; automatically resolves a
+  stable agent-owned linked worktree while preserving/refusing dirty or
+  conflicting checkouts; exposes the migration plan in dry-run/explain; fails
+  closed on missing, denied, stale, malformed, or hash-inconsistent results;
+  and records `policy_sha256` plus `projection_sha256` on the incarnation.
+  Policy remains in dotfiles; SAC adds no hook-, skill-, prompt-, or doc-based
+  rule copy or bypass.
 - **Hermes Cards messages now enter the visible TUI as durable steer turns.**
   Cards 0.52 supplies a responder-issued exchange id and a PostgreSQL
   doorbell; SAC preserves that one id through `202 Accepted`, sender-attributed

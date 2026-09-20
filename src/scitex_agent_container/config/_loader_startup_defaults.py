@@ -1,10 +1,10 @@
-"""Loader default INJECTIONS — the startup command/prompt every spec inherits.
+"""Loader default injection for the startup command every spec inherits.
 
 Extracted verbatim from :mod:`._loaders` when that orchestrator hit the
 per-file line cap (v4 step 6 made the residency field land there). One
-cohesive responsibility: the two defaults ``load_v3`` injects into every
-agent — the guarded direnv-allow startup command and the generic boot
-kick. ``_loaders`` re-imports every public name here, so existing
+cohesive responsibility: the guarded direnv-allow startup command ``load_v3``
+injects into every agent. Startup prompts have no implicit default: the
+standalone spec is authoritative. ``_loaders`` re-imports every public name here, so existing
 consumers keep their ``config._loaders`` import path.
 """
 
@@ -16,7 +16,6 @@ from ._types import StartupCommand
 
 __all__ = [
     "DEFAULT_DIRENV_ALLOW_COMMAND",
-    "DEFAULT_STARTUP_PROMPT",
     "_with_default_direnv_allow",
 ]
 
@@ -67,15 +66,3 @@ def _with_default_direnv_allow(
         if _DIRENV_ALLOW_RE.search(cmd.command or ""):
             return commands
     return [*commands, StartupCommand(command=DEFAULT_DIRENV_ALLOW_COMMAND)]
-
-
-# Generic boot-kick used when a spec omits ``startup_prompts``. Role/ID live in
-# the auto-generated $HOME/.claude/CLAUDE.md and the task lives on the agent's
-# scitex-todo card slice, so the boot prompt only needs a generic kick — per-spec
-# restatement of scope/task is the anti-pattern (operator, 2026-06-25). Bare +
-# period (no colon) so it also parses plain in YAML without >-/quotes.
-DEFAULT_STARTUP_PROMPT = (
-    "Start or continue. Scan your scitex-todo card slice, resume any in-flight "
-    "or assigned work (hold idle if none), then report readiness. Follow "
-    "CLAUDE.md + your skills; don't restate, don't invent scope."
-)
