@@ -91,7 +91,7 @@ spec:
 
   startup_commands:                      # SHELL before claude starts (list of {delay, command} dicts)
     - { delay: 0, command: "echo hi" }
-  startup_prompts:  [...]                # TEXT fed to claude as first user msg
+  startup_prompts:  [...]                # TEXT fed to the selected harness as first user msg
   session: continue                      # top-level shortcut overriding spec.claude.session
 
   host:  gpu-box                         # mutually exclusive: singleton on one peer
@@ -162,7 +162,7 @@ when `spec.a2a.port` is set) and `GET /agents/<name>/card`
 | `session`            | string                     | Top-level shortcut overriding `spec.claude.session`; legacy aliases accepted (`continue-or-new`, `new`). |
 | `screen.name`        | string                     | Legacy metadata (agent display name in `sac fleet`). Default = agent name. Does NOT drive a multiplexer. |
 | `startup_commands[]` | list of `{delay, command}` | Run **before** the harness process starts. Each item is a dict with optional `delay` (int seconds, default 0) and required `command` (string); bare strings are not accepted. |
-| `startup_prompts[]`  | list of strings            | Fed to the agent as first user message(s)                                |
+| `startup_prompts[]`  | list of strings            | Required explicitly; `[]` means no startup turn; no implicit prompt fallback |
 
 ### `spec.apptainer` — engine knobs
 

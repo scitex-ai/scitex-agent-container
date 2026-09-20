@@ -64,6 +64,10 @@ _CHANNEL_SOURCE_DEFAULT = "sac"
 # lives in ``_channel_auto_ack`` so this receive-side adapter stays under
 # the size budget. Re-exported here for historical import paths:
 # ``from scitex_agent_container._mcp.channel import _post_auto_ack``.
+from ._channel_agentic_feedback import (  # noqa: E402
+    absorb_agentic_feedback,
+    is_agentic_feedback_event,
+)
 from ._channel_auto_ack import (  # noqa: E402,F401
     _AUTO_ACK_RATE_MAX_DEFAULT,
     _AUTO_ACK_RATE_WINDOW_DEFAULT,
@@ -214,6 +218,14 @@ async def _push_channel_event(
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage, JSONRPCNotification
 
+    # Semantic feedback is model-authored on the peer. Verify its exact nonce,
+    # update our sender-owned ledger, and keep the protocol envelope out of the
+    # model's ordinary inbox. Automatic receive hooks never originate it.
+    if is_agentic_feedback_event(event):
+        _recent.append(event)
+        absorb_agentic_feedback(event, agent=agent_name)
+        return
+
     # Sender-side absorption: a structural reaction-ack updates the
     # dispatch ledger and is then suppressed from session injection.
     # The event is still buffered into ``_recent`` so a2a_inbox callers
@@ -352,6 +364,15 @@ async def _serve(
                 _refresh_comms_node(name=name, listen_url=listen_url)
             )
 
+        # Missing semantic ACKs are durable control-plane state, not a reason
+        # to resend the original task. The worker emits only nonce reminders,
+        # stops on verified ACK/terminal status, and escalates at its deadline.
+        from ._channel_nudge_worker import run_nudge_scheduler
+
+        nudge_task = asyncio.create_task(
+            run_nudge_scheduler(agent=name, listen_url=listen_url, bearer=bearer)
+        )
+
         try:
             async with anyio.create_task_group() as tg:
                 async for message in session.incoming_messages:
@@ -368,7 +389,7 @@ async def _serve(
             # the MCP session (and made Python 3.13 wait forever for the
             # corresponding test server connections to drain).
             owned_tasks = tuple(
-                task for task in (sse_task, reg_task) if task is not None
+                task for task in (sse_task, reg_task, nudge_task) if task is not None
             )
             for task in owned_tasks:
                 task.cancel()

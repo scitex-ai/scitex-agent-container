@@ -203,7 +203,7 @@ async def run_blocking(
     #     3.11.15  wait_for -> 13 swallowed   asyncio.timeout/bare await -> 0
     #     3.12.3   wait_for ->  0 swallowed   asyncio.timeout/bare await -> 0
     # `asyncio.timeout()` would fix it too but is 3.11+, and this package still
-    # declares `requires-python = ">=3.10"`. A bare await has no swallow branch
+    # declares `requires-python = ">=3.11"`. A bare await has no swallow branch
     # on ANY version: cancellation always propagates.
     deadline = loop.call_later(timeout_s, _on_deadline)
     try:

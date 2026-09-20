@@ -310,7 +310,7 @@ def locate_bundled_hatch_build(pkg_root: Path) -> Path:
 def _declared_version(pyproject_path: Path) -> str:
     """Return the project version named by the staged build input.
 
-    SAC supports Python 3.10, so this intentionally does not import
+    SAC's floor is Python 3.11, and this intentionally does not import
     ``tomllib``.  The project's version is a required, single-line PEP 621
     field; absence is a malformed image-build input and fails before the
     expensive container build starts.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,32 @@ def _config() -> AgentConfig:
     config = AgentConfig(name="worker", harness="hermes", runtime="tui")
     config.a2a.port = "auto"
     return config
+
+
+def _beat(*, process_alive: bool | None, connected: bool = True) -> dict:
+    now = time.time()
+    return {
+        "agent_id": "remote-worker",
+        "spec_id": "sha256:spec",
+        "host": "node-7",
+        "runtime": "tui",
+        "harness": "hermes",
+        "engine": "vllm",
+        "model": "qwen",
+        "session_id": "session-1",
+        "boot_id": "boot-1",
+        "seq": 1,
+        "monotonic_ns": 1,
+        "observed_at": now,
+        "progress_at": now,
+        "progress_seq": 1,
+        "state": "idle",
+        "lease_expires_at": now + 30,
+        "card_id": "",
+        "card_role": "",
+        "_process_alive": process_alive,
+        "_federation_connected": connected,
+    }
 
 
 def test_a2a_status_separates_configured_and_durable_resolved_port() -> None:
@@ -118,8 +145,65 @@ def test_remote_instance_status_exposes_resolved_a2a_contract() -> None:
     )
 
     # Assert
-    assert result["a2a"] == {
-        "configured_port": None,
-        "resolved_port": 19_123,
-        "resolution_source": "active_instance_bound_port",
-    }
+    assert result is not None and (
+        result["a2a"],
+        result["status"],
+        result["observation"]["process"]["state"],
+    ) == (
+        {
+            "configured_port": None,
+            "resolved_port": 19_123,
+            "resolution_source": "active_instance_bound_port",
+        },
+        "unknown",
+        "unknown",
+    )
+
+
+def test_remote_instance_direct_dead_outranks_active_row() -> None:
+    # Arrange
+    beat = _beat(process_alive=False)
+    # Act
+    result = status_module._remote_instance_status(
+        "remote-worker",
+        instance_reader=lambda: [
+            {"name": "remote-worker", "host": "node-7", "remote": True}
+        ],
+        heartbeat_reader=lambda: [beat],
+    )
+
+    # Assert
+    assert result is not None and (
+        result["status"],
+        result["observation"]["process"]["state"],
+    ) == ("stopped", "exited")
+
+
+def test_heartbeat_only_direct_alive_outranks_disconnection() -> None:
+    # Arrange
+    beat = _beat(process_alive=True, connected=False)
+    # Act
+    result = status_module._heartbeat_only_status(
+        "remote-worker", heartbeat_reader=lambda: [beat]
+    )
+    # Assert
+    assert result is not None and (
+        result["status"],
+        result["liveness"]["verdict"],
+        result["observation"]["process"]["state"],
+    ) == ("running", "alive", "alive")
+
+
+def test_fresh_heartbeat_repairs_unknown_liveness_consistently() -> None:
+    # Arrange
+    beat = _beat(process_alive=None)
+    # Act
+    result = status_module._heartbeat_only_status(
+        "remote-worker", heartbeat_reader=lambda: [beat]
+    )
+    # Assert
+    assert result is not None and (
+        result["status"],
+        result["liveness"]["verdict"],
+        result["observation"]["process"]["state"],
+    ) == ("running", "alive", "alive")

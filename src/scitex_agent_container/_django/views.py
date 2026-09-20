@@ -36,6 +36,13 @@ from ._authorization import can_control, fleet_visibility, resolve_identity, sco
 from ._constants import API_URL_ENV
 from ._projection import project_detail, project_row
 from ._remote import RemoteFleet, safe_error_message
+from ._timeline import (
+    KINDS,
+    REFRESH_SECONDS,
+    STALE_AFTER_SECONDS,
+    build_timeline,
+    timeline_rows,
+)
 
 
 def _mount_base(request: HttpRequest, view_path: str) -> str:
@@ -185,6 +192,64 @@ def index(request: HttpRequest):
 
 
 @require_GET
+def timeline(request: HttpRequest):
+    """The rendered activity timeline (its JSON twin is ``timeline_api``).
+
+    Server-rendered so the surface works with JS disabled and is complete on
+    first paint; ``timeline.js`` then refreshes it in place, bounded and
+    deduped. Filters come from the query string and are applied by the SAME
+    server-side code the poll uses, so the two paths cannot diverge.
+    """
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+        comm_error = ""
+    except Exception as exc:  # stx-allow: fallback (reason: unreachable listener is a STATE to show)
+        rows, comm_error = [], str(exc)
+    names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    statuses = fleet.read_statuses(names)
+    agent_filter = request.GET.get("agent") or ""
+    kind_filter = request.GET.get("kind") or ""
+    entries = build_timeline(
+        statuses,
+        agent=agent_filter if isinstance(agent_filter, str) and agent_filter else None,
+        kind=kind_filter if isinstance(kind_filter, str) and kind_filter else None,
+    )
+    context, is_standalone = _app_context(
+        request,
+        "Agents · Activity",
+        view_path="timeline/",
+        entries=timeline_rows(entries),
+        summary=_timeline_summary(entries),
+        agent_names=sorted(names),
+        kinds=KINDS,
+        selected_agent=agent_filter,
+        selected_kind=kind_filter,
+        refresh_seconds=REFRESH_SECONDS,
+        stale_after_seconds=STALE_AFTER_SECONDS,
+        identity=identity,
+        listener=fleet.base_url,
+        comm_error=comm_error,
+        page="timeline",
+    )
+    template = (
+        "scitex_agent_container/timeline.html"
+        if is_standalone
+        else "scitex_agent_container/timeline_hub.html"
+    )
+    return render(request, template, context)
+
+
+def _timeline_summary(entries: list) -> dict:
+    summary = {"total": len(entries), "observed": 0, "stale": 0, "unreachable": 0, "unknown": 0}
+    for entry in entries:
+        if entry.state in summary:
+            summary[entry.state] += 1
+    return summary
+
+
+@require_GET
 def fleet_api(request: HttpRequest) -> JsonResponse:
     """Browser poll endpoint: a synchronous, scoped read that WARMS the cache.
 
@@ -207,6 +272,41 @@ def fleet_api(request: HttpRequest) -> JsonResponse:
     except Exception as exc:  # stx-allow: fallback (reason: surface the failure as JSON, not a 500 page)
         CACHE.record_error(identity, error=safe_error_message(exc), scope=scope)
         return JsonResponse({"ok": False, "error": safe_error_message(exc)}, status=502)
+
+
+@require_GET
+def timeline_api(request: HttpRequest) -> JsonResponse:
+    """The activity timeline as JSON, for the near-real-time poll.
+
+    Reads the SAME per-agent status the fleet view reads, so this endpoint adds
+    no second source of truth and no state of its own. Filters are applied
+    server-side (``agent``, ``kind``): the browser must not pull the whole fleet
+    to render one agent's history.
+    """
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+    except Exception as exc:  # stx-allow: fallback (reason: an unreachable listener is a STATE the caller sees as the 502 JSON body)
+        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+    names = [str(r["name"]) for r in rows if isinstance(r.get("name"), str)]
+    statuses = fleet.read_statuses(names)
+    agent_filter = request.GET.get("agent") or None
+    kind_filter = request.GET.get("kind") or None
+    entries = build_timeline(
+        statuses,
+        agent=agent_filter if isinstance(agent_filter, str) else None,
+        kind=kind_filter if isinstance(kind_filter, str) else None,
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "identity": identity,
+            "count": len(entries),
+            "entries": [e.as_dict() for e in entries],
+            "stale_after_seconds": STALE_AFTER_SECONDS,
+        }
+    )
 
 
 def _detail_extras(fleet: RemoteFleet, name: str, status: Any) -> dict:
@@ -266,12 +366,16 @@ def detail(request: HttpRequest, name: str):
     cross_host = row.get("scope") == "cross-host"
     agent = project_detail(row, status)
     agent.update(_detail_extras(fleet, name, status))
+    from ._control import CONTROL_KEYS, new_dispatch_id
+
     context, is_standalone = _app_context(
         request, f"Agent · {name}", view_path=f"{name}/",
         agent=agent,
         identity=identity,
         cross_host=cross_host,
         can_operate=can_control(identity, cross_host=cross_host, request=request, agent=name),
+        control_keys=CONTROL_KEYS,
+        dispatch_id=new_dispatch_id(),
         list_error=list_error,
         page="detail",
     )
@@ -333,6 +437,99 @@ def lifecycle_action(request: HttpRequest, name: str):
         }
     )
     query = urlencode({"operation": action, "state": state, "message": str(message)[:240]})
+    return HttpResponseRedirect(f"{base}/{name}/?{query}")
+
+
+@require_POST
+def message_action(request: HttpRequest, name: str):
+    """Send a message/steer or a UI-control key to an agent's own bridge.
+
+    Delegates to the agent's published ``turn_url`` — the SAME endpoint the
+    fleet's A2A send uses. The GUI never constructs a host/port, never touches
+    tmux, and holds no queue: a delivery is either reported delivered or
+    reported failed.
+
+    Authorization is identical to :func:`lifecycle_action`: the caller must see
+    the agent AND be allowed to control it. A refusal is audited.
+    """
+    from ._authorization import record_audit
+    from ._control import (
+        exactly_one_of,
+        new_dispatch_id,
+        send_control_key,
+        send_message,
+    )
+
+    fleet = RemoteFleet.from_environment()
+    identity = resolve_identity(request)
+    base = _mount_base(request, f"{name}/message")
+
+    def field(key: str) -> str:
+        """A single POST value as text. ``get`` can return a list, and a list
+        has no ``.strip()`` — reading it as one value is the honest shape."""
+        value = request.POST.get(key, "")
+        return value if isinstance(value, str) else (value[0] if value else "")
+
+    message = field("message")
+    control_key = field("control_key")
+    dispatch_id = field("dispatch_id") or new_dispatch_id()
+
+    if not exactly_one_of(message.strip(), control_key.strip()):
+        query = urlencode(
+            {
+                "operation": "message",
+                "state": "refused",
+                "message": "Provide either a message or a single control key.",
+            }
+        )
+        return HttpResponseRedirect(f"{base}/{name}/?{query}")
+
+    try:
+        rows = scope_rows(fleet.list_all(), identity)
+    except Exception as exc:  # stx-allow: fallback (reason: cannot authorize what cannot be listed)
+        return JsonResponse({"error": f"cannot reach listener: {exc}"}, status=502)
+    row = next((r for r in rows if r.get("name") == name), None)
+    if row is None:
+        return HttpResponseForbidden("This agent is not within your scope.")
+    cross_host = row.get("scope") == "cross-host"
+    if not can_control(identity, cross_host=cross_host, request=request, agent=name):
+        record_audit(
+            {
+                "event": "message_denied",
+                "identity": identity,
+                "agent": name,
+                "path": request.path,
+            }
+        )
+        return HttpResponseForbidden("You are not authorized for this action.")
+
+    turn_url = row.get("turn_url")
+    if control_key.strip():
+        result = send_control_key(turn_url, key=control_key.strip(), dispatch_id=dispatch_id)
+    else:
+        result = send_message(turn_url, text=message, dispatch_id=dispatch_id)
+
+    record_audit(
+        {
+            "event": "message_action",
+            "identity": identity,
+            "agent": name,
+            "mode": result.mode,
+            "cross_host": cross_host,
+            "state": result.state,
+            "dispatch_id": result.dispatch_id,
+            "message": result.message[:240],
+            "path": request.path,
+        }
+    )
+    query = urlencode(
+        {
+            "operation": "control" if result.mode == "control" else "message",
+            "state": result.state,
+            "message": result.message[:240],
+            "dispatch_id": result.dispatch_id,
+        }
+    )
     return HttpResponseRedirect(f"{base}/{name}/?{query}")
 
 

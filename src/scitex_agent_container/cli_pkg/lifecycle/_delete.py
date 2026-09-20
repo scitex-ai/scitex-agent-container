@@ -219,8 +219,17 @@ def delete(
         # in state.db; we must count that as "exists" so the delete
         # doesn't no-op when it should ssh.
         remote_row = lookup_remote_peer(name)
+        # A DANGLING spec link is the case this verb most needs to handle: the
+        # authority half of a deletion landed, so the link's target is gone and
+        # ``spec_dir.exists()`` is False. Measured 2026-09-19 on compute-03 —
+        # two links left by exactly that sequence reported "not found" and the
+        # only cleaner for them was a plain rm. ``is_symlink()`` is True even
+        # when the target is missing, so it is the correct existence test.
+        spec_is_link = spec_dir.is_symlink()
+        spec_is_dangling = spec_is_link and not spec_dir.exists()
         existed_anywhere = (
             spec_dir.exists()
+            or spec_is_link
             or rt_dir.exists()
             or registry.exists(name)
             or remote_row is not None
@@ -232,9 +241,10 @@ def delete(
 
         if dry_run:
             remote_marker = f" remote={remote_row[0]}" if remote_row is not None else ""
+            dangling_marker = " DANGLING (target missing)" if spec_is_dangling else ""
             click.echo(
                 f"[dry-run] would delete '{name}': "
-                f"spec={spec_dir.exists()} runtime={rt_dir.exists() and not keep_runtime} "
+                f"spec={spec_dir.exists()}{dangling_marker} runtime={rt_dir.exists() and not keep_runtime} "
                 f"registry={registry.exists(name)}{remote_marker}"
             )
             continue
@@ -262,8 +272,20 @@ def delete(
         except Exception:
             pass
 
-        # 2. Spec dir.
-        if spec_dir.exists():
+        # 2. Spec dir. A DANGLING link is removed as a LINK — rmtree cannot
+        # resolve it, and the link itself is the debris that half-done
+        # deletions leave behind.
+        if spec_is_dangling:
+            # stx-allow: fallback (unlink may race with a concurrent relink;
+            # we report and continue rather than abort the batch)
+            try:
+                spec_dir.unlink()
+            except OSError as exc:
+                click.echo(
+                    f"[warn] '{name}': could not remove dangling link {spec_dir}: {exc}"
+                )
+                any_err = True
+        elif spec_dir.exists():
             # stx-allow: fallback (rmtree may race with a concurrent
             # writer; we report and continue rather than abort the batch)
             try:

@@ -299,6 +299,7 @@ def remote_instance_rows(
             "account": account,  # deprecated inventory alias
             **identity,
             "remote": True,
+            "liveness_unknown": status == "unknown",
         }
         row.update(dict(_al._MOVEMENT_DEFAULTS))
         row.update(verdict_for(None))
