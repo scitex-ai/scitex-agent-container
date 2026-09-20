@@ -44,8 +44,8 @@ def validate_proxy_coupling(spec: dict, kind: object) -> list[str]:
 
     AgentProxy has NO SDK — it's a thin HTTP forwarder. So:
       * spec.proxy is REQUIRED (no upstream → nothing to forward to)
-      * spec.claude / spec.engines / spec.startup_prompts /
-        spec.startup_commands are IGNORED (no SDK to configure / prompt,
+      * spec.claude / spec.engines / spec.startup are IGNORED
+        (no SDK to configure / prompt,
         and therefore no backend to select); authoring them is a
         category error surfaced loudly.
     The mirror also holds for kind: Agent — spec.proxy is rejected there
@@ -73,8 +73,7 @@ def validate_proxy_coupling(spec: dict, kind: object) -> list[str]:
         for forbidden in (
             "claude",
             "engines",
-            "startup_prompts",
-            "startup_commands",
+            "startup",
         ):
             val = spec.get(forbidden)
             if val:

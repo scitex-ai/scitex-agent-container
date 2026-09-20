@@ -1246,13 +1246,13 @@ def _layers_spec(spec_extra: dict) -> dict:
     return {**_BASE, "spec": {**_BASE["spec"], **spec_extra}}
 
 
-def test_to_home_layers_is_an_accepted_spec_field():
-    # Arrange — a spec declaring the cascade it inherits.
+def test_to_home_layers_is_rejected_in_favour_of_explicit_imports():
+    # Arrange
     raw = _layers_spec({"to_home_layers": ["user-shared", "per-agent"]})
     # Act
     errors = validate_raw(raw, path="<test>")
     # Assert
-    assert not [e for e in errors if "to_home_layers" in e]
+    assert [e for e in errors if "to_home_layers" in e]
 
 
 def test_a_misspelt_layers_field_is_still_rejected():

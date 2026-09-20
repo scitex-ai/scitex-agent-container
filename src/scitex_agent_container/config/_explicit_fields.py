@@ -58,7 +58,7 @@ EXCLUDED from the required map, each with its reason:
     ``spec.scheduling``, ``spec.dockerfile``, top-level ``image`` /
     ``env`` / ``model`` / ``mounts``, ``spec.skills``, ``spec.dot_claude``,
     ``spec.remote``, ``metadata.name``, ``apptainer.container_workdir``.
-  * list-ITEM internals (``listen[].port``, ``startup_commands[].command``,
+  * list-ITEM internals (``listen[].port``, ``startup.commands.entries[].run``,
     ``apptainer.binds`` entries, ``mcp_servers.*`` bodies,
     ``claude.provider`` dict internals) — the LIST/MAPPING itself is the
     explicit declaration; item shapes are validated by their parsers.
@@ -196,18 +196,45 @@ def _top_level_fields() -> list[RequiredField]:
             None,
         ),
         RequiredField("python-venv", "str | list[str]", "''", ""),
-        RequiredField("startup_commands", "list", "[]", []),
         RequiredField(
-            "startup_prompts",
-            "list[str]",
-            "[] (empty inherits the generic boot kick)",
-            [],
+            "startup",
+            "mapping",
+            "no hidden commands, prompts, or environment",
+            {
+                "environment": {
+                    "resolve_on": "target-host",
+                    "conflict_policy": "specification-wins",
+                    "values": {},
+                },
+                "commands": {
+                    "execution": {
+                        "location": "apptainer",
+                        "phase": "before-harness",
+                        "shell": "/bin/bash -lc",
+                        "failure": "abort",
+                    },
+                    "entries": [],
+                },
+                "prompts": {
+                    "execution": {
+                        "location": "harness",
+                        "phase": "first-turn",
+                        "readiness": "required",
+                    },
+                    "entries": [],
+                },
+            },
         ),
         RequiredField("listen", "list", "[]", []),
         RequiredField("extensions", "dict", "{}", {}),
         RequiredField("mcp_servers", "dict", "{}", {}),
         RequiredField("user", "str", "''", ""),
-        RequiredField("to_home", "str", "'./to_home'", "./to_home"),
+        RequiredField(
+            "to_home",
+            "mapping",
+            "no implicit layers",
+            {"imports": []},
+        ),
     ]
 
 
@@ -307,5 +334,6 @@ def required_fields_for_kind(kind: object) -> tuple[RequiredField, ...]:
     if kind == "Agent":
         fields += _claude_fields()
     elif kind == "AgentProxy":
+        fields = [field for field in fields if field.path != "startup"]
         fields += _proxy_fields()
     return tuple(fields)

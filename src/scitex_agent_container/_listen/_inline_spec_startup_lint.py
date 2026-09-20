@@ -195,7 +195,7 @@ class StartupLintResult:
 
 
 def _iter_startup_commands(spec: dict) -> list[Any]:
-    """Best-effort extraction of ``spec.startup_commands`` from a v3 spec.
+    """Best-effort extraction of ``spec.startup.commands.entries``.
 
     Defensive: any unexpected shape collapses to an empty list. Same
     pattern as :func:`_inline_spec_preflight._iter_binds`.
@@ -205,23 +205,29 @@ def _iter_startup_commands(spec: dict) -> list[Any]:
     spec_body = spec.get("spec")
     if not isinstance(spec_body, dict):
         return []
-    cmds = spec_body.get("startup_commands")
+    startup = spec_body.get("startup")
+    if not isinstance(startup, dict):
+        return []
+    commands = startup.get("commands")
+    if not isinstance(commands, dict):
+        return []
+    cmds = commands.get("entries")
     if not isinstance(cmds, list):
         return []
     return cmds
 
 
 def _extract_command(entry: Any) -> str | None:
-    """Pull the ``command`` string out of a single startup_commands entry.
+    """Pull ``run`` from a single structured startup-command entry.
 
-    Accepts the canonical dict form ``{delay: int, command: str}``.
+    Accepts the canonical dict form ``{delay_seconds: int, run: str}``.
     Returns ``None`` for any unexpected shape; the lint then skips
     the entry (the downstream parser will drop it anyway, so this is
     not a host-visible signal we need to enforce).
     """
     if not isinstance(entry, dict):
         return None
-    cmd = entry.get("command")
+    cmd = entry.get("run")
     if not isinstance(cmd, str):
         return None
     return cmd

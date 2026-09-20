@@ -20,7 +20,6 @@ __all__ = [
 ]
 
 
-
 # All spec keys read by load_v3, parsers, or a2a/_server.py.
 # Unknown keys are rejected at parse time so typos surface at boot.
 # Intentional extension data belongs under spec.extensions.
@@ -62,8 +61,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         "watchdog",
         "restart",
         "hooks",
-        "startup_commands",
-        "startup_prompts",  # v3-realign: separate from startup_commands (§3)
         "startup",
         "context_management",  # TOLERATED FOSSIL (2026-08-15): schema deleted — nothing ever read it; key parses to nothing. Drop from this list only after the fleet sweep strips deployed specs, else every spec red-starts (the container.runtime trap).
         "listen",
@@ -88,7 +85,6 @@ _KNOWN_SPEC_KEYS = frozenset(
         # explicit-required map in `_explicit_fields`, so a spec that omits it
         # still loads and still inherits the implicit cascade. Turning that
         # omission into an error is a separate, later step.
-        "to_home_layers",
         "comms",  # Phase-3 ACL: outbound/inbound + a2a listen toggle
         "lineage",  # Phase-3 ACL: group=solitary + may_spawn
         "delegation",  # harness-neutral child concurrency/isolation policy

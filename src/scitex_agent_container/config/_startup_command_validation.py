@@ -1,4 +1,4 @@
-"""``spec.startup_commands`` destructive-command guard.
+"""``spec.startup.commands.entries`` destructive-command guard.
 
 Extracted from ``_validation.py`` to keep that orchestrator under the
 512-line cap (sibling to ``_claude_validation`` / ``_placement_validation``
@@ -10,7 +10,7 @@ Every one of the fleet's 96 generated agent specs shipped an UNGUARDED::
 
     rm -rf $HOME/proj 2>/dev/null; ln -sfn <src> $HOME/proj
 
-in ``startup_commands``. ``$HOME/proj`` is normally a SYMLINK, so the
+in startup commands. ``$HOME/proj`` is normally a SYMLINK, so the
 author's intent was "atomically re-point the symlink". But ``rm -rf`` on a
 *variable* target is a landmine: if ``$HOME/proj`` ever resolved to a real
 directory (a stale checkout, a failed earlier symlink, a race) the
@@ -23,7 +23,7 @@ The fixed form we shipped is symlink-checked + NON-recursive::
 
 ``rm -f`` (no ``-r``) CANNOT descend into a directory, so even if the guard
 were wrong the blast radius is a single inode. This validator makes the
-landmine IMPOSSIBLE TO REINTRODUCE: a spec whose ``startup_commands`` carry
+landmine IMPOSSIBLE TO REINTRODUCE: a spec whose startup commands carry
 a recursive-force ``rm`` on a variable target is REJECTED at validate time
 (constitution: "prefer hooks to prompts; make the destructive path
 impossible; fail fast and loud").
@@ -174,7 +174,7 @@ def _command_is_unguarded_recursive_var_delete(command: str) -> bool:
 
 
 def validate_startup_commands(spec: dict) -> list[str]:
-    """Reject any ``startup_commands`` entry with an unguarded ``rm -rf $VAR``.
+    """Reject a startup command with an unguarded ``rm -rf $VAR``.
 
     Returns a list of error strings (empty = valid), matching the
     ``list[str]`` contract of the other ``config._*_validation`` siblings
@@ -184,18 +184,24 @@ def validate_startup_commands(spec: dict) -> list[str]:
     errors: list[str] = []
     if not isinstance(spec, dict):
         return errors
-    cmds = spec.get("startup_commands")
+    startup = spec.get("startup")
+    if not isinstance(startup, dict):
+        return errors
+    commands = startup.get("commands")
+    if not isinstance(commands, dict):
+        return errors
+    cmds = commands.get("entries")
     if not isinstance(cmds, list):
         return errors
     for index, entry in enumerate(cmds):
         if not isinstance(entry, dict):
             continue
-        command = entry.get("command")
+        command = entry.get("run")
         if not isinstance(command, str) or not command.strip():
             continue
         if _command_is_unguarded_recursive_var_delete(command):
             errors.append(
-                f"spec.startup_commands[{index}].command runs an UNGUARDED "
+                f"spec.startup.commands.entries[{index}].run runs an UNGUARDED "
                 f"recursive delete of a variable path:\n    {command}\n"
                 "`rm -rf $VAR` recurses, and a variable target can resolve to "
                 "a real directory — this is the 2026-07-16 P0 where an "
@@ -204,7 +210,7 @@ def validate_startup_commands(spec: dict) -> list[str]:
                 "NON-recursive delete instead:\n"
                 '    [ -L "$HOME/proj" ] && rm -f "$HOME/proj"\n'
                 "(-L checks it is a symlink; -f without -r cannot descend "
-                "into a directory). Never `rm -rf $VAR` in startup_commands "
+                "into a directory). Never `rm -rf $VAR` in startup commands "
                 "(recursive + variable target = landmine)."
             )
     return errors
