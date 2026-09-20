@@ -29,14 +29,15 @@ Bump python and touch only one file and this goes RED. That is the whole point:
 a half-applied version bump is invisible in review and stays invisible until a
 release, and this fleet keeps hitting exactly that shape.
 
-KNOWN, DELIBERATE GAP -- NOT A BUG THIS FILE HIDES: ``requires-python`` declares
-``>=3.10`` and the classifiers list 3.10, but CI's floor is 3.11 because the
+GAP CLOSED 2026-09-20 -- this file previously recorded a KNOWN, DELIBERATE gap:
+``requires-python`` declared ``>=3.10`` while CI's floor was 3.11, because the
 shared ``ci-cpu.sif`` bakes only 3.11/3.12/3.13 at ``/opt/venv-<ver>``. So 3.10
-is DECLARED supported and never tested. ``test_ci_never_tests_an_undeclared_
-version`` asserts the safe direction (CI never tests something we do not claim
-to support); closing the other direction means either baking 3.10 into the SIF
-or raising ``requires-python``, and that is a separate decision with its own
-blast radius.
+was DECLARED supported and never tested. ``test_ci_never_tests_an_undeclared_
+version`` asserted the safe direction (CI never tests something we do not claim
+to support). The gap was closed from the other side, by the operator's decision
+to raise ``requires-python`` to ``>=3.11`` rather than bake 3.10 into the SIF:
+cheaper to maintain, and it removes a support claim nothing verified. The two
+directions now AGREE at 3.11, which is what this file exists to keep true.
 
 No mocks: every assertion parses the real ``.github/workflows/*.y*ml`` and the
 real ``pyproject.toml``.
