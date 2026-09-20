@@ -1,0 +1,1 @@
+"""Fleet inventory contract tests."""
