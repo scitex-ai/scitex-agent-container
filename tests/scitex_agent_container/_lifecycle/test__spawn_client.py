@@ -203,6 +203,35 @@ def test_post_body_includes_child_name(listen_env) -> None:
     assert json.loads(captured["body"])["name"] == "c"
 
 
+def test_admin_spawn_declares_explicit_authority(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","returncode":0}')
+    # Act
+    request_spawn("c", admin=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["authority"] == "admin"
+
+
+def test_admin_spawn_rejects_claimed_agent_caller(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    # Act
+    # Assert
+    with pytest.raises(SpawnRequestError, match="admin spawn cannot claim"):
+        request_spawn("c", admin=True, caller="parent", opener=lambda *_a, **_k: None)
+
+
+def test_canary_spawn_requests_non_live_handoff(listen_env) -> None:
+    # Arrange
+    listen_env("LISTEN_BASE_URL", "http://host:9100")
+    opener, captured = _opener_returning(b'{"name":"c","canary":true,"started":false}')
+    # Act
+    request_spawn("c", admin=True, canary=True, opener=opener)
+    # Assert
+    assert json.loads(captured["body"])["canary"] is True
+
+
 def test_post_body_defaults_caller_from_sac_name_env(listen_env) -> None:
     # Arrange — SAC_NAME present → resolved as caller automatically.
     listen_env("LISTEN_BASE_URL", "http://host:9100")

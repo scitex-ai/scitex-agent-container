@@ -35,7 +35,7 @@ from .status_cmds import health as _health_impl
 from .status_cmds import status as _status_impl
 
 
-def _rebind(cmd: click.Command, new_name: str) -> click.Command:
+def _rebind(cmd: click.Command, new_name: str, *, hidden: bool = False) -> click.Command:
     return click.Command(
         name=new_name,
         callback=cmd.callback,
@@ -43,6 +43,7 @@ def _rebind(cmd: click.Command, new_name: str) -> click.Command:
         help=cmd.help,
         short_help=cmd.short_help,
         epilog=cmd.epilog,
+        hidden=hidden,
     )
 
 
@@ -56,7 +57,7 @@ class _AgentsGroup(HelpRecursiveGroup):
             [
                 "create",
                 "start",
-                "twin",
+                "fork",
                 "stop",
                 "restart",
                 "reconcile",

@@ -572,6 +572,45 @@ class TestAgentsStartValidation:
         # Assert
         assert resp.status_code == 400
 
+    def test_traversal_name_returns_400(self, client, auth_headers):
+        # Arrange
+        body = {"name": "../escape"}
+        # Act
+        resp = client.post("/agents", json=body, headers=auth_headers)
+        # Assert
+        assert resp.json()["kind"] == "invalid_agent_name"
+
+    def test_canary_materializes_without_starting(
+        self, client, auth_headers, isolated_env
+    ):
+        # Arrange
+        body = {
+            "name": "canary-child",
+            "authority": "admin",
+            "canary": True,
+            "spec": {
+                "apiVersion": "scitex-agent-container/v3",
+                "kind": "Agent",
+                "metadata": {"name": "canary-child"},
+                "spec": {"role": "head"},
+            },
+        }
+        # Act
+        resp = client.post("/agents", json=body, headers=auth_headers)
+        # Assert
+        assert (
+            resp.status_code,
+            resp.json()["started"],
+            (
+                isolated_env
+                / ".scitex"
+                / "agent-container"
+                / "agents"
+                / "canary-child"
+                / "spec.yaml"
+            ).exists(),
+        ) == (200, False, False)
+
     def test_inline_spec_non_dict_returns_400(self, client, auth_headers):
         # Arrange
         body = {"name": "z", "spec": "not-a-dict"}

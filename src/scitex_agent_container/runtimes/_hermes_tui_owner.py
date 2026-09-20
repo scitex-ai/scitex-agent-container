@@ -153,6 +153,47 @@ def _remove_owned_gateway_state(state_dir: Path, *, generation: str) -> None:
         _unlink_if_generation(state_dir / READY_FILE, generation)
 
 
+def _consume_fork_seed(
+    state_dir: Path,
+    command: list[str],
+    *,
+    import_fn: Callable[[Path, dict], str] | None = None,
+) -> bool:
+    """Import one owner-only Hermes fork handoff before spawning the TUI."""
+    from .._lifecycle._twin import HERMES_FORK_SEED_FILE
+
+    path = state_dir / HERMES_FORK_SEED_FILE
+    if not os.path.lexists(path):
+        return False
+    if path.is_symlink():
+        raise RuntimeError(f"Hermes fork seed must not be a symlink: {path}")
+    stat_result = path.stat()
+    if not path.is_file() or stat_result.st_uid != os.geteuid():
+        raise RuntimeError("Hermes fork seed must be an owner-controlled regular file")
+    if stat_result.st_mode & 0o077:
+        raise RuntimeError("Hermes fork seed permissions must be 0600")
+    if stat_result.st_size > 64 * 1024 * 1024:
+        raise RuntimeError("Hermes fork seed exceeds the 64 MiB safety limit")
+    try:
+        seed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"Hermes fork seed is unreadable: {exc}") from exc
+    mode, expected_identity = requested_session(command)
+    title = str(seed.get("title") or "").strip() if isinstance(seed, dict) else ""
+    if mode != "continue" or not expected_identity or title != expected_identity:
+        raise RuntimeError(
+            "Hermes fork seed identity does not match the requested continuation"
+        )
+    if import_fn is None:
+        from ._hermes_tui_rpc import import_fork_seed as import_fn
+
+    stored_id = import_fn(state_dir, seed)
+    if not str(stored_id or "").strip():
+        raise RuntimeError("Hermes fork seed import returned no stored session id")
+    path.unlink()
+    return True
+
+
 def _select_owned_session(
     sessions: list[dict],
     *,
@@ -590,6 +631,11 @@ def main(argv: list[str] | None = None) -> int:
             port=port,
             gateway_pid=gateway.pid,
         )
+        # A fork handoff is imported only after this child's authenticated
+        # gateway is ready and before the official TUI resolves --continue.
+        # The seed is deleted by _consume_fork_seed only after Hermes confirms
+        # the native session.create/session.branch import.
+        _consume_fork_seed(state_dir, command)
         tui_env = os.environ.copy()
         tui_env["HERMES_TUI_GATEWAY_URL"] = (
             f"ws://127.0.0.1:{port}/api/ws?token={token}"

@@ -183,9 +183,9 @@ def fork(
           --task "draft the results section"
 
     Identity contract (enforced by the boot-kick + the fork skill): the
-    fork AUTHORS scitex-todo writes under its own name, but card OWNERSHIP
+    fork AUTHORS scitex-cards writes under its own name, but card OWNERSHIP
     stays with PARENT — the fork passes assignee=$SAC_FORK_PARENT on every
-    card write. scitex-todo cannot default owner=parent from env, so this
+    card write. scitex-cards cannot default owner=parent from env, so this
     is a hard rule, not an env guarantee.
     """
     from ..._lifecycle._fork import ForkSeedError, prepare_fork_spawn
@@ -215,8 +215,10 @@ def fork(
     # POST to the host listen (brokers on both host + in-container paths).
     import os
 
+    from ..._lifecycle._in_sif_broker import is_in_sif
     from ..._lifecycle._spawn_client import SpawnRequestError, request_spawn
 
+    in_sif = is_in_sif()
     base_url = (os.environ.get("SAC_LISTEN_BASE_URL", "") or "").strip() or None
     if base_url is None:
         # Bare-host invocation: env not set — fall back to the canonical
@@ -229,7 +231,8 @@ def fork(
         result = request_spawn(
             resolved_name,
             spec=doc,
-            caller=caller,
+            caller=(caller if in_sif else ""),
+            admin=not in_sif,
             base_url=base_url,
             assume_yes=True,
         )
