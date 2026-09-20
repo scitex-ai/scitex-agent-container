@@ -312,6 +312,8 @@ def start_inbox_dispatcher(
         PROCESS_ROLE,
         "--incarnation-id",
         incarnation_id,
+        "--state-dir",
+        str(state_dir),
     ]
     for channel in channels:
         argv += ["--channel", channel]

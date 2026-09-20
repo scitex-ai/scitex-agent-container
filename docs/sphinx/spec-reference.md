@@ -71,7 +71,7 @@ spec:
     on_timeout: capture_and_proceed      # capture_and_proceed | capture_and_fail
   available_harnesses:
     hermes:
-      session: { mode: continue, max_age_minutes: null }
+      session: { mode: continue, max_age_minutes: 4320 }
       background_review: false
       # run_budget_seconds: 900  # optional; one-shot/eval jobs only
       compression:
@@ -284,7 +284,7 @@ without an operator watching or attaching to the TUI.
 | `provider`                  | `{ base_url, auth_token_env }`        | Point the SDK session at any Anthropic-compatible endpoint (e.g. DeepSeek). `base_url` is the endpoint; `auth_token_env` is the NAME of the host env var holding the key (never the key). Mutually exclusive with `account`; relaxes the `claude-*` model-alias check. See ADR-0011. |
 | `session`                   | `continue` \| `new-session` \| `resume`| Session strategy (default `continue` — safe fallback). Legacy aliases `continue-or-new`, `new` accepted |
 | `resume_id`                 | string                                | Explicit session UUID for `session: resume`                       |
-| `continue_max_age_minutes`  | int                                   | Only resume if session.jsonl is newer than N minutes              |
+| `continue_max_age_minutes`  | int                                   | Only resume if the stored session is newer than N minutes. Hermes defaults to and caps this at 4320 (3 days). |
 | `flags[]`                   | list of strings                       | Extra flags appended to `claude` invocation                       |
 | `auto_accept`               | bool (default `True`)                 | Auto-confirm permission prompts in the TUI                        |
 | `raw_options`               | dict                                  | **Escape hatch** — splatted into `ClaudeAgentOptions(**raw_options)` |
