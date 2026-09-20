@@ -487,6 +487,20 @@ def try_dispatch_remote(
     if found is None:
         return False
     peer, row = found
+    # The REGISTRY is a route source too, not only config.yaml. `sac host list`
+    # already resolves peers from it (_state._peer_resolve.peers_with_registry),
+    # but this dispatch path consulted only the config mapping — so restart,
+    # delete, send and status dead-ended with "Cannot <verb> cross-host without
+    # an ssh target" on any host whose config.yaml has no peers: section, even
+    # though the peer was perfectly routable. Measured 2026-09-19: an operator
+    # instruction to restart an agent failed exactly this way, and the only
+    # working path was `sac host exec <peer> -- sac agents restart <name>`.
+    # Merge the registry in BEFORE concluding the peer is unreachable; config
+    # entries keep precedence and glob resolution is unchanged (the merged
+    # mapping is a PeersMap).
+    from ..._state._peer_resolve import peers_with_registry
+
+    peers = peers_with_registry(dict(peers))
     if peer not in peers:
         raise RuntimeError(
             f"Agent {name!r} active on peer {peer!r} per the shared store, but "
