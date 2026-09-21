@@ -172,9 +172,15 @@ def _hermes_tui_inner_argv(
 ) -> list[str]:
     """Inner argv for Hermes' official Ink TUI as the session owner.
 
-    Hermes does not reliably select the profile's default backend before a
-    session exists.  Pin the same resolved model/provider pair materialized in
-    ``~/.hermes/config.yaml`` so fresh sessions do not fall into Setup Required.
+    No explicit --model/--provider: the materialized ``~/.hermes/config.yaml``
+    already sets ``model.default`` + ``model.provider`` to this same resolved
+    engine (see ``compile_hermes_config``), so flags would only re-select the
+    identical pair. Worse, an explicit selection trips Hermes' TUI-side
+    training-tier confirm ("Switch anyway? [y/N]"), which — unlike the
+    non-interactive startup guard — does NOT honor
+    ``security.allow_data_training_tiers_noninteractive`` and therefore wedges
+    every contributor-tier agent at boot with an empty pane. Omitting the
+    flags lets the TUI resolve the profile default silently.
     """
     del options
     from ..runtimes._hermes_context_gc import DEFAULT_MAX_SESSION_AGE_MINUTES
@@ -208,9 +214,9 @@ def _hermes_tui_inner_argv(
     if not model or not engine_key:
         raise ValueError(
             "Hermes TUI requires a resolved engine model and key; refusing "
-            "to launch without explicit --model/--provider selection"
+            "to launch with an unresolvable profile default"
         )
-    argv += ["--model", model, "--provider", f"custom:sac-{engine_key}"]
+    # NOTE: intentionally no --model/--provider flags (see docstring).
     session_mode = str(config.claude.session or "").strip().lower()
     if session_mode == "continue":
         from ._hermes_session import hermes_session_key
