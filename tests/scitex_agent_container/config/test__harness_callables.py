@@ -55,17 +55,13 @@ def test_resolved_backend_reaches_every_hermes_session_mode(
     config = _config(session=session, resume_id=resume_id)
     # Act
     argv = _hermes_tui_inner_argv(config)
-    # Assert
-    selection = [
-        "--model",
-        "qwen38-27b",
-        "--provider",
-        "custom:sac-qwen38-27b",
-    ]
-    assert (
-        argv[argv.index("--model") : argv.index("--model") + 4],
-        _session_tail(argv),
-    ) == (selection, expected_tail)
+    # Assert: no explicit --model/--provider selection — the materialized
+    # profile default already carries this engine, and explicit flags trip
+    # the TUI-side training-tier confirm (which ignores the non-interactive
+    # ack and wedges contributor-tier agents at boot).
+    assert "--model" not in argv
+    assert "--provider" not in argv
+    assert _session_tail(argv) == expected_tail
 
 
 def test_hermes_refuses_an_unresolved_backend_instead_of_showing_setup():

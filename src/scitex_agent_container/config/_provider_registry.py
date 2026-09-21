@@ -45,6 +45,12 @@ from ._external_gateway import (
     EXTERNAL_GATEWAY_PROVIDER,
     external_gateway_provider_entry,
 )
+from ._free_gateway import (
+    DEFAULT_FREE_GATEWAY_TOKEN_ENV,
+    DEFAULT_FREE_GATEWAY_URL,
+    FREE_GATEWAY_PROVIDER,
+    free_gateway_provider_entry,
+)
 from ._qwen_gateway import (
     DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     DEFAULT_QWEN_GATEWAY_URL,
@@ -101,6 +107,13 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
         "base_url": DEFAULT_QWEN_GATEWAY_URL,
         "auth_token_env": DEFAULT_QWEN_GATEWAY_TOKEN_ENV,
     },
+    # Our own free-SKU endpoint: scitex-genai gateway on :18779 serving
+    # muse-spark-1.3-contributor-free through local opencode serve.
+    # Dynamic (per-host override via SAC_FREE_GATEWAY_URL) like qwen-gateway.
+    FREE_GATEWAY_PROVIDER: {
+        "base_url": DEFAULT_FREE_GATEWAY_URL,
+        "auth_token_env": DEFAULT_FREE_GATEWAY_TOKEN_ENV,
+    },
 }
 
 #: Providers whose metadata is HOST-DEPENDENT and therefore computed on each
@@ -113,6 +126,7 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
 #: become a second special case in :func:`resolve_provider`.
 _DYNAMIC_PROVIDERS = {
     QWEN_GATEWAY_PROVIDER: qwen_gateway_provider_entry,
+    FREE_GATEWAY_PROVIDER: free_gateway_provider_entry,
     EXTERNAL_GATEWAY_PROVIDER: external_gateway_provider_entry,
     "deepseek": external_gateway_provider_entry,
 }

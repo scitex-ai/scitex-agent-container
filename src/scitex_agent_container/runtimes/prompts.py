@@ -201,6 +201,23 @@ def _detect_external_imports(content: str) -> bool:
     )
 
 
+def _detect_hermes_training_tier(content: str) -> bool:
+    """Hermes contributor data-training tier confirmation.
+
+    Hermes warns when the selected model trains on prompts (contributor
+    tier) and offers "1. Switch anyway" / "2. Cancel". The fleet accepts
+    contributor-tier training (operator directive 2026-09-21), so the
+    drain answers "1" — the same accept-the-fleet-default shape as the
+    other first-run pickers in this table.
+    """
+    lowered = content.lower()
+    return (
+        ("train" in lowered or "contributor" in lowered)
+        and "1." in content
+        and ("anyway" in lowered or "switch" in lowered)
+    )
+
+
 def _detect_login_method(content: str) -> bool:
     """First-run login-method picker on a fresh HOME.
 
@@ -368,6 +385,12 @@ PROMPT_HANDLERS: list[PromptHandler] = [
         name="bypass-permissions",
         detect=_detect_bypass_permissions,
         keys=["2", "Enter"],  # "2. Yes, I accept"
+        priority=1,
+    ),
+    PromptHandler(
+        name="hermes-training-tier",
+        detect=_detect_hermes_training_tier,
+        keys=["1", "Enter"],  # "1. Switch anyway" — fleet accepts training tiers
         priority=1,
     ),
     PromptHandler(
