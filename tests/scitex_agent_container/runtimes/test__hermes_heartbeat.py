@@ -212,6 +212,40 @@ def test_accepted_turn_is_counted_from_message_start(tmp_path):
     )
 
 
+def test_a_known_event_without_a_payload_is_skipped_not_fatal(tmp_path):
+    """One unusable event must not make the WHOLE replay unprojectable.
+
+    Regression for the 2026-09-20 incident: the gateway emits
+    ``{'type': 'message.start', 'session_id': ..., 'seq': N}`` with no
+    ``payload``, the projection raised on that shape, and because the caller
+    retries, six agents sat in a ~11-hour loop with 10,000+ identical lines
+    while the registry reported them stopped. An unknown event TYPE is still
+    refused; a known type with nothing to read from is skipped, so the
+    projection continues and the heartbeat advances.
+    """
+    # Arrange
+    _gateway(tmp_path)
+    socket = _Socket(
+        epoch="epoch-1",
+        replays=[
+            {
+                "events": [
+                    {"seq": 1, "type": "message.start"},  # no payload: incident shape
+                    _event(2, "message.start"),
+                ],
+                "latest_seq": 2,
+            }
+        ],
+        statuses=["working", "working"],
+    )
+
+    # Act
+    observed = _observe(tmp_path, socket)
+
+    # Assert
+    assert (observed.state, observed.turns_accepted) == ("busy", 1)
+
+
 def test_streamed_tool_execution_is_counted_from_tool_start(tmp_path):
     # Arrange
     _gateway(tmp_path)

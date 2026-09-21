@@ -214,17 +214,28 @@ def _reduce(
     for event in events:
         event_type = event.get("type")
         payload = event.get("payload")
-        if not isinstance(event_type, str) or not event_type or not isinstance(payload, dict):
+        if not isinstance(event_type, str) or not event_type:
             raise HermesTuiRpcError(f"Hermes event replay contained malformed event: {event!r}")
+        if not isinstance(payload, dict):
+            # A KNOWN event type may legitimately arrive without a payload: the
+            # gateway emits e.g. {'type': 'message.start', 'session_id': ...,
+            # 'seq': ...}. Refusing the whole replay for that made the projection
+            # raise on EVERY retry, so the heartbeat never advanced, the registry
+            # reported the agent stopped, and six agents sat in a 10,000-line
+            # retry loop for ~11 hours (2026-09-20 incident). Skip the event and
+            # keep projecting; the replay-level guards above (truncation,
+            # backwards sequence, non-int seq) still refuse a projection that
+            # cannot be trusted, which is where refusing is genuinely right.
+            continue
         last_event = event_type
         if event_type == "message.start":
             accepted += 1
         elif event_type == "message.complete":
             status = payload.get("status")
             if status not in {"complete", "error", "interrupted"}:
-                raise HermesTuiRpcError(
-                    f"Hermes message.complete had malformed status: {event!r}"
-                )
+                # Same distinction: one unusable event is skipped rather than
+                # making the entire replay unprojectable for the next 11 hours.
+                continue
             # A bounded initial replay can begin in the middle of a turn. Its
             # terminal event advances the cursor but cannot complete a turn in
             # the exact counter scope unless a matching start is known.
