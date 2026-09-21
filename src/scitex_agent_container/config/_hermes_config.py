@@ -156,6 +156,16 @@ def compile_hermes_config(
             "in_place": compression.in_place,
         },
         "display": {"busy_input_mode": "steer"},
+        # Operator decision 2026-09-19 (direct, twice): the leads run on Muse Spark
+        # 1.3 **contributor**, i.e. a tier that trains on prompts and completions, and
+        # the operator accepted that explicitly ("すべて保存学習してくれて良いのでメタの方を使っていきましょう").
+        # Hermes refuses to select a data-training tier in a non-interactive run unless
+        # this is acknowledged, and its acknowledgement is a config key, not a flag
+        # (hermes_cli/main.py:1099). Without it every unattended Muse start wedges on an
+        # invisible "Use this model for this invocation? [y/N]" prompt -- which is exactly
+        # what happened at 00:29 on compute-03. Emitted here so the decision is made once,
+        # in the generated config, for every agent that selects such a tier.
+        "security": {"allow_data_training_tiers_noninteractive": True},
         "terminal": {
             "backend": "local",
             "cwd": workspace,
