@@ -53,9 +53,10 @@ def _fetch_peer_manifest(
     cfg: Config,
     as_json: bool,
     fleet: list[str],
+    remote_sac: str,
 ) -> dict[str, Any]:
     """Run ``ssh peer -- sac fleet sync-code --collect`` and parse."""
-    argv = build_ssh_argv(peer_name, ["sac", "fleet", "sync-code", "--collect"], cfg.peers)
+    argv = build_ssh_argv(peer_name, [remote_sac, "fleet", "sync-code", "--collect"], cfg.peers)
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     if proc.returncode not in (0, 2):
         _fail_loud_unreachable(
@@ -118,6 +119,7 @@ def _sync_code_impl(
     peer_filter: tuple[str, ...],
     allow_unresolvable: bool,
     collect: bool,
+    remote_sac: str,
 ) -> None:
     """Click-decoupled core so the implementation is unit-testable."""
     from .. import __version__ as sac_version
@@ -199,6 +201,7 @@ def _sync_code_impl(
             cfg=cfg,
             as_json=as_json,
             fleet=fleet,
+            remote_sac=remote_sac,
         )
 
     diff = diff_checkout_manifests(manifests)
@@ -246,6 +249,14 @@ def _sync_code_impl(
     help="Downgrade Phase-1-unresolvable peers to warnings instead of exiting 2.",
 )
 @click.option(
+    "--remote-sac",
+    default="$HOME/proj/scitex-agent-container/.venv/bin/sac",
+    show_default=True,
+    help="Path of the `sac` binary on each peer. Defaults to the project "
+    "venv (which tracks develop); the bare `sac` on PATH is the stale "
+    "~/.env-sac install and must NOT be used for --collect.",
+)
+@click.option(
     "--collect",
     is_flag=True,
     default=False,
@@ -259,6 +270,7 @@ def fleet_sync_code(
     peer_filter: tuple[str, ...],
     allow_unresolvable: bool,
     collect: bool,
+    remote_sac: str,
 ) -> None:
     """Audit checkout drift across the fleet (read-only, no auto-merge)."""
     _sync_code_impl(
@@ -267,6 +279,7 @@ def fleet_sync_code(
         peer_filter=peer_filter,
         allow_unresolvable=allow_unresolvable,
         collect=collect,
+        remote_sac=remote_sac,
     )
 
 
