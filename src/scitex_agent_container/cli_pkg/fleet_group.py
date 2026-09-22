@@ -30,6 +30,7 @@ import click
 
 from .._state.host_config import build_ssh_argv, load
 from ._fleet_notify import fleet_notify as _fleet_notify_cmd
+from ._fleet_sync_code import fleet_sync_code
 from ._fleet_sync import fleet_sync
 from ._helpers import _json_flag, console
 
@@ -244,10 +245,11 @@ def fleet_launch(
         raise SystemExit(1)
 
 
-# Cross-host spec audit — registered after the launch verb so the
-# import-time wiring stays linear. ``sync`` lives in its own module
-# (``_fleet_sync.py``) to keep this file under the project line-budget.
+# Cross-host audits — registered after the launch verb so the
+# import-time wiring stays linear. ``sync`` / ``sync-code`` live in
+# their own modules to keep this file under the project line-budget.
 fleet_group.add_command(fleet_sync)
+fleet_group.add_command(fleet_sync_code)
 
 
 # EOF
